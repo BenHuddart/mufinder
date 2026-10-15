@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mufinder.app.cluster_ui_utils as ui_module
 from mufinder.domain.cluster import ClusterConfig
+import mufinder.services.keychain as keychain_module
 from mufinder.services.keychain import KeychainCredentialError, KeychainCredentialIssue
 from mufinder.services.ssh_client import (
     SSHCredentials,
@@ -281,6 +282,7 @@ def test_prompt_for_cluster_credentials_uses_keychain_without_prompting(monkeypa
 
 def test_prompt_for_cluster_credentials_reports_missing_keychain_entry(monkeypatch) -> None:
     warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
 
     def _raise_missing(_config):
         raise KeychainCredentialError(
@@ -307,6 +309,34 @@ def test_prompt_for_cluster_credentials_reports_missing_keychain_entry(monkeypat
     assert credentials is None
     assert warnings[0][0] == "Missing Keychain passwords"
     assert "security add-generic-password -a phys-user -s bastion -w" in warnings[0][1]
+
+
+def test_prompt_for_cluster_credentials_reports_missing_linux_keyring_entry(monkeypatch) -> None:
+    warnings: list[tuple[str, str, str]] = []
+    command = "secret-tool store --label='MuFinder bastion (phys-user)' service bastion account phys-user"
+    monkeypatch.setattr(keychain_module.sys, "platform", "linux")
+
+    def _raise_missing(_config):
+        raise KeychainCredentialError(
+            [KeychainCredentialIssue(endpoint="jump", service="bastion", account="phys-user", command=command)]
+        )
+
+    monkeypatch.setattr(ui_module, "load_keychain_credentials", _raise_missing)
+    monkeypatch.setattr(
+        ui_module,
+        "show_detailed_warning",
+        lambda _parent, title, message, **kwargs: warnings.append((title, message, kwargs["informative_text"])),
+    )
+
+    credentials = ui_module.prompt_for_cluster_credentials(None, _keychain_config())
+
+    assert credentials is None
+    title, message, informative = warnings[0]
+    assert title == "Missing keyring passwords"
+    assert message.startswith("MuFinder could not read the required system keyring password entries.")
+    assert command in message
+    assert "sudo apt install libsecret-tools" in message
+    assert informative == "Open Details for the exact system keyring setup commands."
 
 
 def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> None:

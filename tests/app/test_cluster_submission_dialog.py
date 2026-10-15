@@ -173,6 +173,20 @@ def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
     dialog.close()
 
 
+def test_cluster_submission_dialog_keyring_mode_names_linux_store(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "linux")
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+
+    assert dialog._target_secret_edit.isHidden() is True
+    assert dialog._jump_secret_edit.isHidden() is True
+    assert "System keyring passwords are enabled" in dialog._auth_hint.text()
+    assert "from the keyring" in dialog._auth_hint.text()
+    dialog.close()
+
+
 def test_cluster_submission_dialog_compacts_large_job_summary(qapp) -> None:
     job_labels = [f"cutoff_convergence_ecut_{index}" for index in range(12)]
 

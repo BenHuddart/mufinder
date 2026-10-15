@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import (
     KeychainCredentialError,
+    credential_store_for_display,
     is_glamdring_keychain_supported,
     keychain_setup_help,
     load_keychain_credentials,
@@ -73,7 +74,7 @@ def prompt_for_cluster_credentials(
     target_secret: str | None = None,
     prompt_optional_key: bool = True,
 ) -> SSHCredentials | None:
-    """Resolve cluster credentials, prompting only when Keychain mode is disabled."""
+    """Resolve cluster credentials, prompting only when keyring mode is disabled."""
 
     return resolve_cluster_credentials(
         parent,
@@ -91,7 +92,7 @@ def resolve_cluster_credentials(
     prompt_optional_key: bool = True,
     manual_credentials: SSHCredentials | None = None,
 ) -> SSHCredentials | None:
-    """Resolve credentials from macOS Keychain or manual prompts/fields."""
+    """Resolve credentials from the system keyring or manual prompts/fields."""
 
     if config.use_macos_keychain_passwords and is_glamdring_keychain_supported(config):
         try:
@@ -112,9 +113,10 @@ def resolve_cluster_credentials(
 
 
 def show_keychain_credentials_missing(parent, config: ClusterConfig, exc: KeychainCredentialError) -> None:
-    """Show setup guidance for missing macOS Keychain credentials."""
+    """Show setup guidance for missing system keyring credentials."""
 
-    lines = ["MuFinder could not read the required macOS Keychain password entries."]
+    store = credential_store_for_display()
+    lines = [f"MuFinder could not read the required {store.name} password entries."]
     for issue in exc.issues:
         label = "Physics/bastion" if issue.endpoint == "jump" else "Glamdring"
         lines.append(f"- {label}: {issue.command}")
@@ -122,9 +124,9 @@ def show_keychain_credentials_missing(parent, config: ClusterConfig, exc: Keycha
     lines.append(keychain_setup_help(config))
     show_detailed_warning(
         parent,
-        "Missing Keychain passwords",
+        f"Missing {store.short_name} passwords",
         "\n".join(lines),
-        informative_text="Open Details for the exact macOS Keychain setup commands.",
+        informative_text=f"Open Details for the exact {store.name} setup commands.",
     )
 
 

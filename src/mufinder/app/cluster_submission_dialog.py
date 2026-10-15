@@ -28,7 +28,7 @@ from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.farm_validation import check_farm_counts
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.services.keychain import is_glamdring_keychain_supported
+from mufinder.services.keychain import credential_store_for_display, is_glamdring_keychain_supported
 from mufinder.services.ssh_client import SSHCredentials
 
 
@@ -288,9 +288,10 @@ class ClusterSubmissionDialog(QDialog):
                 "Passwords/passphrases are not required for this submission."
             )
         elif self._uses_keychain_credentials(config):
+            store = credential_store_for_display()
             self._set_auth_hint_text(
-                "macOS Keychain passwords are enabled for this cluster. "
-                "MuFinder will read the Physics and Glamdring passwords from Keychain when you submit."
+                f"{store.sentence_name} passwords are enabled for this cluster. "
+                f"MuFinder will read the Physics and Glamdring passwords from the {store.short_name} when you submit."
             )
         elif config.jump_host_enabled:
             self._set_auth_hint_text(self._jump_host_auth_hint(config))

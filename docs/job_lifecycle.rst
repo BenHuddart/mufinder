@@ -410,11 +410,26 @@ SCARF and Redwood presets.
 - The Redwood preset targets ``glamdring.physics.ox.ac.uk`` through the Physics
   gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately for the
   Physics/bastion and Glamdring credentials because those accounts can differ.
-- On macOS, eligible Redwood/Glamdring password-auth profiles can opt into
-  read-only Keychain password lookup. The entries use the same services as
-  ``glamdring-tools``: ``security add-generic-password -a <physics_username>
-  -s bastion -w`` and ``security add-generic-password -a
-  <glamdring_username> -s glamdring -w``.
+  The preset submits with ``/usr/local/shared/bin/addqueue``; a saved profile
+  keeps whatever submit command path it was saved with.
+- On macOS and Linux, eligible Redwood/Glamdring password-auth profiles can
+  opt into read-only system keyring password lookup, so neither password is
+  prompted for. MuFinder reads existing entries and never stores passwords.
+  On macOS the entries live in the login Keychain and use the same services
+  as ``glamdring-tools``: ``security add-generic-password -a
+  <physics_username> -s bastion -w`` and ``security add-generic-password -a
+  <glamdring_username> -s glamdring -w``. On Linux they live in the Secret
+  Service keyring (GNOME Keyring or KWallet), are read with
+  ``/usr/bin/secret-tool`` (Ubuntu package ``libsecret-tools``) and are
+  created with ``secret-tool store --label=<label> service bastion account
+  <physics_username>`` and ``secret-tool store --label=<label> service
+  glamdring account <glamdring_username>``; the keyring must be unlocked in
+  the desktop session. The setup dialog's ``?`` button shows the exact
+  commands for the current platform. A lookup that fails, finds an empty
+  password or does not finish within 120 seconds stops the connection and
+  lists the missing entries with their setup commands. The persisted
+  ``use_macos_keychain_passwords`` setting enables the lookup on both
+  platforms.
 - Scheduler commands (submit, queue, cancel) can be given explicit paths. A
   command without a configured path is located by probing the
   non-interactive SSH shell.
@@ -449,8 +464,8 @@ Cluster submission and monitoring
   submitting. Remote job directories are deleted recursively over SFTP, never
   through a remote shell command.
 - Jump-host submissions show separate credential fields for the gateway and
-  the target cluster. With the macOS Keychain option enabled, submission and
-  reconnect use the Keychain entries instead of password prompts.
+  the target cluster. With the system keyring option enabled, submission and
+  reconnect use the keyring entries instead of password prompts.
 - When a matching cluster connection is already active, submission reuses it
   and does not ask for a password or passphrase again.
 - The dashboard shows each job's execution target (``Cluster``, which reads
