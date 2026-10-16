@@ -13,6 +13,8 @@ from collections.abc import Mapping, Sequence
 import copy
 from typing import Any
 
+import numpy as np
+
 from mufinder.domain.models import Structure
 
 Vector = Sequence[float]
@@ -95,3 +97,55 @@ def hydrogen_host(a: float = 2.0, *, label: str = "H host", **overrides: Any) ->
         positions=((0.0, 0.0, 0.0),),
         **overrides,
     )
+
+
+def relaxed_muon_supercell(
+    host: Structure,
+    repeats: Sequence[int],
+    muon_position: Vector,
+    displacements: Mapping[tuple[float, float, float], Vector] | None = None,
+    *,
+    label: str = "Relaxed muon supercell",
+) -> Structure:
+    """A diagonal ``repeats`` supercell of ``host`` with an ``H:mu`` and displaced host atoms.
+
+    ``muon_position`` is in host fractional coordinates. ``displacements`` maps a
+    host-frame fractional site, taken modulo the supercell, to a Cartesian
+    displacement in Å. Atoms are listed cell by cell, then in host order, and
+    the muon comes last.
+    """
+
+    counts = [int(value) for value in repeats]
+    lattice = [[float(value) * counts[row] for value in host.lattice_vectors[row]] for row in range(3)]
+    moves = {
+        tuple(round(float(value) % counts[axis], 6) for axis, value in enumerate(site)): displacement
+        for site, displacement in (displacements or {}).items()
+    }
+    species: list[str] = []
+    positions: list[list[float]] = []
+    for i in range(counts[0]):
+        for j in range(counts[1]):
+            for k in range(counts[2]):
+                for symbol, position in zip(host.species, host.fractional_positions):
+                    unit = [float(position[0]) + i, float(position[1]) + j, float(position[2]) + k]
+                    key = tuple(round(value % counts[axis], 6) for axis, value in enumerate(unit))
+                    shift = moves.get(key, (0.0, 0.0, 0.0))
+                    cartesian = [
+                        sum(unit[axis] * float(host.lattice_vectors[axis][column]) for axis in range(3)) + shift[column]
+                        for column in range(3)
+                    ]
+                    species.append(str(symbol))
+                    positions.append(_fractional_in(lattice, cartesian))
+    species.append("H:mu")
+    positions.append([float(muon_position[axis]) / counts[axis] for axis in range(3)])
+    return Structure(
+        label=label,
+        lattice_vectors=lattice,
+        species=species,
+        fractional_positions=positions,
+        parent_structure_id=host.id,
+    )
+
+
+def _fractional_in(lattice: Sequence[Vector], cartesian: Vector) -> list[float]:
+    return [float(value) % 1.0 for value in np.linalg.solve(np.asarray(lattice, dtype=float).T, cartesian)]

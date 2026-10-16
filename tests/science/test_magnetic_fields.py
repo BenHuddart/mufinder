@@ -31,6 +31,7 @@ from mufinder.science.magnetic_fields import (
     assigned_magnetic_atom_indices,
     calculate_commensurate_fields,
     calculate_dipolar_tensors,
+    calculate_distortion_field_correction,
     calculate_dipolar_tensors_for_atoms,
     calculate_finite_dipolar_field,
     calculate_incommensurate_field_distributions,
@@ -46,7 +47,8 @@ from mufinder.science.magnetic_structure import (
     MagneticComponent,
     MagneticStructureModel,
 )
-from tests.support.structures import host_structure
+from mufinder.science.muon_distortion import map_muon_distortion
+from tests.support.structures import host_structure, relaxed_muon_supercell
 
 _structure = partial(host_structure, label="Fe", lattice=3.0, species=("Fe",), positions=((0.0, 0.0, 0.0),))
 _two_atom_structure = partial(host_structure, label="FeO", lattice=3.0, species=("Fe", "O"))
@@ -246,6 +248,23 @@ def test_magnetic_field_result_total_magnitude_and_json() -> None:
     assert payload["dipolar_T"] == [1.0, 0.0, 0.0]
     assert payload["total_T"] == pytest.approx([1.0, 2.0, 3.0])
     assert payload["magnitude_T"] == pytest.approx(np.sqrt(14.0))
+    assert "distortion_T" not in payload
+
+
+def test_magnetic_field_result_adds_the_distortion_correction_to_the_total() -> None:
+    result = MagneticFieldResult(
+        site_label="A",
+        muon_position=(0.1, 0.2, 0.3),
+        dipolar=(1.0, 0.0, 0.0),
+        lorentz=(0.0, 0.0, 0.0),
+        contact=(0.0, 0.0, 0.0),
+        demag=(0.0, 0.0, 0.0),
+        applied=(0.0, 0.0, 0.0),
+        distortion=(0.5, 0.0, 0.25),
+    )
+
+    assert result.total == pytest.approx((1.5, 0.0, 0.25))
+    assert result.to_json()["distortion_T"] == [0.5, 0.0, 0.25]
 
 
 def test_distribution_result_magnitudes_and_json() -> None:
@@ -589,6 +608,159 @@ def test_commensurate_fields_explicit_radius_skips_largest_sphere(monkeypatch) -
         options=MagneticFieldOptions(supercell=(1, 1, 1), radius=4.0),
     )
     assert seen["radius"] == pytest.approx(4.0)
+
+
+# Muon-induced distortion correction: finite-cell field of displaced minus pristine ions
+
+_MU_X = (0.5, 0.0, 0.0)
+
+
+def _axial_dipole_change(moment: float, before: float, after: float) -> float:
+    """B_z change at a muon on the x axis when a z moment moves from ``before`` to ``after`` Å away."""
+
+    prefactor = -1e-7 * 9.274_010_078_3e-24 / ((1e-10) ** 3)
+    return prefactor * moment * (1.0 / abs(after) ** 3 - 1.0 / abs(before) ** 3)
+
+
+def _ferromagnet() -> MagneticStructureModel:
+    return _model()
+
+
+def _antiferromagnet() -> MagneticStructureModel:
+    return _model([0.5, 0.5, 0.5])
+
+
+@pytest.mark.parametrize(
+    ("model", "moment"),
+    [(_ferromagnet, 1.0), (_antiferromagnet, -1.0)],
+    ids=["ferromagnet", "antiferromagnet"],
+)
+def test_distortion_correction_matches_one_displaced_dipole(model, moment) -> None:
+    # The Fe one cell along +x sits 1.5 Å from the muon and moves 0.1 Å away;
+    # in the antiferromagnet its moment is reversed.
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+    distortion = map_muon_distortion(_structure(), relaxed, _MU_X)
+
+    correction = calculate_distortion_field_correction(_structure(), model(), distortion)
+
+    assert correction[0] == pytest.approx(0.0, abs=1e-12)
+    assert correction[1] == pytest.approx(0.0, abs=1e-12)
+    assert correction[2] == pytest.approx(_axial_dipole_change(moment, 1.5, 1.6))
+
+
+def test_distortion_correction_is_zero_without_displacements() -> None:
+    distortion = map_muon_distortion(_structure(), relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X), _MU_X)
+
+    assert calculate_distortion_field_correction(_structure(), _antiferromagnet(), distortion) == pytest.approx(
+        (0.0, 0.0, 0.0), abs=1e-15
+    )
+
+
+def test_distortion_correction_indexes_moments_past_a_muon_marker_in_the_host() -> None:
+    # A muon marker listed before the Fe must not shift which atom each ion takes its moment from.
+    marked = host_structure(
+        label="Fe+mu", lattice=3.0, species=("H:mu", "Fe"), positions=((0.25, 0.25, 0.25), (0.0, 0.0, 0.0))
+    )
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.5, 0.5, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            MagneticComponent(
+                component_id="fe",
+                label="Fe",
+                kind="custom",
+                selector=AtomSelector.species("Fe"),
+                terms=(FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+            ),
+        ),
+    )
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+    distortion = map_muon_distortion(marked, relaxed, _MU_X)
+
+    assert set(distortion.atom_indices.tolist()) == {1}
+    correction = calculate_distortion_field_correction(marked, model, distortion)
+    assert correction[2] == pytest.approx(_axial_dipole_change(-1.0, 1.5, 1.6))
+
+
+def test_commensurate_fields_add_the_distortion_correction(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 1)))
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+
+    corrected, plain = calculate_commensurate_fields(
+        _structure(),
+        _antiferromagnet(),
+        [_MU_X, _MU_X],
+        options=MagneticFieldOptions(supercell=(1, 1, 1)),
+        distorted_structures=[relaxed, None],
+    )
+
+    change = _axial_dipole_change(-1.0, 1.5, 1.6)
+    assert corrected.dipolar == pytest.approx((0.0, 0.0, 1.0))
+    assert corrected.distortion == pytest.approx((0.0, 0.0, change), abs=1e-12)
+    assert corrected.total == pytest.approx((0.0, 0.0, 1.0 + change))
+    assert plain.distortion is None
+    assert plain.total == pytest.approx((0.0, 0.0, 1.0))
+
+
+def test_distortion_correction_follows_each_symmetry_equivalent_site(monkeypatch) -> None:
+    # The cubic host maps the x-axis site and its displaced neighbour onto the
+    # y and z axes. The z moments make the z-axis image differ, so the result
+    # shows the pattern was rotated rather than copied.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+
+    results = calculate_commensurate_fields(
+        _structure(),
+        _antiferromagnet(),
+        [MuonSite(label="Mu", fractional_position=list(_MU_X))],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=True),
+        distorted_structures=[relaxed],
+    )
+
+    by_position = {tuple(np.round(result.muon_position, 6)): result.distortion for result in results}
+    assert set(by_position) == {(0.5, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.5)}
+    for position in ((0.0, 0.5, 0.0), (0.0, 0.0, 0.5)):
+        displaced = tuple(2.0 * value for value in position)
+        direct = map_muon_distortion(
+            _structure(),
+            relaxed_muon_supercell(_structure(), (3, 3, 3), position, {displaced: tuple(0.2 * v for v in position)}),
+            position,
+        )
+        expected = calculate_distortion_field_correction(_structure(), _antiferromagnet(), direct)
+        assert by_position[position] == pytest.approx(expected, abs=1e-12)
+    assert by_position[(0.0, 0.0, 0.5)][2] == pytest.approx(-2.0 * by_position[(0.5, 0.0, 0.0)][2])
+
+
+def test_commensurate_fields_report_an_invalid_distorted_structure(monkeypatch) -> None:
+    _forbid_muesr(monkeypatch)
+    relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
+
+    with pytest.raises(MagneticFieldError, match="from the muon in the distorted structure"):
+        calculate_commensurate_fields(
+            _structure(),
+            _model(),
+            [(0.0, 0.0, 0.0)],
+            distorted_structures=[relaxed],
+        )
+
+
+def test_commensurate_fields_need_one_distorted_entry_per_site(monkeypatch) -> None:
+    _forbid_muesr(monkeypatch)
+
+    with pytest.raises(MagneticFieldError, match="one entry per muon site"):
+        calculate_commensurate_fields(_structure(), _model(), [_MU_X, _MU_X], distorted_structures=[None])
+
+
+def test_incommensurate_distributions_refuse_distortion_corrections(monkeypatch) -> None:
+    _forbid_muesr(monkeypatch)
+    relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
+
+    with pytest.raises(MagneticFieldError, match="commensurate magnetic structures only"):
+        calculate_incommensurate_field_distributions(
+            _structure(),
+            _circular_helix_model(),
+            [_MU_X],
+            distorted_structures=[relaxed],
+        )
 
 
 # Demagnetising correction: B_demag = -3/2 N . B_Lorentz
