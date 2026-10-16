@@ -235,17 +235,17 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
 
 ``MuonSite``
    ``status = "relaxed"``, ``generation_method = "imported_legacy"``,
-   ``source_structure_id`` the active host, ``fractional_position`` taken from
-   the **input** cell's ``H:mu`` folded to host coordinates,
-   ``cartesian_position`` derived from it, and ``total_energy_eV`` the
-   absolute total energy from the ``.castep`` — matching what the native
-   completion path stores, despite the field name.
+   ``source_structure_id`` the active host, ``initial_fractional_position``
+   taken from the **input** cell's ``H:mu`` folded to host coordinates,
+   ``initial_cartesian_position`` derived from it,
+   ``relaxed_fractional_position`` the **output** cell's ``H:mu`` folded to
+   host coordinates (the result's ``muon_final_fractional_position_host``),
+   and ``total_energy_eV`` the absolute total energy from the ``.castep`` —
+   matching what the native completion path stores.
 
-   The site records where the muon *started*, not where it ended up. Native
-   completion updates status, run id and energy and never rewrites the
-   coordinates, so the relaxed position lives on the derived structure and in
-   the result payload instead. Diverging here would make an imported site mean
-   something different from every other site in the project.
+   The initial position is where the muon *started*; native completion never
+   rewrites it and copies the relaxed position beside it, so an imported site
+   means the same as every other site in the project.
 
    Every position an imported row or site records is in the **host** frame.
    Legacy states the muon position in the supercell frame, and job expansion

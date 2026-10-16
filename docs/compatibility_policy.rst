@@ -218,6 +218,17 @@ Compatibility ledger
        ``converged_cutoff`` when ``converged_value`` is absent.
      - Keep until the next saved-project schema version bump, whose migration
        can rename the key to ``converged_value``.
+   * - ``fractional_position`` / ``cartesian_position`` attributes
+     - ``MuonSite`` (``mufinder.domain.models``)
+     - Read-write attribute aliases of ``initial_fractional_position`` /
+       ``initial_cartesian_position``, the names those fields had before the
+       relaxed position was stored beside them. They are properties, not
+       dataclass fields: the constructor takes only the new names and the
+       site entity file stores only the new keys (the 2 to 3 schema step
+       below renames stored keys). No MuFinder code reads them; one test
+       checks that they still resolve.
+     - Public attribute alias. Keep for one minor release (through 0.6.x);
+       then drop both properties.
    * - ``ConstructionSignWidget`` / ``WorkflowDefinition`` /
        ``MuonChargeStateDialog``
      - ``mufinder.app.main_window``
@@ -351,6 +362,19 @@ version or a newer one is loaded as it is. A manifest without
        ``sweep_values``, else from ``cutoff_energies``. The widget form state
        (``ui_state["convergence_form"]``) is not part of the step and keeps its
        own ``cutoff_energies`` key; see :doc:`architecture`.
+   * - 2 to 3
+     - Muon sites (``sites`` entities). Schema 2 stored a site's generated
+       position as ``fractional_position`` / ``cartesian_position`` and kept
+       it unchanged after relaxation. The step renames the keys to
+       ``initial_fractional_position`` / ``initial_cartesian_position``. A
+       site whose ``relaxation_run_id`` names a run with a result recording
+       ``muon_final_fractional_position_host`` gains that triplet as
+       ``relaxed_fractional_position``; other sites have none.
+     - ``site_from_dict`` reads only the new keys, and
+       ``MuonSite.current_fractional_position`` reads
+       ``relaxed_fractional_position``. Muon-relaxation completion sets the
+       relaxed position and removing the run's records clears it, so after
+       the step every relaxed site carries it when its result does.
 
 A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
 ``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table

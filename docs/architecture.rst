@@ -1231,6 +1231,20 @@ per entity under ``entities/``, alongside a project manifest, a state snapshot
 and a provenance JSONL stream. Cross-entity references are validated before
 save.
 
+A ``MuonSite`` keeps two host-cell positions apart.
+``initial_fractional_position`` / ``initial_cartesian_position`` are where the
+site was generated or staged, and never change when it relaxes; generation,
+clustering, duplicate checks and staging read them.
+``relaxed_fractional_position`` is a copy of the linked run's
+``muon_final_fractional_position_host``, set when the muon relaxation that
+``relaxation_run_id`` names completes and cleared when that link is removed; it
+is ``None`` for a site that has not relaxed. The run's result stays the record:
+per-row views of muon relaxations (both charge states of one site) read their
+positions from each job's result. ``MuonSite.current_fractional_position()``
+returns the relaxed position when there is one and the initial one otherwise,
+for consumers that want where the muon is now, such as the magnetic-field
+calculation and the project-home quantum-corrections layer.
+
 ``ProjectService.save_project`` tracks changes by content hash: it skips
 rewriting any entity file (and ``state.json``) whose canonical serialized
 payload is unchanged since the last save or load, guarding each skip with a

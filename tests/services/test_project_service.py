@@ -18,6 +18,7 @@ from mufinder.domain.models import (
     CalculationRun,
     ComparisonTable,
     Job,
+    PROJECT_SCHEMA_VERSION,
     MuonSite,
     Result,
     Structure,
@@ -97,8 +98,8 @@ def test_manual_generation_cartesian_conversion(tmp_path: Path) -> None:
     )
     site = sites[0]
     assert site.status == "generated"
-    assert site.fractional_position == pytest.approx([0.2, 0.3, 0.4])
-    assert site.cartesian_position == pytest.approx([2.0, 3.0, 4.0])
+    assert site.initial_fractional_position == pytest.approx([0.2, 0.3, 0.4])
+    assert site.initial_cartesian_position == pytest.approx([2.0, 3.0, 4.0])
 
 
 def test_random_generation_by_target_count_estimates_spacing(tmp_path: Path) -> None:
@@ -279,7 +280,7 @@ def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: P
     site = sites[0]
     assert site.generation_method == "uep_cluster"
     assert site.source_structure_id == host.id
-    assert site.fractional_position == pytest.approx([0.1, 0.2, 0.3])
+    assert site.initial_fractional_position == pytest.approx([0.1, 0.2, 0.3])
     assert site.properties["uep_source_key"] == "job-1:cluster:1:cluster:0"
     assert site.properties["classification"] == "minimum"
 
@@ -327,7 +328,7 @@ def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -
         "job-1:cluster:3:cluster:2",
     ]
     assert [site.label for site in sites] == ["UEP Cluster 1", "UEP Cluster 2", "UEP Cluster 3"]
-    assert [site.fractional_position[0] for site in sites] == pytest.approx([0.1, 0.2, 0.3])
+    assert [site.initial_fractional_position[0] for site in sites] == pytest.approx([0.1, 0.2, 0.3])
 
 
 def test_manual_generation_wraps_fractional_coordinates(tmp_path: Path) -> None:
@@ -339,7 +340,7 @@ def test_manual_generation_wraps_fractional_coordinates(tmp_path: Path) -> None:
         parameters={"coord_system": "fractional", "x": 1.25, "y": -0.25, "z": 0.5},
     )
 
-    assert sites[0].fractional_position == pytest.approx([0.25, 0.75, 0.5])
+    assert sites[0].initial_fractional_position == pytest.approx([0.25, 0.75, 0.5])
     assert sites[0].properties["coordinate_system"] == "fractional"
 
 
@@ -443,7 +444,7 @@ def test_uep_cluster_generation_creates_member_sites(tmp_path: Path) -> None:
     assert site.label == "UEP Cluster Member 1"
     assert site.source_structure_id == host.id
     assert site.properties["uep_source_key"] == "key-a"
-    assert site.fractional_position == pytest.approx([0.3, 0.3, 0.3])
+    assert site.initial_fractional_position == pytest.approx([0.3, 0.3, 0.3])
 
 
 def test_uep_cluster_generation_treats_a_site_at_the_same_position_as_a_duplicate(
@@ -454,7 +455,7 @@ def test_uep_cluster_generation_treats_a_site_at_the_same_position_as_a_duplicat
         label="member",
         status="generated",
         generation_method="uep_cluster_member",
-        fractional_position=[0.4, 0.4, 0.4],
+        initial_fractional_position=[0.4, 0.4, 0.4],
         source_structure_id=host.id,
     )
     doc.sites[existing.id] = existing
@@ -504,8 +505,8 @@ def test_cluster_candidate_positions_updates_selected_sites_to_anchor_orbit(tmp_
     site = MuonSite(
         label="Candidate",
         status="generated",
-        fractional_position=[0.1, 0.2, 0.3],
-        cartesian_position=[0.5, 1.0, 1.5],
+        initial_fractional_position=[0.1, 0.2, 0.3],
+        initial_cartesian_position=[0.5, 1.0, 1.5],
     )
     doc.sites[site.id] = site
 
@@ -516,8 +517,8 @@ def test_cluster_candidate_positions_updates_selected_sites_to_anchor_orbit(tmp_
     )
 
     assert updated == [site]
-    assert site.fractional_position == pytest.approx([0.9, 0.8, 0.7])
-    assert site.cartesian_position == pytest.approx([4.5, 4.0, 3.5])
+    assert site.initial_fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert site.initial_cartesian_position == pytest.approx([4.5, 4.0, 3.5])
     assert doc.provenance[-1].action == "cluster_candidate_positions"
     assert doc.provenance[-1].parameters["anchor_fractional"] == pytest.approx([0.9, 0.8, 0.7])
 
@@ -535,12 +536,12 @@ def test_cluster_candidate_positions_does_not_rewrite_staged_sites(tmp_path: Pat
     generated = MuonSite(
         label="Generated",
         status="generated",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
     )
     staged = MuonSite(
         label="Staged",
         status="staged",
-        fractional_position=[0.2, 0.3, 0.4],
+        initial_fractional_position=[0.2, 0.3, 0.4],
     )
     doc.sites[generated.id] = generated
     doc.sites[staged.id] = staged
@@ -552,8 +553,8 @@ def test_cluster_candidate_positions_does_not_rewrite_staged_sites(tmp_path: Pat
     )
 
     assert updated == [generated]
-    assert generated.fractional_position == pytest.approx([0.9, 0.8, 0.7])
-    assert staged.fractional_position == pytest.approx([0.2, 0.3, 0.4])
+    assert generated.initial_fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert staged.initial_fractional_position == pytest.approx([0.2, 0.3, 0.4])
     assert doc.provenance[-1].parameters["site_labels"] == ["Generated"]
 
 
@@ -1547,7 +1548,7 @@ def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(tm
 
     loaded = ProjectService().load_project(root)
 
-    assert loaded.project.schema_version == 2
+    assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
     cutoff = loaded.calculations[_SCHEMA_1_CUTOFF_ID].parameters["configuration"]
     assert cutoff["sweep_values"] == [300.0, 400.0, 500.0]
     assert "cutoff_energies" not in cutoff
@@ -1563,25 +1564,76 @@ def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(tm
     ]
 
 
-def test_schema_1_project_is_persisted_at_schema_2_by_the_next_save(tmp_path: Path) -> None:
+def test_schema_1_project_is_persisted_at_the_current_schema_by_the_next_save(tmp_path: Path) -> None:
     root = _copy_schema_1_fixture(tmp_path)
     service = ProjectService()
 
     service.save_project(service.load_project(root))
 
-    assert json.loads((root / "project.json").read_text())["schema_version"] == 2
+    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
     for definition_id in (_SCHEMA_1_CUTOFF_ID, _SCHEMA_1_KPOINT_ID):
         stored = json.loads((root / "entities" / "calculations" / f"{definition_id}.json").read_text())
         assert "cutoff_energies" not in stored["parameters"]["configuration"]
     assert (root / "provenance.jsonl").read_bytes() == (_SCHEMA_1_FIXTURE / "provenance.jsonl").read_bytes()
 
     reloaded = ProjectService().load_project(root)
-    assert reloaded.project.schema_version == 2
+    assert reloaded.project.schema_version == PROJECT_SCHEMA_VERSION
     assert reloaded.calculations[_SCHEMA_1_CUTOFF_ID].parameters["configuration"]["sweep_values"] == [
         300.0,
         400.0,
         500.0,
     ]
+
+
+_SCHEMA_2_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v2_relaxed_site"
+_SCHEMA_2_RELAXED_SITE_ID = UUID("0d5c6e1a-8a3b-4f0e-9a7c-3c2b1d4e5f60")
+_SCHEMA_2_STAGED_SITE_ID = UUID("7e2a9b4c-5d6f-4a1b-8c3d-9e0f1a2b3c4d")
+
+
+def _copy_schema_2_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "schema_v2.mufinder"
+    shutil.copytree(_SCHEMA_2_FIXTURE, root)
+    return root
+
+
+def test_schema_2_project_loads_with_initial_and_backfilled_relaxed_site_positions(tmp_path: Path) -> None:
+    root = _copy_schema_2_fixture(tmp_path)
+
+    loaded = ProjectService().load_project(root)
+
+    assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
+    relaxed = loaded.sites[_SCHEMA_2_RELAXED_SITE_ID]
+    assert relaxed.status == "relaxed"
+    assert relaxed.initial_fractional_position == pytest.approx([0.1, 0.2, 0.3])
+    assert relaxed.initial_cartesian_position == pytest.approx([0.4, 0.8, 1.2])
+    # Backfilled from the linked run's result.
+    assert relaxed.relaxed_fractional_position == pytest.approx([0.15, 0.25, 0.35])
+    assert relaxed.current_fractional_position() == pytest.approx([0.15, 0.25, 0.35])
+    staged = loaded.sites[_SCHEMA_2_STAGED_SITE_ID]
+    assert staged.initial_fractional_position == pytest.approx([0.5, 0.5, 0.5])
+    assert staged.relaxed_fractional_position is None
+    assert staged.current_fractional_position() == pytest.approx([0.5, 0.5, 0.5])
+
+
+def test_schema_2_project_sites_are_rewritten_with_the_new_keys_by_the_next_save(tmp_path: Path) -> None:
+    root = _copy_schema_2_fixture(tmp_path)
+    service = ProjectService()
+
+    service.save_project(service.load_project(root))
+
+    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    stored = json.loads((root / "entities" / "sites" / f"{_SCHEMA_2_RELAXED_SITE_ID}.json").read_text())
+    assert "fractional_position" not in stored
+    assert "cartesian_position" not in stored
+    assert stored["initial_fractional_position"] == [0.1, 0.2, 0.3]
+    assert stored["relaxed_fractional_position"] == [0.15, 0.25, 0.35]
+
+    reloaded = ProjectService().load_project(root)
+    assert reloaded.project.schema_version == PROJECT_SCHEMA_VERSION
+    assert reloaded.sites[_SCHEMA_2_RELAXED_SITE_ID].relaxed_fractional_position == pytest.approx(
+        [0.15, 0.25, 0.35]
+    )
+    assert reloaded.sites[_SCHEMA_2_STAGED_SITE_ID].initial_fractional_position == pytest.approx([0.5, 0.5, 0.5])
 
 
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:

@@ -50,7 +50,7 @@ from tests.support.structures import host_structure
 
 _structure = partial(host_structure, label="Fe", lattice=3.0, species=("Fe",), positions=((0.0, 0.0, 0.0),))
 _two_atom_structure = partial(host_structure, label="FeO", lattice=3.0, species=("Fe", "O"))
-_SITE_A = MuonSite(label="A", fractional_position=[0.25, 0.25, 0.25])
+_SITE_A = MuonSite(label="A", initial_fractional_position=[0.25, 0.25, 0.25])
 
 
 def _model(q=(0.0, 0.0, 0.0)) -> MagneticStructureModel:
@@ -482,9 +482,9 @@ def test_commensurate_fields_label_and_wrap_muon_positions(monkeypatch) -> None:
         _structure(),
         _model([0.0, 0.0, 0.5]),
         [
-            MuonSite(label="", fractional_position=[1.5, -0.25, -1e-12]),
+            MuonSite(label="", initial_fractional_position=[1.5, -0.25, -1e-12]),
             [0.5, 0.5, 0.5],
-            MuonSite(label="Mu1", fractional_position=[0.1, 0.2, 0.3]),
+            MuonSite(label="Mu1", initial_fractional_position=[0.1, 0.2, 0.3]),
         ],
         options=MagneticFieldOptions(supercell=(1, 1, 1)),
     )
@@ -502,7 +502,7 @@ def test_commensurate_fields_expand_symmetry_equivalent_sites(monkeypatch) -> No
     results = calculate_commensurate_fields(
         _structure(),
         _model([0.0, 0.0, 0.5]),
-        [MuonSite(label="Mu", fractional_position=[0.25, 0.25, 0.25])],
+        [MuonSite(label="Mu", initial_fractional_position=[0.25, 0.25, 0.25])],
         options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=True),
     )
 

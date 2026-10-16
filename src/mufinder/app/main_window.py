@@ -4392,10 +4392,7 @@ class MainWindow(QMainWindow):
         for site in self._document.sites.values():
             if site.relaxation_run_id not in run_id_set:
                 continue
-            site.relaxation_run_id = None
-            site.total_energy_eV = None
-            if site.status == "relaxed":
-                site.status = "staged"
+            site.clear_relaxation()
 
         for result_id in result_ids:
             self._document.results.pop(result_id, None)
@@ -7025,7 +7022,7 @@ class MainWindow(QMainWindow):
             {
                 "id": str(site.id),
                 "label": site.label,
-                "fractional_position": list(site.fractional_position),
+                "fractional_position": list(site.initial_fractional_position),
                 "method": site.generation_method or "",
             }
             for site in staged
@@ -10535,8 +10532,8 @@ class MainWindow(QMainWindow):
                 "label": site.label,
                 "method": site.generation_method or "",
                 "status": site.status,
-                "fractional": site.fractional_position,
-                "cartesian": site.cartesian_position,
+                "fractional": site.initial_fractional_position,
+                "cartesian": site.initial_cartesian_position,
                 "source_structure_id": str(site.source_structure_id) if site.source_structure_id else "",
             }
             for site in candidates

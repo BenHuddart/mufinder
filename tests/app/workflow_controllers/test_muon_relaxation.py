@@ -230,7 +230,7 @@ def test_muon_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> N
     site = MuonSite(
         label="Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=other.id,
     )
     document.sites[site.id] = site
@@ -275,7 +275,7 @@ def test_muon_controller_pre_submit_check_passes_when_sites_match_host(
     site = MuonSite(
         label="Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     document.sites[site.id] = site
@@ -342,13 +342,13 @@ def _muon_two_row_submission_fixture(service: ProjectService, tmp_path: Path):
     site1 = MuonSite(
         label="Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     site2 = MuonSite(
         label="Site 2",
         status="staged",
-        fractional_position=[0.4, 0.1, 0.2],
+        initial_fractional_position=[0.4, 0.1, 0.2],
         source_structure_id=host.id,
     )
     document.sites[site1.id] = site1
@@ -473,7 +473,7 @@ def _muon_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
     site = MuonSite(
         label="Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     document.sites[site.id] = site
@@ -992,7 +992,7 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     site = MuonSite(
         label="Shared Site",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     document.sites[site.id] = site
@@ -1064,10 +1064,13 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     assert any(str(s).strip().casefold() == "h:mu" for s in derived.species)
 
     # Sanctioned document side effect: the source site is marked relaxed and
-    # linked to this run with the job's total energy.
+    # linked to this run with the job's total energy and host-cell final
+    # position; its initial position is left alone.
     assert site.status == "relaxed"
     assert site.relaxation_run_id == run.id
     assert site.total_energy_eV == pytest.approx(-12.0)
+    assert site.relaxed_fractional_position == pytest.approx([0.6, 0.8, 0.5])
+    assert site.initial_fractional_position == pytest.approx([0.1, 0.2, 0.3])
 
 
 _MUON_OUT_CELL_TEXT_CONTINUED = """
@@ -1121,7 +1124,7 @@ def test_muon_controller_recompletion_updates_structure_and_site_to_new_run(
     site = MuonSite(
         label="Shared Site",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     document.sites[site.id] = site
@@ -1187,6 +1190,7 @@ def test_muon_controller_recompletion_updates_structure_and_site_to_new_run(
     assert site.relaxation_run_id == run_two.id
     assert site.relaxation_run_id != run_one.id
     assert site.total_energy_eV == pytest.approx(-12.5)
+    assert site.relaxed_fractional_position == pytest.approx([0.7, 0.9, 0.55])
     assert service.validate_document(document) == []
 
 
@@ -1205,7 +1209,7 @@ def test_muon_controller_recompletion_keeps_charge_states_separate(
     site = MuonSite(
         label="Shared Site",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     document.sites[site.id] = site
@@ -1287,7 +1291,7 @@ def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Pa
     site = MuonSite(
         label="Shared Site",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     document.sites[site.id] = site
