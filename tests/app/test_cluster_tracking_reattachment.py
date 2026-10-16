@@ -22,7 +22,8 @@ import pytest
 
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import Job
+from mufinder.domain.models import Job, utc_now
+from mufinder.services.failure_diagnosis import MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
 from mufinder.services.project_service import ProjectService
 
 
@@ -175,4 +176,45 @@ def test_reattached_entry_carries_status_and_cluster_name(qapp, tmp_path, monkey
     assert entry["remote_dir"] == "/remote/work/running_job"
     assert entry["cluster_name"] == "SCARF"
     assert entry["status"] == JobStatus.RUNNING
+    window.close()
+
+
+def test_jobs_failed_for_a_missing_scheduler_entry_are_watched(qapp, tmp_path, monkeypatch) -> None:
+    # A job failed because neither the queue nor accounting listed it may still
+    # be waiting in a hidden queue, so it is registered to be watched.
+    service, document, window, tracked = _prepare_window(qapp, tmp_path, monkeypatch)
+    missing = _add_cluster_job(document, service, label="missing", status=JobStatus.FAILED)
+    missing.error_message = MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+    dismissed = _add_cluster_job(document, service, label="dismissed", status=JobStatus.FAILED)
+    dismissed.error_message = MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+    dismissed.dismissed_at = utc_now()
+    other = _add_cluster_job(document, service, label="other", status=JobStatus.FAILED)
+    other.error_message = "Scheduler reported the job as FAILED."
+    _add_cluster_job(document, service, label="running", status=JobStatus.RUNNING)
+
+    window._sync_cluster_tracking_from_document()
+
+    by_label = {str(entry["seed_name"]): entry for entry in tracked}
+    assert set(by_label) == {"missing", "running"}
+    assert by_label["missing"]["status"] == JobStatus.FAILED
+    assert by_label["missing"]["watch_for_recovery"] is True
+    assert by_label["running"]["watch_for_recovery"] is False
+    window.close()
+
+
+def test_refresh_reconnects_clusters_of_jobs_awaiting_reappearance(qapp, tmp_path, monkeypatch) -> None:
+    # Refresh Queue while disconnected reconnects the clusters it must poll,
+    # including one whose only job is a failed job awaiting reappearance.
+    service, document, window, _tracked = _prepare_window(qapp, tmp_path, monkeypatch)
+    watched = _add_cluster_job(
+        document, service, label="watched", status=JobStatus.FAILED, execution_target="PSI"
+    )
+    watched.error_message = MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+    other = _add_cluster_job(
+        document, service, label="other", status=JobStatus.FAILED, execution_target="ARCHER"
+    )
+    other.error_message = "Scheduler reported the job as FAILED."
+    _add_cluster_job(document, service, label="running", status=JobStatus.RUNNING)
+
+    assert window._active_dashboard_cluster_targets() == ["PSI", "SCARF"]
     window.close()

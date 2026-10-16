@@ -21,10 +21,12 @@ of the main window) as calculations are submitted, monitored, and finished:
    MuFinder is handing the job to a local process or a cluster scheduler.
 
 ``queued``
-   The job has been accepted and is waiting to run.
+   The job has been accepted and is waiting to run, including a cluster job
+   SLURM holds, requeues, or is still configuring before it starts.
 
 ``running``
-   CASTEP is running locally or on the selected cluster.
+   CASTEP is running locally or on the selected cluster. When a queued cluster
+   job starts, the status bar reports *"Cluster job started running: <label>"*.
 
 ``retrieving``
    A cluster job has finished on the scheduler and MuFinder is copying/parsing
@@ -36,7 +38,10 @@ of the main window) as calculations are submitted, monitored, and finished:
 ``failed``
    The process, scheduler, retrieval, or parser reported a failure. Failed jobs
    remain in the dashboard so their diagnostics can be inspected with
-   ``Inspect``. They can be resubmitted or reset.
+   ``Inspect``. They can be resubmitted or reset. A cluster job that failed
+   only because the scheduler stopped listing it is still watched: if SLURM
+   later reports it queued, running, or completed, the job returns to the
+   dashboard's active states and the status bar says that tracking resumed.
 
 ``stopped``
    A cluster calculation reached its walltime limit before producing a
@@ -596,7 +601,7 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
    * - ``completed``
      - none (validated); ``defined`` via ``prepare_job_continuation``
    * - ``failed``
-     - ``submitting``, ``retrieving``, ``cancelled``
+     - ``submitting``, ``queued``, ``running``, ``retrieving``, ``cancelled``
    * - ``cancelled``
      - ``submitting``
 
@@ -629,8 +634,8 @@ status guard instead; both are described below.
 - ``cancel_job`` moves a cancellable job to ``cancelled`` and clears
   ``failure_reason``. Every transition out of ``failed``/``stopped``
   (``submit_job``, ``complete_job``, ``reset_failed_job``,
-  ``prepare_job_continuation``, ``retry_job_retrieval``) clears it alongside
-  ``error_message``.
+  ``prepare_job_continuation``, ``retry_job_retrieval``,
+  ``resume_reappeared_job``) clears it alongside ``error_message``.
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
   ``defined`` and clears remote/process metadata (including the monitor
   metadata and any ``dismissed_at`` stamp).
@@ -643,6 +648,13 @@ status guard instead; both are described below.
   ``error_message``, and preserves remote metadata. The failed/stopped-only
   and remote-metadata preconditions are enforced by
   ``JobExecutionController.prepare_retry_retrieval``, not the primitive.
+- ``resume_reappeared_job`` moves a ``failed`` job to ``queued``, ``running``,
+  or ``retrieving`` (the FAILED → QUEUED / RUNNING / RETRIEVING edges) when the
+  scheduler lists it again; see :ref:`missing-scheduler-entry-recovery`. It
+  clears ``error_message``, ``failure_reason`` and ``completed_at``, stamps
+  ``started_at`` for ``running``, and preserves remote metadata. The
+  missing-scheduler-entry precondition is enforced by
+  ``JobExecutionController.resume_reappeared_cluster_job``, not the primitive.
 - ``dismiss_job`` stamps ``dismissed_at`` for a ``failed``/``stopped``/
   ``cancelled`` job. It is not a status transition and rejects
   already-dismissed jobs; ``record_job_dismissed`` appends a ``job_dismissed``
@@ -901,7 +913,8 @@ bookkeeping (never a status transition), with a fixed source vocabulary:
 (local lifecycle events such as "queued locally", "process started",
 "process completed", "process failed"), ``"reconciliation"`` (orphaned
 local-job reconciliation on project open), ``"watchdog"`` (active-job
-watchdog stops), and ``"user"`` (dashboard retry-retrieval requests). The
+watchdog stops), and ``"user"`` (dashboard retry-retrieval requests). A job
+resumed because the scheduler lists it again is stamped ``"scheduler_poll"``. The
 shared completion/failure paths infer the source from the job's execution
 target; explicit ``source=`` / ``status_message=`` keyword overrides are
 available. Failure stamps hold a short observation ("output retrieval
@@ -1053,7 +1066,10 @@ discard. The worker uploads and submits each job,
 emitting progress and per-job results that the GUI applies via
 ``finalize_cluster_submission``/``fail_cluster_submission``. A modal progress
 dialog reports progress and offers a Cancel button; jobs prepared but not yet
-submitted when cancelled are moved to ``cancelled``.
+submitted when cancelled are moved to ``cancelled``. When the worker reports no
+progress for three minutes the dialog stops waiting: it asks the worker to stop
+submitting, as Cancel does, and moves the jobs it has no result for to
+``cancelled``.
 
 - ``connect_to_cluster`` creates the SSH connection and scheduler backend.
 - ``submit`` validates the local output directory and remote seed name, creates
@@ -1066,7 +1082,9 @@ submitted when cancelled are moved to ``cancelled``.
   marks it terminal, and emits ``cancelled``.
 - ``track_existing_job`` re-registers persisted remote jobs after project load
   or before a manual queue refresh. It requires a remote scheduler id, remote
-  directory, local output directory, cluster name, and current active status.
+  directory, local output directory, cluster name, and current active status,
+  or a ``failed`` status with ``watch_for_recovery`` for a job awaiting
+  reappearance (see :ref:`missing-scheduler-entry-recovery`).
 - ``refresh_queue`` performs one poll immediately.
 
 SLURM memory requests
@@ -1110,9 +1128,40 @@ there.
 
 During polling:
 
-- Only non-terminal tracked jobs for the currently connected cluster are polled.
+- Only tracked jobs for the currently connected cluster are polled: the
+  non-terminal ones, and failed ones watched for reappearance.
+- SLURM is polled with ``squeue --all --jobs=<ids>``. ``--all`` keeps jobs in
+  hidden or unavailable partitions in the output, which ``squeue`` otherwise
+  leaves out. Every job ``squeue`` does not list is then looked up in job
+  accounting with ``sacct --jobs=<ids> --allocations``
+  (``Scheduler.history``), in one call per poll. Accounting still knows a job
+  that a site wrapper, a ``SQUEUE_*`` filter, or a multi-cluster setup hides,
+  and one that ``squeue`` has already forgotten. On a cluster whose accounting
+  is disabled the lookup finds nothing; if ``sacct`` fails for any other
+  reason, the poll leaves those jobs unknown. Neither disconnects the runner.
+  The same lookup guards the deletion of an old run's directory before a
+  resubmission (``ClusterJobRunner.scheduler_job_is_active``). There, an
+  ``sacct`` failure other than disabled accounting is an error, and the
+  directory is not deleted.
 - Scheduler states are mapped to MuFinder states by the scheduler backend.
-- ``queued`` and ``running`` emit status updates.
+  SLURM's pending, configuring, held, requeued, suspended, and stopped
+  (``SIGSTOP``) states (``PD``, ``CF``, ``RD``, ``RF``, ``RH``, ``RQ``,
+  ``SE``, ``S``, ``ST``) map to ``queued``; ``R``, ``CG``, ``RS``, ``SI``, and
+  ``SO`` to ``running``; ``CD`` to ``completed``; ``CA`` to ``cancelled``;
+  ``TO`` to ``stopped``; and ``F``, ``NF``, ``OOM``, ``BF``, ``DL``, ``PR``,
+  and ``RV`` to ``failed``. Accounting reports the long names (``PENDING``,
+  ``CANCELLED by <uid>``), which map the same way. A state the backend does
+  not know maps to ``queued`` and is not terminal, so it never claims the job
+  is running. A running job that SLURM suspends keeps its ``running`` status,
+  because no transition leads from ``running`` back to ``queued``.
+- A state read from accounting is acted on exactly like one ``squeue``
+  reported, so a pending job hidden from ``squeue`` stays ``queued`` however
+  long it waits and is never retrieved or failed for being missing. Its poll
+  observation reads "missing from scheduler queue; scheduler accounting
+  reports QUEUED".
+- ``queued`` and ``running`` emit status updates. A job that moves from
+  ``queued`` to ``running`` also emits ``job_started``, after its ``running``
+  update; the main window reports it in the status bar.
 - ``cancelled`` marks the tracked job terminal and emits cancellation.
 - ``stopped`` and ``failed`` mark the tracked job terminal and download the
   available error files and scheduler log
@@ -1134,18 +1183,23 @@ During polling:
   :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and carried to
   the GUI as the third ``job_finished`` payload, so the completion handler and
   controllers never re-parse them.
-- A missing scheduler entry usually means completion, so retrieval is
-  attempted immediately — but with a grace window. When the output cannot be
+- A job neither ``squeue`` nor accounting lists, or one accounting reports as
+  completed, usually finished, so retrieval is attempted immediately — but
+  with a grace window. When the output cannot be
   downloaded (SFTP error, missing remote ``.castep``, a ``.castep`` older than
   this submission, connection hiccup), the result's
   :class:`~mufinder.services.cluster_retrieval.RetrievalFailure` is
   ``retry_eligible`` and the job is *not* failed yet. The runner retries on up
   to ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
-  entry non-terminal, and only then emits ``job_failed`` with a diagnostic
-  explaining that scheduler history may have expired, the queue command may be
-  filtered, or the wrong cluster may be connected. Parse failures of
+  entry non-terminal, and only then fails the job. A job accounting reports as
+  completed fails with the retrieval error, which ``Retry retrieval`` can
+  re-attempt. A job listed nowhere fails with a diagnostic explaining that
+  scheduler history may have expired, the queue command may be filtered, or
+  the wrong cluster may be connected, and is then watched for reappearance
+  (see :ref:`missing-scheduler-entry-recovery`). Parse failures of
   successfully downloaded output are never retry-eligible and fail
-  immediately. The attempt counter resets if the job reappears in the queue.
+  immediately. The attempt counter resets if the scheduler lists the job as
+  unfinished again.
 - Every poll emits a ``queue_checked`` snapshot carrying ``checked_at``
   (``utc_now()``), per-job elapsed runtimes, and per-job human-readable
   observations (``observations_by_job_id``) describing what the scheduler
@@ -1154,10 +1208,55 @@ During polling:
   ``JobExecutionController.mark_queue_checked`` persists these observations as
   per-job monitor metadata: ``last_checked_at``, ``last_status_source``
   (``"scheduler_poll"``), and ``last_status_message``.
-- Poll failure disconnects the runner, clears the connected state, and emits a
-  warning through the UI. Tracked job state is left untouched — active cluster
+- Poll failure (``squeue`` itself failing) disconnects the runner, clears the
+  connected state, and emits a warning through the UI. Tracked job state is left untouched — active cluster
   rows go stale rather than failing, and the dashboard derives staleness from
   ``last_checked_at`` plus the disconnect (``services.job_monitoring``).
+
+.. _missing-scheduler-entry-recovery:
+
+Recovering a job the scheduler lists again
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A job failed with the missing-scheduler-entry diagnostic may only have been
+hidden: still pending in a queue neither ``squeue`` nor accounting showed. The
+cluster runner therefore keeps it as a *watched* entry: terminal, but still
+polled, with no retrieval attempted. Its poll observation reads "missing from
+scheduler queue; not in scheduler accounting; watching for the job to
+reappear".
+
+- When ``squeue`` or accounting lists a watched job as queued, running, or
+  completed, the runner emits ``job_reappeared(job_id, status)`` once and
+  stops watching it. Any other scheduler state (cancelled, failed, timed out)
+  also ends the watch, and the job stays ``failed``.
+- ``JobExecutionController.resume_reappeared_cluster_job`` applies the
+  signal through ``ProjectService.resume_reappeared_job``: ``queued`` and
+  ``running`` resume as reported, and ``completed`` resumes as
+  ``retrieving``. It registers a *fresh* ``CalculationRun``, as ``Retry
+  retrieval`` does, so the failed run keeps its outcome, and stamps
+  ``"scheduler_poll"`` monitor metadata. The main window then re-registers the
+  job with the runner (``track_existing_job`` with the resumed status), and
+  the next poll carries on normally, retrieving a completed job's output.
+- ``Refresh Queue`` while disconnected reconnects the clusters of watched jobs
+  as well as those of active ones, so a project whose only cluster jobs await
+  reappearance is still polled.
+- Only a job for which
+  ``job_execution_controller.awaits_scheduler_reappearance`` holds is resumed:
+  a ``failed`` cluster job with a remote scheduler id, the
+  missing-scheduler-entry message as its ``error_message``, and no
+  ``dismissed_at`` stamp. A job the user has since reset, resubmitted, or
+  dismissed is left alone.
+- Each ``queue_checked`` snapshot lists the jobs polled only as watches
+  (``watched_job_ids``). ``JobExecutionController.stale_reappearance_watches``
+  picks out those whose job no longer awaits reappearance — reset, dismissed,
+  continued, deleted, or resubmitted under a new scheduler id — and the main
+  window ends their watches with ``ClusterJobRunner.stop_watching``, so they
+  leave the poll after one more cycle. ``mark_queue_checked`` does not stamp a
+  stale watch's observation onto its job.
+- The same predicate selects the failed jobs that the project-open
+  re-tracking (and a manual queue refresh) registers with
+  ``watch_for_recovery``, so the watch survives closing and reopening
+  MuFinder.
 
 Main-window integration
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -1171,6 +1270,10 @@ The main window wires runner signals into ``JobExecutionController``:
 - local and cluster ``job_cancelled`` both call ``cancel_job``.
 - cluster ``status_changed`` is used for ``queued``, ``running``,
   ``retrieving``, and ``stopped`` updates.
+- cluster ``job_started`` calls ``mark_started`` and reports the start in the
+  status bar.
+- cluster ``job_reappeared`` calls ``resume_reappeared_cluster_job`` and
+  re-registers the resumed job with the runner.
 
 The per-job document mutation happens synchronously, but the **heavy dashboard
 work is coalesced**: rebuilding the journal (whole provenance), the jobs table
@@ -1486,12 +1589,15 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
    the job in ``retrieving``.
 
 5. Avoid treating every missing scheduler entry as completed without context.
-   A missing scheduler entry still attempts retrieval immediately, but
-   output-unavailable failures are retried across a three-poll grace window
-   before the job is failed with a diagnostic naming the likely causes
-   (expired scheduler history, filtered queue command, wrong cluster) and
-   suggesting retry or resubmission. Parse failures of downloaded output fail
-   immediately. See "During polling" above.
+   A job ``squeue`` does not list is looked up in scheduler accounting first,
+   so a hidden pending or running job keeps its state. A job listed nowhere
+   still attempts retrieval immediately, but output-unavailable failures are
+   retried across a three-poll grace window before the job is failed with a
+   diagnostic naming the likely causes (expired scheduler history, filtered
+   queue command, wrong cluster) and suggesting retry or resubmission. That
+   job stays watched and resumes if the scheduler lists it again. Parse
+   failures of downloaded output fail immediately. See "During polling" and
+   :ref:`missing-scheduler-entry-recovery` above.
 
 6. Fail fast on local process start errors.
    ``LocalJobRunner._on_process_error`` handles
@@ -1521,7 +1627,7 @@ dashboard indefinitely. Each entry records the behavior and where it lives.
 
 9. Tests around stuck-row prevention.
    Project-open reconciliation, poll-failure inertness, the missing-entry
-   grace window, ``QProcess`` startup failure, watchdog detection and wiring,
+   grace window, the accounting fallback and reappearance recovery, ``QProcess`` startup failure, watchdog detection and wiring,
    retry-retrieval run bookkeeping, and dismissal visibility are all pinned by
    tests beside the existing ``JobExecutionController``, ``LocalJobRunner``,
    ``ClusterJobRunner``, and main-window action suites (see

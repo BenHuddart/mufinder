@@ -89,6 +89,79 @@ def test_slurm_status_parses_squeue_output() -> None:
     assert "/usr/local/bin/squeue" in ssh.commands[0]
 
 
+def test_slurm_status_lists_jobs_in_hidden_partitions() -> None:
+    scheduler = SlurmScheduler(queue_check_command_path="/usr/local/bin/squeue")
+    ssh = _FakeSSH(
+        [
+            (1, "", "slurm_load_jobs error: Invalid job id specified"),
+            (0, "123|PD|0:00|queued_job\n", ""),
+        ]
+    )
+
+    scheduler.status(ssh, ["123"])
+
+    # Without --all, squeue leaves out jobs in hidden or unavailable partitions,
+    # so a pending job there would look finished. The per-id fallback keeps it.
+    assert all(" --all " in command for command in ssh.commands)
+
+
+def test_slurm_history_reads_sacct_allocation_records() -> None:
+    scheduler = SlurmScheduler()
+    ssh = _FakeSSH(
+        [
+            (0, "/usr/bin/sacct\n", ""),
+            (0, "123|PENDING|00:00:00|queued_job\n124|CANCELLED by 1001|00:01:02|other_job\n", ""),
+        ]
+    )
+
+    records = scheduler.history(ssh, ["123", "124", "125"])
+
+    assert ssh.commands[-1] == (
+        "/usr/bin/sacct --jobs=123,124,125 --allocations --noheader --parsable2 "
+        "--format=JobID,State,Elapsed,JobName"
+    )
+    assert sorted(records) == ["123", "124"]
+    assert scheduler.map_to_job_status(records["123"].state) == JobStatus.QUEUED
+    assert scheduler.map_to_job_status(records["124"].state) == JobStatus.CANCELLED
+    assert scheduler.state_name(records["124"].state) == "CANCELLED"
+    assert records["124"].elapsed_runtime == "00:01:02"
+
+
+def test_slurm_history_without_accounting_reports_no_records() -> None:
+    scheduler = SlurmScheduler()
+    ssh = _FakeSSH(
+        [
+            (0, "/usr/bin/sacct\n", ""),
+            (1, "", "sacct: error: Slurm accounting storage is disabled"),
+        ]
+    )
+
+    assert scheduler.history(ssh, ["123"]) == {}
+    assert scheduler.history(_FakeSSH([]), []) == {}
+
+
+def test_slurm_history_raises_when_accounting_fails() -> None:
+    scheduler = SlurmScheduler()
+    ssh = _FakeSSH(
+        [
+            (0, "/usr/bin/sacct\n", ""),
+            (1, "", "sacct: error: Problem talking to the database: Connection refused"),
+        ]
+    )
+
+    # The job's state is unknown, not finished: callers decide how to proceed.
+    with pytest.raises(RuntimeError, match="Problem talking to the database"):
+        scheduler.history(ssh, ["123"])
+
+
+def test_addqueue_history_reads_sacct() -> None:
+    scheduler = AddqueueScheduler()
+    ssh = _FakeSSH([(0, "/usr/bin/sacct\n", ""), (0, "7|RUNNING|00:10:00|job\n", "")])
+
+    # addqueue polls through SLURM, so it shares the sacct lookup.
+    assert scheduler.history(ssh, ["7"])["7"].state == "RUNNING"
+
+
 def test_slurm_status_invalid_job_id_fallback_queries_per_job() -> None:
     scheduler = SlurmScheduler(queue_check_command_path="/usr/local/bin/squeue")
     ssh = _FakeSSH(
@@ -120,10 +193,35 @@ def test_slurm_state_mapping() -> None:
     assert scheduler.map_to_job_status("TO") == JobStatus.STOPPED
     assert scheduler.map_to_job_status("CA") == JobStatus.CANCELLED
     assert scheduler.map_to_job_status("node_fail") == JobStatus.FAILED
-    # An unrecognised state keeps the job tracked as running.
-    assert scheduler.map_to_job_status("mystery") == JobStatus.RUNNING
+    # An unrecognised state keeps the job tracked, but never claims it runs.
+    assert scheduler.map_to_job_status("mystery") == JobStatus.QUEUED
+    assert scheduler.is_terminal("mystery") is False
     assert scheduler.is_terminal("completed") is True
     assert scheduler.is_terminal("running") is False
+
+
+@pytest.mark.parametrize("state", ["CF", "S", "ST", "RH", "RQ", "RF", "RD", "SE", "SUSPENDED", "REQUEUE_HOLD"])
+def test_slurm_waiting_and_held_states_map_to_queued(state: str) -> None:
+    scheduler = SlurmScheduler()
+
+    assert scheduler.map_to_job_status(state) == JobStatus.QUEUED
+    assert scheduler.is_terminal(state) is False
+
+
+@pytest.mark.parametrize("state", ["CG", "RS", "SI", "SO", "COMPLETING", "STAGE_OUT"])
+def test_slurm_executing_states_map_to_running(state: str) -> None:
+    scheduler = SlurmScheduler()
+
+    assert scheduler.map_to_job_status(state) == JobStatus.RUNNING
+    assert scheduler.is_terminal(state) is False
+
+
+@pytest.mark.parametrize("state", ["BF", "DL", "PR", "RV", "BOOT_FAIL", "PREEMPTED", "OUT_OF_MEMORY"])
+def test_slurm_terminal_failure_states_map_to_failed(state: str) -> None:
+    scheduler = SlurmScheduler()
+
+    assert scheduler.map_to_job_status(state) == JobStatus.FAILED
+    assert scheduler.is_terminal(state) is True
 
 
 def test_slurm_status_without_job_ids_does_not_query_the_queue() -> None:
@@ -283,7 +381,7 @@ def test_create_scheduler_factory() -> None:
 
 @pytest.mark.parametrize(
     ("state", "name"),
-    [("OOM", "OUT_OF_MEMORY"), ("TO", "TIMEOUT"), ("NF", "NODE_FAIL"), ("F", "FAILED"), ("timeout", "TIMEOUT"), ("BF", "BF")],
+    [("OOM", "OUT_OF_MEMORY"), ("TO", "TIMEOUT"), ("NF", "NODE_FAIL"), ("F", "FAILED"), ("timeout", "TIMEOUT"), ("BF", "BOOT_FAIL"), ("XX", "XX")],
 )
 def test_slurm_state_name_expands_short_codes(state: str, name: str) -> None:
     assert SlurmScheduler().state_name(state) == name

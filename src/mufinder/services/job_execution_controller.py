@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from mufinder.domain.enums import FailureReason, JobStatus
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
 from mufinder.services.failure_diagnosis import (
+    MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
     FailureDiagnosis,
     diagnose_failure,
     failure_reason_summary,
@@ -691,6 +692,47 @@ class JobExecutionController:
                 run.started_at = utc_now()
         return LifecycleUpdate(job=job, changed=True)
 
+    def resume_reappeared_cluster_job(self, job_id: UUID, status_value: str) -> LifecycleUpdate:
+        """Resume a job failed for a missing scheduler entry that the scheduler lists again.
+
+        Applies the cluster runner's ``job_reappeared`` notification. Only a job
+        for which :func:`awaits_scheduler_reappearance` holds is resumed: a
+        ``queued`` or ``running`` report returns it to that status, and a
+        ``completed`` report to ``retrieving`` so its output is fetched. The
+        transition goes through ``ProjectService.resume_reappeared_job``, and a
+        *fresh* ``CalculationRun`` becomes the active run, as for
+        :meth:`prepare_retry_retrieval`, so the outcome cannot overwrite the
+        failed run. The caller re-registers the job with the cluster runner.
+        """
+
+        document = self._document_getter()
+        job = self._job_for_id(job_id)
+        if document is None or job is None:
+            return LifecycleUpdate()
+        if not awaits_scheduler_reappearance(job):
+            return LifecycleUpdate(job=job)
+        status = {
+            JobStatus.QUEUED.value: JobStatus.QUEUED,
+            JobStatus.RUNNING.value: JobStatus.RUNNING,
+            JobStatus.COMPLETED.value: JobStatus.RETRIEVING,
+        }.get(status_value)
+        if status is None:
+            return LifecycleUpdate(job=job)
+
+        try:
+            self._project_service.resume_reappeared_job(job, status)
+        except ValueError:
+            return LifecycleUpdate(job=job)
+        self._stamp_monitor_metadata(
+            job,
+            source="scheduler_poll",
+            message=f"scheduler reports {status_value.upper()} again; tracking resumed",
+        )
+        run = self._create_active_run(document, job, status)
+        if status == JobStatus.RUNNING:
+            run.started_at = utc_now()
+        return LifecycleUpdate(job=job, changed=True)
+
     def mark_queue_checked(self, snapshot: Any) -> bool:
         """Stamp per-job monitor metadata from one queue polling pass.
 
@@ -698,8 +740,10 @@ class JobExecutionController:
         ``checked_at`` datetime and an ``observations_by_job_id`` mapping).
         Every observed job that exists in the document gets
         ``last_checked_at``/``last_status_source``/``last_status_message``
-        stamped with the poll observation. No status transitions and no run
-        mutations happen here — this is bookkeeping only.
+        stamped with the poll observation, except a reappearance watch whose
+        job no longer awaits it (see :meth:`stale_reappearance_watches`). No
+        status transitions and no run mutations happen here — this is
+        bookkeeping only.
 
         :returns: ``True`` when at least one job was stamped.
         """
@@ -712,16 +756,39 @@ class JobExecutionController:
         if not isinstance(checked_at, datetime) or not isinstance(observations, Mapping):
             return False
 
+        stale = set(self.stale_reappearance_watches(snapshot))
         changed = False
         for job_id, observation in observations.items():
             job = document.jobs.get(job_id)
-            if job is None:
+            if job is None or job_id in stale:
                 continue
             job.last_checked_at = checked_at
             job.last_status_source = "scheduler_poll"
             job.last_status_message = str(observation)
             changed = True
         return changed
+
+    def stale_reappearance_watches(self, snapshot: Any) -> list[UUID]:
+        """Return the watched jobs in ``snapshot`` the runner should stop watching.
+
+        A poll's ``watched_job_ids`` are jobs the cluster runner checks only for
+        the scheduler listing them again. One whose job has since been reset,
+        dismissed, deleted, or otherwise no longer satisfies
+        :func:`awaits_scheduler_reappearance` (and has not resumed) is stale.
+        """
+
+        document = self._document_getter()
+        watched = getattr(snapshot, "watched_job_ids", None)
+        if document is None or not watched:
+            return []
+        stale: list[UUID] = []
+        for job_id in watched:
+            job = document.jobs.get(job_id)
+            if job is None or not (
+                job.status in ACTIVE_JOB_STATUSES or awaits_scheduler_reappearance(job)
+            ):
+                stale.append(job_id)
+        return stale
 
     @staticmethod
     def _stamp_monitor_metadata(job: Job, *, source: str, message: str) -> None:
@@ -837,6 +904,23 @@ class JobExecutionController:
             result=result,
             error_message=error_message,
         )
+
+
+def awaits_scheduler_reappearance(job: Job) -> bool:
+    """Return whether ``job`` failed only because the scheduler stopped listing it.
+
+    Such a cluster job may still be waiting in a queue the poll cannot see, so
+    the cluster runner keeps watching it and the job resumes if the scheduler
+    lists it again. A dismissed job has been acknowledged and is not watched.
+    """
+
+    return (
+        job.status == JobStatus.FAILED
+        and job.dismissed_at is None
+        and is_cluster_job(job)
+        and bool((job.remote_job_id or "").strip())
+        and job.error_message == MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+    )
 
 
 def _legacy_retrieval_flags(

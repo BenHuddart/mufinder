@@ -259,6 +259,7 @@ from mufinder.services.cluster_submission_planner import (
 from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
+    awaits_scheduler_reappearance,
 )
 from mufinder.services.definition_mappings import (
     ensure_job_mapping,
@@ -896,6 +897,7 @@ class MainWindow(QMainWindow):
         self._cluster_runner.job_failed.connect(self._on_cluster_job_failed)
         self._cluster_runner.job_cancelled.connect(self._on_cluster_job_cancelled)
         self._cluster_runner.status_changed.connect(self._on_cluster_job_status_changed)
+        self._cluster_runner.job_reappeared.connect(self._on_cluster_job_reappeared)
         self._cluster_runner.connection_status_changed.connect(self._on_cluster_connection_status_changed)
         self._cluster_runner.queue_checked.connect(self._on_cluster_queue_checked)
         self._cluster_runner.poll_failed.connect(self._on_cluster_poll_failed)
@@ -5088,6 +5090,9 @@ class MainWindow(QMainWindow):
         def on_watchdog_timeout() -> None:
             nonlocal timed_out
             timed_out = True
+            # The unseen jobs are cancelled below, so the worker must not go on
+            # submitting them to the scheduler.
+            self._cluster_runner.cancel_batch()
             loop.quit()
 
         watchdog.timeout.connect(on_watchdog_timeout)
@@ -6321,6 +6326,22 @@ class MainWindow(QMainWindow):
             self._request_dashboard_flush(
                 failure_message="Cluster job start was recorded, but autosave failed.",
             )
+        if update.job is not None:
+            self.statusBar().showMessage(f"Cluster job started running: {update.job.label}")
+
+    def _on_cluster_job_reappeared(self, job_id: UUID, status_value: str) -> None:
+        if self._document is None:
+            return
+        update = self._job_execution.resume_reappeared_cluster_job(job_id, status_value)
+        if not update.changed or update.job is None:
+            return
+        self._track_cluster_job(update.job)
+        self._request_dashboard_flush(
+            failure_message="Resumed cluster job state was recorded, but autosave failed.",
+        )
+        self.statusBar().showMessage(
+            f"Cluster job {update.job.label} is listed by the scheduler again; tracking resumed"
+        )
 
     def _on_cluster_job_finished(
         self,
@@ -6378,6 +6399,9 @@ class MainWindow(QMainWindow):
         # either way, so a deferred flush (below) is fine — nothing is lost by
         # not persisting them immediately.
         stamped = self._job_execution.mark_queue_checked(checked_at)
+        stale_watches = self._job_execution.stale_reappearance_watches(checked_at)
+        if stale_watches:
+            self._cluster_runner.stop_watching(stale_watches)
         # A queue poll fires this once after any jobs it retrieved have been
         # applied, so this also drains whatever those completions' own handlers
         # already marked pending. Routed through the debounced/rate-limited
@@ -6537,7 +6561,8 @@ class MainWindow(QMainWindow):
         targets: list[str] = []
         seen: set[str] = set()
         for job in self._document.jobs.values():
-            if job.status not in ACTIVE_JOB_STATUSES:
+            # A job awaiting scheduler reappearance is polled like an active one.
+            if job.status not in ACTIVE_JOB_STATUSES and not awaits_scheduler_reappearance(job):
                 continue
             target = job.execution_target.strip()
             if not target or target.casefold() == "local":
@@ -6602,43 +6627,53 @@ class MainWindow(QMainWindow):
         )
 
     def _sync_cluster_tracking_from_document(self) -> None:
+        """Register active cluster jobs, and jobs awaiting reappearance, with the runner."""
+
         if self._document is None:
             return
 
         for job in self._document.jobs.values():
-            if job.status not in ACTIVE_JOB_STATUSES:
-                continue
+            if job.status in ACTIVE_JOB_STATUSES or awaits_scheduler_reappearance(job):
+                self._track_cluster_job(job)
 
-            target = job.execution_target.strip()
-            if not target or target.casefold() == "local":
-                continue
+    def _track_cluster_job(self, job: Job) -> None:
+        """Register one cluster job for queue polling, if its remote metadata allows.
 
-            remote_job_id = (job.remote_job_id or "").strip()
-            if not remote_job_id:
-                continue
+        A job failed for a missing scheduler entry is registered to be watched
+        for the scheduler listing it again.
+        """
 
-            remote_dir = (job.remote_directory or "").strip()
-            if not remote_dir:
-                remote_dir = self._infer_remote_job_directory(job, target)
-                if remote_dir:
-                    job.remote_directory = remote_dir
-            if not remote_dir:
-                continue
+        target = job.execution_target.strip()
+        if not target or target.casefold() == "local":
+            return
 
-            output_dir = self._job_output_directory(job)
-            if output_dir is None:
-                continue
+        remote_job_id = (job.remote_job_id or "").strip()
+        if not remote_job_id:
+            return
 
-            self._cluster_runner.track_existing_job(
-                job_id=job.id,
-                remote_job_id=remote_job_id,
-                remote_dir=remote_dir,
-                seed_name=self._job_seed_name(job),
-                local_output_dir=output_dir,
-                cluster_name=target,
-                status=job.status,
-                **self._retrieval_flags_for_job(job).as_kwargs(),
-            )
+        remote_dir = (job.remote_directory or "").strip()
+        if not remote_dir:
+            remote_dir = self._infer_remote_job_directory(job, target)
+            if remote_dir:
+                job.remote_directory = remote_dir
+        if not remote_dir:
+            return
+
+        output_dir = self._job_output_directory(job)
+        if output_dir is None:
+            return
+
+        self._cluster_runner.track_existing_job(
+            job_id=job.id,
+            remote_job_id=remote_job_id,
+            remote_dir=remote_dir,
+            seed_name=self._job_seed_name(job),
+            local_output_dir=output_dir,
+            cluster_name=target,
+            status=job.status,
+            watch_for_recovery=awaits_scheduler_reappearance(job),
+            **self._retrieval_flags_for_job(job).as_kwargs(),
+        )
 
     def _retrieval_flags_for_job(self, job: Job) -> RetrievalFlags:
         """Return the retrieval flags and farm count both runners need for ``job``.
