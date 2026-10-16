@@ -148,8 +148,9 @@ cluster does not have to be described twice.
 
 The job runs on the cluster's default queue, with that queue's overrides of
 the template, executable, walltime and memory applied first. On SLURM the
-default queue is added to the script as ``#SBATCH -p`` unless the template
-already names a partition.
+default queue is added to the script as ``#SBATCH -p``, and its memory per
+CPU as ``#SBATCH --mem-per-cpu``, unless the template already names a
+partition or a memory request.
 
 - The *run line* is the last command in the template that mentions
   ``$castep_command`` or ``$seed_name``. Everything above it (scheduler

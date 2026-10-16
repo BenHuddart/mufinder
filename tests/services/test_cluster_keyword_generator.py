@@ -500,7 +500,11 @@ def test_scheduler_keyword_job_runs_on_the_default_queue(
             default_queue_name="daily",
             queues=(
                 ClusterQueue(name="hourly"),
-                ClusterQueue(name="daily", castep_executable="/opt/castep-daily/castep.mpi"),
+                ClusterQueue(
+                    name="daily",
+                    castep_executable="/opt/castep-daily/castep.mpi",
+                    default_mem_per_cpu_gb=8.0,
+                ),
             ),
         ),
         output_path=tmp_path / "castep_keywords.json",
@@ -509,7 +513,7 @@ def test_scheduler_keyword_job_runs_on_the_default_queue(
     request = scheduler.submit_requests[0]
     runner = _SchedulerSSH.last.remote_files[request.script_path].decode("utf-8")
     preamble = runner.split("\n\n", 2)[1].splitlines()
-    assert preamble[-1] == "#SBATCH -p daily"
+    assert preamble[-2:] == ["#SBATCH -p daily", "#SBATCH --mem-per-cpu=8G"]
     assert "hourly" not in runner
     # The default queue's executable override applies to the keyword job.
     assert "/opt/castep-daily/castep.mpi" in runner

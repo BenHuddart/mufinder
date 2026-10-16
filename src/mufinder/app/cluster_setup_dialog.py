@@ -44,7 +44,7 @@ from mufinder.app.theme import style_help_button, style_hint_text, style_inline_
 from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
 from mufinder.domain.cluster import ClusterConfig, ClusterQueue
-from mufinder.services.cluster_queues import is_valid_queue_name, walltime_issue
+from mufinder.services.cluster_queues import queue_issues, walltime_issue
 from mufinder.services.keychain import (
     credential_store_for_display,
     is_glamdring_keychain_supported,
@@ -104,6 +104,7 @@ class ClusterSetupDialog(QDialog):
         # The cluster whose values the form shows, so its edits can be kept
         # before another cluster is loaded.
         self._loaded_index = -1
+        self._queue_row_names: list[str] = []
 
         self.setWindowTitle("Remote Cluster Connections")
         self.resize(1000, 580)
@@ -792,6 +793,10 @@ class ClusterSetupDialog(QDialog):
     def _refresh_default_queue_combo(self, preferred: str | None = None) -> None:
         current = self._default_queue_combo.currentText() if preferred is None else preferred
         names = self._queue_names_in_table()
+        # Each row's name as the combo last saw it, so a rename can be followed.
+        self._queue_row_names = [
+            self._queue_cell(row, _QUEUE_NAME_COLUMN) for row in range(self._queue_table.rowCount())
+        ]
         self._default_queue_combo.blockSignals(True)
         self._default_queue_combo.clear()
         self._default_queue_combo.addItems(names)
@@ -804,8 +809,13 @@ class ClusterSetupDialog(QDialog):
         self._remove_queue_button.setEnabled(bool(self._queue_table.selectionModel().selectedRows()))
 
     def _on_queue_item_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() == _QUEUE_NAME_COLUMN:
-            self._refresh_default_queue_combo()
+        if item.column() != _QUEUE_NAME_COLUMN:
+            return
+        row = item.row()
+        previous = self._queue_row_names[row] if row < len(self._queue_row_names) else ""
+        renamed_default = bool(previous) and previous == self._default_queue_combo.currentText()
+        # Renaming the default queue keeps it the default under its new name.
+        self._refresh_default_queue_combo(item.text().strip() if renamed_default else None)
 
     def _add_queue(self) -> None:
         existing = set(self._queue_names_in_table())
@@ -839,69 +849,31 @@ class ClusterSetupDialog(QDialog):
         self._refresh_queue_buttons()
 
     def _queues_from_table(self) -> tuple[tuple[ClusterQueue, ...], list[str]]:
-        """Read the queue table, returning the queues and any problems found."""
+        """Read the queue table into records, with the problems that block saving.
+
+        The table only translates cells; ``queue_issues`` holds the rules. A
+        number cell that does not parse is read as ``0`` so the rules report it
+        as not positive.
+        """
 
         is_addqueue = self._is_addqueue_form()
         queues: list[ClusterQueue] = []
-        issues: list[str] = []
-        seen: set[str] = set()
         for row in range(self._queue_table.rowCount()):
-            name = self._queue_cell(row, _QUEUE_NAME_COLUMN)
-            label = f"queue '{name}'" if name else f"queue in row {row + 1}"
-            if not name:
-                issues.append(f"The {label} has no name.")
-                continue
-            if not is_valid_queue_name(name):
-                issues.append(
-                    f"'{name}' is not a queue name. Use letters, digits, '.', '_' and '-', "
-                    "with commas between several partitions."
-                )
-            if name in seen:
-                issues.append(f"The queue '{name}' is listed twice.")
-            seen.add(name)
-
-            walltime = self._queue_cell(row, _QUEUE_WALLTIME_COLUMN)
-            max_walltime = self._queue_cell(row, _QUEUE_MAX_WALLTIME_COLUMN)
-            format_problems = [problem for problem in map(walltime_issue, (walltime, max_walltime)) if problem]
-            issues.extend(f"{label.capitalize()}: {problem}" for problem in format_problems)
-            effective_walltime = walltime or self._walltime_edit.text().strip()
-            if max_walltime and not format_problems and not walltime_issue(effective_walltime):
-                limit_problem = walltime_issue(effective_walltime, max_walltime=max_walltime, queue_name=name)
-                if limit_problem and not walltime:
-                    limit_problem = (
-                        f"{limit_problem} The queue uses the Scheduler tab's default walltime; "
-                        "give it a default walltime of its own."
-                    )
-                if limit_problem:
-                    issues.append(f"{label.capitalize()}: {limit_problem}")
-
             cores_text = self._queue_cell(row, _QUEUE_CORES_COLUMN)
-            cores: int | None = None
-            if cores_text:
-                try:
-                    cores = int(cores_text)
-                except ValueError:
-                    cores = 0
-                if cores <= 0:
-                    issues.append(f"{label.capitalize()}: cores per node must be a positive whole number.")
-                    cores = None
-
+            try:
+                cores = int(cores_text) if cores_text else None
+            except ValueError:
+                cores = 0
             memory_text = self._queue_cell(row, _QUEUE_MEMORY_COLUMN)
-            memory: float | None = None
-            if memory_text:
-                try:
-                    memory = float(memory_text)
-                except ValueError:
-                    memory = 0.0
-                if memory <= 0:
-                    issues.append(f"{label.capitalize()}: memory must be a positive number of GB.")
-                    memory = None
-
+            try:
+                memory = float(memory_text) if memory_text else None
+            except ValueError:
+                memory = 0.0
             queues.append(
                 ClusterQueue(
-                    name=name,
-                    default_walltime=walltime,
-                    max_walltime=max_walltime,
+                    name=self._queue_cell(row, _QUEUE_NAME_COLUMN),
+                    default_walltime=self._queue_cell(row, _QUEUE_WALLTIME_COLUMN),
+                    max_walltime=self._queue_cell(row, _QUEUE_MAX_WALLTIME_COLUMN),
                     cores_per_node=cores,
                     default_memory_gb=memory if is_addqueue else None,
                     default_mem_per_cpu_gb=None if is_addqueue else memory,
@@ -909,6 +881,7 @@ class ClusterSetupDialog(QDialog):
                     template_script_path="" if is_addqueue else self._queue_cell(row, _QUEUE_TEMPLATE_COLUMN),
                 )
             )
+        issues = queue_issues(queues, profile_walltime=self._walltime_edit.text().strip())
         return tuple(queues), issues
 
     # ------------------------------------------------------------- utilities

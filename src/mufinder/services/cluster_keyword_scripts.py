@@ -18,7 +18,9 @@ from string import Template
 
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.script_template import (
+    format_mem_per_cpu_directive,
     insert_partition_directive,
+    insert_sbatch_directive,
     load_template_for_cluster,
     populate_template,
 )
@@ -388,8 +390,12 @@ def scheduler_runner_script(
 
     preamble_text = "\n".join(preamble)
     if is_slurm:
-        # The keyword job runs on the cluster's default queue, like its jobs.
+        # The keyword job asks for the default queue's partition and memory,
+        # as a real job on that queue would; a template line wins for either.
         preamble_text = insert_partition_directive(preamble_text, config.default_queue_name)
+        preamble_text = insert_sbatch_directive(
+            preamble_text, format_mem_per_cpu_directive(config.default_mem_per_cpu_gb)
+        )
     script = render_shell_template(
         "keyword_job.sh",
         preamble=preamble_text,

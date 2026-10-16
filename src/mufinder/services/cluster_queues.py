@@ -10,7 +10,10 @@ holds no widgets.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import re
+
+from mufinder.domain.cluster import ClusterQueue
 
 #: A queue (SLURM partition or addqueue queue) name. SLURM accepts a
 #: comma-separated list of partitions, so commas are allowed; anything that
@@ -72,3 +75,55 @@ def walltime_issue(walltime: str, *, max_walltime: str = "", queue_name: str = "
         queue = f"queue '{queue_name.strip()}'" if queue_name.strip() else "this queue"
         return f"The walltime {text} is longer than the {limit_text} maximum for {queue}."
     return ""
+
+
+def queue_issues(queues: Sequence[ClusterQueue], *, profile_walltime: str = "") -> list[str]:
+    """Return every reason the listed queues cannot be saved, in table order.
+
+    A queue needs a name that :func:`is_valid_queue_name` accepts and that no
+    other queue uses, readable walltimes, and positive cores per node and
+    memory where it sets them. Its default walltime, or ``profile_walltime``
+    when it sets none, must not exceed its maximum, because every submission
+    on the queue would start above the limit.
+    """
+
+    issues: list[str] = []
+    seen: set[str] = set()
+    for position, queue in enumerate(queues, start=1):
+        name = queue.name.strip()
+        label = f"Queue '{name}'" if name else f"The queue in row {position}"
+        if not name:
+            issues.append(f"{label} has no name.")
+        else:
+            if not is_valid_queue_name(name):
+                issues.append(
+                    f"'{name}' is not a queue name. Use letters, digits, '.', '_' and '-', "
+                    "with commas between several partitions."
+                )
+            if name in seen:
+                issues.append(f"The queue '{name}' is listed twice.")
+            seen.add(name)
+
+        walltime = queue.default_walltime.strip()
+        max_walltime = queue.max_walltime.strip()
+        format_problems = [problem for problem in map(walltime_issue, (walltime, max_walltime)) if problem]
+        issues.extend(f"{label}: {problem}" for problem in format_problems)
+        effective_walltime = walltime or profile_walltime.strip()
+        if max_walltime and not format_problems and not walltime_issue(effective_walltime):
+            limit_problem = walltime_issue(effective_walltime, max_walltime=max_walltime, queue_name=name)
+            if limit_problem and not walltime:
+                limit_problem = (
+                    f"{limit_problem} The queue uses the cluster's default walltime; "
+                    "give it a default walltime of its own."
+                )
+            if limit_problem:
+                issues.append(f"{label}: {limit_problem}")
+
+        if queue.cores_per_node is not None and queue.cores_per_node <= 0:
+            issues.append(f"{label}: cores per node must be a positive whole number.")
+        if any(
+            memory is not None and memory <= 0
+            for memory in (queue.default_memory_gb, queue.default_mem_per_cpu_gb)
+        ):
+            issues.append(f"{label}: memory must be a positive number of GB.")
+    return issues

@@ -469,14 +469,16 @@ and, for SLURM, the template script. A blank cell uses the profile's value from
 the ``Scheduler`` tab; the maximum walltime has no profile value, and a queue
 without one has no limit that MuFinder checks.
 
-- Saving refuses a queue without a name, a repeated name, a name that would
-  need shell quoting (letters, digits, ``.``, ``_`` and ``-``, with commas
-  between several SLURM partitions), an unreadable walltime, a default
-  walltime above the maximum (including one inherited from the profile),
-  and a cores-per-node or memory value that is not positive. The dialog also
+- Saving refuses (by ``queue_issues`` in
+  ``mufinder.services.cluster_queues``) a queue without a name, a repeated
+  name, a name that would need shell quoting (letters, digits, ``.``, ``_``
+  and ``-``, with commas between several SLURM partitions), an unreadable
+  walltime, a default walltime above the maximum (including one inherited
+  from the profile), and a cores-per-node or memory value that is not
+  positive. The dialog also
   refuses to switch to another cluster until the table is valid, so no cell
   is dropped unseen. Removing a queue asks first, from the button or
-  Delete/Backspace.
+  Delete/Backspace. Renaming the default queue keeps it the default.
 - ``ClusterConfig.for_queue`` resolves a queue's overrides onto its profile.
   The submission planner applies the chosen queue's template, cores per node
   and executable to every job of a submission, and keyword generation runs

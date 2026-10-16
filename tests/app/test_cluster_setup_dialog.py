@@ -741,7 +741,7 @@ def test_cluster_setup_dialog_addqueue_queue_memory_is_per_core(qapp) -> None:
         (dialog_module._QUEUE_NAME_COLUMN, "", "has no name"),
         (dialog_module._QUEUE_MAX_WALLTIME_COLUMN, "forever", "is not a walltime"),
         (dialog_module._QUEUE_WALLTIME_COLUMN, "2-00:00:00", "longer than the 1-00:00:00 maximum"),
-        (dialog_module._QUEUE_MAX_WALLTIME_COLUMN, "06:00:00", "uses the Scheduler tab's default walltime"),
+        (dialog_module._QUEUE_MAX_WALLTIME_COLUMN, "06:00:00", "uses the cluster's default walltime"),
         (dialog_module._QUEUE_CORES_COLUMN, "many", "cores per node must be a positive whole number"),
         (dialog_module._QUEUE_MEMORY_COLUMN, "-1", "memory must be a positive number of GB"),
     ],
@@ -915,4 +915,28 @@ def test_cluster_setup_dialog_list_follows_name_edits(qapp) -> None:
     QTest.keyClicks(dialog._name_edit, "PSI")
 
     assert dialog._cluster_list.item(0).text() == "PSI"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_renaming_the_default_queue_keeps_it_default(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+    _fill_valid_cluster(dialog)
+    dialog._add_queue()
+    dialog._add_queue()
+    _set_queue_cell(dialog, 0, dialog_module._QUEUE_NAME_COLUMN, "hourly")
+    _set_queue_cell(dialog, 1, dialog_module._QUEUE_NAME_COLUMN, "daily")
+    dialog._default_queue_combo.setCurrentText("daily")
+
+    _set_queue_cell(dialog, 1, dialog_module._QUEUE_NAME_COLUMN, "day")
+    assert dialog._default_queue_combo.currentText() == "day"
+
+    # Renaming another queue leaves the default alone.
+    _set_queue_cell(dialog, 0, dialog_module._QUEUE_NAME_COLUMN, "hour")
+    assert dialog._default_queue_combo.currentText() == "day"
+
+    dialog._accept_and_save()
+    saved = next(config for config in load_cluster_configs(settings) if config.name == "PSI")
+    assert saved.default_queue_name == "day"
+    assert [queue.name for queue in saved.queues] == ["hour", "day"]
     dialog.close()
