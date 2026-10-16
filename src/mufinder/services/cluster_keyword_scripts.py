@@ -17,6 +17,7 @@ import shlex
 from string import Template
 
 from mufinder.domain.cluster import ClusterConfig
+from mufinder.services.cluster_queues import parse_walltime_seconds
 from mufinder.services.script_template import (
     format_mem_per_cpu_directive,
     insert_partition_directive,
@@ -171,7 +172,7 @@ def job_template_plan(config: ClusterConfig, *, working_directory: str = "") -> 
         "num_processes": "1",
         "num_nodes": "1",
         "cores_per_node": "1",
-        "walltime": _KEYWORD_JOB_WALLTIME,
+        "walltime": _keyword_job_walltime(config),
         "working_directory": shlex.quote(working_directory) if working_directory else ".",
         "seed_name": "keywords",
     }
@@ -288,12 +289,27 @@ def help_loop_command(
     )
 
 
+def _keyword_job_walltime(config: ClusterConfig) -> str:
+    """Return the keyword job's own walltime, capped at the default queue's maximum.
+
+    A request above the queue's limit would be rejected or held forever, so a
+    queue shorter than the usual hour gets its maximum instead.
+    """
+
+    limit_text = config.max_walltime_for_queue(config.default_queue_name)
+    limit = parse_walltime_seconds(limit_text) if limit_text else None
+    standard = parse_walltime_seconds(_KEYWORD_JOB_WALLTIME)
+    if limit is not None and standard is not None and limit < standard:
+        return limit_text
+    return _KEYWORD_JOB_WALLTIME
+
+
 def scheduler_walltime(config: ClusterConfig) -> str:
     """Return the walltime the keyword job asks for."""
 
     if config.queue_system.strip().lower() == "addqueue":
         return config.default_walltime.strip()
-    return _KEYWORD_JOB_WALLTIME
+    return _keyword_job_walltime(config)
 
 
 def _job_help_loop_script() -> str:

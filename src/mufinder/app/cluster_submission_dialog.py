@@ -203,7 +203,7 @@ class ClusterSubmissionDialog(QDialog):
         self._button_box.accepted.connect(self._accept_if_valid)
         self._button_box.rejected.connect(self.reject)
         self._cluster_combo.currentTextChanged.connect(lambda *_: self._apply_cluster_defaults())
-        self._queue_combo.activated.connect(lambda *_: self._apply_queue_defaults())
+        self._queue_combo.activated.connect(lambda *_: self._on_queue_activated())
         self._queue_combo.editTextChanged.connect(lambda *_: self._refresh_queue_hint())
         self._username_edit.textChanged.connect(lambda *_: self._refresh_connection_state())
         self._mem_per_cpu_check.toggled.connect(self._mem_per_cpu_edit.setEnabled)
@@ -334,6 +334,20 @@ class ClusterSubmissionDialog(QDialog):
         if config is None:
             return None
         return config.for_queue(self.selected_queue_name())
+
+    def _on_queue_activated(self) -> None:
+        """Apply a picked queue's defaults; leave the fields alone for a typed one.
+
+        An editable combo also reports Enter on typed text as an activation. A
+        name the profile does not list has no defaults of its own, so the
+        resources the user set stay as they are.
+        """
+
+        config = self.selected_cluster_config()
+        if config is not None and self.selected_queue_name() in config.queue_names():
+            self._apply_queue_defaults()
+        else:
+            self._refresh_queue_hint()
 
     def _apply_queue_defaults(self) -> None:
         """Fill the resource fields from the selected queue's defaults."""

@@ -156,7 +156,8 @@ partition or a memory request.
   ``$castep_command`` or ``$seed_name``. Everything above it (scheduler
   directives such as partition and account, ``module load`` lines, other
   environment setup) is kept, with one process, one node, and a one hour
-  walltime of its own rather than the cluster's default job walltime. The run
+  walltime of its own rather than the cluster's default job walltime (the
+  default queue's maximum instead, when that is shorter). The run
   line and anything after it are dropped.
 - The *launcher* is whatever precedes the CASTEP executable on the run line
   (``srun -n 1``, for example). For ``$castep_command`` it is the launcher

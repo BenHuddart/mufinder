@@ -729,3 +729,39 @@ def test_profile_without_queues_submits_no_slurm_partition(qapp) -> None:
     assert _queue_items(dialog) == []
     assert dialog.config().queue_name == ""
     dialog.close()
+
+
+def test_entering_a_typed_queue_keeps_the_resources_set_by_hand(qapp) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    dialog._num_processes_spin.setValue(12)
+    dialog._walltime_edit.setText("03:00:00")
+
+    line_edit = dialog._queue_combo.lineEdit()
+    line_edit.selectAll()
+    QTest.keyClicks(line_edit, "debug")
+    QTest.keyClick(line_edit, Qt.Key.Key_Return)
+
+    config = dialog.config()
+    assert config.queue_name == "debug"
+    assert (config.num_processes, config.walltime, config.mem_per_cpu_gb) == (12, "03:00:00", 8.0)
+    dialog.close()
+
+
+def test_entering_a_listed_queue_name_applies_its_defaults(qapp) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+
+    line_edit = dialog._queue_combo.lineEdit()
+    line_edit.selectAll()
+    QTest.keyClicks(line_edit, "hourly")
+    QTest.keyClick(line_edit, Qt.Key.Key_Return)
+
+    config = dialog.config()
+    assert config.queue_name == "hourly"
+    assert (config.num_processes, config.walltime) == (44, "00:59:00")
+    dialog.close()

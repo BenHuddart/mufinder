@@ -1692,6 +1692,40 @@ def test_keyword_job_walltime_is_short_whatever_the_cluster_default() -> None:
     assert walltime(_scheduler_config(default_walltime="02:00:00", queue_system="addqueue")) == "02:00:00"
 
 
+def test_keyword_job_walltime_respects_a_shorter_default_queue(tmp_path: Path) -> None:
+    from mufinder.domain.cluster import ClusterQueue
+
+    def config(max_walltime: str) -> ClusterConfig:
+        return _scheduler_config(
+            template_script_path="",
+            default_queue_name="short",
+            queues=(ClusterQueue(name="short", max_walltime=max_walltime),),
+        )
+
+    assert scripts_module.scheduler_walltime(config("00:30:00")) == "00:30:00"
+    assert scripts_module.scheduler_walltime(config("1-00:00:00")) == "01:00:00"
+    assert scripts_module.scheduler_walltime(config("")) == "01:00:00"
+    script = scripts_module.scheduler_runner_script(
+        config=config("00:30:00"),
+        remote_directory="/r",
+        remote_dump_path="/r/d",
+        remote_log_path="/r/l",
+    )
+    assert "#SBATCH -t 00:30:00" in script
+
+    # A template's $walltime is filled with the capped value too.
+    template = tmp_path / "short.sh"
+    template.write_text("#!/bin/bash\n#SBATCH -t $walltime\n\n$castep_command\n", encoding="utf-8")
+    plan = scripts_module.job_template_plan(
+        _scheduler_config(
+            template_script_path=str(template),
+            default_queue_name="short",
+            queues=(ClusterQueue(name="short", max_walltime="00:30:00"),),
+        )
+    )
+    assert plan is not None and "#SBATCH -t 00:30:00" in plan.preamble
+
+
 def test_emit_progress_and_check_cancel_helpers() -> None:
     generator_module._emit_progress(None, "ignored")
     generator_module._check_cancel(None)
