@@ -509,3 +509,40 @@ def test_driver_does_not_submit_or_prompt_for_a_job_whose_check_raised() -> None
     ]
     assert plan.skipped == []
     assert [item.submission.job for item in plan.items] == [checked]
+
+
+def test_submission_applies_the_chosen_queue_overrides() -> None:
+    from dataclasses import replace
+
+    from mufinder.domain.cluster import ClusterQueue
+
+    job = make_job("a")
+    plan = _plan([job])
+    cluster = replace(
+        CLUSTER,
+        queues=(
+            ClusterQueue(
+                name="short",
+                cores_per_node=64,
+                castep_executable="/opt/castep-short/castep.mpi",
+                template_script_path="/templates/short.sh",
+            ),
+        ),
+    )
+
+    (item,) = build_cluster_submissions(
+        plan,
+        OverwriteDecisions(),
+        cluster=cluster,
+        submission=_Settings(queue_name="short"),
+        retrieval_flags=lambda _job: RetrievalFlags(),
+        output_directory=lambda job: Path("/local") / job.label,
+    ).items
+
+    submission = item.submission
+    assert submission.queue_name == "short"
+    assert (submission.template_script_path, submission.cores_per_node, submission.castep_executable) == (
+        "/templates/short.sh",
+        64,
+        "/opt/castep-short/castep.mpi",
+    )

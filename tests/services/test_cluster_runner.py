@@ -1724,6 +1724,38 @@ def test_cluster_runner_submit_omits_mem_per_cpu_directive_when_unset(
     assert with_default == explicit_none.replace("mu_relax_3", "mu_relax_2")
 
 
+def test_cluster_runner_submit_writes_the_chosen_partition(qapp, tmp_path: Path) -> None:
+    runner = _slurm_runner()
+    seed = "mu_relax_queue"
+
+    runner.submit(
+        job_id=uuid4(),
+        local_job_dir=_prepare_local_job(tmp_path, seed),
+        seed_name=seed,
+        num_processes=48,
+        walltime="12:00:00",
+        working_directory="/remote/work",
+        template_script_path="",
+        cores_per_node=24,
+        queue_name="daily",
+    )
+
+    content = runner._ssh.remote_files[f"/remote/work/{seed}/run.sh"].decode("utf-8")
+    assert "#SBATCH -p daily" in content
+
+
+def test_cluster_runner_submit_keeps_a_template_partition(qapp, tmp_path: Path) -> None:
+    content = _submit_scarf_job(
+        tmp_path,
+        seed="mu_relax_scarf_queue",
+        template_script_path="builtin:scarf-slurm",
+        queue_name="devel",
+    )
+
+    assert "#SBATCH -p scarf" in content
+    assert "devel" not in content
+
+
 def _slurm_runner() -> ClusterJobRunner:
     """Return a runner wired to a SLURM cluster profile and one persistent fake SSH."""
 

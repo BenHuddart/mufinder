@@ -420,3 +420,24 @@ def test_use_square_top_table_corners_supports_tree_widgets(qapp) -> None:
     theme_module.use_square_top_table_corners(tree)
 
     assert tree.property("squareTopCorners") == "true"
+
+
+def test_style_tab_widget_uses_the_shared_tab_rules(qapp) -> None:
+    from PySide6.QtWidgets import QTabWidget
+
+    tabs = QTabWidget()
+    tabs.addTab(QWidget(), "A long tab title")
+    theme_module.style_tab_widget(tabs)
+
+    assert tabs.objectName() == "mufinderTabs"
+    assert tabs.tabBar().expanding() is False
+    assert tabs.elideMode() == Qt.TextElideMode.ElideRight
+    stylesheet = theme_module._build_stylesheet(theme_module.light_palette())
+    assert "QTabWidget#mufinderTabs QTabBar::tab:selected" in stylesheet
+    assert "QTabWidget#mufinderTabs > QStackedWidget > QWidget" in stylesheet
+
+
+def test_checkboxes_and_radio_buttons_take_their_parent_background() -> None:
+    stylesheet = theme_module._build_stylesheet(theme_module.light_palette())
+
+    assert "QLabel, QCheckBox, QRadioButton {\n        background: transparent;" in stylesheet

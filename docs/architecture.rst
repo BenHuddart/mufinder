@@ -380,6 +380,16 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.cluster_queues``
+     - Checks on what a cluster submission asks of a queue: queue (partition)
+       names that are safe to write into a job script
+       (``is_valid_queue_name``), SLURM walltime parsing
+       (``parse_walltime_seconds``) and the walltime-format and
+       queue-maximum check that the setup and submission dialogs share
+       (``walltime_issue``), and the rules a profile's queue list must meet
+       before it is saved (``queue_issues``); the setup dialog only
+       translates its table cells to and from ``ClusterQueue`` records. Resolving a queue's overrides onto its profile is
+       ``ClusterConfig.for_queue`` in ``mufinder.domain.cluster``.
    * - ``mufinder.services.cluster_retrieval``
      - Retrieving a finished cluster job's output over SSH: which remote files
        to download (task-farm names, per-rank error files, scheduler logs),

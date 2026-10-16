@@ -452,6 +452,10 @@ def build_cluster_submissions(
     """
 
     protected_remote_targets = plan.protected_remote_targets()
+    queue_name = getattr(submission, "queue_name", "")
+    # The chosen queue's overrides (template, cores per node, executable)
+    # apply to every job in this submission.
+    queue_cluster = cluster.for_queue(queue_name)
     result = ClusterSubmissionPlan()
     for target in plan.targets:
         job = target.job
@@ -479,13 +483,13 @@ def build_cluster_submissions(
                     num_processes=submission.num_processes,
                     walltime=submission.walltime,
                     working_directory=submission.working_directory,
-                    template_script_path=cluster.template_script_path,
-                    cores_per_node=cluster.cores_per_node,
+                    template_script_path=queue_cluster.template_script_path,
+                    cores_per_node=queue_cluster.cores_per_node,
                     memory_gb=getattr(submission, "memory_gb", None),
                     mem_per_cpu_gb=getattr(submission, "mem_per_cpu_gb", None),
-                    queue_name=getattr(submission, "queue_name", ""),
+                    queue_name=queue_name,
                     comment=getattr(submission, "comment", ""),
-                    castep_executable=cluster.castep_executable,
+                    castep_executable=queue_cluster.castep_executable,
                     reuse_existing_files=target.reuse_existing_files,
                     allow_existing_remote_directory=target.allow_existing_remote_directory,
                     retrieval=retrieval_flags(job),

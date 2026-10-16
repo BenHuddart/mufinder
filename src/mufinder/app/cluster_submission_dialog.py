@@ -27,8 +27,11 @@ from PySide6.QtCore import Qt
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.farm_validation import check_farm_counts
+from mufinder.app.theme import style_hint_text
 from mufinder.domain.cluster import ClusterConfig
+from mufinder.services.cluster_queues import is_valid_queue_name, walltime_issue
 from mufinder.services.keychain import credential_store_for_display, is_glamdring_keychain_supported
+from mufinder.services.script_template import template_sets_partition
 from mufinder.services.ssh_client import SSHCredentials
 
 
@@ -96,11 +99,25 @@ class ClusterSubmissionDialog(QDialog):
 
         form_group = QGroupBox("Submission Settings", self)
         form = QFormLayout(form_group)
+        self._form = form
 
         self._cluster_combo = QComboBox(form_group)
         for config in cluster_configs:
             self._cluster_combo.addItem(config.name)
         form.addRow("Remote cluster", self._cluster_combo)
+
+        # Editable, so a queue the profile does not list can still be typed.
+        # Picking a listed queue applies its defaults; typing does not.
+        self._queue_name_label = QLabel("Queue or partition", form_group)
+        self._queue_combo = QComboBox(form_group)
+        self._queue_combo.setEditable(True)
+        self._queue_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._queue_combo.lineEdit().setPlaceholderText("Scheduler default")
+        form.addRow(self._queue_name_label, self._queue_combo)
+        self._queue_hint = QLabel(form_group)
+        self._queue_hint.setWordWrap(True)
+        style_hint_text(self._queue_hint)
+        form.addRow("", self._queue_hint)
 
         self._working_directory_edit = QLineEdit(form_group)
         form.addRow("Remote working directory", self._working_directory_edit)
@@ -120,10 +137,6 @@ class ClusterSubmissionDialog(QDialog):
         self._walltime_edit = QLineEdit(form_group)
         self._walltime_edit.setPlaceholderText("HH:MM:SS")
         form.addRow("Maximum runtime", self._walltime_edit)
-
-        self._queue_name_label = QLabel("Queue or partition", form_group)
-        self._queue_name_edit = QLineEdit(form_group)
-        form.addRow(self._queue_name_label, self._queue_name_edit)
 
         self._memory_label = QLabel("Memory per core (GB)", form_group)
         self._memory_spin = DecimalLineEdit(form_group)
@@ -190,6 +203,8 @@ class ClusterSubmissionDialog(QDialog):
         self._button_box.accepted.connect(self._accept_if_valid)
         self._button_box.rejected.connect(self.reject)
         self._cluster_combo.currentTextChanged.connect(lambda *_: self._apply_cluster_defaults())
+        self._queue_combo.activated.connect(lambda *_: self._on_queue_activated())
+        self._queue_combo.editTextChanged.connect(lambda *_: self._refresh_queue_hint())
         self._username_edit.textChanged.connect(lambda *_: self._refresh_connection_state())
         self._mem_per_cpu_check.toggled.connect(self._mem_per_cpu_edit.setEnabled)
         self._mem_per_cpu_edit.setEnabled(self._mem_per_cpu_check.isChecked())
@@ -241,6 +256,9 @@ class ClusterSubmissionDialog(QDialog):
         value = float(self._mem_per_cpu_edit.value())
         return value if value > 0 else None
 
+    def selected_queue_name(self) -> str:
+        return self._queue_combo.currentText().strip()
+
     def config(self) -> ClusterSubmissionConfig:
         addqueue = self._is_addqueue_cluster()
         return ClusterSubmissionConfig(
@@ -250,7 +268,7 @@ class ClusterSubmissionDialog(QDialog):
             job_name_prefix=self._job_name_prefix_edit.text().strip() or self._default_job_name_prefix(),
             num_processes=self._num_processes_spin.value(),
             walltime=self._walltime_edit.text().strip(),
-            queue_name=self._queue_name_edit.text().strip() if addqueue else "",
+            queue_name=self.selected_queue_name(),
             memory_gb=float(self._memory_spin.value()) if addqueue else None,
             mem_per_cpu_gb=self._selected_mem_per_cpu_gb(),
             comment=self._comment_edit.text().strip() if addqueue else "",
@@ -261,6 +279,7 @@ class ClusterSubmissionDialog(QDialog):
         if config is None:
             self._working_directory_edit.setText("")
             self._username_edit.setText("")
+            self._queue_combo.clear()
             self._num_processes_spin.setValue(1)
             self._walltime_edit.setText("01:00:00")
             self._apply_mem_per_cpu_default(None)
@@ -271,11 +290,12 @@ class ClusterSubmissionDialog(QDialog):
 
         self._working_directory_edit.setText(self._default_submission_working_directory(config))
         self._username_edit.setText(config.username)
-        self._num_processes_spin.setValue(max(1, int(config.cores_per_node)))
-        self._walltime_edit.setText(config.default_walltime)
-        self._queue_name_edit.setText(config.default_queue_name)
-        self._memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
-        self._apply_mem_per_cpu_default(config.default_mem_per_cpu_gb)
+        self._queue_combo.blockSignals(True)
+        self._queue_combo.clear()
+        self._queue_combo.addItems(config.queue_names())
+        self._queue_combo.setEditText(config.default_queue_name)
+        self._queue_combo.blockSignals(False)
+        self._apply_queue_defaults()
         self._comment_edit.setText("")
         self._target_secret_edit.setText("")
         self._jump_secret_edit.setText("")
@@ -307,6 +327,60 @@ class ClusterSubmissionDialog(QDialog):
         self._refresh_scheduler_controls()
         self._refresh_connection_state()
 
+    def _selected_queue_config(self) -> ClusterConfig | None:
+        """The selected cluster as it applies to the selected queue."""
+
+        config = self.selected_cluster_config()
+        if config is None:
+            return None
+        return config.for_queue(self.selected_queue_name())
+
+    def _on_queue_activated(self) -> None:
+        """Apply a picked queue's defaults; leave the fields alone for a typed one.
+
+        An editable combo also reports Enter on typed text as an activation. A
+        name the profile does not list has no defaults of its own, so the
+        resources the user set stay as they are.
+        """
+
+        config = self.selected_cluster_config()
+        if config is not None and self.selected_queue_name() in config.queue_names():
+            self._apply_queue_defaults()
+        else:
+            self._refresh_queue_hint()
+
+    def _apply_queue_defaults(self) -> None:
+        """Fill the resource fields from the selected queue's defaults."""
+
+        config = self._selected_queue_config()
+        if config is None:
+            return
+        self._num_processes_spin.setValue(max(1, int(config.cores_per_node)))
+        self._walltime_edit.setText(config.default_walltime)
+        self._memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
+        self._apply_mem_per_cpu_default(config.default_mem_per_cpu_gb)
+        self._refresh_queue_hint()
+
+    def _refresh_queue_hint(self) -> None:
+        """Say what limits the queue has and whether the template overrides it."""
+
+        config = self.selected_cluster_config()
+        queue_name = self.selected_queue_name()
+        notes: list[str] = []
+        if config is not None:
+            max_walltime = config.max_walltime_for_queue(queue_name)
+            if max_walltime:
+                notes.append(f"Maximum walltime on this queue: {max_walltime}.")
+            queue_config = config.for_queue(queue_name)
+            if queue_name and template_sets_partition(
+                queue_config.template_script_path,
+                cluster_name=config.name,
+                queue_system=config.queue_system,
+            ):
+                notes.append("The job script template sets its own partition, which takes precedence.")
+        self._queue_hint.setText(" ".join(notes))
+        self._form.setRowVisible(self._queue_hint, bool(notes))
+
     def _apply_initial_config(self, *, default_cluster_name: str | None) -> None:
         config = self._initial_config
         if config is None:
@@ -321,6 +395,9 @@ class ClusterSubmissionDialog(QDialog):
         if default_cluster_name and selected_cluster_name.casefold() != default_cluster_name.strip().casefold():
             return
 
+        if config.queue_name.strip():
+            self._queue_combo.setEditText(config.queue_name.strip())
+            self._apply_queue_defaults()
         if config.working_directory.strip():
             self._working_directory_edit.setText(config.working_directory.strip())
         if config.username.strip():
@@ -332,7 +409,6 @@ class ClusterSubmissionDialog(QDialog):
         self._walltime_edit.setText(config.walltime.strip())
 
         if self._is_addqueue_cluster():
-            self._queue_name_edit.setText(config.queue_name.strip())
             if config.memory_gb is not None:
                 self._memory_spin.setValue(float(config.memory_gb))
             self._comment_edit.setText(config.comment.strip())
@@ -457,8 +533,6 @@ class ClusterSubmissionDialog(QDialog):
 
     def _refresh_scheduler_controls(self) -> None:
         addqueue = self._is_addqueue_cluster()
-        self._queue_name_label.setVisible(addqueue)
-        self._queue_name_edit.setVisible(addqueue)
         self._memory_label.setVisible(addqueue)
         self._memory_spin.setVisible(addqueue)
         self._comment_label.setVisible(addqueue)
@@ -528,6 +602,23 @@ class ClusterSubmissionDialog(QDialog):
                 "Missing walltime",
                 "Enter a maximum runtime in HH:MM:SS format.",
             )
+            return
+        if config.queue_name and not is_valid_queue_name(config.queue_name):
+            QMessageBox.warning(
+                self,
+                "Invalid queue",
+                f"'{config.queue_name}' is not a queue name. Use letters, digits, '.', '_' and '-', "
+                "with commas between several partitions.",
+            )
+            return
+        cluster = self.selected_cluster_config()
+        issue = walltime_issue(
+            config.walltime,
+            max_walltime=cluster.max_walltime_for_queue(config.queue_name) if cluster is not None else "",
+            queue_name=config.queue_name,
+        )
+        if issue:
+            QMessageBox.warning(self, "Invalid walltime", issue)
             return
 
         selected = self.selected_cluster_config()
