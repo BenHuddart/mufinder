@@ -17,7 +17,11 @@ import shlex
 from string import Template
 
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.services.script_template import load_template_for_cluster, populate_template
+from mufinder.services.script_template import (
+    insert_partition_directive,
+    load_template_for_cluster,
+    populate_template,
+)
 from mufinder.services.shell_templates import render_shell_template
 
 
@@ -382,9 +386,13 @@ def scheduler_runner_script(
             launcher = tuple(shlex.split(launcher_text)) if launcher_text else ()
         executable = config.castep_executable.strip()
 
+    preamble_text = "\n".join(preamble)
+    if is_slurm:
+        # The keyword job runs on the cluster's default queue, like its jobs.
+        preamble_text = insert_partition_directive(preamble_text, config.default_queue_name)
     script = render_shell_template(
         "keyword_job.sh",
-        preamble="\n".join(preamble),
+        preamble=preamble_text,
         directory=shlex.quote(remote_directory),
         shell_init=config.keyword_shell_init.rstrip() if config.keyword_shell_init.strip() else "",
         help_loop_name=JOB_HELP_LOOP_NAME,

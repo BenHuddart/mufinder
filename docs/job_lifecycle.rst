@@ -395,13 +395,21 @@ Cluster profiles and connections
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``Setup > HPC Clusters`` stores cluster profiles globally, including built-in
-SCARF and Redwood presets.
+SCARF and Redwood presets. The dialog lists the saved clusters on the left,
+with ``Add``, ``Duplicate`` and ``Remove``, and edits the selected one in four
+tabs: ``Connection``, ``Scheduler``, ``Queues`` and ``Keyword generation``.
+Edits are kept per cluster while switching between them and are saved together
+on ``OK``. ``Remove`` (or Delete/Backspace in the cluster list) asks first.
+Cluster names must differ by more than letter case.
 
 - A profile sets the hostname, username, queue system, default working
   directory, cores per node, default walltime and CASTEP executable path, plus
-  a submission-script template path for SLURM profiles and a default
-  queue/partition and ``Default memory per core (GB)`` for ``addqueue``
-  profiles.
+  a submission-script template path for SLURM profiles (blank uses the
+  built-in SLURM template) and ``Default memory per core (GB)`` for
+  ``addqueue`` profiles. Walltimes use SLURM's formats (``HH:MM:SS``,
+  ``D-HH:MM:SS`` and the shorter forms) and are checked on save.
+- A profile lists its queues (SLURM partitions or ``addqueue`` queues); see
+  `Cluster queues`_.
 - A SLURM profile may set a default per-CPU memory request, which pre-seeds the
   submission dialog. It is off by default, so a profile without it generates
   batch scripts with no memory directive (see `SLURM memory requests`_).
@@ -449,18 +457,59 @@ SCARF and Redwood presets.
   freezes the GUI; unknown-host-key prompts appear on the GUI thread and the
   check retries automatically once the key is trusted.
 
+Cluster queues
+~~~~~~~~~~~~~~
+
+A cluster with several queues is one profile, not one profile per queue. The
+``Queues`` tab lists the profile's queues in a table and picks the default
+queue. Each queue has a name and optional overrides of the profile's values:
+default walltime, maximum walltime, cores per node, memory (``Memory per CPU
+(GB)`` for SLURM, ``Memory per core (GB)`` for ``addqueue``), CASTEP executable
+and, for SLURM, the template script. A blank cell uses the profile's value from
+the ``Scheduler`` tab; the maximum walltime has no profile value, and a queue
+without one has no limit that MuFinder checks.
+
+- Saving refuses a queue without a name, a repeated name, a name that would
+  need shell quoting (letters, digits, ``.``, ``_`` and ``-``, with commas
+  between several SLURM partitions), an unreadable walltime, a default
+  walltime above the maximum (including one inherited from the profile),
+  and a cores-per-node or memory value that is not positive. The dialog also
+  refuses to switch to another cluster until the table is valid, so no cell
+  is dropped unseen. Removing a queue asks first, from the button or
+  Delete/Backspace.
+- ``ClusterConfig.for_queue`` resolves a queue's overrides onto its profile.
+  The submission planner applies the chosen queue's template, cores per node
+  and executable to every job of a submission, and keyword generation runs
+  on the default queue with its overrides.
+- A profile saved before queues existed, holding a single
+  ``default_queue_name``, loads unchanged and shows that queue as one row with
+  no overrides (see :doc:`compatibility_policy`).
+
 Cluster submission and monitoring
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - ``Run All on Cluster`` / ``Run Selected on Cluster`` opens a dialog that
   chooses the cluster and overrides its runtime settings for this submission.
+- ``Queue or partition`` lists the profile's queues for SLURM and ``addqueue``
+  alike, starting on the default queue. Picking a queue fills cores per job,
+  maximum runtime and memory from that queue; a hint shows the queue's
+  maximum walltime, and says so when the job template sets its own partition.
+  A name the profile does not list can be typed and is submitted as it is.
+  The dialog refuses a walltime above the queue's maximum and a queue name
+  that would need quoting. The last-used queue is remembered per project with
+  the other last-used settings.
 - MuFinder uploads the generated ``.cell`` / ``.param`` inputs and submits
   them to the cluster's scheduler. SLURM submission runs ``sbatch`` on a
-  populated script template and captures the scheduler job id, with an
-  optional ``#SBATCH --mem-per-cpu`` request (see `SLURM memory requests`_).
-  Redwood submission runs ``addqueue`` with the runtime controls ``Queue or
-  partition``, ``Memory per core (GB)`` and ``Submission note``, in
-  sbatch-compatible response mode so the job id parses reliably.
+  populated script template and captures the scheduler job id, with the
+  chosen queue as an ``#SBATCH -p`` directive and an optional
+  ``#SBATCH --mem-per-cpu`` request (see `SLURM memory requests`_). The
+  partition is written into the script, never passed to ``sbatch``, and is
+  left out when the template already names one with ``-p`` or
+  ``--partition`` (as the built-in SCARF template does), so a hand-written
+  partition wins. Redwood submission runs ``addqueue`` with the chosen queue
+  as ``-q`` and the runtime controls ``Memory per core (GB)`` and
+  ``Submission note``, in sbatch-compatible response mode so the job id parses
+  reliably.
 - Cluster submission refuses job labels containing anything other than letters,
   digits, ``.``, ``_`` and ``-``, because remote paths and scheduler commands
   use the label directly; the cluster runner checks each seed name again before

@@ -483,6 +483,57 @@ def test_scheduler_mode_parses_the_remote_dump_and_cleans_up(
     assert ssh.disconnected is True
 
 
+def test_scheduler_keyword_job_runs_on_the_default_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+) -> None:
+    from mufinder.domain.cluster import ClusterQueue
+
+    scheduler = _Scheduler(dump=_scheduler_dump(_ALL_NAMES))
+    _use_scheduler(monkeypatch, scheduler)
+
+    generate_cluster_castep_keywords_json(
+        config=_scheduler_config(
+            name="PSI",
+            template_script_path="",
+            default_queue_name="daily",
+            queues=(
+                ClusterQueue(name="hourly"),
+                ClusterQueue(name="daily", castep_executable="/opt/castep-daily/castep.mpi"),
+            ),
+        ),
+        output_path=tmp_path / "castep_keywords.json",
+    )
+
+    request = scheduler.submit_requests[0]
+    runner = _SchedulerSSH.last.remote_files[request.script_path].decode("utf-8")
+    preamble = runner.split("\n\n", 2)[1].splitlines()
+    assert preamble[-1] == "#SBATCH -p daily"
+    assert "hourly" not in runner
+    # The default queue's executable override applies to the keyword job.
+    assert "/opt/castep-daily/castep.mpi" in runner
+
+
+def test_scheduler_keyword_job_keeps_a_template_partition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+) -> None:
+    scheduler = _Scheduler(dump=_scheduler_dump(_ALL_NAMES))
+    _use_scheduler(monkeypatch, scheduler)
+
+    generate_cluster_castep_keywords_json(
+        config=_scheduler_config(default_queue_name="devel"),
+        output_path=tmp_path / "castep_keywords.json",
+    )
+
+    request = scheduler.submit_requests[0]
+    runner = _SchedulerSSH.last.remote_files[request.script_path].decode("utf-8")
+    assert "#SBATCH -p scarf" in runner
+    assert "devel" not in runner
+
+
 @pytest.mark.parametrize("grep_result", [(1, "0\n", ""), (2, "", "No such file"), (0, "garbage", "")])
 def test_running_job_progress_detail_is_best_effort(
     tmp_path: Path,

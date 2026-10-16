@@ -283,8 +283,8 @@ class ClusterJobRunner(QObject):
         continuation state. It does **not** skip the submit script: ``run.sh`` is
         regenerated from the current template and uploaded on every submission,
         because ``sbatch`` is invoked with no command-line resource flags and the
-        script is therefore the sole carrier of walltime, task count, and memory.
-        Reusing a stale script would silently ignore the resources the current
+        script is therefore the sole carrier of walltime, task count, memory
+        and partition. Reusing a stale script would silently ignore the resources the current
         submission asked for.
 
         ``allow_existing_remote_directory`` is deliberately unread here. It is a
@@ -340,6 +340,7 @@ class ClusterJobRunner(QObject):
                 remote_dir=remote_dir,
                 castep_executable=resolved_castep_executable,
                 mem_per_cpu_gb=mem_per_cpu_gb,
+                queue_name=queue_name,
             )
 
             with tempfile.NamedTemporaryFile(
