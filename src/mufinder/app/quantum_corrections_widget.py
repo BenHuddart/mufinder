@@ -44,6 +44,7 @@ class QuantumSourceRow:
     status: str
     configured: bool = False
     resettable: bool = False
+    stage_two_resettable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +64,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
 
     The source table and its targeting come from :class:`SourceTableWidget`;
     this widget adds the per-row stage and farm columns, the editable site
-    label and the "Reset to Stage 1" action.
+    label and the "Reset to Stage 1" / "Reset to Stage 2" actions.
     """
 
     configure_requested = Signal(object)
@@ -73,6 +74,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     cancel_requested = Signal(object)
     inspect_failed_requested = Signal(object)
     reset_stage_requested = Signal(list)
+    reset_stage_two_requested = Signal(list)
     analysis_requested = Signal(str)
 
     _SOURCE_STATUS_COLUMN = 7
@@ -159,23 +161,29 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         self._submit_local_button = QPushButton()
         self._submit_cluster_button = QPushButton()
         self._reset_stage_button = QPushButton("Reset to Stage 1")
+        self._reset_stage_two_button = QPushButton("Reset to Stage 2")
+        self._reset_stage_two_button.setToolTip(
+            "Return a failed phonon job to 'defined', keeping the completed stage 1."
+        )
         self._batch_configure_button.clicked.connect(self._emit_batch_configure)
         self._submit_local_button.clicked.connect(self._emit_submit_local)
         self._submit_cluster_button.clicked.connect(self._emit_submit_cluster)
         self._reset_stage_button.clicked.connect(self._emit_reset_stage)
+        self._reset_stage_two_button.clicked.connect(self._emit_reset_stage_two)
         actions.addWidget(self._submit_local_button)
         actions.addWidget(self._submit_cluster_button)
         actions.addWidget(self._reset_stage_button)
+        actions.addWidget(self._reset_stage_two_button)
         actions.addStretch(1)
         actions.addWidget(self._selection_count_label)
         actions.addWidget(self._batch_configure_button)
         sources_layout.addLayout(actions)
 
         # Rows here are derived from completed relaxations, so there is no
-        # Remove, and the recovery action is "Reset to Stage 1" rather than the
+        # Remove, and the recovery actions are the stage resets rather than the
         # shared failed-job reset.
         self._sources_table.setToolTip(
-            "Right-click selected rows to run, cancel, inspect, configure, or reset them to stage 1."
+            "Right-click selected rows to run, cancel, inspect, configure, or reset them to stage 1 or 2."
         )
         self._bind_source_row_menu(
             extra_actions=(
@@ -189,6 +197,16 @@ class QuantumCorrectionsWidget(SourceTableWidget):
                     trigger=lambda _rows: self._emit_reset_stage(),
                     on_rows=True,
                     separator_before=True,
+                ),
+                RowMenuAction(
+                    text="Reset to Stage 2",
+                    is_enabled=lambda rows: any(
+                        self._source_rows[int(row)].stage_two_resettable
+                        for row in rows
+                        if 0 <= int(row) < len(self._source_rows)
+                    ),
+                    trigger=lambda _rows: self._emit_reset_stage_two(),
+                    on_rows=True,
                 ),
             ),
         )
@@ -328,9 +346,13 @@ class QuantumCorrectionsWidget(SourceTableWidget):
 
     def refresh_source_actions(self, selected_rows: Sequence[QuantumSourceRow]) -> None:
         self._reset_stage_button.setEnabled(any(row.resettable for row in selected_rows))
+        self._reset_stage_two_button.setEnabled(any(row.stage_two_resettable for row in selected_rows))
 
     def _emit_reset_stage(self) -> None:
         self.reset_stage_requested.emit(self.selected_source_keys())
+
+    def _emit_reset_stage_two(self) -> None:
+        self.reset_stage_two_requested.emit(self.selected_source_keys())
 
     def _on_source_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_sources or item.column() != 0:

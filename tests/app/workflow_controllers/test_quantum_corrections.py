@@ -7,6 +7,7 @@ the phonon-method checks and ``validate_artifacts``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -108,6 +109,12 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
         confirm=lambda _title, _text: True,
+        warn=lambda _title, _text: None,
+        directory_refusal=lambda _job, _shared_with: None,
+        delete_path=lambda _path: None,
+        delete_job_records=lambda _job_id: None,
+        reset_jobs_keeping_files=lambda jobs: (len(jobs), []),
+        refresh_after_reset=lambda: None,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
@@ -693,10 +700,93 @@ def test_quantum_controller_configure_request_follows_each_rows_stage(tmp_path: 
     assert (farms_only.read_only, farms_only.fully_editable, farms_only.farms_only) == (False, False, True)
     assert "Current stage: phonon" in farms_only.intro_text
 
+    assert "only Stage 2 farms can change" in farms_only.locked_reason
+    assert farms_only.locked_reason in farms_only.intro_text
+
     mixed = controller.configure_request([stage_one_key, stage_two_key])
     assert mixed is not None
     assert mixed.title == "Inspect Quantum Corrections Parameters"
     assert mixed.read_only is True
+    assert mixed.locked_reason == "The selection mixes stage-1 and stage-2 rows. Configure them separately."
+
+
+def test_quantum_controller_configure_request_edits_a_defined_singlepoint(tmp_path: Path) -> None:
+    """A staged-but-unsubmitted or dashboard-reset singlepoint is rewritten on submit, so it stays editable."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint = _quantum_job(service, document, "quantum_singlepoint_siteA", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    definition.parameters["singlepoint_job_ids_by_label"][key] = str(singlepoint.id)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    request = controller.configure_request([key])
+
+    assert singlepoint.status == JobStatus.DEFINED
+    assert request is not None
+    assert (request.read_only, request.fully_editable, request.farms_only) == (False, True, False)
+    assert request.title == "Configure Quantum Corrections Parameters"
+    assert request.locked_reason == ""
+
+
+@pytest.mark.parametrize("dismissed", [False, True])
+def test_quantum_controller_configure_request_edits_farms_of_a_reopened_phonon_job(
+    tmp_path: Path, dismissed: bool
+) -> None:
+    """After a phonon failure is reset to ``defined`` or dismissed, its farms can change again."""
+
+    from datetime import datetime, timezone
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _complete_stage_one(service, document, definition, key)
+    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+    if dismissed:
+        phonon.status = JobStatus.FAILED
+        phonon.dismissed_at = datetime.now(timezone.utc)
+    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    request = controller.configure_request([key])
+
+    assert request is not None
+    assert (request.read_only, request.fully_editable, request.farms_only) == (False, False, True)
+    assert request.title == "Configure Quantum Corrections Stage 2 Farms"
+
+
+@pytest.mark.parametrize(
+    ("singlepoint_status", "phonon_status", "expected"),
+    [
+        (JobStatus.FAILED, None, "stage-1 singlepoint is failed. Use Reset to Stage 1"),
+        (JobStatus.RUNNING, None, "job is running. Cancel the job first, then use Reset to Stage 1"),
+        (JobStatus.COMPLETED, JobStatus.QUEUED, "job is queued. Cancel the job first"),
+        (JobStatus.COMPLETED, JobStatus.FAILED, "phonon job is failed. Use Reset to Stage 2"),
+        (JobStatus.COMPLETED, JobStatus.CANCELLED, "phonon job is cancelled. Use Reset to Stage 2"),
+        (JobStatus.COMPLETED, JobStatus.COMPLETED, "completed both stages. Use Reset to Stage 1"),
+    ],
+)
+def test_quantum_controller_read_only_configure_names_the_unlocking_reset(
+    tmp_path: Path, singlepoint_status: JobStatus, phonon_status: JobStatus | None, expected: str
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint = _complete_stage_one(service, document, definition, key)
+    singlepoint.status = singlepoint_status
+    if phonon_status is not None:
+        phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+        phonon.status = phonon_status
+        definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    request = controller.configure_request([key])
+
+    assert request is not None
+    assert request.read_only is True
+    assert request.title == "Inspect Quantum Corrections Parameters"
+    assert expected in request.locked_reason
+    assert request.intro_text.endswith(request.locked_reason)
 
 
 def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path) -> None:
@@ -776,6 +866,244 @@ def test_quantum_controller_lists_stage_one_resets(tmp_path: Path) -> None:
 
     empty = service.create_project(tmp_path / "empty.mufinder", "Empty")
     assert _quantum_document_controller(service, empty, output_root).stage_one_resets([finished_key]) is None
+
+
+@pytest.mark.parametrize(
+    ("status", "resettable"),
+    [
+        (JobStatus.DEFINED, True),
+        (JobStatus.COMPLETED, True),
+        (JobStatus.FAILED, True),
+        (JobStatus.STOPPED, True),
+        (JobStatus.CANCELLED, True),
+        (JobStatus.SUBMITTING, False),
+        (JobStatus.QUEUED, False),
+        (JobStatus.RUNNING, False),
+        (JobStatus.RETRIEVING, False),
+    ],
+)
+def test_quantum_controller_resets_to_stage_one_from_any_inactive_phonon_job(
+    tmp_path: Path, status: JobStatus, resettable: bool
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _complete_stage_one(service, document, definition, key)
+    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+    phonon.status = status
+    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    assert controller.can_reset_to_stage_one(definition, candidates[key]) is resettable
+
+
+def _reset_recording_controller(service, document, output_root, *, confirm: bool, refusal: str | None = None):
+    """Return a controller whose reset deps record what they were asked to do."""
+
+    import dataclasses
+
+    calls: dict[str, list] = {
+        "confirm": [],
+        "deleted_paths": [],
+        "deleted_jobs": [],
+        "reset_jobs": [],
+        "refreshes": [],
+        "warnings": [],
+        "infos": [],
+        "status": [],
+        "persisted": [],
+    }
+    def delete_job_records(job_id) -> None:
+        calls["deleted_jobs"].append(job_id)
+        document.jobs.pop(job_id)
+
+    def reset_jobs_keeping_files(jobs) -> tuple[int, list[str]]:
+        calls["reset_jobs"].append(list(jobs))
+        for job in jobs:
+            service.reset_failed_job(job)
+        return len(jobs), []
+
+    deps = _stub_quantum_deps(
+        confirm=lambda title, text: calls["confirm"].append((title, text)) or confirm,
+        warn=lambda title, text: calls["warnings"].append(text),
+        directory_refusal=lambda _job, _shared_with: refusal,
+        delete_path=calls["deleted_paths"].append,
+        delete_job_records=delete_job_records,
+        reset_jobs_keeping_files=reset_jobs_keeping_files,
+        refresh_after_reset=lambda: calls["refreshes"].append(True),
+    )
+    context = make_context(
+        document=document,
+        project_service=service,
+        infos=calls["infos"],
+        definition_output_directory=lambda _definition: output_root,
+        job_output_directory=lambda job: output_root / "quantum_siteA",
+    )
+    context = dataclasses.replace(
+        context,
+        status_message=calls["status"].append,
+        persist_ui_state=lambda **kwargs: calls["persisted"].append(kwargs["failure_message"]),
+    )
+    return QuantumCorrectionsController(context, deps, _FakeQuantumView()), calls
+
+
+def _row_with_failed_phonon(service, document, definition, key):
+    singlepoint = _complete_stage_one(service, document, definition, key)
+    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+    phonon.status = JobStatus.FAILED
+    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    definition.parameters["job_seed_names_by_label"][key] = "quantum_siteA"
+    return singlepoint, phonon
+
+
+def test_quantum_controller_reset_to_stage_one_deletes_the_row_after_confirmation(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint, phonon = _row_with_failed_phonon(service, document, definition, key)
+    (output_root / "quantum_siteA").mkdir(parents=True)
+    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
+
+    controller.reset_to_stage_one([key])
+
+    assert calls["confirm"][0][0] == "Reset Quantum Corrections"
+    assert calls["deleted_paths"] == [output_root / "quantum_siteA"]
+    assert calls["deleted_jobs"] == [phonon.id, singlepoint.id]
+    assert key not in definition.parameters["job_seed_names_by_label"]
+    assert calls["refreshes"] == [True]
+    assert calls["status"] == ["Reset 1 Quantum Corrections row(s) to stage 1"]
+    assert calls["persisted"] == ["Quantum Corrections stage reset was recorded, but autosave failed."]
+
+
+def test_quantum_controller_reset_to_stage_one_does_nothing_when_declined(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _row_with_failed_phonon(service, document, definition, key)
+    controller, calls = _reset_recording_controller(service, document, output_root, confirm=False)
+
+    controller.reset_to_stage_one([key])
+
+    assert len(calls["confirm"]) == 1
+    assert calls["deleted_paths"] == calls["deleted_jobs"] == calls["refreshes"] == calls["status"] == []
+    assert definition.parameters["job_seed_names_by_label"] == {key: "quantum_siteA"}
+
+
+def test_quantum_controller_reset_to_stage_one_keeps_a_shared_directory(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _row_with_failed_phonon(service, document, definition, key)
+    controller, calls = _reset_recording_controller(
+        service, document, output_root, confirm=True, refusal="- quantum_siteA: another job uses the same output folder"
+    )
+
+    controller.reset_to_stage_one([key])
+
+    assert calls["deleted_paths"] == calls["deleted_jobs"] == calls["status"] == []
+    assert calls["warnings"] == [
+        "Some Quantum Corrections rows could not be reset cleanly:\n"
+        "- quantum_siteA: another job uses the same output folder; the row was not reset"
+    ]
+
+
+def test_quantum_controller_reset_to_stage_one_explains_an_active_row(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _complete_stage_one(service, document, definition, key).status = JobStatus.QUEUED
+    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
+
+    controller.reset_to_stage_one([key])
+
+    assert calls["confirm"] == []
+    assert calls["infos"][0][0] == "No resettable rows"
+    assert "Cancel an active job first." in calls["infos"][0][1]
+
+
+@pytest.mark.parametrize(
+    ("singlepoint_status", "phonon_status", "resettable"),
+    [
+        (JobStatus.COMPLETED, JobStatus.FAILED, True),
+        (JobStatus.COMPLETED, JobStatus.STOPPED, True),
+        (JobStatus.COMPLETED, JobStatus.CANCELLED, True),
+        (JobStatus.COMPLETED, JobStatus.COMPLETED, False),
+        (JobStatus.COMPLETED, JobStatus.DEFINED, False),
+        (JobStatus.COMPLETED, JobStatus.RUNNING, False),
+        (JobStatus.COMPLETED, None, False),
+        (JobStatus.FAILED, None, False),
+    ],
+)
+def test_quantum_controller_reset_to_stage_two_gate(
+    tmp_path: Path, singlepoint_status: JobStatus, phonon_status: JobStatus | None, resettable: bool
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _complete_stage_one(service, document, definition, key).status = singlepoint_status
+    if phonon_status is not None:
+        phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+        phonon.status = phonon_status
+        definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    assert controller.can_reset_to_stage_two(definition, candidates[key]) is resettable
+    assert bool(controller.stage_two_resets([key])) is resettable
+
+
+def test_quantum_controller_reset_to_stage_two_reopens_only_the_phonon_job(tmp_path: Path) -> None:
+    from mufinder.app.workflow_config_codecs import store_workflow_row_configuration
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint, phonon = _row_with_failed_phonon(service, document, definition, key)
+    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
+
+    controller.reset_to_stage_two([key])
+
+    assert calls["confirm"][0][0] == "Reset Quantum Corrections to stage 2"
+    assert calls["reset_jobs"] == [[phonon]]
+    assert calls["deleted_paths"] == calls["deleted_jobs"] == []
+    assert phonon.status == JobStatus.DEFINED
+    assert singlepoint.status == JobStatus.COMPLETED
+    assert calls["status"] == ["Reset 1 Quantum Corrections row(s) to stage 2"]
+
+    # The reopened phonon stage takes a new farm count and is rewritten on submit.
+    request = controller.configure_request([key])
+    assert request is not None and request.farms_only is True
+    store_workflow_row_configuration(definition, key, {"num_farms": 3})
+    assert controller.materialize([key]) == [phonon]
+    param_text = (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(encoding="utf-8")
+    assert re.search(r"^NUM_FARMS\s*:\s*3\s*$", param_text, re.MULTILINE)
+    assert re.search(r"^TASK\s*:\s*PHONON\s*$", param_text, re.MULTILINE)
+
+
+def test_quantum_controller_reset_to_stage_two_does_nothing_when_declined(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _singlepoint, phonon = _row_with_failed_phonon(service, document, definition, key)
+    controller, calls = _reset_recording_controller(service, document, output_root, confirm=False)
+
+    controller.reset_to_stage_two([key])
+
+    assert len(calls["confirm"]) == 1
+    assert calls["reset_jobs"] == calls["status"] == []
+    assert phonon.status == JobStatus.FAILED
+
+
+def test_quantum_controller_reset_to_stage_two_explains_when_nothing_qualifies(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    _complete_stage_one(service, document, definition, key)
+    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
+
+    controller.reset_to_stage_two([key])
+
+    assert calls["confirm"] == []
+    assert calls["infos"][0][0] == "No rows to reset to stage 2"
 
 
 def test_quantum_controller_resolves_where_a_phonon_job_continues(tmp_path: Path) -> None:

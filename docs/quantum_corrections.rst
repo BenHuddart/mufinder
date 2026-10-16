@@ -58,8 +58,9 @@ You submit each stage yourself; MuFinder does not chain them automatically.
    Parameters...``. Check the electronic settings (inherited from the source
    relaxation, see `Configuration dialog`_), choose the ``Phonon Method``, set
    ``Pseudopotentials`` to the family you use, and set ``Stage 2 farms`` if you
-   want task farming. These settings apply to both stages and are **frozen once
-   stage 1 has been submitted**, so get them right now.
+   want task farming. These settings apply to both stages and are **locked once
+   stage 1 has been submitted**; changing them afterwards means resetting the
+   row (see below).
 3. **Submit stage 1.** Select the rows and click ``Run Selected Locally`` or
    ``Run Selected on Cluster``. With nothing selected the buttons read
    ``Run All Locally`` / ``Run All on Cluster`` and submit every ready row. The
@@ -92,20 +93,38 @@ You submit each stage yourself; MuFinder does not chain them automatically.
 
 **Changing your mind or recovering from a failure.** Once stage 1 has been
 submitted the shared parameters are locked so the stage-2 continuation stays
-traceable to the singlepoint it continues. To change them, or to retry a row
-whose singlepoint or phonon job failed, was stopped, or was cancelled, select
-the row and click ``Reset to Stage 1`` (also on the right-click menu). After a
-confirmation, MuFinder deletes both staged job records and the row's output
-directory and returns the row to ``singlepoint`` / ``ready``. Rows whose job is
-still running cannot be reset. A row whose directory is also used by a job
-outside the row is not reset, and the message names that folder.
+traceable to the singlepoint it continues. When ``Configure...`` opens a locked
+row read-only, the dialog says why and names the reset that unlocks it. Two
+row actions, on the button row and the right-click menu, reopen a row; each
+asks for confirmation first, with ``No`` as the default:
 
-The Job Dashboard's own ``Reset`` behaves differently for a failed phonon job:
-it returns just that job to ``defined``, and its optional directory cleanup
-leaves the shared seed directory alone, because the completed singlepoint's
-``.check`` checkpoint and ``.castep`` output in it are what the next stage-2 run
-continues from. The message lists the folder as kept. Use ``Reset to Stage 1``
-to start the row over from a clean directory.
+- ``Reset to Stage 1`` deletes both staged job records and the row's output
+  directory and returns the row to ``singlepoint`` / ``ready``, with every
+  parameter editable and the stored configuration kept. It is offered for any
+  row that has staged a job, whatever that job's state, unless the job is
+  submitting, queued, running or being retrieved: cancel an active job first.
+  A row whose directory is also used by a job outside the row is not reset,
+  and the message names that folder.
+- ``Reset to Stage 2`` is for a row whose singlepoint completed and whose
+  phonon job failed, was stopped or was cancelled. It returns only the phonon
+  job to ``defined`` and keeps the shared seed directory, including the
+  stage-1 ``.check`` checkpoint the continuation reads. The row then reads
+  ``phonon`` / ``defined``: change ``Stage 2 farms`` and submit it again
+  without rerunning stage 1. A completed phonon job is not offered this reset,
+  because its run has rewritten the checkpoint; use ``Reset to Stage 1``.
+
+A stage-1 job that is still ``defined`` (staged but never submitted, or returned
+there by the Job Dashboard's ``Reset``) stays fully editable: submitting the row
+rewrites its input files from the stored configuration. Dismissing a failed job
+from the Job Dashboard also reopens its stage, as for every workflow (see
+:ref:`dismissed-rows-stay-resubmittable`).
+
+The Job Dashboard's own ``Reset`` returns a failed phonon job to ``defined``
+like ``Reset to Stage 2``, and its optional directory cleanup leaves the shared
+seed directory alone, because the completed singlepoint's ``.check``
+checkpoint and ``.castep`` output in it are what the next stage-2 run continues
+from. The message lists the folder as kept. Use ``Reset to Stage 1`` to start
+the row over from a clean directory.
 
 The workflow page
 -----------------
@@ -141,8 +160,8 @@ relaxed site:
    the row is locked).
 
 Right-click selected rows to run, cancel, inspect a failure, configure, or
-reset them to stage 1. There is no ``Remove``: rows are derived from completed
-relaxations.
+reset them to stage 1 or stage 2. There is no ``Remove``: rows are derived from
+completed relaxations.
 
 ``Completed Results`` (``Completed phonon analyses``) has one row per completed
 phonon job: ``Job``, ``ZPE`` (total muon ZPE of the three selected modes, eV),
@@ -195,13 +214,17 @@ between rows are marked as mixed and are left untouched unless you edit them.
 
    * - Row state
      - What you can change
-   * - ``singlepoint`` / ``ready``
+   * - ``singlepoint`` / ``ready`` or ``defined``
      - Everything.
-   * - ``phonon`` / ``ready`` (stage 1 complete, stage 2 not yet generated)
+   * - ``phonon`` / ``ready`` or ``defined`` (stage 1 complete, stage 2 not
+       yet submitted, reset to stage 2, or its failure dismissed)
      - ``Stage 2 farms`` only.
-   * - Anything else
+   * - Anything else, or a selection mixing the two rows above
      - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections
        Parameters`` so the stored inputs stay traceable to the submitted job.
+       Its text says why and names the action that unlocks the row: cancel an
+       active job, ``Reset to Stage 2`` after a phonon failure, or ``Reset to
+       Stage 1``.
 
 What MuFinder writes
 --------------------
