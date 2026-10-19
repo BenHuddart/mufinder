@@ -33,6 +33,7 @@ dev = [
   "pytest-cov>=5.0",
   "pytest-xdist>=3,<4",
   "pytest-timeout>=2.3,<3",
+  "pytest-split>=0.10,<1",
   "Sphinx>=8.0",
   "sphinx-rtd-theme>=2.0",
   "python-semantic-release>=10.5,<11",
@@ -70,7 +71,7 @@ testpaths = ["tests"]
 # A generous per-test timeout is a safety net: any genuinely hung test fails
 # fast with a stack dump naming the culprit, instead of stalling CI for ~49min.
 # Uses the thread method so C-level (Qt/VTK) hangs are caught, not just Python.
-addopts = "--strict-markers --cov=mufinder --cov-report=term-missing --cov-fail-under=85 --timeout=120 --timeout-method=thread"
+addopts = "--strict-markers --cov=mufinder --cov-report=term-missing --timeout=120 --timeout-method=thread"
 markers = [
   "unit: pure-Python or isolated tests that do not require a QApplication",
   "gui: requires PySide6 / Qt widgets",
@@ -83,6 +84,9 @@ source = ["mufinder"]
 core = "sysmon"
 
 [tool.coverage.report]
+# The one coverage gate: pytest-cov enforces it on a full run, and
+# `make coverage` enforces it on the shard data CI combines.
+fail_under = 85
 show_missing = true
 skip_covered = false
 
