@@ -4847,6 +4847,20 @@ class MagneticFieldWidget(QWidget):
     workspace_title_changed = Signal(str)
     delete_requested = Signal()
 
+    _COMPONENT_SUMMARY_HEADERS = ("Component", "Type", "Apply to", "q", "Moment")
+    _BREAKDOWN_HEADERS = ("Term", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)")
+    # Summary tables grow to this many rows, then scroll, so long models cannot push the controls off the page.
+    _SUMMARY_MAX_VISIBLE_ROWS = 8
+    # Commensurate result payload keys, in the order the breakdown lists them.
+    _BREAKDOWN_TERMS = (
+        ("Dipolar", "dipolar_T"),
+        ("Lorentz", "lorentz_T"),
+        ("Contact", "contact_T"),
+        ("Demagnetizing", "demag_T"),
+        ("Distortion correction", "distortion_T"),
+        ("Applied", "applied_T"),
+    )
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -4885,6 +4899,8 @@ class MagneticFieldWidget(QWidget):
         self._structure_summary = QLabel("Magnetic structure: -")
         self._structure_summary.setWordWrap(True)
         self._classification = QLabel("Structure type: -")
+        self._component_summary_table = self._summary_table(self._COMPONENT_SUMMARY_HEADERS, stretch_column=4)
+        self._component_summary_table.setVisible(False)
         self._edit_structure_button = QPushButton("Edit Magnetic Structure...")
         self._edit_structure_button.clicked.connect(self._open_structure_builder)
 
@@ -4907,6 +4923,7 @@ class MagneticFieldWidget(QWidget):
         self._demag_sample = DemagnetizingSample()
         self._advanced_demag_summary = QLabel("No advanced shape selected.")
         self._advanced_demag_summary.setWordWrap(True)
+        self._advanced_demag_summary.setVisible(False)
         style_hint_text(self._advanced_demag_summary)
         self._advanced_demag_button = QPushButton("Advanced...")
         self._advanced_demag_button.clicked.connect(self._open_advanced_demag_dialog)
@@ -4961,12 +4978,19 @@ class MagneticFieldWidget(QWidget):
             stretch_last_section=False,
         )
         self._result_table.itemSelectionChanged.connect(self._sync_distribution_plot_button)
+        self._result_table.itemSelectionChanged.connect(self._refresh_field_breakdown)
         self._configure_result_table_columns()
+        self._breakdown_label = QLabel("Field breakdown")
+        self._breakdown_table = self._summary_table(self._BREAKDOWN_HEADERS, stretch_column=0)
+        self._breakdown_hint = QLabel("")
+        self._breakdown_hint.setWordWrap(True)
+        style_hint_text(self._breakdown_hint)
 
         self._apply_page_styles()
         self._build_layout()
         self._refresh_demag_summary()
         self._refresh_calculation_settings_summary()
+        self._refresh_field_breakdown()
         self._sync_enabled_state()
 
     def _build_layout(self) -> None:
@@ -4980,11 +5004,10 @@ class MagneticFieldWidget(QWidget):
         layout.addLayout(header_row)
         layout.addWidget(self._subtitle)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(14)
-
         structure_group = QGroupBox("Magnetic Structure")
-        structure_layout = QHBoxLayout(structure_group)
+        structure_layout = QVBoxLayout(structure_group)
+        structure_header_layout = QHBoxLayout()
+        structure_layout.addLayout(structure_header_layout)
         structure_left_layout = QVBoxLayout()
         structure_left_layout.addWidget(self._structure_summary)
         structure_left_layout.addWidget(self._classification)
@@ -5003,23 +5026,10 @@ class MagneticFieldWidget(QWidget):
         structure_right_layout.addWidget(hyperfine_label)
         structure_right_layout.addLayout(hyperfine_row)
         structure_right_layout.addStretch(1)
-        structure_layout.addLayout(structure_left_layout, 1)
-        structure_layout.addLayout(structure_right_layout)
-
-        demag_group = QGroupBox("Demagnetizing Field")
-        demag_group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        demag_layout = QVBoxLayout(demag_group)
-        demag_layout.addWidget(self._sphere_radio)
-        demag_layout.addWidget(self._plate_radio)
-        demag_layout.addWidget(self._none_radio)
-        demag_layout.addWidget(self._advanced_demag_radio)
-        demag_layout.addWidget(self._advanced_demag_summary)
-        demag_layout.addWidget(self._advanced_demag_button)
-        demag_layout.addStretch(1)
-
-        top_row.addWidget(structure_group, 1)
-        top_row.addWidget(demag_group)
-        layout.addLayout(top_row)
+        structure_header_layout.addLayout(structure_left_layout, 1)
+        structure_header_layout.addLayout(structure_right_layout)
+        structure_layout.addWidget(self._component_summary_table)
+        layout.addWidget(structure_group)
 
         site_group = QGroupBox("Muon Site")
         site_layout = QVBoxLayout(site_group)
@@ -5032,6 +5042,14 @@ class MagneticFieldWidget(QWidget):
 
         results_group = QGroupBox("Calculation")
         results_layout = QVBoxLayout(results_group)
+        demag_row = QHBoxLayout()
+        demag_row.addWidget(QLabel("Demagnetizing field"))
+        for button in (self._sphere_radio, self._plate_radio, self._none_radio, self._advanced_demag_radio):
+            demag_row.addWidget(button)
+        demag_row.addWidget(self._advanced_demag_button)
+        demag_row.addStretch(1)
+        results_layout.addLayout(demag_row)
+        results_layout.addWidget(self._advanced_demag_summary)
         settings_row = QHBoxLayout()
         settings_row.addWidget(self._calculation_settings_summary, 1)
         settings_row.addWidget(self._calculation_settings_button)
@@ -5045,6 +5063,9 @@ class MagneticFieldWidget(QWidget):
         results_layout.addLayout(action_row)
         results_layout.addWidget(self._calculation_status)
         results_layout.addWidget(self._result_table)
+        results_layout.addWidget(self._breakdown_label)
+        results_layout.addWidget(self._breakdown_table)
+        results_layout.addWidget(self._breakdown_hint)
         layout.addWidget(results_group, 1)
         layout.addStretch(1)
 
@@ -5293,12 +5314,29 @@ class MagneticFieldWidget(QWidget):
         if self._host_structure is None:
             self._structure_summary.setText("Magnetic structure: no host structure")
             self._classification.setText("Structure type: -")
+            self._set_summary_rows(self._component_summary_table, ())
+            self._component_summary_table.setVisible(False)
             return
         count = len(self._model.components)
-        disabled = count - len(enabled_magnetic_components(self._model))
+        enabled = enabled_magnetic_components(self._model)
+        disabled = count - len(enabled)
         plural = "" if count == 1 else "s"
         suffix = f" ({disabled} disabled)" if disabled else ""
         self._structure_summary.setText(f"Magnetic structure: {count} component{plural}{suffix}")
+        self._set_summary_rows(
+            self._component_summary_table,
+            [
+                (
+                    component.label,
+                    component.kind.replace("_", " ").title(),
+                    _selector_label(component.selector, self._host_structure),
+                    _component_q_label(self._model, component),
+                    _component_moment_label(component),
+                )
+                for component in enabled
+            ],
+        )
+        self._component_summary_table.setVisible(bool(enabled))
         if count == disabled:
             self._classification.setText("Structure type: -")
             return
@@ -5434,6 +5472,38 @@ class MagneticFieldWidget(QWidget):
         edit.setToolTip("Set to zero to omit the contact hyperfine contribution.")
         edit.setMinimumWidth(104)
         return edit
+
+    @staticmethod
+    def _summary_table(headers: tuple[str, ...], *, stretch_column: int) -> QTableWidget:
+        """Build a read-only table that grows to fit its first rows and scrolls beyond them."""
+
+        table = create_workflow_table(
+            headers,
+            resize_to_contents_columns=tuple(column for column in range(len(headers)) if column != stretch_column),
+            selection_mode=QAbstractItemView.SelectionMode.NoSelection,
+            stretch_last_section=stretch_column == len(headers) - 1,
+        )
+        table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table.setSizeAdjustPolicy(QAbstractItemView.SizeAdjustPolicy.AdjustToContents)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        return table
+
+    @classmethod
+    def _set_summary_rows(cls, table: QTableWidget, rows: Sequence[Sequence[str]]) -> None:
+        table.setRowCount(0)
+        for values in rows:
+            row = table.rowCount()
+            table.insertRow(row)
+            for column, value in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(str(value)))
+        table.resizeRowsToContents()
+        visible_rows = min(table.rowCount(), cls._SUMMARY_MAX_VISIBLE_ROWS)
+        table.setMaximumHeight(
+            table.horizontalHeader().sizeHint().height()
+            + sum(table.rowHeight(row) for row in range(visible_rows))
+            + 2 * table.frameWidth()
+            + 2
+        )
 
     def _configure_result_table_columns(self) -> None:
         header = self._result_table.horizontalHeader()
@@ -5759,6 +5829,7 @@ class MagneticFieldWidget(QWidget):
         return contact_coupling_to_angstrom_minus3(value, self._current_hyperfine_unit())
 
     def _on_demag_shape_toggled(self, checked: bool) -> None:
+        self._advanced_demag_summary.setVisible(self._advanced_demag_radio.isChecked())
         if checked:
             self._on_form_setting_changed()
 
@@ -5867,6 +5938,43 @@ class MagneticFieldWidget(QWidget):
         self._result_table.setRowCount(0)
         self._calculation_status.setText("Results: -")
         self._sync_distribution_plot_button()
+        self._refresh_field_breakdown()
+
+    def _refresh_field_breakdown(self) -> None:
+        """List the field terms that sum to the selected commensurate result row."""
+
+        rows: list[tuple[str, ...]] = []
+        hint = ""
+        selected_rows = sorted({item.row() for item in self._result_table.selectedItems()})
+        state = self._field_results_state
+        results = state.get("results") if isinstance(state, Mapping) else None
+        if not selected_rows or not isinstance(results, Sequence) or isinstance(results, (str, bytes)):
+            hint = "Select a result row to see its field terms." if self._result_table.rowCount() else ""
+        elif state.get("kind") != "commensurate":
+            hint = (
+                "Incommensurate distributions are sampled as a combined field; "
+                "the term breakdown is available for commensurate results."
+            )
+        elif selected_rows[0] >= len(results) or not isinstance(results[selected_rows[0]], Mapping):
+            hint = "Select a result row to see its field terms."
+        else:
+            payload = results[selected_rows[0]]
+            for label, key in self._BREAKDOWN_TERMS:
+                vector = np.asarray(payload.get(key, ()), dtype=float)
+                if vector.shape == (3,):
+                    rows.append((label, *(f"{value:.6g}" for value in vector), f"{np.linalg.norm(vector):.6g}"))
+            if not rows:
+                hint = "This saved result has no term breakdown; recalculate to see it."
+            else:
+                total = np.asarray(payload.get("total_T", (0.0, 0.0, 0.0)), dtype=float)
+                rows.append(("Total", *(f"{value:.6g}" for value in total), f"{np.linalg.norm(total):.6g}"))
+                if len(selected_rows) > 1:
+                    hint = f"Showing {payload.get('site_label', 'the first selected site')}."
+        self._set_summary_rows(self._breakdown_table, rows)
+        self._breakdown_label.setVisible(bool(rows))
+        self._breakdown_table.setVisible(bool(rows))
+        self._breakdown_hint.setText(hint)
+        self._breakdown_hint.setVisible(bool(hint))
 
     def _populate_commensurate_results(self, results: object) -> None:
         self._distribution_results = []
@@ -5880,6 +5988,8 @@ class MagneticFieldWidget(QWidget):
                 float(result.magnitude),
                 "field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD,
             )
+        if self._result_table.rowCount() > 0:
+            self._result_table.selectRow(0)
 
     def _populate_distribution_results(self, results: object) -> None:
         self._distribution_results = list(results)
@@ -5922,6 +6032,8 @@ class MagneticFieldWidget(QWidget):
                 magnitude = float(result.get("magnitude_T", np.linalg.norm(total)))
                 result_type = _DISTORTION_CORRECTED_FIELD if "distortion_T" in result else "field"
                 self._append_result_row(str(result.get("site_label", "site")), total, magnitude, result_type)
+            if self._result_table.rowCount() > 0:
+                self._result_table.selectRow(0)
             self._calculation_status.setText(f"Results: restored {len(result_payloads)} commensurate field value(s).")
         elif kind == "distribution":
             self._distribution_results = result_payloads

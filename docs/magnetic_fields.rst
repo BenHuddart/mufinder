@@ -12,17 +12,18 @@ A typical pass through the page is:
    open the ``Magnetic Structure Builder`` and define the magnetic model (see
    `Builder UI`_); optionally enter a ``Hyperfine coupling`` in ``Å⁻³``,
    ``T/μB``, or ``MHz/μB`` for the contact term;
-2. choose a demagnetizing-field shape in the ``Demagnetizing Field`` card (see
-   `Demagnetizing-Field Setup`_);
-3. click ``Select Muon Site...`` in the ``Muon Site`` card (see
+2. click ``Select Muon Site...`` in the ``Muon Site`` card (see
    `Muon-Site Selection`_), and tick ``Include equivalent sites`` to calculate
    all symmetry-equivalent positions of that site;
-4. review ``Calculation Settings...`` and click ``Calculate Dipolar Field``.
-   Results appear in the table below (``Site``, ``Bx (T)``, ``By (T)``,
-   ``Bz (T)``, ``|B| (T)``, ``Result``); for an incommensurate result, select
-   its row and click ``Open Distribution Plot`` to view the field-magnitude
-   histogram, which ``Export Data...`` saves to a file;
-5. optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
+3. in the ``Calculation`` card, choose a ``Demagnetizing field`` shape (see
+   `Demagnetizing-Field Setup`_), review ``Calculation Settings...`` and click
+   ``Calculate Dipolar Field``. Results appear in the table below (``Site``,
+   ``Bx (T)``, ``By (T)``, ``Bz (T)``, ``|B| (T)``, ``Result``); a commensurate
+   result row also lists its field terms (see `Field Terms`_), and for an
+   incommensurate result, select its row and click ``Open Distribution Plot``
+   to view the field-magnitude histogram, which ``Export Data...`` saves to a
+   file;
+4. optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card.
 
 The save button in the page header stores the current magnetic structure and
@@ -137,8 +138,12 @@ Supercell`` controls, atom selection, and live structure viewer:
   component is disabled the preview and structure type are empty.
 
 The ``Magnetic Structure`` card on the page reports how many components the
-accepted model has and how many of them are disabled. ``Calculate Dipolar
-Field`` stays disabled until at least one component is enabled.
+accepted model has and how many of them are disabled, and lists every enabled
+component with its ``Type``, the atoms it applies to (``Apply to``), its ``q``
+as a basis combination and r.l.u. vector, and its ``Moment``, using the same
+descriptions as the builder table. The list shows up to eight rows and scrolls
+beyond that. ``Calculate Dipolar Field`` stays disabled until at least one
+component is enabled.
 
 Components can currently be applied to all atoms, to atoms of a species, to a
 symmetry-equivalent atom group, or to atoms selected in the builder preview. The
@@ -367,9 +372,9 @@ stops with an error, and dipolar tensors always use the pristine host.
 Demagnetizing-Field Setup
 -------------------------
 
-The ``Demagnetizing Field`` card offers quick choices for the common limiting
-cases and an ``Advanced shape`` option, configured through the ``Advanced...``
-button, for shape-specific tensors:
+The ``Demagnetizing field`` row at the top of the ``Calculation`` card offers
+quick choices for the common limiting cases and an ``Advanced shape`` option,
+configured through the ``Advanced...`` button, for shape-specific tensors:
 
 ``None``
    No demagnetizing-field correction is added.
@@ -379,8 +384,8 @@ button, for shape-specific tensors:
 
 ``Infinite plate``
    Uses the exact plate limit with demagnetizing factor 1 along the plate normal
-   and 0 along the in-plane directions. The current simple card uses the
-   crystal ``c`` axis as the plate normal.
+   and 0 along the in-plane directions. This quick choice uses the crystal
+   ``c`` axis as the plate normal.
 
 ``Advanced shape``
    ``Advanced...`` opens a dedicated shape window. The first implemented advanced shapes are
@@ -627,7 +632,9 @@ are intended to make convergence checks and later result persistence auditable.
 
 Beyond the dipolar sum, the field calculation includes:
 
-- the Lorentz field (always included in field calculations);
+- the Lorentz field. It is part of the Lorentz-sphere evaluation of the
+  dipolar sum, not an optional extra, so it is always included and reported as
+  its own term (see `Field Terms`_);
 - the contact hyperfine term, when a ``Hyperfine coupling`` is entered;
 - the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
@@ -637,6 +644,19 @@ Beyond the dipolar sum, the field calculation includes:
 
 Dipolar tensors from selected magnetic-ion positions and the nuclear-relaxation
 distortion correction are available through their own dialogs.
+
+Field Terms
+~~~~~~~~~~~
+
+Selecting a commensurate result row lists, under the results table, the terms
+that sum to its field: ``Dipolar``, ``Lorentz``, ``Contact``,
+``Demagnetizing``, ``Distortion correction`` (only for corrected rows) and
+``Applied``, each as ``Bx (T)``, ``By (T)``, ``Bz (T)`` and ``|B| (T)``, followed
+by their ``Total``. A newly calculated or restored commensurate result selects
+its first row. With several rows selected, the first selected row is shown. A
+saved result that stores only its total asks for a recalculation instead.
+Incommensurate distributions are sampled as one combined field, so they show a
+note instead of a breakdown.
 
 Dependency Handling
 -------------------

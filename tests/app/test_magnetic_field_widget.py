@@ -385,8 +385,23 @@ def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tm
     restored = MagneticStructureModel.from_json(payloads[-1])
     assert [component.enabled for component in restored.components] == [True, False]
 
+    summary = widget._component_summary_table
+    assert not summary.isHidden()
+    assert summary.rowCount() == 1
+    assert [summary.horizontalHeaderItem(column).text() for column in range(summary.columnCount())] == [
+        "Component",
+        "Type",
+        "Apply to",
+        "q",
+        "Moment",
+    ]
+    assert summary.item(0, 0).text() == "One"
+    assert summary.item(0, 2).text() == "Selected atoms: 1"
+
     widget._set_model(MagneticStructureModel(components=(replace(_component("one", "One", 0), enabled=False),)))
     assert widget._structure_summary.text() == "Magnetic structure: 1 component (1 disabled)"
+    assert summary.isHidden()
+    assert summary.rowCount() == 0
     assert widget._classification.text() == "Structure type: -"
     assert not widget._calculate_button.isEnabled()
     widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
@@ -2572,6 +2587,141 @@ def test_magnetic_field_widget_restores_distribution_results(qapp, tmp_path) -> 
     assert widget._result_table.item(0, 5).text() == "distribution mean"
     assert widget._open_distribution_button.isEnabled()
     assert widget._selected_distribution_results()[0]["site_label"] == "site 1"
+    widget.close()
+
+
+def test_magnetic_field_widget_scrolls_a_long_component_summary(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-long-summary.mufinder", "Magnetic Long Summary")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    summary = widget._component_summary_table
+
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    short_height = summary.maximumHeight()
+    assert summary.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+
+    limit = MagneticFieldWidget._SUMMARY_MAX_VISIBLE_ROWS
+    components = tuple(_component(f"c{index}", f"C{index}", index % 2) for index in range(limit + 4))
+    widget._set_model(MagneticStructureModel(components=components))
+    assert summary.rowCount() == limit + 4
+    capped_height = summary.maximumHeight()
+    assert short_height < capped_height
+    assert capped_height < summary.horizontalHeader().sizeHint().height() + sum(
+        summary.rowHeight(row) for row in range(summary.rowCount())
+    )
+    widget.close()
+
+
+def test_magnetic_field_widget_places_demagnetizing_controls_in_the_calculation_group(qapp) -> None:
+    widget = MagneticFieldWidget()
+
+    for control in (
+        widget._sphere_radio,
+        widget._plate_radio,
+        widget._none_radio,
+        widget._advanced_demag_radio,
+        widget._advanced_demag_button,
+        widget._advanced_demag_summary,
+    ):
+        assert control.parentWidget().title() == "Calculation"
+    assert widget._advanced_demag_summary.isHidden()
+    widget._advanced_demag_radio.setChecked(True)
+    assert not widget._advanced_demag_summary.isHidden()
+    widget._sphere_radio.setChecked(True)
+    assert widget._advanced_demag_summary.isHidden()
+    widget.close()
+
+
+def _breakdown_rows(widget: MagneticFieldWidget) -> list[list[str]]:
+    table = widget._breakdown_table
+    return [[table.item(row, column).text() for column in range(table.columnCount())] for row in range(table.rowCount())]
+
+
+def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-breakdown.mufinder", "Magnetic Breakdown")
+    service.add_structure(document, _host_structure())
+    result = magnetic_fields_module.MagneticFieldResult(
+        site_label="muon 1",
+        muon_position=(0.25, 0.5, 0.75),
+        dipolar=(0.1, 0.0, 0.0),
+        lorentz=(0.0, 0.2, 0.0),
+        contact=(0.0, 0.0, 0.3),
+        demag=(0.0, -0.4, 0.0),
+        applied=(0.0, 0.0, 0.0),
+    )
+    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
+    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *_args, **_kwargs: (result,))
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    assert widget._breakdown_table.isHidden()
+
+    widget._calculate_fields()
+
+    expected = [
+        ["Dipolar", "0.1", "0", "0", "0.1"],
+        ["Lorentz", "0", "0.2", "0", "0.2"],
+        ["Contact", "0", "0", "0.3", "0.3"],
+        ["Demagnetizing", "0", "-0.4", "0", "0.4"],
+        ["Applied", "0", "0", "0", "0"],
+        ["Total", "0.1", "-0.2", "0.3", f"{np.linalg.norm([0.1, -0.2, 0.3]):.6g}"],
+    ]
+    assert not widget._breakdown_table.isHidden()
+    assert _breakdown_rows(widget) == expected
+    assert widget._breakdown_hint.isHidden()
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(widget.collect_state())
+    assert _breakdown_rows(restored) == expected
+    restored.close()
+
+    widget._clear_results(clear_state=True)
+    assert widget._breakdown_table.isHidden()
+    assert widget._breakdown_table.rowCount() == 0
+    widget.close()
+
+
+def test_magnetic_field_widget_explains_results_without_a_term_breakdown(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-no-breakdown.mufinder", "Magnetic No Breakdown")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+
+    widget.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "site 1", "total_T": [0.0, 0.0, 1.0], "magnitude_T": 1.0}],
+            }
+        }
+    )
+    assert widget._breakdown_table.isHidden()
+    assert widget._breakdown_hint.text() == "This saved result has no term breakdown; recalculate to see it."
+
+    widget.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "distribution",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "muon_position": [0.0, 0.0, 0.0],
+                        "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                        "histogram_centres_T": [1.0, 3.0],
+                        "histogram_counts": [1.0, 1.0],
+                    }
+                ],
+            }
+        }
+    )
+    assert widget._breakdown_table.isHidden()
+    assert "available for commensurate results" in widget._breakdown_hint.text()
     widget.close()
 
 
