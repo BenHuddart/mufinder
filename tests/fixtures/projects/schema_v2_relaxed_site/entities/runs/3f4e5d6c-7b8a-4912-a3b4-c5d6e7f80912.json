@@ -1,0 +1,12 @@
+{
+  "completed_at": null,
+  "convergence_achieved": true,
+  "definition_id": null,
+  "id": "3f4e5d6c-7b8a-4912-a3b4-c5d6e7f80912",
+  "job_id": "75fec760-3aa4-4f34-b452-ca05f0e74650",
+  "result_id": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+  "run_index": 1,
+  "started_at": null,
+  "status": "completed",
+  "warnings": []
+}

@@ -397,13 +397,21 @@ Cluster profiles and connections
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``Setup > HPC Clusters`` stores cluster profiles globally, including built-in
-SCARF and Redwood presets.
+SCARF and Redwood presets. The dialog lists the saved clusters on the left,
+with ``Add``, ``Duplicate`` and ``Remove``, and edits the selected one in four
+tabs: ``Connection``, ``Scheduler``, ``Queues`` and ``Keyword generation``.
+Edits are kept per cluster while switching between them and are saved together
+on ``OK``. ``Remove`` (or Delete/Backspace in the cluster list) asks first.
+Cluster names must differ by more than letter case.
 
 - A profile sets the hostname, username, queue system, default working
   directory, cores per node, default walltime and CASTEP executable path, plus
-  a submission-script template path for SLURM profiles and a default
-  queue/partition and ``Default memory per core (GB)`` for ``addqueue``
-  profiles.
+  a submission-script template path for SLURM profiles (blank uses the
+  built-in SLURM template) and ``Default memory per core (GB)`` for
+  ``addqueue`` profiles. Walltimes use SLURM's formats (``HH:MM:SS``,
+  ``D-HH:MM:SS`` and the shorter forms) and are checked on save.
+- A profile lists its queues (SLURM partitions or ``addqueue`` queues); see
+  `Cluster queues`_.
 - A SLURM profile may set a default per-CPU memory request, which pre-seeds the
   submission dialog. It is off by default, so a profile without it generates
   batch scripts with no memory directive (see `SLURM memory requests`_).
@@ -412,11 +420,29 @@ SCARF and Redwood presets.
 - The Redwood preset targets ``glamdring.physics.ox.ac.uk`` through the Physics
   gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately for the
   Physics/bastion and Glamdring credentials because those accounts can differ.
-- On macOS, eligible Redwood/Glamdring password-auth profiles can opt into
-  read-only Keychain password lookup. The entries use the same services as
-  ``glamdring-tools``: ``security add-generic-password -a <physics_username>
-  -s bastion -w`` and ``security add-generic-password -a
-  <glamdring_username> -s glamdring -w``.
+  The preset submits with ``/usr/local/shared/bin/addqueue``; a saved profile
+  keeps whatever submit command path it was saved with.
+- On macOS and Linux, eligible Redwood/Glamdring password-auth profiles can
+  opt into read-only system keyring password lookup, so neither password is
+  prompted for. MuFinder reads existing entries and never stores passwords.
+  On macOS the entries live in the login Keychain and use the same services
+  as ``glamdring-tools``: ``security add-generic-password -a
+  <physics_username> -s bastion -w`` and ``security add-generic-password -a
+  <glamdring_username> -s glamdring -w``. On Linux they live in the Secret
+  Service keyring (GNOME Keyring or KWallet), are read with
+  ``/usr/bin/secret-tool`` (Ubuntu package ``libsecret-tools``) and are
+  created with ``secret-tool store --label=<label> service bastion account
+  <physics_username>`` and ``secret-tool store --label=<label> service
+  glamdring account <glamdring_username>``; the keyring must be unlocked in
+  the desktop session. The setup dialog's ``?`` button shows the exact
+  commands for the current platform. The lookup runs off the GUI thread, so a
+  keyring waiting on an unlock prompt never freezes the window; if it takes
+  noticeably long, a busy dialog appears whose ``Cancel`` button (or Escape)
+  abandons the lookup without connecting. A lookup that fails, finds an empty
+  password or does not finish within 120 seconds stops the connection and
+  lists the missing entries with their setup commands. The persisted
+  ``use_macos_keychain_passwords`` setting enables the lookup on both
+  platforms.
 - Scheduler commands (submit, queue, cancel) can be given explicit paths. A
   command without a configured path is located by probing the
   non-interactive SSH shell.
@@ -433,28 +459,76 @@ SCARF and Redwood presets.
   freezes the GUI; unknown-host-key prompts appear on the GUI thread and the
   check retries automatically once the key is trusted.
 
+Cluster queues
+~~~~~~~~~~~~~~
+
+A cluster with several queues is one profile, not one profile per queue. The
+``Queues`` tab lists the profile's queues in a table and picks the default
+queue. Each queue has a name and optional overrides of the profile's values:
+default walltime, maximum walltime, cores per node, memory (``Memory per CPU
+(GB)`` for SLURM, ``Memory per core (GB)`` for ``addqueue``), CASTEP executable
+and, for SLURM, the template script. A blank cell uses the profile's value from
+the ``Scheduler`` tab; the maximum walltime has no profile value, and a queue
+without one has no limit that MuFinder checks.
+
+- Saving refuses (by ``queue_issues`` in
+  ``mufinder.services.cluster_queues``) a queue without a name, a repeated
+  name, a name that would need shell quoting (letters, digits, ``.``, ``_``
+  and ``-``, with commas between several SLURM partitions), an unreadable
+  walltime, a default walltime above the maximum (including one inherited
+  from the profile), and a cores-per-node or memory value that is not
+  positive. The dialog also
+  refuses to switch to another cluster until the table is valid, so no cell
+  is dropped unseen. Removing a queue asks first, from the button or
+  Delete/Backspace. Renaming the default queue keeps it the default.
+- ``ClusterConfig.for_queue`` resolves a queue's overrides onto its profile.
+  The submission planner applies the chosen queue's template, cores per node
+  and executable to every job of a submission, and keyword generation runs
+  on the default queue with its overrides.
+- A profile saved before queues existed, holding a single
+  ``default_queue_name``, loads unchanged and shows that queue as one row with
+  no overrides (see :doc:`compatibility_policy`).
+
 Cluster submission and monitoring
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - ``Run All on Cluster`` / ``Run Selected on Cluster`` opens a dialog that
   chooses the cluster and overrides its runtime settings for this submission.
+- ``Queue or partition`` lists the profile's queues for SLURM and ``addqueue``
+  alike, starting on the default queue. Picking a queue fills cores per job,
+  maximum runtime and memory from that queue; a hint shows the queue's
+  maximum walltime, and says so when the job template sets its own partition.
+  A name the profile does not list can be typed and is submitted as it is.
+  The dialog refuses a walltime above the queue's maximum and a queue name
+  that would need quoting. The last-used queue is remembered per project with
+  the other last-used settings.
 - MuFinder uploads the generated ``.cell`` / ``.param`` inputs and submits
   them to the cluster's scheduler. SLURM submission runs ``sbatch`` on a
-  populated script template and captures the scheduler job id, with an
-  optional ``#SBATCH --mem-per-cpu`` request (see `SLURM memory requests`_).
-  Redwood submission runs ``addqueue`` with the runtime controls ``Queue or
-  partition``, ``Memory per core (GB)`` and ``Submission note``, in
-  sbatch-compatible response mode so the job id parses reliably.
+  populated script template and captures the scheduler job id, with the
+  chosen queue as an ``#SBATCH -p`` directive and an optional
+  ``#SBATCH --mem-per-cpu`` request (see `SLURM memory requests`_). The
+  partition is written into the script, never passed to ``sbatch``, and is
+  left out when the template already names one with ``-p`` or
+  ``--partition`` (as the built-in SCARF template does), so a hand-written
+  partition wins. Redwood submission runs ``addqueue`` with the chosen queue
+  as ``-q`` and the runtime controls ``Memory per core (GB)`` and
+  ``Submission note``, in sbatch-compatible response mode so the job id parses
+  reliably.
 - Cluster submission refuses job labels containing anything other than letters,
   digits, ``.``, ``_`` and ``-``, because remote paths and scheduler commands
   use the label directly; the cluster runner checks each seed name again before
   submitting. Remote job directories are deleted recursively over SFTP, never
   through a remote shell command.
 - Jump-host submissions show separate credential fields for the gateway and
-  the target cluster. With the macOS Keychain option enabled, submission and
-  reconnect use the Keychain entries instead of password prompts.
+  the target cluster. With the system keyring option enabled, submission and
+  reconnect use the keyring entries instead of password prompts.
 - When a matching cluster connection is already active, submission reuses it
   and does not ask for a password or passphrase again.
+- Reconnecting reuses the password or passphrase cached from the last
+  connection only while the profile keeps the same name, host, port and
+  username for both the target and the jump host, and the jump host stays
+  enabled or disabled; after any of them changes, the cached secret is never
+  offered to the new endpoint.
 - The dashboard shows each job's execution target (``Cluster``, which reads
   ``local`` for local jobs), remote job id, a live ``Runtime`` and the process
   count used at submission, with a connection-state indicator and a manual
@@ -692,8 +766,10 @@ derived structures of the job's own earlier runs as a fallback for records
 written before that property existed; the label is deliberately not a key,
 because a muon-relaxation job is labelled with its site label alone and one
 site's two charge states share it. The muon site's
-``status``/``relaxation_run_id``/``total_energy_eV`` are rewritten from the
-same completion, so the site and the structure always describe the same run.
+``status``/``relaxation_run_id``/``total_energy_eV``/``relaxed_fractional_position``
+are rewritten from the same completion, so the site and the structure always
+describe the same run. Removing the job's records unlinks the site again: it
+returns to ``staged`` and drops the energy and relaxed position it copied.
 
 *A stale ``-out.cell`` fails the job.* A continuation re-uses its job directory,
 so the previous run's relaxed structure is still sitting where the completion

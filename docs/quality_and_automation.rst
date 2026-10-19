@@ -290,6 +290,11 @@ Merges should be blocked when either gate fails.
 Branch workflow
 ---------------
 
+Pull requests are restricted to repository collaborators through the
+repository's *Collaborators only* pull-request setting. Anyone can open an
+issue. ``CONTRIBUTING.md`` states this policy for outside readers, and the
+``.github/ISSUE_TEMPLATE/`` forms structure bug reports and feature requests.
+
 The expected branch lifecycle is:
 
 1. Branch short-lived ``feature/*`` (or ``fix/*``) branches off ``main``. Small

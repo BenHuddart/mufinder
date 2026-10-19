@@ -90,13 +90,24 @@ class ComparisonTable:
 
 @dataclass(slots=True)
 class MuonSite:
-    """Muon stopping-site representation across workflow stages."""
+    """Muon stopping-site representation across workflow stages.
+
+    ``initial_fractional_position`` / ``initial_cartesian_position`` hold the
+    position the site was generated (or staged) at, in the host cell, and never
+    change when the site is relaxed. ``relaxed_fractional_position`` holds the
+    relaxed muon position folded into the host cell while the site is linked to
+    a completed relaxation run (``relaxation_run_id``), and ``None`` otherwise.
+    The run's result stays the record; the site field is a convenience copy kept
+    in step with it. :meth:`current_fractional_position` answers "where is the
+    muon now".
+    """
 
     id: UUID = field(default_factory=uuid4)
     label: str = ""
     status: str = "generated"
-    fractional_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    cartesian_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    initial_fractional_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    initial_cartesian_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    relaxed_fractional_position: list[float] | None = None
     generation_method: str | None = None
     source_generation_batch_id: UUID | None = None
     source_structure_id: UUID | None = None
@@ -106,6 +117,60 @@ class MuonSite:
     cluster_id: UUID | None = None
     symmetry_label: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
+
+    def current_fractional_position(self) -> list[float]:
+        """Return the relaxed host-cell position when known, else the initial one."""
+
+        if self.relaxed_fractional_position is not None:
+            return self.relaxed_fractional_position
+        return self.initial_fractional_position
+
+    def record_relaxation(
+        self,
+        run_id: UUID,
+        *,
+        total_energy_eV: float | None,
+        fractional_position: Iterable[float] | None,
+    ) -> None:
+        """Mark the site relaxed by ``run_id`` with its host-cell final position."""
+
+        self.status = "relaxed"
+        self.relaxation_run_id = run_id
+        self.total_energy_eV = total_energy_eV
+        self.relaxed_fractional_position = (
+            [float(value) for value in fractional_position] if fractional_position is not None else None
+        )
+
+    def clear_relaxation(self) -> None:
+        """Unlink the site from its relaxation run and drop the values copied from it."""
+
+        self.relaxation_run_id = None
+        self.total_energy_eV = None
+        self.relaxed_fractional_position = None
+        if self.status == "relaxed":
+            self.status = "staged"
+
+    # Attribute aliases for the names the initial position had before it was
+    # renamed; see the compatibility ledger. Constructors take the new names.
+    @property
+    def fractional_position(self) -> list[float]:
+        """Alias of :attr:`initial_fractional_position`."""
+
+        return self.initial_fractional_position
+
+    @fractional_position.setter
+    def fractional_position(self, value: list[float]) -> None:
+        self.initial_fractional_position = value
+
+    @property
+    def cartesian_position(self) -> list[float]:
+        """Alias of :attr:`initial_cartesian_position`."""
+
+        return self.initial_cartesian_position
+
+    @cartesian_position.setter
+    def cartesian_position(self, value: list[float]) -> None:
+        self.initial_cartesian_position = value
 
 
 @dataclass(slots=True)
@@ -176,7 +241,7 @@ MANUAL_DEFAULT_METHOD = "manual"
 
 #: Saved-project schema version this code writes. Older projects are upgraded
 #: on load by ``mufinder.persistence.migrations``.
-PROJECT_SCHEMA_VERSION = 2
+PROJECT_SCHEMA_VERSION = 3
 
 
 @dataclass(slots=True)

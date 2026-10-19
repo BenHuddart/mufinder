@@ -174,7 +174,7 @@ def _candidate_layers(document: ProjectDocument, host: Structure) -> list[Survey
     sites = [site for site in document.sites.values() if site.source_structure_id in (None, host.id)]
     markers = tuple(
         SurveyMarker(
-            _wrap(site.fractional_position),
+            _wrap(site.initial_fractional_position),
             SurveyMarkerKind.CANDIDATE,
             detail=f"{site.label or 'Candidate'} · {_method_label(site.generation_method)} · {site.status}",
         )
@@ -208,7 +208,7 @@ def _relaxation_layers(document: ProjectDocument, host: Structure) -> list[Surve
     by_charge_state: dict[str, list[SurveyMarker]] = {}
     for label, charge_state, site_id, job in rows:
         site = document.sites.get(site_id) if site_id is not None else None
-        start = _wrap(site.fractional_position) if site is not None else None
+        start = _wrap(site.initial_fractional_position) if site is not None else None
         source = completed_by_job.get(job.id) if job is not None else None
         markers = by_charge_state.setdefault(charge_state, [])
         if source is not None:
@@ -276,7 +276,7 @@ def _quantum_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
             if site is None or result is None or not isinstance(result.data, Mapping):
                 continue
             zpe = _float(result.data.get("muon_zpe_total_eV"))
-            position = _relaxed_site_position(document, site.relaxation_run_id) or _wrap(site.fractional_position)
+            position = _wrap(site.current_fractional_position())
             if zpe is None:
                 continue
             markers.append(
@@ -439,15 +439,6 @@ def _mapped_jobs(
             if job is not None:
                 yield str(key), job
         return
-
-
-def _relaxed_site_position(document: ProjectDocument, run_id: UUID | None) -> Fractional | None:
-    run = document.runs.get(run_id) if run_id is not None else None
-    result = document.results.get(run.result_id) if run is not None and run.result_id is not None else None
-    if result is None or not isinstance(result.data, Mapping):
-        return None
-    position = _triplet(result.data.get("muon_final_fractional_position_host"))
-    return _wrap(position) if position is not None else None
 
 
 def _host_fractional_from_cartesian(value: object, host: Structure) -> Fractional | None:

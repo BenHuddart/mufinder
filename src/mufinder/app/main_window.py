@@ -14,7 +14,6 @@ import posixpath
 import re
 import shutil
 import stat
-import threading
 import time
 from typing import TypeVar
 from uuid import UUID, uuid4
@@ -84,6 +83,7 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
 from mufinder.app.comparison_job_dialog import ComparisonJobDialog
 from mufinder.app.comparison_table_widget import ComparisonTableWidget
+from mufinder.app.blocking_call import run_blocking_call
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
     make_message_box_resizable,
@@ -4283,60 +4283,12 @@ class MainWindow(QMainWindow):
         Preserves the caller's synchronous semantics (returns the result,
         re-raises the exception) while pumping the event loop, so the retry
         backoff against OneDrive/antivirus file locks and large recursive
-        deletes cannot freeze the window. The window is disabled while the
-        operation runs to prevent re-entrant user actions, and a busy dialog
-        appears only when the operation takes noticeably long.
+        deletes cannot freeze the window. User input is held back while the
+        operation runs, and a busy dialog appears only when it takes
+        noticeably long.
         """
 
-        outcome: dict[str, object] = {}
-        done = threading.Event()
-
-        def _worker() -> None:
-            try:
-                outcome["result"] = op()
-            except BaseException as exc:  # noqa: BLE001 - re-raised on the GUI thread
-                outcome["error"] = exc
-            finally:
-                done.set()
-
-        worker = threading.Thread(target=_worker, name="mufinder-file-op", daemon=True)
-        loop = QEventLoop()
-        progress: QProgressDialog | None = None
-        started = time.monotonic()
-        poll = QTimer(self)
-        poll.setInterval(25)
-
-        def _tick() -> None:
-            nonlocal progress
-            if done.is_set():
-                loop.quit()
-                return
-            if progress is None and time.monotonic() - started > 0.4:
-                progress = QProgressDialog(description, None, 0, 0, self)
-                progress.setWindowTitle("Working on files")
-                progress.setWindowModality(Qt.WindowModality.WindowModal)
-                progress.setMinimumDuration(0)
-                progress.show()
-
-        poll.timeout.connect(_tick)
-        was_enabled = self.isEnabled()
-        self.setEnabled(False)
-        worker.start()
-        poll.start()
-        try:
-            if not done.is_set():
-                loop.exec()
-        finally:
-            poll.stop()
-            poll.deleteLater()
-            if progress is not None:
-                progress.close()
-            self.setEnabled(was_enabled)
-            worker.join()
-        error = outcome.get("error")
-        if isinstance(error, BaseException):
-            raise error
-        return outcome.get("result")
+        return run_blocking_call(self, op, title="Working on files", description=description)
 
     def _delete_path(self, path: Path) -> None:
         if path.is_dir():
@@ -4443,10 +4395,7 @@ class MainWindow(QMainWindow):
         for site in self._document.sites.values():
             if site.relaxation_run_id not in run_id_set:
                 continue
-            site.relaxation_run_id = None
-            site.total_energy_eV = None
-            if site.status == "relaxed":
-                site.status = "staged"
+            site.clear_relaxation()
 
         for result_id in result_ids:
             self._document.results.pop(result_id, None)
@@ -7086,7 +7035,7 @@ class MainWindow(QMainWindow):
             {
                 "id": str(site.id),
                 "label": site.label,
-                "fractional_position": list(site.fractional_position),
+                "fractional_position": list(site.initial_fractional_position),
                 "method": site.generation_method or "",
             }
             for site in staged
@@ -10526,8 +10475,8 @@ class MainWindow(QMainWindow):
                 "label": site.label,
                 "method": site.generation_method or "",
                 "status": site.status,
-                "fractional": site.fractional_position,
-                "cartesian": site.cartesian_position,
+                "fractional": site.initial_fractional_position,
+                "cartesian": site.initial_cartesian_position,
                 "source_structure_id": str(site.source_structure_id) if site.source_structure_id else "",
             }
             for site in candidates

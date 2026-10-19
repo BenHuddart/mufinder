@@ -507,7 +507,7 @@ def _row_payload(
     """
 
     # Host frame, not the supercell frame the input cell states it in. Every
-    # other relaxation row takes this field from ``MuonSite.fractional_position``
+    # other relaxation row takes this field from ``MuonSite.initial_fractional_position``
     # (host coordinates), and job expansion converts host -> supercell on the way
     # out. Storing supercell coordinates here would show the wrong numbers in the
     # table's Initial columns and, if the row were ever re-expanded, transform
@@ -638,12 +638,10 @@ def commit_legacy_import(
             mulliken_spins=None,
         )
 
-        # A site records where the muon *started*, not where it ended up: the
-        # native completion path updates status, run id and energy and never
-        # rewrites the coordinates. The relaxed position lives on the derived
-        # structure and in the result payload, where the rest of the app looks
-        # for it. Diverging here would make imported sites mean something
-        # different from every other site in the project.
+        # The site's initial position is where the muon *started*; the native
+        # completion path never rewrites it. The relaxed host-cell position is
+        # copied to ``relaxed_fractional_position`` below from the same value
+        # the result payload records, exactly as a native completion does.
         initial_host = _fold_to_host(
             run.initial_muon_fractional_supercell
             or run.final_muon_fractional_supercell
@@ -653,13 +651,12 @@ def commit_legacy_import(
         site = MuonSite(
             label=label,
             status="relaxed",
-            fractional_position=list(initial_host),
-            cartesian_position=lattice_frac_to_cart(
+            initial_fractional_position=list(initial_host),
+            initial_cartesian_position=lattice_frac_to_cart(
                 initial_host, host_structure.lattice_vectors
             ),
             generation_method="imported_legacy",
             source_structure_id=host_structure.id,
-            total_energy_eV=run.total_energy,
             properties={"import_batch_id": str(batch), "legacy_site_index": run.site_index},
         )
 
@@ -669,20 +666,25 @@ def commit_legacy_import(
             completed_at=utc_now(),
             convergence_achieved=run.converged,
         )
-        site.relaxation_run_id = run_record.id
-
         final_supercell = run.final_muon_fractional_supercell
+        final_host = (
+            _fold_to_host(final_supercell, run.supercell_matrix) if final_supercell is not None else None
+        )
+        site.record_relaxation(
+            run_record.id,
+            total_energy_eV=run.total_energy,
+            fractional_position=final_host,
+        )
+
         payload: dict[str, Any] = {
             "completed": True,
             "total_energy": run.total_energy,
             "geom_converged": run.converged,
             "imported": True,
         }
-        if final_supercell is not None:
+        if final_supercell is not None and final_host is not None:
             payload["muon_final_fractional_position_supercell"] = list(final_supercell)
-            payload["muon_final_fractional_position_host"] = list(
-                _fold_to_host(final_supercell, run.supercell_matrix)
-            )
+            payload["muon_final_fractional_position_host"] = list(final_host)
         lattice_a, lattice_b, lattice_c = (
             vector_length(row) for row in relaxed.lattice_vectors
         )
