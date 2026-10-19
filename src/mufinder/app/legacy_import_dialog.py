@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.theme import style_section_subtitle, style_section_title, track_item_view_corners
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.services.legacy_import import DetectedRun, LegacyFolderScan, scan_legacy_folder
 
@@ -218,6 +218,7 @@ class LegacyImportDialog(QDialog):
             layout.addWidget(summary)
 
         self._table = QTableWidget(0, 7, self)
+        track_item_view_corners(self._table)
         self._table.setHorizontalHeaderLabels(
             ["Import", "Site", "Charge", "Status", "Supercell", "Energy (eV)", "Notes"]
         )

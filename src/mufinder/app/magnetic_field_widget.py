@@ -66,6 +66,7 @@ from mufinder.app.theme import (
     style_section_title,
     style_small_checked_tool_button,
     use_square_top_table_corners,
+    track_item_view_corners,
 )
 from mufinder.app import workflow_table_utils
 from mufinder.app.workflow_table_utils import create_workflow_table
@@ -2180,6 +2181,7 @@ class MagneticComponentTable(QTableWidget):
     ) -> None:
         super().__init__(rows, columns, parent)
         self._delete_callback = delete_callback
+        track_item_view_corners(self)
         self.viewport().installEventFilter(self)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
@@ -4270,6 +4272,7 @@ class DipolarTensorResultsDialog(QDialog):
                 pass
 
         table = QTableWidget(3, 3, group)
+        track_item_view_corners(table)
         table.setHorizontalHeaderLabels(["x", "y", "z"])
         table.setVerticalHeaderLabels(["x", "y", "z"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -4632,6 +4635,7 @@ class DipolarTensorDialog(QDialog):
             except (TypeError, ValueError):
                 pass
         table = QTableWidget(3, 3, group)
+        track_item_view_corners(table)
         table.setHorizontalHeaderLabels(["x", "y", "z"])
         table.setVerticalHeaderLabels(["x", "y", "z"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

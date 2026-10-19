@@ -326,7 +326,15 @@ def refresh_widget_style(widget: QWidget) -> None:
 
 
 class _TableCornerStyler(QObject):
-    """Toggle item-view corner styling based on scrollbar/header visibility."""
+    """Toggle item-view corner styling based on scrollbar/header visibility.
+
+    The styler watches only the item views attached to it (and their vertical
+    scroll bars), never the whole application: an application-wide Python event
+    filter runs for every Qt event on every object and dominated the cost of
+    building the main window. Views are attached where they are created, through
+    ``track_item_view_corners`` (called by the shared table helpers), and
+    ``attach_existing_tables`` sweeps up any view that predates the styler.
+    """
 
     _TABLE_WATCH_EVENTS = {
         QEvent.Type.Show,
@@ -339,6 +347,7 @@ class _TableCornerStyler(QObject):
         QEvent.Type.Hide,
         QEvent.Type.Resize,
     }
+    _WATCH_EVENTS = _TABLE_WATCH_EVENTS | _BAR_WATCH_EVENTS
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
 
@@ -362,9 +371,9 @@ class _TableCornerStyler(QObject):
             return
         for widget in app.allWidgets():
             if self._is_supported_item_view(widget):
-                self._attach_table(widget)
+                self.attach_table(widget)
 
-    def _attach_table(self, table: QWidget) -> None:
+    def attach_table(self, table: QWidget) -> None:
         if bool(table.property("_cornerStylerAttached")):
             return
 
@@ -405,15 +414,20 @@ class _TableCornerStyler(QObject):
             return
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        # Only attached views and their scroll bars reach this filter, but they
+        # still see every paint and mouse event, so reject on type first.
+        event_type = event.type()
+        if event_type not in self._WATCH_EVENTS:
+            return False
         try:
             if self._is_supported_item_view(watched):
-                self._attach_table(watched)
-                if event.type() in self._TABLE_WATCH_EVENTS:
+                if event_type in self._TABLE_WATCH_EVENTS:
                     self._sync_table_corner_property(watched)
             elif self._is_scrollbar(watched):
-                table = self._table_for_bar(watched)
-                if table is not None and event.type() in self._BAR_WATCH_EVENTS:
-                    self._sync_table_corner_property(table)
+                if event_type in self._BAR_WATCH_EVENTS:
+                    table = self._table_for_bar(watched)
+                    if table is not None:
+                        self._sync_table_corner_property(table)
         except (RuntimeError, SystemError):
             return False
         return False
@@ -450,6 +464,7 @@ class _TableCornerStyler(QObject):
             try:
                 if self._is_supported_item_view(widget):
                     widget.removeEventFilter(self)
+                    widget.setProperty("_cornerStylerAttached", False)
                 elif self._is_scrollbar(widget):
                     widget.removeEventFilter(self)
                     try:
@@ -489,9 +504,23 @@ def _ensure_table_corner_styler(app: QApplication) -> None:
 
     if _TABLE_CORNER_STYLER is None or _TABLE_CORNER_STYLER.parent() is not app:
         _TABLE_CORNER_STYLER = _TableCornerStyler(app)
-        app.installEventFilter(_TABLE_CORNER_STYLER)
 
     _TABLE_CORNER_STYLER.attach_existing_tables()
+
+
+def track_item_view_corners(view: QTableWidget | QTreeWidget) -> None:
+    """Keep ``view``'s corner-styling properties in step with its scroll bar and header.
+
+    Sets ``hasVerticalScrollbar`` and ``hasVisibleVerticalHeader`` on the view and
+    updates them as it is shown, resized or restyled and as its scroll range
+    changes. The shared table helpers call this; call it directly for a
+    ``QTableWidget`` or ``QTreeWidget`` built without them. Before the theme is
+    applied this does nothing, and ``apply_theme`` attaches the view instead.
+    """
+
+    styler = _TABLE_CORNER_STYLER
+    if styler is not None:
+        styler.attach_table(view)
 
 
 def cleanup_theme_runtime(app: QApplication | None = None) -> None:
@@ -510,13 +539,6 @@ def cleanup_theme_runtime(app: QApplication | None = None) -> None:
         styler.shutdown()
     except (RuntimeError, SystemError):
         pass
-
-    target_app = app if app is not None else QApplication.instance()
-    if target_app is not None:
-        try:
-            target_app.removeEventFilter(styler)
-        except (RuntimeError, SystemError):
-            pass
 
     try:
         styler.deleteLater()
@@ -709,6 +731,7 @@ def use_square_top_table_corners(table: QTableWidget | QTreeWidget) -> None:
     """Opt a table/tree item view into square top corners for titled container layouts."""
 
     table.setProperty("squareTopCorners", "true")
+    track_item_view_corners(table)
     _repolish_widget(table)
     if isinstance(table, QTableWidget):
         _repolish_widget(table.horizontalHeader())

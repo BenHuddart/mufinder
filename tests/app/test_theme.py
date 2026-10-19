@@ -334,10 +334,12 @@ def test_dark_palette_uses_night_expedition_accent(qapp) -> None:
     assert palette.seal_gold == "#D4A853"
 
 
-def test_table_corner_property_tracks_vertical_scrollbar(qapp) -> None:
+def test_workflow_table_factory_tracks_vertical_scrollbar(qapp) -> None:
+    from mufinder.app.workflow_table_utils import create_workflow_table
+
     theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
-    table = QTableWidget(0, 1)
+    table = create_workflow_table(("Name",), show_vertical_header=True)
     table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     table.resize(320, 140)
     table.show()
@@ -355,10 +357,11 @@ def test_table_corner_property_tracks_vertical_scrollbar(qapp) -> None:
     assert table.property("hasVerticalScrollbar") == "false"
 
 
-def test_table_corner_property_tracks_vertical_header_visibility(qapp) -> None:
+def test_tracked_table_follows_vertical_header_visibility(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
     table = QTableWidget(0, 1)
+    theme_module.track_item_view_corners(table)
     table.show()
     qapp.processEvents()
 
@@ -371,6 +374,77 @@ def test_table_corner_property_tracks_vertical_header_visibility(qapp) -> None:
     table.verticalHeader().setVisible(True)
     qapp.processEvents()
     assert table.property("hasVisibleVerticalHeader") == "true"
+
+
+def test_apply_theme_attaches_tables_built_before_the_theme(qapp) -> None:
+    theme_module.cleanup_theme_runtime(qapp)
+
+    table = QTableWidget(0, 1)
+    theme_module.track_item_view_corners(table)
+    table.resize(320, 140)
+    table.show()
+    qapp.processEvents()
+    assert table.property("hasVerticalScrollbar") is None
+
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert table.property("hasVerticalScrollbar") == "false"
+    assert table.property("hasVisibleVerticalHeader") == "true"
+
+    table.setRowCount(80)
+    qapp.processEvents()
+    assert table.property("hasVerticalScrollbar") == "true"
+
+
+def test_reapplied_theme_reattaches_tables_after_cleanup(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    table = QTableWidget(0, 1)
+    theme_module.track_item_view_corners(table)
+    table.resize(320, 140)
+    table.show()
+    qapp.processEvents()
+
+    theme_module.cleanup_theme_runtime(qapp)
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    table.setRowCount(80)
+    qapp.processEvents()
+    assert table.property("hasVerticalScrollbar") == "true"
+
+
+def test_untracked_table_is_not_watched_by_an_application_filter(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    table = QTableWidget(0, 1)
+    table.show()
+    qapp.processEvents()
+
+    assert table.property("hasVerticalScrollbar") is None
+
+
+def test_every_app_item_view_is_attached_to_the_corner_styler() -> None:
+    """Every QTableWidget/QTreeWidget built in ``mufinder.app`` opts into corner tracking.
+
+    No application-wide event filter discovers item views, so a module that builds
+    one must attach it through ``track_item_view_corners`` or a helper that calls it.
+    """
+
+    import re
+    from pathlib import Path
+
+    app_dir = Path(theme_module.__file__).parent
+    constructs_view = re.compile(r"\bQ(?:Table|Tree)Widget\(|class \w+\(Q(?:Table|Tree)Widget\)")
+    attaches_view = re.compile(
+        r"\b(?:track_item_view_corners|use_square_top_table_corners|use_tabbed_table_corners)\("
+    )
+    missing = sorted(
+        path.name
+        for path in app_dir.glob("*.py")
+        if path.name != "theme.py"
+        and constructs_view.search(text := path.read_text(encoding="utf-8"))
+        and len(attaches_view.findall(text)) < len(constructs_view.findall(text))
+    )
+
+    assert missing == []
 
 
 def test_use_square_top_table_corners_sets_property(qapp) -> None:
@@ -392,12 +466,13 @@ def test_use_tabbed_table_corners_sets_tabbed_and_square_properties(qapp) -> Non
     assert table.property("squareTopCorners") == "true"
 
 
-def test_tree_corner_property_tracks_vertical_scrollbar(qapp) -> None:
+def test_square_corner_helper_tracks_tree_vertical_scrollbar(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
     tree = QTreeWidget()
     tree.setColumnCount(1)
     tree.setHeaderLabels(["Name"])
+    theme_module.use_square_top_table_corners(tree)
     tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     tree.resize(320, 140)
     tree.show()

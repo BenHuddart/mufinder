@@ -40,7 +40,13 @@ from mufinder.app.cluster_ui_utils import (
     show_detailed_warning,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.theme import style_help_button, style_hint_text, style_inline_group, style_tab_widget
+from mufinder.app.theme import (
+    style_help_button,
+    style_hint_text,
+    style_inline_group,
+    style_tab_widget,
+    track_item_view_corners,
+)
 from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
 from mufinder.domain.cluster import ClusterConfig, ClusterQueue
@@ -350,6 +356,7 @@ class ClusterSetupDialog(QDialog):
         tab_layout.addLayout(default_row)
 
         self._queue_table = QTableWidget(0, len(_QUEUE_HEADERS), tab)
+        track_item_view_corners(self._queue_table)
         self._queue_table.setHorizontalHeaderLabels(list(_QUEUE_HEADERS))
         self._queue_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._queue_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
