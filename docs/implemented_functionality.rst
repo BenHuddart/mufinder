@@ -196,7 +196,10 @@ propagation-vector formalism, including from the host spins and as skyrmion or
 custom Fourier textures, from components that can be edited, duplicated,
 reordered and disabled without deleting them, with a panel that shows and
 edits the stored propagation-vector basis and which components use each row,
-and calculates at a chosen muon site:
+a component q taken from a basis row or a combination of rows, guided helix,
+conical, cycloid and spin-density-wave presets set from the crystal axes, and
+a checklist that tracks the build and flags disabled, zero-moment and
+unpreviewed incommensurate structures, and calculates at a chosen muon site:
 
 - the dipolar field of commensurate structures, optionally corrected for the
   host-ion displacements in a relaxed muon supercell at the site and its

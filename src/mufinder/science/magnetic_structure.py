@@ -561,6 +561,395 @@ def set_q_basis_vector(
     return edited
 
 
+def q_basis_combination_rlu(model: MagneticStructureModel, q_coeff: Sequence[float]) -> np.ndarray:
+    """Return the wavevector, in r.l.u., of a combination of the model's stored q-basis rows.
+
+    Every row the combination uses must hold a non-zero vector, and the
+    combination itself must be non-zero: a component with q = 0 needs no row.
+    """
+
+    coeff = _as_float_array(q_coeff, "q_coeff")
+    if not np.all(np.isfinite(coeff)):
+        raise MagneticStructureError("q-basis coefficients must be finite")
+    used = [index for index, value in enumerate(coeff) if abs(float(value)) > _Q_COEFF_TOLERANCE]
+    if not used:
+        raise MagneticStructureError("choose at least one q-basis row, or enter q = 0 directly")
+    basis = model.q_basis_array
+    for index in used:
+        if np.allclose(basis[index], 0.0, atol=_Q_COEFF_TOLERANCE):
+            raise MagneticStructureError(f"q{index + 1} is not set; store a propagation vector in it first")
+    q_rlu = coeff @ basis
+    if np.allclose(q_rlu, 0.0, atol=_Q_COEFF_TOLERANCE):
+        raise MagneticStructureError(
+            f"{q_coeff_expression(coeff)} gives q = 0; enter q = 0 directly instead of combining rows"
+        )
+    return q_rlu
+
+
+@dataclass(frozen=True, slots=True)
+class BuilderChecklistItem:
+    """One step of the magnetic-structure builder's checklist, derived from model state.
+
+    ``state`` is ``"done"``, ``"todo"`` or ``"problem"``; ``detail`` says why.
+    """
+
+    key: str
+    title: str
+    state: str
+    detail: str = ""
+
+
+CHECKLIST_DONE = "done"
+CHECKLIST_TODO = "todo"
+CHECKLIST_PROBLEM = "problem"
+_CRYSTAL_AXIS_NAMES = ("a", "b", "c")
+
+
+def magnetic_period_along_axes(
+    q_vectors_rlu: Sequence[Sequence[float]],
+    *,
+    tolerance: float = 1e-8,
+    max_period: int = 64,
+) -> tuple[int | None, ...]:
+    """Return the cell repeats along a, b and c that one magnetic period needs.
+
+    Each axis's period is the least common multiple, over ``q_vectors_rlu``, of
+    the smallest ``n <= max_period`` with ``n * q`` an integer along that axis.
+    An axis is ``None`` when some wavevector is incommensurate along it.
+    """
+
+    periods: list[int | None] = [1, 1, 1]
+    for raw in q_vectors_rlu:
+        q = _as_float_array(raw, "q_rlu")
+        for axis in range(3):
+            if periods[axis] is None:
+                continue
+            period = next(
+                (
+                    n
+                    for n in range(1, int(max_period) + 1)
+                    if abs(n * float(q[axis]) - round(n * float(q[axis]))) <= float(tolerance)
+                ),
+                None,
+            )
+            periods[axis] = None if period is None else int(np.lcm(int(periods[axis]), period))
+    return tuple(periods)
+
+
+def magnetic_builder_checklist(
+    model: MagneticStructureModel,
+    *,
+    has_host: bool,
+    preview_repeats: Sequence[int],
+    max_preview_repeat: int = 12,
+) -> tuple[BuilderChecklistItem, ...]:
+    """Describe how far a builder model is from being ready, and what is wrong with it.
+
+    The steps are: components added (from host spins or by hand), the q basis
+    set, the preview supercell checked, and ready to use. A step is a problem
+    when every component is disabled, an enabled component has zero moment, an
+    enabled component uses a zero q-basis row, or the preview does not repeat
+    along an axis where a wavevector is incommensurate. A commensurate period
+    longer than ``max_preview_repeat`` only asks for the largest preview.
+    """
+
+    repeats = _as_supercell_repeats(preview_repeats)
+    enabled = enabled_magnetic_components(model)
+    items: list[BuilderChecklistItem] = []
+
+    components_title = "Add components or build them from host spins"
+    zero_moment = [
+        component.label
+        for component in enabled
+        if all(np.allclose(term.coefficient.to_array(), 0.0, atol=_Q_COEFF_TOLERANCE) for term in component.terms)
+    ]
+    if not has_host:
+        items.append(BuilderChecklistItem("components", components_title, CHECKLIST_TODO, "Load a host structure first."))
+    elif not model.components:
+        items.append(
+            BuilderChecklistItem(
+                "components",
+                components_title,
+                CHECKLIST_TODO,
+                "Use Add Component, Add Preset... or Build From Host Spins.",
+            )
+        )
+    elif not enabled:
+        items.append(
+            BuilderChecklistItem(
+                "components",
+                components_title,
+                CHECKLIST_PROBLEM,
+                "Every component is disabled, so the structure has no moments.",
+            )
+        )
+    elif zero_moment:
+        items.append(
+            BuilderChecklistItem(
+                "components",
+                components_title,
+                CHECKLIST_PROBLEM,
+                "Zero moment: " + ", ".join(f"'{label}'" for label in zero_moment) + ".",
+            )
+        )
+    else:
+        items.append(
+            BuilderChecklistItem(
+                "components",
+                components_title,
+                CHECKLIST_DONE,
+                f"{len(model.components)} component(s), {len(enabled)} enabled.",
+            )
+        )
+
+    basis_title = "Set the propagation-vector basis"
+    basis = model.q_basis_array
+    used_rows = sorted({index for component in enabled for index in component_q_basis_indices(component)})
+    zero_rows = [index for index in used_rows if np.allclose(basis[index], 0.0, atol=_Q_COEFF_TOLERANCE)]
+    if not enabled:
+        items.append(BuilderChecklistItem("q_basis", basis_title, CHECKLIST_TODO, "Add or enable a component first."))
+    elif zero_rows:
+        rows = ", ".join(f"q{index + 1}" for index in zero_rows)
+        items.append(
+            BuilderChecklistItem(
+                "q_basis",
+                basis_title,
+                CHECKLIST_PROBLEM,
+                f"{rows} is used by an enabled component but holds no propagation vector.",
+            )
+        )
+    elif not used_rows:
+        items.append(
+            BuilderChecklistItem(
+                "q_basis", basis_title, CHECKLIST_DONE, "Not needed: every enabled component has q = 0."
+            )
+        )
+    else:
+        rows = ", ".join(f"q{index + 1}" for index in used_rows)
+        items.append(BuilderChecklistItem("q_basis", basis_title, CHECKLIST_DONE, f"Enabled components use {rows}."))
+
+    preview_title = "Check the preview supercell"
+    wavevectors = [
+        model.q_coeff_to_rlu(term.q_coeff)
+        for component in enabled
+        for term in component.terms
+        if not np.allclose(term.coefficient.to_array(), 0.0, atol=_Q_COEFF_TOLERANCE)
+    ]
+    repeat_text = "×".join(str(value) for value in repeats)
+    if not wavevectors:
+        items.append(BuilderChecklistItem("preview", preview_title, CHECKLIST_TODO, "Nothing to preview yet."))
+    else:
+        periods = magnetic_period_along_axes(wavevectors)
+        needed = [None if period is None else min(period, int(max_preview_repeat)) for period in periods]
+        partial = any(period is not None and period > int(max_preview_repeat) for period in periods)
+        unrepeated = [
+            _CRYSTAL_AXIS_NAMES[axis] for axis, period in enumerate(periods) if period is None and repeats[axis] < 2
+        ]
+        short = [axis for axis, count in enumerate(needed) if count is not None and repeats[axis] < count]
+        if unrepeated:
+            axes = ", ".join(unrepeated)
+            items.append(
+                BuilderChecklistItem(
+                    "preview",
+                    preview_title,
+                    CHECKLIST_PROBLEM,
+                    f"q is incommensurate along {axes} but the preview does not repeat along it; "
+                    "raise that repeat to see the modulation.",
+                )
+            )
+        elif short:
+            target = "×".join(
+                str(repeats[axis] if count is None else max(repeats[axis], count)) for axis, count in enumerate(needed)
+            )
+            goal = "The largest preview needs" if partial else "One magnetic cell needs"
+            items.append(
+                BuilderChecklistItem(
+                    "preview",
+                    preview_title,
+                    CHECKLIST_TODO,
+                    f"{goal} a {target} preview; it shows {repeat_text}.",
+                )
+            )
+        elif any(period is None for period in periods):
+            items.append(
+                BuilderChecklistItem(
+                    "preview",
+                    preview_title,
+                    CHECKLIST_DONE,
+                    f"The {repeat_text} preview repeats along every incommensurate axis.",
+                )
+            )
+        elif partial:
+            items.append(
+                BuilderChecklistItem(
+                    "preview",
+                    preview_title,
+                    CHECKLIST_DONE,
+                    f"The magnetic cell is longer than the largest preview; {repeat_text} shows part of it.",
+                )
+            )
+        else:
+            items.append(
+                BuilderChecklistItem(
+                    "preview",
+                    preview_title,
+                    CHECKLIST_DONE,
+                    f"The {repeat_text} preview shows at least one whole magnetic cell.",
+                )
+            )
+
+    ready_title = "Use the structure"
+    if all(item.state == CHECKLIST_DONE for item in items):
+        items.append(
+            BuilderChecklistItem("ready", ready_title, CHECKLIST_DONE, "Ready: Use Structure stores it for field calculations.")
+        )
+    elif any(item.state == CHECKLIST_PROBLEM for item in items):
+        items.append(BuilderChecklistItem("ready", ready_title, CHECKLIST_TODO, "Fix the flagged steps first."))
+    else:
+        items.append(BuilderChecklistItem("ready", ready_title, CHECKLIST_TODO, "Finish the steps above first."))
+    return tuple(items)
+
+
+MAGNETIC_PRESET_KINDS = ("helix", "conical", "cycloid", "spin_density_wave")
+
+
+def q_cartesian_direction(lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]) -> np.ndarray:
+    """Return the Cartesian unit vector along ``q_rlu`` for a lattice whose rows are a, b and c."""
+
+    q = _as_float_array(q_rlu, "q_rlu")
+    if np.allclose(q, 0.0, atol=_Q_COEFF_TOLERANCE):
+        raise MagneticStructureError("q must be non-zero to define a propagation direction")
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    if lattice.shape != (3, 3):
+        raise MagneticStructureError("lattice_vectors must have shape (3, 3)")
+    try:
+        cartesian = np.linalg.solve(lattice, q)
+    except np.linalg.LinAlgError as exc:
+        raise MagneticStructureError("lattice_vectors must be linearly independent") from exc
+    return _unit_vector(cartesian, "q direction")
+
+
+def crystal_axis_direction(lattice_vectors: Sequence[Sequence[float]], axis: str) -> np.ndarray:
+    """Return the Cartesian unit vector along crystal axis ``"a"``, ``"b"`` or ``"c"``."""
+
+    name = str(axis).strip().lower()
+    if name not in _CRYSTAL_AXIS_NAMES:
+        raise MagneticStructureError("crystal axis must be 'a', 'b' or 'c'")
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    if lattice.shape != (3, 3):
+        raise MagneticStructureError("lattice_vectors must have shape (3, 3)")
+    return _unit_vector(lattice[_CRYSTAL_AXIS_NAMES.index(name)], f"axis {name}")
+
+
+def reciprocal_axis_q_rlu(axis: str, wavevector: float) -> tuple[float, float, float]:
+    """Return the r.l.u. wavevector ``wavevector`` along reciprocal axis ``a*``, ``b*`` or ``c*``."""
+
+    name = str(axis).strip().lower().rstrip("*")
+    if name not in _CRYSTAL_AXIS_NAMES:
+        raise MagneticStructureError("reciprocal axis must be 'a*', 'b*' or 'c*'")
+    value = float(wavevector)
+    if not np.isfinite(value) or abs(value) <= _Q_COEFF_TOLERANCE:
+        raise MagneticStructureError("the wavevector must be a non-zero number of r.l.u.")
+    q = [0.0, 0.0, 0.0]
+    q[_CRYSTAL_AXIS_NAMES.index(name)] = value
+    return (q[0], q[1], q[2])
+
+
+def default_preset_reference_axis(lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]) -> str:
+    """Return the crystal axis most nearly perpendicular to ``q_rlu``, the default reference for a preset."""
+
+    q_direction = q_cartesian_direction(lattice_vectors, q_rlu)
+    return min(
+        _CRYSTAL_AXIS_NAMES,
+        # Rounding lets ties between equally perpendicular axes fall to the first, a before b before c.
+        key=lambda name: round(abs(float(crystal_axis_direction(lattice_vectors, name) @ q_direction)), 9),
+    )
+
+
+def build_magnetic_preset_component(
+    kind: str,
+    *,
+    lattice_vectors: Sequence[Sequence[float]],
+    q_rlu: Sequence[float],
+    q_coeff: Sequence[float],
+    moment: float,
+    reference_axis: str,
+    selector: AtomSelector,
+    label: str = "",
+    handedness: int = 1,
+    cone_angle_degrees: float = 45.0,
+    phase_turns: float = 0.0,
+    component_id: str | None = None,
+) -> MagneticComponent:
+    """Build a helix, conical, cycloid or spin-density-wave component from crystal axes.
+
+    ``q_rlu`` sets the propagation direction and ``q_coeff`` is how the
+    component stores it in the model's q basis. ``reference_axis`` (``"a"``,
+    ``"b"`` or ``"c"``) places the moments relative to the crystal:
+
+    * helix and conical: the rotation plane is perpendicular to q and the
+      moment points along the reference axis, projected into that plane, at
+      zero phase; a conical component's cone axis is q;
+    * cycloid: the rotation plane holds q and the reference axis;
+    * spin-density wave: the moment is modulated along the reference axis.
+
+    ``handedness`` (+1 or -1) sets the sense of rotation, as in the
+    component dialog. The moment maths is the existing component builders'.
+    """
+
+    preset = str(kind).strip().lower()
+    if preset not in MAGNETIC_PRESET_KINDS:
+        raise MagneticStructureError("preset kind must be helix, conical, cycloid or spin_density_wave")
+    size = float(moment)
+    if not np.isfinite(size) or size <= 0.0:
+        raise MagneticStructureError("the moment must be positive")
+    if int(handedness) not in {-1, 1}:
+        raise MagneticStructureError("handedness must be +1 or -1")
+    q_direction = q_cartesian_direction(lattice_vectors, q_rlu)
+    reference = crystal_axis_direction(lattice_vectors, reference_axis)
+    kwargs = {
+        "selector": selector,
+        "q_coeff": q_coeff,
+        "phase_turns": phase_turns,
+        "component_id": component_id,
+    }
+    if preset == "spin_density_wave":
+        return build_spin_density_wave_component(
+            label=label or "Spin-density wave", amplitude_vector=size * reference, **kwargs
+        )
+    projected = reference - float(reference @ q_direction) * q_direction
+    if float(np.linalg.norm(projected)) <= 1e-6:
+        raise MagneticStructureError(
+            f"axis {str(reference_axis).strip().lower()} is parallel to q; choose a reference axis that is not"
+        )
+    primary = projected / float(np.linalg.norm(projected))
+    sign = float(int(handedness))
+    if preset == "cycloid":
+        return build_cycloid_component(
+            label=label or "Cycloid",
+            real_axis_vector=size * primary,
+            imaginary_axis_vector=size * sign * q_direction,
+            **kwargs,
+        )
+    secondary = sign * np.cross(q_direction, primary)
+    if preset == "conical":
+        return build_conical_component(
+            label=label or "Conical",
+            total_moment=size,
+            real_axis_direction=primary,
+            imaginary_axis_direction=secondary,
+            static_axis_direction=q_direction,
+            cone_angle_degrees=cone_angle_degrees,
+            **kwargs,
+        )
+    return build_helix_component(
+        label=label or "Helix",
+        real_axis_vector=size * primary,
+        imaginary_axis_vector=size * secondary,
+        **kwargs,
+    )
+
+
 def viable_atom_selectors(
     structure: Structure,
     *,
