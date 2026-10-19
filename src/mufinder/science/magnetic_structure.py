@@ -408,6 +408,147 @@ def move_magnetic_components(
     return replace(model, components=tuple(components))
 
 
+_Q_COEFF_TOLERANCE = 1e-12
+_Q_BASIS_MATCH_TOLERANCE = 1e-9
+# Component kinds whose moment plane or cone axis is constructed from the q direction.
+_Q_DIRECTION_COMPONENT_KINDS = frozenset({"helix", "cycloid", "conical"})
+
+
+@dataclass(frozen=True, slots=True)
+class QBasisSlot:
+    """One row of a model's stored propagation-vector basis and the components that use it.
+
+    ``component_ids`` lists, in model order, every component (enabled or not)
+    with a Fourier term whose ``q_coeff`` has a non-zero entry for this row.
+    ``texture_component_ids`` is the subset that are grouped textures.
+    ``direction_component_ids`` is the subset whose moment plane or cone axis
+    was built from the q direction (helix, cycloid and conical components).
+    """
+
+    index: int
+    q_rlu: tuple[float, float, float]
+    component_ids: tuple[str, ...] = ()
+    texture_component_ids: tuple[str, ...] = ()
+    direction_component_ids: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        return f"q{self.index + 1}"
+
+    @property
+    def in_use(self) -> bool:
+        return bool(self.component_ids)
+
+
+def is_texture_component(component: MagneticComponent) -> bool:
+    """Return whether ``component`` is a grouped multi-q texture."""
+
+    return component.kind == "texture" or component.metadata.get("type") == "texture"
+
+
+def q_basis_slots(model: MagneticStructureModel) -> tuple[QBasisSlot, ...]:
+    """Describe each of the model's three q-basis rows and which components reference it."""
+
+    users: list[list[str]] = [[], [], []]
+    texture_users: list[list[str]] = [[], [], []]
+    direction_users: list[list[str]] = [[], [], []]
+    for component in model.components:
+        for index in component_q_basis_indices(component):
+            users[index].append(component.component_id)
+            if is_texture_component(component):
+                texture_users[index].append(component.component_id)
+            elif component.kind in _Q_DIRECTION_COMPONENT_KINDS:
+                direction_users[index].append(component.component_id)
+    return tuple(
+        QBasisSlot(
+            index=index,
+            q_rlu=tuple(float(value) for value in row),
+            component_ids=tuple(users[index]),
+            texture_component_ids=tuple(texture_users[index]),
+            direction_component_ids=tuple(direction_users[index]),
+        )
+        for index, row in enumerate(model.q_basis_array)
+    )
+
+
+def component_q_basis_indices(component: MagneticComponent) -> tuple[int, ...]:
+    """Return the sorted q-basis row indices that any of ``component``'s terms reference."""
+
+    used: set[int] = set()
+    for term in component.terms:
+        for index, value in enumerate(tuple(term.q_coeff)[:3]):
+            if abs(float(value)) > _Q_COEFF_TOLERANCE:
+                used.add(index)
+    return tuple(sorted(used))
+
+
+def q_coeff_expression(q_coeff: Sequence[float]) -> str:
+    """Write a q-basis coefficient vector as a combination of ``q1``, ``q2`` and ``q3``.
+
+    ``(1, 0, 0)`` is ``q1``, ``(1, -1, 0)`` is ``q1 − q2``, ``(-1, -1, 0)`` is
+    ``−q1 − q2`` and ``(0.5, 0, 0)`` is ``0.5q1``. An all-zero vector is ``0``.
+    """
+
+    parts: list[str] = []
+    for index, raw in enumerate(tuple(q_coeff)[:3]):
+        value = float(raw)
+        if abs(value) <= _Q_COEFF_TOLERANCE:
+            continue
+        magnitude = abs(value)
+        scale = "" if abs(magnitude - 1.0) <= _Q_COEFF_TOLERANCE else f"{magnitude:.4g}"
+        term = f"{scale}q{index + 1}"
+        if not parts:
+            parts.append(term if value > 0 else f"−{term}")
+        else:
+            parts.append(f"+ {term}" if value > 0 else f"− {term}")
+    return " ".join(parts) or "0"
+
+
+def set_q_basis_vector(
+    model: MagneticStructureModel,
+    index: int,
+    q_rlu: Sequence[float],
+) -> MagneticStructureModel:
+    """Store ``q_rlu`` in q-basis row ``index``; every component using that row follows it.
+
+    Components keep their ``q_coeff`` values, so a component that references the
+    row changes wavevector with it. A row used by a grouped texture cannot be
+    edited here, because the texture's moment directions were built from its
+    q directions; edit the texture instead. A row used by a helix, cycloid or
+    conical component can only be rescaled along its current direction, since
+    those moment planes and cone axes were built from it. A row that a
+    component uses cannot be set to zero, and no two rows may hold the same
+    non-zero vector.
+    """
+
+    if not 0 <= int(index) < 3:
+        raise MagneticStructureError("q-basis row index must be 0, 1 or 2")
+    q = _as_float_array(q_rlu, "q_rlu")
+    if not np.all(np.isfinite(q)):
+        raise MagneticStructureError("q_rlu must be finite")
+    slot = q_basis_slots(model)[int(index)]
+    if slot.texture_component_ids:
+        raise MagneticStructureError(
+            f"{slot.label} is used by a texture; edit the texture to change its propagation vectors"
+        )
+    if slot.in_use and np.allclose(q, 0.0, atol=_Q_COEFF_TOLERANCE):
+        raise MagneticStructureError(
+            f"{slot.label} is used by a component, so it cannot be zero; edit the component to make it q = 0"
+        )
+    if slot.direction_component_ids and not _is_positive_multiple(q, np.asarray(slot.q_rlu, dtype=float)):
+        raise MagneticStructureError(
+            f"{slot.label} is used by a helix, cycloid or conical component, whose moments were built "
+            "around its direction; enter a positive multiple of the current vector, or edit the component"
+        )
+    basis =[tuple(float(value) for value in row) for row in model.q_basis_array]
+    if not np.allclose(q, 0.0, atol=_Q_COEFF_TOLERANCE):
+        for other, row in enumerate(basis):
+            if other != int(index) and np.allclose(row, q, atol=_Q_BASIS_MATCH_TOLERANCE, rtol=0.0):
+                raise MagneticStructureError(f"q{other + 1} already holds this propagation vector")
+    basis[int(index)] = tuple(float(value) for value in q)
+    return replace(model, q_basis_rlu=tuple(basis))
+
+
 def viable_atom_selectors(
     structure: Structure,
     *,
@@ -1375,6 +1516,16 @@ def _as_float_array(values: Sequence[float], name: str) -> np.ndarray:
     if arr.shape != (3,):
         raise MagneticStructureError(f"{name} must be a three-vector")
     return arr
+
+
+def _is_positive_multiple(vector: np.ndarray, reference: np.ndarray) -> bool:
+    """Return whether non-zero ``vector`` points the same way as non-zero ``reference``."""
+
+    norm = float(np.linalg.norm(vector))
+    reference_norm = float(np.linalg.norm(reference))
+    if norm <= _Q_COEFF_TOLERANCE or reference_norm <= _Q_COEFF_TOLERANCE:
+        return False
+    return bool(np.allclose(vector / norm, reference / reference_norm, atol=1e-9, rtol=0.0))
 
 
 def _unit_vector(values: Sequence[float], name: str) -> np.ndarray:

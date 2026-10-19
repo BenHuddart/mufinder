@@ -11,6 +11,7 @@ import pytest
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, Qt
 from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QGridLayout, QScrollArea
+from PySide6.QtTest import QTest
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
@@ -1173,6 +1174,148 @@ def test_magnetic_structure_builder_finite_q_after_zero_q_component_uses_free_ba
 
     assert q_basis[0] == (0.0, 0.0, 0.5)
     assert q_coeff == (1.0, 0.0, 0.0)
+    dialog.close()
+
+
+def _q_component(component_id: str, label: str, q_coeff, kind: str = "spin_density_wave", **kwargs) -> MagneticComponent:
+    return MagneticComponent(
+        component_id=component_id,
+        label=label,
+        kind=kind,
+        selector=AtomSelector.indices([0]),
+        terms=(FourierTerm(q_coeff, ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+        **kwargs,
+    )
+
+
+def _builder_with_q_basis(tmp_path, q_basis, *components: MagneticComponent) -> MagneticStructureBuilderDialog:
+    dialog = _builder_with_components(tmp_path)
+    dialog._set_model(MagneticStructureModel(q_basis_rlu=q_basis, components=components))
+    return dialog
+
+
+def _q_basis_texts(dialog: MagneticStructureBuilderDialog, column: int) -> list[str]:
+    return [dialog._q_basis_table.item(row, column).text() for row in range(3)]
+
+
+def test_magnetic_structure_builder_q_basis_panel_shows_rows_and_their_users(qapp, tmp_path) -> None:
+    texture = _q_component(
+        "texture", "Skyrmion", (1.0, -1.0, 0.0), kind="texture", metadata={"type": "texture"}
+    )
+    dialog = _builder_with_q_basis(
+        tmp_path,
+        ((0.25, 0.0, 0.0), (0.0, 0.25, 0.0), (0.0, 0.0, 0.0)),
+        _q_component("sdw", "SDW", (1.0, 0.0, 0.0)),
+        replace(texture, enabled=False),
+    )
+    table = dialog._q_basis_table
+
+    assert [table.horizontalHeaderItem(column).text() for column in range(3)] == ["Row", "q (r.l.u.)", "Used by"]
+    assert _q_basis_texts(dialog, 0) == ["q1", "q2", "q3"]
+    assert _q_basis_texts(dialog, 1) == ["0.25, 0, 0", "0, 0.25, 0", "0, 0, 0"]
+    assert _q_basis_texts(dialog, 2) == ["SDW, Skyrmion (disabled)", "Skyrmion (disabled)", "Unused"]
+    assert table.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable == Qt.ItemFlag.NoItemFlags
+    assert "texture" in table.item(0, 1).toolTip()
+    assert table.item(2, 1).flags() & Qt.ItemFlag.ItemIsEditable
+    assert dialog._component_table.item(0, 4).text() == "q1 = (0.25, 0, 0)"
+    assert dialog._component_table.item(1, 4).text() == "q1 − q2 = (0.25, -0.25, 0)"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_q_basis_panel_highlights_selected_components_rows(qapp, tmp_path) -> None:
+    dialog = _builder_with_q_basis(
+        tmp_path,
+        ((0.25, 0.0, 0.0), (0.0, 0.25, 0.0), (0.0, 0.0, 0.0)),
+        _q_component("one", "One", (1.0, 0.0, 0.0)),
+        _q_component("two", "Two", (0.0, 1.0, 0.0)),
+    )
+    table = dialog._q_basis_table
+
+    assert not any(table.item(row, 0).font().bold() for row in range(3))
+    _select_builder_rows(dialog, 1)
+    assert [table.item(row, 0).font().bold() for row in range(3)] == [False, True, False]
+    assert table.item(1, 0).toolTip() == "Used by the selected component"
+    _select_builder_rows(dialog, 0, 1)
+    assert [table.item(row, 1).font().bold() for row in range(3)] == [True, True, False]
+    assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
+    dialog.close()
+
+
+def test_magnetic_structure_builder_q_basis_edit_moves_every_component_on_the_row(qapp, tmp_path) -> None:
+    dialog = _builder_with_q_basis(
+        tmp_path,
+        ((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        _q_component("one", "One", (1.0, 0.0, 0.0)),
+        _q_component("two", "Two", (1.0, 0.0, 0.0)),
+    )
+    _select_builder_rows(dialog, 0)
+
+    dialog._q_basis_table.item(0, 1).setText("(0 0 0.25)")
+
+    assert dialog.model().q_basis_rlu[0] == (0.0, 0.0, 0.25)
+    assert _q_basis_texts(dialog, 1)[0] == "0, 0, 0.25"
+    assert [dialog._component_table.item(row, 4).text() for row in range(2)] == ["q1 = (0, 0, 0.25)"] * 2
+    assert dialog._selected_component_ids() == ("one",)
+    assert dialog._q_basis_table.item(0, 0).font().bold()
+    assert dialog._viewer._spins is not None
+    restored = MagneticStructureModel.from_json(dialog.model().to_json())
+    assert restored.q_basis_rlu[0] == (0.0, 0.0, 0.25)
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("row", "text", "message"),
+    [
+        (0, "0.1, 0", "three numbers"),
+        (0, "a, b, c", "not three numbers"),
+        (0, "0, 0, 0", "cannot be zero"),
+        (0, "0, 0.25, 0", "q2 already holds"),
+        (1, "0.1, 0.1, 0", "positive multiple"),
+    ],
+)
+def test_magnetic_structure_builder_q_basis_edit_rejects_invalid_vectors(
+    qapp, tmp_path, monkeypatch, row: int, text: str, message: str
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, body: warnings.append(body),
+    )
+    dialog = _builder_with_q_basis(
+        tmp_path,
+        ((0.0, 0.0, 0.5), (0.0, 0.25, 0.0), (0.0, 0.0, 0.0)),
+        _q_component("one", "One", (1.0, 0.0, 0.0)),
+        _q_component("helix", "Helix", (0.0, 1.0, 0.0), kind="helix"),
+    )
+    before = dialog.model()
+
+    dialog._q_basis_table.item(row, 1).setText(text)
+
+    assert len(warnings) == 1 and message in warnings[0]
+    assert dialog.model() == before
+    assert _q_basis_texts(dialog, 1) == ["0, 0, 0.5", "0, 0.25, 0", "0, 0, 0"]
+    dialog.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter])
+def test_magnetic_structure_builder_enter_in_preview_repeats_keeps_dialog_open(qapp, tmp_path, key) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0))
+    finished: list[int] = []
+    dialog.finished.connect(finished.append)
+    dialog.show()
+    qapp.processEvents()
+    dialog._repeat_c.setFocus()
+    dialog._repeat_c.selectAll()
+
+    QTest.keyClicks(dialog._repeat_c, "10")
+    QTest.keyClick(dialog._repeat_c, key)
+    qapp.processEvents()
+
+    assert finished == []
+    assert dialog.isVisible()
+    assert dialog._repeat_c.value() == 10
+    assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x10)"
     dialog.close()
 
 

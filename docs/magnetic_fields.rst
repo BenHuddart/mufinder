@@ -96,12 +96,17 @@ Supercell`` controls, atom selection, and live structure viewer:
 
 - the component table lists ``Enabled``, ``Component``, ``Type``,
   ``Apply to``, ``q`` and ``Moment`` for each component, top to bottom in the
-  order the model stores them;
+  order the model stores them. The ``q`` column gives each distinct
+  wavevector a component uses as its q-basis combination and its value in
+  reciprocal lattice units, for example ``q1 = (0.25, 0, 0)`` or
+  ``q1 − q2 = (0.25, -0.25, 0)``; a q = 0 term shows the vector alone;
 - selecting no rows previews the full magnetic structure;
 - selecting one or more rows previews only those components; when every
   selected component is disabled the preview shows no moments and says so;
 - diagonal preview supercell controls evaluate the magnetic moments outside the
-  unit cell so longer-wavelength propagation vectors can be inspected;
+  unit cell so longer-wavelength propagation vectors can be inspected. Pressing
+  ``Enter`` in a repeat box applies the value and keeps the builder open; Enter
+  never presses ``Use Structure``;
 - ``Build From Host Spins`` converts the current host-structure scalar spin
   metadata into the new propagation-vector model; when the builder already
   holds components it first asks for confirmation, because the conversion
@@ -139,6 +144,48 @@ Components can currently be applied to all atoms, to atoms of a species, to a
 symmetry-equivalent atom group, or to atoms selected in the builder preview. The
 add-component dialog presents these choices as adaptive radio-button cards and
 disables unavailable options.
+
+Propagation-vector basis panel
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every Fourier term stores its wavevector as a combination of the model's three
+q-basis rows, ``q = l q1 + m q2 + n q3``. The ``Propagation-Vector Basis``
+panel under the component table shows those rows:
+
+- ``Row`` names the row, ``q1`` to ``q3``;
+- ``q (r.l.u.)`` is the stored vector ``h, k, l``;
+- ``Used by`` lists, in table order, every component with a term that
+  references the row, marking disabled components ``(disabled)``, or says
+  ``Unused``.
+
+Selecting components in the component table shows the rows they use in bold,
+with the row name in the accent colour, so a grouped texture's mapping onto the
+stored basis can be read directly.
+
+Adding or editing a component still assigns rows automatically: a new
+wavevector reuses a row that already holds it, and otherwise fills a row that
+no other component uses. When every row is in use by other components, the
+builder refuses the new wavevector with a ``No q-basis slot available``
+warning.
+
+Double-clicking a ``q (r.l.u.)`` cell edits that row. The entry is three
+numbers separated by commas or spaces, optionally in brackets. Components keep
+their basis coefficients, so every component that uses the row changes
+wavevector with it, and the ``q`` column, preview and structure type update at
+once. An edit is refused with a warning, and the row keeps its vector, when:
+
+- the entry is not three numbers;
+- the row is used by a texture. A texture's moment directions are built from
+  its q vectors, so the cell is read-only; edit the texture instead;
+- the row is used by a helix, cycloid or conical component and the new vector
+  does not point the same way as the current one. Those moment planes and cone
+  axes are built around the q direction, so only the wavelength can change
+  here;
+- the row is used by a component and the new vector is zero;
+- another row already holds the same vector.
+
+An unused row accepts any vector. The edited basis is saved with the model when
+the builder's ``Use Structure`` button is pressed.
 
 Multi-q Textures
 ----------------
