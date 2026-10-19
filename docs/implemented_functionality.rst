@@ -194,8 +194,9 @@ Magnetic fields
 The ``Magnetic Fields`` workflow builds magnetic structures in the
 propagation-vector formalism, including from the host spins and as skyrmion or
 custom Fourier textures, from components that can be edited, duplicated,
-reordered and disabled without deleting them, and calculates at a chosen muon
-site:
+reordered and disabled without deleting them, with a panel that shows and
+edits the stored propagation-vector basis and which components use each row,
+and calculates at a chosen muon site:
 
 - the dipolar field of commensurate structures, optionally corrected for the
   host-ion displacements in a relaxed muon supercell at the site and its

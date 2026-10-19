@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
 import numpy as np
@@ -29,22 +30,27 @@ from mufinder.science.magnetic_structure import (
     build_square_skyrmion_texture,
     build_spin_density_wave_component,
     build_texture_component,
+    component_q_basis_indices,
     duplicate_magnetic_components,
     enabled_magnetic_components,
     evaluate_texture_grid,
     evaluate_texture_moment,
     get_muesr_model_data,
+    is_texture_component,
     magnetic_model_from_legacy_structure,
     moment_at_atom,
     moments_in_supercell,
     move_magnetic_components,
     normalize_texture_magnitude,
     prune_texture_terms,
+    q_basis_slots,
+    q_coeff_expression,
     skyrmion_q_basis_rlu,
     split_muesr_model_data_into_helices,
     texture_diagnostics,
     resolve_atom_selector,
     set_magnetic_components_enabled,
+    set_q_basis_vector,
     viable_atom_selectors,
 )
 from mufinder.science.magnetic_structure import _orthogonal_unit_vector
@@ -541,6 +547,155 @@ def test_move_magnetic_components_does_not_change_moments() -> None:
 
     assert _ids(moved) == ["b", "c", "a"]
     assert np.allclose(before, after)
+
+
+def _q_basis_model() -> MagneticStructureModel:
+    collinear = MagneticComponent(
+        "sdw",
+        "SDW",
+        "spin_density_wave",
+        AtomSelector.indices([0]),
+        (FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+    )
+    helix = build_helix_component(
+        label="Helix",
+        selector=AtomSelector.indices([0]),
+        q_coeff=(0.0, 1.0, 0.0),
+        real_axis_vector=(1.0, 0.0, 0.0),
+        imaginary_axis_vector=(0.0, 1.0, 0.0),
+        component_id="helix",
+    )
+    texture = MagneticComponent(
+        "texture",
+        "Texture",
+        "texture",
+        AtomSelector.all(),
+        (
+            FourierTerm((0.0, 0.0, 1.0), ComplexVector.from_vector([1.0, 0.0, 0.0])),
+            FourierTerm((1.0, 0.0, -1.0), ComplexVector.from_vector([0.0, 1.0, 0.0])),
+        ),
+        enabled=False,
+        metadata={"type": "texture"},
+    )
+    return MagneticStructureModel(
+        q_basis_rlu=((0.25, 0.0, 0.0), (0.0, 0.0, 0.2), (0.0, 0.25, 0.0)),
+        components=(collinear, helix, texture),
+    )
+
+
+def test_q_basis_slots_report_every_component_that_uses_a_row() -> None:
+    slots = q_basis_slots(_q_basis_model())
+
+    assert [slot.label for slot in slots] == ["q1", "q2", "q3"]
+    assert slots[0].q_rlu == (0.25, 0.0, 0.0)
+    assert slots[0].component_ids == ("sdw", "texture")
+    assert slots[0].texture_component_ids == ("texture",)
+    assert slots[1].component_ids == ("helix",)
+    assert slots[1].direction_component_ids == ("helix",)
+    assert slots[2].component_ids == ("texture",)
+    assert all(slot.in_use for slot in slots)
+    assert not q_basis_slots(MagneticStructureModel())[0].in_use
+
+
+def test_component_q_basis_indices_and_texture_predicate() -> None:
+    model = _q_basis_model()
+
+    assert [component_q_basis_indices(component) for component in model.components] == [(0,), (1,), (0, 2)]
+    assert [is_texture_component(component) for component in model.components] == [False, False, True]
+
+
+@pytest.mark.parametrize(
+    ("q_coeff", "expected"),
+    [
+        ((0.0, 0.0, 0.0), "0"),
+        ((1.0, 0.0, 0.0), "q1"),
+        ((0.0, -1.0, 0.0), "−q2"),
+        ((1.0, -1.0, 0.0), "q1 − q2"),
+        ((-1.0, -1.0, 0.0), "−q1 − q2"),
+        ((0.5, 0.0, 2.0), "0.5q1 + 2q3"),
+    ],
+)
+def test_q_coeff_expression(q_coeff, expected: str) -> None:
+    assert q_coeff_expression(q_coeff) == expected
+
+
+def test_set_q_basis_vector_moves_every_component_on_the_row() -> None:
+    structure = _structure()
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=_ordered_model("a", "b").components,
+    )
+
+    edited = set_q_basis_vector(model, 0, (0.0, 0.0, 0.25))
+
+    assert edited.q_basis_rlu[0] == (0.0, 0.0, 0.25)
+    assert edited.components == model.components
+    assert np.allclose(edited.q_coeff_to_rlu(edited.components[1].terms[0].q_coeff), (0.0, 0.0, 0.25))
+    _positions, before, _indices = moments_in_supercell(structure, model, (1, 1, 4))
+    _positions, after, _indices = moments_in_supercell(structure, edited, (1, 1, 4))
+    assert not np.allclose(before, after)
+    restored = MagneticStructureModel.from_json(edited.to_json())
+    assert restored.q_basis_rlu == edited.q_basis_rlu
+
+
+def test_set_q_basis_vector_allows_an_unused_row_and_rescaling_a_helix_row() -> None:
+    model = _q_basis_model()
+    model = replace(model, q_basis_rlu=(*model.q_basis_rlu[:2], (0.0, 0.0, 0.0)), components=model.components[:2])
+
+    assert set_q_basis_vector(model, 2, (0.1, 0.1, 0.0)).q_basis_rlu[2] == (0.1, 0.1, 0.0)
+    assert set_q_basis_vector(model, 1, (0.0, 0.0, 0.1)).q_basis_rlu[1] == (0.0, 0.0, 0.1)
+
+
+@pytest.mark.parametrize(
+    ("index", "q_rlu", "message"),
+    [
+        (0, (0.3, 0.0, 0.0), "texture"),
+        (1, (0.1, 0.0, 0.0), "keep its direction"),
+        (1, (0.0, 0.0, -0.2), "keep its direction"),
+        (2, (0.0, 0.0, 0.0), "texture"),
+        (3, (0.1, 0.0, 0.0), "row index"),
+        (1, (np.nan, 0.0, 0.0), "finite"),
+        (1, (0.0, 0.0), "three-vector"),
+    ],
+)
+def test_set_q_basis_vector_rejects_invalid_edits(index: int, q_rlu, message: str) -> None:
+    with pytest.raises(MagneticStructureError, match=message):
+        set_q_basis_vector(_q_basis_model(), index, q_rlu)
+
+
+def test_set_q_basis_vector_checks_the_full_q_of_a_helix_that_combines_rows() -> None:
+    helix = build_helix_component(
+        label="Diagonal helix",
+        selector=AtomSelector.indices([0]),
+        q_coeff=(1.0, 1.0, 0.0),
+        real_axis_vector=(0.0, 0.0, 1.0),
+        imaginary_axis_vector=(1.0, -1.0, 0.0),
+        component_id="diagonal",
+    )
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.0)),
+        components=(helix,),
+    )
+
+    # (0.2, 0, 0) is a positive multiple of q1, but it turns q1 + q2 from (0.1, 0.1, 0) to (0.2, 0.1, 0).
+    with pytest.raises(MagneticStructureError, match="Diagonal helix"):
+        set_q_basis_vector(model, 0, (0.2, 0.0, 0.0))
+    with pytest.raises(MagneticStructureError, match="keep its direction"):
+        set_q_basis_vector(model, 1, (0.0, 0.3, 0.0))
+    assert set_q_basis_vector(model, 2, (0.0, 0.0, 0.5)).q_basis_rlu[2] == (0.0, 0.0, 0.5)
+
+
+def test_set_q_basis_vector_rejects_zero_for_a_used_row_and_duplicate_vectors() -> None:
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.0, 0.0, 0.5), (0.25, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=_ordered_model("a").components,
+    )
+
+    with pytest.raises(MagneticStructureError, match="cannot be zero"):
+        set_q_basis_vector(model, 0, (0.0, 0.0, 0.0))
+    with pytest.raises(MagneticStructureError, match="q2 already holds"):
+        set_q_basis_vector(model, 0, (0.25, 0.0, 0.0))
+    assert set_q_basis_vector(model, 1, (0.0, 0.0, 0.0)).q_basis_rlu[1] == (0.0, 0.0, 0.0)
 
 
 def test_atom_resolved_components_skips_empty_selection() -> None:
