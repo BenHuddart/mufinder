@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Iterable
 
 from PySide6.QtCore import QSettings
@@ -12,15 +13,22 @@ from mufinder.domain.cluster import (
     DEFAULT_CASTEP_EXECUTABLE as _DEFAULT_CASTEP_EXECUTABLE,
     DEFAULT_KEYWORD_EXECUTION_MODE as _DEFAULT_KEYWORD_EXECUTION_MODE,
     ClusterConfig,
+    ClusterQueue,
 )
 
-__all__ = ["ClusterConfig", "load_cluster_config", "load_cluster_configs", "save_cluster_configs"]
+__all__ = [
+    "ClusterConfig",
+    "ClusterQueue",
+    "load_cluster_config",
+    "load_cluster_configs",
+    "save_cluster_configs",
+]
 
 
 _CLUSTER_NAMES_KEY = "clusters/names"
 _SCARF_TEMPLATE_TOKEN = "builtin:scarf-slurm"
 _REDWOOD_PARTITION = "redwood"
-_REDWOOD_ADDQUEUE = "/bin/addqueue"
+_REDWOOD_ADDQUEUE = "/usr/local/shared/bin/addqueue"
 _REDWOOD_SQUEUE = "/usr/local/shared/slurm/bin//squeue"
 _REDWOOD_SCANCEL = "/usr/local/shared/slurm/bin//scancel"
 _REDWOOD_PRESET_NAME = "Redwood"
@@ -124,6 +132,125 @@ def _normalise_mem_per_cpu_gb(value, *, queue_system: str) -> float | None:  # n
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _positive_float(value) -> float | None:  # noqa: ANN001
+    if value in {None, ""}:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _normalise_queue(queue: ClusterQueue, *, queue_system: str) -> ClusterQueue | None:
+    """Return ``queue`` with blank overrides cleared, or ``None`` if it has no name.
+
+    A per-CPU memory override is a SLURM directive and a per-core memory
+    override an addqueue argument, so each is dropped for the other scheduler,
+    as is a template override for addqueue, which submits without a script.
+    """
+
+    name = queue.name.strip()
+    if not name:
+        return None
+    is_slurm = queue_system.strip().lower() == "slurm"
+    is_addqueue = queue_system.strip().lower() == "addqueue"
+    try:
+        cores = int(queue.cores_per_node) if queue.cores_per_node is not None else None
+    except (TypeError, ValueError):
+        cores = None
+    return ClusterQueue(
+        name=name,
+        default_walltime=str(queue.default_walltime or "").strip(),
+        max_walltime=str(queue.max_walltime or "").strip(),
+        cores_per_node=cores if cores is not None and cores > 0 else None,
+        default_memory_gb=_positive_float(queue.default_memory_gb) if is_addqueue else None,
+        default_mem_per_cpu_gb=_positive_float(queue.default_mem_per_cpu_gb) if is_slurm else None,
+        castep_executable=str(queue.castep_executable or "").strip(),
+        template_script_path=str(queue.template_script_path or "").strip() if is_slurm else "",
+    )
+
+
+def _normalise_queues(queues: Iterable[ClusterQueue], *, queue_system: str) -> tuple[ClusterQueue, ...]:
+    cleaned: list[ClusterQueue] = []
+    seen: set[str] = set()
+    for queue in queues:
+        normalised = _normalise_queue(queue, queue_system=queue_system)
+        if normalised is None or normalised.name in seen:
+            continue
+        seen.add(normalised.name)
+        cleaned.append(normalised)
+    return tuple(cleaned)
+
+
+def _resolve_default_queue_name(default_queue_name: str, queues: tuple[ClusterQueue, ...]) -> str:
+    """Keep the default queue among the listed queues when there are any."""
+
+    name = default_queue_name.strip()
+    if not queues or any(queue.name == name for queue in queues):
+        return name
+    return queues[0].name
+
+
+def _queues_from_settings(raw: object, *, queue_system: str) -> tuple[ClusterQueue, ...]:
+    """Decode the persisted ``queues`` JSON list; anything unreadable is no queues."""
+
+    if raw in {None, ""}:
+        return ()
+    try:
+        entries = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(entries, list):
+        return ()
+    queues: list[ClusterQueue] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cores_raw = entry.get("cores_per_node")
+        try:
+            cores = int(cores_raw) if cores_raw not in {None, ""} else None
+        except (TypeError, ValueError):
+            cores = None
+        queues.append(
+            ClusterQueue(
+                name=str(entry.get("name", "") or ""),
+                default_walltime=str(entry.get("default_walltime", "") or ""),
+                max_walltime=str(entry.get("max_walltime", "") or ""),
+                cores_per_node=cores,
+                default_memory_gb=_positive_float(entry.get("default_memory_gb")),
+                default_mem_per_cpu_gb=_positive_float(entry.get("default_mem_per_cpu_gb")),
+                castep_executable=str(entry.get("castep_executable", "") or ""),
+                template_script_path=str(entry.get("template_script_path", "") or ""),
+            )
+        )
+    return _normalise_queues(queues, queue_system=queue_system)
+
+
+def _queues_to_settings(queues: tuple[ClusterQueue, ...]) -> str:
+    """Encode queues as a JSON list, leaving out overrides that are not set."""
+
+    entries: list[dict[str, object]] = []
+    for queue in queues:
+        entry: dict[str, object] = {"name": queue.name}
+        if queue.default_walltime:
+            entry["default_walltime"] = queue.default_walltime
+        if queue.max_walltime:
+            entry["max_walltime"] = queue.max_walltime
+        if queue.cores_per_node is not None:
+            entry["cores_per_node"] = int(queue.cores_per_node)
+        if queue.default_memory_gb is not None:
+            entry["default_memory_gb"] = float(queue.default_memory_gb)
+        if queue.default_mem_per_cpu_gb is not None:
+            entry["default_mem_per_cpu_gb"] = float(queue.default_mem_per_cpu_gb)
+        if queue.castep_executable:
+            entry["castep_executable"] = queue.castep_executable
+        if queue.template_script_path:
+            entry["template_script_path"] = queue.template_script_path
+        entries.append(entry)
+    return json.dumps(entries) if entries else ""
 
 
 def _settings_value(settings: QSettings, key: str, default=None):  # noqa: ANN001
@@ -280,9 +407,11 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         queue_system=queue_system,
     )
 
+    queues = _queues_from_settings(settings.value(f"{prefix}/queues", None), queue_system=queue_system)
     default_queue_name = str(settings.value(f"{prefix}/default_queue_name", "", str) or "").strip()
-    if queue_system.strip().lower() == "addqueue" and not default_queue_name:
+    if queue_system.strip().lower() == "addqueue" and not default_queue_name and not queues:
         default_queue_name = _REDWOOD_PARTITION
+    default_queue_name = _resolve_default_queue_name(default_queue_name, queues)
 
     keyword_execution_mode = str(
         settings.value(
@@ -341,6 +470,7 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         cancel_command_path=str(settings.value(f"{prefix}/cancel_command_path", "", str) or "").strip(),
         keyword_execution_mode=keyword_execution_mode,
         keyword_shell_init=keyword_shell_init,
+        queues=queues,
     )
 
 
@@ -411,6 +541,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
             config.default_mem_per_cpu_gb,
             queue_system=queue_system,
         )
+        queues = _normalise_queues(config.queues, queue_system=queue_system)
         cleaned.append(
             ClusterConfig(
                 name=name,
@@ -432,7 +563,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 default_walltime=default_walltime,
                 template_script_path=config.template_script_path.strip(),
                 castep_executable=config.castep_executable.strip() or _DEFAULT_CASTEP_EXECUTABLE,
-                default_queue_name=config.default_queue_name.strip(),
+                default_queue_name=_resolve_default_queue_name(config.default_queue_name, queues),
                 default_memory_gb=default_memory_gb,
                 default_mem_per_cpu_gb=default_mem_per_cpu_gb,
                 submit_command_path=config.submit_command_path.strip(),
@@ -440,6 +571,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 cancel_command_path=config.cancel_command_path.strip(),
                 keyword_execution_mode=config.keyword_execution_mode.strip().lower() or _DEFAULT_KEYWORD_EXECUTION_MODE,
                 keyword_shell_init=config.keyword_shell_init.rstrip(),
+                queues=queues,
             )
         )
 
@@ -479,3 +611,4 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/cancel_command_path", config.cancel_command_path)
         settings.setValue(f"{prefix}/keyword_execution_mode", config.keyword_execution_mode)
         settings.setValue(f"{prefix}/keyword_shell_init", config.keyword_shell_init)
+        settings.setValue(f"{prefix}/queues", _queues_to_settings(config.queues))

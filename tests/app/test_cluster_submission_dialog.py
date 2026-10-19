@@ -173,6 +173,20 @@ def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
     dialog.close()
 
 
+def test_cluster_submission_dialog_keyring_mode_names_linux_store(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "linux")
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+
+    assert dialog._target_secret_edit.isHidden() is True
+    assert dialog._jump_secret_edit.isHidden() is True
+    assert "System keyring passwords are enabled" in dialog._auth_hint.text()
+    assert "from the keyring" in dialog._auth_hint.text()
+    dialog.close()
+
+
 def test_cluster_submission_dialog_compacts_large_job_summary(qapp) -> None:
     job_labels = [f"cutoff_convergence_ecut_{index}" for index in range(12)]
 
@@ -429,7 +443,7 @@ def test_cluster_submission_dialog_addqueue_defaults_and_optional_walltime(
     assert config.queue_name == "redwood"
     assert config.memory_gb == 7.5
     assert config.comment == "overnight"
-    assert dialog._queue_name_edit.isHidden() is False
+    assert dialog._queue_combo.isHidden() is False
     dialog.close()
 
 
@@ -558,4 +572,196 @@ def test_cluster_dialog_warns_on_uneven_farm_division(qapp) -> None:
     ok_button = dialog._button_box.button(dialog_module.QDialogButtonBox.StandardButton.Ok)
     assert ok_button.isEnabled() is True
     assert "idle" in dialog._farm_warning.text().lower()
+    dialog.close()
+
+
+def _psi_config(**overrides) -> ClusterConfig:  # noqa: ANN003
+    from mufinder.domain.cluster import ClusterQueue
+
+    values = dict(
+        name="PSI",
+        hostname="login.psi.example",
+        username="dana",
+        default_working_directory="/data/dana",
+        queue_system="slurm",
+        cores_per_node=44,
+        default_walltime="01:00:00",
+        template_script_path="/templates/psi.sh",
+        default_mem_per_cpu_gb=4.0,
+        default_queue_name="daily",
+        queues=(
+            ClusterQueue(name="hourly", default_walltime="00:59:00", max_walltime="01:00:00"),
+            ClusterQueue(
+                name="daily",
+                default_walltime="12:00:00",
+                max_walltime="1-00:00:00",
+                cores_per_node=88,
+                default_mem_per_cpu_gb=8.0,
+            ),
+            ClusterQueue(name="general"),
+        ),
+    )
+    values.update(overrides)
+    return ClusterConfig(**values)
+
+
+def _queue_items(dialog: ClusterSubmissionDialog) -> list[str]:
+    return [dialog._queue_combo.itemText(index) for index in range(dialog._queue_combo.count())]
+
+
+def test_slurm_submission_offers_the_profile_queues_and_starts_on_the_default(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+
+    assert dialog._queue_combo.isHidden() is False
+    assert _queue_items(dialog) == ["daily", "hourly", "general"]
+    config = dialog.config()
+    assert config.queue_name == "daily"
+    assert (config.walltime, config.num_processes, config.mem_per_cpu_gb) == ("12:00:00", 88, 8.0)
+    assert dialog._queue_hint.text() == "Maximum walltime on this queue: 1-00:00:00."
+    dialog.close()
+
+
+def test_picking_a_queue_applies_its_defaults(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+
+    dialog._queue_combo.setCurrentIndex(_queue_items(dialog).index("general"))
+    dialog._queue_combo.activated.emit(dialog._queue_combo.currentIndex())
+
+    config = dialog.config()
+    assert config.queue_name == "general"
+    # "general" overrides nothing, so the profile values apply.
+    assert (config.walltime, config.num_processes, config.mem_per_cpu_gb) == ("01:00:00", 44, 4.0)
+    assert dialog._queue_hint.isHidden() is True
+    dialog.close()
+
+
+def test_typed_queue_name_is_submitted_as_is(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    accepted: list[bool] = []
+    monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
+
+    dialog._queue_combo.setEditText("debug")
+    dialog._accept_if_valid()
+
+    assert accepted == [True]
+    assert dialog.config().queue_name == "debug"
+    dialog.close()
+
+
+def test_slurm_submission_restores_the_last_used_queue(qapp) -> None:
+    initial = ClusterSubmissionConfig(
+        cluster_name="PSI",
+        working_directory="/data/dana/project",
+        username="dana",
+        job_name_prefix="convergence",
+        num_processes=22,
+        walltime="00:30:00",
+        queue_name="hourly",
+        mem_per_cpu_gb=2.0,
+    )
+
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()], initial_config=initial)
+
+    config = dialog.config()
+    assert config.queue_name == "hourly"
+    assert (config.walltime, config.num_processes, config.mem_per_cpu_gb) == ("00:30:00", 22, 2.0)
+    assert dialog._queue_hint.text() == "Maximum walltime on this queue: 01:00:00."
+    dialog.close()
+
+
+def test_submission_refuses_a_walltime_beyond_the_queue_maximum(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, title, text: warnings.append((title, text)))
+    accepted: list[bool] = []
+    monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
+
+    dialog._walltime_edit.setText("2-00:00:00")
+    dialog._accept_if_valid()
+
+    assert accepted == []
+    assert warnings == [
+        ("Invalid walltime", "The walltime 2-00:00:00 is longer than the 1-00:00:00 maximum for queue 'daily'.")
+    ]
+    dialog.close()
+
+
+@pytest.mark.parametrize(("walltime", "queue", "title"), [("soon", "daily", "Invalid walltime"), ("01:00:00", "a b", "Invalid queue")])
+def test_submission_refuses_unreadable_walltime_or_queue(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    walltime: str,
+    queue: str,
+    title: str,
+) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    warnings: list[str] = []
+    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, t, _text: warnings.append(t))
+    monkeypatch.setattr(dialog, "accept", lambda: pytest.fail("accepted"))
+
+    dialog._queue_combo.setEditText(queue)
+    dialog._walltime_edit.setText(walltime)
+    dialog._accept_if_valid()
+
+    assert warnings == [title]
+    dialog.close()
+
+
+def test_submission_hint_says_when_the_template_sets_the_partition(qapp, tmp_path) -> None:  # noqa: ANN001
+    template = tmp_path / "fixed.sh"
+    template.write_text("#!/bin/bash\n#SBATCH --partition=fixed\n$castep_command\n", encoding="utf-8")
+
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[_psi_config(template_script_path=str(template))],
+    )
+
+    assert "sets its own partition" in dialog._queue_hint.text()
+    dialog.close()
+
+
+def test_profile_without_queues_submits_no_slurm_partition(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs(), default_cluster_name="alpha")
+
+    assert _queue_items(dialog) == []
+    assert dialog.config().queue_name == ""
+    dialog.close()
+
+
+def test_entering_a_typed_queue_keeps_the_resources_set_by_hand(qapp) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+    dialog._num_processes_spin.setValue(12)
+    dialog._walltime_edit.setText("03:00:00")
+
+    line_edit = dialog._queue_combo.lineEdit()
+    line_edit.selectAll()
+    QTest.keyClicks(line_edit, "debug")
+    QTest.keyClick(line_edit, Qt.Key.Key_Return)
+
+    config = dialog.config()
+    assert config.queue_name == "debug"
+    assert (config.num_processes, config.walltime, config.mem_per_cpu_gb) == (12, "03:00:00", 8.0)
+    dialog.close()
+
+
+def test_entering_a_listed_queue_name_applies_its_defaults(qapp) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
+
+    line_edit = dialog._queue_combo.lineEdit()
+    line_edit.selectAll()
+    QTest.keyClicks(line_edit, "hourly")
+    QTest.keyClick(line_edit, Qt.Key.Key_Return)
+
+    config = dialog.config()
+    assert config.queue_name == "hourly"
+    assert (config.num_processes, config.walltime) == (44, "00:59:00")
     dialog.close()

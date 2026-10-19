@@ -146,11 +146,18 @@ MuFinder already knows how to run CASTEP on a cluster: the job script template
 used for every other job. Keyword generation reads the same template, so the
 cluster does not have to be described twice.
 
+The job runs on the cluster's default queue, with that queue's overrides of
+the template, executable, walltime and memory applied first. On SLURM the
+default queue is added to the script as ``#SBATCH -p``, and its memory per
+CPU as ``#SBATCH --mem-per-cpu``, unless the template already names a
+partition or a memory request.
+
 - The *run line* is the last command in the template that mentions
   ``$castep_command`` or ``$seed_name``. Everything above it (scheduler
   directives such as partition and account, ``module load`` lines, other
   environment setup) is kept, with one process, one node, and a one hour
-  walltime of its own rather than the cluster's default job walltime. The run
+  walltime of its own rather than the cluster's default job walltime (the
+  default queue's maximum instead, when that is shorter). The run
   line and anything after it are dropped.
 - The *launcher* is whatever precedes the CASTEP executable on the run line
   (``srun -n 1``, for example). For ``$castep_command`` it is the launcher

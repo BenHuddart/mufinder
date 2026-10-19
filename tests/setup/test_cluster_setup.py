@@ -158,6 +158,7 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[1].default_queue_name == "redwood"
     assert loaded[1].default_memory_gb == 7.5
     assert loaded[1].castep_executable == "/mnt/redwoodfs/muon/castep.mpi"
+    assert loaded[1].submit_command_path == "/usr/local/shared/bin/addqueue"
     assert loaded[1].keyword_execution_mode == "direct"
     assert loaded[1].keyword_shell_init == ""
 
@@ -409,3 +410,123 @@ def test_cluster_setup_reexports_domain_cluster_config() -> None:
     # Public import alias kept for one minor release; see docs/compatibility_policy.rst.
     assert cluster_setup_module.ClusterConfig is ClusterConfig
     assert "ClusterConfig" in cluster_setup_module.__all__
+
+
+def _psi_profile(**overrides) -> ClusterConfig:  # noqa: ANN003
+    from mufinder.domain.cluster import ClusterQueue
+
+    values = dict(
+        name="PSI",
+        hostname="login.psi.example",
+        username="user",
+        queue_system="SLURM",
+        cores_per_node=44,
+        default_walltime="01:00:00",
+        default_queue_name="daily",
+        queues=(
+            ClusterQueue(name="hourly", max_walltime="01:00:00"),
+            ClusterQueue(
+                name="daily",
+                default_walltime="12:00:00",
+                max_walltime="1-00:00:00",
+                cores_per_node=88,
+                default_mem_per_cpu_gb=8.0,
+                castep_executable="/opt/castep/castep.mpi",
+                template_script_path="/templates/daily.sh",
+            ),
+        ),
+    )
+    values.update(overrides)
+    return ClusterConfig(**values)
+
+
+def test_cluster_setup_roundtrips_queues() -> None:
+    settings = _FakeSettings()
+    save_cluster_configs(settings, [_psi_profile()])
+
+    loaded = load_cluster_config(settings, "PSI")
+
+    assert loaded is not None
+    assert loaded.default_queue_name == "daily"
+    assert loaded.queues == _psi_profile().queues
+
+
+def test_cluster_setup_profile_saved_without_queues_loads_as_before() -> None:
+    settings = _FakeSettings()
+    save_cluster_configs(settings, [_psi_profile(queues=(), default_queue_name="")])
+    # A profile saved before queues existed has no queues key at all.
+    del settings._values["clusters/PSI/queues"]
+
+    loaded = load_cluster_config(settings, "PSI")
+
+    assert loaded is not None
+    assert loaded.queues == ()
+    assert loaded.default_queue_name == ""
+    assert loaded.queue_names() == []
+
+
+def test_cluster_setup_legacy_addqueue_profile_keeps_its_single_queue() -> None:
+    settings = _FakeSettings()
+    redwood = load_cluster_config(settings, "Redwood")
+    assert redwood is not None
+    save_cluster_configs(settings, [redwood])
+    del settings._values["clusters/Redwood/queues"]
+
+    loaded = load_cluster_config(settings, "Redwood")
+
+    assert loaded is not None
+    assert loaded.queues == ()
+    assert loaded.queue_names() == ["redwood"]
+
+
+def test_cluster_setup_moves_the_default_queue_onto_a_listed_queue() -> None:
+    settings = _FakeSettings()
+    save_cluster_configs(settings, [_psi_profile(default_queue_name="gone")])
+
+    loaded = load_cluster_config(settings, "PSI")
+
+    assert loaded is not None
+    assert loaded.default_queue_name == "hourly"
+
+
+@pytest.mark.parametrize("stored", ["not json", "{}", "[1, 2]", '[{"name": ""}]'])
+def test_cluster_setup_ignores_unreadable_queues(stored: str) -> None:
+    settings = _FakeSettings()
+    save_cluster_configs(settings, [_psi_profile(queues=(), default_queue_name="")])
+    settings._values["clusters/PSI/queues"] = stored
+
+    loaded = load_cluster_config(settings, "PSI")
+
+    assert loaded is not None
+    assert loaded.queues == ()
+
+
+def test_cluster_setup_drops_queue_overrides_the_scheduler_cannot_use() -> None:
+    from mufinder.domain.cluster import ClusterQueue
+
+    settings = _FakeSettings()
+    save_cluster_configs(
+        settings,
+        [
+            _psi_profile(
+                queue_system="ADDQUEUE",
+                default_queue_name="redwood",
+                queues=(
+                    ClusterQueue(
+                        name=" redwood ",
+                        default_memory_gb=16.0,
+                        default_mem_per_cpu_gb=8.0,
+                        template_script_path="/templates/x.sh",
+                        cores_per_node=0,
+                    ),
+                    ClusterQueue(name="redwood"),
+                ),
+            )
+        ],
+    )
+
+    loaded = load_cluster_config(settings, "PSI")
+
+    assert loaded is not None
+    (queue,) = loaded.queues
+    assert queue == ClusterQueue(name="redwood", default_memory_gb=16.0)
