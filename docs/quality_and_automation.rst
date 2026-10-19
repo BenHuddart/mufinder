@@ -24,8 +24,14 @@ README, the pull-request template and CI refer to its targets. Pass
   ``uv sync --extra dev --extra scientific-backends`` is equivalent.
 - ``make test`` runs the full suite with the 85 percent coverage gate on four
   ``pytest-xdist`` workers. Run it in the foreground and keep it at four
-  workers or fewer: each worker loads Qt, and more can exhaust the machine. CI
-  runs ``make test PYTEST_WORKERS=auto``.
+  workers or fewer: each worker loads Qt, and more can exhaust the machine.
+  The gate is ``fail_under`` in ``[tool.coverage.report]``, the one place the
+  threshold is set.
+- ``make test-shard SHARD=n SHARDS=m`` runs group ``n`` of ``m`` groups of the
+  suite (``pytest-split``) and writes that group's coverage data to
+  ``.coverage.shard-n`` with no report and no gate. ``make coverage`` combines
+  every ``.coverage.shard-*`` file and enforces the gate. CI runs the suite this
+  way, as four shards.
 - ``make test-fast`` runs focused tests without coverage. With no arguments it
   runs the targeted execution checks listed below; ``make test-fast
   FILES="tests/science/test_supercell.py"`` runs the files you name.
@@ -54,8 +60,23 @@ without post-run crashes.
 Test-suite performance
 ----------------------
 
-CI runs on 2-vCPU runners, so the suite's total CPU time sets the length of
-every CI run. Keep these in place when changing the test setup:
+CI runs on 4-vCPU runners. Keep these in place when changing the test setup:
+
+- **Sharded CI runs.** CI splits the suite into four groups with
+  ``pytest-split`` and runs each on its own runner, so a CI run takes about a
+  quarter of the suite's run time plus one runner's setup. With no stored
+  durations, ``--splitting-algorithm least_duration`` deals the tests out one
+  at a time in test-ID order, which keeps the groups within a few seconds of
+  each other; each group then runs in collection order. Coverage is
+  measured per shard and combined before the gate, so the threshold applies to
+  the whole suite exactly as in ``make test``.
+- **Work-stealing workers.** ``make test`` and ``make test-shard`` run
+  ``pytest-xdist`` with ``--dist worksteal``: an idle worker takes queued tests
+  from a busy one, so a handful of slow tests at the end does not leave one
+  worker running alone.
+- **``uv`` installs.** CI installs from ``uv.lock`` with
+  ``uv sync --frozen`` and a cached ``uv`` download store, which takes seconds
+  where ``pip`` took close to a minute per job.
 
 - **Incremental garbage collection between tests.** The autouse per-test Qt
   cleanup in ``tests/conftest.py`` runs ``gc.collect()`` after each test so
@@ -72,7 +93,7 @@ every CI run. Keep these in place when changing the test setup:
   than the default C tracer on Python 3.12+. Enabling branch coverage would
   silently fall back to the slower tracer on Python 3.12 and 3.13.
 - **Slow-test report.** CI passes ``--durations=25``, so the slowest test
-  phases are listed at the end of every CI log. Check that list when CI time
+  phases are listed at the end of every CI shard log. Check that list when CI time
   creeps up; locally, ``make test PYTEST_ARGS="--no-cov --durations=25"``
   gives the same report.
 
@@ -250,8 +271,12 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``make test PYTEST_WORKERS=auto``: ``pytest`` with coverage threshold
-    enforcement, distributed with ``pytest-xdist`` using ``--dist load``
+  - ``make lint``: ``ruff check`` over ``src`` and ``tests``
+  - ``make test-shard SHARD=n SHARDS=4 PYTEST_WORKERS=auto`` on four runners,
+    each distributed with ``pytest-xdist`` using ``--dist worksteal``, then
+    ``make coverage`` in the required ``tests`` job, which combines the shards'
+    coverage data and enforces the threshold. ``tests`` fails if any shard
+    fails.
   - ``make docs``: ``sphinx`` HTML build with ``-W`` enabled
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
