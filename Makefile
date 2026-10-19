@@ -6,9 +6,18 @@ PYTHON ?= python
 
 # The full suite runs in the foreground with at most 4 workers locally: each
 # xdist worker loads Qt, and more workers can exhaust the machine. CI overrides
-# this with PYTEST_WORKERS=auto.
+# this with PYTEST_WORKERS=auto. Workers steal queued tests from each other,
+# so one slow test file does not leave a single worker finishing alone.
 PYTEST_WORKERS ?= 4
 PYTEST_ARGS ?=
+PYTEST_XDIST = -n $(PYTEST_WORKERS) --dist worksteal
+
+# CI splits the suite into SHARDS groups that run on separate runners.
+# test-shard runs group SHARD and writes its coverage data to
+# .coverage.shard-SHARD with no report and no gate; `make coverage` combines
+# every shard's data and enforces the threshold from [tool.coverage.report].
+SHARDS ?= 4
+SHARD ?= 1
 
 # Default focused set for test-fast: CASTEP output parsing, submission
 # planning, job lifecycle, the local runner and the main submission dialogs.
@@ -23,14 +32,23 @@ FILES ?= \
 	tests/app/test_convergence_widget.py \
 	tests/app/main_window
 
-.PHONY: install test test-fast harness docs lint quality
+.PHONY: install test test-shard coverage test-fast harness docs lint quality
 
 # Equivalent: uv sync --extra dev --extra scientific-backends
 install:
 	$(PYTHON) -m pip install -e ".[dev,scientific-backends]"
 
 test:
-	$(PYTHON) -m pytest -n $(PYTEST_WORKERS) --dist load $(PYTEST_ARGS)
+	$(PYTHON) -m pytest $(PYTEST_XDIST) $(PYTEST_ARGS)
+
+test-shard:
+	COVERAGE_FILE=.coverage.shard-$(SHARD) $(PYTHON) -m pytest $(PYTEST_XDIST) \
+		--splits $(SHARDS) --group $(SHARD) --splitting-algorithm least_duration \
+		--cov-report= --cov-fail-under=0 $(PYTEST_ARGS)
+
+coverage:
+	$(PYTHON) -m coverage combine --keep
+	$(PYTHON) -m coverage report
 
 test-fast:
 	$(PYTHON) -m pytest --no-cov $(FILES)
