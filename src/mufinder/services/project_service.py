@@ -1516,6 +1516,31 @@ class ProjectService:
         job.error_message = None
         job.failure_reason = None
 
+    def resume_reappeared_job(self, job: Job, status: JobStatus) -> None:
+        """Return a failed job to ``status`` because the scheduler lists it again.
+
+        This primitive backs the recovery of a cluster job failed for a missing
+        scheduler entry (the queue and accounting both stopped listing it)
+        that the scheduler later reports as queued, running, or completed:
+        ``status`` is ``QUEUED``, ``RUNNING``, or ``RETRIEVING`` for a completed
+        job whose output is still to be fetched. The FAILED -> QUEUED / RUNNING
+        / RETRIEVING edges are validated by :meth:`_assert_transition`; the
+        caller (``JobExecutionController.resume_reappeared_cluster_job``)
+        enforces that the job failed for a missing scheduler entry. The failure
+        stamps are cleared and the remote metadata is kept, so polling resumes
+        against the same scheduler job.
+        """
+
+        if status not in {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
+            raise ValueError(f"A reappeared job cannot resume as {status.value}.")
+        self._assert_transition(job.status, status)
+        job.status = status
+        job.completed_at = None
+        job.error_message = None
+        job.failure_reason = None
+        if status == JobStatus.RUNNING:
+            job.started_at = utc_now()
+
     def dismiss_job(self, job: Job) -> None:
         """Hide a terminal job from the active dashboard without deleting it.
 
@@ -1969,6 +1994,9 @@ class ProjectService:
             # "Retry retrieval" action: a cluster job whose scheduler run
             # finished but whose output retrieval failed keeps its remote
             # metadata, so retrieval can be re-attempted without resubmitting.
+            # FAILED -> QUEUED/RUNNING/RETRIEVING also resumes a job failed for
+            # a missing scheduler entry that the scheduler lists again
+            # (``resume_reappeared_job``).
             JobStatus.STOPPED: {
                 JobStatus.SUBMITTING,
                 JobStatus.RETRIEVING,
@@ -1977,6 +2005,8 @@ class ProjectService:
             JobStatus.COMPLETED: set(),
             JobStatus.FAILED: {
                 JobStatus.SUBMITTING,
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
                 JobStatus.RETRIEVING,
                 JobStatus.CANCELLED,
             },

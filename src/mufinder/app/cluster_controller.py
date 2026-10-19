@@ -140,6 +140,7 @@ class ClusterController(QObject):
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
+    job_reappeared = Signal(object, object)
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
@@ -217,6 +218,7 @@ class ClusterController(QObject):
         self._runner.job_failed.connect(self.job_failed)
         self._runner.job_cancelled.connect(self.job_cancelled)
         self._runner.status_changed.connect(self.status_changed)
+        self._runner.job_reappeared.connect(self.job_reappeared)
         # Maintain the GUI-thread tracked-id mirror from the same status stream.
         # Queued automatically (cross-thread) and runs on the GUI thread.
         self._runner.status_changed.connect(self._mirror_status_changed)
@@ -384,6 +386,9 @@ class ClusterController(QObject):
     # ------------------------------------------------------------------
     def refresh_queue(self) -> None:
         self._async_task.emit(self._runner.refresh_queue)
+
+    def stop_watching(self, job_ids: list[Any]) -> None:
+        self._async_task.emit(lambda: self._runner.stop_watching(job_ids))
 
     def cancel(self, job_id: Any) -> None:
         self._async_task.emit(lambda: self._runner.cancel(job_id))

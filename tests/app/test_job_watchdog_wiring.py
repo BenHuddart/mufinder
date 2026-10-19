@@ -32,6 +32,7 @@ class _FakeRunner(QObject):
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
+    job_reappeared = Signal(object, object)
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
