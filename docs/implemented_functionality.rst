@@ -193,7 +193,9 @@ Magnetic fields
 
 The ``Magnetic Fields`` workflow builds magnetic structures in the
 propagation-vector formalism, including from the host spins and as skyrmion or
-custom Fourier textures, and calculates at a chosen muon site:
+custom Fourier textures, from components that can be edited, duplicated,
+reordered and disabled without deleting them, and calculates at a chosen muon
+site:
 
 - the dipolar field of commensurate structures, optionally corrected for the
   host-ion displacements in a relaxed muon supercell at the site and its
@@ -261,7 +263,9 @@ and shares one set of table behaviours:
   core-count guidance;
 - cluster profiles for SLURM and ``addqueue`` schedulers, including built-in
   SCARF and Redwood presets, SSH jump hosts and host-key trust on first use,
-  with queue polling and automatic output retrieval;
+  several named queues (partitions) per profile with per-queue walltime,
+  cores, memory, executable and template overrides, a queue choice on every
+  submission, and queue polling and automatic output retrieval;
 - a Job Dashboard of the jobs that still need attention, with per-row
   ``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset`` and
   ``Dismiss``, a failure cause on each failed or stopped row, and safeguards

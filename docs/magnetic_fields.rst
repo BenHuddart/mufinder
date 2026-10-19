@@ -94,21 +94,46 @@ structure and its ``Edit Magnetic Structure...`` button opens the ``Magnetic
 Structure Builder`` dialog. The builder owns the component table, ``Preview
 Supercell`` controls, atom selection, and live structure viewer:
 
+- the component table lists ``Enabled``, ``Component``, ``Type``,
+  ``Apply to``, ``q`` and ``Moment`` for each component, top to bottom in the
+  order the model stores them;
 - selecting no rows previews the full magnetic structure;
-- selecting one or more rows previews only those components;
+- selecting one or more rows previews only those components; when every
+  selected component is disabled the preview shows no moments and says so;
 - diagonal preview supercell controls evaluate the magnetic moments outside the
   unit cell so longer-wavelength propagation vectors can be inspected;
 - ``Build From Host Spins`` converts the current host-structure scalar spin
-  metadata into the new propagation-vector model;
+  metadata into the new propagation-vector model; when the builder already
+  holds components it first asks for confirmation, because the conversion
+  replaces them;
 - ``Add Component`` creates a new propagation-vector component using a preset
   for collinear, spin-density-wave, helix, cycloid, or conical textures;
 - ``Add Texture...`` creates one grouped multi-q texture assignment, currently
   supporting square and hexagonal skyrmion lattices as well as custom Fourier
   texture terms;
-- ``Remove`` deletes selected components;
 - ``Edit...`` reopens the selected component in the same preset-aware dialog so
   its label, target, q vector, phase, and texture parameters can be changed;
-- both ``Delete`` and ``Backspace`` remove selected rows.
+  double-clicking the ``Component`` cell renames a component in place;
+- ``Duplicate`` inserts a copy of each selected component directly below its
+  original. A copy keeps the original's target, Fourier terms, phase, enabled
+  state and texture settings, shares its q-basis slots, and gets a
+  ``(copy)`` label suffix; the copies are selected afterwards;
+- ``Remove`` deletes the selected components after a confirmation whose
+  default answer keeps them; ``Delete`` and ``Backspace`` do the same;
+- ``Move Up`` and ``Move Down`` move the selected components one row, keeping
+  their relative order and stopping at either end of the table. Order changes
+  only how the builder lists components; the summed moments and fields do not
+  depend on it;
+- the ``Enabled`` checkbox switches a component off without deleting it. A
+  disabled component keeps its row, shown in muted text, and is saved with the
+  model, but it is left out of the preview, the structure type, the
+  magnetic-ion defaults of the dipolar tensor dialog and every field
+  calculation. Editing a component keeps its enabled state. When every
+  component is disabled the preview and structure type are empty.
+
+The ``Magnetic Structure`` card on the page reports how many components the
+accepted model has and how many of them are disabled. ``Calculate Dipolar
+Field`` stays disabled until at least one component is enabled.
 
 Components can currently be applied to all atoms, to atoms of a species, to a
 symmetry-equivalent atom group, or to atoms selected in the builder preview. The

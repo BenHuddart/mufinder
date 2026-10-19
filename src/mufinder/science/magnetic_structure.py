@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 import numpy as np
@@ -325,6 +326,86 @@ class MagneticStructureModel:
 
     def q_coeff_to_rlu(self, q_coeff: Sequence[float]) -> np.ndarray:
         return _as_float_array(q_coeff, "q_coeff") @ self.q_basis_array
+
+
+def enabled_magnetic_components(model: MagneticStructureModel) -> tuple[MagneticComponent, ...]:
+    """Return the components that contribute to moments and fields, in model order."""
+
+    return tuple(component for component in model.components if component.enabled)
+
+
+def duplicate_magnetic_components(
+    model: MagneticStructureModel,
+    component_ids: Sequence[str],
+) -> tuple[MagneticStructureModel, tuple[str, ...]]:
+    """Insert a copy of each listed component directly after its original.
+
+    A copy keeps the original's selector, Fourier terms, phase, enabled state and
+    metadata, so it shares the original's q-basis slots. It gets a fresh
+    ``component_id`` and a ``" (copy)"`` label suffix. Returns the new model and
+    the copies' ids in model order.
+    """
+
+    selected = {str(value) for value in component_ids}
+    components: list[MagneticComponent] = []
+    copy_ids: list[str] = []
+    for component in model.components:
+        components.append(component)
+        if component.component_id not in selected:
+            continue
+        duplicate = replace(
+            component,
+            component_id=f"component-{uuid4()}",
+            label=f"{component.label} (copy)",
+            metadata=deepcopy(dict(component.metadata)),
+        )
+        components.append(duplicate)
+        copy_ids.append(duplicate.component_id)
+    return replace(model, components=tuple(components)), tuple(copy_ids)
+
+
+def set_magnetic_components_enabled(
+    model: MagneticStructureModel,
+    component_ids: Sequence[str],
+    enabled: bool,
+) -> MagneticStructureModel:
+    """Enable or disable the listed components; other components are unchanged."""
+
+    selected = {str(value) for value in component_ids}
+    components = tuple(
+        replace(component, enabled=bool(enabled)) if component.component_id in selected else component
+        for component in model.components
+    )
+    return replace(model, components=components)
+
+
+def move_magnetic_components(
+    model: MagneticStructureModel,
+    component_ids: Sequence[str],
+    offset: int,
+) -> MagneticStructureModel:
+    """Move the listed components ``offset`` places (negative is towards the start).
+
+    Listed components keep their relative order. A component stops when it
+    reaches either end or another listed component that has already stopped, so
+    a selection never wraps round. Component order does not change the summed
+    moments; it is the order the builder lists and evaluates components in.
+    """
+
+    selected = {str(value) for value in component_ids}
+    components = list(model.components)
+    step = -1 if offset < 0 else 1
+    for _ in range(abs(int(offset))):
+        indices = range(1, len(components)) if step < 0 else range(len(components) - 2, -1, -1)
+        moved = False
+        for index in indices:
+            neighbour = index + step
+            if components[index].component_id in selected and components[neighbour].component_id not in selected:
+                components[index], components[neighbour] = components[neighbour], components[index]
+                moved = True
+        if not moved:
+            break
+    return replace(model, components=tuple(components))
 
 
 def viable_atom_selectors(

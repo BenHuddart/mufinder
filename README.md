@@ -123,6 +123,14 @@ These binaries ship MuFinder itself, but CASTEP and MPI remain external user-sup
 
 For ad hoc validation on any branch, use the `Preview Build` workflow to produce downloadable artifacts without publishing a release.
 
+## Contributing
+
+Bug reports and feature requests are welcome from everyone: please
+[open an issue](https://github.com/BenHuddart/mufinder/issues/new/choose).
+Pull requests are currently accepted only from repository collaborators. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for details and for how to get in touch
+about becoming a collaborator.
+
 ## License
 
 MuFinder is free software released under the GNU General Public License,

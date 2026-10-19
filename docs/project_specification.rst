@@ -172,7 +172,9 @@ Remote (HPC) execution
 ~~~~~~~~~~~~~~~~~~~~~~
 
 - Cluster profiles are persisted globally and selectable at submission time,
-  and support configurable CASTEP executable paths.
+  and support configurable CASTEP executable paths. A profile lists the
+  cluster's queues (partitions), each able to override the walltime, cores per
+  node, memory, executable and template, and a submission picks one.
 - SSH key authentication is primary; password fallback is supported.
 - Unknown SSH host keys require explicit user trust confirmation before first
   use (trust on first use). Trusted keys are persisted in user-scoped settings
@@ -181,9 +183,10 @@ Remote (HPC) execution
 - The scheduler abstraction supports SLURM script submission and addqueue
   command submission. Submission scripts for script-based schedulers are
   generated from user templates with runtime variable substitution. A built-in
-  Redwood/Glamdring preset exists; addqueue clusters expose partition,
-  memory-per-process and comment runtime controls and allow a blank walltime,
-  while script-based SLURM clusters require one.
+  Redwood/Glamdring preset exists. Both schedulers expose a queue (partition)
+  choice; addqueue clusters also expose memory-per-process and comment
+  runtime controls and allow a blank walltime, while script-based SLURM
+  clusters require one.
 - Scheduler command resolution uses a configured absolute command path when
   one is set and otherwise probes the non-interactive SSH shell.
 - The dashboard tracks cluster name and remote scheduler job id alongside

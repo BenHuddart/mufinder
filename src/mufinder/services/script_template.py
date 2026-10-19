@@ -9,10 +9,12 @@ import shlex
 from string import Template
 
 
-# Any leading-block ``#SBATCH`` line, and any ``#SBATCH`` line that already
-# carries a memory request (``--mem``, ``--mem-per-cpu``, ``--mem-per-gpu``).
+# Any leading-block ``#SBATCH`` line, any ``#SBATCH`` line that already
+# carries a memory request (``--mem``, ``--mem-per-cpu``, ``--mem-per-gpu``),
+# and any that already names a partition (``-p``, ``--partition``).
 _SBATCH_LINE_RE = re.compile(r"^\s*#SBATCH\b")
 _SBATCH_MEMORY_LINE_RE = re.compile(r"^\s*#SBATCH\b.*--mem", re.IGNORECASE)
+_SBATCH_PARTITION_LINE_RE = re.compile(r"^\s*#SBATCH\b.*\s(?:-p|--partition\b)")
 
 _BUILTIN_TEMPLATE_TOKEN_SLURM = "builtin:slurm-basic"
 _BUILTIN_TEMPLATE_TOKEN_SCARF = "builtin:scarf-slurm"
@@ -77,13 +79,42 @@ def format_mem_per_cpu_directive(mem_per_cpu_gb: float | None) -> str:
     return f"#SBATCH --mem-per-cpu={megabytes}M"
 
 
-def insert_sbatch_directive(script: str, directive: str) -> str:
+def format_partition_directive(queue_name: str) -> str:
+    """Return the ``#SBATCH -p`` directive for a queue, or ``""`` for none."""
+
+    name = queue_name.strip()
+    return f"#SBATCH -p {name}" if name else ""
+
+
+def template_sets_partition(template_script_path: str, *, cluster_name: str, queue_system: str) -> bool:
+    """Return whether the cluster's job template hard-codes a partition.
+
+    Such a template wins over the queue chosen for a submission, so the dialogs
+    use this to say the choice will not reach the script. A template that
+    cannot be read sets nothing.
+    """
+
+    if queue_system.strip().lower() != "slurm":
+        return False
+    try:
+        template = load_template_for_cluster(
+            template_script_path,
+            cluster_name=cluster_name,
+            queue_system=queue_system,
+        )
+    except (ValueError, OSError):
+        return False
+    return any(_SBATCH_PARTITION_LINE_RE.match(line) for line in template.template.splitlines())
+
+
+def insert_sbatch_directive(script: str, directive: str, *, unless: re.Pattern[str] | None = None) -> str:
     """Insert one ``#SBATCH`` directive into a rendered batch script.
 
     The directive is placed after the last existing ``#SBATCH`` line so it stays
     inside the leading comment block, where ``sbatch`` stops parsing directives.
-    Templates that already request memory themselves are left untouched, so a
-    hand-written ``--mem``/``--mem-per-cpu`` line always wins over the dialog.
+    A script with a line matching ``unless`` is left untouched, so a
+    hand-written template line always wins over the dialog. ``unless`` defaults
+    to any memory request (``--mem``/``--mem-per-cpu``/``--mem-per-gpu``).
 
     Templates with no ``#SBATCH`` line at all still receive the directive, just
     after the shebang (or at the top when there is none). ``#SBATCH`` is only a
@@ -95,7 +126,8 @@ def insert_sbatch_directive(script: str, directive: str) -> str:
         return script
 
     lines = script.splitlines(keepends=True)
-    if any(_SBATCH_MEMORY_LINE_RE.match(line) for line in lines):
+    existing = _SBATCH_MEMORY_LINE_RE if unless is None else unless
+    if any(existing.match(line) for line in lines):
         return script
 
     insert_at = 0
@@ -109,6 +141,16 @@ def insert_sbatch_directive(script: str, directive: str) -> str:
         lines[insert_at - 1] = f"{lines[insert_at - 1]}\n"
     lines.insert(insert_at, f"{directive}\n")
     return "".join(lines)
+
+
+def insert_partition_directive(script: str, queue_name: str) -> str:
+    """Add ``#SBATCH -p <queue>`` unless the script already names a partition."""
+
+    return insert_sbatch_directive(
+        script,
+        format_partition_directive(queue_name),
+        unless=_SBATCH_PARTITION_LINE_RE,
+    )
 
 
 def load_template(path: Path | str) -> Template:
@@ -161,6 +203,7 @@ def render_job_script(
     remote_dir: str,
     castep_executable: str,
     mem_per_cpu_gb: float | None = None,
+    queue_name: str = "",
 ) -> str:
     """Render a cluster scheduler submission script from its runtime inputs.
 
@@ -204,6 +247,9 @@ def render_job_script(
         ``#SBATCH --mem-per-cpu`` directive on the slurm path only. ``None``
         (the default) emits nothing and leaves the rendered script byte-for-byte
         as it was before this option existed.
+    :param queue_name: Optional SLURM partition, emitted as ``#SBATCH -p`` on
+        the slurm path only, unless the template already names a partition.
+        ``""`` (the default) emits nothing.
     """
 
     template = load_template_for_cluster(
@@ -238,4 +284,5 @@ def render_job_script(
     )
     if not is_slurm:
         return script
+    script = insert_partition_directive(script, queue_name)
     return insert_sbatch_directive(script, format_mem_per_cpu_directive(mem_per_cpu_gb))
