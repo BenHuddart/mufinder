@@ -10,6 +10,9 @@ import pytest
 
 from mufinder.domain.models import Structure
 from mufinder.science.magnetic_structure import (
+    CHECKLIST_DONE,
+    CHECKLIST_PROBLEM,
+    CHECKLIST_TODO,
     MAGNETIC_STRUCTURE_SCHEMA_VERSION,
     AtomResolvedFourierComponent,
     AtomSelector,
@@ -27,24 +30,32 @@ from mufinder.science.magnetic_structure import (
     build_cycloid_component,
     build_helix_component,
     build_hexagonal_skyrmion_texture,
+    build_magnetic_preset_component,
     build_square_skyrmion_texture,
     build_spin_density_wave_component,
     build_texture_component,
     component_q_basis_indices,
+    crystal_axis_direction,
+    default_preset_reference_axis,
     duplicate_magnetic_components,
     enabled_magnetic_components,
     evaluate_texture_grid,
     evaluate_texture_moment,
     get_muesr_model_data,
     is_texture_component,
+    magnetic_builder_checklist,
     magnetic_model_from_legacy_structure,
+    magnetic_period_along_axes,
     moment_at_atom,
     moments_in_supercell,
     move_magnetic_components,
     normalize_texture_magnitude,
     prune_texture_terms,
+    q_basis_combination_rlu,
     q_basis_slots,
+    q_cartesian_direction,
     q_coeff_expression,
+    reciprocal_axis_q_rlu,
     skyrmion_q_basis_rlu,
     split_muesr_model_data_into_helices,
     texture_diagnostics,
@@ -1521,3 +1532,263 @@ def test_prune_texture_terms_no_args_combines() -> None:
     pruned = prune_texture_terms(texture)
     assert len(pruned.terms) == 1
     np.testing.assert_allclose(pruned.terms[0].coefficient.to_array(), [2.0, 0.0, 0.0])
+
+
+_HEXAGONAL_LATTICE = (
+    (3.0, 0.0, 0.0),
+    (-1.5, 1.5 * np.sqrt(3.0), 0.0),
+    (0.0, 0.0, 5.0),
+)
+
+
+def _basis_model(*rows: tuple[float, float, float], components: tuple[MagneticComponent, ...] = ()) -> MagneticStructureModel:
+    basis = list(rows) + [(0.0, 0.0, 0.0)] * (3 - len(rows))
+    return MagneticStructureModel(q_basis_rlu=tuple(basis), components=components)
+
+
+def test_q_basis_combination_rlu_combines_stored_rows() -> None:
+    model = _basis_model((0.25, 0.0, 0.0), (0.0, 0.25, 0.0))
+
+    assert np.allclose(q_basis_combination_rlu(model, (1.0, 0.0, 0.0)), (0.25, 0.0, 0.0))
+    assert np.allclose(q_basis_combination_rlu(model, (1.0, -1.0, 0.0)), (0.25, -0.25, 0.0))
+    assert np.allclose(q_basis_combination_rlu(model, (0.5, 2.0, 0.0)), (0.125, 0.5, 0.0))
+
+
+@pytest.mark.parametrize(
+    ("q_coeff", "message"),
+    [
+        ((0.0, 0.0, 0.0), "at least one q-basis row"),
+        ((0.0, 0.0, 1.0), "q3 is not set"),
+        ((1.0, 1.0, -1.0), "gives q = 0"),
+        ((float("nan"), 0.0, 0.0), "finite"),
+    ],
+)
+def test_q_basis_combination_rlu_rejects_unset_rows_and_zero_results(q_coeff, message) -> None:
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.25, 0.0, 0.0), (0.0, 0.25, 0.0), (0.25, 0.25, 0.0)),
+    )
+    if message == "q3 is not set":
+        model = _basis_model((0.25, 0.0, 0.0), (0.0, 0.25, 0.0))
+
+    with pytest.raises(MagneticStructureError, match=message):
+        q_basis_combination_rlu(model, q_coeff)
+
+
+def test_magnetic_period_along_axes_combines_wavevectors_and_flags_incommensurate_axes() -> None:
+    assert magnetic_period_along_axes([]) == (1, 1, 1)
+    assert magnetic_period_along_axes([(0.5, 0.0, 0.25), (0.0, 1.0 / 3.0, 0.5)]) == (2, 3, 4)
+    assert magnetic_period_along_axes([(0.0, 0.0, 0.123456789)]) == (1, 1, None)
+    assert magnetic_period_along_axes([(0.0, 0.0, 1.0 / 70.0)]) == (1, 1, None)
+    assert magnetic_period_along_axes([(0.0, 0.0, 1.0 / 70.0)], max_period=80) == (1, 1, 70)
+
+
+def _checklist(model: MagneticStructureModel, repeats=(1, 1, 1), *, has_host: bool = True) -> dict[str, tuple[str, str]]:
+    return {
+        item.key: (item.state, item.detail)
+        for item in magnetic_builder_checklist(model, has_host=has_host, preview_repeats=repeats)
+    }
+
+
+def _helix(q_coeff=(1.0, 0.0, 0.0), *, label: str = "Helix", moment: float = 1.0) -> MagneticComponent:
+    return build_helix_component(
+        label=label,
+        selector=AtomSelector.all(),
+        q_coeff=q_coeff,
+        real_axis_vector=(moment, 0.0, 0.0),
+        imaginary_axis_vector=(0.0, moment, 0.0),
+    )
+
+
+def test_magnetic_builder_checklist_starts_with_components_to_add() -> None:
+    without_host = _checklist(MagneticStructureModel(), has_host=False)
+    empty = _checklist(MagneticStructureModel())
+
+    assert without_host["components"] == (CHECKLIST_TODO, "Load a host structure first.")
+    assert empty["components"][0] == CHECKLIST_TODO
+    assert "Add Preset" in empty["components"][1]
+    assert empty["q_basis"][0] == CHECKLIST_TODO
+    assert empty["preview"][0] == CHECKLIST_TODO
+    assert empty["ready"] == (CHECKLIST_TODO, "Finish the steps above first.")
+
+
+def test_magnetic_builder_checklist_flags_disabled_and_zero_moment_components() -> None:
+    disabled = replace(_helix(), enabled=False)
+    zero = _helix(label="Zero", moment=0.0)
+
+    all_disabled = _checklist(_basis_model((0.0, 0.0, 0.25), components=(disabled,)))
+    zero_moment = _checklist(_basis_model((0.0, 0.0, 0.25), components=(zero, _helix(label="Kept"))), (1, 1, 4))
+
+    assert all_disabled["components"] == (
+        CHECKLIST_PROBLEM,
+        "Every component is disabled, so the structure has no moments.",
+    )
+    assert all_disabled["ready"] == (CHECKLIST_TODO, "Fix the flagged steps first.")
+    assert zero_moment["components"] == (CHECKLIST_PROBLEM, "Zero moment: 'Zero'.")
+    assert zero_moment["preview"][0] == CHECKLIST_DONE
+
+
+def test_magnetic_builder_checklist_flags_a_zero_q_basis_row_in_use() -> None:
+    checklist = _checklist(_basis_model(components=(_helix(),)))
+
+    assert checklist["q_basis"][0] == CHECKLIST_PROBLEM
+    assert "q1 is used by an enabled component" in checklist["q_basis"][1]
+
+
+def test_magnetic_builder_checklist_needs_no_basis_for_q_zero_components() -> None:
+    collinear = build_collinear_component(
+        label="Ferro", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0.0, 0.0, 1.0)
+    )
+
+    checklist = _checklist(MagneticStructureModel(components=(collinear,)))
+
+    assert checklist["q_basis"] == (CHECKLIST_DONE, "Not needed: every enabled component has q = 0.")
+    assert checklist["preview"][0] == CHECKLIST_DONE
+    assert checklist["ready"][0] == CHECKLIST_DONE
+
+
+def test_magnetic_builder_checklist_asks_for_a_whole_commensurate_cell() -> None:
+    model = _basis_model((0.5, 0.0, 0.25), components=(_helix(),))
+
+    short = _checklist(model, (2, 1, 1))
+    whole = _checklist(model, (2, 1, 4))
+
+    assert short["preview"] == (CHECKLIST_TODO, "One magnetic cell needs a 2×1×4 preview; it shows 2×1×1.")
+    assert short["ready"][0] == CHECKLIST_TODO
+    assert whole["q_basis"] == (CHECKLIST_DONE, "Enabled components use q1.")
+    assert whole["preview"][0] == CHECKLIST_DONE
+    assert whole["ready"][0] == CHECKLIST_DONE
+
+
+def test_magnetic_builder_checklist_caps_long_commensurate_periods_at_the_largest_preview() -> None:
+    model = _basis_model((0.0, 0.0, 0.05), components=(_helix(),))
+
+    short = magnetic_builder_checklist(model, has_host=True, preview_repeats=(1, 1, 4), max_preview_repeat=12)
+    longest = magnetic_builder_checklist(model, has_host=True, preview_repeats=(1, 1, 12), max_preview_repeat=12)
+
+    assert short[2].detail == "The largest preview needs a 1×1×12 preview; it shows 1×1×4."
+    assert longest[2].state == CHECKLIST_DONE
+    assert "longer than the largest preview" in longest[2].detail
+
+
+def test_magnetic_builder_checklist_flags_an_incommensurate_q_without_a_preview_repeat() -> None:
+    model = _basis_model((0.0, 0.0, 0.123456789), components=(_helix(),))
+
+    flat = _checklist(model)
+    repeated = _checklist(model, (1, 1, 6))
+
+    assert flat["preview"][0] == CHECKLIST_PROBLEM
+    assert "incommensurate along c" in flat["preview"][1]
+    assert flat["ready"] == (CHECKLIST_TODO, "Fix the flagged steps first.")
+    assert repeated["preview"] == (
+        CHECKLIST_DONE,
+        "The 1×1×6 preview repeats along every incommensurate axis.",
+    )
+    assert repeated["ready"][0] == CHECKLIST_DONE
+
+
+def test_q_cartesian_direction_follows_the_reciprocal_lattice() -> None:
+    a_star = q_cartesian_direction(_HEXAGONAL_LATTICE, (0.25, 0.0, 0.0))
+
+    assert np.allclose(a_star, (np.sqrt(3.0) / 2.0, 0.5, 0.0))
+    assert abs(float(a_star @ crystal_axis_direction(_HEXAGONAL_LATTICE, "b"))) < 1e-12
+    with pytest.raises(MagneticStructureError, match="non-zero"):
+        q_cartesian_direction(_HEXAGONAL_LATTICE, (0.0, 0.0, 0.0))
+
+
+def test_crystal_axis_and_reciprocal_axis_helpers_validate_their_axis() -> None:
+    assert np.allclose(crystal_axis_direction(_HEXAGONAL_LATTICE, "B"), (-0.5, np.sqrt(3.0) / 2.0, 0.0))
+    assert reciprocal_axis_q_rlu("c*", 0.2) == (0.0, 0.0, 0.2)
+    assert reciprocal_axis_q_rlu("a", -0.1) == (-0.1, 0.0, 0.0)
+    with pytest.raises(MagneticStructureError, match="crystal axis"):
+        crystal_axis_direction(_HEXAGONAL_LATTICE, "d")
+    with pytest.raises(MagneticStructureError, match="reciprocal axis"):
+        reciprocal_axis_q_rlu("d*", 0.2)
+    with pytest.raises(MagneticStructureError, match="non-zero"):
+        reciprocal_axis_q_rlu("a*", 0.0)
+
+
+def test_default_preset_reference_axis_is_the_axis_most_perpendicular_to_q() -> None:
+    assert default_preset_reference_axis(_HEXAGONAL_LATTICE, (0.0, 0.0, 0.25)) == "a"
+    assert default_preset_reference_axis(_HEXAGONAL_LATTICE, (0.25, 0.0, 0.0)) == "b"
+
+
+def _preset(kind: str, **overrides) -> MagneticComponent:
+    kwargs = {
+        "lattice_vectors": _HEXAGONAL_LATTICE,
+        "q_rlu": (0.0, 0.0, 0.25),
+        "q_coeff": (1.0, 0.0, 0.0),
+        "moment": 2.0,
+        "reference_axis": "a",
+        "selector": AtomSelector.species("Fe"),
+    }
+    kwargs.update(overrides)
+    return build_magnetic_preset_component(kind, **kwargs)
+
+
+def test_helix_preset_rotates_perpendicular_to_q_from_the_reference_axis() -> None:
+    right = _preset("helix")
+    left = _preset("helix", handedness=-1)
+
+    assert right.kind == "helix"
+    assert right.label == "Helix"
+    assert right.selector == AtomSelector.species("Fe")
+    assert right.terms[0].q_coeff == (1.0, 0.0, 0.0)
+    assert np.allclose(right.terms[0].coefficient.real, (2.0, 0.0, 0.0))
+    assert np.allclose(right.terms[0].coefficient.imaginary, (0.0, 2.0, 0.0))
+    assert np.allclose(left.terms[0].coefficient.imaginary, (0.0, -2.0, 0.0))
+
+
+def test_helix_preset_projects_an_oblique_reference_axis_into_the_rotation_plane() -> None:
+    component = _preset("helix", q_rlu=(0.25, 0.0, 0.0), reference_axis="a")
+    q_direction = q_cartesian_direction(_HEXAGONAL_LATTICE, (0.25, 0.0, 0.0))
+    real = np.asarray(component.terms[0].coefficient.real)
+    imag = np.asarray(component.terms[0].coefficient.imaginary)
+
+    assert abs(float(real @ q_direction)) < 1e-12
+    assert abs(float(imag @ q_direction)) < 1e-12
+    assert np.isclose(np.linalg.norm(real), 2.0)
+    assert float(real @ crystal_axis_direction(_HEXAGONAL_LATTICE, "a")) > 0.0
+
+
+def test_conical_preset_puts_the_cone_axis_along_q() -> None:
+    component = _preset("conical", cone_angle_degrees=30.0, handedness=-1, label="Cone")
+
+    assert component.kind == "conical"
+    assert component.label == "Cone"
+    static, rotating = component.terms
+    assert static.q_coeff == (0.0, 0.0, 0.0)
+    assert np.allclose(static.coefficient.real, (0.0, 0.0, 2.0 * np.cos(np.deg2rad(30.0))))
+    assert np.allclose(rotating.coefficient.real, (2.0 * np.sin(np.deg2rad(30.0)), 0.0, 0.0))
+    assert np.allclose(rotating.coefficient.imaginary, (0.0, -2.0 * np.sin(np.deg2rad(30.0)), 0.0))
+
+
+def test_cycloid_preset_rotates_in_the_plane_holding_q_and_the_reference_axis() -> None:
+    component = _preset("cycloid", reference_axis="a")
+
+    assert component.kind == "cycloid"
+    assert np.allclose(component.terms[0].coefficient.real, (2.0, 0.0, 0.0))
+    assert np.allclose(component.terms[0].coefficient.imaginary, (0.0, 0.0, 2.0))
+
+
+def test_spin_density_wave_preset_modulates_along_the_reference_axis() -> None:
+    component = _preset("spin_density_wave", reference_axis="c")
+
+    assert component.kind == "spin_density_wave"
+    assert np.allclose(component.terms[0].coefficient.real, (0.0, 0.0, 2.0))
+    assert np.allclose(component.terms[0].coefficient.imaginary, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("kind", "overrides", "message"),
+    [
+        ("helix", {"reference_axis": "c"}, "parallel to q"),
+        ("cycloid", {"reference_axis": "c"}, "parallel to q"),
+        ("skyrmion", {}, "preset kind"),
+        ("helix", {"moment": 0.0}, "moment must be positive"),
+        ("helix", {"handedness": 0}, "handedness"),
+        ("helix", {"q_rlu": (0.0, 0.0, 0.0)}, "non-zero"),
+    ],
+)
+def test_magnetic_preset_rejects_invalid_choices(kind, overrides, message) -> None:
+    with pytest.raises(MagneticStructureError, match=message):
+        _preset(kind, **overrides)

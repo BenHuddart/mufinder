@@ -92,18 +92,23 @@ from mufinder.science.magnetic_structure import (
     MagneticComponent,
     MagneticStructureModel,
     MagneticStructureError,
+    CHECKLIST_DONE,
+    CHECKLIST_PROBLEM,
     build_collinear_component,
     build_conical_component,
     build_cycloid_component,
     build_helix_component,
     build_hexagonal_skyrmion_texture,
+    build_magnetic_preset_component,
     build_square_skyrmion_texture,
     build_spin_density_wave_component,
     build_texture_component,
     component_q_basis_indices,
+    default_preset_reference_axis,
     duplicate_magnetic_components,
     enabled_magnetic_components,
     is_texture_component,
+    magnetic_builder_checklist,
     magnetic_model_from_legacy_structure,
     MagneticTexture,
     MagneticTextureTerm,
@@ -111,8 +116,11 @@ from mufinder.science.magnetic_structure import (
     move_magnetic_components,
     normalize_texture_magnitude,
     prune_texture_terms,
+    q_basis_combination_rlu,
     q_basis_slots,
+    q_cartesian_direction,
     q_coeff_expression,
+    reciprocal_axis_q_rlu,
     resolve_atom_selector,
     set_magnetic_components_enabled,
     set_q_basis_vector,
@@ -130,6 +138,7 @@ from mufinder.services.project_service import ProjectDocument
 
 
 _DIRECTION_TOLERANCE = 1e-6
+_Q_BASIS_HEADERS = ("Row", "q (r.l.u.)", "Used by")
 _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _SITE_OPTION_ROLE = int(Qt.ItemDataRole.UserRole) + 41
@@ -166,6 +175,8 @@ class MagneticMuonSiteOption:
 class MagneticComponentDialog(QDialog):
     """Dialog for creating a propagation-vector magnetic component."""
 
+    _Q_SOURCE_VECTOR = "vector"
+    _Q_SOURCE_COMBINATION = "combination"
     _TEXTURE_KINDS = {
         "Collinear": "collinear",
         "Spin-density wave": "spin_density_wave",
@@ -181,12 +192,15 @@ class MagneticComponentDialog(QDialog):
         selected_indices: tuple[int, ...] = (),
         component: MagneticComponent | None = None,
         q_vector: tuple[float, float, float] | None = None,
+        model: MagneticStructureModel | None = None,
+        q_coeff: Sequence[float] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit Magnetic Component" if component is not None else "Add Magnetic Component")
-        self.resize(760, 680)
+        self.resize(clamped_size(self, 760, 820))
         self._structure = structure
+        self._model = model if model is not None else MagneticStructureModel()
         if component is not None and component.selector.kind == "indices":
             selected_indices = (*selected_indices, *(int(value) for value in component.selector.values))
         self._selected_indices = tuple(
@@ -242,17 +256,51 @@ class MagneticComponentDialog(QDialog):
         self._q_x = self._decimal_input("0.0", minimum=-4.0, maximum=4.0, placeholder="qx")
         self._q_y = self._decimal_input("0.0", minimum=-4.0, maximum=4.0, placeholder="qy")
         self._q_z = self._decimal_input("0.0", minimum=-4.0, maximum=4.0, placeholder="qz")
+        self._q_source_combo = QComboBox()
+        self._q_source_combo.addItem("Enter a vector (r.l.u.)", self._Q_SOURCE_VECTOR)
+        stored_rows = [slot for slot in q_basis_slots(self._model) if not np.allclose(slot.q_rlu, 0.0, atol=1e-12)]
+        for slot in stored_rows:
+            self._q_source_combo.addItem(f"{slot.label} = ({_q_vector_text(slot.q_rlu)})", slot.index)
+        if stored_rows:
+            self._q_source_combo.addItem("Combination of basis rows", self._Q_SOURCE_COMBINATION)
+        else:
+            self._q_source_combo.setToolTip("No propagation vector is stored yet; enter q as a vector")
+        self._q_coeff_inputs = tuple(
+            self._decimal_input("0", minimum=-4.0, maximum=4.0, placeholder=f"n{index + 1}") for index in range(3)
+        )
+        for index, edit in enumerate(self._q_coeff_inputs):
+            stored = any(slot.index == index for slot in stored_rows)
+            edit.setEnabled(stored)
+            edit.setToolTip(
+                f"Multiple of q{index + 1}" if stored else f"q{index + 1} holds no propagation vector"
+            )
+        self._q_expression = QLabel("")
+        self._q_expression.setWordWrap(True)
+        style_hint_text(self._q_expression)
+        self._q_basis_table = _create_q_basis_table(editable=False)
+        _fill_q_basis_table(self._q_basis_table, self._model)
+        self._q_basis_table.resizeRowsToContents()
+        self._q_basis_table.setFixedHeight(
+            self._q_basis_table.horizontalHeader().sizeHint().height()
+            + sum(self._q_basis_table.rowHeight(row) for row in range(3))
+            + 2 * self._q_basis_table.frameWidth()
+        )
 
         self._phase = self._decimal_input("0.0", minimum=-10.0, maximum=10.0, placeholder="0.0")
 
         self._build_layout()
         self._refresh_target_options()
+        self._q_source_combo.currentIndexChanged.connect(lambda *_: self._sync_q_from_basis())
+        for edit in self._q_coeff_inputs:
+            edit.textChanged.connect(lambda *_: self._sync_q_from_basis())
         self._kind_combo.currentTextChanged.connect(self._refresh_texture_controls)
         self._handedness_combo.currentIndexChanged.connect(lambda *_: self._sync_constrained_direction_inputs())
         for edit in (*self._primary_direction, self._q_x, self._q_y, self._q_z):
             edit.textChanged.connect(lambda *_: self._sync_constrained_direction_inputs())
         if component is not None:
             self._load_component(component, q_vector or (0.0, 0.0, 0.0))
+            self._select_q_source(q_coeff)
+        self._sync_q_from_basis()
         self._refresh_texture_controls()
 
     def _build_layout(self) -> None:
@@ -303,9 +351,28 @@ class MagneticComponentDialog(QDialog):
         q_layout.addWidget(self._q_x)
         q_layout.addWidget(self._q_y)
         q_layout.addWidget(self._q_z)
+        form.addRow("q from", self._q_source_combo)
+        coeff_group = QWidget()
+        style_inline_group(coeff_group)
+        coeff_layout = QHBoxLayout(coeff_group)
+        coeff_layout.setContentsMargins(0, 0, 0, 0)
+        for index, edit in enumerate(self._q_coeff_inputs):
+            coeff_layout.addWidget(edit)
+            row_label = QLabel(f"q{index + 1}" + (" +" if index < 2 else ""))
+            row_label.setStyleSheet("background: transparent;")
+            coeff_layout.addWidget(row_label)
+        self._q_coeff_row_label = QLabel("Basis coefficients")
+        self._q_coeff_group = coeff_group
+        form.addRow(self._q_coeff_row_label, coeff_group)
         form.addRow("q (r.l.u.)", q_group)
+        form.addRow("", self._q_expression)
         form.addRow("Phase (turns)", self._phase)
         layout.addWidget(form_group)
+
+        q_basis_group = QGroupBox("Propagation-Vector Basis")
+        q_basis_layout = QVBoxLayout(q_basis_group)
+        q_basis_layout.addWidget(self._q_basis_table)
+        layout.addWidget(q_basis_group)
 
         target_group = QGroupBox("Apply Component To")
         target_layout = QGridLayout(target_group)
@@ -610,17 +677,12 @@ class MagneticComponentDialog(QDialog):
             if allow_fallback:
                 return np.asarray((0.0, 0.0, 1.0), dtype=float)
             raise ValueError("q must be non-zero for helical, cycloidal, and conical components")
-        lattice = np.asarray(self._structure.lattice_vectors, dtype=float)
         try:
-            q_cartesian = np.linalg.solve(lattice, q_rlu)
-        except np.linalg.LinAlgError:
-            q_cartesian = q_rlu
-        norm = float(np.linalg.norm(q_cartesian))
-        if norm <= _DIRECTION_TOLERANCE:
+            return q_cartesian_direction(self._structure.lattice_vectors, q_rlu)
+        except MagneticStructureError:
             if allow_fallback:
                 return np.asarray((0.0, 0.0, 1.0), dtype=float)
-            raise ValueError("q must define a non-zero propagation direction")
-        return q_cartesian / norm
+            raise ValueError("q must define a non-zero propagation direction") from None
 
     def _projected_reference_direction(self, q_direction: np.ndarray) -> np.ndarray:
         try:
@@ -808,6 +870,74 @@ class MagneticComponentDialog(QDialog):
         </html>
         """
 
+    def _q_source(self) -> object:
+        return self._q_source_combo.currentData()
+
+    def _select_q_source(self, q_coeff: Sequence[float] | None) -> None:
+        """Show an edited component's q as the basis row or combination it is stored as."""
+
+        if q_coeff is None or self._q_source_combo.count() < 2:
+            return
+        coeff = tuple(float(value) for value in tuple(q_coeff)[:3])
+        used = [index for index, value in enumerate(coeff) if abs(value) > 1e-12]
+        if not used:
+            return
+        if len(used) == 1 and abs(coeff[used[0]] - 1.0) <= 1e-12:
+            row = self._q_source_combo.findData(used[0])
+            if row >= 0:
+                self._q_source_combo.setCurrentIndex(row)
+                return
+        row = self._q_source_combo.findData(self._Q_SOURCE_COMBINATION)
+        if row < 0:
+            return
+        for edit, value in zip(self._q_coeff_inputs, coeff, strict=True):
+            edit.setText(f"{value:.8g}")
+        self._q_source_combo.setCurrentIndex(row)
+
+    def q_basis_coefficients(self) -> tuple[float, float, float] | None:
+        """Return the chosen combination of q-basis rows, or ``None`` when q was entered as a vector."""
+
+        source = self._q_source()
+        if isinstance(source, int):
+            return _unit_q_coeff(source)
+        if source == self._Q_SOURCE_COMBINATION:
+            values = tuple(
+                self._decimal_value(edit, f"q{index + 1} coefficient") if edit.isEnabled() else 0.0
+                for index, edit in enumerate(self._q_coeff_inputs)
+            )
+            return (values[0], values[1], values[2])
+        return None
+
+    def _sync_q_from_basis(self) -> None:
+        """Fill the r.l.u. fields from the chosen basis row or combination, and lock them while one is chosen."""
+
+        source = self._q_source()
+        from_basis = source != self._Q_SOURCE_VECTOR
+        combination = source == self._Q_SOURCE_COMBINATION
+        self._q_coeff_group.setVisible(combination)
+        self._q_coeff_row_label.setVisible(combination)
+        for edit in (self._q_x, self._q_y, self._q_z):
+            edit.setReadOnly(from_basis)
+        if not from_basis:
+            self._q_expression.setText(
+                "A new q fills an unused basis row; a q already in the basis reuses its row."
+            )
+            return
+        try:
+            coeff = self.q_basis_coefficients()
+            q_rlu = q_basis_combination_rlu(self._model, coeff or (0.0, 0.0, 0.0))
+        except (MagneticStructureError, ValueError) as exc:
+            self._q_expression.setText(str(exc))
+            return
+        for edit, value in zip((self._q_x, self._q_y, self._q_z), q_rlu, strict=True):
+            text = f"{float(value):.8g}"
+            if edit.text() != text:
+                edit.setText(text)
+        self._q_expression.setText(
+            f"q = {q_coeff_expression(coeff or (0.0, 0.0, 0.0))} = ({_q_vector_text(q_rlu)}); "
+            "the component follows these rows if they are edited."
+        )
+
     def q_vector(self) -> tuple[float, float, float]:
         return (
             self._decimal_value(self._q_x, "q x"),
@@ -912,6 +1042,9 @@ class MagneticComponentDialog(QDialog):
 
         try:
             self._decimal_value(self._amplitude, "amplitude")
+            coeff = self.q_basis_coefficients()
+            if coeff is not None:
+                q_basis_combination_rlu(self._model, coeff)
             self.q_vector()
             self._decimal_value(self._phase, "phase")
             kind = self._TEXTURE_KINDS.get(self._kind_combo.currentText(), "collinear")
@@ -921,8 +1054,234 @@ class MagneticComponentDialog(QDialog):
                 self._primary_unit_direction()
             if kind == "conical":
                 self._decimal_value(self._cone_angle, "cone angle")
-        except ValueError as exc:
+        except (MagneticStructureError, ValueError) as exc:
             QMessageBox.warning(self, "Invalid magnetic component", str(exc))
+            return
+        super().accept()
+
+
+class MagneticPresetDialog(QDialog):
+    """Guided helper that builds a helix, conical, cycloid or spin-density wave from crystal axes."""
+
+    _KINDS = {
+        "Helix": "helix",
+        "Conical": "conical",
+        "Cycloid": "cycloid",
+        "Spin-density wave": "spin_density_wave",
+    }
+    _REFERENCE_LABELS = {
+        "helix": "Moment at zero phase along",
+        "conical": "Rotating moment at zero phase along",
+        "cycloid": "Rotation plane holds q and",
+        "spin_density_wave": "Moment along",
+    }
+
+    def __init__(
+        self,
+        structure: Structure,
+        *,
+        model: MagneticStructureModel | None = None,
+        selected_indices: tuple[int, ...] = (),
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Add Magnetic Preset")
+        self.resize(clamped_size(self, 640, 560))
+        self._structure = structure
+        self._model = model if model is not None else MagneticStructureModel()
+        self._label_edited = False
+        self.setStyleSheet(feature_dialog_stylesheet())
+
+        self._kind_combo = QComboBox()
+        for label, kind in self._KINDS.items():
+            self._kind_combo.addItem(label, kind)
+        self._propagation_combo = QComboBox()
+        for axis in ("a", "b", "c"):
+            self._propagation_combo.addItem(f"Along {axis}*", f"{axis}*")
+        for slot in q_basis_slots(self._model):
+            if not np.allclose(slot.q_rlu, 0.0, atol=1e-12):
+                self._propagation_combo.addItem(f"Basis row {slot.label} = ({_q_vector_text(slot.q_rlu)})", slot.index)
+        self._propagation_combo.setCurrentIndex(2)
+        self._wavevector = MagneticComponentDialog._decimal_input(
+            "0.25", minimum=-4.0, maximum=4.0, placeholder="δ"
+        )
+        self._wavevector_row_label = QLabel("Wavevector δ (r.l.u.)")
+        self._reference_combo = QComboBox()
+        for axis in ("a", "b", "c"):
+            self._reference_combo.addItem(f"Crystal axis {axis}", axis)
+        self._reference_row_label = QLabel("")
+        self._handedness_combo = QComboBox()
+        self._handedness_combo.addItem("Right-handed", 1)
+        self._handedness_combo.addItem("Left-handed", -1)
+        self._handedness_row_label = QLabel("Handedness")
+        self._cone_angle = MagneticComponentDialog._decimal_input(
+            "45.0", minimum=0.0, maximum=180.0, placeholder="45"
+        )
+        self._cone_angle_row_label = QLabel("Cone angle (degrees)")
+        self._moment = MagneticComponentDialog._decimal_input("1.0", minimum=0.0, maximum=1000.0, placeholder="1.0")
+        self._selector_combo = QComboBox()
+        for selector in viable_atom_selectors(structure, selected_indices=selected_indices):
+            self._selector_combo.addItem(_selector_label(selector, structure), selector)
+        if selected_indices:
+            self._selector_combo.setCurrentIndex(self._selector_combo.count() - 1)
+        elif self._selector_combo.count() > 1:
+            self._selector_combo.setCurrentIndex(1)
+        self._label_edit = QLineEdit()
+        self._summary = QLabel("")
+        self._summary.setWordWrap(True)
+        style_hint_text(self._summary)
+
+        self._build_layout()
+        self._kind_combo.currentIndexChanged.connect(lambda *_: self._refresh())
+        self._propagation_combo.currentIndexChanged.connect(lambda *_: self._refresh(reset_reference=True))
+        # δ only rescales q along the same axis, so it keeps the reference axis the user chose.
+        self._wavevector.textChanged.connect(lambda *_: self._refresh())
+        for widget in (self._reference_combo, self._handedness_combo):
+            widget.currentIndexChanged.connect(lambda *_: self._refresh())
+        for edit in (self._cone_angle, self._moment):
+            edit.textChanged.connect(lambda *_: self._refresh())
+        self._label_edit.textEdited.connect(self._on_label_edited)
+        self._refresh(reset_reference=True)
+
+    def _build_layout(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(14)
+        title = QLabel("Add Magnetic Preset", self)
+        style_section_title(title)
+        layout.addWidget(title)
+        intro = QLabel(
+            "Pick the propagation direction and how the moments sit relative to the crystal axes; "
+            "the preset becomes an ordinary component you can edit afterwards."
+        )
+        intro.setWordWrap(True)
+        style_hint_text(intro)
+        layout.addWidget(intro)
+
+        group = QGroupBox("Preset")
+        form = QFormLayout(group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.addRow("Structure", self._kind_combo)
+        form.addRow("Propagation", self._propagation_combo)
+        form.addRow(self._wavevector_row_label, self._wavevector)
+        form.addRow(self._reference_row_label, self._reference_combo)
+        form.addRow(self._handedness_row_label, self._handedness_combo)
+        form.addRow(self._cone_angle_row_label, self._cone_angle)
+        moment_group = QWidget()
+        style_inline_group(moment_group)
+        moment_layout = QHBoxLayout(moment_group)
+        moment_layout.setContentsMargins(0, 0, 0, 0)
+        moment_layout.addWidget(self._moment)
+        bohr_label = QLabel("μ<sub>B</sub>")
+        bohr_label.setTextFormat(Qt.TextFormat.RichText)
+        bohr_label.setStyleSheet("background: transparent;")
+        moment_layout.addWidget(bohr_label)
+        form.addRow("Moment", moment_group)
+        form.addRow("Apply to", self._selector_combo)
+        form.addRow("Label", self._label_edit)
+        layout.addWidget(group)
+        layout.addWidget(self._summary)
+        layout.addStretch(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add Component")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _kind(self) -> str:
+        return str(self._kind_combo.currentData())
+
+    def _on_label_edited(self, *_args: object) -> None:
+        self._label_edited = bool(self._label_edit.text().strip())
+
+    def q_basis_coefficients(self) -> tuple[float, float, float] | None:
+        """Return the stored basis row the preset propagates along, or ``None`` for a new reciprocal-axis q."""
+
+        source = self._propagation_combo.currentData()
+        return _unit_q_coeff(source) if isinstance(source, int) else None
+
+    def q_vector(self) -> tuple[float, float, float]:
+        source = self._propagation_combo.currentData()
+        if isinstance(source, int):
+            return _tuple3_float(self._model.q_basis_rlu[source])
+        try:
+            return reciprocal_axis_q_rlu(str(source), MagneticComponentDialog._decimal_value(self._wavevector, "δ"))
+        except MagneticStructureError as exc:
+            raise ValueError(str(exc)) from None
+
+    def _propagation_text(self) -> str:
+        source = self._propagation_combo.currentData()
+        return f"q{source + 1}" if isinstance(source, int) else str(source)
+
+    def component(self, q_coeff: Sequence[float]) -> MagneticComponent:
+        kind = self._kind()
+        label = self._label_edit.text().strip() or self._default_label()
+        return build_magnetic_preset_component(
+            kind,
+            lattice_vectors=self._structure.lattice_vectors,
+            q_rlu=self.q_vector(),
+            q_coeff=q_coeff,
+            moment=MagneticComponentDialog._decimal_value(self._moment, "moment"),
+            reference_axis=str(self._reference_combo.currentData()),
+            selector=self._selector_combo.currentData(),
+            label=label,
+            handedness=int(self._handedness_combo.currentData()),
+            cone_angle_degrees=(
+                MagneticComponentDialog._decimal_value(self._cone_angle, "cone angle") if kind == "conical" else 45.0
+            ),
+        )
+
+    def _default_label(self) -> str:
+        return f"{self._kind_combo.currentText()} along {self._propagation_text()}"
+
+    def _refresh(self, *, reset_reference: bool = False) -> None:
+        kind = self._kind()
+        from_axis = not isinstance(self._propagation_combo.currentData(), int)
+        self._wavevector.setVisible(from_axis)
+        self._wavevector_row_label.setVisible(from_axis)
+        rotating = kind != "spin_density_wave"
+        self._handedness_combo.setVisible(rotating)
+        self._handedness_row_label.setVisible(rotating)
+        conical = kind == "conical"
+        self._cone_angle.setVisible(conical)
+        self._cone_angle_row_label.setVisible(conical)
+        self._reference_row_label.setText(self._REFERENCE_LABELS[kind])
+        if not self._label_edited:
+            self._label_edit.setText(self._default_label())
+        try:
+            q_rlu = self.q_vector()
+            if reset_reference:
+                axis = default_preset_reference_axis(self._structure.lattice_vectors, q_rlu)
+                self._reference_combo.blockSignals(True)
+                self._reference_combo.setCurrentIndex(self._reference_combo.findData(axis))
+                self._reference_combo.blockSignals(False)
+            self.component(self.q_basis_coefficients() or (1.0, 0.0, 0.0))
+        except (MagneticStructureError, ValueError) as exc:
+            self._summary.setText(f"Cannot build this preset: {exc}")
+            return
+        axis = str(self._reference_combo.currentData())
+        q_text = f"q = ({_q_vector_text(q_rlu)})"
+        if kind == "helix":
+            text = f"Moments rotate in the plane perpendicular to {q_text}, starting along axis {axis}, projected into it."
+        elif kind == "conical":
+            text = (
+                f"Moments precess on a cone about {q_text}; the rotating part starts along axis {axis}, "
+                "projected perpendicular to q."
+            )
+        elif kind == "cycloid":
+            text = f"Moments rotate in the plane that holds {q_text} and axis {axis}."
+        else:
+            text = f"Moments along {axis} are modulated in size with {q_text}."
+        self._summary.setText(text)
+
+    def accept(self) -> None:  # noqa: D401 - Qt API override.
+        """Accept only when the preset builds."""
+
+        try:
+            self.component(self.q_basis_coefficients() or (1.0, 0.0, 0.0))
+        except (MagneticStructureError, ValueError) as exc:
+            QMessageBox.warning(self, "Invalid magnetic preset", str(exc))
             return
         super().accept()
 
@@ -2219,7 +2578,6 @@ class MagneticStructureBuilderDialog(QDialog):
     _COMPONENT_HEADERS = ("Enabled", "Component", "Type", "Apply to", "q", "Moment")
     _ENABLED_COLUMN = 0
     _LABEL_COLUMN = 1
-    _Q_BASIS_HEADERS = ("Row", "q (r.l.u.)", "Used by")
     _Q_BASIS_VECTOR_COLUMN = 1
     _Q_BASIS_USERS_COLUMN = 2
 
@@ -2258,16 +2616,7 @@ class MagneticStructureBuilderDialog(QDialog):
         self._configure_component_table_columns()
         use_square_top_table_corners(self._component_table)
 
-        self._q_basis_table = create_workflow_table(
-            self._Q_BASIS_HEADERS,
-            resize_to_contents_columns=(0,),
-            selection_mode=QAbstractItemView.SelectionMode.NoSelection,
-            editable=True,
-        )
-        self._q_basis_table.setRowCount(3)
-        self._q_basis_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self._q_basis_table.setSizeAdjustPolicy(QAbstractItemView.SizeAdjustPolicy.AdjustToContents)
-        self._q_basis_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._q_basis_table = _create_q_basis_table(editable=True)
         self._q_basis_table.itemChanged.connect(self._on_q_basis_item_changed)
         self._q_basis_hint = QLabel(
             "Each component stores its q as a combination of these rows. Double-click a q vector to edit it; "
@@ -2278,6 +2627,11 @@ class MagneticStructureBuilderDialog(QDialog):
 
         self._add_button = QPushButton("Add Component")
         self._add_button.clicked.connect(self._add_component)
+        self._add_preset_button = QPushButton("Add Preset...")
+        self._add_preset_button.setToolTip(
+            "Build a helix, conical, cycloid or spin-density wave from a propagation direction and crystal axes"
+        )
+        self._add_preset_button.clicked.connect(self._add_preset)
         self._add_texture_button = QPushButton("Add Texture...")
         self._add_texture_button.clicked.connect(self._add_texture)
         self._edit_button = QPushButton("Edit...")
@@ -2299,6 +2653,18 @@ class MagneticStructureBuilderDialog(QDialog):
         self._repeat_c = self._repeat_spinbox()
         for spinbox in (self._repeat_a, self._repeat_b, self._repeat_c):
             spinbox.valueChanged.connect(lambda *_: self._refresh_preview())
+
+        self._checklist_labels: dict[str, QLabel] = {}
+        self._checklist_group = QGroupBox("Checklist")
+        checklist_layout = QVBoxLayout(self._checklist_group)
+        checklist_layout.setSpacing(4)
+        for key in ("components", "q_basis", "preview", "ready"):
+            label = QLabel("")
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setWordWrap(True)
+            label.setStyleSheet("background: transparent;")
+            self._checklist_labels[key] = label
+            checklist_layout.addWidget(label)
 
         self._viewer = AtomicStructureViewer()
         self._viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -2330,6 +2696,7 @@ class MagneticStructureBuilderDialog(QDialog):
 
         action_row = QHBoxLayout()
         action_row.addWidget(self._add_button)
+        action_row.addWidget(self._add_preset_button)
         action_row.addWidget(self._add_texture_button)
         action_row.addWidget(self._edit_button)
         action_row.addWidget(self._duplicate_button)
@@ -2353,6 +2720,7 @@ class MagneticStructureBuilderDialog(QDialog):
 
         info_panel = QWidget()
         info_layout = QVBoxLayout(info_panel)
+        info_layout.addWidget(self._checklist_group)
         info_layout.addWidget(self._preview_status)
         info_layout.addWidget(self._classification)
         info_layout.addWidget(self._component_table, 1)
@@ -2463,6 +2831,7 @@ class MagneticStructureBuilderDialog(QDialog):
     def _sync_enabled_state(self) -> None:
         has_host = self._host_structure is not None
         self._add_button.setEnabled(has_host)
+        self._add_preset_button.setEnabled(has_host)
         self._add_texture_button.setEnabled(has_host)
         self._build_from_host_button.setEnabled(has_host)
         selected_ids = self._selected_component_ids() if has_host else ()
@@ -2514,14 +2883,13 @@ class MagneticStructureBuilderDialog(QDialog):
     def _populate_q_basis(self) -> None:
         """Show each stored q-basis row, the components that use it, and whether it can be edited here."""
 
-        components = {component.component_id: component for component in self._model.components}
         table = self._q_basis_table
+        _fill_q_basis_table(table, self._model)
         for slot in q_basis_slots(self._model):
-            row_item = QTableWidgetItem(slot.label)
-            row_item.setFlags(row_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            vector_item = QTableWidgetItem(_q_vector_text(slot.q_rlu))
+            vector_item = table.item(slot.index, self._Q_BASIS_VECTOR_COLUMN)
+            if not slot.texture_component_ids:
+                vector_item.setFlags(vector_item.flags() | Qt.ItemFlag.ItemIsEditable)
             if slot.texture_component_ids:
-                vector_item.setFlags(vector_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 vector_item.setToolTip(
                     "Used by a texture, whose moment directions follow its q vectors: edit the texture to change it"
                 )
@@ -2538,19 +2906,6 @@ class MagneticStructureBuilderDialog(QDialog):
                 vector_item.setToolTip(
                     "Unused: double-click to edit. Adding a component with a new q fills an unused row"
                 )
-            users = [
-                f"{components[component_id].label}"
-                + ("" if components[component_id].enabled else " (disabled)")
-                for component_id in slot.component_ids
-            ]
-            users_item = QTableWidgetItem(", ".join(users) if users else "Unused")
-            users_item.setFlags(users_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            users_item.setToolTip("\n".join(users) if users else "No component references this row")
-            if not users:
-                users_item.setForeground(QColor(current_palette().text_muted))
-            table.setItem(slot.index, 0, row_item)
-            table.setItem(slot.index, self._Q_BASIS_VECTOR_COLUMN, vector_item)
-            table.setItem(slot.index, self._Q_BASIS_USERS_COLUMN, users_item)
         self._highlight_selected_q_basis_rows()
 
     def _refresh_q_basis_panel(self) -> None:
@@ -2700,20 +3055,58 @@ class MagneticStructureBuilderDialog(QDialog):
         dialog = MagneticComponentDialog(
             self._host_structure,
             selected_indices=self._selected_base_atom_indices(),
+            model=self._model,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        q_basis, q_coeff = self._q_basis_for(dialog.q_vector())
+        self._append_dialog_component(dialog)
+
+    def _add_preset(self) -> None:
+        if self._host_structure is None:
+            return
+        dialog = MagneticPresetDialog(
+            self._host_structure,
+            model=self._model,
+            selected_indices=self._selected_base_atom_indices(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._append_dialog_component(dialog)
+
+    def _append_dialog_component(self, dialog: MagneticComponentDialog | MagneticPresetDialog) -> None:
+        resolved = self._dialog_q_coefficients(dialog)
+        if resolved is None:
+            return
+        q_basis, q_coeff = resolved
+        try:
+            component = dialog.component(q_coeff)
+        except (MagneticStructureError, ValueError) as exc:
+            QMessageBox.warning(self, "Invalid magnetic component", str(exc))
+            return
+        self._set_model(replace(self._model, q_basis_rlu=q_basis, components=(*self._model.components, component)))
+
+    def _dialog_q_coefficients(
+        self,
+        dialog: MagneticComponentDialog | MagneticPresetDialog,
+        *,
+        ignored_component_ids: set[str] | None = None,
+    ) -> tuple[tuple[tuple[float, float, float], ...], tuple[float, float, float]] | None:
+        """Return the q basis and q coefficients for a dialog's q, warning when no basis row is free."""
+
+        coeff = dialog.q_basis_coefficients()
+        if coeff is not None:
+            return tuple(self._model.q_basis_rlu), coeff
+        q_basis, q_coeff = self._q_basis_for(dialog.q_vector(), ignored_component_ids=ignored_component_ids)
         if q_coeff is None:
             QMessageBox.warning(
                 self,
                 "No q-basis slot available",
                 "This builder can store up to three independent propagation-vector basis directions.",
             )
-            return
-        component = dialog.component(q_coeff)
-        self._set_model(replace(self._model, q_basis_rlu=q_basis, components=(*self._model.components, component)))
+            return None
+        return q_basis, q_coeff
 
     def _add_texture(self) -> None:
         if self._host_structure is None:
@@ -2754,18 +3147,16 @@ class MagneticStructureBuilderDialog(QDialog):
             selected_indices=self._selected_base_atom_indices(),
             component=component,
             q_vector=_component_edit_q_vector(self._model, component),
+            model=self._model,
+            q_coeff=_component_edit_q_coeff(component),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        q_basis, q_coeff = self._q_basis_for(dialog.q_vector(), ignored_component_ids={component_id})
-        if q_coeff is None:
-            QMessageBox.warning(
-                self,
-                "No q-basis slot available",
-                "This builder can store up to three independent propagation-vector basis directions.",
-            )
+        resolved = self._dialog_q_coefficients(dialog, ignored_component_ids={component_id})
+        if resolved is None:
             return
+        q_basis, q_coeff = resolved
         updated = replace(dialog.component(q_coeff), enabled=component.enabled)
         components = tuple(updated if candidate.component_id == component_id else candidate for candidate in self._model.components)
         self._set_model(replace(self._model, q_basis_rlu=q_basis, components=components))
@@ -2943,7 +3334,35 @@ class MagneticStructureBuilderDialog(QDialog):
                 selected.append(int(self._preview_atom_indices[int(preview_index)]))
         return tuple(sorted(set(selected)))
 
+    def _refresh_checklist(self) -> None:
+        """Tick off the builder's steps from the current model and flag what is wrong with it."""
+
+        palette = current_palette()
+        marks = {
+            CHECKLIST_DONE: ("✓", palette.success),
+            CHECKLIST_PROBLEM: ("⚠", palette.warning),
+        }
+        items = magnetic_builder_checklist(
+            self._model,
+            has_host=self._host_structure is not None,
+            preview_repeats=self._supercell_repeats(),
+            max_preview_repeat=self._repeat_a.maximum(),
+        )
+        for item in items:
+            label = self._checklist_labels.get(item.key)
+            if label is None:
+                continue
+            mark, colour = marks.get(item.state, ("○", palette.text_muted))
+            label.setText(
+                f'<span style="color:{colour}; font-weight:600;">{mark}</span>&nbsp; '
+                f"<b>{escape(item.title)}</b> "
+                f'<span style="color:{palette.text_muted};">{escape(item.detail)}</span>'
+            )
+            label.setProperty("checklistState", item.state)
+            label.setToolTip(item.detail)
+
     def _refresh_preview(self) -> None:
+        self._refresh_checklist()
         if self._updating or self._host_structure is None:
             if self._host_structure is None:
                 self._preview_atom_indices = np.empty((0,), dtype=int)
@@ -6460,6 +6879,40 @@ def _component_q_label(model: MagneticStructureModel, component: MagneticCompone
     return "; ".join(values) or "-"
 
 
+def _create_q_basis_table(*, editable: bool) -> QTableWidget:
+    """Build the three-row ``Row`` / ``q (r.l.u.)`` / ``Used by`` table that shows a model's q basis."""
+
+    table = create_workflow_table(
+        _Q_BASIS_HEADERS,
+        resize_to_contents_columns=(0,),
+        selection_mode=QAbstractItemView.SelectionMode.NoSelection,
+        editable=editable,
+    )
+    table.setRowCount(3)
+    table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    table.setSizeAdjustPolicy(QAbstractItemView.SizeAdjustPolicy.AdjustToContents)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    return table
+
+
+def _fill_q_basis_table(table: QTableWidget, model: MagneticStructureModel) -> None:
+    """Show each q-basis row, its vector and the components that use it, all read-only."""
+
+    components = {component.component_id: component for component in model.components}
+    for slot in q_basis_slots(model):
+        users = [
+            components[component_id].label + ("" if components[component_id].enabled else " (disabled)")
+            for component_id in slot.component_ids
+        ]
+        users_item = QTableWidgetItem(", ".join(users) if users else "Unused")
+        users_item.setToolTip("\n".join(users) if users else "No component references this row")
+        if not users:
+            users_item.setForeground(QColor(current_palette().text_muted))
+        for column, item in enumerate((QTableWidgetItem(slot.label), QTableWidgetItem(_q_vector_text(slot.q_rlu)), users_item)):
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(slot.index, column, item)
+
+
 def _q_vector_text(values: Sequence[float]) -> str:
     return ", ".join(f"{0.0 if abs(float(value)) < 5e-13 else float(value):.6g}" for value in values)
 
@@ -6520,6 +6973,15 @@ def _component_edit_q_vector(model: MagneticStructureModel, component: MagneticC
     if component.terms:
         return _tuple3_float(model.q_coeff_to_rlu(component.terms[0].q_coeff))
     return (0.0, 0.0, 0.0)
+
+
+def _component_edit_q_coeff(component: MagneticComponent) -> tuple[float, float, float] | None:
+    """Return the q-basis coefficients of a component's first finite-q term, or ``None`` when it has none."""
+
+    for term in component.terms:
+        if any(abs(float(value)) > 1e-12 for value in term.q_coeff):
+            return _tuple3_float(term.q_coeff)
+    return None
 
 
 def _tuple3_float(values: Sequence[float]) -> tuple[float, float, float]:

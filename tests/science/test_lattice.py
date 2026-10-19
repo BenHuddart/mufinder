@@ -29,6 +29,7 @@ from mufinder.science.lattice import (
     minimum_image_distance_matrix,
     near_minimum_indexes,
     nearest_image_distance,
+    reciprocal_to_cartesian,
     vector_length,
     wrap_fractional,
 )
@@ -269,3 +270,21 @@ def test_deduplication_without_a_lattice_uses_fractional_distances() -> None:
     positions = [[0.0, 0.0, 0.0], [0.9995, 0.0, 0.0], [0.002, 0.0, 0.0]]
 
     assert deduplicate_periodic_positions(positions, None, tolerance=1e-3) == [[0.0, 0.0, 0.0], [0.002, 0.0, 0.0]]
+
+
+def test_reciprocal_to_cartesian_gives_the_dual_basis() -> None:
+    lattice = [[3.0, 0.0, 0.0], [-1.5, 1.5 * math.sqrt(3.0), 0.0], [0.0, 0.0, 5.0]]
+
+    a_star = reciprocal_to_cartesian((1.0, 0.0, 0.0), lattice)
+    q = reciprocal_to_cartesian((0.25, -0.5, 2.0), lattice)
+
+    assert np.allclose(np.asarray(lattice) @ a_star, (1.0, 0.0, 0.0))
+    assert np.allclose(np.asarray(lattice) @ q, (0.25, -0.5, 2.0))
+
+
+def test_reciprocal_to_cartesian_rejects_a_singular_lattice_with_the_callers_error() -> None:
+    class _Error(ValueError):
+        pass
+
+    with pytest.raises(_Error, match="singular"):
+        reciprocal_to_cartesian((1.0, 0.0, 0.0), [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]], error=_Error)

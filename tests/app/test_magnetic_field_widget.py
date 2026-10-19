@@ -25,6 +25,7 @@ from mufinder.app.magnetic_field_widget import (
     MagneticFieldCalculationSettingsDialog,
     MagneticFieldDistributionDialog,
     MagneticFieldWidget,
+    MagneticPresetDialog,
     MagneticStructureBuilderDialog,
     MagneticTextureDialog,
     MagneticTexturePreview,
@@ -43,7 +44,9 @@ from mufinder.science.magnetic_structure import (
     MagneticStructureModel,
     MagneticTexture,
     MagneticTextureTerm,
+    build_collinear_component,
     build_conical_component,
+    build_helix_component,
 )
 from mufinder.services.project_service import ProjectService
 from tests.support.structures import host_structure, relaxed_muon_supercell
@@ -476,6 +479,9 @@ def test_magnetic_structure_builder_edits_selected_component(qapp, tmp_path, mon
         def exec(self):
             return QDialog.DialogCode.Accepted
 
+        def q_basis_coefficients(self):
+            return None
+
         def q_vector(self):
             return (0.25, 0.0, 0.0)
 
@@ -891,6 +897,9 @@ def test_magnetic_structure_builder_edit_keeps_disabled_state(qapp, tmp_path, mo
 
         def exec(self):
             return QDialog.DialogCode.Accepted
+
+        def q_basis_coefficients(self):
+            return None
 
         def q_vector(self):
             return (0.0, 0.0, 0.0)
@@ -3054,3 +3063,305 @@ def test_magnetic_field_widget_summarises_model_and_emits_changes(qapp, tmp_path
     assert emitted
     assert isinstance(emitted[-1], dict)
     widget.close()
+
+
+def _two_row_helix_model() -> MagneticStructureModel:
+    helix = build_helix_component(
+        label="Fe helix",
+        selector=AtomSelector.species("Fe"),
+        q_coeff=(1.0, 0.0, 0.0),
+        real_axis_vector=(1.0, 0.0, 0.0),
+        imaginary_axis_vector=(0.0, 1.0, 0.0),
+    )
+    return MagneticStructureModel(
+        q_basis_rlu=((0.0, 0.0, 0.25), (0.5, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(helix,),
+    )
+
+
+def _select_combo_data(combo, data) -> None:
+    index = combo.findData(data)
+    assert index >= 0
+    combo.setCurrentIndex(index)
+
+
+def test_component_dialog_lists_the_q_basis_and_picks_a_stored_row(qapp) -> None:
+    dialog = MagneticComponentDialog(_host_structure(), model=_two_row_helix_model())
+    combo = dialog._q_source_combo
+    table = dialog._q_basis_table
+
+    assert [combo.itemText(index) for index in range(combo.count())] == [
+        "Enter a vector (r.l.u.)",
+        "q1 = (0, 0, 0.25)",
+        "q2 = (0.5, 0, 0)",
+        "Combination of basis rows",
+    ]
+    assert [table.item(row, 2).text() for row in range(3)] == ["Fe helix", "Unused", "Unused"]
+    assert not table.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable
+    assert dialog.q_basis_coefficients() is None
+    assert not dialog._q_x.isReadOnly()
+    assert dialog._q_coeff_group.isHidden()
+
+    _select_combo_data(combo, 1)
+
+    assert dialog.q_basis_coefficients() == (0.0, 1.0, 0.0)
+    assert dialog.q_vector() == (0.5, 0.0, 0.0)
+    assert dialog._q_x.isReadOnly()
+    assert "q = q2 = (0.5, 0, 0)" in dialog._q_expression.text()
+
+    _select_combo_data(combo, MagneticComponentDialog._Q_SOURCE_VECTOR)
+    assert not dialog._q_x.isReadOnly()
+    dialog.close()
+
+
+def test_component_dialog_combines_basis_rows(qapp) -> None:
+    dialog = MagneticComponentDialog(_host_structure(), model=_two_row_helix_model())
+    _select_combo_data(dialog._q_source_combo, MagneticComponentDialog._Q_SOURCE_COMBINATION)
+
+    assert not dialog._q_coeff_group.isHidden()
+    assert not dialog._q_coeff_inputs[2].isEnabled()
+    dialog._q_coeff_inputs[0].setText("1")
+    dialog._q_coeff_inputs[1].setText("-1")
+
+    assert dialog.q_basis_coefficients() == (1.0, -1.0, 0.0)
+    assert dialog.q_vector() == (-0.5, 0.0, 0.25)
+    assert "q = q1 − q2 = (-0.5, 0, 0.25)" in dialog._q_expression.text()
+    dialog.close()
+
+
+def test_component_dialog_rejects_an_empty_basis_combination(qapp, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text)
+    )
+    dialog = MagneticComponentDialog(_host_structure(), model=_two_row_helix_model())
+    _select_combo_data(dialog._q_source_combo, MagneticComponentDialog._Q_SOURCE_COMBINATION)
+
+    dialog.accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "at least one q-basis row" in warnings[-1]
+    assert "at least one q-basis row" in dialog._q_expression.text()
+    dialog.close()
+
+
+def test_component_dialog_without_stored_rows_only_offers_vector_entry(qapp) -> None:
+    dialog = MagneticComponentDialog(_host_structure(), model=MagneticStructureModel())
+
+    assert dialog._q_source_combo.count() == 1
+    assert dialog.q_basis_coefficients() is None
+    assert [dialog._q_basis_table.item(row, 2).text() for row in range(3)] == ["Unused"] * 3
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("q_coeff", "expected_source", "expected_coefficients"),
+    [
+        ((0.0, 1.0, 0.0), 1, (0.0, 1.0, 0.0)),
+        ((1.0, 1.0, 0.0), MagneticComponentDialog._Q_SOURCE_COMBINATION, (1.0, 1.0, 0.0)),
+        (None, MagneticComponentDialog._Q_SOURCE_VECTOR, None),
+    ],
+)
+def test_component_dialog_reopens_a_component_on_its_basis_rows(
+    qapp, q_coeff, expected_source, expected_coefficients
+) -> None:
+    model = _two_row_helix_model()
+    component = model.components[0]
+
+    dialog = MagneticComponentDialog(
+        _host_structure(), component=component, q_vector=(0.0, 0.0, 0.25), model=model, q_coeff=q_coeff
+    )
+
+    assert dialog._q_source_combo.currentData() == expected_source
+    assert dialog.q_basis_coefficients() == expected_coefficients
+    dialog.close()
+
+
+def test_magnetic_structure_builder_adds_a_component_on_a_basis_combination(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _builder_with_components(tmp_path)
+    dialog._set_model(_two_row_helix_model())
+
+    def _accept_combination(component_dialog):
+        _select_combo_data(component_dialog._q_source_combo, MagneticComponentDialog._Q_SOURCE_COMBINATION)
+        component_dialog._q_coeff_inputs[0].setText("1")
+        component_dialog._q_coeff_inputs[1].setText("1")
+        component_dialog._label_edit.setText("Sum")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(MagneticComponentDialog, "exec", _accept_combination)
+    dialog._add_component()
+
+    added = dialog.model().components[-1]
+    assert added.label == "Sum"
+    assert added.terms[0].q_coeff == (1.0, 1.0, 0.0)
+    assert dialog.model().q_basis_rlu == _two_row_helix_model().q_basis_rlu
+    assert dialog._q_basis_table.item(0, 2).text() == "Fe helix, Sum"
+    assert dialog._q_basis_table.item(1, 2).text() == "Sum"
+    assert dialog._q_basis_table.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable
+    dialog.close()
+
+
+def _checklist_states(dialog: MagneticStructureBuilderDialog) -> dict[str, str]:
+    return {key: label.property("checklistState") for key, label in dialog._checklist_labels.items()}
+
+
+def test_magnetic_structure_builder_checklist_ticks_off_from_model_state(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(tmp_path)
+
+    assert _checklist_states(dialog) == {"components": "todo", "q_basis": "todo", "preview": "todo", "ready": "todo"}
+    assert "Add Preset" in dialog._checklist_labels["components"].text()
+
+    dialog._set_model(_two_row_helix_model())
+    assert _checklist_states(dialog) == {"components": "done", "q_basis": "done", "preview": "todo", "ready": "todo"}
+    assert "1×1×4" in dialog._checklist_labels["preview"].text()
+
+    dialog._repeat_c.setValue(4)
+    assert _checklist_states(dialog) == {"components": "done", "q_basis": "done", "preview": "done", "ready": "done"}
+    dialog.close()
+
+
+def test_magnetic_structure_builder_checklist_flags_problems(qapp, tmp_path) -> None:
+    model = _two_row_helix_model()
+    incommensurate = replace(model, q_basis_rlu=((0.0, 0.0, 0.123456789), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+    zero = build_collinear_component(
+        label="Zero", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0.0, 0.0, 0.0)
+    )
+    dialog = _builder_with_components(tmp_path)
+
+    dialog._set_model(incommensurate)
+    assert _checklist_states(dialog)["preview"] == "problem"
+    assert "incommensurate along c" in dialog._checklist_labels["preview"].text()
+    dialog._repeat_c.setValue(3)
+    assert _checklist_states(dialog)["preview"] == "done"
+
+    dialog._set_model(replace(incommensurate, components=(*incommensurate.components, zero)))
+    assert _checklist_states(dialog)["components"] == "problem"
+    assert "Zero moment: &#x27;Zero&#x27;" in dialog._checklist_labels["components"].text()
+
+    dialog._set_model(incommensurate)
+    dialog._component_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert _checklist_states(dialog)["components"] == "problem"
+    assert "Every component is disabled" in dialog._checklist_labels["components"].text()
+    assert _checklist_states(dialog)["ready"] == "todo"
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_defaults_to_a_helix_along_c_star(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure(), model=MagneticStructureModel())
+
+    assert dialog._kind_combo.currentData() == "helix"
+    assert dialog._propagation_combo.currentData() == "c*"
+    assert dialog._reference_combo.currentData() == "a"
+    assert dialog._label_edit.text() == "Helix along c*"
+    assert dialog.q_vector() == (0.0, 0.0, 0.25)
+    assert dialog.q_basis_coefficients() is None
+    assert dialog._cone_angle.isHidden()
+    assert "perpendicular to q = (0, 0, 0.25)" in dialog._summary.text()
+
+    component = dialog.component((1.0, 0.0, 0.0))
+    assert component.kind == "helix"
+    assert component.label == "Helix along c*"
+    assert component.selector == AtomSelector.species("Fe")
+    assert np.allclose(component.terms[0].coefficient.real, (1.0, 0.0, 0.0))
+    assert np.allclose(component.terms[0].coefficient.imaginary, (0.0, 1.0, 0.0))
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_builds_a_conical_component_on_a_stored_row(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure(), model=_two_row_helix_model())
+    _select_combo_data(dialog._kind_combo, "conical")
+    _select_combo_data(dialog._propagation_combo, 1)
+    dialog._cone_angle.setText("30")
+    dialog._moment.setText("2")
+
+    assert not dialog._cone_angle.isHidden()
+    assert dialog._wavevector.isHidden()
+    assert dialog.q_basis_coefficients() == (0.0, 1.0, 0.0)
+    assert dialog.q_vector() == (0.5, 0.0, 0.0)
+    assert dialog._reference_combo.currentData() == "b"
+    assert dialog._label_edit.text() == "Conical along q2"
+
+    component = dialog.component((0.0, 1.0, 0.0))
+    assert component.kind == "conical"
+    assert np.allclose(component.terms[0].coefficient.real, (2.0 * np.cos(np.deg2rad(30.0)), 0.0, 0.0))
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_keeps_an_edited_label(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    dialog._label_edit.setText("My helix")
+    dialog._label_edit.textEdited.emit("My helix")
+    _select_combo_data(dialog._kind_combo, "cycloid")
+
+    assert dialog._label_edit.text() == "My helix"
+    assert dialog._reference_row_label.text() == "Rotation plane holds q and"
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_rejects_a_reference_axis_parallel_to_q(qapp, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text)
+    )
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._reference_combo, "c")
+
+    assert "Cannot build this preset" in dialog._summary.text()
+    dialog.accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "parallel to q" in warnings[-1]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_adds_a_preset_component(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _builder_with_components(tmp_path)
+    dialog._set_model(_two_row_helix_model())
+
+    def _accept_spin_density_wave(preset_dialog):
+        _select_combo_data(preset_dialog._kind_combo, "spin_density_wave")
+        _select_combo_data(preset_dialog._propagation_combo, "a*")
+        preset_dialog._wavevector.setText("0.2")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(MagneticPresetDialog, "exec", _accept_spin_density_wave)
+    assert dialog._add_preset_button.isEnabled()
+    dialog._add_preset_button.click()
+
+    added = dialog.model().components[-1]
+    assert added.kind == "spin_density_wave"
+    assert added.label == "Spin-density wave along a*"
+    # q2 holds a vector no component uses, so the new q takes that row.
+    assert added.terms[0].q_coeff == (0.0, 1.0, 0.0)
+    assert dialog.model().q_basis_rlu[1] == (0.2, 0.0, 0.0)
+    assert np.allclose(added.terms[0].coefficient.real, (0.0, 1.0, 0.0))
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_ignores_a_hidden_cone_angle(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._kind_combo, "conical")
+    dialog._cone_angle.setText("")
+    assert "Cannot build this preset" in dialog._summary.text()
+
+    _select_combo_data(dialog._kind_combo, "helix")
+
+    assert dialog._cone_angle.isHidden()
+    assert "Cannot build this preset" not in dialog._summary.text()
+    assert dialog.component((1.0, 0.0, 0.0)).kind == "helix"
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_keeps_the_reference_axis_while_the_wavevector_changes(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._reference_combo, "b")
+
+    dialog._wavevector.setText("0.3")
+    assert dialog._reference_combo.currentData() == "b"
+
+    _select_combo_data(dialog._propagation_combo, "a*")
+    assert dialog._reference_combo.currentData() == "b"
+    _select_combo_data(dialog._reference_combo, "c")
+    _select_combo_data(dialog._propagation_combo, "b*")
+    assert dialog._reference_combo.currentData() == "a"
+    dialog.close()
