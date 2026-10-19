@@ -2590,6 +2590,30 @@ def test_magnetic_field_widget_restores_distribution_results(qapp, tmp_path) -> 
     widget.close()
 
 
+def test_magnetic_field_widget_scrolls_a_long_component_summary(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-long-summary.mufinder", "Magnetic Long Summary")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    summary = widget._component_summary_table
+
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    short_height = summary.maximumHeight()
+    assert summary.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+
+    limit = MagneticFieldWidget._SUMMARY_MAX_VISIBLE_ROWS
+    components = tuple(_component(f"c{index}", f"C{index}", index % 2) for index in range(limit + 4))
+    widget._set_model(MagneticStructureModel(components=components))
+    assert summary.rowCount() == limit + 4
+    capped_height = summary.maximumHeight()
+    assert short_height < capped_height
+    assert capped_height < summary.horizontalHeader().sizeHint().height() + sum(
+        summary.rowHeight(row) for row in range(summary.rowCount())
+    )
+    widget.close()
+
+
 def test_magnetic_field_widget_places_demagnetizing_controls_in_the_calculation_group(qapp) -> None:
     widget = MagneticFieldWidget()
 

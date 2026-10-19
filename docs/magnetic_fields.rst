@@ -141,8 +141,9 @@ The ``Magnetic Structure`` card on the page reports how many components the
 accepted model has and how many of them are disabled, and lists every enabled
 component with its ``Type``, the atoms it applies to (``Apply to``), its ``q``
 as a basis combination and r.l.u. vector, and its ``Moment``, using the same
-descriptions as the builder table. ``Calculate Dipolar Field`` stays disabled
-until at least one component is enabled.
+descriptions as the builder table. The list shows up to eight rows and scrolls
+beyond that. ``Calculate Dipolar Field`` stays disabled until at least one
+component is enabled.
 
 Components can currently be applied to all atoms, to atoms of a species, to a
 symmetry-equivalent atom group, or to atoms selected in the builder preview. The

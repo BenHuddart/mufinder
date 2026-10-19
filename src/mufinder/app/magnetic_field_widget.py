@@ -4849,6 +4849,8 @@ class MagneticFieldWidget(QWidget):
 
     _COMPONENT_SUMMARY_HEADERS = ("Component", "Type", "Apply to", "q", "Moment")
     _BREAKDOWN_HEADERS = ("Term", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)")
+    # Summary tables grow to this many rows, then scroll, so long models cannot push the controls off the page.
+    _SUMMARY_MAX_VISIBLE_ROWS = 8
     # Commensurate result payload keys, in the order the breakdown lists them.
     _BREAKDOWN_TERMS = (
         ("Dipolar", "dipolar_T"),
@@ -5473,7 +5475,7 @@ class MagneticFieldWidget(QWidget):
 
     @staticmethod
     def _summary_table(headers: tuple[str, ...], *, stretch_column: int) -> QTableWidget:
-        """Build a read-only table that grows to fit its rows instead of scrolling."""
+        """Build a read-only table that grows to fit its first rows and scrolls beyond them."""
 
         table = create_workflow_table(
             headers,
@@ -5483,11 +5485,11 @@ class MagneticFieldWidget(QWidget):
         )
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         table.setSizeAdjustPolicy(QAbstractItemView.SizeAdjustPolicy.AdjustToContents)
-        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         return table
 
-    @staticmethod
-    def _set_summary_rows(table: QTableWidget, rows: Sequence[Sequence[str]]) -> None:
+    @classmethod
+    def _set_summary_rows(cls, table: QTableWidget, rows: Sequence[Sequence[str]]) -> None:
         table.setRowCount(0)
         for values in rows:
             row = table.rowCount()
@@ -5495,6 +5497,13 @@ class MagneticFieldWidget(QWidget):
             for column, value in enumerate(values):
                 table.setItem(row, column, QTableWidgetItem(str(value)))
         table.resizeRowsToContents()
+        visible_rows = min(table.rowCount(), cls._SUMMARY_MAX_VISIBLE_ROWS)
+        table.setMaximumHeight(
+            table.horizontalHeader().sizeHint().height()
+            + sum(table.rowHeight(row) for row in range(visible_rows))
+            + 2 * table.frameWidth()
+            + 2
+        )
 
     def _configure_result_table_columns(self) -> None:
         header = self._result_table.horizontalHeader()
