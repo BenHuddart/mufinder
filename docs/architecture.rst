@@ -129,7 +129,9 @@ policy, move the reusable part into the appropriate shared layer:
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
   ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
   clustering of its optimized positions in
-  ``mufinder.science.uep_clustering`` and every ``muesr`` import in
+  ``mufinder.science.uep_clustering``, pairing a relaxed muon supercell with
+  its pristine host for finite-cell distortion corrections in
+  ``mufinder.science.muon_distortion`` and every ``muesr`` import in
   ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
   formatted density, pseudopotential reports and cell charge the UEP analysis
@@ -477,6 +479,13 @@ no two workflow widgets may define the same private method.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.science.muon_distortion``
+     - Pairing a relaxed muon supercell with its pristine host
+       (``map_muon_distortion``): supercell detection, the finite correction
+       cell, muon-site matching and one-to-one atom mapping, and carrying the
+       pairing to a symmetry-equivalent site
+       (``equivalent_site_distortion``). The nuclear-relaxation and
+       dipolar-field distortion corrections both use it.
    * - ``mufinder.science._muesr_compat``
      - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
        restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the

@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QGridLayout, QScrollArea
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
+import mufinder.science.magnetic_fields as magnetic_fields_module
 from mufinder.app import workflow_table_utils
 from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
@@ -44,7 +45,7 @@ from mufinder.science.magnetic_structure import (
     build_conical_component,
 )
 from mufinder.services.project_service import ProjectService
-from tests.support.structures import host_structure
+from tests.support.structures import host_structure, relaxed_muon_supercell
 
 
 _host_structure = partial(
@@ -1250,16 +1251,15 @@ def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path)
     dialog.close()
 
 
-def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(qapp, tmp_path) -> None:
+_RELAXED_SITE = (0.5, 0.0, 0.0)
+
+
+def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
+    """A project whose relaxation-analysis workspace has one cluster represented by ``relaxed_structure``."""
+
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-relax-sites.mufinder", "Magnetic Relax Sites")
     service.add_structure(document, _host_structure())
-    relaxed_structure = Structure(
-        label="Relaxed muon structure",
-        lattice_vectors=_host_structure().lattice_vectors,
-        species=["Fe", "O", "H"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.2, 0.3, 0.4]],
-    )
     document.structures[relaxed_structure.id] = relaxed_structure
     job_id = uuid4()
     result = Result(derived_structure_ids=[relaxed_structure.id])
@@ -1276,14 +1276,26 @@ def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_op
                             "cluster_index": 1,
                             "size": 3,
                             "representative_job_id": str(job_id),
-                            "representative_fractional_position": [0.2, 0.3, 0.4],
-                            "representative_cartesian_position_ang": [0.6, 0.9, 1.2],
+                            "representative_fractional_position": list(_RELAXED_SITE),
+                            "representative_cartesian_position_ang": [1.5, 0.0, 0.0],
                         }
                     ]
                 }
             },
         }
     ]
+    return document
+
+
+def _displaced_iron_supercell() -> Structure:
+    """The FeO host relaxed around the muon, with the Fe one cell along +x pushed 0.1 Å away."""
+
+    return relaxed_muon_supercell(_host_structure(), (2, 2, 2), _RELAXED_SITE, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+
+
+def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(qapp, tmp_path) -> None:
+    relaxed_structure = _displaced_iron_supercell()
+    document = _relaxation_cluster_document(tmp_path, relaxed_structure)
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
     _set_site_source(dialog, "relaxation_clustering")
@@ -1294,8 +1306,31 @@ def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_op
     assert selected.source == "relaxation_clustering"
     assert selected.label == "Positive muon relaxations cluster 1"
     assert selected.distortion_structure_id == relaxed_structure.id
+    assert selected.include_distortion is False
     assert dialog._distortion_checkbox.isEnabled()
+
+    dialog._distortion_checkbox.setChecked(True)
+    assert dialog.selected_muon_site().include_distortion is True
     dialog.close()
+
+
+def test_muon_site_selection_dialog_restores_the_distortion_choice(qapp, tmp_path) -> None:
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    first = MuonSiteSelectionDialog(document, _host_structure())
+    _set_site_source(first, "relaxation_clustering")
+    first._distortion_checkbox.setChecked(True)
+    chosen = first.selected_muon_site()
+    first.close()
+
+    reopened = MuonSiteSelectionDialog(document, _host_structure(), chosen)
+
+    assert reopened._distortion_checkbox.isChecked()
+    assert reopened.selected_muon_site().include_distortion is True
+    _set_site_source(reopened, "custom")
+    assert not reopened._distortion_checkbox.isEnabled()
+    assert not reopened._distortion_checkbox.isChecked()
+    assert reopened.selected_muon_site().include_distortion is False
+    reopened.close()
 
 
 def test_muon_site_selection_dialog_custom_muon_site(qapp, tmp_path) -> None:
@@ -1329,9 +1364,18 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
         site_label = "site 1"
         total = (0.1, 0.2, 0.3)
         magnitude = float(np.linalg.norm(total))
+        distortion = None
 
-    def _calculate(structure, model, muon_sites, *, options):
-        calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
+        calls.append(
+            {
+                "structure": structure,
+                "model": model,
+                "muon_sites": muon_sites,
+                "options": options,
+                "distorted_structures": distorted_structures,
+            }
+        )
         return (_Result(),)
 
     monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
@@ -1348,6 +1392,7 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
 
     assert calls
     assert calls[0]["muon_sites"] == [(0.25, 0.5, 0.75)]
+    assert calls[0]["distorted_structures"] == [None]
     assert calls[0]["options"].demag_shape == "none"
     assert calls[0]["options"].supercell == (100, 100, 100)
     assert widget._result_table.rowCount() == 1
@@ -1356,6 +1401,97 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
     assert widget.collect_state()["magnetic_field_results"]["kind"] == "commensurate"
     assert widget.collect_state()["magnetic_field_results"]["results"][0]["total_T"] == pytest.approx([0.1, 0.2, 0.3])
     assert "commensurate" in widget._calculation_status.text()
+    widget.close()
+
+
+def _fake_muesr_without_lattice_field(monkeypatch) -> None:
+    """Run the real field helpers with a muesr stand-in that returns zero lattice fields."""
+
+    class _Sample:
+        def __init__(self) -> None:
+            self.muons: list[object] = []
+
+        def add_muon(self, position) -> None:
+            self.muons.append(position)
+
+        def new_mm(self) -> None:
+            self.mm = type("_MM", (), {})()
+
+    def _build_sample(_structure, muons):
+        sample = _Sample()
+        for muon in muons:
+            sample.add_muon(muon)
+        return sample
+
+    def _locfield(sample, *_args, **_kwargs):
+        return [type("_Field", (), {"Dipolar": np.zeros(3)})() for _ in sample.muons]
+
+    monkeypatch.setattr(magnetic_fields_module, "_build_muesr_sample", _build_sample)
+    monkeypatch.setattr(magnetic_fields_module, "_load_muesr_engines", lambda: (_locfield, lambda *_args: 1.0, None))
+
+
+def _distortion_widget(document, *, include_distortion: bool) -> MagneticFieldWidget:
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
+    (site,) = magnetic_field_widget_module._relaxation_cluster_muon_site_options(document, _host_structure())
+    widget._selected_muon_site = replace(site, include_distortion=include_distortion)
+    widget._refresh_site_summary()
+    return widget
+
+
+def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    widget = _distortion_widget(document, include_distortion=True)
+
+    assert "corrected for muon-induced displacements" in widget._site_summary.text()
+    widget._calculate_fields()
+
+    # Only the moved Fe (z moment of 1 μB, 1.5 Å -> 1.6 Å along x from the muon) changes the field.
+    expected_bz = -1e-7 * 9.274_010_078_3e-24 / 1e-30 * (1.0 / 1.6**3 - 1.0 / 1.5**3)
+    assert "with muon-induced distortion corrections" in widget._calculation_status.text()
+    assert widget._result_table.item(0, 5).text() == "field (distortion-corrected)"
+    state = widget.collect_state()
+    assert state["selected_muon_site"]["include_distortion"] is True
+    payload = state["magnetic_field_results"]["results"][0]
+    assert payload["distortion_T"] == pytest.approx([0.0, 0.0, expected_bz], abs=1e-12)
+    assert payload["total_T"] == pytest.approx([0.0, 0.0, expected_bz], abs=1e-12)
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(state)
+    assert restored.selected_muon_site().include_distortion is True
+    assert restored._result_table.item(0, 5).text() == "field (distortion-corrected)"
+    restored.close()
+    widget.close()
+
+
+def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    widget = _distortion_widget(document, include_distortion=False)
+
+    widget._calculate_fields()
+
+    assert widget._result_table.item(0, 5).text() == "field"
+    assert "distortion_T" not in widget.collect_state()["magnetic_field_results"]["results"][0]
+    widget.close()
+
+
+def test_magnetic_field_widget_reports_a_missing_relaxed_structure(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    relaxed = _displaced_iron_supercell()
+    document = _relaxation_cluster_document(tmp_path, relaxed)
+    widget = _distortion_widget(document, include_distortion=True)
+    del document.structures[relaxed.id]
+
+    widget._calculate_fields()
+
+    assert "relaxed structure for the muon-induced distortion correction is no longer available" in (
+        widget._calculation_status.text()
+    )
+    assert widget._result_table.rowCount() == 0
     widget.close()
 
 
@@ -1472,7 +1608,7 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
@@ -2054,7 +2190,7 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(qapp, tmp
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
@@ -2086,7 +2222,7 @@ def test_magnetic_field_widget_converts_hyperfine_coupling_units(qapp, tmp_path,
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
@@ -2121,7 +2257,7 @@ def test_magnetic_field_widget_passes_equivalent_site_option(qapp, tmp_path, mon
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 

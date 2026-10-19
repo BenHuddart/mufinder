@@ -510,18 +510,34 @@ def moment_at_atom(
 ) -> np.ndarray:
     """Evaluate the real magnetic moment for one atom and cell offset."""
 
-    atom_index = int(atom_index)
-    if atom_index < 0 or atom_index >= len(structure.species):
-        raise MagneticStructureError("atom_index is out of range")
     offset = _as_float_array(cell_offset, "cell_offset")
-    moment = np.zeros(3, dtype=complex)
+    return moments_at_atoms(structure, model, [atom_index], [offset], component_ids=component_ids)[0]
+
+
+def moments_at_atoms(
+    structure: Structure,
+    model: MagneticStructureModel,
+    atom_indices: Sequence[int],
+    cell_offsets: Sequence[Sequence[float]],
+    *,
+    component_ids: Sequence[str] | None = None,
+) -> np.ndarray:
+    """Evaluate real magnetic moments, one row per (unit-cell atom index, cell offset) pair."""
+
+    indices = np.asarray(atom_indices, dtype=int).reshape(-1)
+    offsets = np.asarray(cell_offsets, dtype=float).reshape(-1, 3)
+    if offsets.shape[0] != indices.shape[0]:
+        raise MagneticStructureError("atom_indices and cell_offsets must have the same length")
+    if np.any(indices < 0) or np.any(indices >= len(structure.species)):
+        raise MagneticStructureError("atom_index is out of range")
+    moments = np.zeros((indices.shape[0], 3), dtype=complex)
     for component in atom_resolved_fourier_components(structure, model, component_ids=component_ids):
-        fc = component.atom_fcs[atom_index]
+        fc = component.atom_fcs[indices]
         if np.allclose(fc, 0.0):
             continue
-        phase = np.exp(-2j * np.pi * float(component.q_rlu @ offset))
-        moment += fc * phase
-    return moment.real
+        phase = np.exp(-2j * np.pi * (offsets @ component.q_rlu))
+        moments += fc * phase[:, np.newaxis]
+    return moments.real
 
 
 def moments_in_supercell(
@@ -544,16 +560,13 @@ def moments_in_supercell(
     positions_frac = (frac[np.newaxis, :, :] + offsets[:, np.newaxis, :]).reshape(-1, 3)
     atom_indices = np.tile(np.arange(atom_count, dtype=int), len(offsets))
     positions_cart = positions_frac @ cell
-    moments = np.zeros((positions_frac.shape[0], 3), dtype=float)
-    for row, atom_index in enumerate(atom_indices):
-        offset = np.floor(positions_frac[row])
-        moments[row] = moment_at_atom(
-            structure,
-            model,
-            int(atom_index),
-            cell_offset=offset,
-            component_ids=component_ids,
-        )
+    moments = moments_at_atoms(
+        structure,
+        model,
+        atom_indices,
+        np.floor(positions_frac),
+        component_ids=component_ids,
+    )
     return positions_cart, moments, atom_indices
 
 

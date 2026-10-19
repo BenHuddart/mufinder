@@ -197,8 +197,10 @@ custom Fourier textures, from components that can be edited, duplicated,
 reordered and disabled without deleting them, and calculates at a chosen muon
 site:
 
-- the dipolar field of commensurate structures and the field distribution of
-  incommensurate ones, with Auto, Grid or Monte Carlo multi-q phase sampling;
+- the dipolar field of commensurate structures, optionally corrected for the
+  host-ion displacements in a relaxed muon supercell at the site and its
+  symmetry-equivalent sites, and the field distribution of incommensurate
+  ones, with Auto, Grid or Monte Carlo multi-q phase sampling;
 - demagnetizing-field corrections for spherical, plate, ellipsoidal and
   rectangular-prism samples;
 - dipolar tensors for selected magnetic ions;
