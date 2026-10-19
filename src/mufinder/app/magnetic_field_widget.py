@@ -1134,7 +1134,8 @@ class MagneticPresetDialog(QDialog):
         self._build_layout()
         self._kind_combo.currentIndexChanged.connect(lambda *_: self._refresh())
         self._propagation_combo.currentIndexChanged.connect(lambda *_: self._refresh(reset_reference=True))
-        self._wavevector.textChanged.connect(lambda *_: self._refresh(reset_reference=True))
+        # δ only rescales q along the same axis, so it keeps the reference axis the user chose.
+        self._wavevector.textChanged.connect(lambda *_: self._refresh())
         for widget in (self._reference_combo, self._handedness_combo):
             widget.currentIndexChanged.connect(lambda *_: self._refresh())
         for edit in (self._cone_angle, self._moment):
@@ -1226,7 +1227,9 @@ class MagneticPresetDialog(QDialog):
             selector=self._selector_combo.currentData(),
             label=label,
             handedness=int(self._handedness_combo.currentData()),
-            cone_angle_degrees=MagneticComponentDialog._decimal_value(self._cone_angle, "cone angle"),
+            cone_angle_degrees=(
+                MagneticComponentDialog._decimal_value(self._cone_angle, "cone angle") if kind == "conical" else 45.0
+            ),
         )
 
     def _default_label(self) -> str:

@@ -149,6 +149,23 @@ def lattice_cart_to_frac(
     return _frac_to_cart(cartesian, inverse_lattice(lattice_vectors, error=error))
 
 
+def reciprocal_to_cartesian(
+    reciprocal: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+    *,
+    error: type[Exception] = LatticeError,
+) -> list[float]:
+    """Convert a wavevector in reciprocal lattice units to Cartesian (inverse Angstrom, without ``2π``).
+
+    The reciprocal basis vectors are the columns of the inverse lattice, so
+    ``(h, k, l)`` maps to ``h a* + k b* + l c*`` with ``a* · a = 1``.
+    """
+
+    inverse = inverse_lattice(lattice_vectors, error=error)
+    q0, q1, q2 = reciprocal[0], reciprocal[1], reciprocal[2]
+    return [inverse[row][0] * q0 + inverse[row][1] * q1 + inverse[row][2] * q2 for row in range(3)]
+
+
 def _frac_to_cart(fractional: Sequence[float], lattice: Sequence[Sequence[float]]) -> list[float]:
     f0, f1, f2 = fractional[0], fractional[1], fractional[2]
     return [

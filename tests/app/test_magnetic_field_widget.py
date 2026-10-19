@@ -3336,3 +3336,32 @@ def test_magnetic_structure_builder_adds_a_preset_component(qapp, tmp_path, monk
     assert dialog.model().q_basis_rlu[1] == (0.2, 0.0, 0.0)
     assert np.allclose(added.terms[0].coefficient.real, (0.0, 1.0, 0.0))
     dialog.close()
+
+
+def test_magnetic_preset_dialog_ignores_a_hidden_cone_angle(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._kind_combo, "conical")
+    dialog._cone_angle.setText("")
+    assert "Cannot build this preset" in dialog._summary.text()
+
+    _select_combo_data(dialog._kind_combo, "helix")
+
+    assert dialog._cone_angle.isHidden()
+    assert "Cannot build this preset" not in dialog._summary.text()
+    assert dialog.component((1.0, 0.0, 0.0)).kind == "helix"
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_keeps_the_reference_axis_while_the_wavevector_changes(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._reference_combo, "b")
+
+    dialog._wavevector.setText("0.3")
+    assert dialog._reference_combo.currentData() == "b"
+
+    _select_combo_data(dialog._propagation_combo, "a*")
+    assert dialog._reference_combo.currentData() == "b"
+    _select_combo_data(dialog._reference_combo, "c")
+    _select_combo_data(dialog._propagation_combo, "b*")
+    assert dialog._reference_combo.currentData() == "a"
+    dialog.close()

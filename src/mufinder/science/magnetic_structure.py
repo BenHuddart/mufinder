@@ -11,6 +11,7 @@ import numpy as np
 
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import Structure
+from mufinder.science.lattice import lattice_matrix, reciprocal_to_cartesian
 from mufinder.science.spglib_compat import get_crystal_symmetry_dataset, spglib_cell
 
 MAGNETIC_STRUCTURE_SCHEMA_VERSION = 2
@@ -819,13 +820,7 @@ def q_cartesian_direction(lattice_vectors: Sequence[Sequence[float]], q_rlu: Seq
     q = _as_float_array(q_rlu, "q_rlu")
     if np.allclose(q, 0.0, atol=_Q_COEFF_TOLERANCE):
         raise MagneticStructureError("q must be non-zero to define a propagation direction")
-    lattice = np.asarray(lattice_vectors, dtype=float)
-    if lattice.shape != (3, 3):
-        raise MagneticStructureError("lattice_vectors must have shape (3, 3)")
-    try:
-        cartesian = np.linalg.solve(lattice, q)
-    except np.linalg.LinAlgError as exc:
-        raise MagneticStructureError("lattice_vectors must be linearly independent") from exc
+    cartesian = reciprocal_to_cartesian(q, lattice_vectors, error=MagneticStructureError)
     return _unit_vector(cartesian, "q direction")
 
 
@@ -835,9 +830,7 @@ def crystal_axis_direction(lattice_vectors: Sequence[Sequence[float]], axis: str
     name = str(axis).strip().lower()
     if name not in _CRYSTAL_AXIS_NAMES:
         raise MagneticStructureError("crystal axis must be 'a', 'b' or 'c'")
-    lattice = np.asarray(lattice_vectors, dtype=float)
-    if lattice.shape != (3, 3):
-        raise MagneticStructureError("lattice_vectors must have shape (3, 3)")
+    lattice = lattice_matrix(lattice_vectors, error=MagneticStructureError)
     return _unit_vector(lattice[_CRYSTAL_AXIS_NAMES.index(name)], f"axis {name}")
 
 

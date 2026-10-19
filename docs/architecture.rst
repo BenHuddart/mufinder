@@ -466,7 +466,8 @@ no two workflow widgets may define the same private method.
        transition-state parameters.
    * - ``mufinder.science.lattice``
      - Lattice algebra: scalar and broadcast fractional/Cartesian conversion,
-       lattice inversion, minimum-image displacements and distances
+       reciprocal-lattice-unit to Cartesian wavevectors
+       (``reciprocal_to_cartesian``), lattice inversion, minimum-image displacements and distances
        (``minimum_image_distance``, ``minimum_image_distance_matrix``,
        ``nearest_image_distance``) and periodic deduplication
        (``deduplicate_periodic_positions``).

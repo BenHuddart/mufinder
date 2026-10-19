@@ -255,7 +255,8 @@ any other afterwards. The dialog asks for:
   basis row ``qN``, on which the component is then stored;
 - a reference crystal axis, ``a``, ``b`` or ``c``. It defaults to the axis
   most nearly perpendicular to q, preferring a, then b, then c, and resets to
-  that default when the propagation changes. For a helix and a conical
+  that default when the ``Propagation`` choice changes, but not when only δ
+  changes. For a helix and a conical
   structure the rotation plane is perpendicular to q and the moment at zero
   phase lies along the reference axis projected into that plane; a conical
   structure's cone axis is q. For a cycloid the rotation plane holds q and the
@@ -268,7 +269,9 @@ any other afterwards. The dialog asks for:
   symmetry-equivalent site or the preview selection) and a ``Label`` that
   follows the choices, such as ``Helix along c*``, until it is typed over.
 
-A summary line describes the structure the choices give. A reference axis
+A summary line describes the structure the choices give. Only a conical
+structure reads the cone angle, so a hidden, invalid cone angle never blocks
+another structure. A reference axis
 parallel to q, a zero wavevector or a non-positive moment is reported there and
 refused when the dialog is accepted. The new q is stored like a typed vector in
 the add-component dialog, and the moments come from the same helix, cycloid,
