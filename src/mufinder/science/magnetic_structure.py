@@ -514,9 +514,10 @@ def set_q_basis_vector(
     Components keep their ``q_coeff`` values, so a component that references the
     row changes wavevector with it. A row used by a grouped texture cannot be
     edited here, because the texture's moment directions were built from its
-    q directions; edit the texture instead. A row used by a helix, cycloid or
-    conical component can only be rescaled along its current direction, since
-    those moment planes and cone axes were built from it. A row that a
+    q directions; edit the texture instead. An edit must keep the direction of
+    every wavevector of each helix, cycloid or conical component on the row,
+    since those moment planes and cone axes were built from it; a component
+    that combines several rows therefore blocks any change to them. A row that a
     component uses cannot be set to zero, and no two rows may hold the same
     non-zero vector.
     """
@@ -535,18 +536,29 @@ def set_q_basis_vector(
         raise MagneticStructureError(
             f"{slot.label} is used by a component, so it cannot be zero; edit the component to make it q = 0"
         )
-    if slot.direction_component_ids and not _is_positive_multiple(q, np.asarray(slot.q_rlu, dtype=float)):
-        raise MagneticStructureError(
-            f"{slot.label} is used by a helix, cycloid or conical component, whose moments were built "
-            "around its direction; enter a positive multiple of the current vector, or edit the component"
-        )
-    basis =[tuple(float(value) for value in row) for row in model.q_basis_array]
+    basis = [tuple(float(value) for value in row) for row in model.q_basis_array]
     if not np.allclose(q, 0.0, atol=_Q_COEFF_TOLERANCE):
         for other, row in enumerate(basis):
             if other != int(index) and np.allclose(row, q, atol=_Q_BASIS_MATCH_TOLERANCE, rtol=0.0):
                 raise MagneticStructureError(f"q{other + 1} already holds this propagation vector")
     basis[int(index)] = tuple(float(value) for value in q)
-    return replace(model, q_basis_rlu=tuple(basis))
+    edited = replace(model, q_basis_rlu=tuple(basis))
+    # A direction-built component may combine several rows, so compare each term's full wavevector.
+    direction_ids = set(slot.direction_component_ids)
+    for component in model.components:
+        if component.component_id not in direction_ids:
+            continue
+        for term in component.terms:
+            before = model.q_coeff_to_rlu(term.q_coeff)
+            if np.allclose(before, 0.0, atol=_Q_COEFF_TOLERANCE):
+                continue
+            if not _is_positive_multiple(edited.q_coeff_to_rlu(term.q_coeff), before):
+                raise MagneticStructureError(
+                    f"this edit would turn the q of '{component.label}', a helix, cycloid or conical "
+                    "component whose moments were built around its direction; only rescalings that keep "
+                    "its direction are allowed here, so edit the component instead"
+                )
+    return edited
 
 
 def viable_atom_selectors(

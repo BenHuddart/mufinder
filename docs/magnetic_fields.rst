@@ -177,10 +177,12 @@ once. An edit is refused with a warning, and the row keeps its vector, when:
 - the entry is not three numbers;
 - the row is used by a texture. A texture's moment directions are built from
   its q vectors, so the cell is read-only; edit the texture instead;
-- the row is used by a helix, cycloid or conical component and the new vector
-  does not point the same way as the current one. Those moment planes and cone
-  axes are built around the q direction, so only the wavelength can change
-  here;
+- the row is used by a helix, cycloid or conical component and the edit would
+  turn any of that component's wavevectors. Those moment planes and cone axes
+  are built around the q direction, so only the wavelength can change here: a
+  component on a single row accepts any positive multiple of that row, and a
+  component that combines rows, such as ``q1 + q2``, refuses any change to
+  either of them;
 - the row is used by a component and the new vector is zero;
 - another row already holds the same vector.
 

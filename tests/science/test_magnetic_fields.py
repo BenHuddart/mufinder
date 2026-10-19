@@ -202,9 +202,11 @@ def test_load_muesr_engines_patches_numpy_aliases(monkeypatch) -> None:
 
 
 def test_muesr_imports_supplies_cgi_while_importing_muesr_when_cgi_is_missing(monkeypatch) -> None:
+    # Import muesr.core first so the test does not depend on an earlier test having imported it.
+    with muesr_imports():
+        core = importlib.import_module("muesr.core")
     # Python 3.13 removed cgi; a None entry makes ``import cgi`` fail on any version.
     monkeypatch.setitem(sys.modules, "cgi", None)
-    core = importlib.import_module("muesr.core")
     monkeypatch.setattr(core, "prettytable", core.prettytable)
     monkeypatch.delitem(sys.modules, "muesr.core.prettytable")
 

@@ -1241,6 +1241,27 @@ def test_magnetic_structure_builder_q_basis_panel_highlights_selected_components
     dialog.close()
 
 
+def test_magnetic_structure_builder_q_basis_users_follow_renames_and_enable_toggles(qapp, tmp_path) -> None:
+    dialog = _builder_with_q_basis(
+        tmp_path,
+        ((0.25, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        _q_component("one", "One", (1.0, 0.0, 0.0)),
+        _q_component("two", "Two", (1.0, 0.0, 0.0)),
+    )
+    table = dialog._component_table
+
+    table.item(0, 1).setText("Renamed")
+    assert _q_basis_texts(dialog, 2)[0] == "Renamed, Two"
+
+    table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert _q_basis_texts(dialog, 2)[0] == "Renamed, Two (disabled)"
+
+    table.item(1, 0).setCheckState(Qt.CheckState.Checked)
+    assert _q_basis_texts(dialog, 2)[0] == "Renamed, Two"
+    assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
+    dialog.close()
+
+
 def test_magnetic_structure_builder_q_basis_edit_moves_every_component_on_the_row(qapp, tmp_path) -> None:
     dialog = _builder_with_q_basis(
         tmp_path,
@@ -1270,7 +1291,7 @@ def test_magnetic_structure_builder_q_basis_edit_moves_every_component_on_the_ro
         (0, "a, b, c", "not three numbers"),
         (0, "0, 0, 0", "cannot be zero"),
         (0, "0, 0.25, 0", "q2 already holds"),
-        (1, "0.1, 0.1, 0", "positive multiple"),
+        (1, "0.1, 0.1, 0", "keep its direction"),
     ],
 )
 def test_magnetic_structure_builder_q_basis_edit_rejects_invalid_vectors(

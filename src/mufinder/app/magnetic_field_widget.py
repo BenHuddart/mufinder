@@ -2528,7 +2528,7 @@ class MagneticStructureBuilderDialog(QDialog):
             elif slot.direction_component_ids:
                 vector_item.setToolTip(
                     "Double-click to change the wavelength: a helix, cycloid or conical component uses this row, "
-                    "so only positive multiples of the current vector are accepted"
+                    "so only edits that keep its wavevector directions are accepted"
                 )
             elif slot.in_use:
                 vector_item.setToolTip(
@@ -2552,6 +2552,14 @@ class MagneticStructureBuilderDialog(QDialog):
             table.setItem(slot.index, self._Q_BASIS_VECTOR_COLUMN, vector_item)
             table.setItem(slot.index, self._Q_BASIS_USERS_COLUMN, users_item)
         self._highlight_selected_q_basis_rows()
+
+    def _refresh_q_basis_panel(self) -> None:
+        """Rebuild the q-basis panel after a component change made in place (rename or enable toggle)."""
+
+        updating = self._updating
+        self._updating = True
+        self._populate_q_basis()
+        self._updating = updating
 
     def _highlight_selected_q_basis_rows(self) -> None:
         """Embolden the q-basis rows that the selected components reference."""
@@ -2667,6 +2675,7 @@ class MagneticStructureBuilderDialog(QDialog):
             for component in self._model.components
         )
         self._model = replace(self._model, components=components)
+        self._refresh_q_basis_panel()
         self._refresh_preview()
         self._sync_enabled_state()
 
@@ -2676,6 +2685,7 @@ class MagneticStructureBuilderDialog(QDialog):
         self._updating = True
         self._style_component_row(row, enabled)
         self._updating = False
+        self._refresh_q_basis_panel()
         self._refresh_preview()
         self._sync_enabled_state()
 

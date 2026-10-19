@@ -650,8 +650,8 @@ def test_set_q_basis_vector_allows_an_unused_row_and_rescaling_a_helix_row() -> 
     ("index", "q_rlu", "message"),
     [
         (0, (0.3, 0.0, 0.0), "texture"),
-        (1, (0.1, 0.0, 0.0), "positive multiple"),
-        (1, (0.0, 0.0, -0.2), "positive multiple"),
+        (1, (0.1, 0.0, 0.0), "keep its direction"),
+        (1, (0.0, 0.0, -0.2), "keep its direction"),
         (2, (0.0, 0.0, 0.0), "texture"),
         (3, (0.1, 0.0, 0.0), "row index"),
         (1, (np.nan, 0.0, 0.0), "finite"),
@@ -661,6 +661,28 @@ def test_set_q_basis_vector_allows_an_unused_row_and_rescaling_a_helix_row() -> 
 def test_set_q_basis_vector_rejects_invalid_edits(index: int, q_rlu, message: str) -> None:
     with pytest.raises(MagneticStructureError, match=message):
         set_q_basis_vector(_q_basis_model(), index, q_rlu)
+
+
+def test_set_q_basis_vector_checks_the_full_q_of_a_helix_that_combines_rows() -> None:
+    helix = build_helix_component(
+        label="Diagonal helix",
+        selector=AtomSelector.indices([0]),
+        q_coeff=(1.0, 1.0, 0.0),
+        real_axis_vector=(0.0, 0.0, 1.0),
+        imaginary_axis_vector=(1.0, -1.0, 0.0),
+        component_id="diagonal",
+    )
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.0)),
+        components=(helix,),
+    )
+
+    # (0.2, 0, 0) is a positive multiple of q1, but it turns q1 + q2 from (0.1, 0.1, 0) to (0.2, 0.1, 0).
+    with pytest.raises(MagneticStructureError, match="Diagonal helix"):
+        set_q_basis_vector(model, 0, (0.2, 0.0, 0.0))
+    with pytest.raises(MagneticStructureError, match="keep its direction"):
+        set_q_basis_vector(model, 1, (0.0, 0.3, 0.0))
+    assert set_q_basis_vector(model, 2, (0.0, 0.0, 0.5)).q_basis_rlu[2] == (0.0, 0.0, 0.5)
 
 
 def test_set_q_basis_vector_rejects_zero_for_a_used_row_and_duplicate_vectors() -> None:
