@@ -711,7 +711,7 @@ def test_distortion_correction_follows_each_symmetry_equivalent_site(monkeypatch
     results = calculate_commensurate_fields(
         _structure(),
         _antiferromagnet(),
-        [MuonSite(label="Mu", fractional_position=list(_MU_X))],
+        [MuonSite(label="Mu", initial_fractional_position=list(_MU_X))],
         options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=True),
         distorted_structures=[relaxed],
     )

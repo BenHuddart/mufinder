@@ -852,7 +852,7 @@ def _site_distortions(
         if distorted is None:
             out.extend([None] * len(positions))
             continue
-        representative = site.fractional_position if isinstance(site, MuonSite) else site
+        representative = site.current_fractional_position() if isinstance(site, MuonSite) else site
         distortion = map_muon_distortion(structure, distorted, representative, error=MagneticFieldError)
         out.extend(
             equivalent_site_distortion(
