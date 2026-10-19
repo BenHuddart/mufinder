@@ -193,6 +193,7 @@ from mufinder.app.theme import (
     style_section_title,
     status_brush,
     use_square_top_table_corners,
+    track_item_view_corners,
 )
 from mufinder.app.workflow_config_codecs import (
     deserialize_convergence_config,
@@ -526,6 +527,7 @@ class MainWindow(QMainWindow):
             clamp_to_screen(self)
 
         self._project_tree = QTreeWidget()
+        track_item_view_corners(self._project_tree)
         self._project_tree.setObjectName("workflowTree")
         self._project_tree.setHeaderLabel("Project")
         self._project_tree.setHeaderHidden(True)

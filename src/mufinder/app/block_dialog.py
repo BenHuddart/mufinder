@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.theme import style_section_title
+from mufinder.app.theme import style_section_title, track_item_view_corners
 from mufinder.castep_io.schema import BlockColumnSpec, BlockSchema, KeywordSpec
 from mufinder.castep_io.types import BlockSection
 
@@ -89,6 +89,7 @@ class BlockParameterDialog(QDialog):
 
         columns = self._schema.columns or (BlockColumnSpec(name="Entry"),)
         self._table = QTableWidget(self)
+        track_item_view_corners(self._table)
         self._table.setColumnCount(len(columns))
         self._table.setHorizontalHeaderLabels([column.name for column in columns])
         root.addWidget(self._table, 1)

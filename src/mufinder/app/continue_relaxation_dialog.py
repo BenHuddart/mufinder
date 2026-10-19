@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.theme import style_hint_text, style_warning_text
+from mufinder.app.theme import style_hint_text, style_warning_text, track_item_view_corners
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.persistence.codec import to_jsonable
@@ -221,6 +221,7 @@ class ContinueRelaxationDialog(ParameterDialog):
         self._diff_group = QGroupBox("Parameter changes", self)
         diff_layout = QVBoxLayout(self._diff_group)
         self._diff_table = QTableWidget(0, 3, self._diff_group)
+        track_item_view_corners(self._diff_table)
         self._diff_table.setHorizontalHeaderLabels(["Keyword", "Change", "Value"])
         self._diff_table.verticalHeader().setVisible(False)
         self._diff_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

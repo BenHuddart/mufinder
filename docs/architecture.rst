@@ -348,7 +348,11 @@ no two workflow widgets may define the same private method.
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
    * - ``mufinder.app.theme``
-     - Reusable styling, palettes and status brushes.
+     - Reusable styling, palettes and status brushes. Item-view corner styling
+       follows each view's vertical scroll bar and header through
+       ``track_item_view_corners``; the shared table helpers call it, and any
+       ``QTableWidget`` or ``QTreeWidget`` built without them calls it directly,
+       because no application-wide event filter discovers views.
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
