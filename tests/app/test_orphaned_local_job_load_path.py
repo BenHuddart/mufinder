@@ -180,7 +180,7 @@ def test_stopped_local_muon_job_stays_linked_and_resettable(qapp, tmp_path, monk
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(document, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     document.sites[site.id] = site
 
     calc_type = main_window_module.muon_relaxation_calc_type("positive_muon")

@@ -1,0 +1,24 @@
+{
+  "cartesian_position": [
+    0.4,
+    0.8,
+    1.2
+  ],
+  "cluster_id": null,
+  "fractional_position": [
+    0.1,
+    0.2,
+    0.3
+  ],
+  "generation_method": "manual",
+  "host_displacement_max": null,
+  "id": "0d5c6e1a-8a3b-4f0e-9a7c-3c2b1d4e5f60",
+  "label": "Site 1",
+  "properties": {},
+  "relaxation_run_id": "3f4e5d6c-7b8a-4912-a3b4-c5d6e7f80912",
+  "source_generation_batch_id": null,
+  "source_structure_id": "6b0f3c52-1d0e-4c5b-9a43-2f1d7f3e9a10",
+  "status": "relaxed",
+  "symmetry_label": null,
+  "total_energy_eV": -12.0
+}

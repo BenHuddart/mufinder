@@ -764,8 +764,10 @@ derived structures of the job's own earlier runs as a fallback for records
 written before that property existed; the label is deliberately not a key,
 because a muon-relaxation job is labelled with its site label alone and one
 site's two charge states share it. The muon site's
-``status``/``relaxation_run_id``/``total_energy_eV`` are rewritten from the
-same completion, so the site and the structure always describe the same run.
+``status``/``relaxation_run_id``/``total_energy_eV``/``relaxed_fractional_position``
+are rewritten from the same completion, so the site and the structure always
+describe the same run. Removing the job's records unlinks the site again: it
+returns to ``staged`` and drops the energy and relaxed position it copied.
 
 *A stale ``-out.cell`` fails the job.* A continuation re-uses its job directory,
 so the previous run's relaxed structure is still sitting where the completion

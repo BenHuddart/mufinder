@@ -815,7 +815,7 @@ def _expanded_muon_positions(
     for index, site in enumerate(muon_sites, start=1):
         if isinstance(site, MuonSite):
             label = site.label or f"site {index}"
-            position = _canonical_fractional(site.fractional_position)
+            position = _canonical_fractional(site.current_fractional_position())
         else:
             label = f"site {index}"
             position = _canonical_fractional(site)
@@ -852,7 +852,7 @@ def _site_distortions(
         if distorted is None:
             out.extend([None] * len(positions))
             continue
-        representative = site.fractional_position if isinstance(site, MuonSite) else site
+        representative = site.current_fractional_position() if isinstance(site, MuonSite) else site
         distortion = map_muon_distortion(structure, distorted, representative, error=MagneticFieldError)
         out.extend(
             equivalent_site_distortion(

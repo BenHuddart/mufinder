@@ -1376,7 +1376,7 @@ def _muon_continue_fixture(tmp_path: Path):
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.1, 0.2, 0.3], status="staged")
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.1, 0.2, 0.3], status="staged")
     doc.sites[site.id] = site
     window._document = doc
 

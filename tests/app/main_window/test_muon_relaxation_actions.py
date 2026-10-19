@@ -223,7 +223,7 @@ def test_muon_relaxation_staging_updates_memory_without_autosave(main_window, tm
     site = MuonSite(
         label="Random Site 1",
         status="generated",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         generation_method="random",
     )
     doc.sites[site.id] = site
@@ -269,7 +269,7 @@ def test_muon_relaxation_staging_rejected_charge_dialog_leaves_site_generated(ma
     site = MuonSite(
         label="Random Site 1",
         status="generated",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         generation_method="random",
     )
     doc.sites[site.id] = site
@@ -302,7 +302,7 @@ def test_muon_relaxation_row_removal_returns_staged_site_to_generated_without_au
     site = MuonSite(
         label="Random Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         generation_method="random",
     )
     doc.sites[site.id] = site
@@ -341,7 +341,7 @@ def test_muon_relaxation_row_removal_autosaves_persisted_staged_site_revert(
     site = MuonSite(
         label="Random Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         generation_method="random",
     )
     doc.sites[site.id] = site
@@ -385,7 +385,7 @@ def test_muon_relaxation_row_removal_keeps_site_staged_when_other_jobs_share_sit
     site = MuonSite(
         label="Random Site 1",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         generation_method="random",
     )
     doc.sites[site.id] = site
@@ -424,7 +424,7 @@ def test_muon_relaxation_staging_can_create_both_charge_state_tabs(main_window, 
     site = MuonSite(
         label="Random Site 1",
         status="generated",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         generation_method="random",
     )
     doc.sites[site.id] = site
@@ -534,7 +534,7 @@ def test_main_window_jobs_table_refresh_syncs_muon_relaxation_status(main_window
     site = MuonSite(
         label="Shared Site",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     doc.sites[site.id] = site
@@ -609,7 +609,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     site = MuonSite(
         label="Shared Site",
         status="staged",
-        fractional_position=[0.1, 0.2, 0.3],
+        initial_fractional_position=[0.1, 0.2, 0.3],
         source_structure_id=host.id,
     )
     doc.sites[site.id] = site
@@ -715,6 +715,12 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     result = doc.results[run.result_id]
     assert result.data["muon_final_fractional_position_supercell"] == pytest.approx([0.3, 0.4, 0.5])
     assert result.data["muon_final_fractional_position_host"] == pytest.approx([0.6, 0.8, 0.5])
+    # The site keeps where the muon started and copies where it ended up.
+    assert site.status == "relaxed"
+    assert site.relaxation_run_id == run.id
+    assert site.initial_fractional_position == pytest.approx([0.1, 0.2, 0.3])
+    assert site.relaxed_fractional_position == pytest.approx([0.6, 0.8, 0.5])
+    assert site.current_fractional_position() == pytest.approx([0.6, 0.8, 0.5])
     doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
     states = window._muon_relaxation_controller.build_states()
     assert states["muonium:Shared Site"].final_fractional_position == pytest.approx((0.6, 0.8, 0.5))
@@ -737,7 +743,7 @@ def test_main_window_form_muon_relaxation_shows_ready_before_submission(
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_form_ready.mufinder", "MuonFormReady")
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     doc.ui_state["muon_relaxation_form"] = {
         "rows": [
@@ -774,7 +780,7 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -824,7 +830,7 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -890,7 +896,7 @@ def test_main_window_muon_relaxation_sync_ignores_historical_defined_jobs(
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -948,7 +954,7 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
     # Post-Milestone-6.3, the only active jobs still present on project open are
@@ -1009,8 +1015,8 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    first_site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
-    second_site = MuonSite(label="Site 2", fractional_position=[0.5, 0.25, 0.25])
+    first_site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
+    second_site = MuonSite(label="Site 2", initial_fractional_position=[0.5, 0.25, 0.25])
     doc.sites[first_site.id] = first_site
     doc.sites[second_site.id] = second_site
     window._document = doc
@@ -1081,7 +1087,7 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -1142,7 +1148,7 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     )
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -1226,7 +1232,7 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(main_window
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -1282,7 +1288,7 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(doc, host)
-    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    site = MuonSite(label="Site 1", initial_fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
 
@@ -1311,9 +1317,7 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site.status = "relaxed"
-    site.relaxation_run_id = run.id
-    site.total_energy_eV = -1.0
+    site.record_relaxation(run.id, total_energy_eV=-1.0, fractional_position=[0.3, 0.3, 0.3])
     job_dir = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "positivemuon_Site_1"
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "positivemuon_Site_1.cell").write_text("cell", encoding="utf-8")
@@ -1338,6 +1342,8 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     assert result.id not in doc.results
     assert site.relaxation_run_id is None
     assert site.total_energy_eV is None
+    assert site.relaxed_fractional_position is None
+    assert site.current_fractional_position() == pytest.approx([0.25, 0.25, 0.25])
     assert site.status == "generated"
     assert definition.id not in doc.calculations
     assert service.validate_document(doc) == []

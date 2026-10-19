@@ -453,21 +453,22 @@ class TestCoordinateFrames:
         # 0.2/0.4/0.6 in the host cell.
         assert payload["initial_fractional_position"] == pytest.approx([0.2, 0.4, 0.6])
 
-    def test_the_site_keeps_the_initial_position_not_the_relaxed_one(
+    def test_the_site_keeps_its_initial_position_and_copies_the_relaxed_one(
         self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
     ) -> None:
-        """Native completion updates status, run id and energy but never rewrites
-        the site's coordinates, so an imported site must not either. The relaxed
-        position lives on the derived structure and in the result payload."""
+        """Native completion never rewrites the site's initial position and copies
+        the host-cell relaxed position from the result, so an imported site
+        must do the same."""
 
         folder = build_folder(tmp_path / "legacy", sites=(1,))
         _scan, outcome = _commit(document, folder, host_structure)
 
         site = document.sites[outcome.imported[0].site_id]
-        assert site.fractional_position == pytest.approx([0.2, 0.4, 0.6])
-        # The relaxed position is still recorded, just not on the site.
+        assert site.initial_fractional_position == pytest.approx([0.2, 0.4, 0.6])
         data = document.results[outcome.imported[0].result_id].data
         assert data["muon_final_fractional_position_host"] == pytest.approx([0.22, 0.42, 0.62])
+        assert site.relaxed_fractional_position == pytest.approx([0.22, 0.42, 0.62])
+        assert site.current_fractional_position() == pytest.approx([0.22, 0.42, 0.62])
 
     def test_the_site_carries_a_cartesian_position(
         self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
@@ -480,8 +481,8 @@ class TestCoordinateFrames:
 
         site = document.sites[outcome.imported[0].site_id]
         # 0.2/0.4/0.6 of a 4 A cubic host.
-        assert site.cartesian_position == pytest.approx([0.8, 1.6, 2.4])
-        assert site.cartesian_position != [0.0, 0.0, 0.0]
+        assert site.initial_cartesian_position == pytest.approx([0.8, 1.6, 2.4])
+        assert site.initial_cartesian_position != [0.0, 0.0, 0.0]
 
 
 class TestResolvedParameters:
