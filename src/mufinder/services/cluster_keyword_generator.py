@@ -335,8 +335,13 @@ def generate_cluster_castep_keywords_json(
     progress: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
 ) -> Path:
-    """Generate CASTEP keyword JSON using a remote cluster."""
+    """Generate CASTEP keyword JSON using a remote cluster.
 
+    The keyword job runs on the cluster's default queue, with that queue's
+    overrides (executable, template, walltime, memory) applied.
+    """
+
+    config = config.for_queue(config.default_queue_name)
     issues = validate_cluster_keyword_config(config)
     if issues:
         raise ClusterKeywordGenerationError("\n".join(f"- {issue}" for issue in issues))

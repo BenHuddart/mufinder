@@ -483,6 +483,61 @@ def test_scheduler_mode_parses_the_remote_dump_and_cleans_up(
     assert ssh.disconnected is True
 
 
+def test_scheduler_keyword_job_runs_on_the_default_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+) -> None:
+    from mufinder.domain.cluster import ClusterQueue
+
+    scheduler = _Scheduler(dump=_scheduler_dump(_ALL_NAMES))
+    _use_scheduler(monkeypatch, scheduler)
+
+    generate_cluster_castep_keywords_json(
+        config=_scheduler_config(
+            name="PSI",
+            template_script_path="",
+            default_queue_name="daily",
+            queues=(
+                ClusterQueue(name="hourly"),
+                ClusterQueue(
+                    name="daily",
+                    castep_executable="/opt/castep-daily/castep.mpi",
+                    default_mem_per_cpu_gb=8.0,
+                ),
+            ),
+        ),
+        output_path=tmp_path / "castep_keywords.json",
+    )
+
+    request = scheduler.submit_requests[0]
+    runner = _SchedulerSSH.last.remote_files[request.script_path].decode("utf-8")
+    preamble = runner.split("\n\n", 2)[1].splitlines()
+    assert preamble[-2:] == ["#SBATCH -p daily", "#SBATCH --mem-per-cpu=8G"]
+    assert "hourly" not in runner
+    # The default queue's executable override applies to the keyword job.
+    assert "/opt/castep-daily/castep.mpi" in runner
+
+
+def test_scheduler_keyword_job_keeps_a_template_partition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+) -> None:
+    scheduler = _Scheduler(dump=_scheduler_dump(_ALL_NAMES))
+    _use_scheduler(monkeypatch, scheduler)
+
+    generate_cluster_castep_keywords_json(
+        config=_scheduler_config(default_queue_name="devel"),
+        output_path=tmp_path / "castep_keywords.json",
+    )
+
+    request = scheduler.submit_requests[0]
+    runner = _SchedulerSSH.last.remote_files[request.script_path].decode("utf-8")
+    assert "#SBATCH -p scarf" in runner
+    assert "devel" not in runner
+
+
 @pytest.mark.parametrize("grep_result", [(1, "0\n", ""), (2, "", "No such file"), (0, "garbage", "")])
 def test_running_job_progress_detail_is_best_effort(
     tmp_path: Path,
@@ -1635,6 +1690,40 @@ def test_keyword_job_walltime_is_short_whatever_the_cluster_default() -> None:
     assert walltime(_scheduler_config(default_walltime="")) == "01:00:00"
     assert walltime(_scheduler_config(default_walltime="", queue_system="addqueue")) == ""
     assert walltime(_scheduler_config(default_walltime="02:00:00", queue_system="addqueue")) == "02:00:00"
+
+
+def test_keyword_job_walltime_respects_a_shorter_default_queue(tmp_path: Path) -> None:
+    from mufinder.domain.cluster import ClusterQueue
+
+    def config(max_walltime: str) -> ClusterConfig:
+        return _scheduler_config(
+            template_script_path="",
+            default_queue_name="short",
+            queues=(ClusterQueue(name="short", max_walltime=max_walltime),),
+        )
+
+    assert scripts_module.scheduler_walltime(config("00:30:00")) == "00:30:00"
+    assert scripts_module.scheduler_walltime(config("1-00:00:00")) == "01:00:00"
+    assert scripts_module.scheduler_walltime(config("")) == "01:00:00"
+    script = scripts_module.scheduler_runner_script(
+        config=config("00:30:00"),
+        remote_directory="/r",
+        remote_dump_path="/r/d",
+        remote_log_path="/r/l",
+    )
+    assert "#SBATCH -t 00:30:00" in script
+
+    # A template's $walltime is filled with the capped value too.
+    template = tmp_path / "short.sh"
+    template.write_text("#!/bin/bash\n#SBATCH -t $walltime\n\n$castep_command\n", encoding="utf-8")
+    plan = scripts_module.job_template_plan(
+        _scheduler_config(
+            template_script_path=str(template),
+            default_queue_name="short",
+            queues=(ClusterQueue(name="short", max_walltime="00:30:00"),),
+        )
+    )
+    assert plan is not None and "#SBATCH -t 00:30:00" in plan.preamble
 
 
 def test_emit_progress_and_check_cancel_helpers() -> None:

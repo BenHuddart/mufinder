@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 import numpy as np
@@ -327,6 +328,86 @@ class MagneticStructureModel:
         return _as_float_array(q_coeff, "q_coeff") @ self.q_basis_array
 
 
+def enabled_magnetic_components(model: MagneticStructureModel) -> tuple[MagneticComponent, ...]:
+    """Return the components that contribute to moments and fields, in model order."""
+
+    return tuple(component for component in model.components if component.enabled)
+
+
+def duplicate_magnetic_components(
+    model: MagneticStructureModel,
+    component_ids: Sequence[str],
+) -> tuple[MagneticStructureModel, tuple[str, ...]]:
+    """Insert a copy of each listed component directly after its original.
+
+    A copy keeps the original's selector, Fourier terms, phase, enabled state and
+    metadata, so it shares the original's q-basis slots. It gets a fresh
+    ``component_id`` and a ``" (copy)"`` label suffix. Returns the new model and
+    the copies' ids in model order.
+    """
+
+    selected = {str(value) for value in component_ids}
+    components: list[MagneticComponent] = []
+    copy_ids: list[str] = []
+    for component in model.components:
+        components.append(component)
+        if component.component_id not in selected:
+            continue
+        duplicate = replace(
+            component,
+            component_id=f"component-{uuid4()}",
+            label=f"{component.label} (copy)",
+            metadata=deepcopy(dict(component.metadata)),
+        )
+        components.append(duplicate)
+        copy_ids.append(duplicate.component_id)
+    return replace(model, components=tuple(components)), tuple(copy_ids)
+
+
+def set_magnetic_components_enabled(
+    model: MagneticStructureModel,
+    component_ids: Sequence[str],
+    enabled: bool,
+) -> MagneticStructureModel:
+    """Enable or disable the listed components; other components are unchanged."""
+
+    selected = {str(value) for value in component_ids}
+    components = tuple(
+        replace(component, enabled=bool(enabled)) if component.component_id in selected else component
+        for component in model.components
+    )
+    return replace(model, components=components)
+
+
+def move_magnetic_components(
+    model: MagneticStructureModel,
+    component_ids: Sequence[str],
+    offset: int,
+) -> MagneticStructureModel:
+    """Move the listed components ``offset`` places (negative is towards the start).
+
+    Listed components keep their relative order. A component stops when it
+    reaches either end or another listed component that has already stopped, so
+    a selection never wraps round. Component order does not change the summed
+    moments; it is the order the builder lists and evaluates components in.
+    """
+
+    selected = {str(value) for value in component_ids}
+    components = list(model.components)
+    step = -1 if offset < 0 else 1
+    for _ in range(abs(int(offset))):
+        indices = range(1, len(components)) if step < 0 else range(len(components) - 2, -1, -1)
+        moved = False
+        for index in indices:
+            neighbour = index + step
+            if components[index].component_id in selected and components[neighbour].component_id not in selected:
+                components[index], components[neighbour] = components[neighbour], components[index]
+                moved = True
+        if not moved:
+            break
+    return replace(model, components=tuple(components))
+
+
 def viable_atom_selectors(
     structure: Structure,
     *,
@@ -429,18 +510,34 @@ def moment_at_atom(
 ) -> np.ndarray:
     """Evaluate the real magnetic moment for one atom and cell offset."""
 
-    atom_index = int(atom_index)
-    if atom_index < 0 or atom_index >= len(structure.species):
-        raise MagneticStructureError("atom_index is out of range")
     offset = _as_float_array(cell_offset, "cell_offset")
-    moment = np.zeros(3, dtype=complex)
+    return moments_at_atoms(structure, model, [atom_index], [offset], component_ids=component_ids)[0]
+
+
+def moments_at_atoms(
+    structure: Structure,
+    model: MagneticStructureModel,
+    atom_indices: Sequence[int],
+    cell_offsets: Sequence[Sequence[float]],
+    *,
+    component_ids: Sequence[str] | None = None,
+) -> np.ndarray:
+    """Evaluate real magnetic moments, one row per (unit-cell atom index, cell offset) pair."""
+
+    indices = np.asarray(atom_indices, dtype=int).reshape(-1)
+    offsets = np.asarray(cell_offsets, dtype=float).reshape(-1, 3)
+    if offsets.shape[0] != indices.shape[0]:
+        raise MagneticStructureError("atom_indices and cell_offsets must have the same length")
+    if np.any(indices < 0) or np.any(indices >= len(structure.species)):
+        raise MagneticStructureError("atom_index is out of range")
+    moments = np.zeros((indices.shape[0], 3), dtype=complex)
     for component in atom_resolved_fourier_components(structure, model, component_ids=component_ids):
-        fc = component.atom_fcs[atom_index]
+        fc = component.atom_fcs[indices]
         if np.allclose(fc, 0.0):
             continue
-        phase = np.exp(-2j * np.pi * float(component.q_rlu @ offset))
-        moment += fc * phase
-    return moment.real
+        phase = np.exp(-2j * np.pi * (offsets @ component.q_rlu))
+        moments += fc * phase[:, np.newaxis]
+    return moments.real
 
 
 def moments_in_supercell(
@@ -463,16 +560,13 @@ def moments_in_supercell(
     positions_frac = (frac[np.newaxis, :, :] + offsets[:, np.newaxis, :]).reshape(-1, 3)
     atom_indices = np.tile(np.arange(atom_count, dtype=int), len(offsets))
     positions_cart = positions_frac @ cell
-    moments = np.zeros((positions_frac.shape[0], 3), dtype=float)
-    for row, atom_index in enumerate(atom_indices):
-        offset = np.floor(positions_frac[row])
-        moments[row] = moment_at_atom(
-            structure,
-            model,
-            int(atom_index),
-            cell_offset=offset,
-            component_ids=component_ids,
-        )
+    moments = moments_at_atoms(
+        structure,
+        model,
+        atom_indices,
+        np.floor(positions_frac),
+        component_ids=component_ids,
+    )
     return positions_cart, moments, atom_indices
 
 

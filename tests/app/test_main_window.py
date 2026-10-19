@@ -364,6 +364,7 @@ def test_main_window_persists_magnetic_field_calculation_results(qapp, tmp_path:
         muon_position = (0.25, 0.25, 0.25)
         total = (0.1, 0.2, 0.3)
         magnitude = float(np.linalg.norm(total))
+        distortion = None
 
         def to_json(self):
             return {

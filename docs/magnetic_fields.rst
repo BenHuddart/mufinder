@@ -94,21 +94,46 @@ structure and its ``Edit Magnetic Structure...`` button opens the ``Magnetic
 Structure Builder`` dialog. The builder owns the component table, ``Preview
 Supercell`` controls, atom selection, and live structure viewer:
 
+- the component table lists ``Enabled``, ``Component``, ``Type``,
+  ``Apply to``, ``q`` and ``Moment`` for each component, top to bottom in the
+  order the model stores them;
 - selecting no rows previews the full magnetic structure;
-- selecting one or more rows previews only those components;
+- selecting one or more rows previews only those components; when every
+  selected component is disabled the preview shows no moments and says so;
 - diagonal preview supercell controls evaluate the magnetic moments outside the
   unit cell so longer-wavelength propagation vectors can be inspected;
 - ``Build From Host Spins`` converts the current host-structure scalar spin
-  metadata into the new propagation-vector model;
+  metadata into the new propagation-vector model; when the builder already
+  holds components it first asks for confirmation, because the conversion
+  replaces them;
 - ``Add Component`` creates a new propagation-vector component using a preset
   for collinear, spin-density-wave, helix, cycloid, or conical textures;
 - ``Add Texture...`` creates one grouped multi-q texture assignment, currently
   supporting square and hexagonal skyrmion lattices as well as custom Fourier
   texture terms;
-- ``Remove`` deletes selected components;
 - ``Edit...`` reopens the selected component in the same preset-aware dialog so
   its label, target, q vector, phase, and texture parameters can be changed;
-- both ``Delete`` and ``Backspace`` remove selected rows.
+  double-clicking the ``Component`` cell renames a component in place;
+- ``Duplicate`` inserts a copy of each selected component directly below its
+  original. A copy keeps the original's target, Fourier terms, phase, enabled
+  state and texture settings, shares its q-basis slots, and gets a
+  ``(copy)`` label suffix; the copies are selected afterwards;
+- ``Remove`` deletes the selected components after a confirmation whose
+  default answer keeps them; ``Delete`` and ``Backspace`` do the same;
+- ``Move Up`` and ``Move Down`` move the selected components one row, keeping
+  their relative order and stopping at either end of the table. Order changes
+  only how the builder lists components; the summed moments and fields do not
+  depend on it;
+- the ``Enabled`` checkbox switches a component off without deleting it. A
+  disabled component keeps its row, shown in muted text, and is saved with the
+  model, but it is left out of the preview, the structure type, the
+  magnetic-ion defaults of the dipolar tensor dialog and every field
+  calculation. Editing a component keeps its enabled state. When every
+  component is disabled the preview and structure type are empty.
+
+The ``Magnetic Structure`` card on the page reports how many components the
+accepted model has and how many of them are disabled. ``Calculate Dipolar
+Field`` stays disabled until at least one component is enabled.
 
 Components can currently be applied to all atoms, to atoms of a species, to a
 symmetry-equivalent atom group, or to atoms selected in the builder preview. The
@@ -204,10 +229,13 @@ distorted-structure reference. The available dialog sources are:
 
 Structural-relaxation cluster representatives can expose a distorted relaxed
 structure. When that structure is available, the dialog enables the
-``Include muon-induced displacements when available`` option. The dipolar-field
-calculation does not yet apply ion-displacement corrections; the distorted
-structure is currently used only by the ``Nuclear Relaxation...`` distortion
-correction (see `Nuclear Relaxation`_).
+``Correct the dipolar field for muon-induced displacements`` option; it is
+disabled and cleared for every other site. The choice is stored with the
+selected site, the site summary on the page notes it, and saved workspaces
+restore it. When it is ticked, ``Calculate Dipolar Field`` applies the
+correction described in `Muon-Induced Distortion Corrections`_. The
+``Nuclear Relaxation...`` dialog has its own distortion option for the same
+relaxed structure (see `Nuclear Relaxation`_).
 
 Calculation
 -----------
@@ -234,6 +262,58 @@ The sampling method affects only incommensurate field distributions. It does not
 simulate muon spectra or time-dependent polarisation functions. ``muesr``/``muLFC``
 environment errors are reported in the page status area rather than during
 application startup.
+
+Muon-Induced Distortion Corrections
+-----------------------------------
+
+A muon displaces the host ions around it, so the dipolar field at the relaxed
+site differs from the field computed for the pristine host. MuFinder corrects
+the converged pristine lattice sum with the finite-cell change from those
+displacements in the representative relaxed supercell:
+
+.. math::
+
+   \mathbf{B}_\mathrm{dip,corrected} =
+   \mathbf{B}_\mathrm{dip}(\mathrm{pristine}) +
+   \sum_{i \in \mathrm{cell}}
+   \left[\mathbf{B}_i(\mathbf{r}_i + \mathbf{u}_i) - \mathbf{B}_i(\mathbf{r}_i)\right],
+
+where :math:`\mathbf{r}_i` runs from the muon to the pristine site of host ion
+:math:`i`, :math:`\mathbf{u}_i` is that ion's displacement relative to the
+muon, and :math:`\mathbf{B}_i` is the point-dipole field of the moment the
+magnetic model assigns to the pristine site. Every ion of the relaxed
+supercell enters the sum; ions with no moment contribute nothing.
+
+MuFinder pairs the relaxed supercell with the pristine host before it sums
+anything, and reports the first check that fails:
+
+- the relaxed lattice must be an integer supercell of the host lattice with a
+  positive determinant, so the correction cell is finite;
+- the relaxed structure must hold exactly one muon marker and, for every
+  element, the host-atom count of that supercell of the pristine host;
+- the selected site must lie within 0.5 Å of the relaxed muon after lattice
+  translations, so the correction belongs to the site being calculated;
+- every displaced ion is paired with the nearest pristine site of its
+  element, and no two ions may share a pristine site.
+
+The supercell is recentred on the muon and expressed in the pristine host
+frame. Ion vectors start at the relaxed muon and pristine vectors at the
+selected site, so a rigid drift of the relaxed cell cancels.
+
+With ``Include equivalent sites``, each symmetry-equivalent site receives the
+correction carried to it by the host symmetry operation that maps the
+representative onto it: the displacement pattern is rotated with the
+operation, and the moments are evaluated at the mapped pristine sites. The
+magnetic order is not part of the host symmetry, so equivalent sites can
+receive different corrections.
+
+The correction is reported as its own component. Corrected rows read
+``field (distortion-corrected)`` in the ``Result`` column, the vector total
+includes the correction, and the saved result stores it as ``distortion_T``
+beside the uncorrected ``dipolar_T``. The Lorentz, contact and demagnetizing
+terms keep their pristine values. The correction applies to commensurate
+structures only: an incommensurate field distribution with the option ticked
+stops with an error, and dipolar tensors always use the pristine host.
 
 Demagnetizing-Field Setup
 -------------------------
@@ -364,9 +444,10 @@ polycrystal results share one normalization.
 
 If the selected muon site comes from a structural-relaxation cluster and the
 representative relaxed structure is still available, the dialog can apply a
-muon-induced distortion correction. MuFinder matches the active host to the
-relaxed supercell, recentres pristine and distorted cells around the muon,
-unwraps host-ion displacements across periodic boundaries, and adds the local
+muon-induced distortion correction. MuFinder pairs the relaxed supercell with
+the active host exactly as for the dipolar field, with the same checks (see
+`Muon-Induced Distortion Corrections`_), places the displaced and pristine ions
+around a muon at the centre of the correction cell, and adds the local
 finite-cell correction to the converged pristine lattice sum:
 
 .. math::
@@ -501,10 +582,12 @@ Beyond the dipolar sum, the field calculation includes:
 - the contact hyperfine term, when a ``Hyperfine coupling`` is entered;
 - the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
-  advanced ellipsoid, or advanced rectangular prism.
+  advanced ellipsoid, or advanced rectangular prism;
+- the muon-induced distortion correction for commensurate fields, when the
+  selected site requests it (see `Muon-Induced Distortion Corrections`_).
 
-Dipolar tensors from selected magnetic-ion positions and muon-induced distortion
-corrections (nuclear relaxation only) are available through their own dialogs.
+Dipolar tensors from selected magnetic-ion positions and the nuclear-relaxation
+distortion correction are available through their own dialogs.
 
 Dependency Handling
 -------------------
@@ -535,8 +618,8 @@ Current Scope
 
 The implemented workflow covers the propagation-vector data model, the
 magnetic-structure builder and multi-q texture dialogs, commensurate local
-fields, incommensurate field distributions, dipolar tensors, demagnetizing
-corrections, and nuclear dipolar linewidths. It stops at field-level results:
-MuFinder does not simulate muon spectra or polarisation functions, and the
-dipolar-field calculation does not yet apply muon-induced displacement
-corrections.
+fields with optional muon-induced distortion corrections, incommensurate field
+distributions, dipolar tensors, demagnetizing corrections, and nuclear dipolar
+linewidths. It stops at field-level results: MuFinder does not simulate muon
+spectra or polarisation functions. Distortion corrections are not applied to
+incommensurate field distributions or dipolar tensors.

@@ -310,6 +310,19 @@ Compatibility ledger
        ``mufinder.science.uep_clustering``. Not persisted.
      - Public import alias. Keep the ``__getattr__`` hook for one minor
        release (through 0.6.x); then drop it.
+   * - ``clusters/<name>/default_queue_name`` without
+       ``clusters/<name>/queues``
+     - ``mufinder.cluster_setup`` (``load_cluster_configs``)
+     - A cluster profile saved before profiles listed queues holds at most one
+       queue, ``default_queue_name``, and no ``queues`` key. It loads with an
+       empty ``queues`` tuple, so the submission dialog offers that one name
+       with no overrides and every resource comes from the profile, as
+       before. An ``addqueue`` profile with no queue at all still loads with
+       ``redwood``. The setup dialog shows such a profile's queue as one row
+       and saves it into ``queues`` the next time the profile is saved.
+     - Application setting, not project data. Current behaviour, not
+       deprecated: ``default_queue_name`` stays the name of the default queue,
+       and a profile with no queues is valid.
 
 Saved-project schema migrations
 -------------------------------

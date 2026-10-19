@@ -6,7 +6,6 @@ from collections.abc import Callable, Iterator
 
 import numpy as np
 import pytest
-from ase import Atoms
 
 from mufinder.domain.models import Structure
 from mufinder.science import nuclear_relaxation as nr
@@ -570,7 +569,7 @@ def test_distortion_correction_detects_a_doubled_supercell() -> None:
     result = calculate_distortion_correction(
         pristine,
         distorted,
-        (0.25, 0.125, 0.25),
+        (0.25, 0.5, 0.25),
         options=NuclearRelaxationOptions(mode="zf_polycrystal", radius=6.0),
     )
     assert isinstance(result, DistortionCorrectionResult)
@@ -739,16 +738,3 @@ def test_lattice_sum_rejects_a_singular_cell() -> None:
     cell = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]])
     with pytest.raises(NuclearRelaxationError, match="non-singular"):
         nr._translation_limits(cell, 5.0)
-
-
-def test_distortion_unwrapping_rejects_mismatched_cells_and_species() -> None:
-    # Private helper: calculate_distortion_correction aligns the cells and checks the supercell match first.
-    distorted = Atoms("H", scaled_positions=[[0.0, 0.0, 0.0]], cell=np.eye(3) * 3.0, pbc=True)
-    pristine = Atoms("H", scaled_positions=[[0.0, 0.0, 0.0]], cell=np.eye(3) * 4.0, pbc=True)
-    with pytest.raises(NuclearRelaxationError, match="cells must match"):
-        nr._pair_distorted_to_pristine_indices(distorted, pristine)
-
-    distorted = Atoms("HO", scaled_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]], cell=np.eye(3) * 3.0, pbc=True)
-    pristine = Atoms("HH", scaled_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]], cell=np.eye(3) * 3.0, pbc=True)
-    with pytest.raises(NuclearRelaxationError, match="no atoms of species"):
-        nr._pair_distorted_to_pristine_indices(distorted, pristine)

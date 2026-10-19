@@ -129,7 +129,9 @@ policy, move the reusable part into the appropriate shared layer:
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
   ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
   clustering of its optimized positions in
-  ``mufinder.science.uep_clustering`` and every ``muesr`` import in
+  ``mufinder.science.uep_clustering``, pairing a relaxed muon supercell with
+  its pristine host for finite-cell distortion corrections in
+  ``mufinder.science.muon_distortion`` and every ``muesr`` import in
   ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
   formatted density, pseudopotential reports and cell charge the UEP analysis
@@ -273,6 +275,12 @@ no two workflow widgets may define the same private method.
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
        in-row button acts on when its row is, or is not, part of a multi-row
        selection, and the three-way prompt.
+   * - ``mufinder.app.blocking_call``
+     - Running a blocking call off the GUI thread with the caller's
+       synchronous semantics (``run_blocking_call``): user input is held back,
+       a busy dialog appears once the call takes noticeably long, and a
+       cancellable call raises ``BlockingCallCancelled``. Filesystem retries
+       and keyring password lookups use it.
    * - ``mufinder.app.workflow_row_widget``
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and
@@ -374,6 +382,16 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.cluster_queues``
+     - Checks on what a cluster submission asks of a queue: queue (partition)
+       names that are safe to write into a job script
+       (``is_valid_queue_name``), SLURM walltime parsing
+       (``parse_walltime_seconds``) and the walltime-format and
+       queue-maximum check that the setup and submission dialogs share
+       (``walltime_issue``), and the rules a profile's queue list must meet
+       before it is saved (``queue_issues``); the setup dialog only
+       translates its table cells to and from ``ClusterQueue`` records. Resolving a queue's overrides onto its profile is
+       ``ClusterConfig.for_queue`` in ``mufinder.domain.cluster``.
    * - ``mufinder.services.cluster_retrieval``
      - Retrieving a finished cluster job's output over SSH: which remote files
        to download (task-farm names, per-rank error files, scheduler logs),
@@ -461,6 +479,13 @@ no two workflow widgets may define the same private method.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.science.muon_distortion``
+     - Pairing a relaxed muon supercell with its pristine host
+       (``map_muon_distortion``): supercell detection, the finite correction
+       cell, muon-site matching and one-to-one atom mapping, and carrying the
+       pairing to a symmetry-equivalent site
+       (``equivalent_site_distortion``). The nuclear-relaxation and
+       dipolar-field distortion corrections both use it.
    * - ``mufinder.science._muesr_compat``
      - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
        restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the

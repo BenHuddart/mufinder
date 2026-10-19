@@ -10,7 +10,7 @@ import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QToolButton, QTreeWidget, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QTabWidget, QToolButton, QTreeWidget, QWidget
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -686,6 +686,19 @@ def style_help_button(button: QToolButton) -> None:
     button.setObjectName("mufinderHelpButton")
 
 
+def style_tab_widget(tabs: QTabWidget) -> None:
+    """Give a tab widget the rounded, accent-marked MuFinder tabs.
+
+    The tabs keep their natural width (no stretching across the bar) and long
+    titles are elided rather than clipped.
+    """
+
+    tabs.setObjectName("mufinderTabs")
+    tabs.setDocumentMode(False)
+    tabs.tabBar().setExpanding(False)
+    tabs.setElideMode(Qt.TextElideMode.ElideRight)
+
+
 def style_small_checked_tool_button(button: QToolButton) -> None:
     """Tag a small checkable tool button for shared feature-dialog styling."""
 
@@ -734,7 +747,7 @@ def _base_widget_styles(p: MuFinderPalette) -> str:
         background: {p.bg_primary};
         color: {p.text_primary};
     }}
-    QLabel {{
+    QLabel, QCheckBox, QRadioButton {{
         background: transparent;
     }}
     QMainWindow, QDialog {{
@@ -1148,6 +1161,7 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
 
 def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     return f"""
+    QTabWidget#mufinderTabs::pane,
     QTabWidget#muonRelaxationChargeTabs::pane,
     QTabWidget#analysisWorkspaceTabs::pane,
     QTabWidget#energyBarriersTabs::pane,
@@ -1157,18 +1171,24 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         top: -1px;
         background: {p.bg_surface};
     }}
+    QTabWidget#mufinderTabs,
     QTabWidget#muonRelaxationChargeTabs,
     QTabWidget#analysisWorkspaceTabs,
     QTabWidget#energyBarriersTabs,
     QTabWidget#quantumAnalysisTabs {{
         background: transparent;
     }}
+    QTabWidget#mufinderTabs > QStackedWidget > QWidget {{
+        background: {p.bg_surface};
+    }}
+    QTabWidget#mufinderTabs QTabBar,
     QTabWidget#muonRelaxationChargeTabs QTabBar,
     QTabWidget#analysisWorkspaceTabs QTabBar,
     QTabWidget#energyBarriersTabs QTabBar,
     QTabWidget#quantumAnalysisTabs QTabBar {{
         background: transparent;
     }}
+    QTabWidget#mufinderTabs QTabBar::tab,
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab,
     QTabWidget#energyBarriersTabs QTabBar::tab,
@@ -1183,6 +1203,7 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         margin-right: 4px;
         font-weight: 700;
     }}
+    QTabWidget#mufinderTabs QTabBar::tab:selected,
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected,
     QTabWidget#energyBarriersTabs QTabBar::tab:selected {{
@@ -1195,6 +1216,7 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         color: {p.text_primary};
         border-color: {p.accent};
     }}
+    QTabWidget#mufinderTabs QTabBar::tab:hover:!selected,
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected,
     QTabWidget#energyBarriersTabs QTabBar::tab:hover:!selected,
