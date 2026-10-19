@@ -128,8 +128,8 @@ Supercell`` controls, atom selection, and live structure viewer:
   disabled component keeps its row, shown in muted text, and is saved with the
   model, but it is left out of the preview, the structure type, the
   magnetic-ion defaults of the dipolar tensor dialog and every field
-  calculation. When every component is disabled the preview and structure
-  type are empty.
+  calculation. Editing a component keeps its enabled state. When every
+  component is disabled the preview and structure type are empty.
 
 The ``Magnetic Structure`` card on the page reports how many components the
 accepted model has and how many of them are disabled. ``Calculate Dipolar

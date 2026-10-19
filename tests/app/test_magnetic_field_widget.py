@@ -861,6 +861,42 @@ def test_magnetic_structure_builder_edits_texture_component(qapp, tmp_path, monk
     dialog.close()
 
 
+
+@pytest.mark.parametrize("texture", [False, True])
+def test_magnetic_structure_builder_edit_keeps_disabled_state(qapp, tmp_path, monkeypatch, texture) -> None:
+    original = replace(_component("one", "One", 0), enabled=False)
+    if texture:
+        original = replace(original, kind="texture", metadata={"type": "texture", "texture_mode": "custom"})
+
+    class _Dialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def q_vector(self):
+            return (0.0, 0.0, 0.0)
+
+        def q_basis_vectors(self):
+            return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+        def component(self, *_args):
+            # The real editors always build an enabled component.
+            return replace(original, label="Edited", enabled=True)
+
+    dialog_name = "MagneticTextureDialog" if texture else "MagneticComponentDialog"
+    monkeypatch.setattr(magnetic_field_widget_module, dialog_name, _Dialog)
+    dialog = _builder_with_components(tmp_path, original)
+    dialog._component_table.selectRow(0)
+
+    dialog._edit_selected_component()
+
+    assert dialog.model().components[0].label == "Edited"
+    assert dialog.model().components[0].enabled is False
+    assert dialog._component_table.item(0, 0).checkState() == Qt.CheckState.Unchecked
+    dialog.close()
+
 def test_magnetic_structure_builder_shutdowns_viewer_once(qapp) -> None:
     dialog = MagneticStructureBuilderDialog()
     calls = {"shutdown": 0}

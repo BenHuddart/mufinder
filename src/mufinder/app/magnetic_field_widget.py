@@ -2615,7 +2615,7 @@ class MagneticStructureBuilderDialog(QDialog):
                 "This builder can store up to three independent propagation-vector basis directions.",
             )
             return
-        updated = dialog.component(q_coeff)
+        updated = replace(dialog.component(q_coeff), enabled=component.enabled)
         components = tuple(updated if candidate.component_id == component_id else candidate for candidate in self._model.components)
         self._set_model(replace(self._model, q_basis_rlu=q_basis, components=components))
 
@@ -2641,7 +2641,7 @@ class MagneticStructureBuilderDialog(QDialog):
                 "This texture needs more independent propagation-vector basis directions than are available.",
             )
             return
-        updated = dialog.component(transform, q_basis)
+        updated = replace(dialog.component(transform, q_basis), enabled=component.enabled)
         components = tuple(updated if candidate.component_id == component.component_id else candidate for candidate in self._model.components)
         self._set_model(replace(self._model, q_basis_rlu=q_basis, components=components))
 
