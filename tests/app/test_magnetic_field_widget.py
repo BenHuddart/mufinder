@@ -9,10 +9,11 @@ from uuid import uuid4
 import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QGridLayout, QScrollArea
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
+from mufinder.app import workflow_table_utils
 from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.magnetic_field_widget import (
@@ -121,7 +122,7 @@ def test_magnetic_structure_builder_imports_legacy_host_spins(qapp, tmp_path) ->
     dialog._build_from_host_spins()
 
     assert dialog._component_table.rowCount() == 2
-    assert dialog._component_table.columnCount() == 5
+    assert dialog._component_table.columnCount() == 6
     assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
     assert dialog._classification.text() == "Structure type: commensurate"
     assert dialog._viewer._spins is not None
@@ -169,16 +170,227 @@ def test_magnetic_structure_builder_label_column_is_editable(qapp, tmp_path) -> 
     model = MagneticStructureModel(components=(_component("one", "One", 0),))
     dialog._set_model(model)
 
-    label_item = dialog._component_table.item(0, 0)
-    type_item = dialog._component_table.item(0, 1)
+    label_item = dialog._component_table.item(0, 1)
+    type_item = dialog._component_table.item(0, 2)
     assert label_item.flags() & Qt.ItemFlag.ItemIsEditable
     assert not type_item.flags() & Qt.ItemFlag.ItemIsEditable
 
     label_item.setText("Renamed")
 
     assert dialog.model().components[0].label == "Renamed"
-    assert dialog._component_table.item(0, 0).text() == "Renamed"
+    assert dialog._component_table.item(0, 1).text() == "Renamed"
     dialog.close()
+
+
+def _builder_with_components(tmp_path, *components: MagneticComponent) -> MagneticStructureBuilderDialog:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-builder.mufinder", "Magnetic Builder")
+    service.add_structure(document, _host_structure())
+    dialog = MagneticStructureBuilderDialog()
+    dialog.set_document(document)
+    dialog._set_model(MagneticStructureModel(components=components))
+    return dialog
+
+
+def _builder_labels(dialog: MagneticStructureBuilderDialog) -> list[str]:
+    return [dialog._component_table.item(row, 1).text() for row in range(dialog._component_table.rowCount())]
+
+
+def _select_builder_rows(dialog: MagneticStructureBuilderDialog, *rows: int) -> None:
+    table = dialog._component_table
+    table.clearSelection()
+    for row in rows:
+        table.selectionModel().select(
+            table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_magnetic_structure_builder_enabled_column_toggles_components(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), _component("two", "Two", 1))
+    table = dialog._component_table
+    enabled_item = table.item(1, 0)
+
+    assert table.horizontalHeaderItem(0).text() == "Enabled"
+    assert enabled_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert not enabled_item.flags() & Qt.ItemFlag.ItemIsEditable
+    assert enabled_item.checkState() == Qt.CheckState.Checked
+    assert dialog._viewer._spins is not None
+    assert np.count_nonzero(np.linalg.norm(dialog._viewer._spins, axis=1)) == 2
+
+    enabled_item.setCheckState(Qt.CheckState.Unchecked)
+
+    assert [component.enabled for component in dialog.model().components] == [True, False]
+    assert table.rowCount() == 2
+    assert "Disabled" in enabled_item.toolTip()
+    assert table.item(1, 1).foreground().color() == QColor(theme_module.current_palette().text_muted)
+    assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
+    assert np.count_nonzero(np.linalg.norm(dialog._viewer._spins, axis=1)) == 1
+
+    table.selectRow(1)
+    assert dialog._preview_status.text() == "Preview: the selected components are disabled"
+    assert dialog._viewer._spins is None
+    assert dialog._classification.text() == "Structure type: commensurate"
+
+    table.clearSelection()
+    table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert dialog._preview_status.text() == "Preview: every component is disabled"
+    assert dialog._classification.text() == "Structure type: -"
+    assert dialog._viewer._spins is None
+
+    table.item(1, 0).setCheckState(Qt.CheckState.Checked)
+    assert [component.enabled for component in dialog.model().components] == [False, True]
+    assert not table.item(1, 1).data(Qt.ItemDataRole.ForegroundRole)
+    assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_loads_disabled_components_unchecked(qapp, tmp_path) -> None:
+    disabled = replace(_component("two", "Two", 1), enabled=False)
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), disabled)
+
+    assert dialog._component_table.item(0, 0).checkState() == Qt.CheckState.Checked
+    assert dialog._component_table.item(1, 0).checkState() == Qt.CheckState.Unchecked
+    dialog.close()
+
+
+def test_magnetic_structure_builder_duplicates_selected_components(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(
+        tmp_path,
+        _component("one", "One", 0),
+        replace(_component("two", "Two", 1), enabled=False),
+    )
+    assert not dialog._duplicate_button.isEnabled()
+
+    _select_builder_rows(dialog, 0, 1)
+    assert dialog._duplicate_button.isEnabled()
+    dialog._duplicate_button.click()
+
+    components = dialog.model().components
+    assert _builder_labels(dialog) == ["One", "One (copy)", "Two", "Two (copy)"]
+    assert components[1].component_id not in {"one", "two"}
+    assert components[1].terms == components[0].terms
+    assert [component.enabled for component in components] == [True, True, False, False]
+    assert dialog._component_table.item(3, 0).checkState() == Qt.CheckState.Unchecked
+    assert dialog._selected_component_ids() == (components[1].component_id, components[3].component_id)
+    assert dialog._preview_status.text() == "Preview: selected components (1x1x1)"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_moves_selected_components(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(
+        tmp_path,
+        _component("one", "One", 0),
+        _component("two", "Two", 1),
+        _component("three", "Three", 0),
+    )
+    assert not dialog._move_up_button.isEnabled()
+    assert not dialog._move_down_button.isEnabled()
+
+    _select_builder_rows(dialog, 0)
+    assert not dialog._move_up_button.isEnabled()
+    assert dialog._move_down_button.isEnabled()
+
+    dialog._move_down_button.click()
+    assert _builder_labels(dialog) == ["Two", "One", "Three"]
+    assert dialog._selected_component_ids() == ("one",)
+    assert dialog._move_up_button.isEnabled()
+
+    dialog._move_down_button.click()
+    assert _builder_labels(dialog) == ["Two", "Three", "One"]
+    assert not dialog._move_down_button.isEnabled()
+
+    _select_builder_rows(dialog, 1, 2)
+    dialog._move_up_button.click()
+    assert _builder_labels(dialog) == ["Three", "One", "Two"]
+    assert dialog._selected_component_ids() == ("three", "one")
+    assert not dialog._move_up_button.isEnabled()
+    assert dialog._move_down_button.isEnabled()
+
+    _select_builder_rows(dialog, 0, 2)
+    assert dialog._move_up_button.isEnabled()
+    dialog._move_up_button.click()
+    assert _builder_labels(dialog) == ["Three", "Two", "One"]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_remove_asks_for_confirmation(
+    qapp, tmp_path, monkeypatch, confirmed_destructive_actions
+) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), _component("two", "Two", 1))
+
+    _select_builder_rows(dialog, 0, 1)
+    dialog._remove_button.click()
+    assert confirmed_destructive_actions[-1]["text"] == "Remove 2 components?"
+    assert dialog._component_table.rowCount() == 0
+
+    dialog._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False)
+    dialog._component_table.selectRow(0)
+    for key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+        event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+        dialog._component_table.eventFilter(dialog._component_table.viewport(), event)
+    dialog._remove_button.click()
+    assert _builder_labels(dialog) == ["One"]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_confirms_replacing_components_from_host_spins(
+    qapp, tmp_path, monkeypatch, confirmed_destructive_actions
+) -> None:
+    dialog = _builder_with_components(tmp_path)
+    dialog._build_from_host_spins()
+    assert not confirmed_destructive_actions
+    assert dialog._component_table.rowCount() == 2
+
+    dialog._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False)
+    dialog._build_from_host_spins()
+    assert _builder_labels(dialog) == ["One"]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_host_spin_prompt_names_component_count(
+    qapp, tmp_path, confirmed_destructive_actions
+) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0))
+
+    dialog._build_from_host_spins()
+
+    assert confirmed_destructive_actions[-1]["title"] == "Replace magnetic structure"
+    assert "Replace the 1 component" in confirmed_destructive_actions[-1]["text"]
+    assert confirmed_destructive_actions[-1]["accept_label"] == "Replace Components"
+    assert dialog._component_table.rowCount() == 2
+    dialog.close()
+
+
+def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-disabled.mufinder", "Magnetic Disabled")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    payloads: list[dict] = []
+    widget.magnetic_structure_changed.connect(payloads.append)
+
+    widget._set_model(
+        MagneticStructureModel(
+            components=(_component("one", "One", 0), replace(_component("two", "Two", 1), enabled=False))
+        )
+    )
+    assert widget._structure_summary.text() == "Magnetic structure: 2 components (1 disabled)"
+    assert widget._calculate_button.isEnabled()
+    restored = MagneticStructureModel.from_json(payloads[-1])
+    assert [component.enabled for component in restored.components] == [True, False]
+
+    widget._set_model(MagneticStructureModel(components=(replace(_component("one", "One", 0), enabled=False),)))
+    assert widget._structure_summary.text() == "Magnetic structure: 1 component (1 disabled)"
+    assert widget._classification.text() == "Structure type: -"
+    assert not widget._calculate_button.isEnabled()
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    widget._calculate_fields()
+    assert widget._calculation_status.text() == "Results: enable at least one magnetic-structure component first."
+    widget.close()
 
 
 def test_component_dialog_loads_existing_component_for_editing(qapp) -> None:
@@ -265,7 +477,7 @@ def test_magnetic_structure_builder_edits_selected_component(qapp, tmp_path, mon
 
     assert dialog.model().components == (replacement,)
     assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
-    assert dialog._component_table.item(0, 0).text() == "Edited"
+    assert dialog._component_table.item(0, 1).text() == "Edited"
     dialog.close()
 
 
@@ -603,7 +815,7 @@ def test_magnetic_structure_builder_adds_texture_as_single_grouped_row(qapp, tmp
     assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
     assert dialog.model().q_basis_rlu[1] == (0.0, 0.25, 0.0)
     assert dialog._component_table.rowCount() == 1
-    assert "Fourier term" in dialog._component_table.item(0, 4).text()
+    assert "Fourier term" in dialog._component_table.item(0, 5).text()
     dialog.close()
 
 

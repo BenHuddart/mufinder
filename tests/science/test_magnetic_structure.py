@@ -29,18 +29,22 @@ from mufinder.science.magnetic_structure import (
     build_square_skyrmion_texture,
     build_spin_density_wave_component,
     build_texture_component,
+    duplicate_magnetic_components,
+    enabled_magnetic_components,
     evaluate_texture_grid,
     evaluate_texture_moment,
     get_muesr_model_data,
     magnetic_model_from_legacy_structure,
     moment_at_atom,
     moments_in_supercell,
+    move_magnetic_components,
     normalize_texture_magnitude,
     prune_texture_terms,
     skyrmion_q_basis_rlu,
     split_muesr_model_data_into_helices,
     texture_diagnostics,
     resolve_atom_selector,
+    set_magnetic_components_enabled,
     viable_atom_selectors,
 )
 from mufinder.science.magnetic_structure import _orthogonal_unit_vector
@@ -421,6 +425,122 @@ def test_atom_resolved_components_skips_disabled_and_filters_ids() -> None:
     # disabled "off" excluded; component_ids filter keeps only "on".
     resolved = atom_resolved_fourier_components(structure, model, component_ids=["on"])
     assert {c.component_id for c in resolved} == {"on"}
+
+
+def _ordered_model(*component_ids: str) -> MagneticStructureModel:
+    term = FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0]))
+    return MagneticStructureModel(
+        q_basis_rlu=((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=tuple(
+            MagneticComponent(
+                component_id,
+                component_id.upper(),
+                "collinear",
+                AtomSelector.indices([0]),
+                (term,),
+                metadata={"builder": {"amplitude": 1.0}},
+            )
+            for component_id in component_ids
+        ),
+    )
+
+
+def _ids(model: MagneticStructureModel) -> list[str]:
+    return [component.component_id for component in model.components]
+
+
+def test_duplicate_magnetic_components_inserts_copies_after_originals() -> None:
+    model = set_magnetic_components_enabled(_ordered_model("a", "b", "c"), ["c"], False)
+
+    duplicated, copy_ids = duplicate_magnetic_components(model, ["c", "a"])
+
+    assert len(copy_ids) == 2
+    assert _ids(duplicated) == ["a", copy_ids[0], "b", "c", copy_ids[1]]
+    first_copy = duplicated.components[1]
+    assert first_copy.label == "A (copy)"
+    assert first_copy.terms == model.components[0].terms
+    assert first_copy.selector == model.components[0].selector
+    assert first_copy.enabled is True
+    assert duplicated.components[4].enabled is False
+    assert duplicated.q_basis_rlu == model.q_basis_rlu
+    first_copy.metadata["builder"]["amplitude"] = 2.0
+    assert model.components[0].metadata["builder"]["amplitude"] == 1.0
+
+
+def test_duplicate_magnetic_components_round_trips_through_json() -> None:
+    duplicated, copy_ids = duplicate_magnetic_components(_ordered_model("a"), ["a"])
+    disabled = set_magnetic_components_enabled(duplicated, copy_ids, False)
+
+    restored = MagneticStructureModel.from_json(disabled.to_json())
+
+    assert _ids(restored) == ["a", copy_ids[0]]
+    assert [component.enabled for component in restored.components] == [True, False]
+
+
+def test_duplicate_magnetic_components_ignores_unknown_ids() -> None:
+    model = _ordered_model("a", "b")
+
+    duplicated, copy_ids = duplicate_magnetic_components(model, ["missing"])
+
+    assert copy_ids == ()
+    assert duplicated == model
+
+
+def test_set_magnetic_components_enabled_only_touches_listed_components() -> None:
+    model = _ordered_model("a", "b", "c")
+
+    disabled = set_magnetic_components_enabled(model, ["a", "c"], False)
+    assert [component.enabled for component in disabled.components] == [False, True, False]
+    assert [component.component_id for component in enabled_magnetic_components(disabled)] == ["b"]
+
+    enabled = set_magnetic_components_enabled(disabled, ["c"], True)
+    assert [component.enabled for component in enabled.components] == [False, True, True]
+
+
+def test_disabled_components_do_not_contribute_moments() -> None:
+    structure = _structure()
+    model = _ordered_model("a", "b")
+    _positions, both, _indices = moments_in_supercell(structure, model, (1, 1, 1))
+
+    disabled = set_magnetic_components_enabled(model, ["b"], False)
+    _positions, one, _indices = moments_in_supercell(structure, disabled, (1, 1, 1))
+
+    assert np.allclose(one * 2.0, both)
+
+
+@pytest.mark.parametrize(
+    ("selected", "offset", "expected"),
+    [
+        (["c"], -1, ["a", "c", "b", "d"]),
+        (["b"], 1, ["a", "c", "b", "d"]),
+        (["b", "c"], -1, ["b", "c", "a", "d"]),
+        (["b", "c"], 1, ["a", "d", "b", "c"]),
+        (["a"], -1, ["a", "b", "c", "d"]),
+        (["d"], 1, ["a", "b", "c", "d"]),
+        (["a", "c"], -1, ["a", "c", "b", "d"]),
+        (["b", "d"], 1, ["a", "c", "b", "d"]),
+        (["d"], -2, ["a", "d", "b", "c"]),
+        (["a"], 10, ["b", "c", "d", "a"]),
+        (["missing"], 1, ["a", "b", "c", "d"]),
+        (["b"], 0, ["a", "b", "c", "d"]),
+    ],
+)
+def test_move_magnetic_components(selected: list[str], offset: int, expected: list[str]) -> None:
+    moved = move_magnetic_components(_ordered_model("a", "b", "c", "d"), selected, offset)
+
+    assert _ids(moved) == expected
+
+
+def test_move_magnetic_components_does_not_change_moments() -> None:
+    structure = _structure()
+    model = _ordered_model("a", "b", "c")
+    _positions, before, _indices = moments_in_supercell(structure, model, (1, 1, 2))
+
+    moved = move_magnetic_components(model, ["a"], 2)
+    _positions, after, _indices = moments_in_supercell(structure, moved, (1, 1, 2))
+
+    assert _ids(moved) == ["b", "c", "a"]
+    assert np.allclose(before, after)
 
 
 def test_atom_resolved_components_skips_empty_selection() -> None:

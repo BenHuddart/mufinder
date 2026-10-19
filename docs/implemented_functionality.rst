@@ -193,7 +193,9 @@ Magnetic fields
 
 The ``Magnetic Fields`` workflow builds magnetic structures in the
 propagation-vector formalism, including from the host spins and as skyrmion or
-custom Fourier textures, and calculates at a chosen muon site:
+custom Fourier textures, from components that can be edited, duplicated,
+reordered and disabled without deleting them, and calculates at a chosen muon
+site:
 
 - the dipolar field of commensurate structures and the field distribution of
   incommensurate ones, with Auto, Grid or Monte Carlo multi-q phase sampling;
