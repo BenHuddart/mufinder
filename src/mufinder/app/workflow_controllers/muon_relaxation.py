@@ -30,7 +30,7 @@ supercell and host coordinates, the derived relaxed
 :class:`~mufinder.domain.models.Structure`, and — as a sanctioned document side
 effect (see the :class:`~mufinder.app.workflow_controllers.base.ControllerResult`
 docstring) — mutation of the source :class:`~mufinder.domain.models.MuonSite`
-(``status``/``relaxation_run_id``/``total_energy_eV``).
+(``status``/``relaxation_run_id``/``total_energy_eV``/``relaxed_fractional_position``).
 :meth:`MuonRelaxationController.validate_artifacts` fails the job before any
 result is built: it applies the relaxation checks shared with the pristine
 controller (``geom_converged``, a missing, unparseable or stale ``-out.cell``)
@@ -974,7 +974,8 @@ class MuonRelaxationController(WorkflowJobController):
         consumes the carried cell rather than re-reading disk.
 
         Mutating the source :class:`~mufinder.domain.models.MuonSite`
-        (``status``/``relaxation_run_id``/``total_energy_eV``) is a
+        (``status``/``relaxation_run_id``/``total_energy_eV`` and the host-cell
+        ``relaxed_fractional_position``) is a
         sanctioned document side effect (see the ``ControllerResult``
         docstring). Output files are **not** contributed here: the call site
         already passes ``_output_files_for_job(job)`` for every job.
@@ -1042,9 +1043,11 @@ class MuonRelaxationController(WorkflowJobController):
         # run rather than leaving it on the superseded one.
         site = document.sites.get(row.site_id) if row is not None else None
         if site is not None:
-            site.status = "relaxed"
-            site.relaxation_run_id = run.id
-            site.total_energy_eV = parsed.total_energy
+            site.record_relaxation(
+                run.id,
+                total_energy_eV=parsed.total_energy,
+                fractional_position=final_host_position,
+            )
 
         return ControllerResult(
             payload=payload,

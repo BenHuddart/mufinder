@@ -104,7 +104,7 @@ def test_random_count_generation_raises_the_last_error_after_every_retry(
 
 def test_cluster_returns_moved_sites_and_one_record(tmp_path: Path) -> None:
     document = _document(tmp_path)
-    site = MuonSite(label="Random Site 1", status="generated", fractional_position=[0.9, 0.1, 0.1])
+    site = MuonSite(label="Random Site 1", status="generated", initial_fractional_position=[0.9, 0.1, 0.1])
     document.sites[site.id] = site
 
     outcome = site_generation_service.cluster_candidate_positions(

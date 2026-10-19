@@ -17,7 +17,14 @@ import shlex
 from string import Template
 
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.services.script_template import load_template_for_cluster, populate_template
+from mufinder.services.cluster_queues import parse_walltime_seconds
+from mufinder.services.script_template import (
+    format_mem_per_cpu_directive,
+    insert_partition_directive,
+    insert_sbatch_directive,
+    load_template_for_cluster,
+    populate_template,
+)
 from mufinder.services.shell_templates import render_shell_template
 
 
@@ -165,7 +172,7 @@ def job_template_plan(config: ClusterConfig, *, working_directory: str = "") -> 
         "num_processes": "1",
         "num_nodes": "1",
         "cores_per_node": "1",
-        "walltime": _KEYWORD_JOB_WALLTIME,
+        "walltime": _keyword_job_walltime(config),
         "working_directory": shlex.quote(working_directory) if working_directory else ".",
         "seed_name": "keywords",
     }
@@ -282,12 +289,27 @@ def help_loop_command(
     )
 
 
+def _keyword_job_walltime(config: ClusterConfig) -> str:
+    """Return the keyword job's own walltime, capped at the default queue's maximum.
+
+    A request above the queue's limit would be rejected or held forever, so a
+    queue shorter than the usual hour gets its maximum instead.
+    """
+
+    limit_text = config.max_walltime_for_queue(config.default_queue_name)
+    limit = parse_walltime_seconds(limit_text) if limit_text else None
+    standard = parse_walltime_seconds(_KEYWORD_JOB_WALLTIME)
+    if limit is not None and standard is not None and limit < standard:
+        return limit_text
+    return _KEYWORD_JOB_WALLTIME
+
+
 def scheduler_walltime(config: ClusterConfig) -> str:
     """Return the walltime the keyword job asks for."""
 
     if config.queue_system.strip().lower() == "addqueue":
         return config.default_walltime.strip()
-    return _KEYWORD_JOB_WALLTIME
+    return _keyword_job_walltime(config)
 
 
 def _job_help_loop_script() -> str:
@@ -382,9 +404,17 @@ def scheduler_runner_script(
             launcher = tuple(shlex.split(launcher_text)) if launcher_text else ()
         executable = config.castep_executable.strip()
 
+    preamble_text = "\n".join(preamble)
+    if is_slurm:
+        # The keyword job asks for the default queue's partition and memory,
+        # as a real job on that queue would; a template line wins for either.
+        preamble_text = insert_partition_directive(preamble_text, config.default_queue_name)
+        preamble_text = insert_sbatch_directive(
+            preamble_text, format_mem_per_cpu_directive(config.default_mem_per_cpu_gb)
+        )
     script = render_shell_template(
         "keyword_job.sh",
-        preamble="\n".join(preamble),
+        preamble=preamble_text,
         directory=shlex.quote(remote_directory),
         shell_init=config.keyword_shell_init.rstrip() if config.keyword_shell_init.strip() else "",
         help_loop_name=JOB_HELP_LOOP_NAME,

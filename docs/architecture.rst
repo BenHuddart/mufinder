@@ -129,7 +129,9 @@ policy, move the reusable part into the appropriate shared layer:
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
   ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
   clustering of its optimized positions in
-  ``mufinder.science.uep_clustering`` and every ``muesr`` import in
+  ``mufinder.science.uep_clustering``, pairing a relaxed muon supercell with
+  its pristine host for finite-cell distortion corrections in
+  ``mufinder.science.muon_distortion`` and every ``muesr`` import in
   ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
   formatted density, pseudopotential reports and cell charge the UEP analysis
@@ -273,6 +275,12 @@ no two workflow widgets may define the same private method.
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
        in-row button acts on when its row is, or is not, part of a multi-row
        selection, and the three-way prompt.
+   * - ``mufinder.app.blocking_call``
+     - Running a blocking call off the GUI thread with the caller's
+       synchronous semantics (``run_blocking_call``): user input is held back,
+       a busy dialog appears once the call takes noticeably long, and a
+       cancellable call raises ``BlockingCallCancelled``. Filesystem retries
+       and keyring password lookups use it.
    * - ``mufinder.app.workflow_row_widget``
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and
@@ -374,6 +382,16 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.cluster_queues``
+     - Checks on what a cluster submission asks of a queue: queue (partition)
+       names that are safe to write into a job script
+       (``is_valid_queue_name``), SLURM walltime parsing
+       (``parse_walltime_seconds``) and the walltime-format and
+       queue-maximum check that the setup and submission dialogs share
+       (``walltime_issue``), and the rules a profile's queue list must meet
+       before it is saved (``queue_issues``); the setup dialog only
+       translates its table cells to and from ``ClusterQueue`` records. Resolving a queue's overrides onto its profile is
+       ``ClusterConfig.for_queue`` in ``mufinder.domain.cluster``.
    * - ``mufinder.services.cluster_retrieval``
      - Retrieving a finished cluster job's output over SSH: which remote files
        to download (task-farm names, per-rank error files, scheduler logs),
@@ -461,6 +479,13 @@ no two workflow widgets may define the same private method.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.science.muon_distortion``
+     - Pairing a relaxed muon supercell with its pristine host
+       (``map_muon_distortion``): supercell detection, the finite correction
+       cell, muon-site matching and one-to-one atom mapping, and carrying the
+       pairing to a symmetry-equivalent site
+       (``equivalent_site_distortion``). The nuclear-relaxation and
+       dipolar-field distortion corrections both use it.
    * - ``mufinder.science._muesr_compat``
      - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
        restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the
@@ -610,7 +635,8 @@ attributes, so each widget keeps its own signal names. It implements three
 public hooks: ``source_row_values`` (the text of the leading columns),
 ``create_source_row_cells`` (its own cells) and ``refresh_source_actions``
 (its own actions for the selected rows). Quantum corrections adds the stage
-and farm columns, the editable site label and "Reset to Stage 1"; energy
+and farm columns, the editable site label and "Reset to Stage 1" / "Reset to
+Stage 2"; energy
 barriers adds the endpoint pair that generates paths, the View column, path
 removal and the NEB inspector, and its view is created lazily (see
 Construction).
@@ -946,8 +972,9 @@ Controller summary
        Its source rows come from :mod:`mufinder.services.source_candidates`.
        It also answers, for the cluster submission, where a phonon job's
        stage 1 ran and which remote directory it continues in
-       (``stage_one_target``, ``continuation_remote_target``), and lists the
-       rows "Reset to Stage 1" may rewind (``stage_one_resets``).
+       (``stage_one_target``, ``continuation_remote_target``), and owns the
+       two stage resets (``reset_to_stage_one``, ``reset_to_stage_two``) and
+       the Configure dialog's lock explanation (``configure_request``).
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
@@ -993,10 +1020,12 @@ hooks above:
   number.
 
 Their deps hold only what needs the window: the host-mismatch dialogs
-(``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), and a
-yes/no question (quantum corrections) or a warning (energy barriers). The
+(``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), a warning,
+and for quantum corrections a yes/no question and the job and file
+primitives its stage resets drive (the directory-ownership check, path and
+job-record deletion, the keep-files job reset and the post-reset repaint). The
 window keeps the dialogs themselves, the job-file cleanup before a path is
-removed or a row is reset to stage 1, and the phonon analysis windows.
+removed, and the phonon analysis windows.
 
 Definition mappings and row removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1214,6 +1243,20 @@ model and the project directory layout). A project is stored as JSON, one file
 per entity under ``entities/``, alongside a project manifest, a state snapshot
 and a provenance JSONL stream. Cross-entity references are validated before
 save.
+
+A ``MuonSite`` keeps two host-cell positions apart.
+``initial_fractional_position`` / ``initial_cartesian_position`` are where the
+site was generated or staged, and never change when it relaxes; generation,
+clustering, duplicate checks and staging read them.
+``relaxed_fractional_position`` is a copy of the linked run's
+``muon_final_fractional_position_host``, set when the muon relaxation that
+``relaxation_run_id`` names completes and cleared when that link is removed; it
+is ``None`` for a site that has not relaxed. The run's result stays the record:
+per-row views of muon relaxations (both charge states of one site) read their
+positions from each job's result. ``MuonSite.current_fractional_position()``
+returns the relaxed position when there is one and the initial one otherwise,
+for consumers that want where the muon is now, such as the magnetic-field
+calculation and the project-home quantum-corrections layer.
 
 ``ProjectService.save_project`` tracks changes by content hash: it skips
 rewriting any entity file (and ``state.json``) whose canonical serialized

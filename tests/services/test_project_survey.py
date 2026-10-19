@@ -69,7 +69,7 @@ def test_stages_without_positions_have_no_layers(tmp_path: Path) -> None:
 
 def test_candidates_on_the_active_host_are_shown_and_others_counted(tmp_path: Path) -> None:
     project = muon_project(tmp_path)
-    stray = MuonSite(label="old", fractional_position=[0.1, 0.1, 0.1], source_structure_id=uuid4())
+    stray = MuonSite(label="old", initial_fractional_position=[0.1, 0.1, 0.1], source_structure_id=uuid4())
     project.document.sites[stray.id] = stray
 
     (layer,) = survey_layers(project.document, "muon_candidates")

@@ -61,14 +61,14 @@ def muon_project(tmp_path: Path) -> MuonProject:
     relaxed_site = MuonSite(
         label="mu1",
         status="relaxed",
-        fractional_position=[0.5, 0.2, 0.2],
+        initial_fractional_position=[0.5, 0.2, 0.2],
         generation_method="near_element",
         source_structure_id=host.id,
     )
     running_site = MuonSite(
         label="mu2",
         status="staged",
-        fractional_position=[0.2, 0.5, 0.75],
+        initial_fractional_position=[0.2, 0.5, 0.75],
         generation_method="uep_cluster",
         source_structure_id=host.id,
     )
@@ -114,7 +114,7 @@ def muon_project(tmp_path: Path) -> MuonProject:
     result.calculation_run_id = run.id
     document.runs[run.id] = run
     document.results[result.id] = result
-    relaxed_site.relaxation_run_id = run.id
+    relaxed_site.record_relaxation(run.id, total_energy_eV=-1000.0, fractional_position=[0.5, 0.25, 0.25])
 
     prefix = muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE)
     definition = CalculationDefinition(

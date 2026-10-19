@@ -10,6 +10,7 @@ import pytest
 import mufinder.services.cluster_retrieval as cluster_retrieval_module
 import mufinder.services.cluster_runner as cluster_runner_module
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_retrieval import (
     RetrievalFailure,
@@ -19,6 +20,7 @@ from mufinder.services.cluster_retrieval import (
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.scheduler import SchedulerJobInfo
+from mufinder.services.ssh_client import SSHCredentials
 from tests.support.cluster_ssh import FakeSSH, OutputUnavailableSSH
 
 
@@ -1004,6 +1006,128 @@ def test_cluster_runner_reconnect_reuses_cached_key_passphrase(
     assert _SSHFactory.passwords == ["secret-passphrase", "secret-passphrase"]
 
 
+class _RecordingJumpSSH:
+    """SSH double recording which secrets each connection attempt received."""
+
+    attempts: list[tuple[str | None, str | None]] = []
+
+    def __init__(self, _config, *, settings=None) -> None:
+        _ = settings
+        self.is_connected = False
+
+    def connect(
+        self,
+        password: str | None = None,
+        *,
+        credentials: SSHCredentials | None = None,
+    ) -> None:
+        if credentials is None:
+            self.__class__.attempts.append((password, None))
+        else:
+            self.__class__.attempts.append((credentials.target_secret, credentials.jump_secret))
+        self.is_connected = True
+
+    def disconnect(self) -> None:
+        self.is_connected = False
+
+
+def _jump_host_redwood_config(**overrides) -> ClusterConfig:
+    fields = dict(
+        name="redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        port=22,
+        username="alice",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="gateway.physics.ox.ac.uk",
+        jump_port=22,
+        jump_username="alice",
+        jump_auth_method="password",
+        default_working_directory="/mnt/redwoodfs/alice",
+        queue_system="addqueue",
+        cores_per_node=32,
+        default_walltime="",
+    )
+    fields.update(overrides)
+    return ClusterConfig(**fields)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"hostname": "evil.example.org"},
+        {"port": 2222},
+        {"jump_hostname": "other-gateway.example.org"},
+        {"jump_port": 2200},
+    ],
+    ids=["hostname", "port", "jump_hostname", "jump_port"],
+)
+def test_cluster_runner_reconnect_does_not_reuse_cached_credentials_after_endpoint_change(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: dict[str, object],
+) -> None:
+    runner = ClusterJobRunner()
+    _RecordingJumpSSH.attempts = []
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
+    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+
+    original = _jump_host_redwood_config()
+    runner.connect_to_cluster(
+        original,
+        credentials=SSHCredentials(target_secret="target-pw", jump_secret="jump-pw"),
+    )
+    runner._ssh.is_connected = False
+    runner.connect_to_cluster(_jump_host_redwood_config(**changed), credentials=SSHCredentials())
+
+    assert _RecordingJumpSSH.attempts == [("target-pw", "jump-pw"), (None, None)]
+
+
+def test_cluster_runner_reconnect_does_not_reuse_direct_password_after_enabling_jump_host(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = ClusterJobRunner()
+    _RecordingJumpSSH.attempts = []
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
+    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+
+    # The jump fields stay saved while the jump host is switched off, so only
+    # ``jump_host_enabled`` changes between the two connections.
+    runner.connect_to_cluster(_jump_host_redwood_config(jump_host_enabled=False), password="target-pw")
+    runner._ssh.is_connected = False
+    runner.connect_to_cluster(_jump_host_redwood_config(), credentials=SSHCredentials())
+
+    assert _RecordingJumpSSH.attempts == [("target-pw", None), (None, None)]
+
+
+def test_cluster_runner_reconnect_reuses_cached_credentials_for_unchanged_endpoints(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = ClusterJobRunner()
+    _RecordingJumpSSH.attempts = []
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
+    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+
+    runner.connect_to_cluster(
+        _jump_host_redwood_config(),
+        credentials=SSHCredentials(target_secret="target-pw", jump_secret="jump-pw"),
+    )
+    runner._ssh.is_connected = False
+    # A field outside the credential target (walltime) and host-name case do not
+    # invalidate the cache.
+    runner.connect_to_cluster(
+        _jump_host_redwood_config(
+            hostname="Glamdring.Physics.Ox.Ac.Uk",
+            default_walltime="02:00:00",
+        ),
+        credentials=SSHCredentials(),
+    )
+
+    assert _RecordingJumpSSH.attempts == [("target-pw", "jump-pw"), ("target-pw", "jump-pw")]
+
+
 def test_cluster_runner_submit_addqueue_forwards_runtime_options(
     qapp,
     tmp_path: Path,
@@ -1610,6 +1734,38 @@ def test_cluster_runner_submit_omits_mem_per_cpu_directive_when_unset(
 
     assert "--mem" not in with_default
     assert with_default == explicit_none.replace("mu_relax_3", "mu_relax_2")
+
+
+def test_cluster_runner_submit_writes_the_chosen_partition(qapp, tmp_path: Path) -> None:
+    runner = _slurm_runner()
+    seed = "mu_relax_queue"
+
+    runner.submit(
+        job_id=uuid4(),
+        local_job_dir=_prepare_local_job(tmp_path, seed),
+        seed_name=seed,
+        num_processes=48,
+        walltime="12:00:00",
+        working_directory="/remote/work",
+        template_script_path="",
+        cores_per_node=24,
+        queue_name="daily",
+    )
+
+    content = runner._ssh.remote_files[f"/remote/work/{seed}/run.sh"].decode("utf-8")
+    assert "#SBATCH -p daily" in content
+
+
+def test_cluster_runner_submit_keeps_a_template_partition(qapp, tmp_path: Path) -> None:
+    content = _submit_scarf_job(
+        tmp_path,
+        seed="mu_relax_scarf_queue",
+        template_script_path="builtin:scarf-slurm",
+        queue_name="devel",
+    )
+
+    assert "#SBATCH -p scarf" in content
+    assert "devel" not in content
 
 
 def _slurm_runner() -> ClusterJobRunner:

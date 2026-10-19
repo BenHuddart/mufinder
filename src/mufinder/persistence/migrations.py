@@ -84,7 +84,65 @@ def _sweep_values_replace_cutoff_energies(entities: EntityPayloads) -> set[Entit
     return changed
 
 
+_LEGACY_SITE_POSITION_KEYS = {
+    "fractional_position": "initial_fractional_position",
+    "cartesian_position": "initial_cartesian_position",
+}
+
+
+def _site_positions_split_initial_and_relaxed(entities: EntityPayloads) -> set[EntityKey]:
+    """Schema 2 to 3: a muon site keeps its initial and relaxed positions apart.
+
+    Schema 2 stored the position a site was generated at as
+    ``fractional_position`` / ``cartesian_position`` and never updated it when
+    the site was relaxed. Those keys become ``initial_fractional_position`` /
+    ``initial_cartesian_position``. A site linked to a relaxation run gains
+    ``relaxed_fractional_position``, copied from that run's result
+    ``muon_final_fractional_position_host`` when the result records one.
+    """
+
+    results_by_id = {str(payload.get("id")): payload for payload in entities.get("results", [])}
+    results_by_run = {
+        str(payload.get("calculation_run_id")): payload
+        for payload in entities.get("results", [])
+        if payload.get("calculation_run_id") is not None
+    }
+    runs_by_id = {str(payload.get("id")): payload for payload in entities.get("runs", [])}
+
+    def relaxed_position(run_id: object) -> list[float] | None:
+        run = runs_by_id.get(str(run_id))
+        if run is None:
+            return None
+        result = results_by_id.get(str(run.get("result_id"))) or results_by_run.get(str(run_id))
+        data = result.get("data") if result is not None else None
+        position = data.get("muon_final_fractional_position_host") if isinstance(data, dict) else None
+        if not isinstance(position, list) or len(position) != 3:
+            return None
+        try:
+            return [float(value) for value in position]
+        except (TypeError, ValueError):
+            return None
+
+    changed: set[EntityKey] = set()
+    for payload in entities.get("sites", []):
+        site_changed = False
+        for legacy_key, key in _LEGACY_SITE_POSITION_KEYS.items():
+            if legacy_key in payload:
+                value = payload.pop(legacy_key)
+                payload.setdefault(key, value)
+                site_changed = True
+        if payload.get("relaxed_fractional_position") is None and payload.get("relaxation_run_id"):
+            position = relaxed_position(payload["relaxation_run_id"])
+            if position is not None:
+                payload["relaxed_fractional_position"] = position
+                site_changed = True
+        if site_changed:
+            changed.add(("sites", str(payload.get("id"))))
+    return changed
+
+
 _MIGRATIONS: dict[int, Callable[[EntityPayloads], set[EntityKey]]] = {
     1: _sweep_values_replace_cutoff_energies,
+    2: _site_positions_split_initial_and_relaxed,
 }
 """The step that upgrades payloads saved at each version to the next one."""

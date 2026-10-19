@@ -16,9 +16,11 @@ from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
     get_muesr_model_data,
+    moments_at_atoms,
     resolve_atom_selector,
     split_muesr_model_data_into_helices,
 )
+from mufinder.science.muon_distortion import MuonDistortion, equivalent_site_distortion, map_muon_distortion
 
 MU0_OVER_4PI = 1e-7
 MU0 = 4.0 * np.pi * 1e-7
@@ -95,6 +97,7 @@ class MagneticFieldResult:
     contact: tuple[float, float, float]
     demag: tuple[float, float, float]
     applied: tuple[float, float, float]
+    distortion: tuple[float, float, float] | None = None
 
     @property
     def total(self) -> tuple[float, float, float]:
@@ -105,6 +108,8 @@ class MagneticFieldResult:
             + np.asarray(self.demag, dtype=float)
             + np.asarray(self.applied, dtype=float)
         )
+        if self.distortion is not None:
+            total = total + np.asarray(self.distortion, dtype=float)
         return _tuple3(total)
 
     @property
@@ -112,7 +117,7 @@ class MagneticFieldResult:
         return float(np.linalg.norm(np.asarray(self.total, dtype=float)))
 
     def to_json(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "site_label": self.site_label,
             "muon_position": list(self.muon_position),
             "dipolar_T": list(self.dipolar),
@@ -123,6 +128,9 @@ class MagneticFieldResult:
             "total_T": list(self.total),
             "magnitude_T": self.magnitude,
         }
+        if self.distortion is not None:
+            payload["distortion_T"] = list(self.distortion)
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,16 +280,44 @@ def calculate_finite_dipolar_field(
     return _tuple3(MU0_OVER_4PI * np.sum(terms, axis=0))
 
 
+def calculate_distortion_field_correction(
+    structure: Structure,
+    model: MagneticStructureModel,
+    distortion: MuonDistortion,
+) -> tuple[float, float, float]:
+    """Return the dipolar-field change in Tesla from muon-induced host-ion displacements.
+
+    The correction is the finite-cell difference between the field of the
+    displaced ions and the field of the same ions at their pristine sites. Each
+    ion keeps the moment of its pristine site, evaluated from ``model``.
+    """
+
+    moments = moments_at_atoms(structure, model, distortion.atom_indices, distortion.cell_offsets)
+    origin = np.zeros(3, dtype=float)
+    distorted = calculate_finite_dipolar_field(distortion.distorted_vectors, moments, origin)
+    pristine = calculate_finite_dipolar_field(distortion.pristine_vectors, moments, origin)
+    return _tuple3(np.asarray(distorted, dtype=float) - np.asarray(pristine, dtype=float))
+
+
 def calculate_commensurate_fields(
     structure: Structure,
     model: MagneticStructureModel,
     muon_sites: Sequence[MuonSite | Sequence[float]],
     *,
     options: MagneticFieldOptions | None = None,
+    distorted_structures: Sequence[Structure | None] | None = None,
 ) -> tuple[MagneticFieldResult, ...]:
-    """Calculate commensurate vector fields with the optional muesr backend."""
+    """Calculate commensurate vector fields with the optional muesr backend.
+
+    ``distorted_structures`` optionally gives, per entry of ``muon_sites``, the
+    relaxed supercell containing that muon. A site with one receives the
+    muon-induced distortion correction
+    (:func:`calculate_distortion_field_correction`), carried to every
+    symmetry-equivalent site when ``options.find_equivalent_sites`` is set.
+    """
 
     opts = options or MagneticFieldOptions()
+    distortions = _site_distortions(structure, muon_sites, distorted_structures, opts)
     models = get_muesr_model_data(structure, model, merge_equivalent_k=True)
     if not models:
         raise MagneticFieldError("magnetic structure has no non-zero Fourier components")
@@ -324,6 +360,7 @@ def calculate_commensurate_fields(
     results: list[MagneticFieldResult] = []
     for index, (label, position) in enumerate(muons):
         demag = _demag_field(lorentz[index], opts)
+        distortion = distortions[index]
         results.append(
             MagneticFieldResult(
                 site_label=label,
@@ -333,6 +370,9 @@ def calculate_commensurate_fields(
                 contact=_tuple3(contact[index]),
                 demag=_tuple3(demag),
                 applied=_tuple3(applied),
+                distortion=(
+                    None if distortion is None else calculate_distortion_field_correction(structure, model, distortion)
+                ),
             )
         )
     return tuple(results)
@@ -408,10 +448,19 @@ def calculate_incommensurate_field_distributions(
     muon_sites: Sequence[MuonSite | Sequence[float]],
     *,
     options: MagneticFieldOptions | None = None,
+    distorted_structures: Sequence[Structure | None] | None = None,
 ) -> tuple[MagneticFieldDistributionResult, ...]:
-    """Calculate field distributions for incommensurate structures."""
+    """Calculate field distributions for incommensurate structures.
+
+    Muon-induced distortion corrections are not available for distributions;
+    passing any distorted structure raises :class:`MagneticFieldError`.
+    """
 
     opts = options or MagneticFieldOptions()
+    if distorted_structures is not None and any(item is not None for item in distorted_structures):
+        raise MagneticFieldError(
+            "muon-induced distortion corrections are available for commensurate magnetic structures only"
+        )
     if int(opts.nangles) < 1:
         raise MagneticFieldError("nangles must be positive")
     if int(opts.phase_sample_count) < 1:
@@ -766,7 +815,7 @@ def _expanded_muon_positions(
     for index, site in enumerate(muon_sites, start=1):
         if isinstance(site, MuonSite):
             label = site.label or f"site {index}"
-            position = _canonical_fractional(site.fractional_position)
+            position = _canonical_fractional(site.current_fractional_position())
         else:
             label = f"site {index}"
             position = _canonical_fractional(site)
@@ -783,6 +832,39 @@ def _expanded_muon_positions(
     if not expanded:
         raise MagneticFieldError("no muon positions provided")
     return expanded
+
+
+def _site_distortions(
+    structure: Structure,
+    muon_sites: Sequence[MuonSite | Sequence[float]],
+    distorted_structures: Sequence[Structure | None] | None,
+    options: MagneticFieldOptions,
+) -> list[MuonDistortion | None]:
+    """Return one distortion pairing (or ``None``) per expanded muon position."""
+
+    if distorted_structures is None:
+        return [None] * len(_expanded_muon_positions(structure, muon_sites, options))
+    if len(distorted_structures) != len(muon_sites):
+        raise MagneticFieldError("distorted_structures must have one entry per muon site")
+    out: list[MuonDistortion | None] = []
+    for site, distorted in zip(muon_sites, distorted_structures, strict=True):
+        positions = [position for _label, position in _expanded_muon_positions(structure, [site], options)]
+        if distorted is None:
+            out.extend([None] * len(positions))
+            continue
+        representative = site.current_fractional_position() if isinstance(site, MuonSite) else site
+        distortion = map_muon_distortion(structure, distorted, representative, error=MagneticFieldError)
+        out.extend(
+            equivalent_site_distortion(
+                structure,
+                distortion,
+                position,
+                tolerance=float(options.equivalent_tolerance),
+                error=MagneticFieldError,
+            )
+            for position in positions
+        )
+    return out
 
 
 def _resolve_magnetic_ion_indices(

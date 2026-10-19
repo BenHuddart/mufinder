@@ -9,10 +9,12 @@ from uuid import uuid4
 import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QGridLayout, QScrollArea
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
+import mufinder.science.magnetic_fields as magnetic_fields_module
+from mufinder.app import workflow_table_utils
 from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.magnetic_field_widget import (
@@ -43,7 +45,7 @@ from mufinder.science.magnetic_structure import (
     build_conical_component,
 )
 from mufinder.services.project_service import ProjectService
-from tests.support.structures import host_structure
+from tests.support.structures import host_structure, relaxed_muon_supercell
 
 
 _host_structure = partial(
@@ -121,7 +123,7 @@ def test_magnetic_structure_builder_imports_legacy_host_spins(qapp, tmp_path) ->
     dialog._build_from_host_spins()
 
     assert dialog._component_table.rowCount() == 2
-    assert dialog._component_table.columnCount() == 5
+    assert dialog._component_table.columnCount() == 6
     assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
     assert dialog._classification.text() == "Structure type: commensurate"
     assert dialog._viewer._spins is not None
@@ -169,16 +171,227 @@ def test_magnetic_structure_builder_label_column_is_editable(qapp, tmp_path) -> 
     model = MagneticStructureModel(components=(_component("one", "One", 0),))
     dialog._set_model(model)
 
-    label_item = dialog._component_table.item(0, 0)
-    type_item = dialog._component_table.item(0, 1)
+    label_item = dialog._component_table.item(0, 1)
+    type_item = dialog._component_table.item(0, 2)
     assert label_item.flags() & Qt.ItemFlag.ItemIsEditable
     assert not type_item.flags() & Qt.ItemFlag.ItemIsEditable
 
     label_item.setText("Renamed")
 
     assert dialog.model().components[0].label == "Renamed"
-    assert dialog._component_table.item(0, 0).text() == "Renamed"
+    assert dialog._component_table.item(0, 1).text() == "Renamed"
     dialog.close()
+
+
+def _builder_with_components(tmp_path, *components: MagneticComponent) -> MagneticStructureBuilderDialog:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-builder.mufinder", "Magnetic Builder")
+    service.add_structure(document, _host_structure())
+    dialog = MagneticStructureBuilderDialog()
+    dialog.set_document(document)
+    dialog._set_model(MagneticStructureModel(components=components))
+    return dialog
+
+
+def _builder_labels(dialog: MagneticStructureBuilderDialog) -> list[str]:
+    return [dialog._component_table.item(row, 1).text() for row in range(dialog._component_table.rowCount())]
+
+
+def _select_builder_rows(dialog: MagneticStructureBuilderDialog, *rows: int) -> None:
+    table = dialog._component_table
+    table.clearSelection()
+    for row in rows:
+        table.selectionModel().select(
+            table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_magnetic_structure_builder_enabled_column_toggles_components(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), _component("two", "Two", 1))
+    table = dialog._component_table
+    enabled_item = table.item(1, 0)
+
+    assert table.horizontalHeaderItem(0).text() == "Enabled"
+    assert enabled_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert not enabled_item.flags() & Qt.ItemFlag.ItemIsEditable
+    assert enabled_item.checkState() == Qt.CheckState.Checked
+    assert dialog._viewer._spins is not None
+    assert np.count_nonzero(np.linalg.norm(dialog._viewer._spins, axis=1)) == 2
+
+    enabled_item.setCheckState(Qt.CheckState.Unchecked)
+
+    assert [component.enabled for component in dialog.model().components] == [True, False]
+    assert table.rowCount() == 2
+    assert "Disabled" in enabled_item.toolTip()
+    assert table.item(1, 1).foreground().color() == QColor(theme_module.current_palette().text_muted)
+    assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
+    assert np.count_nonzero(np.linalg.norm(dialog._viewer._spins, axis=1)) == 1
+
+    table.selectRow(1)
+    assert dialog._preview_status.text() == "Preview: the selected components are disabled"
+    assert dialog._viewer._spins is None
+    assert dialog._classification.text() == "Structure type: commensurate"
+
+    table.clearSelection()
+    table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert dialog._preview_status.text() == "Preview: every component is disabled"
+    assert dialog._classification.text() == "Structure type: -"
+    assert dialog._viewer._spins is None
+
+    table.item(1, 0).setCheckState(Qt.CheckState.Checked)
+    assert [component.enabled for component in dialog.model().components] == [False, True]
+    assert not table.item(1, 1).data(Qt.ItemDataRole.ForegroundRole)
+    assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_loads_disabled_components_unchecked(qapp, tmp_path) -> None:
+    disabled = replace(_component("two", "Two", 1), enabled=False)
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), disabled)
+
+    assert dialog._component_table.item(0, 0).checkState() == Qt.CheckState.Checked
+    assert dialog._component_table.item(1, 0).checkState() == Qt.CheckState.Unchecked
+    dialog.close()
+
+
+def test_magnetic_structure_builder_duplicates_selected_components(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(
+        tmp_path,
+        _component("one", "One", 0),
+        replace(_component("two", "Two", 1), enabled=False),
+    )
+    assert not dialog._duplicate_button.isEnabled()
+
+    _select_builder_rows(dialog, 0, 1)
+    assert dialog._duplicate_button.isEnabled()
+    dialog._duplicate_button.click()
+
+    components = dialog.model().components
+    assert _builder_labels(dialog) == ["One", "One (copy)", "Two", "Two (copy)"]
+    assert components[1].component_id not in {"one", "two"}
+    assert components[1].terms == components[0].terms
+    assert [component.enabled for component in components] == [True, True, False, False]
+    assert dialog._component_table.item(3, 0).checkState() == Qt.CheckState.Unchecked
+    assert dialog._selected_component_ids() == (components[1].component_id, components[3].component_id)
+    assert dialog._preview_status.text() == "Preview: selected components (1x1x1)"
+    dialog.close()
+
+
+def test_magnetic_structure_builder_moves_selected_components(qapp, tmp_path) -> None:
+    dialog = _builder_with_components(
+        tmp_path,
+        _component("one", "One", 0),
+        _component("two", "Two", 1),
+        _component("three", "Three", 0),
+    )
+    assert not dialog._move_up_button.isEnabled()
+    assert not dialog._move_down_button.isEnabled()
+
+    _select_builder_rows(dialog, 0)
+    assert not dialog._move_up_button.isEnabled()
+    assert dialog._move_down_button.isEnabled()
+
+    dialog._move_down_button.click()
+    assert _builder_labels(dialog) == ["Two", "One", "Three"]
+    assert dialog._selected_component_ids() == ("one",)
+    assert dialog._move_up_button.isEnabled()
+
+    dialog._move_down_button.click()
+    assert _builder_labels(dialog) == ["Two", "Three", "One"]
+    assert not dialog._move_down_button.isEnabled()
+
+    _select_builder_rows(dialog, 1, 2)
+    dialog._move_up_button.click()
+    assert _builder_labels(dialog) == ["Three", "One", "Two"]
+    assert dialog._selected_component_ids() == ("three", "one")
+    assert not dialog._move_up_button.isEnabled()
+    assert dialog._move_down_button.isEnabled()
+
+    _select_builder_rows(dialog, 0, 2)
+    assert dialog._move_up_button.isEnabled()
+    dialog._move_up_button.click()
+    assert _builder_labels(dialog) == ["Three", "Two", "One"]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_remove_asks_for_confirmation(
+    qapp, tmp_path, monkeypatch, confirmed_destructive_actions
+) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), _component("two", "Two", 1))
+
+    _select_builder_rows(dialog, 0, 1)
+    dialog._remove_button.click()
+    assert confirmed_destructive_actions[-1]["text"] == "Remove 2 components?"
+    assert dialog._component_table.rowCount() == 0
+
+    dialog._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False)
+    dialog._component_table.selectRow(0)
+    for key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+        event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+        dialog._component_table.eventFilter(dialog._component_table.viewport(), event)
+    dialog._remove_button.click()
+    assert _builder_labels(dialog) == ["One"]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_confirms_replacing_components_from_host_spins(
+    qapp, tmp_path, monkeypatch, confirmed_destructive_actions
+) -> None:
+    dialog = _builder_with_components(tmp_path)
+    dialog._build_from_host_spins()
+    assert not confirmed_destructive_actions
+    assert dialog._component_table.rowCount() == 2
+
+    dialog._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False)
+    dialog._build_from_host_spins()
+    assert _builder_labels(dialog) == ["One"]
+    dialog.close()
+
+
+def test_magnetic_structure_builder_host_spin_prompt_names_component_count(
+    qapp, tmp_path, confirmed_destructive_actions
+) -> None:
+    dialog = _builder_with_components(tmp_path, _component("one", "One", 0))
+
+    dialog._build_from_host_spins()
+
+    assert confirmed_destructive_actions[-1]["title"] == "Replace magnetic structure"
+    assert "Replace the 1 component" in confirmed_destructive_actions[-1]["text"]
+    assert confirmed_destructive_actions[-1]["accept_label"] == "Replace Components"
+    assert dialog._component_table.rowCount() == 2
+    dialog.close()
+
+
+def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-disabled.mufinder", "Magnetic Disabled")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    payloads: list[dict] = []
+    widget.magnetic_structure_changed.connect(payloads.append)
+
+    widget._set_model(
+        MagneticStructureModel(
+            components=(_component("one", "One", 0), replace(_component("two", "Two", 1), enabled=False))
+        )
+    )
+    assert widget._structure_summary.text() == "Magnetic structure: 2 components (1 disabled)"
+    assert widget._calculate_button.isEnabled()
+    restored = MagneticStructureModel.from_json(payloads[-1])
+    assert [component.enabled for component in restored.components] == [True, False]
+
+    widget._set_model(MagneticStructureModel(components=(replace(_component("one", "One", 0), enabled=False),)))
+    assert widget._structure_summary.text() == "Magnetic structure: 1 component (1 disabled)"
+    assert widget._classification.text() == "Structure type: -"
+    assert not widget._calculate_button.isEnabled()
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    widget._calculate_fields()
+    assert widget._calculation_status.text() == "Results: enable at least one magnetic-structure component first."
+    widget.close()
 
 
 def test_component_dialog_loads_existing_component_for_editing(qapp) -> None:
@@ -265,7 +478,7 @@ def test_magnetic_structure_builder_edits_selected_component(qapp, tmp_path, mon
 
     assert dialog.model().components == (replacement,)
     assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
-    assert dialog._component_table.item(0, 0).text() == "Edited"
+    assert dialog._component_table.item(0, 1).text() == "Edited"
     dialog.close()
 
 
@@ -603,7 +816,7 @@ def test_magnetic_structure_builder_adds_texture_as_single_grouped_row(qapp, tmp
     assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
     assert dialog.model().q_basis_rlu[1] == (0.0, 0.25, 0.0)
     assert dialog._component_table.rowCount() == 1
-    assert "Fourier term" in dialog._component_table.item(0, 4).text()
+    assert "Fourier term" in dialog._component_table.item(0, 5).text()
     dialog.close()
 
 
@@ -648,6 +861,42 @@ def test_magnetic_structure_builder_edits_texture_component(qapp, tmp_path, monk
     assert dialog.model().q_basis_rlu[0] == (0.0, 0.25, 0.0)
     dialog.close()
 
+
+
+@pytest.mark.parametrize("texture", [False, True])
+def test_magnetic_structure_builder_edit_keeps_disabled_state(qapp, tmp_path, monkeypatch, texture) -> None:
+    original = replace(_component("one", "One", 0), enabled=False)
+    if texture:
+        original = replace(original, kind="texture", metadata={"type": "texture", "texture_mode": "custom"})
+
+    class _Dialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def q_vector(self):
+            return (0.0, 0.0, 0.0)
+
+        def q_basis_vectors(self):
+            return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+        def component(self, *_args):
+            # The real editors always build an enabled component.
+            return replace(original, label="Edited", enabled=True)
+
+    dialog_name = "MagneticTextureDialog" if texture else "MagneticComponentDialog"
+    monkeypatch.setattr(magnetic_field_widget_module, dialog_name, _Dialog)
+    dialog = _builder_with_components(tmp_path, original)
+    dialog._component_table.selectRow(0)
+
+    dialog._edit_selected_component()
+
+    assert dialog.model().components[0].label == "Edited"
+    assert dialog.model().components[0].enabled is False
+    assert dialog._component_table.item(0, 0).checkState() == Qt.CheckState.Unchecked
+    dialog.close()
 
 def test_magnetic_structure_builder_shutdowns_viewer_once(qapp) -> None:
     dialog = MagneticStructureBuilderDialog()
@@ -1002,16 +1251,15 @@ def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path)
     dialog.close()
 
 
-def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(qapp, tmp_path) -> None:
+_RELAXED_SITE = (0.5, 0.0, 0.0)
+
+
+def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
+    """A project whose relaxation-analysis workspace has one cluster represented by ``relaxed_structure``."""
+
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-relax-sites.mufinder", "Magnetic Relax Sites")
     service.add_structure(document, _host_structure())
-    relaxed_structure = Structure(
-        label="Relaxed muon structure",
-        lattice_vectors=_host_structure().lattice_vectors,
-        species=["Fe", "O", "H"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.2, 0.3, 0.4]],
-    )
     document.structures[relaxed_structure.id] = relaxed_structure
     job_id = uuid4()
     result = Result(derived_structure_ids=[relaxed_structure.id])
@@ -1028,14 +1276,26 @@ def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_op
                             "cluster_index": 1,
                             "size": 3,
                             "representative_job_id": str(job_id),
-                            "representative_fractional_position": [0.2, 0.3, 0.4],
-                            "representative_cartesian_position_ang": [0.6, 0.9, 1.2],
+                            "representative_fractional_position": list(_RELAXED_SITE),
+                            "representative_cartesian_position_ang": [1.5, 0.0, 0.0],
                         }
                     ]
                 }
             },
         }
     ]
+    return document
+
+
+def _displaced_iron_supercell() -> Structure:
+    """The FeO host relaxed around the muon, with the Fe one cell along +x pushed 0.1 Å away."""
+
+    return relaxed_muon_supercell(_host_structure(), (2, 2, 2), _RELAXED_SITE, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+
+
+def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(qapp, tmp_path) -> None:
+    relaxed_structure = _displaced_iron_supercell()
+    document = _relaxation_cluster_document(tmp_path, relaxed_structure)
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
     _set_site_source(dialog, "relaxation_clustering")
@@ -1046,8 +1306,31 @@ def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_op
     assert selected.source == "relaxation_clustering"
     assert selected.label == "Positive muon relaxations cluster 1"
     assert selected.distortion_structure_id == relaxed_structure.id
+    assert selected.include_distortion is False
     assert dialog._distortion_checkbox.isEnabled()
+
+    dialog._distortion_checkbox.setChecked(True)
+    assert dialog.selected_muon_site().include_distortion is True
     dialog.close()
+
+
+def test_muon_site_selection_dialog_restores_the_distortion_choice(qapp, tmp_path) -> None:
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    first = MuonSiteSelectionDialog(document, _host_structure())
+    _set_site_source(first, "relaxation_clustering")
+    first._distortion_checkbox.setChecked(True)
+    chosen = first.selected_muon_site()
+    first.close()
+
+    reopened = MuonSiteSelectionDialog(document, _host_structure(), chosen)
+
+    assert reopened._distortion_checkbox.isChecked()
+    assert reopened.selected_muon_site().include_distortion is True
+    _set_site_source(reopened, "custom")
+    assert not reopened._distortion_checkbox.isEnabled()
+    assert not reopened._distortion_checkbox.isChecked()
+    assert reopened.selected_muon_site().include_distortion is False
+    reopened.close()
 
 
 def test_muon_site_selection_dialog_custom_muon_site(qapp, tmp_path) -> None:
@@ -1081,9 +1364,18 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
         site_label = "site 1"
         total = (0.1, 0.2, 0.3)
         magnitude = float(np.linalg.norm(total))
+        distortion = None
 
-    def _calculate(structure, model, muon_sites, *, options):
-        calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
+        calls.append(
+            {
+                "structure": structure,
+                "model": model,
+                "muon_sites": muon_sites,
+                "options": options,
+                "distorted_structures": distorted_structures,
+            }
+        )
         return (_Result(),)
 
     monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
@@ -1100,6 +1392,7 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
 
     assert calls
     assert calls[0]["muon_sites"] == [(0.25, 0.5, 0.75)]
+    assert calls[0]["distorted_structures"] == [None]
     assert calls[0]["options"].demag_shape == "none"
     assert calls[0]["options"].supercell == (100, 100, 100)
     assert widget._result_table.rowCount() == 1
@@ -1108,6 +1401,97 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
     assert widget.collect_state()["magnetic_field_results"]["kind"] == "commensurate"
     assert widget.collect_state()["magnetic_field_results"]["results"][0]["total_T"] == pytest.approx([0.1, 0.2, 0.3])
     assert "commensurate" in widget._calculation_status.text()
+    widget.close()
+
+
+def _fake_muesr_without_lattice_field(monkeypatch) -> None:
+    """Run the real field helpers with a muesr stand-in that returns zero lattice fields."""
+
+    class _Sample:
+        def __init__(self) -> None:
+            self.muons: list[object] = []
+
+        def add_muon(self, position) -> None:
+            self.muons.append(position)
+
+        def new_mm(self) -> None:
+            self.mm = type("_MM", (), {})()
+
+    def _build_sample(_structure, muons):
+        sample = _Sample()
+        for muon in muons:
+            sample.add_muon(muon)
+        return sample
+
+    def _locfield(sample, *_args, **_kwargs):
+        return [type("_Field", (), {"Dipolar": np.zeros(3)})() for _ in sample.muons]
+
+    monkeypatch.setattr(magnetic_fields_module, "_build_muesr_sample", _build_sample)
+    monkeypatch.setattr(magnetic_fields_module, "_load_muesr_engines", lambda: (_locfield, lambda *_args: 1.0, None))
+
+
+def _distortion_widget(document, *, include_distortion: bool) -> MagneticFieldWidget:
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
+    (site,) = magnetic_field_widget_module._relaxation_cluster_muon_site_options(document, _host_structure())
+    widget._selected_muon_site = replace(site, include_distortion=include_distortion)
+    widget._refresh_site_summary()
+    return widget
+
+
+def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    widget = _distortion_widget(document, include_distortion=True)
+
+    assert "corrected for muon-induced displacements" in widget._site_summary.text()
+    widget._calculate_fields()
+
+    # Only the moved Fe (z moment of 1 μB, 1.5 Å -> 1.6 Å along x from the muon) changes the field.
+    expected_bz = -1e-7 * 9.274_010_078_3e-24 / 1e-30 * (1.0 / 1.6**3 - 1.0 / 1.5**3)
+    assert "with muon-induced distortion corrections" in widget._calculation_status.text()
+    assert widget._result_table.item(0, 5).text() == "field (distortion-corrected)"
+    state = widget.collect_state()
+    assert state["selected_muon_site"]["include_distortion"] is True
+    payload = state["magnetic_field_results"]["results"][0]
+    assert payload["distortion_T"] == pytest.approx([0.0, 0.0, expected_bz], abs=1e-12)
+    assert payload["total_T"] == pytest.approx([0.0, 0.0, expected_bz], abs=1e-12)
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(state)
+    assert restored.selected_muon_site().include_distortion is True
+    assert restored._result_table.item(0, 5).text() == "field (distortion-corrected)"
+    restored.close()
+    widget.close()
+
+
+def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    widget = _distortion_widget(document, include_distortion=False)
+
+    widget._calculate_fields()
+
+    assert widget._result_table.item(0, 5).text() == "field"
+    assert "distortion_T" not in widget.collect_state()["magnetic_field_results"]["results"][0]
+    widget.close()
+
+
+def test_magnetic_field_widget_reports_a_missing_relaxed_structure(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    relaxed = _displaced_iron_supercell()
+    document = _relaxation_cluster_document(tmp_path, relaxed)
+    widget = _distortion_widget(document, include_distortion=True)
+    del document.structures[relaxed.id]
+
+    widget._calculate_fields()
+
+    assert "relaxed structure for the muon-induced distortion correction is no longer available" in (
+        widget._calculation_status.text()
+    )
+    assert widget._result_table.rowCount() == 0
     widget.close()
 
 
@@ -1224,7 +1608,7 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
@@ -1806,7 +2190,7 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(qapp, tmp
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
@@ -1838,7 +2222,7 @@ def test_magnetic_field_widget_converts_hyperfine_coupling_units(qapp, tmp_path,
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
@@ -1873,7 +2257,7 @@ def test_magnetic_field_widget_passes_equivalent_site_option(qapp, tmp_path, mon
 
     calls: list[dict[str, object]] = []
 
-    def _calculate(structure, model, muon_sites, *, options):
+    def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
         calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
         return ()
 
