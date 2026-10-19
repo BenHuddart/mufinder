@@ -62,6 +62,14 @@ def _quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon_status
     return window, doc, definition, candidate, singlepoint, phonon, directory
 
 
+def _answer_yes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *_args: main_window_module.QMessageBox.StandardButton.Yes,
+    )
+
+
 def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -151,15 +159,30 @@ def test_reset_to_stage_one_still_clears_its_own_directory(
     window, doc, definition, candidate, singlepoint, phonon, directory = _quantum_row(
         tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
     )
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "exec", lambda _self: main_window_module.QMessageBox.StandardButton.Yes
-    )
+    _answer_yes(monkeypatch)
 
-    window._on_reset_quantum_corrections_to_stage_one([candidate.key])
+    window._quantum_corrections_controller.reset_to_stage_one([candidate.key])
 
     # Both stages belong to the row, so rewinding it removes the directory.
     assert not directory.exists()
     assert singlepoint.id not in doc.jobs and phonon.id not in doc.jobs
+    window.close()
+
+
+def test_reset_to_stage_two_keeps_the_shared_directory(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, doc, definition, candidate, singlepoint, phonon, directory = _quantum_row(
+        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
+    )
+    _answer_yes(monkeypatch)
+
+    window._quantum_corrections_controller.reset_to_stage_two([candidate.key])
+
+    # Only the phonon job is reopened; the stage-1 checkpoint it continues from stays.
+    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
+    assert phonon.status == JobStatus.DEFINED
+    assert singlepoint.status == JobStatus.COMPLETED
     window.close()
 
 
@@ -178,12 +201,10 @@ def test_reset_to_stage_one_refuses_a_directory_shared_with_another_row(
         "_job_output_directory",
         lambda job: directory if job.id == stranger.id else original_lookup(job),
     )
-    monkeypatch.setattr(
-        main_window_module.QMessageBox, "exec", lambda _self: main_window_module.QMessageBox.StandardButton.Yes
-    )
+    _answer_yes(monkeypatch)
     warnings = _capture_warnings(monkeypatch)
 
-    window._on_reset_quantum_corrections_to_stage_one([candidate.key])
+    window._quantum_corrections_controller.reset_to_stage_one([candidate.key])
 
     assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
     assert singlepoint.id in doc.jobs and phonon.id in doc.jobs
