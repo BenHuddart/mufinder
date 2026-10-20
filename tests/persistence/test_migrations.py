@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
 from mufinder.persistence.migrations import UI_STATE_KEY, migrate_project_payloads, stored_schema_version
+from mufinder.science.magnetic_fields import DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
 
 
 def _definition(stage: str, configuration: object, definition_id: str = "def-1") -> dict[str, object]:
@@ -17,7 +19,7 @@ def _definition(stage: str, configuration: object, definition_id: str = "def-1")
 
 
 def test_new_projects_are_written_at_the_current_schema_version() -> None:
-    assert PROJECT_SCHEMA_VERSION == 4
+    assert PROJECT_SCHEMA_VERSION == 5
     assert Project().schema_version == PROJECT_SCHEMA_VERSION
 
 
@@ -283,3 +285,57 @@ def test_schema_3_project_without_magnetic_results_changes_nothing() -> None:
     assert migrate_project_payloads({"schema_version": 3}, entities, ui_state) == set()
     assert ui_state == {"magnetic_field_form": {"histogram_bins": 512}, "other": {"x": 1}}
     assert entities == {"results": []}
+
+
+def _tensor_record(record_id: str, entries: list[object], result_type: str = "magnetic_dipolar_tensor") -> dict[str, object]:
+    return {
+        "id": record_id,
+        "calculation_run_id": None,
+        "result_type": result_type,
+        "data": {"owner": "magnetic_fields", "results": entries},
+    }
+
+
+def test_schema_4_dipolar_tensors_are_converted_from_inverse_cubic_angstrom_to_tesla_per_mu_b() -> None:
+    raw = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]
+    tensor = _tensor_record("tensor", [{"site_label": "a", "dipolar_tensor_T_per_muB": raw}, {"site_label": "b"}])
+    field = _tensor_record("field", [{"dipolar_tensor_T_per_muB": raw}], result_type="magnetic_field")
+    entities = {"results": [tensor, field]}
+
+    changed = migrate_project_payloads({"schema_version": 4}, entities)
+
+    assert changed == {("results", "tensor")}
+    np.testing.assert_allclose(
+        tensor["data"]["results"][0]["dipolar_tensor_T_per_muB"], DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * np.asarray(raw)
+    )
+    assert tensor["data"]["results"][1] == {"site_label": "b"}
+    assert field["data"]["results"][0]["dipolar_tensor_T_per_muB"] == raw
+
+
+@pytest.mark.parametrize(
+    "tensor",
+    [None, "1 0 0", [[1.0, 0.0], [0.0, 1.0]], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, "x"]], [[True] * 3] * 3],
+    ids=["missing", "string", "two-by-two", "non-numeric", "boolean"],
+)
+def test_schema_4_migration_leaves_malformed_tensors_alone(tensor) -> None:
+    record = _tensor_record("tensor", [{"dipolar_tensor_T_per_muB": tensor}, "not a mapping"])
+    entities = {"results": [record]}
+
+    assert migrate_project_payloads({"schema_version": 4}, entities) == set()
+    assert record["data"]["results"] == [{"dipolar_tensor_T_per_muB": tensor}, "not a mapping"]
+
+
+def test_schema_3_inline_dipolar_tensor_is_converted_after_becoming_a_record() -> None:
+    ui_state = {
+        "magnetic_field_form": {
+            "dipolar_tensor_results": [{"site_label": "a", "dipolar_tensor_T_per_muB": [[0, 0, 0], [0, 0, 0], [0, 0, 2]]}]
+        }
+    }
+    entities: dict[str, list[dict[str, object]]] = {}
+
+    migrate_project_payloads({"schema_version": 3}, entities, ui_state)
+
+    (record,) = entities["results"]
+    assert record["data"]["results"][0]["dipolar_tensor_T_per_muB"][2][2] == pytest.approx(
+        2.0 * DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
+    )

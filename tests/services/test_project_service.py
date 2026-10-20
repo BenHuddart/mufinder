@@ -1694,6 +1694,44 @@ def test_schema_3_project_is_persisted_with_result_records_by_the_next_save(tmp_
     assert reloaded.ui_state["magnetic_field_form"] == {"histogram_bins": 512}
 
 
+_SCHEMA_4_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v4_dipolar_tensor"
+_SCHEMA_4_TENSOR_ID = "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e"
+# The fixture stores muesr's raw face-centre tensor, in Å^-3, for a 3 Å simple cubic lattice.
+_SCHEMA_4_TENSOR_T_PER_MUB = [[0.14885, 0.0, 0.0], [0.0, 0.14885, 0.0], [0.0, 0.0, -0.29770]]
+
+
+def _schema_4_tensor(root_or_project) -> list[list[float]]:
+    if isinstance(root_or_project, Path):
+        record = json.loads((root_or_project / "entities" / "results" / f"{_SCHEMA_4_TENSOR_ID}.json").read_text())
+        return record["data"]["results"][0]["dipolar_tensor_T_per_muB"]
+    (record,) = magnetic_field_results(root_or_project, MAGNETIC_FIELD_PAGE_OWNER)
+    assert record.result_type == MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE
+    return record.data["results"][0]["dipolar_tensor_T_per_muB"]
+
+
+def test_schema_4_project_loads_with_dipolar_tensors_in_tesla_per_mu_b(tmp_path: Path) -> None:
+    root = tmp_path / "schema_v4.mufinder"
+    shutil.copytree(_SCHEMA_4_FIXTURE, root)
+
+    loaded = ProjectService().load_project(root)
+
+    assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
+    assert _schema_4_tensor(loaded) == [pytest.approx(row, abs=1e-4) for row in _SCHEMA_4_TENSOR_T_PER_MUB]
+
+
+def test_schema_4_project_tensor_is_converted_once_across_save_and_reload(tmp_path: Path) -> None:
+    root = tmp_path / "schema_v4.mufinder"
+    shutil.copytree(_SCHEMA_4_FIXTURE, root)
+    service = ProjectService()
+
+    service.save_project(service.load_project(root))
+
+    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    stored = _schema_4_tensor(root)
+    assert stored == [pytest.approx(row, abs=1e-4) for row in _SCHEMA_4_TENSOR_T_PER_MUB]
+    assert _schema_4_tensor(ProjectService().load_project(root)) == stored
+
+
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:
     service, doc, host = _document_with_host(tmp_path)
     # An output directory outside the project root is stored as an absolute path.

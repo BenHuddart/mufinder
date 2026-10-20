@@ -573,7 +573,16 @@ table. Each selected or symmetry-equivalent muon site receives one ``3 x 3``
 tensor. The dialog keeps the most recent tensor result for the current Magnetic
 Fields workspace, and saved workspaces restore that latest result when reopened.
 The displayed units can be switched between ``T/μB``, ``MHz/μB``, and ``Å⁻³``,
-matching the hyperfine-coupling unit choices.
+matching the hyperfine-coupling unit choices. ``muesr`` returns the lattice sum
+:math:`\sum (3\hat{\mathbf{r}}\hat{\mathbf{r}} - 1)/r^3` in ``Å⁻³``; MuFinder
+multiplies it by :math:`\mu_0 \mu_B / (4\pi\,\text{Å}^3) = 0.9274` T/μB, so the
+tensor applied to a moment in μB gives the dipolar field in tesla. The ``Å⁻³``
+display uses the hyperfine-coupling convention,
+:math:`\mathbf{B} = (2\mu_0/3)\,\mu_B A\,\mathbf{m}`, so it shows the contact
+coupling that would give the same field rather than ``muesr``'s raw lattice sum.
+Tensors saved in a project at schema 4 or earlier hold the raw ``Å⁻³`` sum
+and are converted to T/μB when the project is loaded (see
+:doc:`compatibility_policy`).
 
 Only tensor-relevant numerical settings are shown in this workflow. The tensor
 dialog reports the lattice-summation supercell used for the calculation, but it
@@ -657,6 +666,27 @@ unit marker moment internally, because the tensor describes the linear coupling
 between a magnetic moment and the local field at the muon. The tensor workflow
 therefore depends on the chosen magnetic-ion set and lattice summation settings,
 not on the detailed Fourier coefficients of a magnetic texture.
+
+Moments follow one convention everywhere in MuFinder. Atom ``j`` in the cell at
+lattice translation ``R`` carries
+
+.. math::
+
+   \mathbf{m}_j(\mathbf{R}) =
+   \mathrm{Re}\left[\mathbf{F}_j\, e^{-2\pi i\, \mathbf{q} \cdot \mathbf{R}}\right],
+
+where the atom-resolved coefficient :math:`\mathbf{F}_j` already contains the
+phase :math:`e^{-2\pi i\, \mathbf{q} \cdot \mathbf{x}_j}` of the atom's
+fractional position. ``R`` is measured from the home cell, the cell whose
+fractional coordinates lie in ``[0, 1)`` and hold the muon site, so the field
+reported for a site at ``r`` is the field at ``r``. ``muesr`` places each muon
+in cell :math:`\lfloor N/2 \rfloor` of its :math:`N_a \times N_b \times N_c`
+summation supercell and measures phases from the supercell origin, so MuFinder
+multiplies every coefficient by
+:math:`e^{2\pi i\, \mathbf{q} \cdot \lfloor \mathbf{N}/2 \rfloor}` before
+handing it over. The ``Cells along`` setting therefore changes a result only
+through the convergence of the lattice sum, never by moving the muon to a
+different magnetic cell.
 
 For incommensurate structures, a single muon site generally samples a
 distribution of local fields rather than one finite set of symmetry-equivalent
@@ -856,6 +886,88 @@ saved result that stores only its total asks for a recalculation instead.
 Incommensurate distributions are sampled as one combined field, so they show
 their convergence checks (see `Convergence Checks`_) and a note instead of a
 breakdown.
+
+Worked Examples
+---------------
+
+The examples below use one magnetic ion of 1 μB in a simple cubic cell with
+``a = 3 Å`` and the default ``Calculation Settings`` (``100 x 100 x 100``
+cells, Lorentz sphere chosen by ``muesr``). Positions are fractional. Each
+number comes from the calculation and is pinned by
+``tests/science/test_magnetic_fields.py``.
+
+Ferromagnet
+~~~~~~~~~~~
+
+With the moment along ``c`` and ``q = 0``, the magnetisation is
+:math:`M = \mu_B / a^3`, and the Lorentz field
+:math:`\mu_0 M / 3 = \mu_0 \mu_B / (3a^3)` is 0.1439 T along ``c``. MuFinder
+reports 0.1437 T because ``muesr`` counts the ions inside a finite Lorentz
+sphere.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Site
+     - Dipolar ``Bz`` (T)
+     - Lorentz ``Bz`` (T)
+     - Total ``Bz`` (T)
+   * - ``(1/2, 1/2, 1/2)``
+     - 0.0000
+     - 0.1437
+     - 0.1437
+   * - ``(1/2, 1/2, 0)``
+     - -0.2977
+     - 0.1438
+     - -0.1538
+   * - ``(1/2, 0, 0)``
+     - -0.5166
+     - 0.1438
+     - -0.3728
+
+Cubic symmetry cancels the dipolar sum at the body centre. A ``Hyperfine
+coupling`` of 0.5 T/μB adds a contact field of 0.5 T along the moment there, for
+a total of 0.6437 T.
+
+The dipolar tensor at the face centre ``(1/2, 1/2, 0)`` is
+``diag(0.1488, 0.1488, -0.2977)`` T/μB and at the edge centre ``(1/2, 0, 0)``
+is ``diag(1.0332, -0.5166, -0.5166)`` T/μB. Each is traceless, and its ``zz``
+element times 1 μB is the ferromagnet's dipolar field at that site.
+
+A-type antiferromagnet
+~~~~~~~~~~~~~~~~~~~~~~
+
+With ``q = (0, 0, 1/2)`` the ``ab`` layers alternate along ``c`` and the
+Lorentz field vanishes. At the body centre the two neighbouring layers cancel,
+so the field is zero. The face centre ``(1/2, 1/2, 0)`` sees -0.5493 T and the
+edge centre ``(1/2, 0, 0)`` -0.8003 T along ``c``.
+
+Commensurate helix
+~~~~~~~~~~~~~~~~~~
+
+A helix with ``q = (0, 0, 1/4)`` and coefficient
+:math:`\mathbf{F} = \hat{\mathbf{a}} + i\,\hat{\mathbf{b}}` turns the moment by
+90° in the ``ab`` plane from one cell to the next along ``c``. Its magnetic
+cell is four host cells long, so a muon site and its translations ``r + T``
+can see different fields. ``Report finite fields for near-commensurate q``
+lists them:
+
+- on the fourfold axis at ``(1/2, 1/2, 0)`` every copy sees 0.2836 T, turning
+  by 90° from one copy to the next;
+- at the edge centre ``(1/2, 0, 0)`` the copies alternate between 1.1660 T
+  along ``±a`` and 0.3637 T along ``±b``. Half of the muons see each magnitude.
+
+Incommensurate helix
+~~~~~~~~~~~~~~~~~~~~
+
+Changing the wavevector to ``q = (0, 0, 0.2861)`` makes the helix
+incommensurate, and ``Calculate Dipolar Field`` samples a distribution. For one
+wavevector the sampled field traces an ellipse,
+:math:`\mathbf{B}(\theta) = \cos\theta\,\mathbf{B}_0 + \sin\theta\,\mathbf{B}_{90}`,
+so :math:`p(|B|)` runs between the two semi-axes and peaks at both ends. At
+``(1/2, 1/2, 0)`` the fourfold axis makes the ellipse a circle and the
+distribution a single line at 0.2816 T. At ``(1/2, 0, 0)`` it spans 0.3616 T to
+1.1634 T, close to the two fields of the ``q = 1/4`` helix above.
 
 Dependency Handling
 -------------------
