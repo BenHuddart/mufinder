@@ -593,7 +593,7 @@ def test_commensurate_fields_applies_contact_coupling_and_radius(monkeypatch) ->
     np.testing.assert_allclose(result.lorentz, [0.0, 0.0, 0.0])
     np.testing.assert_allclose(result.contact, [0.0, 0.0, 1.0])
     np.testing.assert_allclose(result.applied, [0.0, 0.0, 0.1])
-    # demag derives from (zero) lorentz, so it is zero here.
+    # The q = (0, 0, 1/2) order has no bulk magnetisation, so no demagnetizing field.
     np.testing.assert_allclose(result.demag, [0.0, 0.0, 0.0])
 
 
@@ -771,14 +771,24 @@ def test_incommensurate_distributions_refuse_distortion_corrections(monkeypatch)
         )
 
 
-# Demagnetising correction: B_demag = -3/2 N . B_Lorentz
+# Demagnetising correction: B_demag = -mu0 N M_meas, with M_meas the bulk
+# magnetisation of the model's uniform (q = 0) order in its (3 Å)^3 cell.
+
+_UNIFORM_MOMENT = (1.0, 2.0, 3.0)
 
 
-def _commensurate_demag(monkeypatch, **options) -> tuple[float, float, float]:
-    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Lorentz=(1, 2, 3)))
+def _bulk_field(moment=_UNIFORM_MOMENT) -> np.ndarray:
+    """mu0 M in T for ``moment`` mu_B per (3 Å)^3 cell."""
+
+    return module.MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * np.asarray(moment, dtype=float) / 27.0
+
+
+def _commensurate_demag(monkeypatch, model=None, **options) -> tuple[float, float, float]:
+    # The fake Lorentz field is deliberately unrelated to the model's magnetisation.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Lorentz=(5, 6, 7)))
     (result,) = calculate_commensurate_fields(
         _structure(),
-        _model([0.0, 0.0, 0.5]),
+        model or _single_q_model((0.0, 0.0, 0.0), _UNIFORM_MOMENT),
         [_SITE_A],
         options=MagneticFieldOptions(supercell=(1, 1, 1), **options),
     )
@@ -789,8 +799,8 @@ def test_demag_field_is_zero_without_a_sample_shape(monkeypatch) -> None:
     assert _commensurate_demag(monkeypatch) == (0.0, 0.0, 0.0)
 
 
-def test_demag_field_applies_sphere_factor(monkeypatch) -> None:
-    assert _commensurate_demag(monkeypatch, demag_shape="sphere") == pytest.approx((-0.5, -1.0, -1.5))
+def test_demag_field_for_a_sphere_is_a_third_of_the_bulk_magnetisation(monkeypatch) -> None:
+    assert _commensurate_demag(monkeypatch, demag_shape="sphere") == pytest.approx(tuple(-_bulk_field() / 3.0))
 
 
 @pytest.mark.parametrize(
@@ -799,7 +809,7 @@ def test_demag_field_applies_sphere_factor(monkeypatch) -> None:
 )
 def test_demag_field_for_infinite_plate_acts_along_the_normal(monkeypatch, axis: str, index: int) -> None:
     expected = [0.0, 0.0, 0.0]
-    expected[index] = -1.5 * (index + 1)
+    expected[index] = -_bulk_field()[index]
 
     demag = _commensurate_demag(monkeypatch, demag_shape="infinite_plate", plate_normal_axis=axis)
 
@@ -814,7 +824,21 @@ def test_demag_sample_takes_precedence_over_demag_shape(monkeypatch) -> None:
         demag_sample=DemagnetizingSample(shape="ellipsoid", semi_axes=(1.0, 1.0, 1.0)),
     )
 
-    assert demag == pytest.approx((-0.5, -1.0, -1.5))
+    assert demag == pytest.approx(tuple(-_bulk_field() / 3.0))
+
+
+def test_demag_field_is_zero_for_order_without_a_uniform_moment(monkeypatch) -> None:
+    # An antiferromagnet has no bulk magnetisation, whatever Lorentz field muesr reports.
+    demag = _commensurate_demag(monkeypatch, _single_q_model((0.0, 0.0, 0.5), _UNIFORM_MOMENT), demag_shape="sphere")
+
+    assert demag == (0.0, 0.0, 0.0)
+
+
+def test_demag_field_counts_order_at_a_reciprocal_lattice_vector_as_uniform(monkeypatch) -> None:
+    # q = (1, 0, 0) gives every cell the same moment, so it magnetises the sample.
+    demag = _commensurate_demag(monkeypatch, _single_q_model((1.0, 0.0, 0.0), _UNIFORM_MOMENT), demag_shape="sphere")
+
+    assert demag == pytest.approx(tuple(-_bulk_field() / 3.0))
 
 
 def test_demag_field_rejects_unknown_shape(monkeypatch) -> None:
@@ -1288,7 +1312,7 @@ def test_auto_two_q_sampling_ignores_large_legacy_grid_cap() -> None:
 # calculate_incommensurate_field_distributions: demagnetising correction
 
 
-def test_incommensurate_distribution_applies_demag_to_sampled_lorentz_field(monkeypatch) -> None:
+def test_incommensurate_distribution_has_no_demag_field_without_a_uniform_moment(monkeypatch) -> None:
     def _locfield(_sample, mode, *_args, **kwargs):
         assert mode == "i"
         nangles = int(kwargs["nangles"])
@@ -1310,39 +1334,48 @@ def test_incommensurate_distribution_applies_demag_to_sampled_lorentz_field(monk
         ),
     )[0]
 
-    lookup = np.column_stack(
-        [
-            np.arange(4, dtype=float),
-            2.0 * np.arange(4, dtype=float),
-            3.0 * np.arange(4, dtype=float),
-        ]
-    )
-    np.testing.assert_allclose(result.fields_T, 0.5 * lookup, atol=1e-12)
+    # A helix has no bulk magnetisation: the sampled fields are muesr's Lorentz lookup alone.
+    lookup = np.column_stack([np.arange(4.0), 2.0 * np.arange(4.0), 3.0 * np.arange(4.0)])
+    np.testing.assert_allclose(result.fields_T, lookup, atol=1e-12)
 
 
-def test_incommensurate_distribution_applies_advanced_demag_sample(monkeypatch) -> None:
-    def _locfield(_sample, mode, *_args, **kwargs):
-        assert mode == "i"
-        assert kwargs["nangles"] == 3
-        return [_Field(Dipolar=np.zeros(3), Lorentz=(0.0, 0.0, 2.0), Contact=np.zeros(3))]
+def test_incommensurate_distribution_applies_advanced_demag_sample_to_the_uniform_moment(monkeypatch) -> None:
+    def _locfield(sample, mode, *_args, **kwargs):
+        assert mode in {"i", "s"}
+        return [_Field(Dipolar=np.zeros(3), Lorentz=np.zeros(3), Contact=np.zeros(3)) for _ in sample.muons]
 
     _install_fake_muesr(monkeypatch, locfield=_locfield)
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.12345, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            _helix("helix", (1.0, 0.0, 0.0)),
+            MagneticComponent(
+                component_id="uniform",
+                label="Uniform",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(FourierTerm((0.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 2.0])),),
+            ),
+        ),
+    )
 
     result = calculate_incommensurate_field_distributions(
         _structure(),
-        _circular_helix_model(),
+        model,
         [_SITE_A],
         options=MagneticFieldOptions(
             supercell=(1, 1, 1),
             nangles=3,
             phase_sampling="grid",
-            demag_sample=DemagnetizingSample(shape="ellipsoid", semi_axes=(1.0, 1.0, 1.0)),
+            demag_sample=DemagnetizingSample(shape="infinite_plate", plate_normal_axis="c"),
             histogram_bins=4,
         ),
     )[0]
 
-    np.testing.assert_allclose(result.fields_T, np.full((3, 3), [0.0, 0.0, 1.0]), atol=1e-12)
-    assert result.calculation_parameters["demag_sample"]["shape"] == "ellipsoid"
+    # N = 1 along the plate normal: every sampled field is -mu0 M of the 2 mu_B uniform moment.
+    expected = -_bulk_field((0.0, 0.0, 2.0))
+    np.testing.assert_allclose(result.fields_T, np.full((len(result.fields_T), 3), expected), atol=1e-12)
+    assert result.calculation_parameters["demag_sample"]["shape"] == "infinite_plate"
 
 
 # Internal guards the public entry points never reach
@@ -1799,6 +1832,32 @@ def test_real_muesr_ferromagnet_body_centre_sees_only_the_lorentz_field(real_mue
     assert result.lorentz == pytest.approx((0.0, 0.0, lorentz), rel=5e-3)
     assert lorentz == pytest.approx(0.1439, abs=1e-4)
     assert result.contact == (0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize(("demag_shape", "factor"), [("sphere", 1 / 3), ("infinite_plate", 1.0)], ids=["sphere", "plate"])
+def test_real_muesr_ferromagnet_demagnetizing_field_follows_the_muesr_convention(real_muesr, demag_shape, factor) -> None:
+    # muesr's convention: B_Lor = mu0 M_Lor / 3 from the moments inside the
+    # Lorentz sphere, B_dem = -mu0 N M_meas from the bulk magnetisation, here
+    # mu0 M_meas = 0.4316 T for 1 mu_B per (3 Å)^3. For a sphere the two cancel
+    # up to muesr's finite-sphere count of the ions, 0.1437 T against 0.1439 T.
+    options = MagneticFieldOptions(demag_shape=demag_shape, plate_normal_axis="c")
+    (result,) = calculate_commensurate_fields(_structure(), _model(), [(0.5, 0.5, 0.5)], options=options)
+
+    bulk = 4.0e-7 * np.pi * 9.274_010_078_3e-24 / (3.0e-10) ** 3
+    assert bulk == pytest.approx(0.4316, abs=1e-4)
+    assert result.demag == pytest.approx((0.0, 0.0, -factor * bulk), rel=1e-12)
+    assert result.lorentz[2] + result.demag[2] == pytest.approx((1 / 3 - factor) * bulk, abs=5e-4)
+
+
+def test_real_muesr_antiferromagnet_has_no_demagnetizing_field(real_muesr) -> None:
+    # muesr's finite Lorentz sphere leaves a small Lorentz field at a general
+    # site, but the A-type order has no bulk magnetisation to demagnetize.
+    model = _single_q_model((0.0, 0.0, 0.5), (0.0, 0.0, 1.0))
+    options = MagneticFieldOptions(demag_shape="sphere")
+    (result,) = calculate_commensurate_fields(_structure(), model, [_GENERAL_SITE], options=options)
+
+    assert np.linalg.norm(result.lorentz) > 0.0
+    assert result.demag == (0.0, 0.0, 0.0)
 
 
 @pytest.mark.parametrize(

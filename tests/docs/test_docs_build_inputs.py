@@ -22,7 +22,7 @@ _DOI = re.compile(r"10\.\d{4,9}/[^\s`<>]+")
 # citation to a page means adding it here.
 CITED_DOIS: dict[str, tuple[str, ...]] = {
     "implemented_functionality.rst": ("10.1016/j.cpc.2022.108488",),
-    "magnetic_fields.rst": ("10.1063/1.1703091", "10.1103/PhysRevB.20.850"),
+    "magnetic_fields.rst": ("10.1063/1.1703091", "10.1103/PhysRevB.20.850", "10.1080/001075199181521"),
     "quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
     "site_generation.rst": ("10.1016/j.cpc.2022.108488",),
     "structural_relaxation_analysis.rst": (

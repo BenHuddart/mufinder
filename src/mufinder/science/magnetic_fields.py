@@ -34,6 +34,8 @@ CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (2.0 * MU0 / 3.0) * MU_B / (ANGSTR
 # muesr returns dipolar tensors as the lattice sum of (3 r̂ r̂ - 1) / r^3 in Å^-3;
 # this factor, mu0 mu_B / (4 pi Å^3), turns that sum into T per mu_B.
 DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0_OVER_4PI * MU_B / (ANGSTROM_TO_M**3)
+# mu0 M, in T, of a magnetisation of 1 mu_B per Å^3.
+MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0 * MU_B / (ANGSTROM_TO_M**3)
 CONTACT_COUPLING_UNIT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("angstrom^-3", "Å⁻³"),
     ("T_per_muB", "T/μB"),
@@ -481,9 +483,9 @@ def calculate_commensurate_fields(
     )
 
     applied = _as_vector(opts.applied_field, "applied_field")
+    demag = _demag_field(structure, models, opts)
     results: list[MagneticFieldResult] = []
     for index, (label, position) in enumerate(muons):
-        demag = _demag_field(lorentz[index], opts)
         distortion = distortions[index]
         results.append(
             MagneticFieldResult(
@@ -564,6 +566,7 @@ def calculate_commensurate_approximant_fields(
     sample = _build_muesr_sample(structure, positions)
     radius = float(opts.radius) if opts.radius is not None else float(find_largest_sphere(sample, list(opts.supercell)))
     applied = _as_vector(opts.applied_field, "applied_field")
+    demag = _demag_field(structure, approximant_models, opts)
 
     terms_by_translation = []
     for translation in translations:
@@ -586,7 +589,7 @@ def calculate_commensurate_approximant_fields(
                     dipolar=_tuple3(dipolar[index]),
                     lorentz=_tuple3(lorentz[index]),
                     contact=_tuple3(contact[index]),
-                    demag=_tuple3(_demag_field(lorentz[index], opts)),
+                    demag=_tuple3(demag),
                     applied=_tuple3(applied),
                 )
             )
@@ -821,7 +824,6 @@ def calculate_incommensurate_field_distributions(
     calculation_parameters["phase_sample_count"] = int(phase_samples_turns.shape[0])
     calculation_parameters["resolved_phase_sampling"] = resolved_sampling
     component_totals_by_site: list[list[np.ndarray]] = [[] for _ in muons]
-    component_lorentz_by_site: list[list[np.ndarray]] = [[] for _ in muons]
     component_phase_coeffs: list[tuple[float, ...]] = []
 
     for model_data, phase_coeff in zip(models, phase_coeffs_by_model, strict=True):
@@ -852,11 +854,11 @@ def calculate_incommensurate_field_distributions(
                 lor = _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles)) if opts.include_lorentz else 0.0
                 con = _field_array(local_field, "Contact", "C", nangles=int(opts.nangles))
                 component_totals_by_site[index].append(dip + lor + con)
-                component_lorentz_by_site[index].append(lor if isinstance(lor, np.ndarray) else np.zeros((int(opts.nangles), 3), dtype=float))
             component_phase_coeffs.append(tuple(float(value) for value in phase_coeff))
 
-    applied = _as_vector(opts.applied_field, "applied_field")
-    demag_tensor = _demag_tensor(opts)
+    # The demagnetizing field depends only on the bulk magnetisation, so it is
+    # the same at every sampled phase point.
+    offset = _as_vector(opts.applied_field, "applied_field") + _demag_field(structure, models, opts)
     half_samples = _half_resolution_phase_samples(phase_samples_turns, resolved_sampling)
     results: list[MagneticFieldDistributionResult] = []
     for index, (label, position) in enumerate(muons):
@@ -869,16 +871,7 @@ def calculate_incommensurate_field_distributions(
                 nangles=int(opts.nangles),
                 stride=stride,
             )
-            if demag_tensor is not None:
-                lorentz_fields = _combine_component_samples(
-                    component_lorentz_by_site[index],
-                    component_phase_coeffs,
-                    phases,
-                    nangles=int(opts.nangles),
-                    stride=stride,
-                )
-                fields = fields - 1.5 * (lorentz_fields @ demag_tensor.T)
-            return fields + applied[np.newaxis, :]
+            return fields + offset[np.newaxis, :]
 
         fields = site_fields(phase_samples_turns)
         magnitudes = np.linalg.norm(fields, axis=1)
@@ -1410,11 +1403,30 @@ def _unit_tensor_fourier_components(structure: Structure, indices: Sequence[int]
     return fc
 
 
-def _demag_field(lorentz: np.ndarray, options: MagneticFieldOptions) -> np.ndarray:
+def _demag_field(structure: Structure, models: Sequence[MuesrModelData], options: MagneticFieldOptions) -> np.ndarray:
+    """Return the demagnetizing field ``-mu0 N M`` of the bulk magnetisation, in T."""
+
     tensor = _demag_tensor(options)
     if tensor is None:
         return np.zeros(3, dtype=float)
-    return -1.5 * (tensor @ np.asarray(lorentz, dtype=float))
+    return -(tensor @ _bulk_magnetization_field(structure, models))
+
+
+def _bulk_magnetization_field(structure: Structure, models: Sequence[MuesrModelData]) -> np.ndarray:
+    """Return ``mu0 M`` in T for the moment per cell of the uniform part of the order.
+
+    Only Fourier components whose wavevector is a reciprocal lattice vector give
+    every cell the same moment; every other component averages to zero over the
+    sample, so an antiferromagnet or a helix has no bulk magnetisation.
+    """
+
+    moment = np.zeros(3, dtype=float)
+    for model_data in models:
+        k_rlu = np.asarray(model_data.k_rlu, dtype=float)
+        if np.allclose(k_rlu, np.round(k_rlu), rtol=0.0, atol=1e-10):
+            moment += np.sum(np.asarray(model_data.fc, dtype=complex), axis=0).real
+    volume = abs(float(np.linalg.det(np.asarray(structure.lattice_vectors, dtype=float))))
+    return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment / volume
 
 
 def _demag_tensor(options: MagneticFieldOptions) -> np.ndarray | None:

@@ -535,20 +535,58 @@ single cubic Fourier grid would suffer for very thin plates or long needles. ``F
 kept as the user-facing resolution control for the midpoint average; increasing
 it improves the estimate but increases cost.
 
-For field calculations, the selected tensor is inserted into the same correction
-used by mag2spectra:
+MuFinder follows the ``muesr`` convention
+(`muesr basic theory <https://muesr.readthedocs.io/en/latest/Intro.html>`_),
+which splits the dipolar field of the whole sample into three terms:
 
 .. math::
 
-   \mathbf{B}_\mathrm{demag} =
-   -\frac{3}{2}\,N\,\mathbf{B}_\mathrm{Lor}.
+   \mathbf{B}_\mathrm{dip}' =
+   \mathbf{B}_\mathrm{dip} + \mathbf{B}_\mathrm{Lor} + \mathbf{B}_\mathrm{demag}.
+
+``Dipolar`` is the explicit sum over the ions inside the Lorentz sphere around
+the muon. The ions outside it are treated as a magnetised continuum, whose field
+at the muon comes from two surfaces:
+
+- the surface of the Lorentz sphere gives the ``Lorentz`` field,
+  :math:`\mathbf{B}_\mathrm{Lor} = \mu_0 \mathbf{M}_\mathrm{Lor} / 3`. ``muesr``
+  takes :math:`\mathbf{M}_\mathrm{Lor}` as the sum of the moments inside the
+  sphere divided by its volume;
+- the surface of the sample gives the ``Demagnetizing`` field,
+
+  .. math::
+
+     \mathbf{B}_\mathrm{demag} = -\mu_0 N \mathbf{M}_\mathrm{meas},
+
+  where :math:`\mathbf{M}_\mathrm{meas}` is the bulk magnetisation of the sample
+  (S. J. Blundell, Contemp. Phys. **40**, 175 (1999), DOI:
+  ``10.1080/001075199181521``).
+
+``muesr`` leaves :math:`\mathbf{M}_\mathrm{meas}` to the user, because it
+depends on the sample and the experiment. MuFinder takes it from the magnetic
+model: it is the moment per unit cell of the uniform part of the order, the
+Fourier components whose wavevector is a reciprocal lattice vector, divided by
+the cell volume. Every other component averages to zero over the sample, so an
+antiferromagnet or a helix has no demagnetizing field, whatever Lorentz field
+the finite sphere leaves. This assumes the sample is a single magnetic domain,
+or is saturated by an applied field. A multidomain ferromagnet in zero field has
+a smaller bulk magnetisation, and MuFinder overestimates its demagnetizing field.
+
+For a sphere, :math:`N = \tfrac{1}{3}`, so a single-domain sample's Lorentz and
+demagnetizing fields cancel up to the difference between
+:math:`\mathbf{M}_\mathrm{Lor}` and :math:`\mathbf{M}_\mathrm{meas}`. That
+difference comes from counting the ions inside a finite sphere and shrinks as the
+sphere grows; it is about 0.1 % of the Lorentz field in the
+`Worked Examples`_. For an infinite plate magnetised along its normal,
+:math:`N = 1` and the two terms sum to about
+:math:`-2\mu_0 \mathbf{M}_\mathrm{meas} / 3`.
 
 This correction is a field-level contribution only. It does not simulate spectra
-or time-dependent polarisation. For commensurate calculations it is applied once
-to the finite Lorentz field. For incommensurate distributions, MuFinder first
-combines the component Lorentz lookup tables at every sampled phase point, then
-adds the demagnetizing correction point-by-point before applied fields and
-histograms are formed.
+or time-dependent polarisation. The bulk magnetisation does not depend on the
+muon site or on the magnetic phase, so the demagnetizing field is the same for
+every site of a commensurate calculation and for every sampled phase point of an
+incommensurate distribution; it is added before applied fields and histograms
+are formed.
 
 Dipolar Tensors
 ---------------
@@ -903,7 +941,11 @@ With the moment along ``c`` and ``q = 0``, the magnetisation is
 :math:`M = \mu_B / a^3`, and the Lorentz field
 :math:`\mu_0 M / 3 = \mu_0 \mu_B / (3a^3)` is 0.1439 T along ``c``. MuFinder
 reports 0.1437 T because ``muesr`` counts the ions inside a finite Lorentz
-sphere.
+sphere. The bulk magnetisation gives :math:`\mu_0 M = 0.4316` T. With
+``Demagnetizing field`` set to ``Sphere``, the demagnetizing term is -0.1439 T,
+and the Lorentz and demagnetizing terms sum to -0.0002 T, the finite-sphere
+difference. With ``Infinite plate`` it is -0.4316 T, and the two sum to
+-0.2879 T.
 
 .. list-table::
    :header-rows: 1
