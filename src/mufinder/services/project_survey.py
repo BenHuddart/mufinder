@@ -4,7 +4,8 @@
 in the active host cell: UEP minima per source job, the candidate sites, the
 relaxations per charge state (start and end), the distinct sites per analysis
 workspace, the sites with zero-point energies, the diffusion paths and the
-sites with magnetic-field results. ``discovered_sites_layer`` returns the best
+sites with magnetic-field results (fields at an unrelaxed UEP site are marked
+as estimates). ``discovered_sites_layer`` returns the best
 positions found so far, for the stages that have none of their own.
 
 Every position is host fractional, wrapped into ``[0, 1)``. Results tied to a
@@ -30,6 +31,8 @@ from mufinder.services.job_results import latest_result_for_job, total_energy_fo
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_RESULT_TYPE,
     commensurate_field_entries,
+    field_result_site_source,
+    is_unrelaxed_site_source,
     magnetic_field_result,
 )
 from mufinder.services.project_document import ProjectDocument, active_host_structure, definitions_for_stage
@@ -331,6 +334,10 @@ def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
         result = magnetic_field_result(document, str(workspace.get("id", "")).strip(), MAGNETIC_FIELD_RESULT_TYPE)
         if result is None or result.data.get("kind") != "commensurate":
             continue
+        form = workspace.get("form")
+        estimate = is_unrelaxed_site_source(
+            field_result_site_source(result.data, form if isinstance(form, Mapping) else None)
+        )
         markers = []
         for entry in commensurate_field_entries(result):
             position = _triplet(entry.get("muon_position"))
@@ -342,8 +349,9 @@ def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
                 SurveyMarker(
                     _wrap(position),
                     SurveyMarkerKind.SITE,
-                    f"{magnitude:.3g} T",
-                    f"{site_label} · |B| = {magnitude:.4g} T",
+                    f"≈{magnitude:.3g} T" if estimate else f"{magnitude:.3g} T",
+                    f"{site_label} · |B| = {magnitude:.4g} T"
+                    + (" · unrelaxed UEP site estimate" if estimate else ""),
                 )
             )
         title = str(workspace.get("title", "")).strip() or "Magnetic fields"

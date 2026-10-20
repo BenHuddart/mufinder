@@ -49,7 +49,11 @@ The staged workflow is:
 Dependency policy:
 
 - downstream workflows consume completed structural muon relaxations as durable
-  project entities, never unrelaxed candidates
+  project entities, never unrelaxed candidates, with one stated exception:
+  magnetic fields may use UEP sites as unrelaxed estimates, for a quick field
+  estimate before any relaxation has run. Fields computed at a UEP site are
+  labelled as estimates wherever they are shown, and the workflow offers
+  relaxation-analysis clusters first once they exist for the host
 - convergence outputs prefill the project calculation defaults
 - a pristine relaxation output may become the active host basis for later
   stages

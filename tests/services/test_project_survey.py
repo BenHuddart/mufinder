@@ -272,3 +272,28 @@ def test_magnetic_layer_shows_commensurate_field_magnitudes(tmp_path: Path) -> N
 
     assert layer.title == "AFM · local fields"
     assert layer.markers[0].label == "0.213 T"
+    assert "estimate" not in layer.markers[0].detail
+
+
+def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -> None:
+    project = muon_project(tmp_path)
+    entry = {"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}
+    project.document.ui_state["magnetic_field_workspaces"] = [
+        {"id": "uep", "title": "UEP", "form": {}},
+        # Saved before results carried their site source: the workspace's selected site supplies it.
+        {"id": "legacy", "title": "Legacy", "form": {"selected_muon_site": {"source": "uep_clustering"}}},
+    ]
+    store_magnetic_field_results(
+        project.document,
+        "uep",
+        {"magnetic_field_results": {"kind": "commensurate", "results": [entry], "site_source": "uep_clustering"}},
+    )
+    store_magnetic_field_results(
+        project.document, "legacy", {"magnetic_field_results": {"kind": "commensurate", "results": [entry]}}
+    )
+
+    layers = survey_layers(project.document, "magnetic_fields")
+
+    for layer in layers:
+        assert layer.markers[0].label == "≈0.213 T"
+        assert layer.markers[0].detail.endswith("unrelaxed UEP site estimate")

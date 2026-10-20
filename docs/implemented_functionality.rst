@@ -217,8 +217,10 @@ unpreviewed incommensurate structures, and calculates at a chosen muon site:
   crystals and polycrystals, from bundled natural-abundance isotope data, with
   an optional muon-induced distortion correction.
 
-Muon sites come from UEP or relaxation clustering or a custom fractional
-position. Settings are saved as named workspaces, and the latest results of
+Muon sites come from relaxation clustering, UEP clustering or a custom
+fractional position; relaxation clusters are offered first once they exist,
+and fields computed at an unrelaxed UEP site are labelled as estimates.
+Settings are saved as named workspaces, and the latest results of
 the page and of each workspace are saved as project results.
 
 See :doc:`magnetic_fields`.

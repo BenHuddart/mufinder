@@ -11,6 +11,8 @@ from mufinder.services.magnetic_field_results import (
     NUCLEAR_RELAXATION_RESULT_TYPE,
     attach_magnetic_field_results,
     commensurate_field_entries,
+    field_result_site_source,
+    is_unrelaxed_site_source,
     magnetic_field_result,
     magnetic_field_results,
     remove_magnetic_field_results,
@@ -168,3 +170,43 @@ def test_records_survive_a_save_and_reload(tmp_path: Path) -> None:
     assert attach_magnetic_field_results(
         reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
     ) == _form()
+
+
+def test_field_records_keep_the_site_source_through_a_save_and_reload(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _document(tmp_path)
+    form = _form(magnetic_field_results={**_FIELD, "site_source": "uep_clustering"})
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, form)
+    service.save_project(document)
+
+    reloaded = service.load_project(document.project_root)
+
+    record = magnetic_field_result(reloaded, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE)
+    assert record.data["site_source"] == "uep_clustering"
+    attached = attach_magnetic_field_results(
+        reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
+    )
+    assert attached == form
+
+
+def test_attach_takes_a_missing_site_source_from_the_selected_site(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    selected = {"source": "uep_clustering", "label": "UEP cluster 1", "fractional_position": [0.1, 0.2, 0.3]}
+    stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form(selected_muon_site=selected))
+
+    attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored)
+
+    assert attached["magnetic_field_results"] == {**_FIELD, "site_source": "uep_clustering"}
+    # Without a selected site nothing is inferred.
+    other = store_magnetic_field_results(document, "other", _form())
+    assert "site_source" not in attach_magnetic_field_results(document, "other", other)["magnetic_field_results"]
+
+
+def test_only_uep_sites_are_unrelaxed_estimates() -> None:
+    assert is_unrelaxed_site_source("uep_clustering")
+    assert not is_unrelaxed_site_source("relaxation_clustering")
+    assert not is_unrelaxed_site_source("custom")
+    assert not is_unrelaxed_site_source(None)
+    assert field_result_site_source({"site_source": "custom"}, {"selected_muon_site": {"source": "uep_clustering"}}) == "custom"
+    assert field_result_site_source({}, {"selected_muon_site": {"source": "uep_clustering"}}) == "uep_clustering"
+    assert field_result_site_source({}, None) is None

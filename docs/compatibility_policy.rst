@@ -323,6 +323,19 @@ Compatibility ledger
      - Application setting, not project data. Current behaviour, not
        deprecated: ``default_queue_name`` stays the name of the default queue,
        and a profile with no queues is valid.
+   * - ``magnetic_field`` records without ``site_source``
+     - ``mufinder.services.magnetic_field_results``
+       (``field_result_site_source``, ``attach_magnetic_field_results``)
+     - A dipolar-field record names the source of the muon site it was
+       computed at in ``data["site_source"]``, so fields at an unrelaxed UEP
+       site are shown as estimates. A record saved before the key existed
+       takes the ``source`` of its form's ``selected_muon_site``, which is the
+       site the results were computed at because choosing another site clears
+       them. A record whose form has no selected site shows no estimate
+       marker. The next calculation writes the key.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that copies the selected site's source into each
+       stored ``magnetic_field`` record.
 
 Saved-project schema migrations
 -------------------------------

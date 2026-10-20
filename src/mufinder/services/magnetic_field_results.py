@@ -14,6 +14,12 @@ under ``magnetic_field_results``, ``dipolar_tensor_results`` and
 :func:`store_magnetic_field_results` moves them into records and returns the
 form state without them, for ``ui_state``; :func:`attach_magnetic_field_results`
 puts them back before the form is restored.
+
+A dipolar-field record carries the source of the muon site it was computed at
+in ``data["site_source"]``. :data:`UEP_SITE_SOURCE` marks an unrelaxed UEP
+site, so the result is an estimate (:func:`is_unrelaxed_site_source`). A record
+saved without it takes the source of the form's ``selected_muon_site``, because
+choosing a different site clears the field results.
 """
 
 from __future__ import annotations
@@ -38,6 +44,10 @@ NUCLEAR_RELAXATION_RESULT_TYPE = "nuclear_relaxation"
 #: workspace's results use the workspace id instead.
 MAGNETIC_FIELD_PAGE_OWNER = "magnetic_fields"
 
+#: Site source of a muon site taken from UEP clustering: an unrelaxed UEP
+#: minimum or batch cluster, so fields computed there are estimates.
+UEP_SITE_SOURCE = "uep_clustering"
+
 MAGNETIC_FIELD_RESULT_TYPES = (
     MAGNETIC_FIELD_RESULT_TYPE,
     MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
@@ -45,14 +55,44 @@ MAGNETIC_FIELD_RESULT_TYPES = (
 )
 
 
+def is_unrelaxed_site_source(source: object) -> bool:
+    """Return whether a muon site of ``source`` is unrelaxed, so its fields are estimates."""
+
+    return source == UEP_SITE_SOURCE
+
+
+def field_result_site_source(
+    field_results: Mapping[str, Any],
+    form_state: Mapping[str, object] | None = None,
+) -> str | None:
+    """Return the site source of a dipolar-field result.
+
+    ``field_results`` is the record data or the form's ``magnetic_field_results``.
+    A result saved without a source takes it from ``form_state``'s
+    ``selected_muon_site``.
+    """
+
+    source = field_results.get("site_source")
+    if not source and isinstance(form_state, Mapping):
+        site = form_state.get("selected_muon_site")
+        source = site.get("source") if isinstance(site, Mapping) else None
+    return str(source) if source else None
+
+
 def _field_data(value: object) -> dict[str, Any] | None:
     if not isinstance(value, Mapping) or not isinstance(value.get("results"), list) or not value["results"]:
         return None
-    return {"kind": str(value.get("kind", "")), "results": list(value["results"])}
+    data: dict[str, Any] = {"kind": str(value.get("kind", "")), "results": list(value["results"])}
+    if value.get("site_source"):
+        data["site_source"] = str(value["site_source"])
+    return data
 
 
 def _field_value(data: Mapping[str, Any]) -> object:
-    return {"kind": data.get("kind", ""), "results": list(data.get("results", []))}
+    value: dict[str, Any] = {"kind": data.get("kind", ""), "results": list(data.get("results", []))}
+    if data.get("site_source"):
+        value["site_source"] = str(data["site_source"])
+    return value
 
 
 def _tensor_data(value: object) -> dict[str, Any] | None:
@@ -164,6 +204,11 @@ def attach_magnetic_field_results(
         record = magnetic_field_result(document, owner, result_type)
         if record is not None and isinstance(record.data, Mapping):
             attached[key] = to_value(record.data)
+    field_results = attached.get("magnetic_field_results")
+    if isinstance(field_results, dict) and not field_results.get("site_source"):
+        source = field_result_site_source(field_results, attached)
+        if source is not None:
+            attached["magnetic_field_results"] = {**field_results, "site_source": source}
     if not attached:
         return attached
     for key, empty in _EMPTY_FORM_RESULTS.items():
