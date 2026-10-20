@@ -1474,6 +1474,7 @@ def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
     document.ui_state["relaxation_analysis_workspaces"] = [
         {
             "name": "Positive muon relaxations",
+            "host_structure_id": str(document.project.host_structure_id),
             "clustering": {
                 "result": {
                     "clusters": [
@@ -1750,6 +1751,22 @@ def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(
     assert widget.selected_muon_site().source == "relaxation_clustering"
     assert "unrelaxed" not in widget._site_summary.text()
     widget.close()
+
+
+def test_magnetic_field_widget_ignores_relaxation_clusters_of_another_host(qapp, tmp_path) -> None:
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    _add_uep_cluster(document)
+    set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
+    document.ui_state["relaxation_analysis_workspaces"][0]["host_structure_id"] = str(uuid4())
+
+    assert magnetic_field_widget_module._relaxation_cluster_muon_site_options(document, _host_structure()) == []
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    assert widget.selected_muon_site().source == "uep_clustering"
+    widget.close()
+    dialog = MuonSiteSelectionDialog(document, _host_structure())
+    assert dialog._site_source_combo.currentData() == "uep_clustering"
+    dialog.close()
 
 
 def test_magnetic_field_widget_marks_fields_at_a_uep_site_as_estimates_across_a_reload(

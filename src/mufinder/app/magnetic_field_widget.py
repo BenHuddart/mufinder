@@ -6995,7 +6995,8 @@ def _relaxation_cluster_muon_site_options(
     returned, labelled by Wyckoff label and cluster, in charge-state then
     energy-rank order; a live cluster matches a pin by workspace and
     representative relaxation job. Otherwise every workspace's clusters, sorted
-    by name.
+    by name. Only workspaces of the active host count: cluster positions are
+    fractional coordinates in their own host's cell.
     """
 
     workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
@@ -7005,8 +7006,11 @@ def _relaxation_cluster_muon_site_options(
     ranks = {key: order for order, key in enumerate(pinned)}
     pinned_options: list[tuple[int, MagneticMuonSiteOption]] = []
     options: list[MagneticMuonSiteOption] = []
+    host_id = document.project.host_structure_id
     for workspace in workspaces:
-        if not isinstance(workspace, dict):
+        if not isinstance(workspace, dict) or host_id is None:
+            continue
+        if str(workspace.get("host_structure_id", "")).strip() != str(host_id):
             continue
         workspace_name = str(workspace.get("name", "Relaxation analysis")).strip() or "Relaxation analysis"
         clustering = workspace.get("clustering")

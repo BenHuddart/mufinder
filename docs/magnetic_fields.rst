@@ -420,7 +420,8 @@ distorted-structure reference. The available dialog sources are:
   re-pinning never relabels a different site. Tick ``Show every relaxed site`` to list every analysis
   workspace's clusters instead; the choice is saved with the project. With no
   pin, a notice and a ``Go to Muon Sites →`` button (which closes the dialog
-  and opens that page) explain how to pin sites;
+  and opens that page) explain how to pin sites. Only analysis workspaces of
+  the active host are listed;
 - ``Custom fractional position``, a fractional coordinate in the active host
   cell.
 
