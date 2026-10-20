@@ -771,7 +771,7 @@ def test_incommensurate_distributions_refuse_distortion_corrections(monkeypatch)
         )
 
 
-# Demagnetising correction: B_demag = -3/2 N . B_Lorentz
+# Demagnetising correction: B_demag = -mu0 N M = -3 N . B_Lorentz
 
 
 def _commensurate_demag(monkeypatch, **options) -> tuple[float, float, float]:
@@ -789,8 +789,8 @@ def test_demag_field_is_zero_without_a_sample_shape(monkeypatch) -> None:
     assert _commensurate_demag(monkeypatch) == (0.0, 0.0, 0.0)
 
 
-def test_demag_field_applies_sphere_factor(monkeypatch) -> None:
-    assert _commensurate_demag(monkeypatch, demag_shape="sphere") == pytest.approx((-0.5, -1.0, -1.5))
+def test_demag_field_for_a_sphere_cancels_the_lorentz_field(monkeypatch) -> None:
+    assert _commensurate_demag(monkeypatch, demag_shape="sphere") == pytest.approx((-1.0, -2.0, -3.0))
 
 
 @pytest.mark.parametrize(
@@ -799,7 +799,7 @@ def test_demag_field_applies_sphere_factor(monkeypatch) -> None:
 )
 def test_demag_field_for_infinite_plate_acts_along_the_normal(monkeypatch, axis: str, index: int) -> None:
     expected = [0.0, 0.0, 0.0]
-    expected[index] = -1.5 * (index + 1)
+    expected[index] = -3.0 * (index + 1)
 
     demag = _commensurate_demag(monkeypatch, demag_shape="infinite_plate", plate_normal_axis=axis)
 
@@ -814,7 +814,7 @@ def test_demag_sample_takes_precedence_over_demag_shape(monkeypatch) -> None:
         demag_sample=DemagnetizingSample(shape="ellipsoid", semi_axes=(1.0, 1.0, 1.0)),
     )
 
-    assert demag == pytest.approx((-0.5, -1.0, -1.5))
+    assert demag == pytest.approx((-1.0, -2.0, -3.0))
 
 
 def test_demag_field_rejects_unknown_shape(monkeypatch) -> None:
@@ -1310,14 +1310,8 @@ def test_incommensurate_distribution_applies_demag_to_sampled_lorentz_field(monk
         ),
     )[0]
 
-    lookup = np.column_stack(
-        [
-            np.arange(4, dtype=float),
-            2.0 * np.arange(4, dtype=float),
-            3.0 * np.arange(4, dtype=float),
-        ]
-    )
-    np.testing.assert_allclose(result.fields_T, 0.5 * lookup, atol=1e-12)
+    # A sphere's demagnetizing field cancels the Lorentz field at every phase point.
+    np.testing.assert_allclose(result.fields_T, np.zeros((4, 3)), atol=1e-12)
 
 
 def test_incommensurate_distribution_applies_advanced_demag_sample(monkeypatch) -> None:
@@ -1336,13 +1330,14 @@ def test_incommensurate_distribution_applies_advanced_demag_sample(monkeypatch) 
             supercell=(1, 1, 1),
             nangles=3,
             phase_sampling="grid",
-            demag_sample=DemagnetizingSample(shape="ellipsoid", semi_axes=(1.0, 1.0, 1.0)),
+            demag_sample=DemagnetizingSample(shape="infinite_plate", plate_normal_axis="c"),
             histogram_bins=4,
         ),
     )[0]
 
-    np.testing.assert_allclose(result.fields_T, np.full((3, 3), [0.0, 0.0, 1.0]), atol=1e-12)
-    assert result.calculation_parameters["demag_sample"]["shape"] == "ellipsoid"
+    # N = 1 along the plate normal: B_L + B_demag = 2 - 3 * 2 = -4 T.
+    np.testing.assert_allclose(result.fields_T, np.full((3, 3), [0.0, 0.0, -4.0]), atol=1e-12)
+    assert result.calculation_parameters["demag_sample"]["shape"] == "infinite_plate"
 
 
 # Internal guards the public entry points never reach
@@ -1799,6 +1794,23 @@ def test_real_muesr_ferromagnet_body_centre_sees_only_the_lorentz_field(real_mue
     assert result.lorentz == pytest.approx((0.0, 0.0, lorentz), rel=5e-3)
     assert lorentz == pytest.approx(0.1439, abs=1e-4)
     assert result.contact == (0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("demag_shape", "lorentz_plus_demag"),
+    [("sphere", 0.0), ("infinite_plate", -2.0)],
+    ids=["sphere", "plate-along-moment"],
+)
+def test_real_muesr_ferromagnet_demagnetizing_field_is_minus_mu0_n_m(real_muesr, demag_shape, lorentz_plus_demag) -> None:
+    # B_demag = -mu0 N M and B_L = mu0 M / 3: a sphere (N = 1/3) cancels the
+    # Lorentz field and a plate magnetised along its normal (N = 1) leaves
+    # -2 mu0 M / 3, i.e. -2 B_L.
+    options = MagneticFieldOptions(demag_shape=demag_shape, plate_normal_axis="c")
+    (result,) = calculate_commensurate_fields(_structure(), _model(), [(0.5, 0.5, 0.5)], options=options)
+
+    lorentz = np.asarray(result.lorentz)
+    np.testing.assert_allclose(lorentz + np.asarray(result.demag), lorentz_plus_demag * lorentz, atol=1e-9)
+    np.testing.assert_allclose(result.total, lorentz_plus_demag * lorentz, atol=1e-9)
 
 
 @pytest.mark.parametrize(

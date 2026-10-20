@@ -535,13 +535,22 @@ single cubic Fourier grid would suffer for very thin plates or long needles. ``F
 kept as the user-facing resolution control for the midpoint average; increasing
 it improves the estimate but increases cost.
 
-For field calculations, the selected tensor is inserted into the same correction
-used by mag2spectra:
+For field calculations, the selected tensor :math:`N` gives the demagnetizing
+field of a uniformly magnetised sample, :math:`-\mu_0 N \mathbf{M}` (A. Yaouanc
+and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and Resonance*,
+Oxford University Press (2011); S. J. Blundell, Contemp. Phys. **40**, 175
+(1999), DOI: ``10.1080/001075199181521``). MuFinder takes the magnetisation from
+the Lorentz field :math:`\mathbf{B}_\mathrm{Lor} = \mu_0 \mathbf{M} / 3`
+returned by ``muesr``, so
 
 .. math::
 
-   \mathbf{B}_\mathrm{demag} =
-   -\frac{3}{2}\,N\,\mathbf{B}_\mathrm{Lor}.
+   \mathbf{B}_\mathrm{demag} = -\mu_0 N \mathbf{M} =
+   -3\,N\,\mathbf{B}_\mathrm{Lor}.
+
+For a sphere, :math:`N = \tfrac{1}{3}` and the demagnetizing field cancels the
+Lorentz field exactly. For an infinite plate magnetised along its normal,
+:math:`N = 1` and the two terms sum to :math:`-2\mu_0 \mathbf{M} / 3`.
 
 This correction is a field-level contribution only. It does not simulate spectra
 or time-dependent polarisation. For commensurate calculations it is applied once
@@ -903,7 +912,9 @@ With the moment along ``c`` and ``q = 0``, the magnetisation is
 :math:`M = \mu_B / a^3`, and the Lorentz field
 :math:`\mu_0 M / 3 = \mu_0 \mu_B / (3a^3)` is 0.1439 T along ``c``. MuFinder
 reports 0.1437 T because ``muesr`` counts the ions inside a finite Lorentz
-sphere.
+sphere. With ``Demagnetizing field`` set to ``Sphere``, the demagnetizing term is
+-0.1437 T and cancels the Lorentz term. With ``Infinite plate`` it is -0.4311 T,
+and the two sum to -0.2874 T.
 
 .. list-table::
    :header-rows: 1

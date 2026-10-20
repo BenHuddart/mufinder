@@ -877,7 +877,7 @@ def calculate_incommensurate_field_distributions(
                     nangles=int(opts.nangles),
                     stride=stride,
                 )
-                fields = fields - 1.5 * (lorentz_fields @ demag_tensor.T)
+                fields = fields + _demag_correction(lorentz_fields, demag_tensor)
             return fields + applied[np.newaxis, :]
 
         fields = site_fields(phase_samples_turns)
@@ -1414,7 +1414,13 @@ def _demag_field(lorentz: np.ndarray, options: MagneticFieldOptions) -> np.ndarr
     tensor = _demag_tensor(options)
     if tensor is None:
         return np.zeros(3, dtype=float)
-    return -1.5 * (tensor @ np.asarray(lorentz, dtype=float))
+    return _demag_correction(np.asarray(lorentz, dtype=float), tensor)
+
+
+def _demag_correction(lorentz: np.ndarray, tensor: np.ndarray) -> np.ndarray:
+    """Return ``-mu0 N M`` for Lorentz field(s) ``mu0 M / 3`` stacked along the last axis."""
+
+    return -3.0 * (lorentz @ tensor.T)
 
 
 def _demag_tensor(options: MagneticFieldOptions) -> np.ndarray | None:
