@@ -31,6 +31,8 @@ from mufinder.app.workflow_table_utils import (
     SupercellColumn,
     bind_reset_failed_context_menu,
     create_workflow_table,
+    format_table_number,
+    format_vector_components,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
@@ -1070,3 +1072,21 @@ def test_supercell_column_suggests_grid_and_spacing_from_the_project_reference(q
     assert column.suggested_spacing() is None
     column.set_kpoint_reference((4, 4, 4), None)
     assert column.suggested_spacing() is None
+
+
+def test_format_table_number_shows_numerical_noise_and_negative_zero_as_zero() -> None:
+    assert format_table_number(-0.0) == "0"
+    assert format_table_number(1.28162e-18) == "0"
+    assert format_table_number(-5e-13) == "0"
+    assert format_table_number(-0.297712345) == "-0.297712"
+    assert format_table_number(2e-12) == "2e-12"
+    assert format_table_number(2e-12, scale=0.5) == "0"
+    assert format_table_number(1e-6, scale=0.5) == "1e-06"
+    assert format_table_number(1e-14, absolute_tolerance=0.0, relative_tolerance=0.0) == "1e-14"
+
+
+def test_format_vector_components_judges_each_component_against_the_row_scale() -> None:
+    assert format_vector_components((1.28162e-18, -5.32134e-18, -0.153881)) == ("0", "0", "-0.153881")
+    assert format_vector_components((-0.0, -0.0, 0.0)) == ("0", "0", "0")
+    assert format_vector_components((3e-11, 0.0, 0.0)) == ("3e-11", "0", "0")
+    assert format_vector_components((3e-11, 0.0, 0.0), scale=0.4) == ("0", "0", "0")

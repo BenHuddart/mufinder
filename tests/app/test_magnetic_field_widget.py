@@ -2814,6 +2814,53 @@ def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(qapp, 
     widget.close()
 
 
+def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-zero-display.mufinder", "Magnetic Zero Display")
+    service.add_structure(document, _host_structure())
+    result = magnetic_fields_module.MagneticFieldResult(
+        site_label="muon 1",
+        muon_position=(0.5, 0.5, 0.0),
+        dipolar=(1.28162e-18, -5.32134e-18, -0.297712),
+        lorentz=(0.0, 0.0, 0.143831),
+        contact=(0.0, 0.0, 0.0),
+        demag=(-0.0, -0.0, 0.0),
+        applied=(0.0, 0.0, 0.0),
+    )
+    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
+    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *_args, **_kwargs: (result,))
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.5, 0.5, 0.0))
+
+    widget._calculate_fields()
+
+    expected_result_row = ["muon 1", "0", "0", "-0.153881", "0.153881", "field"]
+    assert [widget._result_table.item(0, column).text() for column in range(6)] == expected_result_row
+    expected_breakdown = [
+        ["Dipolar", "0", "0", "-0.297712", "0.297712"],
+        ["Lorentz", "0", "0", "0.143831", "0.143831"],
+        ["Contact", "0", "0", "0", "0"],
+        ["Demagnetizing", "0", "0", "0", "0"],
+        ["Applied", "0", "0", "0", "0"],
+        ["Total", "0", "0", "-0.153881", "0.153881"],
+    ]
+    assert _breakdown_rows(widget) == expected_breakdown
+
+    stored = widget.collect_state()["magnetic_field_results"]["results"][0]
+    assert stored["total_T"][:2] == [1.28162e-18, -5.32134e-18]
+    assert stored["dipolar_T"][:2] == [1.28162e-18, -5.32134e-18]
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(widget.collect_state())
+    assert [restored._result_table.item(0, column).text() for column in range(6)] == expected_result_row
+    assert _breakdown_rows(restored) == expected_breakdown
+    restored.close()
+    widget.close()
+
+
 def test_magnetic_field_widget_explains_results_without_a_term_breakdown(qapp, tmp_path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-no-breakdown.mufinder", "Magnetic No Breakdown")

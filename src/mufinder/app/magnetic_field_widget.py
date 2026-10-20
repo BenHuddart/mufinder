@@ -69,7 +69,11 @@ from mufinder.app.theme import (
     track_item_view_corners,
 )
 from mufinder.app import workflow_table_utils
-from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    format_table_number,
+    format_vector_components,
+)
 from mufinder.domain.models import Structure
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.ase_bridge import reduced_formula
@@ -6605,12 +6609,12 @@ class MagneticFieldWidget(QWidget):
             for label, key in self._BREAKDOWN_TERMS:
                 vector = np.asarray(payload.get(key, ()), dtype=float)
                 if vector.shape == (3,):
-                    rows.append((label, *(f"{value:.6g}" for value in vector), f"{np.linalg.norm(vector):.6g}"))
+                    rows.append((label, *format_vector_components(vector), format_table_number(np.linalg.norm(vector))))
             if not rows:
                 hint = "This saved result has no term breakdown; recalculate to see it."
             else:
                 total = np.asarray(payload.get("total_T", (0.0, 0.0, 0.0)), dtype=float)
-                rows.append(("Total", *(f"{value:.6g}" for value in total), f"{np.linalg.norm(total):.6g}"))
+                rows.append(("Total", *format_vector_components(total), format_table_number(np.linalg.norm(total))))
                 if len(selected_rows) > 1:
                     hint = f"Showing {payload.get('site_label', 'the first selected site')}."
         self._set_summary_rows(self._breakdown_table, rows)
@@ -6761,10 +6765,8 @@ class MagneticFieldWidget(QWidget):
         self._result_table.insertRow(row)
         values = [
             label,
-            f"{float(field[0]):.6g}",
-            f"{float(field[1]):.6g}",
-            f"{float(field[2]):.6g}",
-            f"{float(magnitude):.6g}",
+            *format_vector_components(field[:3], scale=magnitude),
+            format_table_number(magnitude),
             result_type,
         ]
         for column, value in enumerate(values):
@@ -7152,7 +7154,7 @@ def _fill_q_basis_table(table: QTableWidget, model: MagneticStructureModel) -> N
 
 
 def _q_vector_text(values: Sequence[float]) -> str:
-    return ", ".join(f"{0.0 if abs(float(value)) < 5e-13 else float(value):.6g}" for value in values)
+    return ", ".join(format_table_number(value, absolute_tolerance=5e-13, relative_tolerance=0.0) for value in values)
 
 
 def _parse_q_vector_text(text: str) -> tuple[float, float, float]:

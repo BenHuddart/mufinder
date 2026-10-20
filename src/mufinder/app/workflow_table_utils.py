@@ -69,6 +69,47 @@ def format_energy_ev(value: object) -> str:
         return ""
 
 
+#: Values at most this large are shown as ``0`` by :func:`format_table_number`.
+DISPLAY_ZERO_ABSOLUTE_TOLERANCE = 1e-12
+
+#: Values at most this fraction of their row's scale are shown as ``0``.
+DISPLAY_ZERO_RELATIVE_TOLERANCE = 1e-9
+
+
+def format_table_number(
+    value: float,
+    *,
+    scale: float = 0.0,
+    absolute_tolerance: float = DISPLAY_ZERO_ABSOLUTE_TOLERANCE,
+    relative_tolerance: float = DISPLAY_ZERO_RELATIVE_TOLERANCE,
+) -> str:
+    """Format a number for a results table with six significant figures.
+
+    A value no larger than ``absolute_tolerance``, or than ``relative_tolerance``
+    times ``scale`` (the magnitude of the row it belongs to), is rounding noise
+    and shows as ``0``. No cell ever shows ``-0``.
+    """
+
+    number = float(value)
+    threshold = max(absolute_tolerance, relative_tolerance * abs(float(scale)))
+    if abs(number) <= threshold:
+        number = 0.0
+    return f"{number + 0.0:.6g}"
+
+
+def format_vector_components(values: Sequence[float], *, scale: float = 0.0) -> tuple[str, ...]:
+    """Format each component of a vector with :func:`format_table_number`.
+
+    Components are judged against the larger of the vector's norm and
+    ``scale``, so noise in a component that should vanish shows as ``0``.
+    """
+
+    numbers = [float(value) for value in values]
+    norm = sum(number * number for number in numbers) ** 0.5
+    row_scale = max(norm, abs(float(scale)))
+    return tuple(format_table_number(number, scale=row_scale) for number in numbers)
+
+
 def bind_delete_shortcuts(
     widget: QWidget,
     slot: Callable[[], None],
