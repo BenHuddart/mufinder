@@ -81,11 +81,13 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldOptions,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     assigned_magnetic_atom_indices,
+    calculate_commensurate_approximant_fields,
     calculate_commensurate_fields,
     calculate_dipolar_tensors_for_atoms,
     calculate_incommensurate_field_distributions,
     classify_magnetic_model,
     contact_coupling_to_angstrom_minus3,
+    find_commensurate_approximant,
 )
 from mufinder.science.magnetic_structure import (
     AtomSelector,
@@ -146,6 +148,13 @@ _DISTORTION_CORRECTED_FIELD = "field (distortion-corrected)"
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
+MAX_APPROXIMANT_PERIOD = 64
+CONVERGENCE_GUIDANCE_TEXT = (
+    "Each distribution is checked after it is calculated: halving the lookup angles or the samples "
+    "must shift the field distribution by at most 1%, and every occupied histogram bin needs at "
+    "least 20 samples. Select a distribution row to read the checks, then double any flagged "
+    "setting and recalculate."
+)
 PHASE_SAMPLING_METHOD_OPTIONS: tuple[tuple[str, str], ...] = (
     ("auto", "Auto"),
     ("grid", "Grid"),
@@ -4079,11 +4088,14 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         phase_sample_count: int,
         histogram_bins: int,
         phase_sampling: str = "auto",
+        use_approximants: bool = False,
+        approximant_tolerance: float = MagneticFieldOptions().approximant_tolerance,
+        approximant_max_period: int = MagneticFieldOptions().approximant_max_period,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Calculation Settings")
-        self.resize(420, 240)
+        self.resize(460, 360)
 
         self._calc_cells_a = self._calculation_cell_input(supercell[0])
         self._calc_cells_b = self._calculation_cell_input(supercell[1])
@@ -4113,6 +4125,36 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         form.addRow("Sampling method", self._phase_sampling)
         form.addRow("Histogram bins", self._histogram_bins)
         layout.addWidget(form_group)
+        guidance = QLabel(CONVERGENCE_GUIDANCE_TEXT, self)
+        guidance.setWordWrap(True)
+        style_hint_text(guidance)
+        layout.addWidget(guidance)
+
+        approximant_group = QGroupBox("Commensurate Approximants", self)
+        approximant_form = QFormLayout(approximant_group)
+        self._use_approximants = QCheckBox("Report finite fields for near-commensurate q", approximant_group)
+        self._use_approximants.setChecked(bool(use_approximants))
+        self._use_approximants.setToolTip(
+            "Replace each incommensurate wavevector by its nearest short-period fraction and list the fields "
+            "at the translation-equivalent sites of that magnetic supercell instead of sampling a distribution."
+        )
+        self._approximant_tolerance = QDoubleSpinBox(approximant_group)
+        self._approximant_tolerance.setDecimals(6)
+        self._approximant_tolerance.setRange(1e-6, 0.05)
+        self._approximant_tolerance.setSingleStep(1e-4)
+        self._approximant_tolerance.setValue(float(approximant_tolerance))
+        self._approximant_tolerance.setSuffix(" r.l.u.")
+        self._approximant_tolerance.setToolTip(
+            "Largest change of any wavevector component when it is replaced by a fraction p/n."
+        )
+        self._approximant_max_period = QSpinBox(approximant_group)
+        self._approximant_max_period.setRange(1, MAX_APPROXIMANT_PERIOD)
+        self._approximant_max_period.setValue(int(approximant_max_period))
+        self._approximant_max_period.setToolTip("Largest denominator n allowed for each wavevector component.")
+        approximant_form.addRow(self._use_approximants)
+        approximant_form.addRow("Tolerance", self._approximant_tolerance)
+        approximant_form.addRow("Longest period", self._approximant_max_period)
+        layout.addWidget(approximant_group)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -4130,6 +4172,9 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
             "phase_sample_count": int(self._phase_samples.value()),
             "phase_sampling": str(self._phase_sampling.currentData() or "auto"),
             "histogram_bins": int(self._histogram_bins.value()),
+            "use_approximants": self._use_approximants.isChecked(),
+            "approximant_tolerance": float(self._approximant_tolerance.value()),
+            "approximant_max_period": int(self._approximant_max_period.value()),
         }
 
     @staticmethod
@@ -5359,6 +5404,9 @@ class MagneticFieldWidget(QWidget):
         self._phase_samples = self._incommensurate_sampling_input(MagneticFieldOptions().phase_sample_count)
         self._phase_sampling_method = MagneticFieldOptions().phase_sampling
         self._histogram_bins = self._histogram_bin_input(MagneticFieldOptions().histogram_bins)
+        self._use_approximants = False
+        self._approximant_tolerance = MagneticFieldOptions().approximant_tolerance
+        self._approximant_max_period = MagneticFieldOptions().approximant_max_period
         self._hyperfine_coupling = self._hyperfine_coupling_input()
         self._hyperfine_units = QComboBox()
         for unit_key, label in CONTACT_COUPLING_UNIT_OPTIONS:
@@ -5547,6 +5595,9 @@ class MagneticFieldWidget(QWidget):
             "incommensurate_samples": int(self._phase_samples.value()),
             "phase_sampling": str(self._phase_sampling_method),
             "histogram_bins": int(self._histogram_bins.value()),
+            "use_commensurate_approximants": bool(self._use_approximants),
+            "approximant_tolerance": float(self._approximant_tolerance),
+            "approximant_max_period": int(self._approximant_max_period),
             "hyperfine_coupling": self._hyperfine_coupling.text().strip(),
             "hyperfine_coupling_unit": self._current_hyperfine_unit(),
             "selected_muon_site": self._muon_site_to_state(self._selected_muon_site),
@@ -5631,6 +5682,9 @@ class MagneticFieldWidget(QWidget):
                 state.get("phase_sampling", self._phase_sampling_method)
             )
             self._set_spinbox_from_state(self._histogram_bins, state.get("histogram_bins"))
+            self._use_approximants = bool(state.get("use_commensurate_approximants", False))
+            self._approximant_tolerance = self._state_approximant_tolerance(state.get("approximant_tolerance"))
+            self._approximant_max_period = self._state_approximant_max_period(state.get("approximant_max_period"))
             raw_hyperfine = state.get("hyperfine_coupling")
             if raw_hyperfine is not None:
                 self._hyperfine_coupling.setText(str(raw_hyperfine))
@@ -5677,6 +5731,9 @@ class MagneticFieldWidget(QWidget):
             self._phase_samples.setValue(defaults.phase_sample_count)
             self._phase_sampling_method = defaults.phase_sampling
             self._histogram_bins.setValue(defaults.histogram_bins)
+            self._use_approximants = False
+            self._approximant_tolerance = defaults.approximant_tolerance
+            self._approximant_max_period = defaults.approximant_max_period
             self._hyperfine_coupling.setText("0.0")
             self._set_hyperfine_unit("angstrom^-3")
             self._selected_muon_site = self._default_muon_site()
@@ -5970,17 +6027,48 @@ class MagneticFieldWidget(QWidget):
                 )
                 self._emit_form_state_changed()
             else:
-                results = calculate_incommensurate_field_distributions(
+                approximant = find_commensurate_approximant(
                     self._host_structure,
                     self._model,
-                    [site.fractional_position],
-                    options=options,
-                    distorted_structures=distorted_structures,
+                    tolerance=options.approximant_tolerance,
+                    max_period=options.approximant_max_period,
                 )
-                self._populate_distribution_results(results)
-                self._calculation_status.setText(
-                    f"Results: sampled {len(results)} incommensurate field distribution(s)."
-                )
+                if approximant is not None and self._use_approximants:
+                    results = calculate_commensurate_approximant_fields(
+                        self._host_structure,
+                        self._model,
+                        [site.fractional_position],
+                        options=options,
+                        distorted_structures=distorted_structures,
+                    )
+                    self._populate_commensurate_results(results)
+                    self._calculation_status.setText(
+                        f"Results: calculated {len(results)} field value(s) of the commensurate approximant "
+                        f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)."
+                    )
+                else:
+                    results = calculate_incommensurate_field_distributions(
+                        self._host_structure,
+                        self._model,
+                        [site.fractional_position],
+                        options=options,
+                        distorted_structures=distorted_structures,
+                    )
+                    self._populate_distribution_results(results)
+                    status = f"Results: sampled {len(results)} incommensurate field distribution(s)"
+                    flagged = sum(
+                        1 for result in results for check in getattr(result, "convergence", ()) if not check.converged
+                    )
+                    if flagged:
+                        status += f"; {flagged} convergence check(s) need attention, select a row for advice"
+                    status += "."
+                    if approximant is not None:
+                        status += (
+                            f" q is within {approximant.max_deviation_rlu:.2g} r.l.u. of the commensurate "
+                            f"approximant {approximant.describe()}; turn on commensurate approximants in "
+                            "Calculation Settings to list its finite fields."
+                        )
+                    self._calculation_status.setText(status)
                 self._emit_form_state_changed()
         except MagneticFieldDependencyError as exc:
             self._calculation_status.setText(f"Results unavailable: {exc}")
@@ -6011,6 +6099,9 @@ class MagneticFieldWidget(QWidget):
             phase_sample_count=int(self._phase_samples.value()),
             histogram_bins=int(self._histogram_bins.value()),
             phase_sampling=str(self._phase_sampling_method),
+            use_approximants=self._use_approximants,
+            approximant_tolerance=self._approximant_tolerance,
+            approximant_max_period=self._approximant_max_period,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -6029,6 +6120,13 @@ class MagneticFieldWidget(QWidget):
                 values.get("phase_sampling", self._phase_sampling_method)
             )
             self._histogram_bins.setValue(int(values.get("histogram_bins", self._histogram_bins.value())))
+            self._use_approximants = bool(values.get("use_approximants", self._use_approximants))
+            self._approximant_tolerance = self._state_approximant_tolerance(
+                values.get("approximant_tolerance", self._approximant_tolerance)
+            )
+            self._approximant_max_period = self._state_approximant_max_period(
+                values.get("approximant_max_period", self._approximant_max_period)
+            )
         finally:
             self._restoring_form_state = False
         self._on_form_setting_changed()
@@ -6151,7 +6249,13 @@ class MagneticFieldWidget(QWidget):
             f"{int(self._lookup_angles.value())} lookup angles per q; "
             f"{int(self._phase_samples.value())} distribution samples; "
             f"{self._phase_sampling_label()} sampling; "
-            f"{int(self._histogram_bins.value())} histogram bins."
+            f"{int(self._histogram_bins.value())} histogram bins"
+            + (
+                f"; commensurate approximants within {self._approximant_tolerance:g} r.l.u., "
+                f"period up to {self._approximant_max_period}."
+                if self._use_approximants
+                else "."
+            )
         )
 
     def _field_options(self) -> MagneticFieldOptions:
@@ -6169,7 +6273,27 @@ class MagneticFieldWidget(QWidget):
             phase_sample_count=int(self._phase_samples.value()),
             phase_sampling=str(self._phase_sampling_method),
             histogram_bins=int(self._histogram_bins.value()),
+            approximant_tolerance=float(self._approximant_tolerance),
+            approximant_max_period=int(self._approximant_max_period),
         )
+
+    @staticmethod
+    def _state_approximant_tolerance(value: object) -> float:
+        default = MagneticFieldOptions().approximant_tolerance
+        try:
+            tolerance = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+        return tolerance if np.isfinite(tolerance) and 0.0 < tolerance <= 0.05 else default
+
+    @staticmethod
+    def _state_approximant_max_period(value: object) -> int:
+        default = MagneticFieldOptions().approximant_max_period
+        try:
+            period = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+        return period if 1 <= period <= MAX_APPROXIMANT_PERIOD else default
 
     def _phase_sampling_label(self) -> str:
         method = self._normalize_phase_sampling_method(self._phase_sampling_method)
@@ -6374,6 +6498,10 @@ class MagneticFieldWidget(QWidget):
                 "Incommensurate distributions are sampled as a combined field; "
                 "the term breakdown is available for commensurate results."
             )
+            if selected_rows[0] < len(results) and isinstance(results[selected_rows[0]], Mapping):
+                checks = self._convergence_lines(results[selected_rows[0]].get("convergence"))
+                if checks:
+                    hint = "\n".join(["Convergence checks:", *checks, hint])
         elif selected_rows[0] >= len(results) or not isinstance(results[selected_rows[0]], Mapping):
             hint = "Select a result row to see its field terms."
         else:
@@ -6394,6 +6522,20 @@ class MagneticFieldWidget(QWidget):
         self._breakdown_table.setVisible(bool(rows))
         self._breakdown_hint.setText(hint)
         self._breakdown_hint.setVisible(bool(hint))
+
+    @staticmethod
+    def _convergence_lines(raw_checks: object) -> list[str]:
+        """Return one line per saved convergence check of a distribution result."""
+
+        if not isinstance(raw_checks, Sequence) or isinstance(raw_checks, (str, bytes)):
+            return []
+        lines: list[str] = []
+        for check in raw_checks:
+            if not isinstance(check, Mapping):
+                continue
+            verdict = "OK" if check.get("converged") else "Needs attention"
+            lines.append(f"{check.get('label', check.get('setting', 'Check'))}: {verdict}. {check.get('message', '')}".strip())
+        return lines
 
     def _populate_commensurate_results(self, results: object) -> None:
         self._distribution_results = []

@@ -47,7 +47,10 @@ a saved workspace, and each owner has at most one record of each type.
   ``distribution``) and ``results``, one entry per site: a commensurate entry
   stores ``site_label``, ``muon_position``, ``total_T``, ``magnitude_T`` and its
   field terms (see `Field Terms`_), and a distribution entry stores
-  ``fields_T``, the histogram and ``calculation_parameters``.
+  ``fields_T``, the histogram, ``calculation_parameters`` and its
+  ``convergence`` checks (see `Convergence Checks`_). The finite field list of
+  a commensurate approximant (see `Commensurate Approximants`_) is stored as
+  ``commensurate`` entries.
 - ``magnetic_dipolar_tensor`` data holds ``results``, the tensor dialog's rows.
 - ``nuclear_relaxation`` data holds ``result``, the nuclear-relaxation result.
 
@@ -406,13 +409,14 @@ Calculation
 ``Calculate Dipolar Field`` sends the selected magnetic structure and muon
 site to the magnetic-field calculation helpers. Commensurate magnetic
 structures produce finite vector field results. Incommensurate structures
-produce sampled field-distribution summaries. The ``Calculation Settings...``
-dialog exposes:
+produce sampled field-distribution summaries, or the finite field list of
+their commensurate approximant when that option is on. The
+``Calculation Settings...`` dialog exposes, under ``Numerical Parameters``:
 
 - ``Cells along`` ``a``, ``b``, and ``c``: the number of unit-cell repeats
   included in the ``muesr`` lattice summation, defaulting to
   ``100 x 100 x 100``;
-- ``Lookup angles per q`` (default 4096), which sets the angular lookup
+- ``Lookup angles per q`` (default 32,768), which sets the angular lookup
   resolution for each incommensurate Fourier component;
 - ``Distribution samples`` (default 200,000), which caps or targets the number
   of sampled fields used for the final incommensurate distribution;
@@ -420,6 +424,20 @@ dialog exposes:
   ``Auto`` (default), ``Grid``, and ``Monte Carlo`` options;
 - ``Histogram bins`` (default 512), the number of bins used when summarising
   field magnitudes.
+
+A note under these settings explains the convergence checks (see
+`Convergence Checks`_). The ``Commensurate Approximants`` group holds:
+
+- ``Report finite fields for near-commensurate q`` (default off), which lists
+  the finite fields of a commensurate approximant instead of sampling a
+  distribution when the structure has one;
+- ``Tolerance`` (default 0.001 r.l.u.), the largest change of any wavevector
+  component when it is replaced by a fraction;
+- ``Longest period`` (default 12, at most 64), the largest denominator allowed
+  for each wavevector component.
+
+The settings summary on the ``Calculation`` card names the approximant
+tolerance and period when the option is on.
 
 The sampling method affects only incommensurate field distributions. It does not
 simulate muon spectra or time-dependent polarisation functions. ``muesr``/``muLFC``
@@ -475,8 +493,9 @@ The correction is reported as its own component. Corrected rows read
 includes the correction, and the saved result stores it as ``distortion_T``
 beside the uncorrected ``dipolar_T``. The Lorentz, contact and demagnetizing
 terms keep their pristine values. The correction applies to commensurate
-structures only: an incommensurate field distribution with the option ticked
-stops with an error, and dipolar tensors always use the pristine host.
+structures only: an incommensurate field distribution or a commensurate
+approximant with the option ticked stops with an error, and dipolar tensors
+always use the pristine host.
 
 Demagnetizing-Field Setup
 -------------------------
@@ -735,9 +754,75 @@ The user-facing sampling controls are:
    constructing very large arrays.
 
 The calculation parameters saved with an incommensurate result include the
-chosen ``phase_sampling`` mode, the active ``independent_q_indices``, the
-``phase_sample_count`` actually used, and the histogram settings. These fields
-make convergence checks of the saved result auditable.
+chosen ``phase_sampling`` mode, the ``resolved_phase_sampling`` it ran as
+(``grid`` or ``montecarlo``), the active ``independent_q_indices``, the
+``phase_sample_count`` actually used, and the histogram settings.
+
+Convergence Checks
+~~~~~~~~~~~~~~~~~~
+
+Every incommensurate distribution carries three convergence checks, computed
+from the lookup tables already returned by ``muesr`` without further backend
+calls:
+
+``Lookup angles per q``
+   The distribution is recomputed from every other lookup angle, which is the
+   lookup resolution ``N/2``. The check reports the Kolmogorov-Smirnov
+   distance, the largest difference between the two cumulative distributions
+   of ``|B|``, and passes when it is at most 1%. A failing check advises
+   doubling ``Lookup angles per q``.
+
+``Distribution samples``
+   The distribution is recomputed from half the phase samples: every other
+   Monte Carlo sample, or every other grid point along each phase axis. It
+   passes on the same 1% criterion and advises more distribution samples, or
+   more lookup angles when a grid already uses every lookup angle along its
+   axes.
+
+``Histogram bins``
+   The mean number of samples per occupied histogram bin, which must be at
+   least 20. A failing check advises fewer bins, or more samples (more lookup
+   angles for a grid limited by them). A single-valued distribution passes.
+
+A structure whose sampled phase space collapses to a single phase reports only
+the histogram check. After a calculation, the status line counts the checks
+that need attention; selecting a distribution row lists each check with its
+verdict and advice under the results table, for new and restored results.
+The checks are saved with the result as ``convergence`` entries holding
+``setting``, ``label``, ``converged``, ``metric`` and ``message``.
+
+The defaults pass for a single-q distribution: a one-dimensional grid uses one
+sample per lookup angle, so 32,768 lookup angles give 64 samples per
+occupied bin of a 512-bin histogram. The lookup resolution adds little cost,
+because ``muesr`` evaluates the lattice sum once per component and the lookup
+angles only rotate that sum.
+
+Commensurate Approximants
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An incommensurate wavevector is often close to a short-period fraction, for
+example a measured ``q = (0.3334, 0, 0)`` near ``(1/3, 0, 0)``. MuFinder looks
+for a commensurate approximant whenever it samples an incommensurate
+distribution: every component of every wavevector is replaced by the fraction
+``p/n`` with the smallest ``n`` up to ``Longest period`` that lies within
+``Tolerance`` of it. When every component has such a fraction, the approximant
+repeats over a magnetic supercell whose size along each axis is the least
+common multiple of the denominators on that axis.
+
+With ``Report finite fields for near-commensurate q`` off, the distribution is
+sampled as usual and the status line names the approximant it found. With the
+option on, MuFinder lists the finite set of fields that the
+translation-equivalent copies ``r + T`` of the muon site see in that magnetic
+supercell. The field at ``r + T`` is the commensurate lattice sum of the
+approximant with every Fourier phase advanced by ``q . T``. ``muesr`` takes
+these phases in units of :math:`2\pi`, adding them to ``q . R`` of each cell.
+MuFinder lists one translation per distinct set of phases, so every listed
+field stands for the same number of sites. Rows are labelled with their
+translation, for example ``Custom site + (1, 0, 0)``, carry the full term
+breakdown of a commensurate result, and give the muon position ``r + T`` in
+host fractional coordinates. A structure without an approximant within the
+limits keeps its sampled distribution, and an approximant with more than 512
+distinct translations stops with an error.
 
 Beyond the dipolar sum, the field calculation includes:
 
@@ -764,8 +849,9 @@ that sum to its field: ``Dipolar``, ``Lorentz``, ``Contact``,
 by their ``Total``. A newly calculated or restored commensurate result selects
 its first row. With several rows selected, the first selected row is shown. A
 saved result that stores only its total asks for a recalculation instead.
-Incommensurate distributions are sampled as one combined field, so they show a
-note instead of a breakdown.
+Incommensurate distributions are sampled as one combined field, so they show
+their convergence checks (see `Convergence Checks`_) and a note instead of a
+breakdown.
 
 Dependency Handling
 -------------------
@@ -797,7 +883,9 @@ Current Scope
 The implemented workflow covers the propagation-vector data model, the
 magnetic-structure builder and multi-q texture dialogs, commensurate local
 fields with optional muon-induced distortion corrections, incommensurate field
-distributions, dipolar tensors, demagnetizing corrections, and nuclear dipolar
+distributions with convergence checks, finite field lists of commensurate
+approximants, dipolar tensors, demagnetizing corrections, and nuclear dipolar
 linewidths. It stops at field-level results: MuFinder does not simulate muon
 spectra or polarisation functions. Distortion corrections are not applied to
-incommensurate field distributions or dipolar tensors.
+incommensurate field distributions, commensurate approximants or dipolar
+tensors.

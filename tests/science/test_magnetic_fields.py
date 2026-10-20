@@ -29,6 +29,7 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldOptions,
     MagneticFieldResult,
     assigned_magnetic_atom_indices,
+    calculate_commensurate_approximant_fields,
     calculate_commensurate_fields,
     calculate_dipolar_tensors,
     calculate_distortion_field_correction,
@@ -37,6 +38,7 @@ from mufinder.science.magnetic_fields import (
     calculate_incommensurate_field_distributions,
     classify_magnetic_model,
     contact_coupling_to_angstrom_minus3,
+    find_commensurate_approximant,
     find_equivalent_muon_sites,
     is_commensurate_propagation_vector,
 )
@@ -940,7 +942,7 @@ def test_calculate_dipolar_tensors_compatibility_uses_assigned_atoms(monkeypatch
 def test_incommensurate_distribution_options_use_fine_defaults() -> None:
     options = MagneticFieldOptions()
 
-    assert options.nangles == 4096
+    assert options.nangles == 32_768
     assert options.phase_sample_count == 200_000
     assert options.phase_sampling == "auto"
     assert options.max_grid_samples == 1_000_000
@@ -1405,3 +1407,272 @@ def test_component_sample_combination_guards_array_shapes() -> None:
         module._combine_component_samples([np.zeros((4, 2))], [(1.0,)], np.zeros((2, 1)), nangles=4)
     with pytest.raises(MagneticFieldError, match="phase coefficient length"):
         module._combine_component_samples([np.zeros((4, 3))], [(1.0,)], np.zeros((2, 2)), nangles=4)
+
+
+# Commensurate approximants
+
+
+def _phase_recording_locfield(sample, mode, *_args, **_kwargs):
+    """A fake commensurate ``locfield`` reporting the phase and wavevector it was given."""
+
+    assert mode == "s"
+    record = (float(sample.mm.phi[0]), float(sample.mm.k[0]), float(sample.mm.k[1]))
+    return [_Field(Dipolar=record, Lorentz=(0.0, 0.0, 1.0), Contact=(0.0, 0.0, 0.0)) for _ in sample.muons]
+
+
+def test_find_commensurate_approximant_rounds_each_axis_to_a_short_period() -> None:
+    approximant = find_commensurate_approximant(_structure(), _circular_helix_model((0.3334, 0.2499, 0.0)))
+
+    assert approximant is not None
+    np.testing.assert_allclose(approximant.approximant_rlu, [(1.0 / 3.0, 0.25, 0.0)])
+    assert approximant.denominators == ((3, 4, 1),)
+    assert approximant.periods == (3, 4, 1)
+    assert approximant.max_deviation_rlu == pytest.approx(1e-4, abs=1e-6)
+    assert approximant.is_exact is False
+    assert approximant.describe() == "q = (1/3, 1/4, 0) with a 3 x 4 x 1 magnetic supercell"
+    assert approximant.to_json()["periods"] == [3, 4, 1]
+
+
+def test_find_commensurate_approximant_combines_periods_across_wavevectors() -> None:
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.5, 0.0, 0.0), (0.0, 0.3333, 0.0), (0.0, 0.0, 0.0)),
+        components=(_helix("q1", (1.0, 0.0, 0.0)), _helix("q2", (0.0, 1.0, 0.0))),
+    )
+
+    approximant = find_commensurate_approximant(_structure(), model)
+
+    assert approximant is not None
+    assert approximant.periods == (2, 3, 1)
+
+
+def test_find_commensurate_approximant_reports_a_genuinely_incommensurate_q() -> None:
+    # 0.12345 is 1.5e-3 from 1/8, outside the default 1e-3 tolerance.
+    assert find_commensurate_approximant(_structure(), _circular_helix_model()) is None
+    assert find_commensurate_approximant(_structure(), _circular_helix_model(), tolerance=2e-3) is not None
+    assert find_commensurate_approximant(_structure(), _circular_helix_model(), tolerance=2e-3, max_period=7) is None
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"tolerance": -1.0}, "tolerance must not be negative"),
+        ({"max_period": 0}, "maximum period must be positive"),
+    ],
+)
+def test_find_commensurate_approximant_validates_its_limits(kwargs, message) -> None:
+    with pytest.raises(MagneticFieldError, match=message):
+        find_commensurate_approximant(_structure(), _circular_helix_model(), **kwargs)
+
+
+def test_find_commensurate_approximant_rejects_an_empty_model() -> None:
+    with pytest.raises(MagneticFieldError, match="no non-zero Fourier components"):
+        find_commensurate_approximant(_structure(), _empty_model())
+
+
+def test_approximant_fields_list_each_translation_with_advanced_phases(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+
+    results = calculate_commensurate_approximant_fields(
+        _structure(),
+        _circular_helix_model((0.3334, 0.0, 0.0)),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1)),
+    )
+
+    assert [result.site_label for result in results] == ["A + (0, 0, 0)", "A + (1, 0, 0)", "A + (2, 0, 0)"]
+    np.testing.assert_allclose(
+        [result.muon_position for result in results],
+        [(0.25, 0.25, 0.25), (1.25, 0.25, 0.25), (2.25, 0.25, 0.25)],
+    )
+    # The backend receives the rational q = 1/3 and a phase advanced by q . T (in turns).
+    np.testing.assert_allclose([result.dipolar[0] for result in results], [0.0, 1.0 / 3.0, 2.0 / 3.0])
+    np.testing.assert_allclose([result.dipolar[1] for result in results], [1.0 / 3.0] * 3)
+    assert all(result.lorentz == (0.0, 0.0, 1.0) for result in results)
+    assert all(result.distortion is None for result in results)
+
+
+def test_approximant_fields_keep_one_translation_per_distinct_phase(monkeypatch) -> None:
+    # q = (1/2, 1/2, 0) has a 2 x 2 x 1 supercell but only two distinct phases, 0 and 1/2.
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+
+    results = calculate_commensurate_approximant_fields(
+        _structure(),
+        _circular_helix_model((0.5, 0.4999, 0.0)),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=False),
+    )
+
+    assert [result.site_label for result in results] == ["A + (0, 0, 0)", "A + (0, 1, 0)"]
+    np.testing.assert_allclose([result.dipolar[0] for result in results], [0.0, 0.5])
+
+
+def test_approximant_fields_of_a_single_phase_keep_the_site_label(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+
+    (result,) = calculate_commensurate_approximant_fields(
+        _structure(),
+        _circular_helix_model((0.0002, 0.0, 0.0)),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1)),
+    )
+
+    assert result.site_label == "A"
+    assert result.dipolar[1] == 0.0
+
+
+def test_approximant_fields_need_an_approximant(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+
+    with pytest.raises(MagneticFieldError, match="no commensurate approximant within 0.001 r.l.u. and period 12"):
+        calculate_commensurate_approximant_fields(_structure(), _circular_helix_model(), [_SITE_A])
+
+
+def test_approximant_fields_cap_the_number_of_translations(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+
+    with pytest.raises(MagneticFieldError, match="3 inequivalent translations, more than 2"):
+        calculate_commensurate_approximant_fields(
+            _structure(),
+            _circular_helix_model((0.3334, 0.0, 0.0)),
+            [_SITE_A],
+            options=MagneticFieldOptions(max_approximant_fields=2),
+        )
+
+
+def test_approximant_fields_refuse_distortion_corrections(monkeypatch) -> None:
+    _forbid_muesr(monkeypatch)
+
+    with pytest.raises(MagneticFieldError, match="not available for commensurate approximants"):
+        calculate_commensurate_approximant_fields(
+            _structure(),
+            _circular_helix_model((0.3334, 0.0, 0.0)),
+            [_SITE_A],
+            distorted_structures=[_structure()],
+        )
+
+
+def test_approximant_fields_reject_an_empty_model(monkeypatch) -> None:
+    _forbid_muesr(monkeypatch)
+
+    with pytest.raises(MagneticFieldError, match="no non-zero Fourier components"):
+        calculate_commensurate_approximant_fields(_structure(), _empty_model(), [_SITE_A])
+
+
+# Distribution convergence checks
+
+
+def _ramp_locfield(sample, mode, *_args, **kwargs):
+    """A fake incommensurate lookup whose |B| rises smoothly with the phase angle."""
+
+    assert mode == "i"
+    nangles = int(kwargs["nangles"])
+    values = np.zeros((nangles, 3), dtype=float)
+    values[:, 0] = 1.0 + np.arange(nangles, dtype=float) / nangles
+    return [_Field(Dipolar=values) for _ in sample.muons]
+
+
+def _alternating_locfield(sample, mode, *_args, **kwargs):
+    """A fake lookup whose odd angles differ from its even ones, so half the angles miss half of p(|B|)."""
+
+    assert mode == "i"
+    nangles = int(kwargs["nangles"])
+    values = np.zeros((nangles, 3), dtype=float)
+    values[:, 0] = 1.0 + (np.arange(nangles) % 2)
+    return [_Field(Dipolar=values) for _ in sample.muons]
+
+
+def test_distribution_convergence_checks_pass_for_a_resolved_distribution(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_ramp_locfield)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=1024, histogram_bins=16),
+    )
+
+    assert [check.setting for check in result.convergence] == ["nangles", "phase_sample_count", "histogram_bins"]
+    assert all(check.converged for check in result.convergence)
+    assert result.convergence[0].message.startswith("Halving the lookup angles to 512 shifts")
+    assert result.convergence[2].metric == pytest.approx(64.0)
+    assert result.calculation_parameters["resolved_phase_sampling"] == "grid"
+    payload = result.to_json()["convergence"]
+    assert payload[0]["setting"] == "nangles"
+    assert payload[0]["converged"] is True
+
+
+def test_distribution_convergence_flags_a_coarse_lookup(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_alternating_locfield)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=1024, histogram_bins=16),
+    )
+
+    lookup = result.convergence[0]
+    assert lookup.converged is False
+    assert lookup.metric == pytest.approx(0.5)
+    assert lookup.message.endswith("(more than 1%); double Lookup angles per q.")
+
+
+@pytest.mark.parametrize(
+    ("sampling", "advice"),
+    [("grid", "more lookup angles per q"), ("montecarlo", "more distribution samples")],
+)
+def test_distribution_convergence_flags_sparse_histogram_bins(monkeypatch, sampling, advice) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_ramp_locfield)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=64,
+            phase_sample_count=64,
+            phase_sampling=sampling,
+            random_seed=3,
+            histogram_bins=64,
+        ),
+    )
+
+    bins = result.convergence[-1]
+    assert bins.setting == "histogram_bins"
+    assert bins.converged is False
+    assert bins.message.endswith(f"use fewer histogram bins or {advice}.")
+    samples = result.convergence[1]
+    assert samples.converged is False
+    assert samples.message.endswith(f"use {advice}.")
+    assert result.calculation_parameters["resolved_phase_sampling"] == sampling
+
+
+def test_distribution_convergence_of_a_single_phase_checks_only_the_histogram(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0.0, 0.0, 2.0)))
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _model([0.0, 0.0, 0.5]),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=4, histogram_bins=4),
+    )
+
+    assert [check.setting for check in result.convergence] == ["histogram_bins"]
+    assert result.convergence[0].converged is True
+
+
+def test_half_resolution_grid_keeps_every_other_point_per_axis() -> None:
+    axis = np.arange(4, dtype=float) / 4.0
+    grid = np.stack([mesh.ravel() for mesh in np.meshgrid(axis, axis, indexing="ij")], axis=1)
+
+    half = module._half_resolution_phase_samples(grid, "grid")
+
+    np.testing.assert_allclose(half, [(0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)])
+    assert module._half_resolution_phase_samples(grid[:15], "grid") is None
+    assert module._half_resolution_phase_samples(np.zeros((1, 0)), "grid") is None
+
+
+def test_cdf_distance_measures_the_largest_cumulative_difference() -> None:
+    assert module._cdf_distance(np.array([1.0, 2.0]), np.array([1.0, 2.0])) == 0.0
+    assert module._cdf_distance(np.array([1.0, 2.0]), np.array([1.0, 1.0])) == pytest.approx(0.5)

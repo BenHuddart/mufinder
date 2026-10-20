@@ -204,9 +204,11 @@ unpreviewed incommensurate structures, and calculates at a chosen muon site:
 - the dipolar field of commensurate structures, optionally corrected for the
   host-ion displacements in a relaxed muon supercell at the site and its
   symmetry-equivalent sites, and the field distribution of incommensurate
-  ones, with Auto, Grid or Monte Carlo multi-q phase sampling; commensurate
-  results list their dipolar, Lorentz, contact, demagnetizing, distortion and
-  applied terms;
+  ones, with Auto, Grid or Monte Carlo multi-q phase sampling and convergence
+  checks for lookup angles, samples and histogram bins; near-commensurate
+  structures can instead list the finite fields of their commensurate
+  approximant; commensurate results list their dipolar, Lorentz, contact,
+  demagnetizing, distortion and applied terms;
 - demagnetizing-field corrections for spherical, plate, ellipsoidal and
   rectangular-prism samples;
 - dipolar tensors for selected magnetic ions;
