@@ -952,6 +952,12 @@ Incommensurate distributions are sampled as one combined field, so they show
 their convergence checks (see `Convergence Checks`_) and a note instead of a
 breakdown.
 
+The results table and the term breakdown show fields to six significant
+figures. A component no larger than 10\ :sup:`-12` T, or than 10\ :sup:`-9` of
+its row's magnitude, is rounding noise from the lattice sum and shows as ``0``,
+and no cell shows ``-0``. For a distribution row the magnitude is the mean
+``|B|``. The saved result keeps the calculated values unrounded.
+
 Worked Examples
 ---------------
 

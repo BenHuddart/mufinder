@@ -268,8 +268,10 @@ no two workflow widgets may define the same private method.
        (``SelectionFeedback``, ``selected_table_rows``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
        (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
-       rows are editable, every other status locks the row), and energies in
-       a results table (``format_energy_ev``).
+       rows are editable, every other status locks the row), and energies and
+       numbers in a results table (``format_energy_ev``,
+       ``format_table_number``, ``format_vector_components``: rounding noise
+       and ``-0`` show as ``0``).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
