@@ -88,6 +88,13 @@ _FORM_RESULTS: tuple[
 #: The form-state keys whose values live in ``Result`` records.
 FORM_RESULT_KEYS = tuple(key for key, *_ in _FORM_RESULTS)
 
+#: The form value that means "no result" for each key.
+_EMPTY_FORM_RESULTS: dict[str, Callable[[], object]] = {
+    "magnetic_field_results": lambda: None,
+    "dipolar_tensor_results": list,
+    "nuclear_relaxation_results": dict,
+}
+
 
 def magnetic_field_results(document: ProjectDocument, owner: str | None = None) -> list[Result]:
     """Return the Magnetic Fields result records, oldest first, optionally for one owner."""
@@ -144,13 +151,23 @@ def attach_magnetic_field_results(
     owner: str,
     form_state: Mapping[str, object] | None,
 ) -> dict[str, object]:
-    """Return ``form_state`` with ``owner``'s recorded results put back in."""
+    """Return ``form_state`` with ``owner``'s recorded results put back in.
+
+    Every result key ``owner`` has no record of gets its empty value, so a page
+    reused across projects or workspaces drops the results it showed before.
+    An empty form with no records stays empty, which the page reads as "reset
+    to defaults".
+    """
 
     attached = dict(form_state) if isinstance(form_state, Mapping) else {}
     for key, result_type, _, to_value in _FORM_RESULTS:
         record = magnetic_field_result(document, owner, result_type)
         if record is not None and isinstance(record.data, Mapping):
             attached[key] = to_value(record.data)
+    if not attached:
+        return attached
+    for key, empty in _EMPTY_FORM_RESULTS.items():
+        attached.setdefault(key, empty())
     return attached
 
 

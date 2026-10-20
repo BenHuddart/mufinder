@@ -67,8 +67,25 @@ def test_attach_restores_the_form_the_page_stored(tmp_path: Path) -> None:
     stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form())
 
     assert attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored) == _form()
-    assert attach_magnetic_field_results(document, "other-workspace", stored) == stored
     assert attach_magnetic_field_results(document, "other-workspace", None) == {}
+
+
+def test_attach_gives_every_missing_result_an_explicit_empty_value(tmp_path: Path) -> None:
+    # A page reused across projects must clear results the owner has no record of.
+    document = _document(tmp_path)
+    store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {"magnetic_field_results": _FIELD})
+
+    assert attach_magnetic_field_results(document, "other-workspace", {"histogram_bins": 512}) == {
+        "histogram_bins": 512,
+        "magnetic_field_results": None,
+        "dipolar_tensor_results": [],
+        "nuclear_relaxation_results": {},
+    }
+    assert attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {}) == {
+        "magnetic_field_results": _FIELD,
+        "dipolar_tensor_results": [],
+        "nuclear_relaxation_results": {},
+    }
 
 
 def test_unchanged_results_keep_their_record_and_changed_results_replace_it(tmp_path: Path) -> None:

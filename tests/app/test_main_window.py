@@ -418,6 +418,38 @@ def test_main_window_persists_magnetic_field_calculation_results(qapp, tmp_path:
     reloaded_window.close()
 
 
+def test_main_window_magnetic_field_results_do_not_leak_into_the_next_project(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    first = service.create_project(tmp_path / "first.mufinder", "First")
+    second = service.create_project(tmp_path / "second.mufinder", "Second")
+    # The second project has saved page settings but no result records.
+    second.ui_state["magnetic_field_form"] = {"histogram_bins": 640}
+
+    window._document = first
+    window._refresh_ui_after_project_change()
+    view = window._magnetic_field_view
+    view.set_form_state(
+        {
+            "histogram_bins": 512,
+            "dipolar_tensor_results": [{"site_label": "site 1"}],
+            "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4},
+        }
+    )
+    view._emit_form_state_changed()
+    assert len(magnetic_field_results(first)) == 2
+
+    window._document = second
+    window._refresh_ui_after_project_change()
+    view._emit_form_state_changed()
+
+    state = view.collect_state()
+    assert state["dipolar_tensor_results"] == []
+    assert state["nuclear_relaxation_results"] == {}
+    assert magnetic_field_results(second) == []
+    window.close()
+
+
 def test_main_window_pinned_magnetic_field_workspace_owns_a_copy_of_the_page_results(
     qapp,
     tmp_path: Path,
