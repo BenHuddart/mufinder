@@ -17,6 +17,7 @@ from mufinder.science._muesr_compat import muesr_imports
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
+    MuesrModelData,
     get_muesr_model_data,
     moments_at_atoms,
     resolve_atom_selector,
@@ -30,6 +31,9 @@ MU_B = 9.274_010_078_3e-24
 ANGSTROM_TO_M = 1e-10
 MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538_96
 CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (2.0 * MU0 / 3.0) * MU_B / (ANGSTROM_TO_M**3)
+# muesr returns dipolar tensors as the lattice sum of (3 r̂ r̂ - 1) / r^3 in Å^-3;
+# this factor, mu0 mu_B / (4 pi Å^3), turns that sum into T per mu_B.
+DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0_OVER_4PI * MU_B / (ANGSTROM_TO_M**3)
 CONTACT_COUPLING_UNIT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("angstrom^-3", "Å⁻³"),
     ("T_per_muB", "T/μB"),
@@ -606,7 +610,7 @@ def _commensurate_field_terms(
         sample = _build_muesr_sample(structure, positions)
         sample.new_mm()
         sample.mm.k = model_data.k_rlu
-        sample.mm.fc = model_data.fc
+        sample.mm.fc = _muesr_fourier_components(model_data, options.supercell)
         sample.mm.phi = model_data.phi
         fields = locfield(sample, "s", list(options.supercell), radius, nnn=int(options.nnn), rcont=float(options.rcont))
         for index, local_field in enumerate(fields):
@@ -741,7 +745,10 @@ def calculate_dipolar_tensors_for_atoms(
     sample.mm.k = np.zeros(3, dtype=float)
     sample.mm.fc = _unit_tensor_fourier_components(structure, indices)
     sample.mm.phi = np.zeros(len(structure.species), dtype=float)
-    tensors = [np.asarray(tensor, dtype=float) for tensor in dipten(sample, list(opts.supercell), radius)]
+    tensors = [
+        np.asarray(tensor, dtype=float) * DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
+        for tensor in dipten(sample, list(opts.supercell), radius)
+    ]
     if len(tensors) != len(muons):
         raise MagneticFieldError("muesr returned an unexpected number of dipolar tensors")
     return tuple(
@@ -832,7 +839,7 @@ def calculate_incommensurate_field_distributions(
             sample = _build_muesr_sample(structure, [position for _label, position in muons])
             sample.new_mm()
             sample.mm.k = model_entry.k_rlu
-            sample.mm.fc = model_entry.fc
+            sample.mm.fc = _muesr_fourier_components(model_entry, opts.supercell)
             sample.mm.phi = model_entry.phi
             kwargs: dict[str, Any] = {}
             if mode == "i":
@@ -1269,6 +1276,24 @@ def _load_muesr_engines():
                 "Install muesr and muLFC to enable this workflow."
             ) from exc
     return locfield, find_largest_sphere, dipten
+
+
+def _muesr_fourier_components(model_data: MuesrModelData, supercell: Sequence[int]) -> np.ndarray:
+    """Return muesr Fourier components that measure the order from the muon's own cell.
+
+    muesr places each muon in cell ``floor(supercell / 2)`` of its supercell but
+    takes the Fourier phases ``k . R`` from the supercell origin, so its moments
+    are those of MuFinder's convention translated by that cell. Multiplying every
+    component by ``exp(2 pi i k . floor(supercell / 2))`` undoes the translation:
+    the field at a muon site is the field at that site, whatever the supercell
+    size. The phase goes into the components rather than ``mm.phi``, which keeps
+    muLFC on its fully tested zero-phase path and keeps each circular helix
+    circular.
+    """
+
+    muon_cell = np.floor(np.asarray(supercell, dtype=float) / 2.0)
+    turns = float(np.dot(np.asarray(model_data.k_rlu, dtype=float), muon_cell))
+    return np.asarray(model_data.fc, dtype=complex) * np.exp(2j * np.pi * turns)
 
 
 def _build_muesr_sample(structure: Structure, muon_positions_frac: Sequence[Sequence[float]]):

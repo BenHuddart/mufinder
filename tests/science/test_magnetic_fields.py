@@ -1,8 +1,10 @@
 """Tests for magnetic field helper calculations.
 
-The periodic calculations run through muesr. Apart from the engine-loading
-tests, every test here swaps in a fake muesr (``_install_fake_muesr``) so the
-public entry points run end to end on fields the test controls.
+The periodic calculations run through muesr. Most tests swap in a fake muesr
+(``_install_fake_muesr``) so the public entry points run end to end on fields
+the test controls. The engine-loading tests and the closing real-muesr section
+run the installed engines; that section checks them against closed-form results
+and direct lattice sums, and skips when muesr or muLFC cannot be imported.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from mufinder.science._muesr_compat import muesr_imports, patch_numpy_aliases_fo
 from mufinder.science.demagnetization import DemagnetizingSample
 from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
+    DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3,
     DipolarTensorResult,
     MagneticFieldDependencyError,
     MagneticFieldDistributionResult,
@@ -48,9 +51,10 @@ from mufinder.science.magnetic_structure import (
     FourierTerm,
     MagneticComponent,
     MagneticStructureModel,
+    moments_at_atoms,
 )
 from mufinder.science.muon_distortion import map_muon_distortion
-from tests.support.structures import host_structure, relaxed_muon_supercell
+from tests.support.structures import BODY_CENTRE, host_structure, relaxed_muon_supercell
 
 _structure = partial(host_structure, label="Fe", lattice=3.0, species=("Fe",), positions=((0.0, 0.0, 0.0),))
 _two_atom_structure = partial(host_structure, label="FeO", lattice=3.0, species=("Fe", "O"))
@@ -851,8 +855,11 @@ def test_calculate_dipolar_tensors_for_atoms_uses_explicit_selector(monkeypatch)
     assert calls["fc"][1, 2] == pytest.approx(0.0)
     assert results[0].site_label == "A"
     assert results[0].muon_position == pytest.approx((0.25, 0.25, 0.25))
-    assert np.asarray(results[0].tensor_T_per_muB) == pytest.approx(np.eye(3))
-    assert np.asarray(results[0].to_json()["dipolar_tensor_T_per_muB"]) == pytest.approx(np.eye(3))
+    # muesr's tensor is in Å^-3; the result carries it in T/mu_B.
+    expected = DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * np.eye(3)
+    assert DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 == pytest.approx(0.9274, abs=1e-4)
+    assert np.asarray(results[0].tensor_T_per_muB) == pytest.approx(expected)
+    assert np.asarray(results[0].to_json()["dipolar_tensor_T_per_muB"]) == pytest.approx(expected)
 
 
 def test_calculate_dipolar_tensors_for_atoms_dedupes_and_sorts_indices(monkeypatch) -> None:
@@ -1714,3 +1721,276 @@ def test_half_resolution_grid_keeps_every_other_point_per_axis() -> None:
 def test_cdf_distance_measures_the_largest_cumulative_difference() -> None:
     assert module._cdf_distance(np.array([1.0, 2.0]), np.array([1.0, 2.0])) == 0.0
     assert module._cdf_distance(np.array([1.0, 2.0]), np.array([1.0, 1.0])) == pytest.approx(0.5)
+
+
+# Real muesr lattice sums against independent references
+#
+# These tests run the installed muesr/muLFC engines. The reference for each is
+# either a closed-form result or a direct sum over every ion inside the
+# Lorentz sphere, with the moments taken from ``moments_at_atoms``, so they pin
+# both muesr's numbers and MuFinder's hand-off of the magnetic model to it.
+
+_RADIUS = 12.0
+_GENERAL_SITE = (0.1, 0.2, 0.3)
+_bcc_structure = partial(host_structure, label="Fe2", lattice=3.0, species=("Fe", "Fe"), positions=BODY_CENTRE)
+
+
+@pytest.fixture
+def real_muesr() -> None:
+    """Skip a test unless the real muesr and muLFC engines import."""
+
+    try:
+        module._load_muesr_engines()
+    except MagneticFieldDependencyError as exc:
+        pytest.skip(str(exc))
+
+
+def _single_q_model(q, real, imaginary=(0.0, 0.0, 0.0)) -> MagneticStructureModel:
+    """One component on every atom with Fourier coefficient ``real + i imaginary`` at ``q``."""
+
+    return MagneticStructureModel(
+        q_basis_rlu=(tuple(float(value) for value in q), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            MagneticComponent(
+                component_id="moment",
+                label="Moment",
+                kind="custom",
+                selector=AtomSelector.all(),
+                terms=(FourierTerm((1.0, 0.0, 0.0), ComplexVector(real=tuple(real), imaginary=tuple(imaginary))),),
+            ),
+        ),
+    )
+
+
+def _direct_lattice_field(structure, model, muon_frac, radius, *, displacements=None) -> np.ndarray:
+    """Dipolar field in T at ``muon_frac`` summed directly over every ion within ``radius`` Å.
+
+    Moments follow MuFinder's convention, ``moments_at_atoms`` with cell offsets
+    measured from the origin cell. ``displacements`` maps ``(atom index, cell
+    offset)`` to a Cartesian shift in Å; an ion's pristine site decides whether
+    it lies inside the sphere.
+    """
+
+    lattice = np.asarray(structure.lattice_vectors, dtype=float)
+    fractional = np.asarray(structure.fractional_positions, dtype=float)
+    muon = np.asarray(muon_frac, dtype=float)
+    reach = int(np.ceil(radius / np.min(np.linalg.norm(lattice, axis=1)))) + 1
+    steps = range(-reach, reach + 1)
+    offsets = np.floor(muon) + np.array([(i, j, k) for i in steps for j in steps for k in steps], dtype=float)
+    indices = np.repeat(np.arange(len(fractional)), len(offsets))
+    cells = np.tile(offsets, (len(fractional), 1))
+    positions = (fractional[indices] + cells) @ lattice
+    muon_cart = muon @ lattice
+    inside = np.linalg.norm(positions - muon_cart, axis=1) < radius
+    for (atom, offset), shift in (displacements or {}).items():
+        match = (indices == atom) & np.all(cells == np.asarray(offset, dtype=float), axis=1)
+        positions[match] += np.asarray(shift, dtype=float)
+    moments = moments_at_atoms(structure, model, indices[inside], cells[inside])
+    return np.asarray(calculate_finite_dipolar_field(positions[inside], moments, muon_cart))
+
+
+def test_real_muesr_ferromagnet_body_centre_sees_only_the_lorentz_field(real_muesr) -> None:
+    # Cubic symmetry cancels the dipolar sum at the body centre, leaving the
+    # Lorentz field mu0 M / 3 of 1 mu_B per (3 Å)^3, 0.1439 T.
+    (result,) = calculate_commensurate_fields(_structure(), _model(), [(0.5, 0.5, 0.5)])
+
+    lorentz = 4.0e-7 * np.pi * 9.274_010_078_3e-24 / (3.0e-10) ** 3 / 3.0
+    assert result.dipolar == pytest.approx((0.0, 0.0, 0.0), abs=1e-9)
+    assert result.lorentz == pytest.approx((0.0, 0.0, lorentz), rel=5e-3)
+    assert lorentz == pytest.approx(0.1439, abs=1e-4)
+    assert result.contact == (0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("structure", "model"),
+    [
+        (_structure, partial(_single_q_model, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0))),
+        (_structure, partial(_single_q_model, (0.0, 0.0, 0.5), (0.0, 0.0, 1.0))),
+        (_structure, partial(_single_q_model, (0.5, 0.0, 0.5), (1.0, 0.0, 0.0))),
+        (_structure, partial(_single_q_model, (0.0, 0.0, 0.25), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
+        (_structure, partial(_single_q_model, (1 / 3, 0.2, 0.25), (0.0, 0.0, 1.0), (0.0, 0.5, 0.0))),
+        (_bcc_structure, partial(_single_q_model, (0.0, 0.0, 1 / 3), (1.0, 0.0, 0.0))),
+    ],
+    ids=["ferromagnet", "a-type", "c-type", "quarter-helix", "elliptical-three-q", "bcc-third"],
+)
+@pytest.mark.parametrize("supercell", [(15, 15, 15), (14, 16, 17)], ids=["odd", "anisotropic"])
+def test_real_muesr_commensurate_dipolar_field_matches_a_direct_lattice_sum(real_muesr, structure, model, supercell) -> None:
+    (result,) = calculate_commensurate_fields(
+        structure(), model(), [_GENERAL_SITE], options=MagneticFieldOptions(supercell=supercell, radius=_RADIUS)
+    )
+
+    expected = _direct_lattice_field(structure(), model(), _GENERAL_SITE, _RADIUS)
+    np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
+
+
+def test_real_muesr_commensurate_field_does_not_depend_on_the_supercell_size(real_muesr) -> None:
+    # muesr puts the muon in cell floor(N / 2); with q = 1/3 every N in 14..16
+    # lands that cell on a different magnetic phase unless MuFinder compensates.
+    model = _single_q_model((0.0, 0.0, 1 / 3), (0.0, 0.0, 1.0))
+
+    dipolar = [
+        calculate_commensurate_fields(
+            _structure(), model, [_GENERAL_SITE], options=MagneticFieldOptions(supercell=(n, n, n), radius=_RADIUS)
+        )[0].dipolar
+        for n in (14, 15, 16)
+    ]
+
+    np.testing.assert_allclose(dipolar[1], dipolar[0], rtol=1e-6, atol=1e-9)
+    np.testing.assert_allclose(dipolar[2], dipolar[0], rtol=1e-6, atol=1e-9)
+
+
+def test_real_muesr_contact_field_converts_the_coupling_unit(real_muesr) -> None:
+    # A uniform 1 mu_B ferromagnet gives a contact field equal to the coupling in T per mu_B.
+    options = MagneticFieldOptions(
+        supercell=(15, 15, 15),
+        radius=_RADIUS,
+        contact_coupling=contact_coupling_to_angstrom_minus3(0.5, "T_per_muB"),
+    )
+
+    results = calculate_commensurate_fields(_structure(), _model(), [(0.5, 0.5, 0.5), _GENERAL_SITE], options=options)
+
+    for result in results:
+        assert result.contact == pytest.approx((0.0, 0.0, 0.5), rel=1e-6, abs=1e-9)
+
+
+def test_real_muesr_distortion_corrected_field_matches_the_distorted_lattice(real_muesr) -> None:
+    # The Fe one cell along +x moves 0.1 Å away from the muon in a q = 1/4 helix,
+    # where the lattice sum and the correction must agree on that Fe's moment.
+    model = _single_q_model((0.25, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+
+    (result,) = calculate_commensurate_fields(
+        _structure(),
+        model,
+        [_MU_X],
+        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS),
+        distorted_structures=[relaxed],
+    )
+
+    distorted = _direct_lattice_field(
+        _structure(), model, _MU_X, _RADIUS, displacements={(0, (1.0, 0.0, 0.0)): (0.1, 0.0, 0.0)}
+    )
+    assert np.linalg.norm(result.distortion) > 1e-3
+    np.testing.assert_allclose(
+        np.asarray(result.dipolar) + np.asarray(result.distortion), distorted, rtol=1e-6, atol=1e-9
+    )
+
+
+def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_muesr) -> None:
+    model = _single_q_model((0.0, 0.0, 0.25), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+
+    results = calculate_commensurate_approximant_fields(
+        _structure(), model, [_GENERAL_SITE], options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS)
+    )
+
+    assert [result.site_label for result in results] == [f"site 1 + (0, 0, {step})" for step in range(4)]
+    for result in results:
+        expected = _direct_lattice_field(_structure(), model, result.muon_position, _RADIUS)
+        np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("real", "imaginary"),
+    [((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), ((0.0, 0.0, 1.0), (0.0, 0.5, 0.0)), ((0.0, 0.0, 1.0), (0.0, 0.0, 0.0))],
+    ids=["circular-helix", "elliptical", "spin-density-wave"],
+)
+def test_real_muesr_incommensurate_fields_trace_the_direct_sum_ellipse(real_muesr, real, imaginary) -> None:
+    # A single-q structure gives B(theta) = cos(theta) B0 + sin(theta) B90, where
+    # B0 is the field of the model and B90 that of the model a quarter turn on.
+    q = (0.1234, 0.0, 0.0)
+    coefficient = np.asarray(real) + 1j * np.asarray(imaginary)
+    quarter = -1j * coefficient
+    options = MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS, include_lorentz=False, nangles=360)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(), _single_q_model(q, real, imaginary), [_GENERAL_SITE], options=options
+    )
+
+    basis = np.stack(
+        [
+            _direct_lattice_field(_structure(), _single_q_model(q, real, imaginary), _GENERAL_SITE, _RADIUS),
+            _direct_lattice_field(_structure(), _single_q_model(q, quarter.real, quarter.imag), _GENERAL_SITE, _RADIUS),
+        ],
+        axis=1,
+    )
+    coefficients, *_ = np.linalg.lstsq(basis, result.fields_T.T, rcond=None)
+    np.testing.assert_allclose(basis @ coefficients, result.fields_T.T, rtol=1e-6, atol=1e-9)
+    np.testing.assert_allclose(np.linalg.norm(coefficients, axis=0), 1.0, rtol=0.0, atol=1e-6)
+
+
+def test_real_muesr_dipolar_tensor_maps_a_moment_onto_its_lattice_field(real_muesr) -> None:
+    options = MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS)
+
+    (result,) = calculate_dipolar_tensors_for_atoms(_structure(), [_GENERAL_SITE], magnetic_ion_indices=[0], options=options)
+
+    tensor = np.asarray(result.tensor_T_per_muB)
+    np.testing.assert_allclose(tensor, tensor.T, rtol=0.0, atol=1e-12)
+    assert np.trace(tensor) == pytest.approx(0.0, abs=1e-9)
+    for axis in np.eye(3):
+        expected = _direct_lattice_field(_structure(), _single_q_model((0.0, 0.0, 0.0), axis), _GENERAL_SITE, _RADIUS)
+        np.testing.assert_allclose(tensor @ axis, expected, rtol=1e-6, atol=1e-9)
+
+
+# Worked examples in docs/magnetic_fields.rst, at the default calculation settings
+
+_FACE_CENTRE = (0.5, 0.5, 0.0)
+_EDGE_CENTRE = (0.5, 0.0, 0.0)
+_DOC_PRECISION = 5e-5
+
+
+def _documented_helix(q_c: float) -> MagneticStructureModel:
+    return _single_q_model((0.0, 0.0, q_c), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+
+
+def test_worked_example_ferromagnet(real_muesr) -> None:
+    sites = [(0.5, 0.5, 0.5), _FACE_CENTRE, _EDGE_CENTRE]
+    coupling = contact_coupling_to_angstrom_minus3(0.5, "T_per_muB")
+
+    results = calculate_commensurate_fields(_structure(), _model(), sites)
+    (with_contact,) = calculate_commensurate_fields(
+        _structure(), _model(), sites[:1], options=MagneticFieldOptions(contact_coupling=coupling)
+    )
+
+    expected = [(0.0, 0.1437, 0.1437), (-0.2977, 0.1438, -0.1538), (-0.5166, 0.1438, -0.3728)]
+    for result, (dipolar, lorentz, total) in zip(results, expected, strict=True):
+        assert result.dipolar[2] == pytest.approx(dipolar, abs=_DOC_PRECISION)
+        assert result.lorentz[2] == pytest.approx(lorentz, abs=_DOC_PRECISION)
+        assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
+    assert with_contact.total == pytest.approx((0.0, 0.0, 0.6437), abs=_DOC_PRECISION)
+
+
+def test_worked_example_dipolar_tensors(real_muesr) -> None:
+    face, edge = calculate_dipolar_tensors_for_atoms(_structure(), [_FACE_CENTRE, _EDGE_CENTRE], magnetic_ion_indices=[0])
+
+    np.testing.assert_allclose(face.tensor_T_per_muB, np.diag([0.1488, 0.1488, -0.2977]), atol=_DOC_PRECISION)
+    np.testing.assert_allclose(edge.tensor_T_per_muB, np.diag([1.0332, -0.5166, -0.5166]), atol=_DOC_PRECISION)
+
+
+def test_worked_example_a_type_antiferromagnet(real_muesr) -> None:
+    model = _single_q_model((0.0, 0.0, 0.5), (0.0, 0.0, 1.0))
+
+    results = calculate_commensurate_fields(_structure(), model, [(0.5, 0.5, 0.5), _FACE_CENTRE, _EDGE_CENTRE])
+
+    for result, total in zip(results, (0.0, -0.5493, -0.8003), strict=True):
+        assert result.lorentz == pytest.approx((0.0, 0.0, 0.0), abs=_DOC_PRECISION)
+        assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
+
+
+def test_worked_example_commensurate_helix(real_muesr) -> None:
+    axis = calculate_commensurate_approximant_fields(_structure(), _documented_helix(0.25), [_FACE_CENTRE])
+    edge = calculate_commensurate_approximant_fields(_structure(), _documented_helix(0.25), [_EDGE_CENTRE])
+
+    assert [result.magnitude for result in axis] == pytest.approx([0.2836] * 4, abs=_DOC_PRECISION)
+    assert [result.magnitude for result in edge] == pytest.approx([1.1660, 0.3637] * 2, abs=_DOC_PRECISION)
+    assert edge[0].total == pytest.approx((1.1660, 0.0, 0.0), abs=_DOC_PRECISION)
+    assert edge[1].total == pytest.approx((0.0, -0.3637, 0.0), abs=_DOC_PRECISION)
+
+
+def test_worked_example_incommensurate_helix(real_muesr) -> None:
+    axis, edge = calculate_incommensurate_field_distributions(
+        _structure(), _documented_helix(0.2861), [_FACE_CENTRE, _EDGE_CENTRE]
+    )
+
+    np.testing.assert_allclose(axis.magnitudes_T, 0.2816, atol=_DOC_PRECISION)
+    assert edge.magnitudes_T.min() == pytest.approx(0.3616, abs=_DOC_PRECISION)
+    assert edge.magnitudes_T.max() == pytest.approx(1.1634, abs=_DOC_PRECISION)
