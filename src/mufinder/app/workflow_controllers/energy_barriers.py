@@ -51,6 +51,12 @@ from mufinder.services.definition_mappings import (
     remove_source_keys_from_definition,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.muon_sites_summary import (
+    ENERGY_BARRIERS_SCOPE,
+    DownstreamSiteScope,
+    downstream_site_scope,
+    set_show_every_relaxed_site,
+)
 from mufinder.services.source_candidates import (
     ENERGY_BARRIERS_FORM_STATE_KEY,
     EnergyBarrierNebCandidate,
@@ -241,21 +247,48 @@ class EnergyBarriersController(WorkflowJobController):
         ]
         return legacy + self.definitions()
 
-    def endpoint_rows(self) -> list[EnergyBarrierEndpointRow]:
-        """Return the relaxed sites offered as initial and final endpoints."""
+    def site_scope(self) -> DownstreamSiteScope:
+        """Return which relaxed sites the endpoint pickers list."""
+
+        return downstream_site_scope(self._context.document(), ENERGY_BARRIERS_SCOPE)
+
+    def endpoint_rows(self, scope: DownstreamSiteScope | None = None) -> list[EnergyBarrierEndpointRow]:
+        """Return the relaxed sites offered as initial and final endpoints.
+
+        By default these are the sites pinned to the Muon Sites summary, labelled
+        by Wyckoff label and cluster in energy-rank order; with "Show every
+        relaxed site" they are every eligible relaxed site.
+        """
 
         candidates = eligible_quantum_source_candidates(self._context.document())
+        if scope is None:
+            scope = downstream_site_scope(self._context.document(), ENERGY_BARRIERS_SCOPE, candidates)
         relative = quantum_source_relative_energies(candidates)
         return [
             EnergyBarrierEndpointRow(
                 key=candidate.key,
-                label=candidate.site.label or candidate.job.label or candidate.structure.label,
+                label=scope.pinned_label(candidate.key)
+                or candidate.site.label
+                or candidate.job.label
+                or candidate.structure.label,
                 charge_state=charge_state_label_for_job(candidate.job),
                 source_job=candidate.job.label,
                 relative_energy=_format_endpoint_relative_energy(relative.get(candidate.key)),
             )
-            for candidate in candidates
+            for candidate in scope.scoped_candidates(candidates)
         ]
+
+    def set_show_every_site(self, enabled: bool) -> None:
+        """Offer every eligible relaxed site as an endpoint (``True``) or only the pinned ones."""
+
+        document = self._context.document()
+        if document is None:
+            return
+        set_show_every_relaxed_site(document, ENERGY_BARRIERS_SCOPE, enabled)
+        self.refresh_view()
+        self._context.persist_ui_state(
+            failure_message="The Energy Barriers endpoint list was updated, but autosave failed."
+        )
 
     def select_endpoints(self, reactant_key: str, product_key: str) -> None:
         """Remember the endpoint pair the form selects."""
@@ -1042,14 +1075,17 @@ class EnergyBarriersController(WorkflowJobController):
             return
         document = self._context.document()
         if document is None:
+            view.set_site_scope(show_every_site=False)
             view.set_endpoint_options([])
             view.set_sources([])
             view.set_neb_results([])
             return
 
         reactant_key, product_key = selected_energy_barrier_endpoint_keys(document)
+        scope = self.site_scope()
+        view.set_site_scope(show_every_site=scope.show_every_site, notice=scope.notice)
         view.set_endpoint_options(
-            self.endpoint_rows(),
+            self.endpoint_rows(scope),
             reactant_key=reactant_key,
             product_key=product_key,
             max_path_length_text=energy_barrier_max_path_length_text(document),

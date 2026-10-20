@@ -15,6 +15,7 @@ from PySide6.QtTest import QTest
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
+from mufinder.services.muon_sites_summary import MAGNETIC_FIELDS_SCOPE, set_show_every_relaxed_site
 from mufinder.app import workflow_table_utils
 from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
@@ -1484,6 +1485,7 @@ def _displaced_iron_supercell() -> Structure:
 def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(qapp, tmp_path) -> None:
     relaxed_structure = _displaced_iron_supercell()
     document = _relaxation_cluster_document(tmp_path, relaxed_structure)
+    set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
     _set_site_source(dialog, "relaxation_clustering")
@@ -1504,6 +1506,7 @@ def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_op
 
 def test_muon_site_selection_dialog_restores_the_distortion_choice(qapp, tmp_path) -> None:
     document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
     first = MuonSiteSelectionDialog(document, _host_structure())
     _set_site_source(first, "relaxation_clustering")
     first._distortion_checkbox.setChecked(True)

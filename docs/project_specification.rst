@@ -50,6 +50,10 @@ Dependency policy:
 
 - downstream workflows consume completed structural muon relaxations as durable
   project entities, never unrelaxed candidates
+- quantum corrections, energy barriers and magnetic fields list the distinct
+  sites pinned to the Muon Sites summary by default, one per pinned site of the
+  matching charge state; a per-workflow ``Show every relaxed site`` option
+  lists every eligible relaxed site instead
 - convergence outputs prefill the project calculation defaults
 - a pristine relaxation output may become the active host basis for later
   stages
@@ -401,7 +405,12 @@ Relaxation analysis and clustering
   as distinct sites with representative structures (see
   :doc:`structural_relaxation_analysis` and :doc:`site_generation`).
 - Distinct sites can be pinned on the Muon Sites summary page, which is the
-  source downstream workflows read, and exported as CIF.
+  source downstream workflows read, and exported as CIF. Each pinned site
+  records its cluster's representative relaxation job, which resolves it to the
+  relaxed muon site quantum corrections and energy barriers start from, under
+  the same eligibility rules as the full list. A charge state with no pin, or a
+  pinned site that no longer resolves, is reported on the downstream page with
+  a link to the Muon Sites page.
 
 Host structure magnetic editing and the supercell editor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

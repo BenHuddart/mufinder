@@ -173,7 +173,9 @@ fitted Wyckoff labels, analyses the host displacements around a site, and
 exports the relaxed positions as CIF. ``Pin to Summary`` copies a workspace's
 distinct sites to the ``Muon Sites`` summary page, which shows one card per
 charge state with a ranked site table, a 3D preview, links back into the
-analysis, and CIF export of the pinned sites.
+analysis, and CIF export of the pinned sites. Quantum Corrections, Energy
+Barriers and the Magnetic Fields muon-site dialog list the pinned sites by
+default, with a ``Show every relaxed site`` option for the full list.
 
 See :doc:`structural_relaxation_analysis`.
 

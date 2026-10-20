@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import (
     arrow_icon,
     current_palette,
@@ -540,6 +541,8 @@ class EnergyBarriersWidget(SourceTableWidget):
     """
 
     endpoint_selection_changed = Signal(str, str)
+    show_every_site_toggled = Signal(bool)
+    open_muon_sites_requested = Signal()
     generate_paths_requested = Signal(str, str, str)
     remove_sources_requested = Signal(list)
     cancel_requested = Signal(object)
@@ -626,6 +629,10 @@ class EnergyBarriersWidget(SourceTableWidget):
         endpoint_hint.setWordWrap(True)
         style_hint_text(endpoint_hint)
         endpoint_layout.addWidget(endpoint_hint)
+        self._site_scope = PinnedSitesScopeBar(endpoint_group)
+        self._site_scope.show_every_site_toggled.connect(self.show_every_site_toggled)
+        self._site_scope.open_muon_sites_requested.connect(self.open_muon_sites_requested)
+        endpoint_layout.addWidget(self._site_scope)
 
         endpoint_form = QFormLayout()
         endpoint_form.setHorizontalSpacing(10)
@@ -862,6 +869,11 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._reactant_combo.blockSignals(False)
         self._product_combo.blockSignals(False)
         self._update_actions()
+
+    def set_site_scope(self, *, show_every_site: bool, notice: str = "") -> None:
+        """Show whether the endpoints list every relaxed site, and the pinned-sites notice."""
+
+        self._site_scope.set_state(show_every_site=show_every_site, notice=notice)
 
     def set_sources(self, rows: list[EnergyBarrierSourceRow]) -> None:
         self._sources_group.setTitle(f"Diffusion Paths ({len(rows)})")

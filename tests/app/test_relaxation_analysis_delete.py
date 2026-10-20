@@ -13,6 +13,10 @@ from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_analysis_widget import RelaxationAnalysisWidget, default_workspace_state
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
+from mufinder.services.muon_sites_summary import (
+    MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
+    store_muon_sites_summary_snapshot,
+)
 from mufinder.services.project_summary import relaxation_analysis_complete
 from tests.support.main_window import window_with_host
 from tests.support.structures import host_structure
@@ -109,12 +113,12 @@ def test_delete_removes_a_summary_pin_taken_from_the_workspace(
         stale = _workspace(host, "Preliminary analysis")
         other = _workspace(host, "Muonium analysis", charge_state=MUONIUM_CHARGE_STATE)
         window._set_relaxation_analysis_workspaces([stale, other])
-        window._store_muon_sites_summary_snapshot(POSITIVE_MUON_CHARGE_STATE, _snapshot(stale, host))
-        window._store_muon_sites_summary_snapshot(MUONIUM_CHARGE_STATE, _snapshot(other, host))
+        store_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE, _snapshot(stale, host))
+        store_muon_sites_summary_snapshot(doc, MUONIUM_CHARGE_STATE, _snapshot(other, host))
 
         window._delete_relaxation_analysis_workspace(str(stale["id"]))
 
-        snapshots = doc.ui_state[window._MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
+        snapshots = doc.ui_state[MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
         assert POSITIVE_MUON_CHARGE_STATE not in snapshots
         assert snapshots[MUONIUM_CHARGE_STATE]["workspace_id"] == other["id"]
         assert "pin is removed" in confirmed_destructive_actions[-1]["detail"]
