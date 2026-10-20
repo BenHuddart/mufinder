@@ -287,6 +287,12 @@ from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase, partial_count_suffix
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_PAGE_OWNER,
+    attach_magnetic_field_results,
+    remove_magnetic_field_results,
+    store_magnetic_field_results,
+)
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
@@ -3065,7 +3071,7 @@ class MainWindow(QMainWindow):
                 title_editable=True,
                 deletable=True,
             )
-            widget.set_form_state(form_state if isinstance(form_state, Mapping) else {})
+            widget.set_form_state(attach_magnetic_field_results(self._document, workspace_id, form_state))
             widget.magnetic_structure_changed.connect(
                 lambda payload, workspace_id=workspace_id: self._on_magnetic_field_workspace_structure_changed(
                     workspace_id,
@@ -3109,7 +3115,7 @@ class MainWindow(QMainWindow):
                 title_editable=True,
                 deletable=True,
             )
-            widget.set_form_state(form_state if isinstance(form_state, Mapping) else {})
+            widget.set_form_state(attach_magnetic_field_results(self._document, workspace_id, form_state))
 
     def _on_delete_comparison_table_requested(self, payload: object) -> None:
         if isinstance(payload, UUID):
@@ -10689,7 +10695,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
         self._magnetic_field_view.set_form_state(
-            self._document.ui_state.get(self._MAGNETIC_FIELD_FORM_KEY, {})
+            attach_magnetic_field_results(
+                self._document,
+                MAGNETIC_FIELD_PAGE_OWNER,
+                self._document.ui_state.get(self._MAGNETIC_FIELD_FORM_KEY, {}),
+            )
         )
         self._refresh_magnetic_field_workspace_views()
 
@@ -10752,7 +10762,9 @@ class MainWindow(QMainWindow):
     def _on_magnetic_field_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
             return
-        self._document.ui_state[self._MAGNETIC_FIELD_FORM_KEY] = state
+        self._document.ui_state[self._MAGNETIC_FIELD_FORM_KEY] = store_magnetic_field_results(
+            self._document, MAGNETIC_FIELD_PAGE_OWNER, state
+        )
 
     def _normalize_magnetic_field_workspace_title(self, title: object) -> str:
         normalized = str(title).strip()
@@ -10785,7 +10797,13 @@ class MainWindow(QMainWindow):
     def _on_magnetic_field_workspace_form_state_changed(self, workspace_id: str, state: dict) -> None:
         if self._document is None or self._shutting_down:
             return
-        self._replace_magnetic_field_workspace(workspace_id, {"form": state})
+        if not any(
+            str(workspace.get("id", "")).strip() == workspace_id for workspace in self._magnetic_field_workspaces_state()
+        ):
+            return
+        self._replace_magnetic_field_workspace(
+            workspace_id, {"form": store_magnetic_field_results(self._document, workspace_id, state)}
+        )
 
     def _on_magnetic_field_workspace_title_changed(self, workspace_id: str, title: str) -> None:
         if self._document is None or self._shutting_down:
@@ -10823,7 +10841,9 @@ class MainWindow(QMainWindow):
             "id": workspace_id,
             "title": normalized,
             "magnetic_structure": magnetic_structure if isinstance(magnetic_structure, dict) else None,
-            "form": form_state if isinstance(form_state, dict) else {},
+            "form": store_magnetic_field_results(
+                self._document, workspace_id, form_state if isinstance(form_state, dict) else {}
+            ),
         }
         workspaces = list(self._magnetic_field_workspaces_state())
         workspaces.append(workspace)
@@ -10862,6 +10882,7 @@ class MainWindow(QMainWindow):
             for workspace in workspaces
             if str(workspace.get("id", "")).strip() != workspace_id
         ]
+        remove_magnetic_field_results(self._document, workspace_id)
         self._sync_magnetic_field_workspace_views()
         self._populate_project_tree()
         route = self._active_route()

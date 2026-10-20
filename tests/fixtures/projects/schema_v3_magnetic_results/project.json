@@ -1,0 +1,44 @@
+{
+  "app_version": "0.6.0",
+  "created_at": "2026-10-14T20:17:07.787183+00:00",
+  "host_structure_id": null,
+  "id": "4c1e7a2b-9d3f-4e5a-8b6c-7d8e9f0a1b2c",
+  "magnetic_structure": null,
+  "modified_at": "2026-10-14T20:17:07.787735+00:00",
+  "name": "Schema 3 magnetic results",
+  "notes": "",
+  "recommended_cutoff_cell_id": null,
+  "recommended_cutoff_energy": null,
+  "recommended_cutoff_energy_threshold": null,
+  "recommended_cutoff_force_threshold": null,
+  "recommended_cutoff_method": null,
+  "recommended_cutoff_stress_threshold": null,
+  "recommended_cutoff_xc_functional": null,
+  "recommended_kpoint_cell_id": null,
+  "recommended_kpoint_energy_threshold": null,
+  "recommended_kpoint_force_threshold": null,
+  "recommended_kpoint_grid": null,
+  "recommended_kpoint_lattice": null,
+  "recommended_kpoint_method": null,
+  "recommended_kpoint_stress_threshold": null,
+  "recommended_kpoint_xc_functional": null,
+  "recommended_xc_functional": null,
+  "schema_version": 3,
+  "supercell_matrix": [
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      1
+    ]
+  ]
+}

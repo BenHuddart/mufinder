@@ -9,6 +9,7 @@ import pytest
 
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result
+from mufinder.services.magnetic_field_results import MAGNETIC_FIELD_PAGE_OWNER, store_magnetic_field_results
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_survey import (
     SurveyMarkerKind,
@@ -237,18 +238,35 @@ def test_quantum_layer_places_zero_point_energies_at_the_relaxed_position(tmp_pa
 def test_magnetic_layer_shows_commensurate_field_magnitudes(tmp_path: Path) -> None:
     project = muon_project(tmp_path)
     project.document.ui_state["magnetic_field_workspaces"] = [
-        {
-            "id": "mag-1",
-            "title": "AFM",
-            "form": {
-                "magnetic_field_results": {
-                    "kind": "commensurate",
-                    "results": [{"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}],
-                }
-            },
-        },
-        {"id": "mag-2", "title": "Distribution", "form": {"magnetic_field_results": {"kind": "distribution", "results": []}}},
+        {"id": "mag-1", "title": "AFM", "form": {}},
+        {"id": "mag-2", "title": "Distribution", "form": {}},
     ]
+    store_magnetic_field_results(
+        project.document,
+        "mag-1",
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}],
+            }
+        },
+    )
+    store_magnetic_field_results(
+        project.document,
+        "mag-2",
+        {"magnetic_field_results": {"kind": "distribution", "results": [{"site_label": "3c", "fields_T": []}]}},
+    )
+    # The page's own results are not a saved workspace and add no layer.
+    store_magnetic_field_results(
+        project.document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.5}],
+            }
+        },
+    )
 
     (layer,) = survey_layers(project.document, "magnetic_fields")
 

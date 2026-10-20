@@ -431,6 +431,13 @@ no two workflow widgets may define the same private method.
        (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
        per-stage project summary (``summarize_project``; see
        :doc:`project_home`).
+   * - ``mufinder.services.magnetic_field_results``
+     - The Magnetic Fields page's and each saved magnetic-field workspace's
+       latest field, dipolar-tensor and nuclear-relaxation results as
+       ``Result`` records with no calculation run, keyed by owner
+       (``store_magnetic_field_results``, ``attach_magnetic_field_results``,
+       ``remove_magnetic_field_results``, ``magnetic_field_results``; see
+       :doc:`magnetic_fields`).
    * - ``mufinder.services.project_survey``
      - The positions each stage has found, in the active host's cell, for the
        project home's cell survey (``survey_layers``,

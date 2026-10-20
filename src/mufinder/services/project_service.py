@@ -265,10 +265,12 @@ class ProjectService:
             entity_type: store.load_entities(entity_type)
             for entity_type in ("structures", "sites", "calculations", "runs", "results", "comparison_tables", "jobs")
         }
+        ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
         # Projects saved at an older schema are upgraded in memory; the entity
-        # files a migration changed are left out of the dirty-tracking cache
-        # below so the next save writes them with the new manifest version.
-        migrated_keys = migrate_project_payloads(manifest, payloads)
+        # files (and ui_state) a migration changed are left out of the
+        # dirty-tracking cache below so the next save writes them with the new
+        # manifest version.
+        migrated_keys = migrate_project_payloads(manifest, payloads, ui_state)
 
         project = project_codec.project_from_dict(manifest)
         # Each entity directory is named after the ``ProjectDocument`` mapping it fills.
@@ -285,7 +287,6 @@ class ProjectService:
         unsaved_keys = migrated_keys | {
             ("jobs", payload["id"]) for payload in job_payloads if payload.get("created_at") is None
         }
-        ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
 
         document = ProjectDocument(
             project_root=project_root,
@@ -313,9 +314,10 @@ class ProjectService:
                 self._content_hashes[(root_key, entity_type, entity_id)] = self._payload_hash(
                     to_jsonable(entity)
                 )
-        self._content_hashes[(root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)] = (
-            self._payload_hash(to_jsonable(ui_state))
-        )
+        if (self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID) not in unsaved_keys:
+            self._content_hashes[(root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)] = (
+                self._payload_hash(to_jsonable(ui_state))
+            )
 
         issues = self.validate_document(document)
         if issues:

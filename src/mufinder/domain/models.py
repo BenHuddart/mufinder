@@ -241,7 +241,7 @@ MANUAL_DEFAULT_METHOD = "manual"
 
 #: Saved-project schema version this code writes. Older projects are upgraded
 #: on load by ``mufinder.persistence.migrations``.
-PROJECT_SCHEMA_VERSION = 3
+PROJECT_SCHEMA_VERSION = 4
 
 
 @dataclass(slots=True)

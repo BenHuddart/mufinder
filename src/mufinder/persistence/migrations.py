@@ -1,10 +1,12 @@
 """Load-time migrations between saved-project schema versions.
 
 ``ProjectService.load_project`` reads the manifest and every entity payload off
-disk, then passes them to :func:`migrate_project_payloads` before it builds any
-domain object. Each entry in ``_MIGRATIONS`` upgrades payloads saved at one
-schema version to the next, in place, and reports which entity files it
-changed so the caller can make the next save rewrite them. Migrations never
+disk, together with the saved ``ui_state``, then passes them to
+:func:`migrate_project_payloads` before it builds any domain object. Each entry
+in ``_MIGRATIONS`` upgrades payloads saved at one schema version to the next,
+in place, and reports which entity files it changed (and :data:`UI_STATE_KEY`
+when it changed ``ui_state``) so the caller can make the next save rewrite
+them. Migrations never
 touch provenance: those records are history and keep the names they were
 written with.
 
@@ -16,7 +18,9 @@ schema 1.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from mufinder.domain.models import PROJECT_SCHEMA_VERSION
 
@@ -27,6 +31,11 @@ EntityPayloads = dict[str, list[dict[str, Any]]]
 EntityKey = tuple[str, str]
 """An ``(entity_type, entity_id)`` pair naming one entity file."""
 
+UI_STATE_KEY: EntityKey = ("ui_state", "ui_state")
+"""The key a migration step reports when it changed ``ui_state``."""
+
+MigrationStep = Callable[[EntityPayloads, dict[str, Any]], set[EntityKey]]
+
 _SWEEP_STAGES = frozenset({"convergence_cutoff", "convergence_kpoint"})
 
 
@@ -36,24 +45,30 @@ def stored_schema_version(manifest: dict[str, Any]) -> int:
     return int(manifest.get("schema_version", 1))
 
 
-def migrate_project_payloads(manifest: dict[str, Any], entities: EntityPayloads) -> set[EntityKey]:
-    """Upgrade ``manifest`` and ``entities`` to ``PROJECT_SCHEMA_VERSION`` in place.
+def migrate_project_payloads(
+    manifest: dict[str, Any],
+    entities: EntityPayloads,
+    ui_state: dict[str, Any] | None = None,
+) -> set[EntityKey]:
+    """Upgrade ``manifest``, ``entities`` and ``ui_state`` to ``PROJECT_SCHEMA_VERSION`` in place.
 
     Returns the ``(entity_type, entity_id)`` keys of every entity payload a
-    migration step changed. The manifest's ``schema_version`` is set to the
+    migration step changed or added, plus :data:`UI_STATE_KEY` when a step
+    changed ``ui_state``. The manifest's ``schema_version`` is set to the
     version the payloads now conform to.
     """
 
     version = stored_schema_version(manifest)
     changed: set[EntityKey] = set()
+    state = ui_state if ui_state is not None else {}
     while version < PROJECT_SCHEMA_VERSION:
-        changed |= _MIGRATIONS[version](entities)
+        changed |= _MIGRATIONS[version](entities, state)
         version += 1
     manifest["schema_version"] = version
     return changed
 
 
-def _sweep_values_replace_cutoff_energies(entities: EntityPayloads) -> set[EntityKey]:
+def _sweep_values_replace_cutoff_energies(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
     """Schema 1 to 2: convergence definitions keep their sweep in ``sweep_values`` only.
 
     Schema 1 wrote a convergence definition's configuration with both
@@ -90,7 +105,7 @@ _LEGACY_SITE_POSITION_KEYS = {
 }
 
 
-def _site_positions_split_initial_and_relaxed(entities: EntityPayloads) -> set[EntityKey]:
+def _site_positions_split_initial_and_relaxed(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
     """Schema 2 to 3: a muon site keeps its initial and relaxed positions apart.
 
     Schema 2 stored the position a site was generated at as
@@ -141,8 +156,82 @@ def _site_positions_split_initial_and_relaxed(entities: EntityPayloads) -> set[E
     return changed
 
 
-_MIGRATIONS: dict[int, Callable[[EntityPayloads], set[EntityKey]]] = {
+#: Magnetic Fields form-state key, result type and how its value becomes record data.
+_MAGNETIC_FIELD_FORM_RESULTS: tuple[tuple[str, str, Callable[[object], dict[str, Any] | None]], ...] = (
+    (
+        "magnetic_field_results",
+        "magnetic_field",
+        lambda value: (
+            {"kind": str(value.get("kind", "")), "results": value["results"]}
+            if isinstance(value, dict) and isinstance(value.get("results"), list) and value["results"]
+            else None
+        ),
+    ),
+    (
+        "dipolar_tensor_results",
+        "magnetic_dipolar_tensor",
+        lambda value: {"results": value} if isinstance(value, list) and value else None,
+    ),
+    (
+        "nuclear_relaxation_results",
+        "nuclear_relaxation",
+        lambda value: {"result": value} if isinstance(value, dict) and value else None,
+    ),
+)
+
+
+def _magnetic_field_results_become_results(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
+    """Schema 3 to 4: Magnetic Fields results become ``results`` entities.
+
+    Schema 3 kept the Magnetic Fields page's latest field, dipolar-tensor and
+    nuclear-relaxation results inline in its form state:
+    ``ui_state["magnetic_field_form"]`` for the page and the ``form`` of each
+    entry in ``ui_state["magnetic_field_workspaces"]``. Each non-empty value
+    becomes one result entity with no ``calculation_run_id``, whose
+    ``data["owner"]`` is ``"magnetic_fields"`` for the page or the workspace
+    id, and its key is removed from the form.
+    """
+
+    forms: list[tuple[str, dict[str, Any]]] = []
+    page_form = ui_state.get("magnetic_field_form")
+    if isinstance(page_form, dict):
+        forms.append(("magnetic_fields", page_form))
+    workspaces = ui_state.get("magnetic_field_workspaces")
+    for workspace in workspaces if isinstance(workspaces, list) else []:
+        form = workspace.get("form") if isinstance(workspace, dict) else None
+        owner = str(workspace.get("id", "")).strip() if isinstance(workspace, dict) else ""
+        if isinstance(form, dict) and owner:
+            forms.append((owner, form))
+
+    changed: set[EntityKey] = set()
+    created_at = datetime.now(UTC).isoformat()
+    for owner, form in forms:
+        for key, result_type, to_data in _MAGNETIC_FIELD_FORM_RESULTS:
+            if key not in form:
+                continue
+            data = to_data(form.pop(key))
+            changed.add(UI_STATE_KEY)
+            if data is None:
+                continue
+            result_id = str(uuid4())
+            entities.setdefault("results", []).append(
+                {
+                    "id": result_id,
+                    "calculation_run_id": None,
+                    "result_type": result_type,
+                    "data": {"owner": owner, **data},
+                    "output_files": [],
+                    "derived_structure_ids": [],
+                    "created_at": created_at,
+                }
+            )
+            changed.add(("results", result_id))
+    return changed
+
+
+_MIGRATIONS: dict[int, MigrationStep] = {
     1: _sweep_values_replace_cutoff_energies,
     2: _site_positions_split_initial_and_relaxed,
+    3: _magnetic_field_results_become_results,
 }
 """The step that upgrades payloads saved at each version to the next one."""

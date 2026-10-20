@@ -215,7 +215,8 @@ unpreviewed incommensurate structures, and calculates at a chosen muon site:
   an optional muon-induced distortion correction.
 
 Muon sites come from UEP or relaxation clustering or a custom fractional
-position. Settings are saved as named workspaces.
+position. Settings are saved as named workspaces, and the latest results of
+the page and of each workspace are saved as project results.
 
 See :doc:`magnetic_fields`.
 
