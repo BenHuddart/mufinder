@@ -20,6 +20,12 @@ in ``data["site_source"]``. :data:`UEP_SITE_SOURCE` marks an unrelaxed UEP
 site, so the result is an estimate (:func:`is_unrelaxed_site_source`). A record
 saved without it takes the source of the form's ``selected_muon_site``, because
 choosing a different site clears the field results.
+
+Dipolar-tensor and nuclear-relaxation records carry ``data["site_source"]`` the
+same way. In the form state the source sits on each tensor row and on the
+nuclear-relaxation result, as ``site_source``. These results survive a change
+of muon site, so a record saved without a source has none: nothing is
+inferred, and it is not shown as an estimate.
 """
 
 from __future__ import annotations
@@ -98,22 +104,37 @@ def _field_value(data: Mapping[str, Any]) -> object:
 def _tensor_data(value: object) -> dict[str, Any] | None:
     if not isinstance(value, list) or not value:
         return None
-    return {"results": list(value)}
+    sources = {entry.get("site_source") if isinstance(entry, Mapping) else None for entry in value}
+    source = sources.pop() if len(sources) == 1 else None
+    if not source:
+        return {"results": list(value)}
+    rows = [{key: item for key, item in entry.items() if key != "site_source"} for entry in value]
+    return {"results": rows, "site_source": str(source)}
 
 
 def _tensor_value(data: Mapping[str, Any]) -> object:
-    return list(data.get("results", []))
+    rows = list(data.get("results", []))
+    source = data.get("site_source")
+    if not source:
+        return rows
+    return [{**row, "site_source": str(source)} if isinstance(row, Mapping) else row for row in rows]
 
 
 def _nuclear_data(value: object) -> dict[str, Any] | None:
     if not isinstance(value, Mapping) or not value:
         return None
-    return {"result": dict(value)}
+    data: dict[str, Any] = {"result": {key: item for key, item in value.items() if key != "site_source"}}
+    if value.get("site_source"):
+        data["site_source"] = str(value["site_source"])
+    return data
 
 
 def _nuclear_value(data: Mapping[str, Any]) -> object:
     result = data.get("result")
-    return dict(result) if isinstance(result, Mapping) else {}
+    value = dict(result) if isinstance(result, Mapping) else {}
+    if value and data.get("site_source"):
+        value["site_source"] = str(data["site_source"])
+    return value
 
 
 #: Form-state key, result type, form value to record data, record data to form value.

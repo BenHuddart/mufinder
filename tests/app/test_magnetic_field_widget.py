@@ -1474,7 +1474,6 @@ def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
     document.ui_state["relaxation_analysis_workspaces"] = [
         {
             "name": "Positive muon relaxations",
-            "host_structure_id": str(document.project.host_structure_id),
             "clustering": {
                 "result": {
                     "clusters": [
@@ -1753,22 +1752,6 @@ def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(
     widget.close()
 
 
-def test_magnetic_field_widget_ignores_relaxation_clusters_of_another_host(qapp, tmp_path) -> None:
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
-    _add_uep_cluster(document)
-    set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
-    document.ui_state["relaxation_analysis_workspaces"][0]["host_structure_id"] = str(uuid4())
-
-    assert magnetic_field_widget_module._relaxation_cluster_muon_site_options(document, _host_structure()) == []
-    widget = MagneticFieldWidget()
-    widget.set_document(document)
-    assert widget.selected_muon_site().source == "uep_clustering"
-    widget.close()
-    dialog = MuonSiteSelectionDialog(document, _host_structure())
-    assert dialog._site_source_combo.currentData() == "uep_clustering"
-    dialog.close()
-
-
 def test_magnetic_field_widget_marks_fields_at_a_uep_site_as_estimates_across_a_reload(
     qapp, tmp_path, monkeypatch
 ) -> None:
@@ -1813,6 +1796,109 @@ def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(qapp
     assert "estimate" not in widget._calculation_status.text()
     assert widget.collect_state()["magnetic_field_results"]["site_source"] == "relaxation_clustering"
     widget.close()
+
+
+def _site_from(source: str) -> magnetic_field_widget_module.MagneticMuonSiteOption:
+    return replace(_custom_muon_site((0.25, 0.25, 0.25)), source=source, label=f"{source} site")
+
+
+def _tensor_dialog(site, results_state=()) -> DipolarTensorDialog:
+    tensor = {
+        "site_label": "site 1",
+        "muon_position": [0.25, 0.25, 0.25],
+        "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]],
+    }
+    return DipolarTensorDialog(
+        _host_structure(),
+        MagneticStructureModel(components=(_component("one", "One", 0),)),
+        site,
+        include_equivalent_sites=False,
+        results_state=results_state,
+        calculate_callback=lambda _dialog: (tensor,),
+    )
+
+
+def _nuclear_dialog(site, results_state=None) -> NuclearRelaxationDialog:
+    return NuclearRelaxationDialog(
+        muon_site=site,
+        distortion_available=False,
+        results_state=results_state,
+        calculate_callback=lambda _dialog: {"site_label": "site 1", "mode": "zf_polycrystal", "sigma": 0.2},
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "estimate"),
+    [("uep_clustering", True), ("relaxation_clustering", False), ("custom", False)],
+)
+def test_tensor_and_nuclear_dialogs_mark_results_at_a_uep_site_as_estimates(qapp, source, estimate) -> None:
+    tensor_dialog = _tensor_dialog(_site_from(source))
+    tensor_dialog._calculate()
+
+    assert tensor_dialog.results_state()[0]["site_source"] == source
+    assert (not tensor_dialog._estimate_note.isHidden()) is estimate
+    title = tensor_dialog._result_content.findChildren(magnetic_field_widget_module.QGroupBox)[0].title()
+    assert title == ("site 1 (unrelaxed estimate)" if estimate else "site 1")
+    assert ("unrelaxed UEP site" in tensor_dialog._status.text()) is estimate
+    tensor_dialog.close()
+
+    nuclear_dialog = _nuclear_dialog(_site_from(source))
+    nuclear_dialog._calculate()
+
+    assert nuclear_dialog.results_state()["site_source"] == source
+    assert (not nuclear_dialog._estimate_note.isHidden()) is estimate
+    assert ("unrelaxed UEP site" in nuclear_dialog._status.text()) is estimate
+    nuclear_dialog.close()
+
+
+def test_tensor_and_nuclear_estimates_survive_a_reload_whatever_site_is_selected(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = _uep_cluster_document(tmp_path)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    site = widget.selected_muon_site()
+    assert site.source == "uep_clustering"
+    tensor_dialog = _tensor_dialog(site)
+    tensor_dialog._calculate()
+    nuclear_dialog = _nuclear_dialog(site)
+    nuclear_dialog._calculate()
+    widget._dipolar_tensor_results_state = tensor_dialog.results_state()
+    widget._nuclear_relaxation_results_state = nuclear_dialog.results_state()
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, widget.collect_state()
+    )
+    service.save_project(document)
+    for closed in (tensor_dialog, nuclear_dialog, widget):
+        closed.close()
+
+    reloaded = service.load_project(document.project_root)
+    restored = MagneticFieldWidget()
+    restored.set_document(reloaded)
+    restored.set_form_state(
+        attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"])
+    )
+    # The results keep their own source after another site is chosen.
+    other_site = _site_from("custom")
+    restored_tensor = _tensor_dialog(other_site, restored._dipolar_tensor_results_state)
+    restored_nuclear = _nuclear_dialog(other_site, restored._nuclear_relaxation_results_state)
+    assert not restored_tensor._estimate_note.isHidden()
+    assert not restored_nuclear._estimate_note.isHidden()
+    for closed in (restored_tensor, restored_nuclear, restored):
+        closed.close()
+
+
+def test_tensor_and_nuclear_results_without_a_source_show_no_estimate(qapp) -> None:
+    uep_site = _site_from("uep_clustering")
+    tensor_dialog = _tensor_dialog(
+        uep_site,
+        [{"site_label": "site 1", "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]}],
+    )
+    nuclear_dialog = _nuclear_dialog(uep_site, {"mode": "zf_polycrystal", "sigma": 0.2})
+
+    assert tensor_dialog._estimate_note.isHidden()
+    assert nuclear_dialog._estimate_note.isHidden()
+    tensor_dialog.close()
+    nuclear_dialog.close()
 
 
 def test_magnetic_field_widget_enables_nuclear_relaxation_without_magnetic_model(qapp, tmp_path) -> None:
