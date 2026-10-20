@@ -1815,7 +1815,7 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
 
     assert calls
     assert calls[0]["options"].supercell == (24, 36, 48)
-    assert calls[0]["options"].nangles == 4096
+    assert calls[0]["options"].nangles == 32_768
     assert calls[0]["options"].histogram_bins == 512
     widget.close()
 
@@ -2054,15 +2054,22 @@ def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(q
             },
             "dipolar_tensor_selector": {"mode": "species", "species": "Fe"},
             "dipolar_tensor_results": [{"site_label": "site 1"}],
+            "use_commensurate_approximants": True,
+            "approximant_tolerance": 0.004,
+            "approximant_max_period": 20,
         }
     )
 
     widget.set_form_state({})
 
+    assert widget.collect_state()["use_commensurate_approximants"] is False
+    assert widget._field_options().approximant_tolerance == 1e-3
+    assert widget._field_options().approximant_max_period == 12
+
     assert widget._demag_shape() == "none"
     assert widget._field_options().supercell == (100, 100, 100)
     assert widget._include_equivalent_sites.isChecked() is False
-    assert widget._lookup_angles.value() == 4096
+    assert widget._lookup_angles.value() == 32_768
     assert widget._phase_samples.value() == 200_000
     assert widget._field_options().phase_sampling == "auto"
     assert widget._histogram_bins.value() == 512
@@ -2091,6 +2098,9 @@ def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> Non
     dialog._phase_samples.setValue(250_000)
     dialog._phase_sampling.setCurrentIndex(dialog._phase_sampling.findData("montecarlo"))
     dialog._histogram_bins.setValue(1024)
+    dialog._use_approximants.setChecked(True)
+    dialog._approximant_tolerance.setValue(0.002)
+    dialog._approximant_max_period.setValue(8)
 
     assert dialog.values() == {
         "supercell": (18, 24, 36),
@@ -2098,6 +2108,9 @@ def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> Non
         "phase_sample_count": 250_000,
         "phase_sampling": "montecarlo",
         "histogram_bins": 1024,
+        "use_approximants": True,
+        "approximant_tolerance": 0.002,
+        "approximant_max_period": 8,
     }
     assert dialog._phase_samples.maximum() == magnetic_field_widget_module.MAX_INCOMMENSURATE_PHASE_SAMPLES
     dialog.close()
@@ -2109,12 +2122,27 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(qapp, tmp_path,
     service.add_structure(document, _host_structure())
 
     class _Dialog:
-        def __init__(self, *, supercell, nangles, phase_sample_count, histogram_bins, phase_sampling, parent=None):
+        def __init__(
+            self,
+            *,
+            supercell,
+            nangles,
+            phase_sample_count,
+            histogram_bins,
+            phase_sampling,
+            use_approximants,
+            approximant_tolerance,
+            approximant_max_period,
+            parent=None,
+        ):
             assert supercell == (100, 100, 100)
-            assert nangles == 4096
+            assert nangles == 32_768
             assert phase_sample_count == 200_000
             assert histogram_bins == 512
             assert phase_sampling == "auto"
+            assert use_approximants is False
+            assert approximant_tolerance == 1e-3
+            assert approximant_max_period == 12
 
         def exec(self):
             return QDialog.DialogCode.Accepted
@@ -2126,6 +2154,9 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(qapp, tmp_path,
                 "phase_sample_count": 250_000,
                 "phase_sampling": "grid",
                 "histogram_bins": 1024,
+                "use_approximants": True,
+                "approximant_tolerance": 0.002,
+                "approximant_max_period": 8,
             }
 
     monkeypatch.setattr(magnetic_field_widget_module, "MagneticFieldCalculationSettingsDialog", _Dialog)
@@ -2142,8 +2173,16 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(qapp, tmp_path,
     assert widget._field_options().phase_sample_count == 250_000
     assert widget._field_options().phase_sampling == "grid"
     assert widget._field_options().histogram_bins == 1024
+    assert widget._field_options().approximant_tolerance == 0.002
+    assert widget._field_options().approximant_max_period == 8
     assert "cells 24 x 36 x 48" in widget._calculation_settings_summary.text()
+    assert "commensurate approximants within 0.002 r.l.u., period up to 8" in (
+        widget._calculation_settings_summary.text()
+    )
     assert emitted[-1]["supercell"] == [24, 36, 48]
+    assert emitted[-1]["use_commensurate_approximants"] is True
+    assert emitted[-1]["approximant_tolerance"] == 0.002
+    assert emitted[-1]["approximant_max_period"] == 8
     widget.close()
 
 
@@ -2396,7 +2435,7 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(qapp, tmp
     widget._calculate_fields()
 
     assert calls
-    assert calls[0]["options"].nangles == 4096
+    assert calls[0]["options"].nangles == 32_768
     assert calls[0]["options"].phase_sample_count == 250_000
     assert calls[0]["options"].phase_sampling == "montecarlo"
     assert calls[0]["options"].histogram_bins == 1024
@@ -2542,7 +2581,7 @@ def test_magnetic_field_widget_collects_and_restores_form_state(qapp, tmp_path) 
     assert restored._demag_shape() == "infinite_plate"
     assert restored._field_options().supercell == (24, 36, 48)
     assert restored._field_options().find_equivalent_sites is True
-    assert restored._field_options().nangles == 4096
+    assert restored._field_options().nangles == 32_768
     assert restored._field_options().phase_sample_count == 250_000
     assert restored._field_options().phase_sampling == "grid"
     assert restored._field_options().histogram_bins == 1024
@@ -2814,6 +2853,221 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(qapp, tmp_
     assert widget._open_distribution_button.isEnabled()
     assert widget.collect_state()["magnetic_field_results"]["kind"] == "distribution"
     assert widget.collect_state()["magnetic_field_results"]["results"][0]["fields_T"] == [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]]
+    widget.close()
+
+
+_APPROXIMANT = magnetic_fields_module.CommensurateApproximant(
+    q_rlu=((0.3334, 0.0, 0.0),),
+    approximant_rlu=((1.0 / 3.0, 0.0, 0.0),),
+    denominators=((3, 1, 1),),
+    periods=(3, 1, 1),
+    max_deviation_rlu=6.7e-5,
+)
+
+
+def _approximant_field(label: str, bz: float) -> magnetic_fields_module.MagneticFieldResult:
+    zero = (0.0, 0.0, 0.0)
+    return magnetic_fields_module.MagneticFieldResult(
+        site_label=label,
+        muon_position=zero,
+        dipolar=(0.0, 0.0, bz),
+        lorentz=zero,
+        contact=zero,
+        demag=zero,
+        applied=zero,
+    )
+
+
+def _incommensurate_widget(document, monkeypatch, *, approximant) -> MagneticFieldWidget:
+    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "incommensurate")
+    monkeypatch.setattr(magnetic_field_widget_module, "find_commensurate_approximant", lambda *_args, **_kwargs: approximant)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    return widget
+
+
+def test_magnetic_field_widget_lists_commensurate_approximant_fields(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-approximant.mufinder", "Magnetic Approximant")
+    service.add_structure(document, _host_structure())
+    calls: list[object] = []
+
+    def _approximant_fields(*_args, options, distorted_structures=None):
+        calls.append(options)
+        return (_approximant_field("site 1 + (0, 0, 0)", 1.0), _approximant_field("site 1 + (1, 0, 0)", -0.5))
+
+    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_approximant_fields", _approximant_fields)
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_incommensurate_field_distributions",
+        lambda *_args, **_kwargs: pytest.fail("an approximant should not sample a distribution"),
+    )
+    widget = _incommensurate_widget(document, monkeypatch, approximant=_APPROXIMANT)
+    widget._use_approximants = True
+    widget._approximant_tolerance = 2e-3
+    widget._approximant_max_period = 8
+
+    widget._calculate_fields()
+
+    assert calls[0].approximant_tolerance == 2e-3
+    assert calls[0].approximant_max_period == 8
+    assert [widget._result_table.item(row, 0).text() for row in range(2)] == [
+        "site 1 + (0, 0, 0)",
+        "site 1 + (1, 0, 0)",
+    ]
+    assert widget._result_table.item(1, 5).text() == "field"
+    assert widget._calculation_status.text() == (
+        "Results: calculated 2 field value(s) of the commensurate approximant q = (1/3, 0, 0) with a "
+        "3 x 1 x 1 magnetic supercell (q moved by at most 6.7e-05 r.l.u.)."
+    )
+    state = widget.collect_state()["magnetic_field_results"]
+    assert state["kind"] == "commensurate"
+    assert state["results"][1]["dipolar_T"] == [0.0, 0.0, -0.5]
+    assert not widget._breakdown_table.isHidden()
+    widget.close()
+
+
+def test_magnetic_field_widget_suggests_an_available_approximant(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-suggest.mufinder", "Magnetic Suggest")
+    service.add_structure(document, _host_structure())
+    flagged = magnetic_fields_module.DistributionConvergenceCheck(
+        setting="nangles",
+        label="Lookup angles per q",
+        converged=False,
+        metric=0.2,
+        message="Halving the lookup angles to 8 shifts the |B| distribution by 20%.",
+    )
+
+    class _Distribution:
+        site_label = "site 1"
+        fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)
+        convergence = (flagged,)
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_approximant_fields",
+        lambda *_args, **_kwargs: pytest.fail("approximants are turned off"),
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_incommensurate_field_distributions",
+        lambda *_args, **_kwargs: (_Distribution(),),
+    )
+    widget = _incommensurate_widget(document, monkeypatch, approximant=_APPROXIMANT)
+
+    widget._calculate_fields()
+
+    status = widget._calculation_status.text()
+    assert status.startswith(
+        "Results: sampled 1 incommensurate field distribution(s); "
+        "1 convergence check(s) need attention, select a row for advice."
+    )
+    assert "within 6.7e-05 r.l.u. of the commensurate approximant q = (1/3, 0, 0)" in status
+    assert status.endswith("turn on commensurate approximants in Calculation Settings to list its finite fields.")
+    widget.close()
+
+
+def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-converged.mufinder", "Magnetic Converged")
+    service.add_structure(document, _host_structure())
+
+    class _Distribution:
+        site_label = "site 1"
+        fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)
+        convergence = ()
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_incommensurate_field_distributions",
+        lambda *_args, **_kwargs: (_Distribution(),),
+    )
+    widget = _incommensurate_widget(document, monkeypatch, approximant=None)
+    widget._use_approximants = True
+
+    widget._calculate_fields()
+
+    assert widget._calculation_status.text() == "Results: sampled 1 incommensurate field distribution(s)."
+    widget.close()
+
+
+def test_magnetic_field_widget_shows_distribution_convergence_checks(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-convergence.mufinder", "Magnetic Convergence")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+
+    widget.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "distribution",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                        "convergence": [
+                            {
+                                "setting": "nangles",
+                                "label": "Lookup angles per q",
+                                "converged": True,
+                                "message": "Halving the lookup angles to 16384 shifts the |B| distribution by 0.05%.",
+                            },
+                            {
+                                "setting": "histogram_bins",
+                                "label": "Histogram bins",
+                                "converged": False,
+                                "message": "8 samples per occupied histogram bin (fewer than 20).",
+                            },
+                            "not a check",
+                        ],
+                    }
+                ],
+            }
+        }
+    )
+
+    hint = widget._breakdown_hint.text().splitlines()
+    assert hint[:3] == [
+        "Convergence checks:",
+        "Lookup angles per q: OK. Halving the lookup angles to 16384 shifts the |B| distribution by 0.05%.",
+        "Histogram bins: Needs attention. 8 samples per occupied histogram bin (fewer than 20).",
+    ]
+    assert "available for commensurate results" in hint[3]
+    widget.close()
+
+
+def test_magnetic_field_widget_saves_and_restores_approximant_settings(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-approximant-state.mufinder", "Approximant State")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+
+    widget.set_form_state(
+        {"use_commensurate_approximants": True, "approximant_tolerance": 0.004, "approximant_max_period": 20}
+    )
+
+    state = widget.collect_state()
+    assert state["use_commensurate_approximants"] is True
+    assert state["approximant_tolerance"] == 0.004
+    assert state["approximant_max_period"] == 20
+    assert "commensurate approximants within 0.004 r.l.u., period up to 20." in (
+        widget._calculation_settings_summary.text()
+    )
+
+    widget.set_form_state({"approximant_tolerance": "wide", "approximant_max_period": 500})
+    assert widget._use_approximants is False
+    assert widget._field_options().approximant_tolerance == 1e-3
+    assert widget._field_options().approximant_max_period == 12
+
+    widget.set_form_state({"approximant_tolerance": -1.0, "approximant_max_period": "long"})
+    assert widget._field_options().approximant_tolerance == 1e-3
+    assert widget._field_options().approximant_max_period == 12
+    assert widget._calculation_settings_summary.text().endswith("512 histogram bins.")
     widget.close()
 
 
