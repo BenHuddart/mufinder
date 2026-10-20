@@ -384,6 +384,16 @@ no two workflow widgets may define the same private method.
        directory but keeps its inputs, for the failed-job reset and fresh
        start. Every workflow controller reaches it as
        ``WorkflowControllerContext.job_file_cleanup``.
+   * - ``mufinder.services.job_progress``
+     - The geometry-optimisation progress of running jobs: which jobs report it
+       (``job_reports_geometry_progress``), where their ``.castep`` is
+       (``castep_output_names``, ``remote_castep_candidates``), following a
+       growing output locally or over SFTP so each read fetches only what CASTEP
+       appended (``GeometryProgressReader``), and when to read it
+       (``JobProgressMonitor``: a slow periodic refresh while the dashboard is
+       visible, rate-limited on-demand reads, local files on a background thread
+       and cluster files through the cluster runner's SSH worker). Parsing the
+       convergence tables is ``mufinder.castep_io.geometry_progress``.
    * - ``mufinder.services.job_results``
      - Scalar readings from the result of a job's latest run
        (``total_energy_for_job``, ``max_force_for_job``,

@@ -283,13 +283,16 @@ and shares one set of table behaviours:
   submission, and queue polling and automatic output retrieval;
 - a Job Dashboard of the jobs that still need attention, with per-row
   ``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset`` and
-  ``Dismiss``, a failure cause on each failed or stopped row, and safeguards
-  that keep no job stuck in an active state;
+  ``Dismiss``, a failure cause on each failed or stopped row, the
+  geometry-optimisation progress of each running relaxation (iteration and
+  convergence criteria met, with a plot of every criterion against its
+  tolerance), and safeguards that keep no job stuck in an active state;
 - for relaxations, a choice on resubmission between continuing from the
   checkpoint and starting again.
 
 See :doc:`job_lifecycle`, in particular Job tables and selections, Running
-jobs, :ref:`job-failure-reasons` and :ref:`resubmit-continue-or-start-again`.
+jobs, :ref:`geometry-optimisation-progress`, :ref:`job-failure-reasons` and
+:ref:`resubmit-continue-or-start-again`.
 
 CASTEP input and parameters
 ---------------------------

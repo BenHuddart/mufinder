@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 
 class FakeSSH:
@@ -73,3 +74,23 @@ class OutputUnavailableSSH(FakeSSH):
 
     def get(self, remote_path: str, local_path: Path) -> None:
         raise OSError(f"SFTP download failed: {remote_path}")
+
+
+class GrowingOutputSSH(FakeSSH):
+    """A fake whose remote files can be stat-ed and read from an offset.
+
+    ``reads`` records each ``(path, offset)`` read, so a test can check that a
+    reader following a growing file fetches only what was appended.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[tuple[str, int]] = []
+
+    def stat(self, remote_path: str):
+        data = self.remote_files.get(remote_path)
+        return None if data is None else SimpleNamespace(st_size=len(data))
+
+    def read_bytes(self, remote_path: str, offset: int = 0) -> bytes:
+        self.reads.append((remote_path, offset))
+        return self.remote_files[remote_path][offset:]

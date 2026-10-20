@@ -27,6 +27,8 @@ of the main window) as calculations are submitted, monitored, and finished:
 ``running``
    CASTEP is running locally or on the selected cluster. When a queued cluster
    job starts, the status bar reports *"Cluster job started running: <label>"*.
+   A running relaxation shows its geometry-optimisation progress (see
+   :ref:`geometry-optimisation-progress`).
 
 ``retrieving``
    A cluster job has finished on the scheduler and MuFinder is copying/parsing
@@ -57,7 +59,7 @@ of the main window) as calculations are submitted, monitored, and finished:
 
 The dashboard shows jobs that still need attention: active jobs, failed jobs,
 stopped jobs, and cancelled jobs. Each row lists the job's ``Label``,
-``Workflow``, ``Calc Type``, ``Status``, ``Last Checked``, ``Cluster``,
+``Workflow``, ``Calc Type``, ``Status``, ``Progress``, ``Last Checked``, ``Cluster``,
 ``Remote Job ID``, ``Runtime``, and ``Processes``, followed by per-row
 ``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset``, and
 ``Dismiss`` buttons that are enabled only when they apply (see the action rules
@@ -75,6 +77,40 @@ remote metadata can ``Retry retrieval`` instead of resubmitting. Reuse covers
 the remote inputs and outputs only: the scheduler submit script is regenerated
 on every submission, so an updated walltime, core count, or memory request
 takes effect on resubmission.
+
+.. _geometry-optimisation-progress:
+
+Geometry-optimisation progress
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A running pristine or muon relaxation shows how far its geometry optimisation
+has got in the narrow ``Progress`` column, as ``iteration · criteria met``: for
+example ``14 · 3/4`` means CASTEP has finished iteration 14 and three of the
+four convergence criteria it tests (``dE/ion``, ``|F|max``, ``|dR|max``,
+``Smax``) are within tolerance. A run that fixes every ion or the cell tests
+fewer criteria, so its count reads out of three or two. ``starting`` means the
+run has echoed its parameters but not finished a step. The cell is empty for
+every other job and status. Hovering it lists each criterion's value against
+its tolerance, the step limit (``GEOM_MAX_ITER``) and, after a continuation,
+which restart the figures belong to. ``Inspect`` on a running relaxation opens
+a progress dialog with the same table and a plot of each criterion over the
+iterations against its tolerance; it updates as new steps arrive and has a
+``Refresh`` button.
+
+The progress comes from the job's growing ``.castep``
+(``<seed>_farm001.castep`` when the run is task-farmed).
+``mufinder.castep_io.geometry_progress`` reads the convergence table CASTEP
+prints after every step, from the most recent restart only: CASTEP counts
+iterations from 0 again after a continuation. An iteration counts once its
+table is complete, so a file read mid-write never shows a partial count.
+``mufinder.services.job_progress`` reads the output as soon as a relaxation is
+seen running, then every 60 seconds while the dashboard is visible, and when a
+progress dialog opens or its ``Refresh`` is pressed (at most once every 10
+seconds per job). Each read fetches only what CASTEP has appended since the
+last one. A local job's file is read on a background thread;
+a cluster job's file is read over SFTP on the cluster runner's SSH worker
+thread, so neither blocks the window. A read that fails keeps the last progress
+shown. Progress is never saved in the project.
 
 .. _job-failure-reasons:
 
@@ -1326,7 +1362,10 @@ staleness reason. Actions are enabled as follows:
   duplicate scheduler job, moving the job back to ``retrieving`` under a
   fresh ``CalculationRun``.
 - ``Cancel``: ``submitting``, ``queued``, ``running``, and ``retrieving``.
-- ``Inspect``: ``failed`` and ``stopped``.
+- ``Inspect``: ``failed`` and ``stopped`` (failure diagnostics), and ``running``
+  pristine and muon relaxations (the geometry-optimisation progress dialog; see
+  :ref:`geometry-optimisation-progress`). On a mixed selection each job gets the
+  view that fits it.
 - ``Reset``: ``failed``, ``stopped``, and ``cancelled``. The same action is
   also available per row from every workflow table (see
   :ref:`per-row-reset-affordance`), which is what keeps a non-dismissed

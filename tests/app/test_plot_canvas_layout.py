@@ -8,6 +8,7 @@ that no axes decoration extends past the figure edge, where Qt would clip it.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -21,6 +22,7 @@ import pytest
 
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_types import SweepPointRunState
+from mufinder.app.geometry_progress_dialog import GeometryProgressDialog
 from mufinder.app.magnetic_field_widget import MagneticFieldDistributionDialog
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
 from mufinder.app.relaxation_analysis_widget import (
@@ -30,6 +32,7 @@ from mufinder.app.relaxation_analysis_widget import (
     RelaxationClusteringDialog,
 )
 from mufinder.app.uep_clustering_dialog import UepClusteringDialog
+from mufinder.castep_io.geometry_progress import parse_geometry_progress
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
@@ -209,6 +212,11 @@ def _convergence_examiner() -> QDialog:
     return ConvergenceExaminerDialog(states, num_atoms=2)
 
 
+def _geometry_progress() -> QDialog:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    return GeometryProgressDialog("Si2", parse_geometry_progress(fixture))
+
+
 PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "relaxation-clustering-connected": lambda: _relaxation_clustering(0),
     "relaxation-clustering-hierarchical": lambda: _relaxation_clustering(1),
@@ -218,6 +226,7 @@ PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "uep-clustering-kmeans": lambda: _uep_clustering({"method": "kmeans", "kmeans_k": 2}),
     "magnetic-field-distribution": _field_distribution,
     "convergence-examiner": _convergence_examiner,
+    "geometry-progress": _geometry_progress,
 }
 
 

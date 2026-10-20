@@ -14,6 +14,15 @@ from .gui_metadata import (
     make_keyword_assignment,
     normalize_gui_value,
 )
+from .geometry_progress import (
+    ConvergenceCriterion,
+    GeometryIteration,
+    GeometryProgress,
+    is_geometry_progress_line,
+    parse_geometry_progress,
+    parse_geometry_progress_lines,
+    parse_geometry_progress_text,
+)
 from .output_parser import CastepResult, parse_castep_mulliken_atomic_spins, parse_castep_output
 from .param_parser import (
     ParamObservation,
@@ -98,6 +107,13 @@ __all__ = [
     "validate_param_file",
     "parse_castep_output",
     "parse_castep_mulliken_atomic_spins",
+    "ConvergenceCriterion",
+    "GeometryIteration",
+    "GeometryProgress",
+    "is_geometry_progress_line",
+    "parse_geometry_progress",
+    "parse_geometry_progress_lines",
+    "parse_geometry_progress_text",
     "parse_transition_state_file",
     "parse_transition_state_text",
     "CastepRunParameters",

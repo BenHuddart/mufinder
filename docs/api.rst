@@ -65,6 +65,10 @@ CASTEP I/O
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.castep_io.geometry_progress
+   :members:
+   :undoc-members:
+
 .. automodule:: mufinder.castep_io.charge_density
    :members:
    :undoc-members:
@@ -142,6 +146,10 @@ Services
    :undoc-members:
 
 .. automodule:: mufinder.services.job_paths
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.job_progress
    :members:
    :undoc-members:
 

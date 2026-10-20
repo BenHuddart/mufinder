@@ -9,6 +9,7 @@ import pytest
 
 import mufinder.services.cluster_retrieval as cluster_retrieval_module
 import mufinder.services.cluster_runner as cluster_runner_module
+from mufinder.castep_io.geometry_progress import parse_geometry_progress
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
@@ -21,7 +22,7 @@ from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.scheduler import SchedulerJobInfo
 from mufinder.services.ssh_client import SSHCredentials
-from tests.support.cluster_ssh import FakeSSH, OutputUnavailableSSH
+from tests.support.cluster_ssh import FakeSSH, GrowingOutputSSH, OutputUnavailableSSH
 
 
 class _FakeScheduler:
@@ -2206,3 +2207,48 @@ def test_cluster_runner_stop_watching_drops_the_job_from_polls(qapp, tmp_path: P
     assert queried[-1] == ["802"]
     assert snapshots[-1].watched_job_ids == frozenset()
     assert runner._tracked_jobs[other_id].terminal is False
+
+
+def test_cluster_runner_reads_geometry_progress_of_tracked_jobs(qapp, tmp_path: Path) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs.castep"
+    runner = ClusterJobRunner()
+    ssh = GrowingOutputSSH()
+    ssh.remote_files["/remote/farmed/seed_farm001.castep"] = fixture.read_bytes()
+    runner._ssh = ssh
+    runner._config = ClusterConfig(name="alpha", hostname="alpha.example", username="alice")
+    farmed, missing, untracked = uuid4(), uuid4(), uuid4()
+    for job_id, remote_dir, retrieval in (
+        (farmed, "/remote/farmed", RetrievalFlags(task_farming_enabled=True, num_farms=2)),
+        (missing, "/remote/missing", RetrievalFlags()),
+    ):
+        runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+            job_id=job_id,
+            remote_job_id="1",
+            remote_dir=remote_dir,
+            seed_name="seed",
+            local_output_dir=tmp_path,
+            cluster_name="alpha",
+            status=JobStatus.RUNNING,
+            retrieval=retrieval,
+        )
+    results: list[dict] = []
+    runner.geometry_progress_read.connect(results.append)
+
+    runner.read_geometry_progress([farmed, missing, untracked])
+
+    assert results == [{farmed: parse_geometry_progress(fixture), missing: None, untracked: None}]
+    assert ssh.reads == [("/remote/farmed/seed_farm001.castep", 0)]
+
+
+def test_cluster_runner_reports_no_geometry_progress_while_disconnected(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id, remote_job_id="1", remote_dir="/remote/job", seed_name="seed", local_output_dir=tmp_path
+    )
+    results: list[dict] = []
+    runner.geometry_progress_read.connect(results.append)
+
+    runner.read_geometry_progress([job_id])
+
+    assert results == [{job_id: None}]

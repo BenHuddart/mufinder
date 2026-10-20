@@ -154,6 +154,12 @@ from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.active_host_badge import ActiveHostBadge
+from mufinder.app.geometry_progress_dialog import (
+    PROGRESS_COLUMN_TOOLTIP,
+    GeometryProgressDialog,
+    progress_cell_text,
+    progress_tooltip,
+)
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.journal_widget import JournalWidget
@@ -240,6 +246,7 @@ from mufinder.app.workflow_controllers import (
     merge_controller_result,
     validate_controller_artifacts,
 )
+from mufinder.castep_io.geometry_progress import GeometryProgress
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
@@ -279,6 +286,7 @@ from mufinder.services.job_paths import (
 )
 from mufinder.services.job_results import max_force_for_job, max_stress_for_job, total_energy_for_job
 from mufinder.services.job_monitoring import job_staleness
+from mufinder.services.job_progress import JobProgressMonitor, job_reports_geometry_progress
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
@@ -411,17 +419,18 @@ class MainWindow(QMainWindow):
     _JOB_WORKFLOW_COLUMN = 1
     _JOB_CALC_TYPE_COLUMN = 2
     _JOB_STATUS_COLUMN = 3
-    _JOB_LAST_CHECKED_COLUMN = 4
-    _JOB_CLUSTER_COLUMN = 5
-    _JOB_REMOTE_ID_COLUMN = 6
-    _JOB_RUNTIME_COLUMN = 7
-    _JOB_PROCESSES_COLUMN = 8
-    _JOB_SUBMIT_COLUMN = 9
-    _JOB_RETRY_RETRIEVAL_COLUMN = 10
-    _JOB_CANCEL_COLUMN = 11
-    _JOB_INSPECT_COLUMN = 12
-    _JOB_RESET_COLUMN = 13
-    _JOB_DISMISS_COLUMN = 14
+    _JOB_PROGRESS_COLUMN = 4
+    _JOB_LAST_CHECKED_COLUMN = 5
+    _JOB_CLUSTER_COLUMN = 6
+    _JOB_REMOTE_ID_COLUMN = 7
+    _JOB_RUNTIME_COLUMN = 8
+    _JOB_PROCESSES_COLUMN = 9
+    _JOB_SUBMIT_COLUMN = 10
+    _JOB_RETRY_RETRIEVAL_COLUMN = 11
+    _JOB_CANCEL_COLUMN = 12
+    _JOB_INSPECT_COLUMN = 13
+    _JOB_RESET_COLUMN = 14
+    _JOB_DISMISS_COLUMN = 15
     _PROJECT_TREE_MIN_WIDTH = 220
     _PROJECT_TREE_MAX_WIDTH = 300
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = ConvergenceCutoffController.active_key
@@ -459,6 +468,14 @@ class MainWindow(QMainWindow):
         # Cluster SSH work runs on a dedicated worker thread via this facade,
         # which mirrors ClusterJobRunner's public surface (see cluster_controller).
         self._cluster_runner = ClusterController(self, settings=self._settings)
+        self._job_progress = JobProgressMonitor(
+            local_output_paths=self._local_runner.output_candidates,
+            request_remote_progress=self._cluster_runner.read_geometry_progress,
+            parent=self,
+        )
+        self._cluster_runner.geometry_progress_read.connect(self._job_progress.accept_remote_progress)
+        self._job_progress.progress_changed.connect(self._on_job_progress_changed)
+        self._geometry_progress_dialogs: dict[UUID, GeometryProgressDialog] = {}
         self._active_run_by_job: dict[UUID, UUID] = {}
         self._job_execution = JobExecutionController(
             document_getter=lambda: self._document,
@@ -873,13 +890,14 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
 
-        self._jobs_table = QTableWidget(0, 15)
+        self._jobs_table = QTableWidget(0, 16)
         self._jobs_table.setHorizontalHeaderLabels(
             [
                 "Label",
                 "Workflow",
                 "Calc Type",
                 "Status",
+                "Progress",
                 "Last Checked",
                 "Cluster",
                 "Remote Job ID",
@@ -893,6 +911,7 @@ class MainWindow(QMainWindow):
                 "Dismiss",
             ]
         )
+        self._jobs_table.horizontalHeaderItem(self._JOB_PROGRESS_COLUMN).setToolTip(PROGRESS_COLUMN_TOOLTIP)
         use_square_top_table_corners(self._jobs_table)
         self._jobs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._jobs_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -2246,6 +2265,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_jobs_table(self) -> None:
         if self._document is None:
+            self._job_progress.follow(())
+            for dialog in list(self._geometry_progress_dialogs.values()):
+                dialog.close()
             self._jobs_table.setRowCount(0)
             self._job_runtime_timer.stop()
             self._cluster_elapsed_seconds_by_job = {}
@@ -2270,6 +2292,7 @@ class MainWindow(QMainWindow):
             for job in self._document.jobs.values()
             if job.status in _VISIBLE_DASHBOARD_STATES and job.dismissed_at is None
         ]
+        self._job_progress.follow(desired_jobs)
         self._sync_jobs_table_rows(desired_jobs, now=now)
 
         self._configure_jobs_table_columns()
@@ -2299,12 +2322,7 @@ class MainWindow(QMainWindow):
                 self._can_retry_retrieval(job),
             ),
             (self._JOB_CANCEL_COLUMN, "Cancel", "cancel", job.status in ACTIVE_JOB_STATUSES),
-            (
-                self._JOB_INSPECT_COLUMN,
-                "Inspect",
-                "inspect",
-                job.status in {JobStatus.FAILED, JobStatus.STOPPED},
-            ),
+            (self._JOB_INSPECT_COLUMN, "Inspect", "inspect", self._dashboard_action_applies("inspect", job)),
             (
                 self._JOB_RESET_COLUMN,
                 "Reset",
@@ -2412,6 +2430,11 @@ class MainWindow(QMainWindow):
         self._apply_job_status_cell(status_item, job)
         self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
 
+        progress_item = QTableWidgetItem()
+        progress_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._apply_job_progress_cell(progress_item, job)
+        self._jobs_table.setItem(row, self._JOB_PROGRESS_COLUMN, progress_item)
+
         last_checked_item = QTableWidgetItem()
         self._apply_last_checked_cell(last_checked_item, job, now=now)
         self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
@@ -2458,6 +2481,10 @@ class MainWindow(QMainWindow):
         status_item = self._jobs_table.item(row, self._JOB_STATUS_COLUMN)
         if status_item is not None:
             self._apply_job_status_cell(status_item, job)
+
+        progress_item = self._jobs_table.item(row, self._JOB_PROGRESS_COLUMN)
+        if progress_item is not None:
+            self._apply_job_progress_cell(progress_item, job)
 
         last_checked_item = self._jobs_table.item(row, self._JOB_LAST_CHECKED_COLUMN)
         if last_checked_item is not None:
@@ -2542,6 +2569,7 @@ class MainWindow(QMainWindow):
 
     def _on_jobs_dock_visibility_changed(self, visible: bool) -> None:
         self._jobs_dock_visible = bool(visible)
+        self._job_progress.set_enabled(self._jobs_dock_visible)
         # On becoming visible, bring the (possibly stale) runtime cells current
         # before re-arming. _sync_job_runtime_timer stops the timer when hidden.
         if self._jobs_dock_visible:
@@ -2561,6 +2589,7 @@ class MainWindow(QMainWindow):
             self._JOB_REMOTE_ID_COLUMN,
         )
         contents_columns = (
+            self._JOB_PROGRESS_COLUMN,
             self._JOB_LAST_CHECKED_COLUMN,
             self._JOB_RUNTIME_COLUMN,
             self._JOB_PROCESSES_COLUMN,
@@ -3604,6 +3633,9 @@ class MainWindow(QMainWindow):
         if kind == "retry_retrieval":
             # Retry needs remote metadata + a live connection, not just a status.
             return self._can_retry_retrieval(job)
+        if kind == "inspect" and job.status == JobStatus.RUNNING:
+            # A running geometry optimisation opens its convergence progress.
+            return job_reports_geometry_progress(job)
         terminal = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         eligible_statuses = {
             "resubmit": _RESUBMITTABLE_JOB_STATES,
@@ -3620,7 +3652,7 @@ class MainWindow(QMainWindow):
             "resubmit": "_on_resubmit_from_dashboard",
             "retry_retrieval": "_on_retry_retrieval_from_dashboard",
             "cancel": "_on_cancel_from_dashboard",
-            "inspect": "_on_inspect_failed_from_dashboard",
+            "inspect": "_on_inspect_from_dashboard",
             "reset": "_on_reset_failed_from_dashboard",
             "dismiss": "_on_dismiss_from_dashboard",
         }
@@ -3701,11 +3733,64 @@ class MainWindow(QMainWindow):
         jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
         self._cancel_jobs([job for job in jobs if job is not None])
 
+    def _on_inspect_from_dashboard(self, job_ids: list[UUID]) -> None:
+        """Open each running job's progress and the failure diagnostics of the rest."""
+
+        if self._document is None:
+            return
+        jobs = [job for job in (self._document.jobs.get(job_id) for job_id in job_ids) if job is not None]
+        for job in jobs:
+            if job.status == JobStatus.RUNNING:
+                self._show_geometry_progress(job)
+        others = [job.id for job in jobs if job.status != JobStatus.RUNNING]
+        if others or not jobs:
+            self._on_inspect_failed_from_dashboard(others)
+
     def _on_inspect_failed_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
             return
         jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
         self._inspect_failed_jobs([job for job in jobs if job is not None])
+
+    def _show_geometry_progress(self, job: Job) -> GeometryProgressDialog:
+        """Open (or raise) the progress dialog of a running geometry optimisation."""
+
+        dialog = self._geometry_progress_dialogs.get(job.id)
+        if dialog is None:
+            dialog = GeometryProgressDialog(job.label, self._job_progress.progress_for(job.id), self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            dialog.refresh_requested.connect(lambda jid=job.id: self._job_progress.refresh([jid]))
+            dialog.destroyed.connect(lambda _obj=None, jid=job.id: self._geometry_progress_dialogs.pop(jid, None))
+            self._geometry_progress_dialogs[job.id] = dialog
+        self._job_progress.refresh([job.id])
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def _on_job_progress_changed(self, job_id: UUID, progress: GeometryProgress | None) -> None:
+        dialog = self._geometry_progress_dialogs.get(job_id)
+        if dialog is not None and progress is not None:
+            dialog.set_progress(progress)
+        job = self._document.jobs.get(job_id) if self._document is not None else None
+        if job is None:
+            return
+        for row in range(self._jobs_table.rowCount()):
+            if self._jobs_table_row_job_id(self._jobs_table.item(row, self._JOB_LABEL_COLUMN)) == job_id:
+                item = self._jobs_table.item(row, self._JOB_PROGRESS_COLUMN)
+                if item is not None:
+                    self._apply_job_progress_cell(item, job)
+                    self._jobs_table.resizeColumnToContents(self._JOB_PROGRESS_COLUMN)
+                break
+
+    def _apply_job_progress_cell(self, item: QTableWidgetItem, job: Job) -> None:
+        progress = self._job_progress.progress_for(job.id) if job.status == JobStatus.RUNNING else None
+        text = progress_cell_text(progress)
+        tooltip = progress_tooltip(progress)
+        if item.text() != text:
+            item.setText(text)
+        if item.toolTip() != tooltip:
+            item.setToolTip(tooltip)
 
     def _on_reset_failed_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
