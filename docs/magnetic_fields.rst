@@ -580,6 +580,9 @@ tensor applied to a moment in μB gives the dipolar field in tesla. The ``Å⁻�
 display uses the hyperfine-coupling convention,
 :math:`\mathbf{B} = (2\mu_0/3)\,\mu_B A\,\mathbf{m}`, so it shows the contact
 coupling that would give the same field rather than ``muesr``'s raw lattice sum.
+Tensors saved in a project at schema 4 or earlier hold the raw ``Å⁻³`` sum
+and are converted to T/μB when the project is loaded (see
+:doc:`compatibility_policy`).
 
 Only tensor-relevant numerical settings are shown in this workflow. The tensor
 dialog reports the lattice-summation supercell used for the calculation, but it

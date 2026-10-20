@@ -229,9 +229,56 @@ def _magnetic_field_results_become_results(entities: EntityPayloads, ui_state: d
     return changed
 
 
+#: mu0 mu_B / (4 pi Å^3) in T per mu_B: the factor that turns muesr's raw dipolar
+#: tensor, in Å^-3, into T/mu_B. ``mufinder.science.magnetic_fields`` applies the
+#: same factor, ``DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3``, to new tensors.
+_DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = 1e-7 * 9.274_010_078_3e-24 / 1e-30
+
+
+def _dipolar_tensors_convert_to_tesla_per_mu_b(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
+    """Schema 4 to 5: saved dipolar tensors are converted from Å^-3 to T/mu_B.
+
+    Schema 4 stored muesr's dipolar tensor under ``dipolar_tensor_T_per_muB``
+    without converting it from Å^-3. Every 3 x 3 tensor in a
+    ``magnetic_dipolar_tensor`` result is multiplied by
+    :data:`_DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3`; an entry without a
+    numeric 3 x 3 tensor is left as it is.
+    """
+
+    changed: set[EntityKey] = set()
+    for payload in entities.get("results", []):
+        if payload.get("result_type") != "magnetic_dipolar_tensor":
+            continue
+        data = payload.get("data")
+        entries = data.get("results") if isinstance(data, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            tensor = entry.get("dipolar_tensor_T_per_muB") if isinstance(entry, dict) else None
+            if not _is_numeric_3x3(tensor):
+                continue
+            entry["dipolar_tensor_T_per_muB"] = [
+                [float(value) * _DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 for value in row] for row in tensor
+            ]
+            changed.add(("results", str(payload.get("id"))))
+    return changed
+
+
+def _is_numeric_3x3(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 3
+        and all(
+            isinstance(row, list)
+            and len(row) == 3
+            and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in row)
+            for row in value
+        )
+    )
+
+
 _MIGRATIONS: dict[int, MigrationStep] = {
     1: _sweep_values_replace_cutoff_energies,
     2: _site_positions_split_initial_and_relaxed,
     3: _magnetic_field_results_become_results,
+    4: _dipolar_tensors_convert_to_tesla_per_mu_b,
 }
 """The step that upgrades payloads saved at each version to the next one."""

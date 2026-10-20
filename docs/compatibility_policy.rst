@@ -392,6 +392,17 @@ version or a newer one is loaded as it is. A manifest without
        project survey reads a workspace's field results from its record.
        ``migrate_project_payloads`` receives ``ui_state`` and reports it
        changed, so the next save rewrites ``state.json``.
+   * - 4 to 5
+     - Dipolar-tensor results (``results`` entities of type
+       ``magnetic_dipolar_tensor``). Schema 4 stored ``muesr``'s tensor under
+       ``dipolar_tensor_T_per_muB`` without converting it from ``Å⁻³``. The
+       step multiplies every numeric ``3 x 3`` tensor in ``data["results"]``
+       by :math:`\mu_0 \mu_B / (4\pi\,\text{Å}^3) = 0.9274` T/μB and leaves
+       any other entry as it is. A schema 3 project reaches this step after
+       its inline tensors have become records, so they are converted too.
+     - The dipolar tensor dialog reads ``dipolar_tensor_T_per_muB`` as T/μB,
+       and ``calculate_dipolar_tensors_for_atoms`` applies the same factor to
+       new tensors. Saved commensurate field results are not rewritten.
 
 A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
 ``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table
