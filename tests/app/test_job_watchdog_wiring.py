@@ -36,6 +36,7 @@ class _FakeRunner(QObject):
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
+    geometry_progress_read = Signal(object)
 
     def __init__(self, *, settings: object = None) -> None:
         super().__init__()

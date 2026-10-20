@@ -29,6 +29,7 @@ from mufinder.services.failure_diagnosis import (
     RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE,
 )
 from mufinder.services.job_artifacts import RetrievalFlags
+from mufinder.services.job_progress import GeometryProgressReader, remote_castep_candidates
 from mufinder.services.scheduler import (
     Scheduler,
     SchedulerJobInfo,
@@ -182,6 +183,8 @@ class ClusterJobRunner(QObject):
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
+    #: ``{job_id: GeometryProgress | None}`` from :meth:`read_geometry_progress`.
+    geometry_progress_read = Signal(object)
 
     def __init__(self, parent: QObject | None = None, *, settings=None) -> None:
         super().__init__(parent)
@@ -191,6 +194,7 @@ class ClusterJobRunner(QObject):
         self._scheduler: Scheduler | None = None
         self._tracked_jobs: dict[UUID, _TrackedClusterJob] = {}
         self._credential_cache: SSHCredentials | None = None
+        self._progress_reader = GeometryProgressReader()
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(60_000)
@@ -436,6 +440,30 @@ class ClusterJobRunner(QObject):
         """
 
         self._tracked_jobs.clear()
+        self._progress_reader.forget_all_except(())
+
+    def read_geometry_progress(self, job_ids: list[UUID]) -> None:
+        """Read tracked jobs' geometry-optimisation progress from their remote output.
+
+        Fetches only what CASTEP appended since the previous read of each job.
+        Emits :attr:`geometry_progress_read` with an entry for every requested
+        job: ``None`` when the job is not tracked on the connected cluster, the
+        cluster is disconnected, or the output cannot be read.
+        """
+
+        results: dict[UUID, Any] = {}
+        ssh = self._ssh if self.is_connected else None
+        for job_id in job_ids:
+            entry = self._tracked_jobs.get(job_id)
+            progress = None
+            if ssh is not None and entry is not None and self._tracked_job_matches_connected_cluster(entry):
+                candidates = remote_castep_candidates(entry.remote_dir, entry.seed_name, entry.retrieval.farm_count)
+                try:
+                    progress = self._progress_reader.read_remote(job_id, ssh, candidates)
+                except Exception:  # noqa: BLE001 - a failed read keeps the last progress shown
+                    progress = None
+            results[job_id] = progress
+        self.geometry_progress_read.emit(results)
 
     def stop_watching(self, job_ids: list[UUID]) -> None:
         """End the reappearance watch of each of ``job_ids``; other entries are untouched.

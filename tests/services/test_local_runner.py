@@ -723,3 +723,21 @@ def test_local_runner_active_and_pending_id_accessors(qapp, tmp_path: Path) -> N
 
     assert runner.active_job_ids() == frozenset({active_id})
     assert runner.pending_job_ids() == frozenset({pending_id})
+
+
+def test_local_runner_output_candidates_name_a_running_jobs_castep(qapp, tmp_path: Path) -> None:
+    runner = LocalJobRunner()
+    job_id = uuid4()
+    request = local_runner_module._PendingJob(
+        job_id=job_id,
+        job_dir=tmp_path,
+        seed_name="seed",
+        castep_executable="/usr/bin/castep",
+        mpirun_path="",
+        num_cores=1,
+        retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=3),
+    )
+    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+
+    assert runner.output_candidates(job_id) == (tmp_path / "seed_farm001.castep", tmp_path / "seed.castep")
+    assert runner.output_candidates(uuid4()) == ()

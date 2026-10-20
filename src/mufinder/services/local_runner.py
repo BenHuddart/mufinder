@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QProcess, Signal
 from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
 from mufinder.services.job_artifacts import RetrievalFlags
+from mufinder.services.job_progress import castep_output_names
 
 
 @dataclass(slots=True)
@@ -70,6 +71,21 @@ class LocalJobRunner(QObject):
         """Return the ids of jobs with a live ``QProcess`` (running)."""
 
         return frozenset(self._active)
+
+    def output_candidates(self, job_id: UUID) -> tuple[Path, ...]:
+        """Return where a running job writes its ``.castep``, most specific first.
+
+        Empty when ``job_id`` is not running here.
+        """
+
+        active = self._active.get(job_id)
+        if active is None:
+            return ()
+        request = active.request
+        return tuple(
+            request.job_dir / name
+            for name in castep_output_names(request.seed_name, request.retrieval.farm_count)
+        )
 
     def pending_job_ids(self) -> frozenset[UUID]:
         """Return the ids of jobs queued but not yet started."""
@@ -289,8 +305,8 @@ class LocalJobRunner(QObject):
 
     @staticmethod
     def _primary_output_path(request: _PendingJob) -> Path:
-        if request.retrieval.farm_count > 1:
-            farmed = request.job_dir / f"{request.seed_name}_farm001.castep"
-            if farmed.exists():
-                return farmed
-        return request.job_dir / f"{request.seed_name}.castep"
+        *preferred, master = (
+            request.job_dir / name
+            for name in castep_output_names(request.seed_name, request.retrieval.farm_count)
+        )
+        return next((path for path in preferred if path.exists()), master)

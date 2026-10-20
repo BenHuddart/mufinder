@@ -25,7 +25,8 @@ Two asynchronous styles are used:
 * **Fire-and-forget with forwarded signals** (``refresh_queue``, ``cancel``,
   ``track_existing_job``, ``connect_async``/``connect_finished``,
   ``check_remote_dirs``/``remote_dirs_checked``,
-  ``check_remote_files``/``remote_files_checked``, ``submit_batch`` and its
+  ``check_remote_files``/``remote_files_checked``,
+  ``read_geometry_progress``/``geometry_progress_read``, ``submit_batch`` and its
   progress signals): the GUI returns immediately and results arrive later via a
   purpose-built signal.
 * **Request/completion bridge** (``clear_tracked_jobs``, and the low-level
@@ -144,6 +145,7 @@ class ClusterController(QObject):
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
+    geometry_progress_read = Signal(object)
 
     # Result of an asynchronous connect: None on success, else the exception.
     connect_finished = Signal(object)
@@ -224,6 +226,7 @@ class ClusterController(QObject):
         self._runner.status_changed.connect(self._mirror_status_changed)
         self._runner.queue_checked.connect(self.queue_checked)
         self._runner.poll_failed.connect(self.poll_failed)
+        self._runner.geometry_progress_read.connect(self.geometry_progress_read)
         self._runner.connection_status_changed.connect(self._on_connection_status_changed)
 
         self._async_task.connect(self._tasks.run_task, Qt.ConnectionType.QueuedConnection)
@@ -389,6 +392,12 @@ class ClusterController(QObject):
 
     def stop_watching(self, job_ids: list[Any]) -> None:
         self._async_task.emit(lambda: self._runner.stop_watching(job_ids))
+
+    def read_geometry_progress(self, job_ids: list[Any]) -> None:
+        """Read jobs' geometry progress on the worker; results via :attr:`geometry_progress_read`."""
+
+        ids = list(job_ids)
+        self._async_task.emit(lambda: self._runner.read_geometry_progress(ids))
 
     def cancel(self, job_id: Any) -> None:
         self._async_task.emit(lambda: self._runner.cancel(job_id))

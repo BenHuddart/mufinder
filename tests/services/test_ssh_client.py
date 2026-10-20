@@ -76,6 +76,7 @@ class _FakeStdin:
 class _FakeSFTPFile:
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._position = 0
 
     def __enter__(self):
         return self
@@ -83,8 +84,11 @@ class _FakeSFTPFile:
     def __exit__(self, *args):
         return False
 
+    def seek(self, offset: int) -> None:
+        self._position = offset
+
     def read(self) -> bytes:
-        return self._data
+        return self._data[self._position :]
 
 
 class _FakeSFTP:
@@ -566,6 +570,8 @@ def test_ssh_connection_file_operations(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     text = connection.read_text("/remote/work/dir/local.txt")
     assert text == "hello"
+    assert connection.read_bytes("/remote/work/dir/local.txt") == b"hello"
+    assert connection.read_bytes("/remote/work/dir/local.txt", 2) == b"llo"
 
     out_file = tmp_path / "out.txt"
     connection.get("/remote/work/dir/local.txt", out_file)

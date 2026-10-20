@@ -492,6 +492,20 @@ class SSHConnection:
             return data.decode("utf-8", errors="replace")
         return str(data)
 
+    def read_bytes(self, remote_path: str, offset: int = 0) -> bytes:
+        """Return the remote file's bytes from ``offset`` to its current end.
+
+        Lets a reader that follows a growing file fetch only what was appended
+        since its last read.
+        """
+
+        sftp = self._require_sftp()
+        with sftp.open(remote_path, "rb") as handle:
+            if offset:
+                handle.seek(offset)
+            data = handle.read()
+        return data if isinstance(data, bytes) else str(data).encode("utf-8")
+
     def put(self, local_path: Path, remote_path: str) -> None:
         sftp = self._require_sftp()
         source = Path(local_path)

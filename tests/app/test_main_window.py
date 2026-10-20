@@ -2674,13 +2674,15 @@ def test_main_window_jobs_table_includes_cluster_columns(qapp) -> None:
     assert "Remote Job ID" in headers
     assert "Runtime" in headers
     assert "Processes" in headers
-    assert window._jobs_table.columnCount() == 15
+    assert "Progress" in headers
+    assert window._jobs_table.columnCount() == 16
     assert window._jobs_table.property("squareTopCorners") == "true"
     header = window._jobs_table.horizontalHeader()
     assert header.sectionResizeMode(window._JOB_LABEL_COLUMN) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(window._JOB_REMOTE_ID_COLUMN) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(window._JOB_RUNTIME_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
     assert header.sectionResizeMode(window._JOB_PROCESSES_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
+    assert header.sectionResizeMode(window._JOB_PROGRESS_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
     assert header.sectionResizeMode(window._JOB_SUBMIT_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
     dock = window.findChild(QDockWidget, "jobDashboardDock")
     assert dock is not None

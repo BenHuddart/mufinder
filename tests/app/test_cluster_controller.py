@@ -46,6 +46,7 @@ class _FakeRunner(QObject):
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
     poll_failed = Signal(str)
+    geometry_progress_read = Signal(object)
 
     def __init__(self, *, settings: object = None) -> None:
         super().__init__()
@@ -109,6 +110,11 @@ class _FakeRunner(QObject):
     def refresh_queue(self) -> None:
         self.threads["refresh"] = QThread.currentThread()
         self.calls.append(("refresh",))
+
+    def read_geometry_progress(self, job_ids) -> None:
+        self.threads["progress"] = QThread.currentThread()
+        self.calls.append(("progress", tuple(job_ids)))
+        self.geometry_progress_read.emit({job_id: f"progress-{job_id}" for job_id in job_ids})
 
     def cancel(self, job_id) -> None:
         self.threads["cancel"] = QThread.currentThread()
@@ -237,6 +243,19 @@ def test_async_calls_run_on_worker_thread(controller) -> None:
     assert fake.threads["refresh"] is not gui_thread
     assert fake.threads["cancel"] is ctrl._thread
     assert fake.threads["track"] is ctrl._thread
+
+
+def test_geometry_progress_is_read_on_the_worker_and_reported_on_the_gui_thread(controller) -> None:
+    ctrl, fake = controller
+    gui_thread = QThread.currentThread()
+    received: list[tuple[object, QThread]] = []
+    ctrl.geometry_progress_read.connect(lambda results: received.append((results, QThread.currentThread())))
+
+    ctrl.read_geometry_progress(["job-1", "job-2"])
+
+    assert pump_until(lambda: bool(received))
+    assert fake.threads["progress"] is ctrl._thread
+    assert received == [({"job-1": "progress-job-1", "job-2": "progress-job-2"}, gui_thread)]
 
 
 def test_connect_mirrors_state_and_forwards_signal(controller) -> None:
