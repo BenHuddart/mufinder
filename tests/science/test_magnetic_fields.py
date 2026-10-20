@@ -1407,6 +1407,8 @@ def test_component_sample_combination_guards_array_shapes() -> None:
         module._combine_component_samples([np.zeros((4, 2))], [(1.0,)], np.zeros((2, 1)), nangles=4)
     with pytest.raises(MagneticFieldError, match="phase coefficient length"):
         module._combine_component_samples([np.zeros((4, 3))], [(1.0,)], np.zeros((2, 2)), nangles=4)
+    with pytest.raises(MagneticFieldError, match="lookup stride must divide"):
+        module._combine_component_samples([np.zeros((5, 3))], [(1.0,)], np.zeros((2, 1)), nangles=5, stride=2)
 
 
 # Commensurate approximants
@@ -1502,8 +1504,31 @@ def test_approximant_fields_keep_one_translation_per_distinct_phase(monkeypatch)
         options=MagneticFieldOptions(supercell=(1, 1, 1), find_equivalent_sites=False),
     )
 
-    assert [result.site_label for result in results] == ["A + (0, 0, 0)", "A + (0, 1, 0)"]
+    assert [result.site_label for result in results] == ["A + (0, 0, 0)", "A + (1, 0, 0)"]
     np.testing.assert_allclose([result.dipolar[0] for result in results], [0.0, 0.5])
+
+
+def test_distinct_phase_translations_walk_the_phase_group_not_the_supercell() -> None:
+    # q = (1/12, 1/12, 1/12) repeats over 12 x 12 x 12 cells but reaches only 12 phases.
+    twelfths = (np.array([1, 1, 1]), np.array([12, 12, 12]))
+
+    translations = module._distinct_phase_translations([twelfths], limit=512)
+
+    assert translations is not None
+    assert len(translations) == 12
+    assert translations == tuple((n, 0, 0) for n in range(12))
+
+
+def test_distinct_phase_translations_stop_at_the_limit() -> None:
+    # Three independent wavevectors with coprime periods reach 11 x 12 x 13 phase sets.
+    rationals = [
+        (np.array([1, 0, 0]), np.array([11, 1, 1])),
+        (np.array([0, 1, 0]), np.array([1, 12, 1])),
+        (np.array([0, 0, 1]), np.array([1, 1, 13])),
+    ]
+
+    assert module._distinct_phase_translations(rationals, limit=512) is None
+    assert len(module._distinct_phase_translations(rationals, limit=11 * 12 * 13)) == 11 * 12 * 13
 
 
 def test_approximant_fields_of_a_single_phase_keep_the_site_label(monkeypatch) -> None:
@@ -1530,7 +1555,7 @@ def test_approximant_fields_need_an_approximant(monkeypatch) -> None:
 def test_approximant_fields_cap_the_number_of_translations(monkeypatch) -> None:
     _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
 
-    with pytest.raises(MagneticFieldError, match="3 inequivalent translations, more than 2"):
+    with pytest.raises(MagneticFieldError, match="more than 2 inequivalent translations"):
         calculate_commensurate_approximant_fields(
             _structure(),
             _circular_helix_model((0.3334, 0.0, 0.0)),
@@ -1599,6 +1624,19 @@ def test_distribution_convergence_checks_pass_for_a_resolved_distribution(monkey
     payload = result.to_json()["convergence"]
     assert payload[0]["setting"] == "nangles"
     assert payload[0]["converged"] is True
+
+
+def test_distribution_convergence_skips_the_lookup_check_for_an_odd_lookup_count(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_ramp_locfield)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=1023, histogram_bins=16),
+    )
+
+    assert [check.setting for check in result.convergence] == ["phase_sample_count", "histogram_bins"]
 
 
 def test_distribution_convergence_flags_a_coarse_lookup(monkeypatch) -> None:

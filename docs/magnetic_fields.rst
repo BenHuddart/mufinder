@@ -770,7 +770,8 @@ calls:
    lookup resolution ``N/2``. The check reports the Kolmogorov-Smirnov
    distance, the largest difference between the two cumulative distributions
    of ``|B|``, and passes when it is at most 1%. A failing check advises
-   doubling ``Lookup angles per q``.
+   doubling ``Lookup angles per q``. The check runs only for an even number of
+   lookup angles, since an odd number has no uniform half-resolution lookup.
 
 ``Distribution samples``
    The distribution is recomputed from half the phase samples: every other
@@ -785,7 +786,8 @@ calls:
    angles for a grid limited by them). A single-valued distribution passes.
 
 A structure whose sampled phase space collapses to a single phase reports only
-the histogram check. After a calculation, the status line counts the checks
+the histogram check, and an odd ``Lookup angles per q`` omits the lookup-angle
+check. After a calculation, the status line counts the checks
 that need attention; selecting a distribution row lists each check with its
 verdict and advice under the results table, for new and restored results.
 The checks are saved with the result as ``convergence`` entries holding
@@ -821,8 +823,10 @@ field stands for the same number of sites. Rows are labelled with their
 translation, for example ``Custom site + (1, 0, 0)``, carry the full term
 breakdown of a commensurate result, and give the muon position ``r + T`` in
 host fractional coordinates. A structure without an approximant within the
-limits keeps its sampled distribution, and an approximant with more than 512
-distinct translations stops with an error.
+limits keeps its sampled distribution. MuFinder finds the distinct phase sets
+by stepping one unit translation at a time from the origin, so it never walks
+the whole magnetic supercell, and it stops with an error as soon as it finds
+more than 512.
 
 Beyond the dipolar sum, the field calculation includes:
 
