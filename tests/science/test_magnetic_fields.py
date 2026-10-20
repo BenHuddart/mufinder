@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 import importlib
+import json
 import sys
 from types import ModuleType
 
@@ -846,6 +847,81 @@ def test_demag_field_rejects_unknown_shape(monkeypatch) -> None:
         _commensurate_demag(monkeypatch, demag_shape="cube")
 
 
+# A measured magnetisation, in mu_B per formula unit, replaces the model's uniform moment.
+
+_MEASURED_MOMENT = (0.1, -0.2, 0.05)
+
+
+def test_measured_magnetisation_replaces_the_model_uniform_moment(monkeypatch) -> None:
+    demag = _commensurate_demag(monkeypatch, demag_shape="sphere", measured_magnetization=_MEASURED_MOMENT)
+
+    assert demag == pytest.approx(tuple(-_bulk_field(_MEASURED_MOMENT) / 3.0))
+
+
+def test_measured_magnetisation_gives_a_demag_field_for_order_without_a_uniform_moment(monkeypatch) -> None:
+    demag = _commensurate_demag(
+        monkeypatch,
+        _single_q_model((0.0, 0.0, 0.5), _UNIFORM_MOMENT),
+        demag_shape="infinite_plate",
+        plate_normal_axis="c",
+        measured_magnetization=_MEASURED_MOMENT,
+    )
+
+    assert demag == pytest.approx((0.0, 0.0, -_bulk_field(_MEASURED_MOMENT)[2]))
+
+
+def test_measured_magnetisation_has_no_effect_without_a_sample_shape(monkeypatch) -> None:
+    assert _commensurate_demag(monkeypatch, measured_magnetization=_MEASURED_MOMENT) == (0.0, 0.0, 0.0)
+
+
+def test_measured_magnetisation_counts_formula_units_per_cell(monkeypatch) -> None:
+    # Two Fe atoms in the (3 Å)^3 cell are two formula units of Fe.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Lorentz=(5, 6, 7)))
+    (result,) = calculate_commensurate_fields(
+        host_structure(label="Fe2", lattice=3.0, species=("Fe", "Fe"), positions=BODY_CENTRE),
+        _single_q_model((0.0, 0.0, 0.0), _UNIFORM_MOMENT),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            demag_shape="sphere",
+            measured_magnetization=_MEASURED_MOMENT,
+        ),
+    )
+
+    assert result.demag == pytest.approx(tuple(-2.0 * _bulk_field(_MEASURED_MOMENT) / 3.0))
+
+
+@pytest.mark.parametrize(
+    ("measured", "message"),
+    [
+        (1.0, "three-vector"),
+        ((1.0, 2.0), "three-vector"),
+        ((1.0, float("nan"), 0.0), "finite"),
+        ((1.0, float("inf"), 0.0), "finite"),
+        (("x", 0.0, 0.0), "three numbers"),
+    ],
+)
+def test_measured_magnetisation_is_validated(monkeypatch, measured, message) -> None:
+    with pytest.raises(MagneticFieldError, match=message):
+        _commensurate_demag(monkeypatch, demag_shape="sphere", measured_magnetization=measured)
+
+
+def test_measured_magnetisation_applies_to_every_approximant_translation(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_phase_recording_locfield)
+
+    results = calculate_commensurate_approximant_fields(
+        _structure(),
+        _circular_helix_model((0.3334, 0.0, 0.0)),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), demag_shape="sphere", measured_magnetization=_MEASURED_MOMENT),
+    )
+
+    # The 3 x 1 x 1 approximant holds three formula units in three times the volume.
+    assert len(results) == 3
+    for result in results:
+        assert result.demag == pytest.approx(tuple(-_bulk_field(_MEASURED_MOMENT) / 3.0))
+
+
 # Dipolar tensors
 
 
@@ -1376,6 +1452,74 @@ def test_incommensurate_distribution_applies_advanced_demag_sample_to_the_unifor
     expected = -_bulk_field((0.0, 0.0, 2.0))
     np.testing.assert_allclose(result.fields_T, np.full((len(result.fields_T), 3), expected), atol=1e-12)
     assert result.calculation_parameters["demag_sample"]["shape"] == "infinite_plate"
+
+
+def _zero_lookup_locfield(_sample, mode, *_args, **kwargs):
+    """A fake incommensurate ``locfield`` whose lookup tables are all zero."""
+
+    assert mode == "i"
+    zeros = np.zeros((int(kwargs["nangles"]), 3))
+    return [_Field(Dipolar=zeros, Lorentz=zeros, Contact=zeros)]
+
+
+def test_incommensurate_distribution_applies_a_measured_magnetisation(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_lookup_locfield)
+
+    result = calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sampling="grid",
+            demag_shape="infinite_plate",
+            plate_normal_axis="a",
+            measured_magnetization=_MEASURED_MOMENT,
+            histogram_bins=4,
+        ),
+    )[0]
+
+    # The helix has no uniform moment, so the whole demag field comes from the measured value.
+    expected = np.array([-_bulk_field(_MEASURED_MOMENT)[0], 0.0, 0.0])
+    np.testing.assert_allclose(result.fields_T, np.full((len(result.fields_T), 3), expected), atol=1e-12)
+    saved = json.loads(json.dumps(result.to_json()))
+    assert saved["calculation_parameters"]["measured_magnetization"] == list(_MEASURED_MOMENT)
+
+
+def test_distribution_parameters_record_a_model_derived_magnetisation_as_none(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_lookup_locfield)
+
+    result = calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=4, phase_sampling="grid", histogram_bins=4),
+    )[0]
+
+    assert result.calculation_parameters["measured_magnetization"] is None
+
+
+@pytest.mark.parametrize(
+    ("measured", "message"),
+    [(1.0, "three-vector"), ((1.0, 2.0), "three-vector"), ((0.0, float("nan"), 0.0), "finite"), (("x", 0.0, 0.0), "three numbers")],
+)
+def test_incommensurate_distribution_validates_a_measured_magnetisation(monkeypatch, measured, message) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_lookup_locfield)
+
+    with pytest.raises(MagneticFieldError, match=message):
+        calculate_incommensurate_field_distributions(
+            _structure(),
+            _circular_helix_model(),
+            [_SITE_A],
+            options=MagneticFieldOptions(
+                supercell=(1, 1, 1),
+                nangles=4,
+                phase_sampling="grid",
+                histogram_bins=4,
+                measured_magnetization=measured,
+            ),
+        )
 
 
 # Internal guards the public entry points never reach

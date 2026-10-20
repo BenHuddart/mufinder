@@ -489,8 +489,9 @@ no two workflow widgets may define the same private method.
        with tolerances passed by each caller.
    * - ``mufinder.science.ase_bridge``
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
-       ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
-       the muon-label and element-symbol rules.
+       ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``),
+       the muon-label and element-symbol rules, and the reduced formula and
+       formula units per cell (``reduced_formula``).
    * - ``mufinder.science.muon_distortion``
      - Pairing a relaxed muon supercell with its pristine host
        (``map_muon_distortion``): supercell detection, the finite correction

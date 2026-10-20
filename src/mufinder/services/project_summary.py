@@ -31,7 +31,7 @@ from mufinder.domain.charge_states import (
 )
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
-from mufinder.science.ase_bridge import element_symbol, is_muon_label
+from mufinder.science.ase_bridge import is_muon_label, reduced_formula
 from mufinder.services import supercell_assets
 from mufinder.services.project_document import (
     ProjectDocument,
@@ -488,20 +488,7 @@ def magnetic_field_workspaces(document: ProjectDocument) -> list[dict[str, objec
 def structure_formula(structure: Structure) -> str:
     """Return the reduced chemical formula of a structure's non-muon atoms (``SrTiO3``)."""
 
-    counts: Counter[str] = Counter()
-    for label in structure.species:
-        if is_muon_label(label):
-            continue
-        try:
-            counts[element_symbol(label)] += 1
-        except ValueError:
-            continue
-    if not counts:
-        return ""
-    divisor = math.gcd(*counts.values())
-    return "".join(
-        f"{symbol}{count // divisor if count // divisor > 1 else ''}" for symbol, count in counts.items()
-    )
+    return reduced_formula(structure.species)[0]
 
 
 # --- The project summary ------------------------------------------------------

@@ -2021,6 +2021,86 @@ def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> 
     widget.close()
 
 
+def test_magnetic_field_widget_measured_magnetisation_reaches_the_options_and_round_trips(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "measured-magnetisation.mufinder", "Measured Magnetisation")
+    service.add_structure(document, _host_structure())
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    emitted: list[dict] = []
+    widget.form_state_changed.connect(emitted.append)
+
+    assert widget._field_options().measured_magnetization is None
+    assert not any(edit.isEnabled() for edit in widget._measured_magnetization_inputs)
+    assert widget._measured_magnetization_unit.text().startswith("μB per FeO")
+
+    widget._measured_magnetization_check.setChecked(True)
+    x, y, z = widget._measured_magnetization_inputs
+    x.setText("0.5")
+    y.setText("")
+    z.setText("-1.25")
+
+    assert all(edit.isEnabled() for edit in widget._measured_magnetization_inputs)
+    assert widget._field_options().measured_magnetization == (0.5, 0.0, -1.25)
+    assert emitted[-1]["use_measured_magnetization"] is True
+    assert emitted[-1]["measured_magnetization"] == [0.5, 0.0, -1.25]
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(widget.collect_state())
+
+    assert restored._measured_magnetization_check.isChecked()
+    assert restored._field_options().measured_magnetization == (0.5, 0.0, -1.25)
+
+    # Unchecking keeps the values for later but falls back to the model's moment.
+    restored._measured_magnetization_check.setChecked(False)
+    assert restored._field_options().measured_magnetization is None
+    assert restored.collect_state()["measured_magnetization"] == [0.5, 0.0, -1.25]
+
+    restored.set_form_state({})
+    assert not restored._measured_magnetization_check.isChecked()
+    assert restored.collect_state()["measured_magnetization"] == [0.0, 0.0, 0.0]
+    widget.close()
+    restored.close()
+
+
+def test_magnetic_field_widget_ignores_a_malformed_saved_magnetisation(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "bad-magnetisation.mufinder", "Bad Magnetisation")
+    service.add_structure(document, _host_structure())
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state(
+        {"demag_shape": "sphere", "use_measured_magnetization": True, "measured_magnetization": ["a", 1.0]}
+    )
+
+    assert widget._field_options().measured_magnetization == (0.0, 0.0, 0.0)
+    widget.close()
+
+
+def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "unfinished-magnetisation.mufinder", "Unfinished Magnetisation")
+    service.add_structure(document, _host_structure())
+    calls: list[object] = []
+    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *args, **kwargs: calls.append(kwargs))
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._measured_magnetization_check.setChecked(True)
+    widget._measured_magnetization_inputs[0].setText("-")
+
+    widget._calculate_fields()
+
+    assert calls == []
+    assert "measured magnetisation components must be decimal numbers" in widget._calculation_status.text()
+    widget.close()
+
+
 def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(qapp, tmp_path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-empty-state.mufinder", "Magnetic Empty State")

@@ -2,14 +2,18 @@
 
 This is the one home for turning a :class:`~mufinder.domain.models.Structure`
 (or any structure-like object with ``lattice_vectors``, ``species`` and
-``fractional_positions``) into an ASE ``Atoms`` object, and for the muon-label
-and element-symbol rules that conversion needs. Science modules that hand a
+``fractional_positions``) into an ASE ``Atoms`` object, for the muon-label
+and element-symbol rules that conversion needs, and for the reduced formula
+those rules give (:func:`reduced_formula`). Science modules that hand a
 structure to ASE call :func:`structure_to_ase_atoms` with the options they need
 instead of building ``Atoms`` themselves.
 """
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable
+import math
 import re
 
 from ase import Atoms
@@ -45,6 +49,30 @@ def element_symbol(symbol: object, *, error: type[Exception] = StructureConversi
     if match is None:
         raise error(f"Could not resolve element symbol from '{symbol}'.")
     return match.group(1)
+
+
+def reduced_formula(species: Iterable[object]) -> tuple[str, int]:
+    """Return the reduced formula of the non-muon species and its count per cell.
+
+    ``("Fe2O3", 6)`` for twelve Fe and eighteen O labels: elements keep their
+    first-seen order and the count is the greatest common divisor of the element
+    counts. Labels that do not start with an element symbol are skipped. A cell
+    with no such atoms gives ``("", 0)``.
+    """
+
+    counts: Counter[str] = Counter()
+    for label in species:
+        if is_muon_label(label):
+            continue
+        try:
+            counts[element_symbol(label)] += 1
+        except StructureConversionError:
+            continue
+    if not counts:
+        return "", 0
+    divisor = math.gcd(*counts.values())
+    formula = "".join(f"{symbol}{count // divisor if count // divisor > 1 else ''}" for symbol, count in counts.items())
+    return formula, divisor
 
 
 def structure_to_ase_atoms(
