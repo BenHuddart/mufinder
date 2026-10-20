@@ -1328,7 +1328,10 @@ def test_scheduler_job_follows_a_template_that_uses_castep_command(tmp_path: Pat
     assert re.fullmatch(r"mufinder: one query took [\d.]+ s \([\d.]+ s user, [\d.]+ s system\)", job_log[2])
     # ... and whether running queries side by side paid off on this node.
     assert re.fullmatch(
-        r"mufinder: 4 queries at once took \d+ ms against \d+ ms for one; (keeping 4|running one) at a time",
+        # A slow runner can hit the side-by-side time limit, which the script
+        # reports as not finished and then runs one at a time.
+        r"mufinder: 4 queries at once (took|had not finished after) \d+ ms against \d+ ms for one; "
+        r"(keeping 4|running one) at a time",
         job_log[3],
     )
     assert len(job_log) == 4

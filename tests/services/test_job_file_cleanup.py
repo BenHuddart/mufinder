@@ -130,6 +130,26 @@ def test_execute_skips_the_prompt_for_an_item_without_files(tmp_path: Path) -> N
     assert job.id not in document.jobs
 
 
+def test_execute_does_not_ask_again_for_a_directory_an_earlier_item_removed(tmp_path: Path) -> None:
+    service, document = _project(tmp_path)
+    old, replacement = _job(service, document, "relax_a"), _job(service, document, "relax_b")
+    directory = _job_directory(document, "relax_a")
+    cleanup = _cleanup(document, {"relax_a": directory, "relax_b": directory})
+    plan = [cleanup.plan_item([old]), cleanup.plan_item([replacement])]
+    asked: list[str] = []
+
+    # Cancel would be the answer for a second prompt; there must not be one.
+    answers = iter(["delete", None])
+    outcome = cleanup.execute(
+        plan, choose_disposition=lambda item: asked.append(item.label) or next(answers), stop_on_error=True
+    )
+
+    assert asked == ["relax_a"]
+    assert outcome.completed
+    assert not directory.exists()
+    assert document.jobs == {}
+
+
 def test_execute_stops_on_cancel_and_keeps_the_rest(tmp_path: Path) -> None:
     service, document = _project(tmp_path)
     first, second = _job(service, document, "relax_a"), _job(service, document, "relax_b")

@@ -264,7 +264,8 @@ class JobFileCleanup:
     ) -> JobCleanupOutcome:
         """Clean each item of ``plan`` in order and return what happened.
 
-        For an item with files, ``choose_disposition`` says whether to delete or
+        For an item whose files are still on disk when its turn comes,
+        ``choose_disposition`` says whether to delete or
         archive them, until it answers with an ``*_all`` disposition, which
         applies to every later item. ``None`` cancels: that item and the rest
         are left alone. A refused item, or one whose files cannot be updated,
@@ -281,7 +282,10 @@ class JobFileCleanup:
                 if stop_on_error:
                     break
                 continue
-            if item.directory is not None:
+            # Checked again here: an earlier item may already have deleted or
+            # archived a directory this one shares (a reconfigured relaxation
+            # row's old and replacement jobs use one folder).
+            if item.directory is not None and item.directory.exists():
                 disposition = shared_disposition or choose_disposition(item)
                 if disposition is None:
                     return JobCleanupOutcome(tuple(cleaned), tuple(failures), cancelled=True)
