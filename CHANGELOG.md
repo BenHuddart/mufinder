@@ -2,6 +2,239 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-10-20)
+
+### Bug Fixes
+
+- Address review findings on the magnetic preset helpers
+  ([#209](https://github.com/BenHuddart/mufinder/pull/209),
+  [`163ea3a`](https://github.com/BenHuddart/mufinder/commit/163ea3ab8cc7406b5c6dfb3b3195237576680ca2))
+
+- Anchor muesr fields to the muon's cell and report dipolar tensors in T/μB
+  ([#212](https://github.com/BenHuddart/mufinder/pull/212),
+  [`7c98c96`](https://github.com/BenHuddart/mufinder/commit/7c98c967a24d3d691f8db909fd1015061f37ffb7))
+
+- Anchor muesr fields to the muon's cell and report tensors in T/muB
+  ([#212](https://github.com/BenHuddart/mufinder/pull/212),
+  [`7c98c96`](https://github.com/BenHuddart/mufinder/commit/7c98c967a24d3d691f8db909fd1015061f37ffb7))
+
+- Apply muon-induced distortion corrections to the dipolar field
+  ([#196](https://github.com/BenHuddart/mufinder/pull/196),
+  [`4ce2b5d`](https://github.com/BenHuddart/mufinder/commit/4ce2b5d1258c910205d1e09fc6e84e2302437d33))
+
+- Bound approximant translation search and skip odd lookup halving
+  ([#211](https://github.com/BenHuddart/mufinder/pull/211),
+  [`1d81a9e`](https://github.com/BenHuddart/mufinder/commit/1d81a9e8b25b0ef586e8ee88e06dc38a31f86d0a))
+
+- Cap the keyword job walltime at the queue maximum
+  ([#203](https://github.com/BenHuddart/mufinder/pull/203),
+  [`28b111a`](https://github.com/BenHuddart/mufinder/commit/28b111a60c0e7824baf977cadb4371d380cec9e8))
+
+- Clear magnetic-field results an owner has no record of
+  ([#210](https://github.com/BenHuddart/mufinder/pull/210),
+  [`f7f106d`](https://github.com/BenHuddart/mufinder/commit/f7f106df5f64837551d7697cc3c0344638d5a1bf))
+
+- Convert saved dipolar tensors to T/muB on load (schema 5)
+  ([#212](https://github.com/BenHuddart/mufinder/pull/212),
+  [`7c98c96`](https://github.com/BenHuddart/mufinder/commit/7c98c967a24d3d691f8db909fd1015061f37ffb7))
+
+- Index distortion moments in the full pristine species list
+  ([#196](https://github.com/BenHuddart/mufinder/pull/196),
+  [`4ce2b5d`](https://github.com/BenHuddart/mufinder/commit/4ce2b5d1258c910205d1e09fc6e84e2302437d33))
+
+- Invalidate cached cluster credentials when the jump host is toggled
+  ([#201](https://github.com/BenHuddart/mufinder/pull/201),
+  [`d1d0d63`](https://github.com/BenHuddart/mufinder/commit/d1d0d63e32d3e3913c8a033556bc72642e7636fb))
+
+- Keep a component's enabled state when it is edited
+  ([#204](https://github.com/BenHuddart/mufinder/pull/204),
+  [`c0cafc9`](https://github.com/BenHuddart/mufinder/commit/c0cafc9521055790b83baa6b96090715bb0fe422))
+
+- Let a long component summary scroll on the Magnetic Fields page
+  ([#208](https://github.com/BenHuddart/mufinder/pull/208),
+  [`0d1dd3e`](https://github.com/BenHuddart/mufinder/commit/0d1dd3e5125463da10e8388ba08b8f792de3d384))
+
+- List only the active host's relaxation clusters as magnetic-field sites
+  ([#219](https://github.com/BenHuddart/mufinder/pull/219),
+  [`671a99a`](https://github.com/BenHuddart/mufinder/commit/671a99adbc232c5cce1fe18c0d812dbab765e325))
+
+- Mark Energy Barriers complete when an NEB result exists
+  ([#195](https://github.com/BenHuddart/mufinder/pull/195),
+  [`631c682`](https://github.com/BenHuddart/mufinder/commit/631c682f27288e37c17ff4ba82f09ffc5a9c91f7))
+
+- Match pinned sites by representative job and keep endpoints in scope
+  ([#218](https://github.com/BenHuddart/mufinder/pull/218),
+  [`3036836`](https://github.com/BenHuddart/mufinder/commit/30368367763b88e04c18e2a5c05573435d775250))
+
+- Only reuse cached cluster credentials for the same host
+  ([#201](https://github.com/BenHuddart/mufinder/pull/201),
+  [`d1d0d63`](https://github.com/BenHuddart/mufinder/commit/d1d0d63e32d3e3913c8a033556bc72642e7636fb))
+
+- Read keyring passwords off the GUI thread
+  ([#202](https://github.com/BenHuddart/mufinder/pull/202),
+  [`deb1020`](https://github.com/BenHuddart/mufinder/commit/deb102076fe0bb9d8c8159609bb1bb854c91829a))
+
+- Read the current muon position in the merged distortion code
+  ([#197](https://github.com/BenHuddart/mufinder/pull/197),
+  [`8dfbe3c`](https://github.com/BenHuddart/mufinder/commit/8dfbe3c457138b91cf5ae7c82a77d3af3d391955))
+
+- Recheck a shared job directory before asking what to do with it
+  ([#217](https://github.com/BenHuddart/mufinder/pull/217),
+  [`0a74ffb`](https://github.com/BenHuddart/mufinder/commit/0a74ffb3b37cb46d019b664a68d198302a4eb685))
+
+- Record a muon site's relaxed position beside its initial one
+  ([#197](https://github.com/BenHuddart/mufinder/pull/197),
+  [`8dfbe3c`](https://github.com/BenHuddart/mufinder/commit/8dfbe3c457138b91cf5ae7c82a77d3af3d391955))
+
+- Recover long-queued cluster jobs the queue poll cannot see
+  ([#200](https://github.com/BenHuddart/mufinder/pull/200),
+  [`16f5ad9`](https://github.com/BenHuddart/mufinder/commit/16f5ad923697474feee190e772c1b1594ba3e69d))
+
+- Refuse directory deletion on sacct errors and reconnect watched clusters
+  ([#200](https://github.com/BenHuddart/mufinder/pull/200),
+  [`16f5ad9`](https://github.com/BenHuddart/mufinder/commit/16f5ad923697474feee190e772c1b1594ba3e69d))
+
+- Restart progress reads on a new output file and read outside the lock
+  ([#221](https://github.com/BenHuddart/mufinder/pull/221),
+  [`36cabf7`](https://github.com/BenHuddart/mufinder/commit/36cabf7b27fdac82db55e7438440a4bf9bdb19c4))
+
+- Show numerically zero magnetic-field components as 0
+  ([#216](https://github.com/BenHuddart/mufinder/pull/216),
+  [`5ae57fd`](https://github.com/BenHuddart/mufinder/commit/5ae57fd128e9e0a11fd6c1c7f24a654adf4dc1d3))
+
+- Stop watching jobs reset or dismissed since failing
+  ([#200](https://github.com/BenHuddart/mufinder/pull/200),
+  [`16f5ad9`](https://github.com/BenHuddart/mufinder/commit/16f5ad923697474feee190e772c1b1594ba3e69d))
+
+- Summarise k-point grid adjustments instead of listing every row
+  ([#192](https://github.com/BenHuddart/mufinder/pull/192),
+  [`dd2138f`](https://github.com/BenHuddart/mufinder/commit/dd2138f1899c299d8a951791296be06c18a896ab))
+
+- Take the demagnetizing field from the bulk magnetisation
+  ([#214](https://github.com/BenHuddart/mufinder/pull/214),
+  [`f02358f`](https://github.com/BenHuddart/mufinder/commit/f02358f55e15f8c3f32f30be52b3d22b740f9e76))
+
+- Take the demagnetizing field from the bulk magnetisation
+  ([#213](https://github.com/BenHuddart/mufinder/pull/213),
+  [`22c61d4`](https://github.com/BenHuddart/mufinder/commit/22c61d4c9c0024e8561dafb073bc566d436f48f4))
+
+- Tighten q-basis edits for combined rows and keep the panel current
+  ([#207](https://github.com/BenHuddart/mufinder/pull/207),
+  [`052f24e`](https://github.com/BenHuddart/mufinder/commit/052f24e7d2fee02a3a8f19227177226bea93712e))
+
+- Use -mu0 N M for the demagnetizing field ([#214](https://github.com/BenHuddart/mufinder/pull/214),
+  [`f02358f`](https://github.com/BenHuddart/mufinder/commit/f02358f55e15f8c3f32f30be52b3d22b740f9e76))
+
+- Use -mu0 N M for the demagnetizing field ([#213](https://github.com/BenHuddart/mufinder/pull/213),
+  [`22c61d4`](https://github.com/BenHuddart/mufinder/commit/22c61d4c9c0024e8561dafb073bc566d436f48f4))
+
+- Validate a measured magnetisation before recording it in distribution parameters
+  ([#214](https://github.com/BenHuddart/mufinder/pull/214),
+  [`f02358f`](https://github.com/BenHuddart/mufinder/commit/f02358f55e15f8c3f32f30be52b3d22b740f9e76))
+
+- Validate queues in services and carry queue memory into keyword jobs
+  ([#203](https://github.com/BenHuddart/mufinder/pull/203),
+  [`28b111a`](https://github.com/BenHuddart/mufinder/commit/28b111a60c0e7824baf977cadb4371d380cec9e8))
+
+- **app**: Keep the project home legible in short windows and drop map decoration
+  ([#189](https://github.com/BenHuddart/mufinder/pull/189),
+  [`7d1a264`](https://github.com/BenHuddart/mufinder/commit/7d1a2642d464dde212989fce03d83bffed57eaee))
+
+- **app**: Let every inactive Quantum Corrections row reach editable parameters
+  ([#198](https://github.com/BenHuddart/mufinder/pull/198),
+  [`eedc3bf`](https://github.com/BenHuddart/mufinder/commit/eedc3bf973d986bc418feba6bc5ed7ff6756150d))
+
+- **castep_io**: Snap POSITIONS_ABS face atoms to 0.0 on every platform
+  ([#193](https://github.com/BenHuddart/mufinder/pull/193),
+  [`fc3ebbb`](https://github.com/BenHuddart/mufinder/commit/fc3ebbb1202ea6a1bfd07c7c2548e651d1bf7d86))
+
+- **science**: Accept CIF comments beside and between loop headings
+  ([#191](https://github.com/BenHuddart/mufinder/pull/191),
+  [`be907f8`](https://github.com/BenHuddart/mufinder/commit/be907f8983973b7183279eb8d91ebdce526397e0))
+
+### Documentation
+
+- Add contributing guidelines and issue forms
+  ([#199](https://github.com/BenHuddart/mufinder/pull/199),
+  [`9e6dbe5`](https://github.com/BenHuddart/mufinder/commit/9e6dbe528297d661c9272e6bf63c355ce9156fa6))
+
+- Allow attachments in the bug report logs field
+  ([#199](https://github.com/BenHuddart/mufinder/pull/199),
+  [`9e6dbe5`](https://github.com/BenHuddart/mufinder/commit/9e6dbe528297d661c9272e6bf63c355ce9156fa6))
+
+- Render the Magnetic Fields screenshots in CI instead of committing them
+  ([#215](https://github.com/BenHuddart/mufinder/pull/215),
+  [`f46e29b`](https://github.com/BenHuddart/mufinder/commit/f46e29b0f68b09ba7ae84bcd58002223c5a1f91a))
+
+### Features
+
+- Add a q-basis inspection panel to the magnetic-structure builder
+  ([#207](https://github.com/BenHuddart/mufinder/pull/207),
+  [`052f24e`](https://github.com/BenHuddart/mufinder/commit/052f24e7d2fee02a3a8f19227177226bea93712e))
+
+- Add duplicate, enable/disable and reorder to the magnetic-structure builder
+  ([#204](https://github.com/BenHuddart/mufinder/pull/204),
+  [`c0cafc9`](https://github.com/BenHuddart/mufinder/commit/c0cafc9521055790b83baa6b96090715bb0fe422))
+
+- Choose a cluster queue per submission and rework cluster setup
+  ([#203](https://github.com/BenHuddart/mufinder/pull/203),
+  [`28b111a`](https://github.com/BenHuddart/mufinder/commit/28b111a60c0e7824baf977cadb4371d380cec9e8))
+
+- Default downstream workflows to the pinned Muon Sites summary
+  ([#218](https://github.com/BenHuddart/mufinder/pull/218),
+  [`3036836`](https://github.com/BenHuddart/mufinder/commit/30368367763b88e04c18e2a5c05573435d775250))
+
+- Guide the magnetic-structure builder with a q picker, checklist and presets
+  ([#209](https://github.com/BenHuddart/mufinder/pull/209),
+  [`163ea3a`](https://github.com/BenHuddart/mufinder/commit/163ea3ab8cc7406b5c6dfb3b3195237576680ca2))
+
+- Label dipolar tensors and nuclear relaxation at UEP sites as estimates
+  ([#220](https://github.com/BenHuddart/mufinder/pull/220),
+  [`8f96893`](https://github.com/BenHuddart/mufinder/commit/8f968930a75b27e40340c5554275005059203e71))
+
+- Label magnetic fields computed at UEP sites as unrelaxed estimates
+  ([#219](https://github.com/BenHuddart/mufinder/pull/219),
+  [`671a99a`](https://github.com/BenHuddart/mufinder/commit/671a99adbc232c5cce1fe18c0d812dbab765e325))
+
+- Let the user enter a measured bulk magnetisation for the demag field
+  ([#214](https://github.com/BenHuddart/mufinder/pull/214),
+  [`f02358f`](https://github.com/BenHuddart/mufinder/commit/f02358f55e15f8c3f32f30be52b3d22b740f9e76))
+
+- Let the user enter a measured bulk magnetisation for the demagnetizing field
+  ([#214](https://github.com/BenHuddart/mufinder/pull/214),
+  [`f02358f`](https://github.com/BenHuddart/mufinder/commit/f02358f55e15f8c3f32f30be52b3d22b740f9e76))
+
+- Read Redwood passwords from the Linux system keyring
+  ([#202](https://github.com/BenHuddart/mufinder/pull/202),
+  [`deb1020`](https://github.com/BenHuddart/mufinder/commit/deb102076fe0bb9d8c8159609bb1bb854c91829a))
+
+- Replace the AI home map with a dependency chart and cell survey
+  ([#189](https://github.com/BenHuddart/mufinder/pull/189),
+  [`7d1a264`](https://github.com/BenHuddart/mufinder/commit/7d1a2642d464dde212989fce03d83bffed57eaee))
+
+- Report commensurate-approximant fields and check distribution convergence
+  ([#211](https://github.com/BenHuddart/mufinder/pull/211),
+  [`1d81a9e`](https://github.com/BenHuddart/mufinder/commit/1d81a9e8b25b0ef586e8ee88e06dc38a31f86d0a))
+
+- Show geometry-optimisation progress for running relaxations
+  ([#221](https://github.com/BenHuddart/mufinder/pull/221),
+  [`36cabf7`](https://github.com/BenHuddart/mufinder/commit/36cabf7b27fdac82db55e7438440a4bf9bdb19c4))
+
+- Store magnetic-field results as project Result records
+  ([#210](https://github.com/BenHuddart/mufinder/pull/210),
+  [`f7f106d`](https://github.com/BenHuddart/mufinder/commit/f7f106df5f64837551d7697cc3c0344638d5a1bf))
+
+- Summarise components and break down field terms on the Magnetic Fields page
+  ([#208](https://github.com/BenHuddart/mufinder/pull/208),
+  [`0d1dd3e`](https://github.com/BenHuddart/mufinder/commit/0d1dd3e5125463da10e8388ba08b8f792de3d384))
+
+### Performance Improvements
+
+- Attach table corner styling per view instead of app-wide
+  ([#206](https://github.com/BenHuddart/mufinder/pull/206),
+  [`a77c405`](https://github.com/BenHuddart/mufinder/commit/a77c405ad8d9746959084d53d325d195747d68d8))
+
+
 ## v0.6.0 (2026-10-11)
 
 ### Bug Fixes
