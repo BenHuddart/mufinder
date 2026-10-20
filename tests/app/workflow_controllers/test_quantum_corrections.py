@@ -110,9 +110,6 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
         handle_site_host_mismatch=lambda _mismatch: True,
         confirm=lambda _title, _text: True,
         warn=lambda _title, _text: None,
-        directory_refusal=lambda _job, _shared_with: None,
-        delete_path=lambda _path: None,
-        delete_job_records=lambda _job_id: None,
         reset_jobs_keeping_files=lambda jobs: (len(jobs), []),
         refresh_after_reset=lambda: None,
     )
@@ -898,7 +895,12 @@ def test_quantum_controller_resets_to_stage_one_from_any_inactive_phonon_job(
 
 
 def _reset_recording_controller(service, document, output_root, *, confirm: bool, refusal: str | None = None):
-    """Return a controller whose reset deps record what they were asked to do."""
+    """Return a controller whose reset collaborators record what they were asked to do.
+
+    File and record clean-up runs through the context's real ``JobFileCleanup``,
+    wrapped to record the paths and jobs it deletes; ``refusal`` stands in for
+    another job using the row's directory.
+    """
 
     import dataclasses
 
@@ -913,9 +915,6 @@ def _reset_recording_controller(service, document, output_root, *, confirm: bool
         "status": [],
         "persisted": [],
     }
-    def delete_job_records(job_id) -> None:
-        calls["deleted_jobs"].append(job_id)
-        document.jobs.pop(job_id)
 
     def reset_jobs_keeping_files(jobs) -> tuple[int, list[str]]:
         calls["reset_jobs"].append(list(jobs))
@@ -926,9 +925,6 @@ def _reset_recording_controller(service, document, output_root, *, confirm: bool
     deps = _stub_quantum_deps(
         confirm=lambda title, text: calls["confirm"].append((title, text)) or confirm,
         warn=lambda title, text: calls["warnings"].append(text),
-        directory_refusal=lambda _job, _shared_with: refusal,
-        delete_path=calls["deleted_paths"].append,
-        delete_job_records=delete_job_records,
         reset_jobs_keeping_files=reset_jobs_keeping_files,
         refresh_after_reset=lambda: calls["refreshes"].append(True),
     )
@@ -937,13 +933,33 @@ def _reset_recording_controller(service, document, output_root, *, confirm: bool
         project_service=service,
         infos=calls["infos"],
         definition_output_directory=lambda _definition: output_root,
-        job_output_directory=lambda job: output_root / "quantum_siteA",
+        job_output_directory=lambda job: (
+            output_root / "quantum_siteA" if job.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS else None
+        ),
+        job_seed_name=lambda _job: "quantum_siteA",
     )
     context = dataclasses.replace(
         context,
         status_message=calls["status"].append,
         persist_ui_state=lambda **kwargs: calls["persisted"].append(kwargs["failure_message"]),
     )
+    cleanup = context.job_file_cleanup
+    real_delete_path, real_delete_job_records = cleanup.delete_path, cleanup.delete_job_records
+
+    def delete_path(path) -> None:
+        calls["deleted_paths"].append(path)
+        real_delete_path(path)
+
+    def delete_job_records(job_id) -> None:
+        calls["deleted_jobs"].append(job_id)
+        real_delete_job_records(job_id)
+
+    cleanup.delete_path = delete_path  # type: ignore[method-assign]
+    cleanup.delete_job_records = delete_job_records  # type: ignore[method-assign]
+    if refusal is not None:
+        cleanup.directory_ownership_refusals = (  # type: ignore[method-assign]
+            lambda jobs, **_kwargs: {jobs[0].id: refusal}
+        )
     return QuantumCorrectionsController(context, deps, _FakeQuantumView()), calls
 
 
@@ -968,7 +984,9 @@ def test_quantum_controller_reset_to_stage_one_deletes_the_row_after_confirmatio
 
     assert calls["confirm"][0][0] == "Reset Quantum Corrections"
     assert calls["deleted_paths"] == [output_root / "quantum_siteA"]
+    assert not (output_root / "quantum_siteA").exists()
     assert calls["deleted_jobs"] == [phonon.id, singlepoint.id]
+    assert phonon.id not in document.jobs and singlepoint.id not in document.jobs
     assert key not in definition.parameters["job_seed_names_by_label"]
     assert calls["refreshes"] == [True]
     assert calls["status"] == ["Reset 1 Quantum Corrections row(s) to stage 1"]

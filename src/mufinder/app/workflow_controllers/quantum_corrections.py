@@ -299,9 +299,10 @@ class QuantumCorrectionsDeps:
 
     The dialogs: the host-mismatch handlers ask whether to switch the active
     host (shared with every host-guarded workflow), ``confirm`` asks a yes/no
-    question and ``warn`` reports a problem. The rest are the window's job and
-    file primitives the two stage resets drive. Everything else the controller
-    reads from the shared
+    question and ``warn`` reports a problem. The rest are the window's job-reset
+    and refresh primitives the two stage resets drive; the stage-1 reset cleans
+    files through the shared context's ``job_file_cleanup``. Everything else the
+    controller reads from the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
     or the service layer.
     """
@@ -313,13 +314,6 @@ class QuantumCorrectionsDeps:
     confirm: Callable[[str, str], bool]
     #: Show a warning (title, text).
     warn: Callable[[str, str], None]
-    #: Why a job's output directory may not be deleted along with the jobs
-    #: whose ids are given (another job still uses it), or ``None``.
-    directory_refusal: Callable[[Job, frozenset[UUID]], str | None]
-    #: Delete a file or directory tree; raises ``OSError`` on failure.
-    delete_path: Callable[[Path], None]
-    #: Delete a job with its runs and results, and unbind it from definitions.
-    delete_job_records: Callable[[UUID], None]
     #: Return terminal jobs to ``defined`` without touching their files, and
     #: return how many were reset and any problems to report.
     reset_jobs_keeping_files: Callable[[Sequence[Job]], tuple[int, list[str]]]
@@ -789,27 +783,23 @@ class QuantumCorrectionsController(WorkflowJobController):
         ):
             return
 
-        cleanup_errors: list[str] = []
-        reset_count = 0
-        for reset in resets:
-            # The phonon job, when there is one, owns the shared seed directory,
-            # which is deleted whole, so it must hold only this row's two stages.
-            owner = reset.jobs[0]
-            refusal = self._deps.directory_refusal(owner, frozenset(job.id for job in reset.jobs))
-            if refusal:
-                cleanup_errors.append(f"{refusal}; the row was not reset")
-                continue
-            output_dir = self._context.job_output_directory(owner)
-            if output_dir is not None and output_dir.is_dir():
-                try:
-                    self._deps.delete_path(output_dir)
-                except OSError as exc:
-                    cleanup_errors.append(f"- {reset.label}: {exc}")
-                    continue
-            for job in reset.jobs:
-                self._deps.delete_job_records(job.id)
-            self.forget_seed_name(reset.key)
-            reset_count += 1
+        cleanup = self._context.job_file_cleanup
+        # The phonon job, when there is one, owns the shared seed directory,
+        # which is deleted whole, so it must hold only this row's two stages.
+        plan = [
+            cleanup.plan_item(reset.jobs, label=reset.label, check_ownership=True, key=reset.key)
+            for reset in resets
+        ]
+        outcome = cleanup.execute(plan, choose_disposition=lambda _item: "delete", stop_on_error=False)
+        for item in outcome.cleaned:
+            self.forget_seed_name(str(item.key))
+        reset_count = len(outcome.cleaned)
+        cleanup_errors = [
+            f"{failure.refusal}; the row was not reset"
+            if failure.refusal is not None
+            else f"- {failure.item.label}: {failure.error}"
+            for failure in outcome.failures
+        ]
 
         self._deps.refresh_after_reset()
         if cleanup_errors:

@@ -1492,7 +1492,7 @@ def test_main_window_remove_cutoffs_without_document_delegates_to_widget(
     window.close()
 
 
-def test_main_window_remove_single_convergence_cutoff_warns_on_file_cleanup_error(
+def test_main_window_remove_convergence_cutoff_warns_on_file_cleanup_error(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
@@ -1525,13 +1525,22 @@ def test_main_window_remove_single_convergence_cutoff_warns_on_file_cleanup_erro
 
     warnings: list[str] = []
     monkeypatch.setattr(window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "delete")
-    monkeypatch.setattr(window, "_delete_path", lambda path: (_ for _ in ()).throw(OSError("busy")))
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda _parent, title, _message: warnings.append(title))
+    monkeypatch.setattr(
+        window._job_file_cleanup, "delete_path", lambda path: (_ for _ in ()).throw(OSError("busy"))
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, message: warnings.append(f"{title}: {message}"),
+    )
+    removed: list[list[float]] = []
+    monkeypatch.setattr(window._convergence_view, "remove_cutoffs", removed.append)
 
-    removed, _shared, aborted = window._remove_single_convergence_cutoff(300.0)
-    assert removed is False
-    assert aborted is False
-    assert warnings == ["File cleanup failed"]
+    window._on_remove_cutoffs_from_convergence([300.0])
+
+    assert warnings == ["File cleanup failed: Could not update files for cutoff 300 eV:\nbusy"]
+    assert removed == []
+    assert ready_dir.exists()
     window.close()
 
 

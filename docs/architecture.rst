@@ -365,6 +365,20 @@ no two workflow widgets may define the same private method.
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
        the ``files/`` fallbacks), ``job_seed_name`` and ``job_output_files``.
+   * - ``mufinder.services.job_file_cleanup``
+     - Cleaning up jobs' files and records when rows are removed or reset
+       (``JobFileCleanup``): ``plan_item`` turns jobs into a
+       ``JobCleanupItem`` with its directory, archive root and any ownership
+       refusal (``directory_ownership_refusals``: a directory outside the
+       project's job folders, not named after the seed, or used by another
+       job); ``execute`` deletes or archives each item's files as a
+       ``choose_disposition`` callable answers, applies an *Apply to All*
+       answer to later items, deletes the records (``delete_job_records``)
+       and returns a ``JobCleanupOutcome``. It never shows a dialog: the
+       window asks and reports. ``clear_directory_contents`` empties a
+       directory but keeps its inputs, for the failed-job reset and fresh
+       start. Every workflow controller reaches it as
+       ``WorkflowControllerContext.job_file_cleanup``.
    * - ``mufinder.services.job_results``
      - Scalar readings from the result of a job's latest run
        (``total_energy_for_job``, ``max_force_for_job``,
@@ -733,7 +747,8 @@ built from three inputs:
    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`:
    the narrow, late-bound callables every controller needs (document access,
    persistence, job dispatch, status reporting,
-   ``prepare_jobs_for_resubmission``). Nothing workflow-specific goes in it;
+   ``prepare_jobs_for_resubmission``, the ``job_file_cleanup`` service).
+   Nothing workflow-specific goes in it;
 2. an optional per-controller deps dataclass of required, precisely typed
    callables, defined in the controller's own module (for example
    ``ConvergenceCutoffDeps``);
@@ -823,8 +838,9 @@ overriding these hooks.
        ``remove_rows(labels)`` template method for each of ``definitions()``.
      - k-point sweep, pristine and muon relaxation, UEP, energy barriers
    * - ``row_key_matcher(labels)``
-     - The predicate picking the job-mapping keys of removed rows, which the
-       window's job-file cleanup uses. The default matches a key whose string
+     - The predicate picking the job-mapping keys of removed rows, which
+       ``jobs_for_removed_rows(labels)`` uses to find the jobs whose files and
+       records a row removal cleans up. The default matches a key whose string
        form is one of the labels.
      - muon relaxation
    * - ``submission_groups(jobs)``
@@ -1068,7 +1084,10 @@ above a failed one (``relaxation_mapping_job_priority``). A target with no
 candidate is left untouched.
 
 Removing rows is ``remove_rows(labels)`` on the controller, after the window
-has confirmed the removal and asked what to do with the rows' job files.
+has confirmed the removal and cleaned up the rows' jobs: the controller lists
+them (``jobs_for_removed_rows``; ``jobs_for_removed_sources`` on energy
+barriers), ``job_file_cleanup`` plans and runs the clean-up, and the window
+asks what to do with each job's files and reports a failure.
 ``remove_labels_from_definition`` drops the matching configuration rows
 (rewriting the configuration through the codec only when one is dropped) and
 the matching keys of the named mappings, then ``remove_definition_if_no_rows``

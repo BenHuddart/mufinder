@@ -8,7 +8,8 @@ live here:
 - ``RecordingBackend`` stands in for the local and cluster submit backends and
   records ``(jobs, kwargs)`` for each call.
 - ``make_context`` builds a :class:`WorkflowControllerContext` from a document,
-  a ``ProjectService`` and recording backends; every other callable is a no-op.
+  a ``ProjectService`` and recording backends, with a real ``JobFileCleanup``
+  over the given job readers; every other callable is a no-op.
 - ``FakeRowState`` stands in for a workflow's per-row run state (a ``status``
   and an optional ``job_id``).
 - ``no_artifacts`` and ``completed_castep_result`` are the parsed-output
@@ -30,6 +31,7 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
@@ -86,6 +88,11 @@ def make_context(
         definition_output_directory=definition_output_directory,
         job_output_directory=job_output_directory,
         job_seed_name=job_seed_name,
+        job_file_cleanup=JobFileCleanup(
+            document_getter=lambda: document,
+            job_output_directory=job_output_directory,  # type: ignore[arg-type]
+            job_seed_name=job_seed_name,  # type: ignore[arg-type]
+        ),
         run_for_job=run_for_job,
         total_energy_for_job=total_energy_for_job,
         max_force_for_job=max_force_for_job,

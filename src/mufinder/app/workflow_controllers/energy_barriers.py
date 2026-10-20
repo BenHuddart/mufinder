@@ -728,6 +728,38 @@ class EnergyBarriersController(WorkflowJobController):
 
         return self.job_for_key(definition, key, calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE)
 
+    def jobs_for_removed_sources(self, keys: Collection[str]) -> list[tuple[CalculationDefinition, Job]]:
+        """Return ``(definition, job)`` for each job a removed source ``keys`` name is bound to.
+
+        Walks every one of :meth:`path_definitions`, so paths an older
+        configuration stored are cleaned up too; each job appears once, with
+        the first definition that binds it.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return []
+        targets: list[tuple[CalculationDefinition, Job]] = []
+        seen: set[UUID] = set()
+        for definition in self.path_definitions():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key in keys:
+                raw_job_id = mapping.get(key)
+                if not isinstance(raw_job_id, str):
+                    continue
+                try:
+                    job_id = UUID(raw_job_id)
+                except ValueError:
+                    continue
+                job = document.jobs.get(job_id)
+                if job is None or job.id in seen:
+                    continue
+                targets.append((definition, job))
+                seen.add(job.id)
+        return targets
+
     def jobs_for_keys(self, keys: list[object]) -> list[Job]:
         document = self._context.document()
         if document is None:

@@ -20,6 +20,7 @@ import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition
+from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import (
     patch_continuation_cluster_dialog,
@@ -372,7 +373,7 @@ def test_clean_keeps_the_input_of_a_seed_ending_in_out(tmp_path: Path) -> None:
     for name in ("pristine_relax_relax-out.cell", "pristine_relax_relax-out.param", "pristine_relax_relax-out-out.cell"):
         (directory / name).write_text("data", encoding="utf-8")
 
-    MainWindow._clear_directory_contents(directory)
+    JobFileCleanup.clear_directory_contents(directory)
 
     assert sorted(path.name for path in directory.iterdir()) == [
         "pristine_relax_relax-out.cell",
@@ -393,7 +394,7 @@ def test_clean_removes_symlinks_without_following_them(tmp_path: Path) -> None:
     os.symlink(shared, directory / "pseudos")
     os.symlink(outside_file, directory / "notes.txt")
 
-    MainWindow._clear_directory_contents(directory)
+    JobFileCleanup.clear_directory_contents(directory)
 
     assert sorted(path.name for path in directory.iterdir()) == ["seed.cell"]
     assert (shared / "H.usp").read_text(encoding="utf-8") == "pseudopotential"
