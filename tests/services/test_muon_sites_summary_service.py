@@ -16,8 +16,9 @@ from mufinder.services.muon_sites_summary import (
     QUANTUM_CORRECTIONS_SCOPE,
     build_muon_sites_summary_snapshot,
     downstream_site_scope,
-    pinned_cluster_labels,
+    has_pinned_sites,
     pinned_muon_sites,
+    pinned_sites_by_representative,
     pinned_source_selection,
     set_show_every_relaxed_site,
     show_every_relaxed_site,
@@ -251,24 +252,26 @@ def test_a_charge_state_without_a_pin_is_named_in_the_notice(project) -> None:
     assert "No muonium sites are pinned" in scope.notice
 
 
-def test_pinned_cluster_labels_key_sites_by_workspace_and_cluster(project) -> None:
+def test_pinned_sites_are_keyed_by_workspace_and_representative_job(project) -> None:
     _service, doc, host = project
-    _low_a, _low_b, _high, workspace = _two_site_project(doc, host)
+    low_a, _low_b, high, workspace = _two_site_project(doc, host)
     muonium = add_relaxed_muon_site(doc, label="mu0", charge_calc_type=MUONIUM_RELAXATION_CALC_TYPE)
     mu_workspace = clustered_workspace(
         host, [ClusterSpec(1, relaxation_job_id(doc, muonium))], charge_state=MUONIUM_CHARGE_STATE
     )
+    assert not has_pinned_sites(doc)
     _pin(doc, workspace)
     _pin(doc, mu_workspace)
 
-    labels = pinned_cluster_labels(doc)
+    pinned = pinned_sites_by_representative(doc)
 
-    assert list(labels) == [
-        (workspace["id"], 1),
-        (workspace["id"], 2),
-        (mu_workspace["id"], 1),
+    assert has_pinned_sites(doc)
+    assert list(pinned) == [
+        (workspace["id"], relaxation_job_id(doc, low_a)),
+        (workspace["id"], relaxation_job_id(doc, high)),
+        (mu_workspace["id"], relaxation_job_id(doc, muonium)),
     ]
-    assert labels[(mu_workspace["id"], 1)].label == "Cluster 1"
+    assert pinned[(mu_workspace["id"], relaxation_job_id(doc, muonium))].label == "Cluster 1"
 
 
 def test_show_every_relaxed_site_survives_save_and_reload(project) -> None:

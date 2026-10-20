@@ -145,7 +145,8 @@ from mufinder.science.nuclear_relaxation import (
 from mufinder.services.muon_sites_summary import (
     MAGNETIC_FIELDS_SCOPE,
     NO_PINNED_SITES_NOTICE,
-    pinned_cluster_labels,
+    has_pinned_sites,
+    pinned_sites_by_representative,
     set_show_every_relaxed_site,
     show_every_relaxed_site,
 )
@@ -3630,7 +3631,7 @@ class MuonSiteSelectionDialog(QDialog):
     def _refresh_site_scope(self, source: str) -> None:
         self._site_scope.setVisible(source == "relaxation_clustering")
         show_every = show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE)
-        notice = "" if show_every or pinned_cluster_labels(self._document) else NO_PINNED_SITES_NOTICE
+        notice = "" if show_every or has_pinned_sites(self._document) else NO_PINNED_SITES_NOTICE
         self._site_scope.set_state(show_every_site=show_every, notice=notice)
 
     def _on_show_every_site_toggled(self, enabled: bool) -> None:
@@ -6943,13 +6944,15 @@ def _relaxation_cluster_muon_site_options(
 
     With ``pinned_only`` only the clusters pinned to the Muon Sites summary are
     returned, labelled by Wyckoff label and cluster, in charge-state then
-    energy-rank order; otherwise every workspace's clusters, sorted by name.
+    energy-rank order; a live cluster matches a pin by workspace and
+    representative relaxation job. Otherwise every workspace's clusters, sorted
+    by name.
     """
 
     workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
     if not isinstance(workspaces, list):
         return []
-    pinned = pinned_cluster_labels(document) if pinned_only else {}
+    pinned = pinned_sites_by_representative(document) if pinned_only else {}
     ranks = {key: order for order, key in enumerate(pinned)}
     pinned_options: list[tuple[int, MagneticMuonSiteOption]] = []
     options: list[MagneticMuonSiteOption] = []
@@ -6971,10 +6974,12 @@ def _relaxation_cluster_muon_site_options(
             if fractional is None:
                 continue
             cluster_index = _optional_int(cluster.get("cluster_index"))
-            pinned_key = (str(workspace.get("id", "")), cluster_index if cluster_index is not None else 0)
+            job_id = _uuid_or_none(cluster.get("representative_job_id"))
+            # A pin names its cluster's representative relaxation, which survives
+            # re-clustering; the cluster index does not.
+            pinned_key = (str(workspace.get("id", "")), job_id)
             if pinned_only and pinned_key not in pinned:
                 continue
-            job_id = _uuid_or_none(cluster.get("representative_job_id"))
             structure_id = _distorted_structure_id_for_job(document, job_id)
             cartesian = _triplet_or_none(cluster.get("representative_cartesian_position_ang")) or _fractional_to_cartesian(
                 fractional,

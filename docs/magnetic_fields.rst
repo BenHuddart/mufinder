@@ -410,7 +410,9 @@ distorted-structure reference. The available dialog sources are:
   endpoints. By default this lists the clusters pinned to the ``Muon Sites``
   summary (:doc:`structural_relaxation_analysis`), in the summary's charge-state
   and energy order, with the ``Cluster`` column showing the summary label
-  (``8c · cluster 1``). Tick ``Show every relaxed site`` to list every analysis
+  (``8c · cluster 1``). A live cluster matches a pin by its workspace and
+  representative relaxation job, so re-clustering the analysis without
+  re-pinning never relabels a different site. Tick ``Show every relaxed site`` to list every analysis
   workspace's clusters instead; the choice is saved with the project. With no
   pin, a notice and a ``Go to Muon Sites →`` button (which closes the dialog
   and opens that page) explain how to pin sites;

@@ -449,7 +449,7 @@ no two workflow widgets may define the same private method.
        ``store_muon_sites_summary_snapshot``,
        ``validated_muon_sites_summary_snapshot``), resolving pinned sites to
        eligible relaxed sources (``pinned_source_selection``,
-       ``pinned_cluster_labels``), and the per-workflow "Show every relaxed
+       ``pinned_sites_by_representative``), and the per-workflow "Show every relaxed
        site" choice and notice that decide which sites quantum corrections,
        energy barriers and magnetic fields list (``downstream_site_scope``).
    * - ``mufinder.services.project_summary``

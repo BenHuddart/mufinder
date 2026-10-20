@@ -480,6 +480,17 @@ def test_energy_barrier_form_state_readers(document: ProjectDocument) -> None:
     assert "changed" not in document.ui_state["energy_barriers_form"]  # a copy
     assert energy_barrier_max_path_length_text(document) == "4.25"
     assert selected_energy_barrier_endpoint_keys(document) == (str(first.id), str(first.id))
+    # A stored endpoint the pickers do not offer falls back to the offered keys.
+    document.ui_state["energy_barriers_form"] = {
+        "selected_reactant_key": str(first.id),
+        "selected_product_key": str(second.id),
+    }
+    assert selected_energy_barrier_endpoint_keys(document, [str(second.id)]) == (str(second.id), str(second.id))
+    assert selected_energy_barrier_endpoint_keys(document, [str(second.id), str(first.id)]) == (
+        str(first.id),
+        str(second.id),
+    )
+    assert selected_energy_barrier_endpoint_keys(document, []) == ("", "")
     document.ui_state["energy_barriers_form"] = {"max_path_length_ang": "far"}
     assert energy_barrier_max_path_length_text(document) == ""
     assert energy_barrier_form_state(None) == {}

@@ -353,13 +353,29 @@ def pinned_source_selection(
     )
 
 
-def pinned_cluster_labels(document: ProjectDocument | None) -> dict[tuple[str, int], PinnedMuonSite]:
-    """Return every validated pinned site keyed by ``(workspace_id, cluster_index)``."""
+def has_pinned_sites(document: ProjectDocument | None) -> bool:
+    """Return whether any charge state has a validated pin."""
 
-    pinned: dict[tuple[str, int], PinnedMuonSite] = {}
+    return any(pinned_muon_sites(document, charge_state) for charge_state in SUMMARY_CHARGE_STATES)
+
+
+def pinned_sites_by_representative(
+    document: ProjectDocument | None,
+) -> dict[tuple[str, UUID], PinnedMuonSite]:
+    """Return every validated pinned site keyed by ``(workspace_id, representative_job_id)``.
+
+    The representative relaxation job, not the cluster index, identifies a
+    pinned site: re-clustering a workspace renumbers its clusters, so matching
+    a live cluster by index could offer a different physical site than the pin.
+    Sites with no resolvable job id are left out. Keys follow charge-state then
+    energy-rank order.
+    """
+
+    pinned: dict[tuple[str, UUID], PinnedMuonSite] = {}
     for charge_state in SUMMARY_CHARGE_STATES:
         for site in pinned_muon_sites(document, charge_state):
-            pinned.setdefault((site.workspace_id, site.cluster_index), site)
+            if site.representative_job_id is not None:
+                pinned.setdefault((site.workspace_id, site.representative_job_id), site)
     return pinned
 
 
@@ -528,7 +544,8 @@ __all__ = [
     "build_muon_sites_summary_snapshot",
     "muon_site_wyckoff_labels",
     "muon_sites_summary_snapshots",
-    "pinned_cluster_labels",
+    "has_pinned_sites",
+    "pinned_sites_by_representative",
     "pinned_muon_sites",
     "pinned_source_selection",
     "pinned_sites_notice",

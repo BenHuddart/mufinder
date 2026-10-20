@@ -1081,11 +1081,25 @@ class EnergyBarriersController(WorkflowJobController):
             view.set_neb_results([])
             return
 
-        reactant_key, product_key = selected_energy_barrier_endpoint_keys(document)
         scope = self.site_scope()
+        endpoint_rows = self.endpoint_rows(scope)
+        reactant_key, product_key = selected_energy_barrier_endpoint_keys(
+            document, [row.key for row in endpoint_rows]
+        )
+        # Keep the stored pair within the listed endpoints, so toggling "Show
+        # every relaxed site" keeps the pair the pickers showed. An empty list
+        # (nothing pinned) leaves the stored pair alone.
+        state = energy_barrier_form_state(document)
+        if endpoint_rows and (
+            state.get("selected_reactant_key"),
+            state.get("selected_product_key"),
+        ) != (reactant_key, product_key):
+            state["selected_reactant_key"] = reactant_key
+            state["selected_product_key"] = product_key
+            document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY] = state
         view.set_site_scope(show_every_site=scope.show_every_site, notice=scope.notice)
         view.set_endpoint_options(
-            self.endpoint_rows(scope),
+            endpoint_rows,
             reactant_key=reactant_key,
             product_key=product_key,
             max_path_length_text=energy_barrier_max_path_length_text(document),

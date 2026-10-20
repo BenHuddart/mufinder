@@ -201,6 +201,29 @@ def test_energy_barrier_endpoints_default_to_the_pinned_sites(qapp, tmp_path: Pa
         window.close()
 
 
+def test_energy_barrier_endpoints_keep_the_pinned_pair_when_widened(qapp, tmp_path: Path) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        low_a, low_b, high, workspace = _relaxed_copies(doc, host)
+        _pin(doc, workspace)
+        # A pair stored before pinning names an unpinned relaxed copy.
+        doc.ui_state["energy_barriers_form"] = {
+            "selected_reactant_key": str(low_b.id),
+            "selected_product_key": str(high.id),
+        }
+        view = window._ensure_energy_barriers_view()
+        window._refresh_energy_barriers_view()
+
+        assert view.selected_endpoint_keys() == (str(low_a.id), str(high.id))
+        assert doc.ui_state["energy_barriers_form"]["selected_reactant_key"] == str(low_a.id)
+
+        _scope_checkbox(view).click()
+
+        assert view.selected_endpoint_keys() == (str(low_a.id), str(high.id))
+    finally:
+        window.close()
+
+
 def test_energy_barriers_without_a_pin_links_to_the_muon_sites_page(qapp, tmp_path: Path) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
@@ -247,6 +270,38 @@ def test_magnetic_site_dialog_lists_pinned_clusters_by_default(qapp, tmp_path: P
 
             assert show_every_relaxed_site(doc, MAGNETIC_FIELDS_SCOPE)
             assert len(_relaxation_rows(dialog)) == 3
+        finally:
+            dialog.deleteLater()
+    finally:
+        window.close()
+
+
+def test_magnetic_site_dialog_matches_pins_by_representative_after_reclustering(
+    qapp, tmp_path: Path
+) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        low_a, _low_b, high, workspace = _relaxed_copies(doc, host)
+        _pin(doc, workspace)
+        # Re-clustering without re-pinning renumbers the clusters.
+        reclustered = clustered_workspace(
+            host,
+            [
+                ClusterSpec(1, relaxation_job_id(doc, high), (0.5, 0.0, 0.0), 0.0),
+                ClusterSpec(2, relaxation_job_id(doc, low_a), (0.25, 0.25, 0.25), 0.5),
+            ],
+            name="Positive analysis",
+        )
+        reclustered["id"] = workspace["id"]
+        store_workspaces(doc, reclustered)
+        dialog = MuonSiteSelectionDialog(doc, host)
+        try:
+            dialog._site_source_combo.setCurrentIndex(dialog._site_source_combo.findData("relaxation_clustering"))
+            options = dialog._site_options
+            assert [(option.cluster_label, option.fractional_position) for option in options] == [
+                ("8c · cluster 1", (0.25, 0.25, 0.25)),
+                ("4b · cluster 2", (0.5, 0.0, 0.0)),
+            ]
         finally:
             dialog.deleteLater()
     finally:
