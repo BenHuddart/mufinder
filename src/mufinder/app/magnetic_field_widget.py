@@ -142,6 +142,7 @@ from mufinder.science.nuclear_relaxation import (
     calculate_nuclear_relaxation,
     calculate_nuclear_relaxation_with_distortion,
 )
+from mufinder.services.magnetic_field_results import UEP_SITE_SOURCE, is_unrelaxed_site_source
 from mufinder.services.muon_sites_summary import (
     MAGNETIC_FIELDS_SCOPE,
     NO_PINNED_SITES_NOTICE,
@@ -159,6 +160,10 @@ _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _SITE_OPTION_ROLE = int(Qt.ItemDataRole.UserRole) + 41
 _DISTORTION_CORRECTED_FIELD = "field (distortion-corrected)"
+_UNRELAXED_ESTIMATE_NOTE = (
+    "UEP sites are unrelaxed, so fields computed at them are estimates: "
+    "the relaxed muon site can sit some distance from the UEP minimum."
+)
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
@@ -3456,10 +3461,13 @@ class MuonSiteSelectionDialog(QDialog):
         self._current_site = current_site
 
         self._site_source_combo = QComboBox()
-        self._site_source_combo.addItem("UEP clustering", "uep_clustering")
+        self._site_source_combo.addItem(_site_source_label(UEP_SITE_SOURCE), UEP_SITE_SOURCE)
         self._site_source_combo.addItem("Structural relaxation clustering", "relaxation_clustering")
         self._site_source_combo.addItem("Custom fractional position", "custom")
         self._site_source_combo.currentIndexChanged.connect(self._refresh_muon_site_selection)
+        self._estimate_note = QLabel(_UNRELAXED_ESTIMATE_NOTE)
+        self._estimate_note.setWordWrap(True)
+        style_hint_text(self._estimate_note)
 
         self._site_table = create_workflow_table(
             ("Site", "Source", "Cluster", "fx", "fy", "fz"),
@@ -3542,6 +3550,7 @@ class MuonSiteSelectionDialog(QDialog):
         source_row.addWidget(QLabel("Source"))
         source_row.addWidget(self._site_source_combo, 1)
         layout.addLayout(source_row)
+        layout.addWidget(self._estimate_note)
         layout.addWidget(self._site_scope)
 
         table_page = QWidget()
@@ -3594,6 +3603,9 @@ class MuonSiteSelectionDialog(QDialog):
 
     def _set_current_site(self, site: MagneticMuonSiteOption | None) -> None:
         if site is None:
+            # Relaxed sites come before unrelaxed UEP estimates once the relaxation list has any.
+            source = "relaxation_clustering" if self._site_options_for_source("relaxation_clustering") else UEP_SITE_SOURCE
+            self._site_source_combo.setCurrentIndex(self._site_source_combo.findData(source))
             return
         index = self._site_source_combo.findData(site.source)
         if index >= 0:
@@ -3604,11 +3616,12 @@ class MuonSiteSelectionDialog(QDialog):
             self._custom_z.setText(f"{site.fractional_position[2]:.8g}")
 
     def _site_source(self) -> str:
-        return str(self._site_source_combo.currentData() or "uep_clustering")
+        return str(self._site_source_combo.currentData() or UEP_SITE_SOURCE)
 
     def _refresh_muon_site_selection(self) -> None:
         source = self._site_source()
         self._site_stack.setCurrentIndex(1 if source == "custom" else 0)
+        self._estimate_note.setVisible(is_unrelaxed_site_source(source))
         self._site_options = self._site_options_for_source(source)
         self._refresh_site_scope(source)
         self._populate_site_table()
@@ -3618,7 +3631,7 @@ class MuonSiteSelectionDialog(QDialog):
     def _site_options_for_source(self, source: str) -> list[MagneticMuonSiteOption]:
         if self._document is None or self._host_structure is None:
             return []
-        if source == "uep_clustering":
+        if source == UEP_SITE_SOURCE:
             return _uep_cluster_muon_site_options(self._document, self._host_structure)
         if source == "relaxation_clustering":
             return _relaxation_cluster_muon_site_options(
@@ -3735,9 +3748,16 @@ class MuonSiteSelectionDialog(QDialog):
 class MagneticFieldDistributionDialog(QDialog):
     """Plot an incommensurate magnetic-field magnitude distribution."""
 
-    def __init__(self, results: object | Sequence[object], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        results: object | Sequence[object],
+        parent: QWidget | None = None,
+        *,
+        estimate: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._results = self._coerce_results(results)
+        self._estimate = estimate
         label = self._title_label()
         self.setWindowTitle(f"Field Distribution - {label}")
         self.resize(760, 520)
@@ -3837,8 +3857,10 @@ class MagneticFieldDistributionDialog(QDialog):
 
     def _title_label(self) -> str:
         if len(self._results) == 1:
-            return str(getattr(self._results[0], "site_label", "Field distribution"))
-        return f"{len(self._results)} field distributions"
+            label = str(getattr(self._results[0], "site_label", "Field distribution"))
+        else:
+            label = f"{len(self._results)} field distributions"
+        return f"{label} (unrelaxed estimate)" if self._estimate else label
 
     def _distribution_series(self) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, str]]:
         series: list[tuple[np.ndarray, np.ndarray, np.ndarray, str]] = []
@@ -3933,6 +3955,8 @@ class MagneticFieldDistributionDialog(QDialog):
             "# MuFinder field distribution export",
             f"# Distributions: {len(series)}",
         ]
+        if self._estimate:
+            lines.append(f"# Estimate: {_UNRELAXED_ESTIMATE_NOTE}")
         for index, result in enumerate(self._results, start=1):
             label = str(getattr(result, "site_label", f"site {index}"))
             position = getattr(result, "muon_position", None)
@@ -5936,8 +5960,8 @@ class MagneticFieldWidget(QWidget):
         # The lowest-energy site pinned to the Muon Sites summary comes first.
         for options in (
             _relaxation_cluster_muon_site_options(self._document, self._host_structure, pinned_only=True),
-            _uep_cluster_muon_site_options(self._document, self._host_structure),
             _relaxation_cluster_muon_site_options(self._document, self._host_structure),
+            _uep_cluster_muon_site_options(self._document, self._host_structure),
         ):
             if options:
                 return options[0]
@@ -5960,10 +5984,11 @@ class MagneticFieldWidget(QWidget):
         source = site.source_label or _site_source_label(site.source)
         cluster = f" ({site.cluster_label})" if site.cluster_label else ""
         distortion = " Dipolar field corrected for muon-induced displacements." if site.include_distortion else ""
+        estimate = f" {_UNRELAXED_ESTIMATE_NOTE}" if is_unrelaxed_site_source(site.source) else ""
         self._site_summary.setText(
             f"Muon site: {site.label}{cluster} from {source} at "
             f"({site.fractional_position[0]:.4f}, {site.fractional_position[1]:.4f}, "
-            f"{site.fractional_position[2]:.4f}).{distortion}"
+            f"{site.fractional_position[2]:.4f}).{distortion}{estimate}"
         )
 
     @staticmethod
@@ -6114,10 +6139,11 @@ class MagneticFieldWidget(QWidget):
                     options=options,
                     distorted_structures=distorted_structures,
                 )
-                self._populate_commensurate_results(results)
+                self._populate_commensurate_results(results, site_source=site.source)
                 corrected = " with muon-induced distortion corrections" if site.include_distortion else ""
                 self._calculation_status.setText(
                     f"Results: calculated {len(results)} commensurate field value(s){corrected}."
+                    + self._estimate_status_suffix()
                 )
                 self._emit_form_state_changed()
             else:
@@ -6135,10 +6161,11 @@ class MagneticFieldWidget(QWidget):
                         options=options,
                         distorted_structures=distorted_structures,
                     )
-                    self._populate_commensurate_results(results)
+                    self._populate_commensurate_results(results, site_source=site.source)
                     self._calculation_status.setText(
                         f"Results: calculated {len(results)} field value(s) of the commensurate approximant "
                         f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)."
+                        + self._estimate_status_suffix()
                     )
                 else:
                     results = calculate_incommensurate_field_distributions(
@@ -6148,7 +6175,7 @@ class MagneticFieldWidget(QWidget):
                         options=options,
                         distorted_structures=distorted_structures,
                     )
-                    self._populate_distribution_results(results)
+                    self._populate_distribution_results(results, site_source=site.source)
                     status = f"Results: sampled {len(results)} incommensurate field distribution(s)"
                     flagged = sum(
                         1 for result in results for check in getattr(result, "convergence", ()) if not check.converged
@@ -6162,7 +6189,7 @@ class MagneticFieldWidget(QWidget):
                             f"approximant {approximant.describe()}; turn on commensurate approximants in "
                             "Calculation Settings to list its finite fields."
                         )
-                    self._calculation_status.setText(status)
+                    self._calculation_status.setText(status + self._estimate_status_suffix())
                 self._emit_form_state_changed()
         except MagneticFieldDependencyError as exc:
             self._calculation_status.setText(f"Results unavailable: {exc}")
@@ -6680,9 +6707,9 @@ class MagneticFieldWidget(QWidget):
             lines.append(f"{check.get('label', check.get('setting', 'Check'))}: {verdict}. {check.get('message', '')}".strip())
         return lines
 
-    def _populate_commensurate_results(self, results: object) -> None:
+    def _populate_commensurate_results(self, results: object, *, site_source: str) -> None:
         self._distribution_results = []
-        self._field_results_state = self._field_results_to_state("commensurate", results)
+        self._field_results_state = self._field_results_to_state("commensurate", results, site_source=site_source)
         self._result_table.setRowCount(0)
         for result in results:
             total = np.asarray(result.total, dtype=float)
@@ -6690,14 +6717,16 @@ class MagneticFieldWidget(QWidget):
                 result.site_label,
                 total,
                 float(result.magnitude),
-                "field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD,
+                self._result_type_label("field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD),
             )
         if self._result_table.rowCount() > 0:
             self._result_table.selectRow(0)
 
-    def _populate_distribution_results(self, results: object) -> None:
+    def _populate_distribution_results(self, results: object, *, site_source: str) -> None:
         self._distribution_results = list(results)
-        self._field_results_state = self._field_results_to_state("distribution", self._distribution_results)
+        self._field_results_state = self._field_results_to_state(
+            "distribution", self._distribution_results, site_source=site_source
+        )
         self._result_table.setRowCount(0)
         for index, result in enumerate(self._distribution_results):
             fields = np.asarray(result.fields_T, dtype=float)
@@ -6707,7 +6736,7 @@ class MagneticFieldWidget(QWidget):
                 result.site_label,
                 mean,
                 float(np.mean(magnitudes)),
-                "distribution mean",
+                self._result_type_label("distribution mean"),
                 distribution_index=index,
             )
         if self._result_table.rowCount() > 0:
@@ -6734,11 +6763,16 @@ class MagneticFieldWidget(QWidget):
                 if total.shape != (3,):
                     total = np.zeros(3, dtype=float)
                 magnitude = float(result.get("magnitude_T", np.linalg.norm(total)))
-                result_type = _DISTORTION_CORRECTED_FIELD if "distortion_T" in result else "field"
+                result_type = self._result_type_label(
+                    _DISTORTION_CORRECTED_FIELD if "distortion_T" in result else "field"
+                )
                 self._append_result_row(str(result.get("site_label", "site")), total, magnitude, result_type)
             if self._result_table.rowCount() > 0:
                 self._result_table.selectRow(0)
-            self._calculation_status.setText(f"Results: restored {len(result_payloads)} commensurate field value(s).")
+            self._calculation_status.setText(
+                f"Results: restored {len(result_payloads)} commensurate field value(s)."
+                + self._estimate_status_suffix()
+            )
         elif kind == "distribution":
             self._distribution_results = result_payloads
             for index, result in enumerate(result_payloads):
@@ -6753,15 +6787,30 @@ class MagneticFieldWidget(QWidget):
                     str(result.get("site_label", f"site {index + 1}")),
                     mean,
                     magnitude,
-                    "distribution mean",
+                    self._result_type_label("distribution mean"),
                     distribution_index=index,
                 )
             if self._result_table.rowCount() > 0:
                 self._result_table.selectRow(0)
-            self._calculation_status.setText(f"Results: restored {len(result_payloads)} incommensurate distribution(s).")
+            self._calculation_status.setText(
+                f"Results: restored {len(result_payloads)} incommensurate distribution(s)."
+                + self._estimate_status_suffix()
+            )
         self._sync_distribution_plot_button()
 
-    def _field_results_to_state(self, kind: str, results: object) -> dict[str, object]:
+    def _results_are_estimates(self) -> bool:
+        """Return whether the shown field results were computed at an unrelaxed UEP site."""
+
+        state = self._field_results_state
+        return isinstance(state, Mapping) and is_unrelaxed_site_source(state.get("site_source"))
+
+    def _result_type_label(self, result_type: str) -> str:
+        return f"{result_type}, unrelaxed estimate" if self._results_are_estimates() else result_type
+
+    def _estimate_status_suffix(self) -> str:
+        return " Computed at an unrelaxed UEP site, so these are estimates." if self._results_are_estimates() else ""
+
+    def _field_results_to_state(self, kind: str, results: object, *, site_source: str) -> dict[str, object]:
         payloads: list[dict[str, object]] = []
         for result in results:
             if hasattr(result, "to_json"):
@@ -6773,7 +6822,7 @@ class MagneticFieldWidget(QWidget):
             jsonable = to_jsonable(payload)
             if isinstance(jsonable, Mapping):
                 payloads.append(dict(jsonable))
-        return {"kind": kind, "results": payloads}
+        return {"kind": kind, "results": payloads, "site_source": site_source}
 
     @staticmethod
     def _field_result_object_to_state(result: object) -> dict[str, object]:
@@ -6848,7 +6897,7 @@ class MagneticFieldWidget(QWidget):
         if not results:
             QMessageBox.information(self, "Field Distribution", "Select an incommensurate distribution result first.")
             return
-        dialog = MagneticFieldDistributionDialog(results, self)
+        dialog = MagneticFieldDistributionDialog(results, self, estimate=self._results_are_estimates())
         dialog.exec()
 
 
@@ -6872,7 +6921,7 @@ def _uep_cluster_muon_site_options(
         seen.add(key)
         options.append(
             MagneticMuonSiteOption(
-                source="uep_clustering",
+                source=UEP_SITE_SOURCE,
                 label=site.label or "UEP cluster site",
                 source_label="Generated UEP site",
                 cluster_label=_cluster_label_from_properties(site.properties),
@@ -6918,7 +6967,7 @@ def _uep_cluster_muon_site_options(
                 seen.add(key)
                 options.append(
                     MagneticMuonSiteOption(
-                        source="uep_clustering",
+                        source=UEP_SITE_SOURCE,
                         label=f"UEP cluster {cluster_index if cluster_index is not None else len(options) + 1}",
                         source_label=str(source_job_label),
                         cluster_label="-" if cluster_index is None else f"Cluster {cluster_index}",
@@ -6946,7 +6995,8 @@ def _relaxation_cluster_muon_site_options(
     returned, labelled by Wyckoff label and cluster, in charge-state then
     energy-rank order; a live cluster matches a pin by workspace and
     representative relaxation job. Otherwise every workspace's clusters, sorted
-    by name.
+    by name. Only workspaces of the active host count: cluster positions are
+    fractional coordinates in their own host's cell.
     """
 
     workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
@@ -6956,8 +7006,11 @@ def _relaxation_cluster_muon_site_options(
     ranks = {key: order for order, key in enumerate(pinned)}
     pinned_options: list[tuple[int, MagneticMuonSiteOption]] = []
     options: list[MagneticMuonSiteOption] = []
+    host_id = document.project.host_structure_id
     for workspace in workspaces:
-        if not isinstance(workspace, dict):
+        if not isinstance(workspace, dict) or host_id is None:
+            continue
+        if str(workspace.get("host_structure_id", "")).strip() != str(host_id):
             continue
         workspace_name = str(workspace.get("name", "Relaxation analysis")).strip() or "Relaxation analysis"
         clustering = workspace.get("clustering")
@@ -7008,7 +7061,7 @@ def _relaxation_cluster_muon_site_options(
 
 def _site_source_label(source: str) -> str:
     labels = {
-        "uep_clustering": "UEP clustering",
+        UEP_SITE_SOURCE: "UEP clustering (unrelaxed estimate)",
         "relaxation_clustering": "Structural relaxation clustering",
         "custom": "Custom",
     }

@@ -111,7 +111,8 @@ The survey follows the selected waypoint and shows that stage's results:
      - The diffusion paths, labelled with their barrier height once computed.
    * - Magnetic Fields
      - The sites with a local-field result, labelled with ``|B|``, one result
-       set per saved workspace.
+       set per saved workspace. A field computed at an unrelaxed UEP site is an
+       estimate, labelled ``≈`` before the magnitude.
 
 When a stage has more than one result set, the arrows under the drawing step
 through them. A stage with no positions of its own (Host Structure, Supercell

@@ -58,7 +58,11 @@ a saved workspace, and each owner has at most one record of each type.
   ``fields_T``, the histogram, ``calculation_parameters`` and its
   ``convergence`` checks (see `Convergence Checks`_). The finite field list of
   a commensurate approximant (see `Commensurate Approximants`_) is stored as
-  ``commensurate`` entries.
+  ``commensurate`` entries. ``site_source`` names the source of the muon site
+  the fields were computed at (``uep_clustering``, ``relaxation_clustering``
+  or ``custom``); ``uep_clustering`` marks the results as unrelaxed estimates
+  (see `Muon-Site Selection`_). A record without it takes the source of the
+  form's selected site.
 - ``magnetic_dipolar_tensor`` data holds ``results``, the tensor dialog's rows.
 - ``nuclear_relaxation`` data holds ``result``, the nuclear-relaxation result.
 
@@ -405,8 +409,9 @@ site is normalized into one internal option containing a label, source,
 fractional coordinate, optional Cartesian coordinate, and optional
 distorted-structure reference. The available dialog sources are:
 
-- UEP clustering results, using representative clustered UEP minima;
-- structural-relaxation clustering results, using representative relaxed muon
+- ``UEP clustering (unrelaxed estimate)``, using representative clustered UEP
+  minima;
+- ``Structural relaxation clustering``, using representative relaxed muon
   endpoints. By default this lists the clusters pinned to the ``Muon Sites``
   summary (:doc:`structural_relaxation_analysis`), in the summary's charge-state
   and energy order, with the ``Cluster`` column showing the summary label
@@ -415,12 +420,31 @@ distorted-structure reference. The available dialog sources are:
   re-pinning never relabels a different site. Tick ``Show every relaxed site`` to list every analysis
   workspace's clusters instead; the choice is saved with the project. With no
   pin, a notice and a ``Go to Muon Sites →`` button (which closes the dialog
-  and opens that page) explain how to pin sites;
-- a custom fractional coordinate in the active host cell.
+  and opens that page) explain how to pin sites. Only analysis workspaces of
+  the active host are listed;
+- ``Custom fractional position``, a fractional coordinate in the active host
+  cell.
 
 Until a site is chosen, the page uses the lowest-energy pinned site (positive
-muon first), else the first UEP cluster, else the first structural-relaxation
-cluster, else a custom site at the origin.
+muon first), else the first structural-relaxation cluster, else the first UEP
+cluster, else a custom site at the origin. With no site chosen, the dialog
+opens on ``Structural relaxation clustering`` when that source lists a site
+(a pinned site, or any cluster with ``Show every relaxed site`` ticked), and on
+UEP clustering otherwise.
+
+UEP sites are the one exception to the rule that downstream workflows use
+relaxed sites (see :doc:`project_specification`). A UEP minimum is unrelaxed,
+and the relaxed muon site can sit some distance from it, so a field computed
+there is a quick estimate made before any relaxation has run. While the UEP
+source is chosen, the dialog shows a one-line note saying so, and the site
+summary on the page repeats it. Fields computed at a UEP site are marked as
+estimates wherever they are shown: the ``Result`` column reads, for example,
+``field, unrelaxed estimate``, the results status line says the site is
+unrelaxed, the distribution plot title ends in ``(unrelaxed estimate)``, its
+``Export Data...`` file carries an ``# Estimate:`` header line, and the
+project survey's local-field markers read ``≈`` before the magnitude. The
+marker comes from the source saved with the result (see `Saved Results`_), so
+it survives a reload.
 
 Structural-relaxation cluster representatives can expose a distorted relaxed
 structure. When that structure is available, the dialog enables the

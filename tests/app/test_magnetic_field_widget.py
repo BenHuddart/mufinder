@@ -49,6 +49,11 @@ from mufinder.science.magnetic_structure import (
     build_conical_component,
     build_helix_component,
 )
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_PAGE_OWNER,
+    attach_magnetic_field_results,
+    store_magnetic_field_results,
+)
 from mufinder.services.project_service import ProjectService
 from tests.support.structures import host_structure, relaxed_muon_supercell
 
@@ -1400,10 +1405,9 @@ def test_magnetic_structure_builder_supercell_preview_propagates_moments(qapp, t
     dialog.close()
 
 
-def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path) -> None:
-    service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-uep-sites.mufinder", "Magnetic UEP Sites")
-    service.add_structure(document, _host_structure())
+def _add_uep_cluster(document) -> None:
+    """Give ``document`` one UEP batch cluster at (0.1, 0.2, 0.3)."""
+
     job_id = uuid4()
     document.jobs[job_id] = Job(id=job_id, label="UEP batch")
     document.ui_state["uep_analysis_states"] = {
@@ -1425,6 +1429,18 @@ def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path)
             },
         }
     }
+
+
+def _uep_cluster_document(tmp_path):
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-uep-sites.mufinder", "Magnetic UEP Sites")
+    service.add_structure(document, _host_structure())
+    _add_uep_cluster(document)
+    return document
+
+
+def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path) -> None:
+    document = _uep_cluster_document(tmp_path)
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
 
@@ -1458,6 +1474,7 @@ def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
     document.ui_state["relaxation_analysis_workspaces"] = [
         {
             "name": "Positive muon relaxations",
+            "host_structure_id": str(document.project.host_structure_id),
             "clustering": {
                 "result": {
                     "clusters": [
@@ -1683,6 +1700,118 @@ def test_magnetic_field_widget_reports_a_missing_relaxed_structure(qapp, tmp_pat
         widget._calculation_status.text()
     )
     assert widget._result_table.rowCount() == 0
+    widget.close()
+
+
+def test_muon_site_selection_dialog_labels_uep_sites_as_unrelaxed_estimates(qapp, tmp_path) -> None:
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    _add_uep_cluster(document)
+    dialog = MuonSiteSelectionDialog(document, _host_structure())
+
+    _set_site_source(dialog, "uep_clustering")
+    assert dialog._site_source_combo.currentText() == "UEP clustering (unrelaxed estimate)"
+    assert not dialog._estimate_note.isHidden()
+    assert "estimates" in dialog._estimate_note.text()
+
+    _set_site_source(dialog, "relaxation_clustering")
+    assert dialog._estimate_note.isHidden()
+    dialog.close()
+
+
+def test_muon_site_selection_dialog_offers_relaxation_clusters_first_once_they_exist(qapp, tmp_path) -> None:
+    uep_only = MuonSiteSelectionDialog(_uep_cluster_document(tmp_path / "uep"), _host_structure())
+    assert uep_only._site_source_combo.currentData() == "uep_clustering"
+    uep_only.close()
+
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    _add_uep_cluster(document)
+    # With nothing pinned the relaxation list is empty, so the UEP sites stay first.
+    unpinned = MuonSiteSelectionDialog(document, _host_structure())
+    assert unpinned._site_source_combo.currentData() == "uep_clustering"
+    unpinned.close()
+
+    set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
+    both = MuonSiteSelectionDialog(document, _host_structure())
+    assert both._site_source_combo.currentData() == "relaxation_clustering"
+    assert both.selected_muon_site().source == "relaxation_clustering"
+    both.close()
+
+
+def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(qapp, tmp_path) -> None:
+    uep_widget = MagneticFieldWidget()
+    uep_widget.set_document(_uep_cluster_document(tmp_path / "uep"))
+    assert uep_widget.selected_muon_site().source == "uep_clustering"
+    assert "unrelaxed" in uep_widget._site_summary.text()
+    uep_widget.close()
+
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    _add_uep_cluster(document)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    assert widget.selected_muon_site().source == "relaxation_clustering"
+    assert "unrelaxed" not in widget._site_summary.text()
+    widget.close()
+
+
+def test_magnetic_field_widget_ignores_relaxation_clusters_of_another_host(qapp, tmp_path) -> None:
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    _add_uep_cluster(document)
+    set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
+    document.ui_state["relaxation_analysis_workspaces"][0]["host_structure_id"] = str(uuid4())
+
+    assert magnetic_field_widget_module._relaxation_cluster_muon_site_options(document, _host_structure()) == []
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    assert widget.selected_muon_site().source == "uep_clustering"
+    widget.close()
+    dialog = MuonSiteSelectionDialog(document, _host_structure())
+    assert dialog._site_source_combo.currentData() == "uep_clustering"
+    dialog.close()
+
+
+def test_magnetic_field_widget_marks_fields_at_a_uep_site_as_estimates_across_a_reload(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    service = ProjectService()
+    document = _uep_cluster_document(tmp_path)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
+
+    widget._calculate_fields()
+
+    assert widget._result_table.item(0, 5).text() == "field, unrelaxed estimate"
+    assert "unrelaxed UEP site" in widget._calculation_status.text()
+    state = widget.collect_state()
+    assert state["magnetic_field_results"]["site_source"] == "uep_clustering"
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, state
+    )
+    service.save_project(document)
+    widget.close()
+
+    reloaded = service.load_project(document.project_root)
+    restored = MagneticFieldWidget()
+    restored.set_document(reloaded)
+    restored.set_form_state(
+        attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"])
+    )
+    assert restored._result_table.item(0, 5).text() == "field, unrelaxed estimate"
+    assert "unrelaxed UEP site" in restored._calculation_status.text()
+    restored.close()
+
+
+def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(qapp, tmp_path, monkeypatch) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    widget = _distortion_widget(document, include_distortion=False)
+
+    widget._calculate_fields()
+
+    assert widget._result_table.item(0, 5).text() == "field"
+    assert "estimate" not in widget._calculation_status.text()
+    assert widget.collect_state()["magnetic_field_results"]["site_source"] == "relaxation_clustering"
     widget.close()
 
 
@@ -3222,7 +3351,7 @@ def test_magnetic_field_widget_opens_incommensurate_distribution_plot(qapp, tmp_
     opened: list[object] = []
 
     class _Dialog:
-        def __init__(self, results, parent=None):
+        def __init__(self, results, parent=None, *, estimate=False):
             opened.append(tuple(results))
 
         def exec(self):
@@ -3268,7 +3397,7 @@ def test_magnetic_field_widget_opens_selected_distribution_plots_together(qapp, 
     opened: list[tuple[object, ...]] = []
 
     class _Dialog:
-        def __init__(self, results, parent=None):
+        def __init__(self, results, parent=None, *, estimate=False):
             opened.append(tuple(results))
 
         def exec(self):
@@ -3310,6 +3439,24 @@ def test_magnetic_field_distribution_dialog_plots_histogram(qapp) -> None:
     assert axis.lines[0].get_ydata().max() == pytest.approx(1.0)
     assert axis.get_ylim()[0] == pytest.approx(0.0)
     dialog.close()
+
+
+def test_magnetic_field_distribution_dialog_marks_an_unrelaxed_estimate(qapp) -> None:
+    class _Distribution:
+        site_label = "site 1"
+        fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)
+        histogram_centres_T = np.asarray([1.0, 3.0], dtype=float)
+        histogram_counts = np.asarray([4, 2], dtype=float)
+
+    estimate = MagneticFieldDistributionDialog(_Distribution(), estimate=True)
+    assert estimate._figure.axes[0].get_title() == "site 1 (unrelaxed estimate)"
+    assert "# Estimate: UEP sites are unrelaxed" in estimate._export_text()
+    estimate.close()
+
+    relaxed = MagneticFieldDistributionDialog(_Distribution())
+    assert relaxed._figure.axes[0].get_title() == "site 1"
+    assert "# Estimate" not in relaxed._export_text()
+    relaxed.close()
 
 
 def test_magnetic_field_distribution_zero_padding_uses_bin_edges(qapp) -> None:
