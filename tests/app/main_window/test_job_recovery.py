@@ -27,6 +27,7 @@ from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
+from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectService
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from tests.support.main_window import (
@@ -165,7 +166,11 @@ def test_main_window_reset_failed_jobs_warns_when_cleanup_fails(
     (output_dir / "stale.log").write_text("stale", encoding="utf-8")
 
     monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: True)
-    monkeypatch.setattr(window, "_clear_directory_contents", lambda _path: (_ for _ in ()).throw(OSError("denied")))
+    monkeypatch.setattr(
+        window._job_file_cleanup,
+        "clear_directory_contents",
+        lambda _path: (_ for _ in ()).throw(OSError("denied")),
+    )
 
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -477,33 +482,6 @@ def test_main_window_prompt_failed_job_cleanup_choices(
 
     _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Cancel
     assert window._prompt_failed_job_cleanup(2) is None
-    window.close()
-
-
-def test_main_window_delete_path_retries_transient_permission_error(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    target_dir = tmp_path / "transient_dir"
-    target_dir.mkdir()
-    (target_dir / "inner.txt").write_text("x", encoding="utf-8")
-
-    real_rmtree = main_window_module.shutil.rmtree
-    calls = {"n": 0}
-
-    def flaky_rmtree(path, *args, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise PermissionError(13, "Access is denied", str(path))
-        return real_rmtree(path, *args, **kwargs)
-
-    monkeypatch.setattr(main_window_module.shutil, "rmtree", flaky_rmtree)
-    monkeypatch.setattr(main_window_module.time, "sleep", lambda _delay: None)
-
-    window._delete_path(target_dir)
-
-    assert calls["n"] >= 2
-    assert not target_dir.exists()
     window.close()
 
 
@@ -2189,7 +2167,7 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
     def _locked(_directory: Path) -> None:
         raise PermissionError("file in use")
 
-    monkeypatch.setattr(MainWindow, "_clear_directory_contents", staticmethod(_locked))
+    monkeypatch.setattr(JobFileCleanup, "clear_directory_contents", staticmethod(_locked))
 
     window._submit_jobs_on_cluster(
         [job],

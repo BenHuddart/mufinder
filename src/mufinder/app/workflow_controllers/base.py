@@ -41,6 +41,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
+from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import (
     ProjectDocument,
     ProjectService,
@@ -92,6 +93,9 @@ class WorkflowControllerContext:
     definition_output_directory: Callable[[CalculationDefinition], Path | None]
     job_output_directory: Callable[[Job], Path | None]
     job_seed_name: Callable[[Job], str]
+    #: Plans and runs the clean-up of jobs' files and records (ownership
+    #: checks, delete or archive, record deletion). Prompts stay with the caller.
+    job_file_cleanup: JobFileCleanup
     run_for_job: Callable[[UUID], CalculationRun | None]
     total_energy_for_job: Callable[[UUID], float | None]
     max_force_for_job: Callable[[UUID], float | None]
@@ -217,6 +221,39 @@ class WorkflowJobController:
         """
 
         return lambda key: str(key) in labels
+
+    def jobs_for_removed_rows(self, labels: Collection[str]) -> list[Job]:
+        """Return the jobs the rows ``labels`` name are bound to, in every definition.
+
+        Walks each of :meth:`definitions`' ``job_ids_by_label`` mappings for the
+        keys :meth:`row_key_matcher` picks, in definition and mapping order,
+        once per job. These are the jobs whose files and records a row removal
+        cleans up.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return []
+        key_matches = self.row_key_matcher(labels)
+        jobs: list[Job] = []
+        seen: set[UUID] = set()
+        for definition in self.definitions():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                if not key_matches(key):
+                    continue
+                try:
+                    job_id = UUID(str(raw_job_id))
+                except (TypeError, ValueError):
+                    continue
+                job = document.jobs.get(job_id)
+                if job is None or job.id in seen:
+                    continue
+                jobs.append(job)
+                seen.add(job.id)
+        return jobs
 
     def remove_labels_from_definition(
         self, definition: CalculationDefinition, labels: Collection[str]

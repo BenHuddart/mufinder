@@ -96,6 +96,7 @@ def _kpoint_context_and_deps(
         definition_output_directory=lambda d: document.project_root / "files" / "convergence_kpoint",
         job_output_directory=lambda _job: None,
         job_seed_name=lambda job: job.label,
+        job_file_cleanup=None,  # type: ignore[arg-type]
         run_for_job=lambda _job_id: None,
         total_energy_for_job=lambda _job_id: None,
         max_force_for_job=lambda _job_id: None,

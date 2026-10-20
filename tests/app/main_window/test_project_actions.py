@@ -472,7 +472,7 @@ def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(main_wind
 
     file_path = tmp_path / "orphan.txt"
     file_path.write_text("x", encoding="utf-8")
-    window._delete_path(file_path)
+    window._job_file_cleanup.delete_path(file_path)
     assert not file_path.exists()
 
     output_root = tmp_path / "files"
@@ -482,7 +482,7 @@ def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(main_wind
     (archive_root / "job_a").mkdir()
     source.mkdir(parents=True, exist_ok=True)
 
-    archived = window._archive_cutoff_directory(source, output_root)
+    archived = window._job_file_cleanup.archive_directory(source, output_root)
 
     assert archived.name == "job_a_1"
     assert archived.exists()

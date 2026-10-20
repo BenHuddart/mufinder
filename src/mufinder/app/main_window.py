@@ -8,12 +8,9 @@ from datetime import UTC, datetime
 from functools import partial
 import html
 import logging
-import os
 from pathlib import Path
 import posixpath
 import re
-import shutil
-import stat
 import time
 from typing import TypeVar
 from uuid import UUID, uuid4
@@ -274,6 +271,7 @@ from mufinder.services.failure_diagnosis import (
     read_log_tail,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags, collect_job_artifacts
+from mufinder.services.job_file_cleanup import JobCleanupItem, JobFileCleanup
 from mufinder.services.job_paths import (
     definition_output_directory,
     job_output_directory,
@@ -466,6 +464,13 @@ class MainWindow(QMainWindow):
             job_output_directory=self._job_output_directory,
             job_seed_name=self._job_seed_name,
             active_run_by_job=self._active_run_by_job,
+        )
+        self._job_file_cleanup = JobFileCleanup(
+            document_getter=lambda: self._document,
+            job_output_directory=lambda job: self._job_output_directory(job),
+            job_seed_name=lambda job: self._job_seed_name(job),
+            active_run_by_job=self._active_run_by_job,
+            run_file_op=lambda op, description: self._run_blocking_file_op(op, description=description),
         )
         self._workflow_submission = WorkflowSubmissionCoordinator(dedupe_jobs=self._dedupe_jobs)
         self._job_runtime_timer = QTimer(self)
@@ -3399,86 +3404,12 @@ class MainWindow(QMainWindow):
 
         Start again deletes a job's local output directory and its remote
         directory, so both must belong to that job alone (see
-        :meth:`_directory_ownership_refusals`). Reconfiguring a relaxation row
-        can leave an old failed job and its replacement sharing one directory,
-        which is the case this exists for.
+        :meth:`JobFileCleanup.directory_ownership_refusals`). Reconfiguring
+        a relaxation row can leave an old failed job and its replacement
+        sharing one directory, which is the case this exists for.
         """
 
-        return self._directory_ownership_refusals(jobs)
-
-    def _directory_ownership_refusals(
-        self,
-        jobs: Sequence[Job],
-        *,
-        shared_with: Collection[UUID] = (),
-        check_remote: bool = True,
-    ) -> dict[UUID, str]:
-        """Return, per job id, why deleting that job's directories would be unsafe.
-
-        A job is refused when its local directory is not strictly inside
-        ``<project>/files/<stage>/``, is not named after the job's seed, or is
-        used by another job (the same directory, or one inside it); and, with
-        ``check_remote``, when its remote directory is not named after the seed
-        or another job on the same cluster uses it or a directory inside it.
-        Jobs in ``shared_with`` may share a directory without causing a
-        refusal: they are being cleaned together (a Quantum Corrections
-        singlepoint and phonon pair share one seed directory by design).
-        """
-
-        if self._document is None or not jobs:
-            return {}
-        files_root = (self._document.project_root / "files").resolve()
-
-        def local_directory(job: Job) -> Path | None:
-            directory = self._job_output_directory(job)
-            return directory.resolve() if directory is not None else None
-
-        def remote_directory(job: Job) -> tuple[str, str] | None:
-            target = (job.execution_target or "").strip().casefold()
-            directory = (job.remote_directory or "").strip()
-            if not target or target == "local" or not directory:
-                return None
-            return target, posixpath.normpath(directory)
-
-        others = [
-            (other.id, local_directory(other), remote_directory(other))
-            for other in self._document.jobs.values()
-        ]
-        refusals: dict[UUID, str] = {}
-        for job in jobs:
-            seed = self._job_seed_name(job)
-            local = local_directory(job)
-            remote = remote_directory(job)
-            reason = ""
-            if local is not None:
-                if not local.is_relative_to(files_root) or len(local.relative_to(files_root).parts) < 2:
-                    reason = f"its output folder is outside the project's job folders ({local})"
-                elif local.name != seed:
-                    reason = f"its output folder is not named after the job ({local})"
-                elif any(
-                    other_id != job.id
-                    and other_id not in shared_with
-                    and other_local is not None
-                    and other_local.is_relative_to(local)
-                    for other_id, other_local, _other_remote in others
-                ):
-                    reason = f"another job uses the same output folder ({local})"
-            if not reason and check_remote and remote is not None:
-                cluster, path = remote
-                if posixpath.basename(path) != seed:
-                    reason = f"its cluster directory is not named after the job ({path})"
-                elif any(
-                    other_id != job.id
-                    and other_id not in shared_with
-                    and other_remote is not None
-                    and other_remote[0] == cluster
-                    and (other_remote[1] == path or other_remote[1].startswith(path.rstrip("/") + "/"))
-                    for other_id, _other_local, other_remote in others
-                ):
-                    reason = f"another job uses the same cluster directory ({path})"
-            if reason:
-                refusals[job.id] = f"- {job.label}: {reason}"
-        return refusals
+        return self._job_file_cleanup.directory_ownership_refusals(jobs)
 
     def _clear_outputs_for_fresh_start(self, jobs: Sequence[Job]) -> tuple[list[Job], list[str]]:
         """Empty each job's local output directory, keeping its ``.cell``/``.param``.
@@ -3499,7 +3430,7 @@ class MainWindow(QMainWindow):
             output_dir = self._job_output_directory(job)
             if output_dir is not None and output_dir.is_dir():
                 try:
-                    self._clear_directory_contents(output_dir)
+                    self._job_file_cleanup.clear_directory_contents(output_dir)
                 except OSError as exc:
                     errors.append(f"- {job.label}: could not clear its previous output ({exc})")
                     continue
@@ -3924,7 +3855,7 @@ class MainWindow(QMainWindow):
             return
 
         for job in deletable_jobs:
-            self._delete_job_records(job.id)
+            self._job_file_cleanup.delete_job_records(job.id)
 
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
@@ -4141,19 +4072,30 @@ class MainWindow(QMainWindow):
             self._convergence_view.remove_cutoffs(cutoff_values)
             return
 
-        removed_cutoffs: list[float] = []
-        shared_file_disposition: str | None = None
-        multi = len(cutoff_values) > 1
-        for cutoff in cutoff_values:
-            removed, shared_file_disposition, aborted = self._remove_single_convergence_cutoff(
-                float(cutoff),
-                shared_file_disposition=shared_file_disposition,
+        plan = [self._convergence_cutoff_cleanup_item(float(cutoff)) for cutoff in cutoff_values]
+        multi = len(plan) > 1
+        outcome = self._job_file_cleanup.execute(
+            plan,
+            choose_disposition=lambda item: self._prompt_cutoff_file_disposition(
+                item.key[0],
+                item.directory,
                 include_apply_all=multi,
+            ),
+            stop_on_error=False,
+        )
+        for failure in outcome.failures:
+            QMessageBox.warning(
+                self,
+                "File cleanup failed",
+                f"Could not update files for cutoff {failure.item.key[0]:.8g} eV:\n{failure.error}",
             )
-            if aborted:
-                break
-            if removed:
-                removed_cutoffs.append(float(cutoff))
+
+        removed_cutoffs: list[float] = []
+        for item in outcome.cleaned:
+            cutoff, definition = item.key
+            if definition is not None:
+                self._remove_cutoff_from_equivalent_definitions(definition, cutoff)
+            removed_cutoffs.append(cutoff)
 
         if removed_cutoffs:
             self._convergence_view.remove_cutoffs(removed_cutoffs)
@@ -4163,15 +4105,15 @@ class MainWindow(QMainWindow):
                 f"Removed {len(removed_cutoffs)} convergence cutoff entr{('y' if len(removed_cutoffs) == 1 else 'ies')}"
             )
 
-    def _remove_single_convergence_cutoff(
-        self,
-        cutoff: float,
-        *,
-        shared_file_disposition: str | None = None,
-        include_apply_all: bool = False,
-    ) -> tuple[bool, str | None, bool]:
-        if self._document is None:
-            return True, shared_file_disposition, False
+    def _convergence_cutoff_cleanup_item(self, cutoff: float) -> JobCleanupItem:
+        """Return the clean-up item for one convergence cutoff.
+
+        Its directory is ``<definition output>/<job label>``, named after the
+        cutoff's job or, without one, after the label the sweep would give it;
+        archived files stay under the definition's output directory. ``key`` is
+        ``(cutoff, definition)``, so the cutoff can be dropped from the
+        definitions once its files are dealt with.
+        """
 
         definition, config = self._convergence_controller.definition_for_sweep_key(cutoff)
         job = self._convergence_controller.job_for_cutoff(definition, cutoff) if definition is not None else None
@@ -4188,40 +4130,13 @@ class MainWindow(QMainWindow):
 
         output_root = definition_output_directory(self._document, definition) if definition is not None else None
         job_dir = output_root / job_label if output_root is not None and job_label else None
-
-        if job_dir is not None and job_dir.exists():
-            disposition = shared_file_disposition
-            if disposition is None:
-                disposition = self._prompt_cutoff_file_disposition(
-                    cutoff,
-                    job_dir,
-                    include_apply_all=include_apply_all,
-                )
-            if disposition is None:
-                return False, shared_file_disposition, True
-            try:
-                if disposition in {"delete", "delete_all"}:
-                    self._delete_path(job_dir)
-                else:
-                    self._archive_cutoff_directory(job_dir, output_root)
-            except OSError as exc:
-                QMessageBox.warning(
-                    self,
-                    "File cleanup failed",
-                    f"Could not update files for cutoff {cutoff:.8g} eV:\n{exc}",
-                )
-                return False, shared_file_disposition, False
-
-            if disposition in {"delete_all", "archive_all"}:
-                shared_file_disposition = disposition
-
-        if job is not None:
-            self._delete_job_records(job.id)
-
-        if definition is not None:
-            self._remove_cutoff_from_equivalent_definitions(definition, cutoff)
-
-        return True, shared_file_disposition, False
+        return JobCleanupItem(
+            label=job_label or f"{cutoff:.8g} eV",
+            jobs=(job,) if job is not None else (),
+            directory=job_dir if job_dir is not None and job_dir.exists() else None,
+            archive_root=output_root,
+            key=(cutoff, definition),
+        )
 
     def _remove_cutoff_from_equivalent_definitions(self, source_definition, cutoff: float) -> None:
         if self._document is None:
@@ -4250,43 +4165,6 @@ class MainWindow(QMainWindow):
                 continue
             self._convergence_controller.remove_cutoff_from_definition(definition, cutoff)
 
-    _FILESYSTEM_RETRY_DELAYS: tuple[float, ...] = (0.1, 0.25, 0.5, 1.0)
-
-    @staticmethod
-    def _force_writable_and_retry(func, path, exc_info) -> None:
-        # shutil.rmtree onexc handler: Windows refuses to delete read-only files
-        # (CASTEP often marks output read-only) and raises PermissionError. Clear
-        # the read-only attribute and retry the failed primitive once. Anything
-        # else — including a second failure — propagates so the outer retry loop
-        # or the UI sees it.
-        exc = exc_info[1] if isinstance(exc_info, tuple) else exc_info
-        if not isinstance(exc, PermissionError):
-            raise exc
-        try:
-            os.chmod(path, stat.S_IWRITE)
-        except OSError:
-            raise exc
-        func(path)
-
-    @classmethod
-    def _retry_filesystem_op(cls, op) -> None:
-        # OneDrive sync, antivirus scanners, and the Windows search indexer hold
-        # transient handles that produce PermissionError / [WinError 5]. Retry
-        # with short backoff (~2 s total) so the common case clears silently;
-        # re-raise the last error otherwise so the existing UI dialog fires.
-        for delay in cls._FILESYSTEM_RETRY_DELAYS:
-            try:
-                op()
-                return
-            except FileNotFoundError:
-                return
-            except PermissionError:
-                time.sleep(delay)
-        try:
-            op()
-        except FileNotFoundError:
-            pass
-
     def _run_blocking_file_op(self, op: Callable[[], object], *, description: str) -> object:
         """Run a blocking filesystem operation off the GUI thread.
 
@@ -4299,41 +4177,6 @@ class MainWindow(QMainWindow):
         """
 
         return run_blocking_call(self, op, title="Working on files", description=description)
-
-    def _delete_path(self, path: Path) -> None:
-        if path.is_dir():
-            self._run_blocking_file_op(
-                lambda: self._retry_filesystem_op(
-                    lambda: shutil.rmtree(path, onexc=self._force_writable_and_retry)
-                ),
-                description=f"Deleting {path.name}…",
-            )
-            return
-        self._run_blocking_file_op(
-            lambda: self._retry_filesystem_op(path.unlink),
-            description=f"Deleting {path.name}…",
-        )
-
-    @staticmethod
-    def _unique_destination(path: Path) -> Path:
-        if not path.exists():
-            return path
-        suffix = 1
-        while True:
-            candidate = path.parent / f"{path.name}_{suffix}"
-            if not candidate.exists():
-                return candidate
-            suffix += 1
-
-    def _archive_cutoff_directory(self, source: Path, output_root: Path | None) -> Path:
-        archive_root = (output_root if output_root is not None else source.parent) / "removed_from_workflow"
-        archive_root.mkdir(parents=True, exist_ok=True)
-        destination = self._unique_destination(archive_root / source.name)
-        self._run_blocking_file_op(
-            lambda: self._retry_filesystem_op(lambda: source.rename(destination)),
-            description=f"Archiving {source.name}…",
-        )
-        return destination
 
     def _prompt_cutoff_file_disposition(
         self,
@@ -4384,56 +4227,6 @@ class MainWindow(QMainWindow):
         if answer == QMessageBox.StandardButton.Yes:
             return "delete"
         return "archive"
-
-    def _delete_job_records(self, job_id: UUID) -> None:
-        if self._document is None:
-            return
-
-        run_ids = [run.id for run in self._document.runs.values() if run.job_id == job_id]
-        result_ids = {
-            result.id
-            for result in self._document.results.values()
-            if result.calculation_run_id in run_ids
-        }
-        result_ids.update(
-            run.result_id
-            for run in self._document.runs.values()
-            if run.job_id == job_id and run.result_id is not None
-        )
-
-        run_id_set = set(run_ids)
-        for site in self._document.sites.values():
-            if site.relaxation_run_id not in run_id_set:
-                continue
-            site.clear_relaxation()
-
-        for result_id in result_ids:
-            self._document.results.pop(result_id, None)
-        for run_id in run_ids:
-            self._document.runs.pop(run_id, None)
-
-        self._active_run_by_job.pop(job_id, None)
-        self._detach_job_references(job_id)
-        self._document.jobs.pop(job_id, None)
-
-    def _detach_job_references(self, job_id: UUID) -> None:
-        if self._document is None:
-            return
-        target = str(job_id)
-        for definition in self._document.calculations.values():
-            for mapping_name in (
-                "job_ids_by_cutoff",
-                "job_ids_by_grid",
-                "job_ids_by_label",
-                "singlepoint_job_ids_by_label",
-                "phonon_job_ids_by_label",
-            ):
-                mapping = definition.parameters.get(mapping_name, {})
-                if not isinstance(mapping, dict):
-                    continue
-                stale_keys = [key for key, value in mapping.items() if str(value) == target]
-                for key in stale_keys:
-                    mapping.pop(key, None)
 
     def _task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
         """Return ``(farming_enabled, num_farms)`` for any farm-aware calc type.
@@ -5382,7 +5175,7 @@ class MainWindow(QMainWindow):
         # checkpoint in it, with the completed singlepoint. Jobs reset together
         # may share one; anything else keeps its directory and is reported.
         cleanup_refusals = (
-            self._directory_ownership_refusals(
+            self._job_file_cleanup.directory_ownership_refusals(
                 [job for job in jobs if not job_is_imported(job)],
                 # Imported jobs are skipped below, never cleaned, so a folder
                 # shared with one must not count as cleaned together.
@@ -5404,7 +5197,7 @@ class MainWindow(QMainWindow):
                 output_dir = self._job_output_directory(job)
                 if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                     try:
-                        self._clear_directory_contents(output_dir)
+                        self._job_file_cleanup.clear_directory_contents(output_dir)
                         cleaned_output_directory = True
                     except OSError as exc:
                         cleanup_errors.append(f"- {job.label}: {exc}")
@@ -5726,6 +5519,7 @@ class MainWindow(QMainWindow):
             definition_output_directory=lambda definition: definition_output_directory(self._document, definition),
             job_output_directory=lambda job: self._job_output_directory(job),
             job_seed_name=lambda job: self._job_seed_name(job),
+            job_file_cleanup=self._job_file_cleanup,
             run_for_job=lambda job_id: self._run_for_job(job_id),
             total_energy_for_job=lambda job_id: total_energy_for_job(self._document, job_id),
             max_force_for_job=lambda job_id: max_force_for_job(self._document, job_id),
@@ -5872,7 +5666,7 @@ class MainWindow(QMainWindow):
         )
 
     def _build_quantum_corrections_deps(self) -> QuantumCorrectionsDeps:
-        """Build the quantum-corrections controller's deps: its window dialogs and reset primitives."""
+        """Build the quantum-corrections controller's deps: its window dialogs and stage-2 reset."""
 
         return QuantumCorrectionsDeps(
             handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
@@ -5888,11 +5682,6 @@ class MainWindow(QMainWindow):
                 == QMessageBox.StandardButton.Yes
             ),
             warn=lambda title, text: QMessageBox.warning(self, title, text),
-            directory_refusal=lambda job, shared_with: self._directory_ownership_refusals(
-                [job], shared_with=shared_with, check_remote=False
-            ).get(job.id),
-            delete_path=lambda path: self._delete_path(path),
-            delete_job_records=lambda job_id: self._delete_job_records(job_id),
             reset_jobs_keeping_files=lambda jobs: self._apply_failed_job_reset(
                 jobs, cleanup_choice=False, detach_convergence=False
             ),
@@ -6082,32 +5871,6 @@ class MainWindow(QMainWindow):
         if answer == QMessageBox.StandardButton.Cancel:
             return None
         return answer == QMessageBox.StandardButton.Yes
-
-    @staticmethod
-    def _clear_directory_contents(directory: Path) -> None:
-        """Delete a job directory's contents except its ``.cell``/``.param`` inputs.
-
-        A job directory is named after the job's seed, so CASTEP's relaxed
-        ``{seed}-out.cell`` is recognised by exact name and deleted with the
-        rest of the run's output; every other ``.cell``/``.param`` is kept, so a
-        seed that itself ends in ``-out`` keeps its input. A symlink is removed
-        as a link, never followed into what it points at.
-        """
-
-        output_cell = f"{directory.name}-out.cell".casefold()
-        for child in directory.iterdir():
-            if (
-                child.is_file()
-                and child.suffix.lower() in {".cell", ".param"}
-                and child.name.casefold() != output_cell
-            ):
-                continue
-            if child.is_symlink():
-                child.unlink()
-            elif child.is_dir():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
 
     def _run_for_job(self, job_id: UUID) -> CalculationRun | None:
         return self._job_execution.run_for_job(job_id)
@@ -8698,7 +8461,7 @@ class MainWindow(QMainWindow):
         definitions = controller.definitions()
         key_matches = controller.row_key_matcher(labels)
         should_autosave = self._relaxation_removal_touches_project_files(definitions, key_matches)
-        if not self._cleanup_relaxation_rows(definitions, key_matches):
+        if not self._cleanup_relaxation_rows(controller.jobs_for_removed_rows(labels)):
             self._restore_pristine_relaxation_form_from_definition()
             return
         controller.remove_rows(labels)
@@ -8717,7 +8480,7 @@ class MainWindow(QMainWindow):
         key_matches = controller.row_key_matcher(labels)
         removed_site_ids = self._muon_relaxation_site_ids_for_removed_rows(definitions, labels)
         should_autosave = self._relaxation_removal_touches_project_files(definitions, key_matches)
-        if not self._cleanup_relaxation_rows(definitions, key_matches):
+        if not self._cleanup_relaxation_rows(controller.jobs_for_removed_rows(labels)):
             self._restore_muon_relaxation_form_from_definition()
             return
         controller.remove_rows(labels)
@@ -8909,76 +8672,59 @@ class MainWindow(QMainWindow):
             return Path("")
         return self._document.project_root / "entities" / entity_type / f"{entity_id}.json"
 
-    def _cleanup_relaxation_rows(
-        self,
-        definitions: list,
-        key_matches: Callable[[object], bool],
-    ) -> bool:
-        """Delete the jobs bound to the removed relaxation rows, asking what to do with their files.
+    def _cleanup_relaxation_rows(self, jobs: Sequence[Job]) -> bool:
+        """Delete the jobs bound to removed relaxation rows, asking what to do with their files.
 
-        ``key_matches`` picks the removed rows' ``job_ids_by_label`` keys (a
-        controller's ``row_key_matcher``). Returns ``False`` when the user
-        cancels a file prompt or a file operation fails, leaving the rows in
-        place.
+        Returns ``False`` when the user cancels a file prompt or a file
+        operation fails, leaving the rows in place.
         """
 
         if self._document is None:
             return True
-
-        jobs: list[Job] = []
-        seen: set[UUID] = set()
-        for definition in definitions:
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            for key, raw_job_id in mapping.items():
-                if not key_matches(key):
-                    continue
-                try:
-                    job_id = UUID(str(raw_job_id))
-                except (TypeError, ValueError):
-                    continue
-                job = self._document.jobs.get(job_id)
-                if job is None or job.id in seen:
-                    continue
-                jobs.append(job)
-                seen.add(job.id)
-
-        shared_file_disposition: str | None = None
-        multi = len(jobs) > 1
+        plan = []
         for job in jobs:
             job_dir = self._job_output_directory(job)
-            if job_dir is not None and job_dir.exists():
-                disposition = shared_file_disposition
-                if disposition is None:
-                    disposition = self._prompt_job_file_disposition(
-                        title="Remove relaxation job with files",
-                        text=f"Relaxation job '{job.label}' has associated files.\n\n{job_dir}",
-                        keep_text="or Cancel to keep the relaxation row.",
-                        include_apply_all=multi,
-                    )
-                if disposition is None:
-                    return False
-                try:
-                    if disposition in {"delete", "delete_all"}:
-                        self._delete_path(job_dir)
-                    else:
-                        output_root = self._relaxation_archive_root_for_job(job, job_dir)
-                        self._archive_cutoff_directory(job_dir, output_root)
-                except OSError as exc:
-                    QMessageBox.warning(
-                        self,
-                        "File cleanup failed",
-                        f"Could not update files for job '{job.label}':\n{exc}",
-                    )
-                    return False
+            archive_root = self._relaxation_archive_root_for_job(job, job_dir) if job_dir is not None else None
+            plan.append(self._job_file_cleanup.plan_item([job], archive_root=archive_root))
+        return self._clean_up_removed_jobs(
+            plan,
+            title="Remove relaxation job with files",
+            describe=lambda item: f"Relaxation job '{item.label}' has associated files.\n\n{item.directory}",
+            keep_text="or Cancel to keep the relaxation row.",
+        )
 
-                if disposition in {"delete_all", "archive_all"}:
-                    shared_file_disposition = disposition
+    def _clean_up_removed_jobs(
+        self,
+        plan: Sequence[JobCleanupItem],
+        *,
+        title: str,
+        describe: Callable[[JobCleanupItem], str],
+        keep_text: str,
+    ) -> bool:
+        """Run a row-removal clean-up plan, asking per item what to do with its files.
 
-            self._delete_job_records(job.id)
+        Stops at the first file operation that fails and reports it. Returns
+        whether every item was cleaned.
+        """
 
-        return True
+        multi = len(plan) > 1
+        outcome = self._job_file_cleanup.execute(
+            plan,
+            choose_disposition=lambda item: self._prompt_job_file_disposition(
+                title=title,
+                text=describe(item),
+                keep_text=keep_text,
+                include_apply_all=multi,
+            ),
+            stop_on_error=True,
+        )
+        for failure in outcome.failures:
+            QMessageBox.warning(
+                self,
+                "File cleanup failed",
+                f"Could not update files for job '{failure.item.label}':\n{failure.error}",
+            )
+        return outcome.completed
 
     def _relaxation_archive_root_for_job(self, job: Job, job_dir: Path) -> Path | None:
         if self._document is None:
@@ -10034,57 +9780,18 @@ class MainWindow(QMainWindow):
     def _cleanup_energy_barrier_source_jobs(self, keys: set[str]) -> bool:
         if self._document is None:
             return True
-        targets: list[tuple[object, Job]] = []
-        seen: set[UUID] = set()
-        for definition in self._energy_barriers_controller.path_definitions():
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            for key in keys:
-                raw_job_id = mapping.get(key)
-                if not isinstance(raw_job_id, str):
-                    continue
-                try:
-                    job_id = UUID(raw_job_id)
-                except ValueError:
-                    continue
-                job = self._document.jobs.get(job_id)
-                if job is None or job.id in seen:
-                    continue
-                targets.append((definition, job))
-                seen.add(job.id)
-
-        shared_file_disposition: str | None = None
-        multi = len(targets) > 1
-        for definition, job in targets:
-            job_dir = self._job_output_directory(job)
-            if job_dir is not None and job_dir.exists():
-                disposition = shared_file_disposition
-                if disposition is None:
-                    disposition = self._prompt_job_file_disposition(
-                        title="Remove energy-barrier path with files",
-                        text=f"Energy-barrier job '{job.label}' has associated files.\n\n{job_dir}",
-                        keep_text="or Cancel to keep the generated path.",
-                        include_apply_all=multi,
-                    )
-                if disposition is None:
-                    return False
-                try:
-                    if disposition in {"delete", "delete_all"}:
-                        self._delete_path(job_dir)
-                    else:
-                        self._archive_cutoff_directory(job_dir, definition_output_directory(self._document, definition))
-                except OSError as exc:
-                    QMessageBox.warning(
-                        self,
-                        "File cleanup failed",
-                        f"Could not update files for job '{job.label}':\n{exc}",
-                    )
-                    return False
-                if disposition in {"delete_all", "archive_all"}:
-                    shared_file_disposition = disposition
-            self._delete_job_records(job.id)
-        return True
+        plan = [
+            self._job_file_cleanup.plan_item(
+                [job], archive_root=definition_output_directory(self._document, definition)
+            )
+            for definition, job in self._energy_barriers_controller.jobs_for_removed_sources(keys)
+        ]
+        return self._clean_up_removed_jobs(
+            plan,
+            title="Remove energy-barrier path with files",
+            describe=lambda item: f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}",
+            keep_text="or Cancel to keep the generated path.",
+        )
 
     def _on_configure_quantum_corrections_source(self, payload: object) -> None:
         controller = self._quantum_corrections_controller
