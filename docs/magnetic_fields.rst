@@ -66,6 +66,12 @@ a saved workspace, and each owner has at most one record of each type.
 - ``magnetic_dipolar_tensor`` data holds ``results``, the tensor dialog's rows.
 - ``nuclear_relaxation`` data holds ``result``, the nuclear-relaxation result.
 
+Dipolar-tensor and nuclear-relaxation records carry ``site_source`` as well,
+naming the source of the muon site the calculation used. These results are
+kept when a different muon site is chosen, so the selected site says nothing
+about where they were computed: a record without ``site_source`` has no
+source and is not marked as an estimate.
+
 A new calculation replaces the owner's record of that type with a new record;
 changing a setting that invalidates the field results, or clearing a dialog's
 results, removes the record. Saving a workspace copies the page's results into
@@ -420,8 +426,7 @@ distorted-structure reference. The available dialog sources are:
   re-pinning never relabels a different site. Tick ``Show every relaxed site`` to list every analysis
   workspace's clusters instead; the choice is saved with the project. With no
   pin, a notice and a ``Go to Muon Sites →`` button (which closes the dialog
-  and opens that page) explain how to pin sites. Only analysis workspaces of
-  the active host are listed;
+  and opens that page) explain how to pin sites;
 - ``Custom fractional position``, a fractional coordinate in the active host
   cell.
 
@@ -442,9 +447,14 @@ estimates wherever they are shown: the ``Result`` column reads, for example,
 ``field, unrelaxed estimate``, the results status line says the site is
 unrelaxed, the distribution plot title ends in ``(unrelaxed estimate)``, its
 ``Export Data...`` file carries an ``# Estimate:`` header line, and the
-project survey's local-field markers read ``≈`` before the magnitude. The
+project survey's local-field markers read ``≈`` before the magnitude.
+Dipolar tensors and nuclear relaxation computed at a UEP site are marked the
+same way in their dialogs: the results show a note that they were computed at
+an unrelaxed UEP site, each tensor's title ends in ``(unrelaxed estimate)``,
+and the status line after a calculation says the results are estimates. The
 marker comes from the source saved with the result (see `Saved Results`_), so
-it survives a reload.
+it survives a reload, and a tensor or nuclear-relaxation result keeps its
+marker after another muon site is chosen.
 
 Structural-relaxation cluster representatives can expose a distorted relaxed
 structure. When that structure is available, the dialog enables the

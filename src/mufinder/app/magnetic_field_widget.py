@@ -164,6 +164,11 @@ _UNRELAXED_ESTIMATE_NOTE = (
     "UEP sites are unrelaxed, so fields computed at them are estimates: "
     "the relaxed muon site can sit some distance from the UEP minimum."
 )
+_UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are estimates."
+_UNRELAXED_RESULTS_NOTE = (
+    "Computed at an unrelaxed UEP site, so these are estimates: "
+    "the relaxed muon site can sit some distance from the UEP minimum."
+)
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
@@ -4690,6 +4695,7 @@ class NuclearRelaxationDialog(QDialog):
             resize_to_contents_columns=(0,),
             stretch_last_section=False,
         )
+        self._estimate_note = _unrelaxed_results_note(self)
 
         self._build_layout()
         self._apply_styles()
@@ -4762,6 +4768,7 @@ class NuclearRelaxationDialog(QDialog):
 
         results_group = QGroupBox("Results", self)
         results_layout = QVBoxLayout(results_group)
+        results_layout.addWidget(self._estimate_note)
         results_layout.addWidget(self._summary_table)
         results_layout.addWidget(self._element_table)
         layout.addWidget(results_group, 1)
@@ -4797,9 +4804,12 @@ class NuclearRelaxationDialog(QDialog):
         payload = result.to_json() if hasattr(result, "to_json") else dict(result)
         jsonable = to_jsonable(payload)
         self._results_state = dict(jsonable) if isinstance(jsonable, Mapping) else {}
+        if self._results_state and self._muon_site is not None:
+            self._results_state["site_source"] = self._muon_site.source
         self._populate_results(self._results_state)
         mode = str(self._results_state.get("mode", self.options().mode))
-        self._status.setText(f"Calculated {self._MODE_LABELS.get(mode, mode)} nuclear relaxation.")
+        suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
+        self._status.setText(f"Calculated {self._MODE_LABELS.get(mode, mode)} nuclear relaxation.{suffix}")
 
     def _restore_options(self, state: Mapping[str, object] | None) -> None:
         if not isinstance(state, Mapping):
@@ -4836,6 +4846,7 @@ class NuclearRelaxationDialog(QDialog):
     def _populate_results(self, result: Mapping[str, object]) -> None:
         self._summary_table.setRowCount(0)
         self._element_table.setRowCount(0)
+        self._estimate_note.setVisible(is_unrelaxed_site_source(result.get("site_source")))
         if not result:
             return
         rows = [
@@ -5086,6 +5097,7 @@ class DipolarTensorDialog(QDialog):
             self._result_unit_combo.setCurrentIndex(t_index)
         self._result_unit_combo.currentIndexChanged.connect(self._refresh_result_units)
 
+        self._estimate_note = _unrelaxed_results_note(self)
         self._result_scroll = QScrollArea(self)
         self._result_scroll.setWidgetResizable(True)
         self._result_content = QWidget(self._result_scroll)
@@ -5153,6 +5165,7 @@ class DipolarTensorDialog(QDialog):
         unit_row.addWidget(self._result_unit_combo)
         unit_row.addStretch(1)
         result_layout.addLayout(unit_row)
+        result_layout.addWidget(self._estimate_note)
         result_layout.addWidget(self._result_scroll, 1)
         layout.addWidget(result_group, 1)
         layout.addWidget(self._buttons)
@@ -5212,10 +5225,14 @@ class DipolarTensorDialog(QDialog):
             self._status.setText(f"Calculation failed: {exc}")
             return
         self._results_state = [self._result_to_state(result) for result in results]
+        if self._muon_site is not None:
+            for state in self._results_state:
+                state["site_source"] = self._muon_site.source
         self._populate_results(self._results_state)
         count = len(self._results_state)
         plural = "" if count == 1 else "s"
-        self._status.setText(f"Calculated {count} dipolar tensor{plural}.")
+        suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
+        self._status.setText(f"Calculated {count} dipolar tensor{plural}.{suffix}")
 
     def _restore_selector_state(self, state: Mapping[str, object] | None) -> None:
         if isinstance(state, Mapping):
@@ -5287,6 +5304,7 @@ class DipolarTensorDialog(QDialog):
                 widget.deleteLater()
         self._result_tables = []
         self._result_tensors = []
+        self._estimate_note.setVisible(any(is_unrelaxed_site_source(result.get("site_source")) for result in results))
         if not results:
             empty = QLabel("No tensor calculated yet.")
             style_hint_text(empty)
@@ -5298,7 +5316,10 @@ class DipolarTensorDialog(QDialog):
         self._result_content_layout.addStretch(1)
 
     def _result_card(self, result: Mapping[str, object]) -> QWidget:
-        group = QGroupBox(str(result.get("site_label", "site")))
+        title = str(result.get("site_label", "site"))
+        if is_unrelaxed_site_source(result.get("site_source")):
+            title = f"{title} (unrelaxed estimate)"
+        group = QGroupBox(title)
         layout = QVBoxLayout(group)
         position = result.get("muon_position")
         if position is not None:
@@ -6808,7 +6829,7 @@ class MagneticFieldWidget(QWidget):
         return f"{result_type}, unrelaxed estimate" if self._results_are_estimates() else result_type
 
     def _estimate_status_suffix(self) -> str:
-        return " Computed at an unrelaxed UEP site, so these are estimates." if self._results_are_estimates() else ""
+        return _UNRELAXED_ESTIMATE_SUFFIX if self._results_are_estimates() else ""
 
     def _field_results_to_state(self, kind: str, results: object, *, site_source: str) -> dict[str, object]:
         payloads: list[dict[str, object]] = []
@@ -6995,8 +7016,7 @@ def _relaxation_cluster_muon_site_options(
     returned, labelled by Wyckoff label and cluster, in charge-state then
     energy-rank order; a live cluster matches a pin by workspace and
     representative relaxation job. Otherwise every workspace's clusters, sorted
-    by name. Only workspaces of the active host count: cluster positions are
-    fractional coordinates in their own host's cell.
+    by name.
     """
 
     workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
@@ -7006,11 +7026,8 @@ def _relaxation_cluster_muon_site_options(
     ranks = {key: order for order, key in enumerate(pinned)}
     pinned_options: list[tuple[int, MagneticMuonSiteOption]] = []
     options: list[MagneticMuonSiteOption] = []
-    host_id = document.project.host_structure_id
     for workspace in workspaces:
-        if not isinstance(workspace, dict) or host_id is None:
-            continue
-        if str(workspace.get("host_structure_id", "")).strip() != str(host_id):
+        if not isinstance(workspace, dict):
             continue
         workspace_name = str(workspace.get("name", "Relaxation analysis")).strip() or "Relaxation analysis"
         clustering = workspace.get("clustering")
@@ -7057,6 +7074,16 @@ def _relaxation_cluster_muon_site_options(
     if pinned_only:
         return [option for _rank, option in sorted(pinned_options, key=lambda item: item[0])]
     return sorted(options, key=lambda option: (option.source_label or "", option.cluster_label or "", option.label))
+
+
+def _unrelaxed_results_note(parent: QWidget) -> QLabel:
+    """Return a hidden note marking results computed at an unrelaxed UEP site as estimates."""
+
+    note = QLabel(_UNRELAXED_RESULTS_NOTE, parent)
+    note.setWordWrap(True)
+    style_hint_text(note)
+    note.setVisible(False)
+    return note
 
 
 def _site_source_label(source: str) -> str:

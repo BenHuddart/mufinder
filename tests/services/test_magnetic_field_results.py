@@ -202,6 +202,44 @@ def test_attach_takes_a_missing_site_source_from_the_selected_site(tmp_path: Pat
     assert "site_source" not in attach_magnetic_field_results(document, "other", other)["magnetic_field_results"]
 
 
+def test_tensor_and_nuclear_records_keep_the_site_source_through_a_save_and_reload(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _document(tmp_path)
+    form = _form(
+        dipolar_tensor_results=[{**row, "site_source": "uep_clustering"} for row in _TENSORS],
+        nuclear_relaxation_results={**_NUCLEAR, "site_source": "relaxation_clustering"},
+    )
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, form)
+    service.save_project(document)
+
+    reloaded = service.load_project(document.project_root)
+
+    tensor = magnetic_field_result(reloaded, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE)
+    assert tensor.data == {"owner": MAGNETIC_FIELD_PAGE_OWNER, "results": _TENSORS, "site_source": "uep_clustering"}
+    nuclear = magnetic_field_result(reloaded, MAGNETIC_FIELD_PAGE_OWNER, NUCLEAR_RELAXATION_RESULT_TYPE)
+    assert nuclear.data == {
+        "owner": MAGNETIC_FIELD_PAGE_OWNER,
+        "result": _NUCLEAR,
+        "site_source": "relaxation_clustering",
+    }
+    attached = attach_magnetic_field_results(
+        reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
+    )
+    assert attached == form
+
+
+def test_tensor_and_nuclear_records_without_a_source_take_none_from_the_selected_site(tmp_path: Path) -> None:
+    # These results survive a change of muon site, so the selected site says nothing about them.
+    document = _document(tmp_path)
+    selected = {"source": "uep_clustering", "label": "UEP cluster 1", "fractional_position": [0.1, 0.2, 0.3]}
+    stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form(selected_muon_site=selected))
+
+    attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored)
+
+    assert attached["dipolar_tensor_results"] == _TENSORS
+    assert attached["nuclear_relaxation_results"] == _NUCLEAR
+
+
 def test_only_uep_sites_are_unrelaxed_estimates() -> None:
     assert is_unrelaxed_site_source("uep_clustering")
     assert not is_unrelaxed_site_source("relaxation_clustering")
