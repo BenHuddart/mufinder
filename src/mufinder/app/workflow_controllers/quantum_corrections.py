@@ -48,6 +48,11 @@ from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.project_service import TERMINAL_RECOVERABLE_JOB_STATUSES
+from mufinder.services.muon_sites_summary import (
+    QUANTUM_CORRECTIONS_SCOPE,
+    downstream_site_scope,
+    set_show_every_relaxed_site,
+)
 from mufinder.services.source_candidates import (
     QUANTUM_STAGE_PHONON,
     QUANTUM_STAGE_SINGLEPOINT,
@@ -1478,6 +1483,18 @@ class QuantumCorrectionsController(WorkflowJobController):
         warnings = [] if mass_warning is None else [mass_warning]
         return ControllerResult(payload=payload, warnings=warnings)
 
+    def set_show_every_site(self, enabled: bool) -> None:
+        """List every eligible relaxed site (``True``) or only the pinned ones."""
+
+        document = self._context.document()
+        if document is None:
+            return
+        set_show_every_relaxed_site(document, QUANTUM_CORRECTIONS_SCOPE, enabled)
+        self.refresh_view()
+        self._context.persist_ui_state(
+            failure_message="The Quantum Corrections site list was updated, but autosave failed."
+        )
+
     # --- view contract ---
 
     def refresh_view(self) -> None:
@@ -1492,6 +1509,7 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         document = self._context.document()
         if document is None:
+            self._view.set_site_scope(show_every_site=False)
             self._view.set_sources([])
             self._view.set_results([])
             return
@@ -1501,9 +1519,22 @@ class QuantumCorrectionsController(WorkflowJobController):
         candidates = self.candidates()
         relative_energies = quantum_source_relative_energies(candidates)
         definition = self.active_definition()
-        for candidate in candidates:
+        stage_states = {
+            candidate.key: self.stage_state(definition, candidate) for candidate in candidates
+        }
+        # The pinned list keeps every row this workflow already tracks, so a
+        # configured or submitted site never drops out of the table.
+        tracked_keys = [
+            candidate.key
+            for candidate in candidates
+            if stage_states[candidate.key].current_job is not None
+            or workflow_row_configuration_exists(definition, candidate.key)
+        ]
+        scope = downstream_site_scope(document, QUANTUM_CORRECTIONS_SCOPE, candidates)
+        self._view.set_site_scope(show_every_site=scope.show_every_site, notice=scope.notice)
+        for candidate in scope.scoped_candidates(candidates, keep_keys=tracked_keys):
             state = quantum_states.get(candidate.key)
-            stage_state = self.stage_state(definition, candidate)
+            stage_state = stage_states[candidate.key]
             _params, _advanced, extras = workflow_row_configuration(definition, candidate.key)
             source_rows.append(
                 QuantumSourceRow(
@@ -1525,6 +1556,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                     configured=workflow_row_configuration_exists(definition, candidate.key),
                     resettable=self.can_reset_to_stage_one(definition, candidate),
                     stage_two_resettable=self.can_reset_to_stage_two(definition, candidate),
+                    pinned_label=scope.pinned_label(candidate.key),
                 )
             )
 

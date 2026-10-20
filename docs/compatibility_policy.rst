@@ -47,6 +47,17 @@ Compatibility ledger
        configured is reinterpreted.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that drops task-only rows from ``convergence_form``.
+   * - Pinned sites without ``representative_job_id``
+     - ``muon_sites_summary_snapshots`` UI state, read by
+       ``mufinder.services.muon_sites_summary`` (``pinned_muon_sites``)
+     - A Muon Sites summary snapshot pinned before sites recorded their
+       cluster's representative relaxation job has no ``representative_job_id``
+       key. Such a site takes the job id from the cluster with the same index in
+       the pinned workspace while that workspace exists; otherwise it is
+       reported as no longer resolving, and re-pinning the analysis writes the
+       key. A site whose key is present but ``null`` is never repaired this way.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that adds the key to stored snapshots.
    * - ``relative_energy_eV`` muon-site key
      - ``mufinder.persistence.project_codec`` (``site_from_dict``)
      - ``MuonSite`` stored the source relaxation's absolute final total energy

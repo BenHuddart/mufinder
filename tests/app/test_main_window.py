@@ -16,6 +16,12 @@ import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_cont
 import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
+from tests.support.muon_sites import add_relaxed_muon_site
+from mufinder.services.muon_sites_summary import (
+    ENERGY_BARRIERS_SCOPE,
+    QUANTUM_CORRECTIONS_SCOPE,
+    set_show_every_relaxed_site,
+)
 from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePath
@@ -1228,6 +1234,7 @@ def test_main_window_quantum_corrections_allows_editing_eligible_site_name(qapp,
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_rename_doc.mufinder", "Quantum Rename")
     window._document = doc
+    set_show_every_relaxed_site(doc, QUANTUM_CORRECTIONS_SCOPE, True)
 
     relaxed_structure = Structure(
         label="site relaxed",
@@ -3470,48 +3477,6 @@ def test_main_window_missing_farmed_ts_names_the_farmed_file(
     window.close()
 
 
-def _add_relaxed_quantum_source(
-    doc,
-    *,
-    label: str,
-    charge_calc_type: str,
-    species: list[str],
-    total_energy: float,
-) -> MuonSite:
-    """Add one eligible relaxed muon source whose site stores the absolute total energy."""
-
-    positions = [[0.1 * index, 0.0, 0.0] for index in range(len(species) - 1)] + [[0.25, 0.25, 0.25]]
-    relaxed = Structure(
-        label=f"{label} relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=list(species),
-        fractional_positions=positions,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
-    )
-    doc.structures[relaxed.id] = relaxed
-    job = Job(
-        label=f"relax-{label}",
-        workflow_stage=WorkflowStage.MUON_RELAXATION,
-        calc_type=charge_calc_type,
-        status=JobStatus.COMPLETED,
-    )
-    doc.jobs[job.id] = job
-    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
-    result = Result(
-        calculation_run_id=run.id,
-        result_type=job.calc_type,
-        data={"total_energy": total_energy},
-        derived_structure_ids=[relaxed.id],
-    )
-    run.result_id = result.id
-    doc.runs[run.id] = run
-    doc.results[result.id] = result
-    site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, total_energy_eV=total_energy)
-    doc.sites[site.id] = site
-    return site
-
-
 def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(qapp, tmp_path: Path) -> None:
     """The dE column offsets each site by the lowest site with the same charge state and cell.
 
@@ -3525,13 +3490,15 @@ def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_relative_energy.mufinder", "Quantum dE")
     window._document = doc
+    set_show_every_relaxed_site(doc, QUANTUM_CORRECTIONS_SCOPE, True)
+    set_show_every_relaxed_site(doc, ENERGY_BARRIERS_SCOPE, True)
     positive = "castep_positivemuon_relaxation"
-    low = _add_relaxed_quantum_source(doc, label="low", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-100.0)
-    high = _add_relaxed_quantum_source(doc, label="high", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-99.75)
-    muonium = _add_relaxed_quantum_source(
+    low = add_relaxed_muon_site(doc, label="low", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-100.0)
+    high = add_relaxed_muon_site(doc, label="high", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-99.75)
+    muonium = add_relaxed_muon_site(
         doc, label="mu0", charge_calc_type="castep_muonium_relaxation", species=["Si", "H:mu"], total_energy=-250.0
     )
-    supercell = _add_relaxed_quantum_source(
+    supercell = add_relaxed_muon_site(
         doc, label="big", charge_calc_type=positive, species=["Si", "Si", "H:mu"], total_energy=-300.0
     )
 
@@ -3565,7 +3532,7 @@ def test_main_window_configures_neb_paths_through_the_dialog(
     window._document = doc
     positive = "castep_positivemuon_relaxation"
     sites = [
-        _add_relaxed_quantum_source(doc, label=label, charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-1.0)
+        add_relaxed_muon_site(doc, label=label, charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-1.0)
         for label in ("siteA", "siteB")
     ]
     source: dict[str, object] = {"key": "path-1", "label": "siteA_to_siteB_path1", "path_index": 1}

@@ -283,6 +283,11 @@ no two workflow widgets may define the same private method.
        a busy dialog appears once the call takes noticeably long, and a
        cancellable call raises ``BlockingCallCancelled``. Filesystem retries
        and keyring password lookups use it.
+   * - ``mufinder.app.pinned_sites_scope``
+     - The "Show every relaxed site" check box, pinned-sites notice and
+       ``Go to Muon Sites →`` link above a downstream site list
+       (``PinnedSitesScopeBar``), shared by quantum corrections, energy
+       barriers and the Magnetic Fields muon-site dialog.
    * - ``mufinder.app.workflow_row_widget``
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and
@@ -438,6 +443,15 @@ no two workflow widgets may define the same private method.
        Energy Barriers form state they live in and the NEB results for energy
        barriers; and the completed pristine and muon relaxations offered to
        comparison and relaxation analysis.
+   * - ``mufinder.services.muon_sites_summary``
+     - The pinned Muon Sites summary: building, storing and validating the
+       per-charge-state snapshots (``build_muon_sites_summary_snapshot``,
+       ``store_muon_sites_summary_snapshot``,
+       ``validated_muon_sites_summary_snapshot``), resolving pinned sites to
+       eligible relaxed sources (``pinned_source_selection``,
+       ``pinned_sites_by_representative``), and the per-workflow "Show every relaxed
+       site" choice and notice that decide which sites quantum corrections,
+       energy barriers and magnetic fields list (``downstream_site_scope``).
    * - ``mufinder.services.project_summary``
      - The workflow-stage catalogue the navigator and the project home are built
        from (``WORKFLOW_STAGES``, ``STAGE_GROUPS``: titles, completion goals and

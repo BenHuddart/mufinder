@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_row_widget import SourceTableWidget
 from mufinder.app.workflow_table_utils import (
@@ -45,6 +46,7 @@ class QuantumSourceRow:
     configured: bool = False
     resettable: bool = False
     stage_two_resettable: bool = False
+    pinned_label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,8 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     reset_stage_requested = Signal(list)
     reset_stage_two_requested = Signal(list)
     analysis_requested = Signal(str)
+    show_every_site_toggled = Signal(bool)
+    open_muon_sites_requested = Signal()
 
     _SOURCE_STATUS_COLUMN = 7
     _SOURCE_CONFIGURE_COLUMN = 8
@@ -95,6 +99,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         self._result_rows: list[QuantumResultRow] = []
         self._result_rows_valid = False
         self._updating_sources = False
+        self._show_every_site = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -129,7 +134,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         sources_layout.setContentsMargins(10, 8, 10, 8)
         sources_layout.setSpacing(6)
 
-        self._source_label = QLabel("Eligible relaxed sites")
+        self._source_label = QLabel("Pinned muon sites")
         style_section_title(self._source_label)
         sources_layout.addWidget(self._source_label)
         source_hint = QLabel(
@@ -139,6 +144,10 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
         sources_layout.addWidget(source_hint)
+        self._site_scope = PinnedSitesScopeBar(sources_group)
+        self._site_scope.show_every_site_toggled.connect(self.show_every_site_toggled)
+        self._site_scope.open_muon_sites_requested.connect(self.open_muon_sites_requested)
+        sources_layout.addWidget(self._site_scope)
         self._sources_table = create_workflow_table(
             ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
             resize_to_contents_columns=(8,),
@@ -259,12 +268,23 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         if self._source_rows_valid and list(rows) == self._source_rows:
             return
         self._source_rows_valid = True
-        self._source_label.setText(f"Eligible relaxed sites ({len(rows)})")
+        self._update_source_label(len(rows))
         self._updating_sources = True
         try:
             self._set_source_rows(rows)
         finally:
             self._updating_sources = False
+
+    def set_site_scope(self, *, show_every_site: bool, notice: str = "") -> None:
+        """Show whether every relaxed site is listed, and the pinned-sites notice."""
+
+        self._show_every_site = bool(show_every_site)
+        self._site_scope.set_state(show_every_site=show_every_site, notice=notice)
+        self._update_source_label(len(self._source_rows))
+
+    def _update_source_label(self, count: int) -> None:
+        title = "Eligible relaxed sites" if self._show_every_site else "Pinned muon sites"
+        self._source_label.setText(f"{title} ({count})")
 
     def set_results(self, rows: list[QuantumResultRow]) -> None:
         """Replace the displayed quantum-result rows.
@@ -328,7 +348,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
 
     def source_row_values(self, row: QuantumSourceRow) -> tuple[str, ...]:
         return (
-            row.label,
+            row.pinned_label or row.label,
             row.charge_state,
             row.relative_energy,
             row.displacements,
@@ -339,10 +359,15 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         )
 
     def create_source_row_cells(self, row_index: int, row: QuantumSourceRow) -> None:
-        # The site label is renamed in place (``source_label_renamed``).
+        # The site label is renamed in place (``source_label_renamed``). A pinned
+        # row shows its summary label instead, so it is renamed from the full list.
         label_item = self._sources_table.item(row_index, 0)
-        if label_item is not None:
-            label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
+        if label_item is None:
+            return
+        if row.pinned_label:
+            label_item.setToolTip(f"Relaxed site: {row.label}")
+            return
+        label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
 
     def refresh_source_actions(self, selected_rows: Sequence[QuantumSourceRow]) -> None:
         self._reset_stage_button.setEnabled(any(row.resettable for row in selected_rows))

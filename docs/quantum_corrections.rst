@@ -33,13 +33,14 @@ Quantum Corrections needs:
   relaxation completed successfully appears automatically on the Quantum
   Corrections page (see `Source eligibility`_). Relaxations brought in through
   :doc:`legacy_import` are eligible too.
-- **A decision about which sites matter.** The page lists *every* eligible
-  relaxed site, ordered by relative energy, and a phonon calculation is
-  expensive (roughly three displacements per atom with finite displacement).
-  Use ``Muon Sites > Analysis`` (:doc:`structural_relaxation_analysis`) to group
-  the relaxed sites into distinct stopping sites first, then run Quantum
-  Corrections on one representative of each site you want to compare, not on
-  every row.
+- **A decision about which sites matter.** A phonon calculation is expensive
+  (roughly three displacements per atom with finite displacement), so the page
+  lists the distinct sites pinned to the ``Muon Sites`` summary by default:
+  cluster the relaxed sites under ``Muon Sites > Analysis``
+  (:doc:`structural_relaxation_analysis`) and choose ``Pin to Summary``. Each
+  pinned site is one row, its cluster's representative relaxation. Tick
+  ``Show every relaxed site`` to list every eligible relaxed site instead,
+  including relaxed copies of the same site.
 - **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
   under ``Setup``, and load a keyword catalog (:doc:`castep_keyword_catalog`).
 
@@ -51,7 +52,7 @@ stage-2 phonon calculation that continues from the singlepoint's checkpoint.
 You submit each stage yourself; MuFinder does not chain them automatically.
 
 1. **Open the page.** Select ``Quantum Corrections`` in the workflow navigator.
-   The ``Quantum Phonon Jobs`` table lists the eligible relaxed sites with
+   The ``Quantum Phonon Jobs`` table lists the pinned sites with
    ``Stage`` = ``singlepoint`` and ``Status`` = ``ready``.
 2. **Configure before the first submission.** Click a row's ``Configure...``
    button, or select several rows and click ``Configure Selected
@@ -129,12 +130,27 @@ the row over from a clean directory.
 The workflow page
 -----------------
 
-``Quantum Phonon Jobs`` (``Eligible relaxed sites``) has one row per eligible
-relaxed site:
+``Quantum Phonon Jobs`` lists one of two sets of rows:
+
+- ``Pinned muon sites`` (the default): one row per site pinned to the
+  ``Muon Sites`` summary, positive muon first, then muonium, each in the
+  summary's energy rank. A site the workflow already tracks (a configured row
+  or one with a job) stays listed even when it is not pinned, so a submitted
+  row never drops out of the table.
+- ``Eligible relaxed sites``, when ``Show every relaxed site`` is ticked: one
+  row per eligible relaxed site.
+
+The choice is saved with the project. When no charge state has a pin, the
+table is empty and a notice with ``Go to Muon Sites →`` explains how to pin
+sites. The notice also names a charge state with eligible sites but no pin,
+and counts pinned sites that no longer resolve to an eligible relaxed site
+(their relaxation was reset or removed); re-pin the analysis to refresh them.
 
 ``Site``
-   The relaxed site's label. Double-click to rename it; the new label is also
-   used by Energy Barriers.
+   For a pinned row, the summary label: the Wyckoff label and cluster, such as
+   ``8c · cluster 1`` (``Cluster 1`` without a Wyckoff label); the tooltip
+   names the relaxed site. Otherwise the relaxed site's label: double-click to
+   rename it; the new label is also used by Energy Barriers.
 ``Charge``
    The charge state of the source relaxation: ``positive muon`` or
    ``muonium``.
@@ -142,7 +158,8 @@ relaxed site:
    The site's relaxed total energy relative to the lowest-energy eligible site
    with the same charge state and cell composition. Energies from different
    charge states or supercells are not comparable, so each such group has its
-   own zero. Rows are ordered by charge state, then by ``dE``.
+   own zero. In the full list, rows are ordered by charge state, then by
+   ``dE``.
 ``Displacements``
    ``3 x atom count`` for the relaxed defect cell — an approximate count of the
    finite-displacement calculations the phonon stage needs, and therefore a
@@ -258,7 +275,9 @@ seed a spin of +1 on the muon, as the muon relaxation does.
 Source eligibility
 ------------------
 
-A relaxed site is listed only when:
+A relaxed site is listed only when (a pinned site is listed when the relaxed
+site of its cluster's representative relaxation passes the same checks, in the
+pin's charge state):
 
 - the ``MuonSite`` status is ``relaxed`` and the site records its relaxation run;
 - that run, and the job that produced it, completed successfully;

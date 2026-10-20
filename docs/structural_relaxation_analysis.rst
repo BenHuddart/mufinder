@@ -193,7 +193,15 @@ built on the active host structure, and that its charge state is supported; the
 button reports if there is nothing to summarise yet or the host does not match.
 Use **Unpin** to clear a card. Pinned snapshots are saved in the project's UI
 state under ``muon_sites_summary_snapshots``, keyed by charge state and
-independent of the live workspaces.
+independent of the live workspaces. Each pinned site records the job id of its
+cluster's representative relaxation.
+
+Quantum Corrections, Energy Barriers and the Magnetic Fields muon-site dialog
+list the pinned sites by default, labelled by Wyckoff label and cluster and
+ranked by relative energy as on the summary. Each page has a **Show every
+relaxed site** option that lists every eligible relaxed site instead; the
+choice is saved per workflow under ``downstream_show_every_relaxed_site``.
+Pinning or unpinning updates those pages straight away.
 
 You can navigate from the summary straight into the live analysis:
 
