@@ -32,7 +32,7 @@ FILES ?= \
 	tests/app/test_convergence_widget.py \
 	tests/app/main_window
 
-.PHONY: install test test-shard coverage test-fast harness docs lint quality
+.PHONY: install test test-shard coverage test-fast harness screenshots docs lint quality
 
 # Equivalent: uv sync --extra dev --extra scientific-backends
 install:
@@ -56,11 +56,16 @@ test-fast:
 harness:
 	$(PYTHON) -m pytest --no-cov tests/test_agent_harness.py
 
-docs:
+# The user-guide screenshots are rendered from the application, not committed:
+# scripts/docs_screenshots.py writes them to docs/_generated/screenshots.
+screenshots:
+	$(PYTHON) scripts/docs_screenshots.py
+
+docs: screenshots
 	$(PYTHON) -m sphinx -W -b html docs docs/_build/html
 
 # ruff is installed by the dev extra (added alongside the ruff configuration).
 lint:
-	$(PYTHON) -m ruff check src tests
+	$(PYTHON) -m ruff check src tests scripts
 
 quality: lint test docs

@@ -157,10 +157,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
 
+      # The screenshots run real field calculations, so the docs need the
+      # scientific backends as well.
       - name: Install Python dependencies
         run: |
-          uv sync --frozen --extra dev
+          uv sync --frozen --extra dev --extra scientific-backends
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
+      # make docs renders the user-guide screenshots first; they are build
+      # outputs and are not uploaded from this job.
       - name: Build Sphinx documentation
         run: make docs

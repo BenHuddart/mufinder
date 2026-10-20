@@ -36,8 +36,11 @@ README, the pull-request template and CI refer to its targets. Pass
   runs the targeted execution checks listed below; ``make test-fast
   FILES="tests/science/test_supercell.py"`` runs the files you name.
 - ``make harness`` runs the agent-harness structural tests.
-- ``make docs`` builds this Sphinx site with warnings treated as errors.
-- ``make lint`` runs ``ruff check`` over ``src`` and ``tests``.
+- ``make screenshots`` renders the user-guide screenshots into
+  ``docs/_generated/screenshots`` (see `Documentation screenshots`_).
+- ``make docs`` renders the screenshots, then builds this Sphinx site with
+  warnings treated as errors.
+- ``make lint`` runs ``ruff check`` over ``src``, ``tests`` and ``scripts``.
 - ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
 To skip the Qt widget tests while iterating, select by marker with
@@ -133,6 +136,29 @@ literature DOI the user guides cite stays on its page; a new citation is added
 to its ``CITED_DOIS`` table. Tests do not pin prose phrases, ``conf.py`` lines
 or stylesheet values: whether a page describes the code correctly is checked in
 review, and the ``-W`` build catches broken references and missing assets.
+
+Documentation screenshots
+-------------------------
+
+The user-guide screenshots are build outputs: no image under ``docs/`` is
+committed for them. ``scripts/docs_screenshots.py`` writes each one to
+``docs/_generated/screenshots`` (ignored by git), and a page shows it with a
+``figure`` directive whose path is ``_generated/screenshots/<name>.png``.
+
+Each screenshot saves a small project, opens it in a real ``MainWindow``,
+drives the page through its buttons (a real ``muesr`` calculation included) and
+grabs the window or the dialog it opens. The script needs no display: Qt draws
+on its ``offscreen`` platform at twice the logical size, and VTK renders
+through EGL. pyvistaqt's ``QtInteractor`` needs a native window, so the script
+gives the 3D viewers an off-screen PyVista plotter that paints its frame
+instead. Settings and app data go to a temporary directory, so a local run
+leaves the developer's own MuFinder configuration alone.
+
+To add a screenshot, add a function to the script's ``SCREENSHOTS`` table and
+reference its file from a page. ``tests/docs/test_docs_screenshots.py`` runs the
+script and fails if a page references an image the script does not write, or
+the script writes one no page uses. To render only some of them, name them:
+``python scripts/docs_screenshots.py magnetic_fields_page``.
 
 Shared test helpers
 -------------------
@@ -271,13 +297,14 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``make lint``: ``ruff check`` over ``src`` and ``tests``
+  - ``make lint``: ``ruff check`` over ``src``, ``tests`` and ``scripts``
   - ``make test-shard SHARD=n SHARDS=4 PYTEST_WORKERS=auto`` on four runners,
     each distributed with ``pytest-xdist`` using ``--dist worksteal``, then
     ``make coverage`` in the required ``tests`` job, which combines the shards'
     coverage data and enforces the threshold. ``tests`` fails if any shard
     fails.
-  - ``make docs``: ``sphinx`` HTML build with ``-W`` enabled
+  - ``make docs``: the screenshots, then the ``sphinx`` HTML build with ``-W``
+    enabled. The job uploads nothing.
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
   and macOS artifacts from any branch, tag, or SHA without publishing a release
@@ -301,8 +328,13 @@ continuous integration and tag-driven publishing:
      git push origin release/vX.Y.Z                    # open a PR, wait for CI + merge
      git push origin vX.Y.Z                            # push the tag, which triggers Release Publish
 
-- ``Pages`` rebuilds this Sphinx site (with ``-W``) on every push to ``main``
-  and deploys it to GitHub Pages.
+- ``Pages`` rebuilds this Sphinx site, screenshots included, with ``make docs``
+  on every push to ``main`` and deploys it to GitHub Pages. GitHub Pages keeps
+  its own copy of a deployed site, so once the deployment succeeds the
+  ``cleanup`` job deletes the run's uploaded ``github-pages`` artifact; it needs
+  ``actions: write`` for that and nothing else. A failed deployment keeps its
+  artifact so the deploy job can be re-run, and the upload's one-day retention
+  removes it otherwise.
 
 The repository's default ``GITHUB_TOKEN`` permission for workflows is
 read-only. A workflow that needs to write (``Pages``, ``Release Publish``)

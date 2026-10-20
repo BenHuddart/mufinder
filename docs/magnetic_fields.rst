@@ -26,6 +26,14 @@ A typical pass through the page is:
 4. optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card.
 
+.. figure:: _generated/screenshots/magnetic_fields_page.png
+   :alt: The Magnetic Fields page with a ferromagnet's calculated field and its
+         term breakdown.
+
+   The ferromagnet of `Worked Examples`_ with a ``Sphere`` demagnetizing field.
+   The selected result at the face centre ``(1/2, 1/2, 0)`` is broken down into
+   its field terms.
+
 The save button in the page header stores the current magnetic structure and
 form settings as a named magnetic-field workspace. Saved workspaces appear as
 children of ``Magnetic Fields`` in the project tree, can be renamed from their
@@ -123,7 +131,16 @@ The ``Magnetic Fields`` workflow page summarizes the accepted magnetic
 structure and its ``Edit Magnetic Structure...`` button opens the ``Magnetic
 Structure Builder`` dialog. The builder owns the component table, ``Preview
 Supercell`` controls, atom selection, a checklist and the live structure
-viewer:
+viewer.
+
+.. figure:: _generated/screenshots/magnetic_structure_builder.png
+   :alt: The Magnetic Structure Builder showing a helix component, its
+         checklist, q-basis table and a four-cell spin preview.
+
+   The ``q = (0, 0, 1/4)`` helix of `Worked Examples`_, previewed over one
+   whole magnetic cell (``1 x 1 x 4``).
+
+The builder's parts are:
 
 - the component table lists ``Enabled``, ``Component``, ``Type``,
   ``Apply to``, ``q`` and ``Moment`` for each component, top to bottom in the
@@ -1037,6 +1054,12 @@ so :math:`p(|B|)` runs between the two semi-axes and peaks at both ends. At
 ``(1/2, 1/2, 0)`` the fourfold axis makes the ellipse a circle and the
 distribution a single line at 0.2816 T. At ``(1/2, 0, 0)`` it spans 0.3616 T to
 1.1634 T, close to the two fields of the ``q = 1/4`` helix above.
+
+.. figure:: _generated/screenshots/magnetic_field_distribution.png
+   :alt: The field-distribution plot of the incommensurate helix at the edge
+         centre, peaking at both ends of its range.
+
+   ``Open Distribution Plot`` for the incommensurate helix at ``(1/2, 0, 0)``.
 
 Dependency Handling
 -------------------
