@@ -96,6 +96,10 @@ class _FakeQuantumView:
     def __init__(self) -> None:
         self.sources: list[list] = []
         self.results: list[list] = []
+        self.site_scopes: list[dict] = []
+
+    def set_site_scope(self, **kwargs) -> None:
+        self.site_scopes.append(kwargs)
 
     def set_sources(self, rows) -> None:
         self.sources.append(list(rows))

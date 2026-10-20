@@ -40,6 +40,20 @@ analysis:
   Inspect completed NEB results with a reaction-coordinate plot, an image
   stepper, a summary readout, and a synchronized structure viewer.
 
+The endpoint selectors list the distinct sites pinned to the ``Muon Sites``
+summary (:doc:`structural_relaxation_analysis`), labelled by Wyckoff label and
+cluster (``8c · cluster 1``) in the summary's energy rank, so each physical
+site is offered once. Tick ``Show every relaxed site`` above the selectors to
+offer every eligible relaxed site instead; the choice is saved with the
+project. When no charge state has a pin the selectors are empty and a notice
+with ``Go to Muon Sites →`` explains how to pin sites; the notice also names a
+charge state with no pin and counts pinned sites that no longer resolve to an
+eligible relaxed site. A stored endpoint the selectors no longer list is
+replaced by the first listed site (the final endpoint by the first other one),
+so widening the list keeps the pair the selectors showed. Paths already
+generated stay in the ``Diffusion Paths``
+table whichever list the selectors show.
+
 The intended user flow is:
 
 - complete structural relaxation for the two sites of interest;

@@ -11,6 +11,7 @@ from uuid import UUID
 
 import pytest
 
+from mufinder.services.muon_sites_summary import ENERGY_BARRIERS_SCOPE, set_show_every_relaxed_site
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
@@ -57,6 +58,10 @@ class _FakeEnergyBarriersView:
         self.endpoint_calls: list[tuple] = []
         self.sources: list[list] = []
         self.neb_results: list[list] = []
+        self.site_scopes: list[dict] = []
+
+    def set_site_scope(self, **kwargs) -> None:
+        self.site_scopes.append(kwargs)
 
     def set_endpoint_options(self, rows, **kwargs) -> None:
         self.endpoint_calls.append((list(rows), kwargs))
@@ -153,6 +158,7 @@ def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
     document, definition, _source, output_root = _seed_energy_barriers_document(
         service, tmp_path, row_settings={"num_farms": 3}
     )
+    set_show_every_relaxed_site(document, ENERGY_BARRIERS_SCOPE, True)
     job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
     job.status = JobStatus.COMPLETED
     definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)

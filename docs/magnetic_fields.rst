@@ -407,8 +407,20 @@ distorted-structure reference. The available dialog sources are:
 
 - UEP clustering results, using representative clustered UEP minima;
 - structural-relaxation clustering results, using representative relaxed muon
-  endpoints;
+  endpoints. By default this lists the clusters pinned to the ``Muon Sites``
+  summary (:doc:`structural_relaxation_analysis`), in the summary's charge-state
+  and energy order, with the ``Cluster`` column showing the summary label
+  (``8c · cluster 1``). A live cluster matches a pin by its workspace and
+  representative relaxation job, so re-clustering the analysis without
+  re-pinning never relabels a different site. Tick ``Show every relaxed site`` to list every analysis
+  workspace's clusters instead; the choice is saved with the project. With no
+  pin, a notice and a ``Go to Muon Sites →`` button (which closes the dialog
+  and opens that page) explain how to pin sites;
 - a custom fractional coordinate in the active host cell.
+
+Until a site is chosen, the page uses the lowest-energy pinned site (positive
+muon first), else the first UEP cluster, else the first structural-relaxation
+cluster, else a custom site at the origin.
 
 Structural-relaxation cluster representatives can expose a distorted relaxed
 structure. When that structure is available, the dialog enables the

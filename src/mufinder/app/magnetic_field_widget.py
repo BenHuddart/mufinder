@@ -52,6 +52,7 @@ from mufinder.app.atomic_structure_viewer import (
     _shutdown_pyvista_widget,
 )
 from mufinder.app.icons import icon
+from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.plot_canvas import create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
@@ -140,6 +141,14 @@ from mufinder.science.nuclear_relaxation import (
     NuclearRelaxationOptions,
     calculate_nuclear_relaxation,
     calculate_nuclear_relaxation_with_distortion,
+)
+from mufinder.services.muon_sites_summary import (
+    MAGNETIC_FIELDS_SCOPE,
+    NO_PINNED_SITES_NOTICE,
+    has_pinned_sites,
+    pinned_sites_by_representative,
+    set_show_every_relaxed_site,
+    show_every_relaxed_site,
 )
 from mufinder.services.project_service import ProjectDocument
 
@@ -3421,7 +3430,14 @@ class MagneticStructureBuilderDialog(QDialog):
 
 
 class MuonSiteSelectionDialog(QDialog):
-    """Dialog for choosing the muon site used by magnetic-field calculations."""
+    """Dialog for choosing the muon site used by magnetic-field calculations.
+
+    Structural-relaxation clusters list the sites pinned to the Muon Sites
+    summary unless "Show every relaxed site" is on, which lists every analysis
+    workspace's cluster representatives.
+    """
+
+    open_muon_sites_requested = Signal()
 
     def __init__(
         self,
@@ -3452,6 +3468,9 @@ class MuonSiteSelectionDialog(QDialog):
         )
         self._site_table.itemSelectionChanged.connect(self._on_site_selection_changed)
         self._configure_site_table_columns()
+        self._site_scope = PinnedSitesScopeBar(self)
+        self._site_scope.show_every_site_toggled.connect(self._on_show_every_site_toggled)
+        self._site_scope.open_muon_sites_requested.connect(self._on_open_muon_sites_requested)
 
         self._custom_x = self._fractional_position_input("0.0")
         self._custom_y = self._fractional_position_input("0.0")
@@ -3523,6 +3542,7 @@ class MuonSiteSelectionDialog(QDialog):
         source_row.addWidget(QLabel("Source"))
         source_row.addWidget(self._site_source_combo, 1)
         layout.addLayout(source_row)
+        layout.addWidget(self._site_scope)
 
         table_page = QWidget()
         table_layout = QVBoxLayout(table_page)
@@ -3590,6 +3610,7 @@ class MuonSiteSelectionDialog(QDialog):
         source = self._site_source()
         self._site_stack.setCurrentIndex(1 if source == "custom" else 0)
         self._site_options = self._site_options_for_source(source)
+        self._refresh_site_scope(source)
         self._populate_site_table()
         self._sync_distortion_controls()
         self._refresh_site_status()
@@ -3600,8 +3621,26 @@ class MuonSiteSelectionDialog(QDialog):
         if source == "uep_clustering":
             return _uep_cluster_muon_site_options(self._document, self._host_structure)
         if source == "relaxation_clustering":
-            return _relaxation_cluster_muon_site_options(self._document, self._host_structure)
+            return _relaxation_cluster_muon_site_options(
+                self._document,
+                self._host_structure,
+                pinned_only=not show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE),
+            )
         return []
+
+    def _refresh_site_scope(self, source: str) -> None:
+        self._site_scope.setVisible(source == "relaxation_clustering")
+        show_every = show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE)
+        notice = "" if show_every or has_pinned_sites(self._document) else NO_PINNED_SITES_NOTICE
+        self._site_scope.set_state(show_every_site=show_every, notice=notice)
+
+    def _on_show_every_site_toggled(self, enabled: bool) -> None:
+        set_show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE, enabled)
+        self._refresh_muon_site_selection()
+
+    def _on_open_muon_sites_requested(self) -> None:
+        self.open_muon_sites_requested.emit()
+        self.reject()
 
     def _populate_site_table(self) -> None:
         self._site_table.setRowCount(0)
@@ -5313,6 +5352,7 @@ class MagneticFieldWidget(QWidget):
     magnetic_structure_changed = Signal(object)
     form_state_changed = Signal(dict)
     pin_requested = Signal(dict)
+    open_muon_sites_requested = Signal()
     workspace_title_changed = Signal(str)
     delete_requested = Signal()
 
@@ -5882,6 +5922,7 @@ class MagneticFieldWidget(QWidget):
 
     def _open_muon_site_dialog(self) -> None:
         dialog = MuonSiteSelectionDialog(self._document, self._host_structure, self._selected_muon_site, self)
+        dialog.open_muon_sites_requested.connect(self.open_muon_sites_requested)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._selected_muon_site = dialog.accepted_site()
@@ -5892,7 +5933,9 @@ class MagneticFieldWidget(QWidget):
     def _default_muon_site(self) -> MagneticMuonSiteOption | None:
         if self._document is None or self._host_structure is None:
             return None
+        # The lowest-energy site pinned to the Muon Sites summary comes first.
         for options in (
+            _relaxation_cluster_muon_site_options(self._document, self._host_structure, pinned_only=True),
             _uep_cluster_muon_site_options(self._document, self._host_structure),
             _relaxation_cluster_muon_site_options(self._document, self._host_structure),
         ):
@@ -6894,10 +6937,24 @@ def _uep_cluster_muon_site_options(
 def _relaxation_cluster_muon_site_options(
     document: ProjectDocument,
     host_structure: Structure,
+    *,
+    pinned_only: bool = False,
 ) -> list[MagneticMuonSiteOption]:
+    """Return the relaxation-analysis cluster representatives as muon-site options.
+
+    With ``pinned_only`` only the clusters pinned to the Muon Sites summary are
+    returned, labelled by Wyckoff label and cluster, in charge-state then
+    energy-rank order; a live cluster matches a pin by workspace and
+    representative relaxation job. Otherwise every workspace's clusters, sorted
+    by name.
+    """
+
     workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
     if not isinstance(workspaces, list):
         return []
+    pinned = pinned_sites_by_representative(document) if pinned_only else {}
+    ranks = {key: order for order, key in enumerate(pinned)}
+    pinned_options: list[tuple[int, MagneticMuonSiteOption]] = []
     options: list[MagneticMuonSiteOption] = []
     for workspace in workspaces:
         if not isinstance(workspace, dict):
@@ -6918,23 +6975,34 @@ def _relaxation_cluster_muon_site_options(
                 continue
             cluster_index = _optional_int(cluster.get("cluster_index"))
             job_id = _uuid_or_none(cluster.get("representative_job_id"))
+            # A pin names its cluster's representative relaxation, which survives
+            # re-clustering; the cluster index does not.
+            pinned_key = (str(workspace.get("id", "")), job_id)
+            if pinned_only and pinned_key not in pinned:
+                continue
             structure_id = _distorted_structure_id_for_job(document, job_id)
             cartesian = _triplet_or_none(cluster.get("representative_cartesian_position_ang")) or _fractional_to_cartesian(
                 fractional,
                 host_structure,
             )
-            options.append(
-                MagneticMuonSiteOption(
-                    source="relaxation_clustering",
-                    label=f"{workspace_name} cluster {cluster_index if cluster_index is not None else len(options) + 1}",
-                    source_label=workspace_name,
-                    cluster_label="-" if cluster_index is None else f"Cluster {cluster_index}",
-                    fractional_position=fractional,
-                    cartesian_position=cartesian,
-                    distortion_structure_id=structure_id,
-                    properties={"workspace": dict(workspace), "cluster": dict(cluster)},
-                )
+            option = MagneticMuonSiteOption(
+                source="relaxation_clustering",
+                label=f"{workspace_name} cluster {cluster_index if cluster_index is not None else len(options) + 1}",
+                source_label=workspace_name,
+                cluster_label="-" if cluster_index is None else f"Cluster {cluster_index}",
+                fractional_position=fractional,
+                cartesian_position=cartesian,
+                distortion_structure_id=structure_id,
+                properties={"workspace": dict(workspace), "cluster": dict(cluster)},
             )
+            if pinned_only:
+                # The label stays the workspace/cluster name so a saved selection
+                # still matches; the Cluster column carries the summary label.
+                option = replace(option, cluster_label=pinned[pinned_key].label)
+                pinned_options.append((ranks[pinned_key], option))
+            options.append(option)
+    if pinned_only:
+        return [option for _rank, option in sorted(pinned_options, key=lambda item: item[0])]
     return sorted(options, key=lambda option: (option.source_label or "", option.cluster_label or "", option.label))
 
 

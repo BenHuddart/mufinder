@@ -16,6 +16,12 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
+from mufinder.services.muon_sites_summary import (
+    MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
+    muon_sites_summary_snapshots,
+    store_muon_sites_summary_snapshot,
+    validated_muon_sites_summary_snapshot,
+)
 from tests.support.main_window import window_with_host
 from tests.support.structures import host_structure
 
@@ -506,7 +512,7 @@ def test_pin_builds_ranked_snapshot_and_populates_panel(qapp, tmp_path: Path) ->
 
         window._on_muon_sites_pin_requested(str(workspace["id"]))
 
-        stored = doc.ui_state[window._MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
+        stored = doc.ui_state[MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
         assert POSITIVE_MUON_CHARGE_STATE in stored
         sites = stored[POSITIVE_MUON_CHARGE_STATE]["sites"]
         # Ranked by relative energy (lowest first) even though clusters were
@@ -523,13 +529,13 @@ def test_pin_builds_ranked_snapshot_and_populates_panel(qapp, tmp_path: Path) ->
 def test_validated_snapshot_dropped_when_host_changes(qapp, tmp_path: Path) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
-        window._store_muon_sites_summary_snapshot(
+        store_muon_sites_summary_snapshot(doc, 
             POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host)
         )
-        assert window._validated_muon_sites_summary_snapshot(POSITIVE_MUON_CHARGE_STATE) is not None
+        assert validated_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE) is not None
         # Point the project at a different host: the decoupled snapshot is stale.
         doc.project.host_structure_id = uuid4()
-        assert window._validated_muon_sites_summary_snapshot(POSITIVE_MUON_CHARGE_STATE) is None
+        assert validated_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE) is None
     finally:
         window.close()
 
@@ -537,11 +543,11 @@ def test_validated_snapshot_dropped_when_host_changes(qapp, tmp_path: Path) -> N
 def test_unpin_removes_snapshot(qapp, tmp_path: Path) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
-        window._store_muon_sites_summary_snapshot(
+        store_muon_sites_summary_snapshot(doc, 
             POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host)
         )
         window._on_unpin_muon_sites_requested(POSITIVE_MUON_CHARGE_STATE)
-        assert POSITIVE_MUON_CHARGE_STATE not in doc.ui_state[window._MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
+        assert POSITIVE_MUON_CHARGE_STATE not in doc.ui_state[MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
     finally:
         window.close()
 
@@ -562,7 +568,7 @@ def test_pin_without_clustering_is_rejected(qapp, tmp_path: Path, monkeypatch) -
             lambda *args, **kwargs: None,
         )
         window._on_muon_sites_pin_requested(str(workspace["id"]))
-        assert window._muon_sites_summary_snapshots_state() == {}
+        assert muon_sites_summary_snapshots(doc) == {}
     finally:
         window.close()
 
@@ -589,7 +595,7 @@ def test_gated_summary_refresh_is_noop_while_hidden(qapp, tmp_path: Path) -> Non
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
         assert window._main_stack.currentWidget() is not window._muon_sites_summary_view
-        window._store_muon_sites_summary_snapshot(POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host))
+        store_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host))
         panel = window._muon_sites_summary_view._panels[POSITIVE_MUON_CHARGE_STATE]
         # only_if_visible must not rebuild the viewers off-screen when the page
         # is not showing.
@@ -615,7 +621,7 @@ def test_pin_from_non_active_host_workspace_is_rejected(qapp, tmp_path: Path, mo
             lambda *args, **kwargs: None,
         )
         window._on_muon_sites_pin_requested(str(workspace["id"]))
-        assert window._muon_sites_summary_snapshots_state() == {}
+        assert muon_sites_summary_snapshots(doc) == {}
     finally:
         window.close()
 
@@ -626,7 +632,7 @@ def test_pin_snapshot_is_keyed_to_workspace_host(qapp, tmp_path: Path) -> None:
         workspace = _clustered_workspace(host, uuid4())
         window._set_relaxation_analysis_workspaces([workspace])
         window._on_muon_sites_pin_requested(str(workspace["id"]))
-        stored = window._muon_sites_summary_snapshots_state()[POSITIVE_MUON_CHARGE_STATE]
+        stored = muon_sites_summary_snapshots(doc)[POSITIVE_MUON_CHARGE_STATE]
         # The snapshot host is the workspace's host (which equals the active host
         # here), so its sites are always interpreted in the correct cell.
         assert stored["host_structure_id"] == str(host.id)
@@ -646,6 +652,6 @@ def test_pin_with_unsupported_charge_state_is_rejected(qapp, tmp_path: Path, mon
             lambda *args, **kwargs: None,
         )
         window._on_muon_sites_pin_requested(str(workspace["id"]))
-        assert window._muon_sites_summary_snapshots_state() == {}
+        assert muon_sites_summary_snapshots(doc) == {}
     finally:
         window.close()

@@ -551,26 +551,28 @@ def energy_barrier_max_path_length_text(document: ProjectDocument | None) -> str
         return ""
 
 
-def selected_energy_barrier_endpoint_keys(document: ProjectDocument | None) -> tuple[str, str]:
+def selected_energy_barrier_endpoint_keys(
+    document: ProjectDocument | None,
+    available_keys: Sequence[str] | None = None,
+) -> tuple[str, str]:
     """Return the ``(initial, final)`` endpoint keys the form selects.
 
-    A missing selection falls back to the first eligible source for the initial
-    endpoint and the first other eligible source for the final one.
+    ``available_keys`` are the endpoints the pickers offer, in order (default:
+    every eligible source). A missing selection, or one not among them, falls
+    back to the first available key for the initial endpoint and the first other
+    available key for the final one.
     """
 
+    if available_keys is None:
+        available_keys = [candidate.key for candidate in eligible_quantum_source_candidates(document)]
+    available = list(available_keys)
     state = energy_barrier_form_state(document)
     reactant_key = str(state.get("selected_reactant_key", "")).strip()
     product_key = str(state.get("selected_product_key", "")).strip()
-    if reactant_key and product_key:
-        return reactant_key, product_key
-    candidates = eligible_quantum_source_candidates(document)
-    if not reactant_key and candidates:
-        reactant_key = candidates[0].key
-    if not product_key:
-        for candidate in candidates:
-            if candidate.key != reactant_key:
-                product_key = candidate.key
-                break
+    if reactant_key not in available:
+        reactant_key = available[0] if available else ""
+    if product_key not in available:
+        product_key = next((key for key in available if key != reactant_key), "")
     return reactant_key, product_key
 
 
