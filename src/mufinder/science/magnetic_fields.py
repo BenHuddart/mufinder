@@ -1240,9 +1240,7 @@ def _distribution_calculation_parameters(options: MagneticFieldOptions, radius: 
         "demag_shape": options.demag_shape,
         "plate_normal_axis": options.plate_normal_axis,
         "demag_sample": None if options.demag_sample is None else options.demag_sample.to_json(),
-        "measured_magnetization": (
-            None if options.measured_magnetization is None else list(options.measured_magnetization)
-        ),
+        "measured_magnetization": _optional_list(_measured_magnetization_vector(options.measured_magnetization)),
         "nnn": int(options.nnn),
         "rcont": float(options.rcont),
         "contact_coupling": None if options.contact_coupling is None else float(options.contact_coupling),
@@ -1433,6 +1431,19 @@ def _measured_magnetization_field(
     so a supercell gives the same field as its primitive cell.
     """
 
+    moment = _measured_magnetization_vector(magnetization)
+    if moment is None:
+        return None
+    _formula, formula_units = reduced_formula(structure.species)
+    if formula_units <= 0:
+        raise MagneticFieldError("measured_magnetization needs a structure with at least one non-muon atom")
+    volume = abs(float(np.linalg.det(np.asarray(structure.lattice_vectors, dtype=float))))
+    return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment * formula_units / volume
+
+
+def _measured_magnetization_vector(magnetization: object) -> np.ndarray | None:
+    """Return a validated measured magnetisation in mu_B per formula unit, or None."""
+
     if magnetization is None:
         return None
     try:
@@ -1443,11 +1454,11 @@ def _measured_magnetization_field(
         raise MagneticFieldError("measured_magnetization must be a three-vector in mu_B per formula unit")
     if not np.all(np.isfinite(moment)):
         raise MagneticFieldError("measured_magnetization must be finite")
-    _formula, formula_units = reduced_formula(structure.species)
-    if formula_units <= 0:
-        raise MagneticFieldError("measured_magnetization needs a structure with at least one non-muon atom")
-    volume = abs(float(np.linalg.det(np.asarray(structure.lattice_vectors, dtype=float))))
-    return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment * formula_units / volume
+    return moment
+
+
+def _optional_list(values: np.ndarray | None) -> list[float] | None:
+    return None if values is None else [float(value) for value in values]
 
 
 def _bulk_magnetization_field(structure: Structure, models: Sequence[MuesrModelData]) -> np.ndarray:

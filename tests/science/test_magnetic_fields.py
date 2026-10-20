@@ -894,6 +894,7 @@ def test_measured_magnetisation_counts_formula_units_per_cell(monkeypatch) -> No
 @pytest.mark.parametrize(
     ("measured", "message"),
     [
+        (1.0, "three-vector"),
         ((1.0, 2.0), "three-vector"),
         ((1.0, float("nan"), 0.0), "finite"),
         ((1.0, float("inf"), 0.0), "finite"),
@@ -1497,6 +1498,28 @@ def test_distribution_parameters_record_a_model_derived_magnetisation_as_none(mo
     )[0]
 
     assert result.calculation_parameters["measured_magnetization"] is None
+
+
+@pytest.mark.parametrize(
+    ("measured", "message"),
+    [(1.0, "three-vector"), ((1.0, 2.0), "three-vector"), ((0.0, float("nan"), 0.0), "finite"), (("x", 0.0, 0.0), "three numbers")],
+)
+def test_incommensurate_distribution_validates_a_measured_magnetisation(monkeypatch, measured, message) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_lookup_locfield)
+
+    with pytest.raises(MagneticFieldError, match=message):
+        calculate_incommensurate_field_distributions(
+            _structure(),
+            _circular_helix_model(),
+            [_SITE_A],
+            options=MagneticFieldOptions(
+                supercell=(1, 1, 1),
+                nangles=4,
+                phase_sampling="grid",
+                histogram_bins=4,
+                measured_magnetization=measured,
+            ),
+        )
 
 
 # Internal guards the public entry points never reach
