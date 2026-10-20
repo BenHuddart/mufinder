@@ -209,8 +209,8 @@ unpreviewed incommensurate structures, and calculates at a chosen muon site:
   structures can instead list the finite fields of their commensurate
   approximant; commensurate results list their dipolar, Lorentz, contact,
   demagnetizing, distortion and applied terms;
-- demagnetizing-field corrections for spherical, plate, ellipsoidal and
-  rectangular-prism samples;
+- demagnetizing-field corrections from the model's bulk magnetisation for
+  spherical, plate, ellipsoidal and rectangular-prism samples;
 - dipolar tensors for selected magnetic ions;
 - nuclear dipolar second moments in zero and transverse field, for single
   crystals and polycrystals, from bundled natural-abundance isotope data, with
