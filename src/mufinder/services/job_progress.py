@@ -21,7 +21,7 @@ the UI; it emits :attr:`JobProgressMonitor.progress_changed`.
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import posixpath
 import threading
 import time
@@ -71,19 +71,26 @@ def castep_output_names(seed_name: str, farm_count: int) -> tuple[str, ...]:
 
 @dataclass(slots=True)
 class _Cursor:
+    #: The file this cursor follows; a different file starts a new cursor.
+    source: Hashable = None
     offset: int = 0
     pending: bytes = b""
-    lines: list[str] = field(default_factory=list)
+    lines: tuple[str, ...] = ()
     progress: GeometryProgress | None = None
 
 
 class GeometryProgressReader:
     """Follow growing ``.castep`` files and parse their geometry progress.
 
-    Each key (normally a job id) has its own cursor. A file that shrinks was
-    replaced, so its cursor starts again from the beginning. A trailing partial
-    line is held back until CASTEP finishes writing it. Safe to call from
-    several threads.
+    Each key (normally a job id) has its own cursor on one file. A file that
+    shrinks was replaced, and a key that switches to another file (a task farm
+    writing ``<seed>_farm001.castep`` after the master file was read) is a new
+    file, so either starts again from the beginning. A trailing partial line is
+    held back until CASTEP finishes writing it.
+
+    Safe to call from several threads. The lock only guards the cursors: the
+    read and the parse happen outside it, so a large read never blocks a
+    caller that is only forgetting keys.
     """
 
     def __init__(self) -> None:
@@ -96,11 +103,14 @@ class GeometryProgressReader:
         *,
         size: int | None,
         read_from: Callable[[int], bytes],
+        source: Hashable = None,
     ) -> GeometryProgress | None:
         """Read what was appended since the last read and return the progress.
 
         ``size`` is the file's current size, ``None`` when it does not exist;
-        ``read_from(offset)`` returns the file's bytes from ``offset`` on.
+        ``read_from(offset)`` returns the file's bytes from ``offset`` on;
+        ``source`` names the file, so a key that moves to another file starts
+        again from its beginning.
         """
 
         with self._lock:
@@ -108,19 +118,28 @@ class GeometryProgressReader:
                 self._cursors.pop(key, None)
                 return None
             cursor = self._cursors.get(key)
-            if cursor is None or size < cursor.offset:
-                cursor = _Cursor()
+            if cursor is None or cursor.source != source or size < cursor.offset:
+                cursor = _Cursor(source=source)
                 self._cursors[key] = cursor
-            if size > cursor.offset:
-                data = read_from(cursor.offset)
-                cursor.offset += len(data)
-                complete, newline, rest = (cursor.pending + data).rpartition(b"\n")
+            if size <= cursor.offset:
+                return cursor.progress
+            offset, pending, lines, progress = cursor.offset, cursor.pending, cursor.lines, cursor.progress
+
+        data = read_from(offset)
+        complete, newline, rest = (pending + data).rpartition(b"\n")
+        if newline:
+            text = complete.decode("utf-8", errors="replace")
+            lines += tuple(line for line in text.splitlines() if is_geometry_progress_line(line))
+            progress = parse_geometry_progress_lines(lines)
+
+        with self._lock:
+            # Keep the result only if nothing replaced or forgot this cursor meanwhile.
+            if self._cursors.get(key) is cursor and cursor.offset == offset:
+                cursor.offset = offset + len(data)
                 cursor.pending = rest
-                if newline:
-                    text = complete.decode("utf-8", errors="replace")
-                    cursor.lines.extend(line for line in text.splitlines() if is_geometry_progress_line(line))
-                    cursor.progress = parse_geometry_progress_lines(cursor.lines)
-            return cursor.progress
+                cursor.lines = lines
+                cursor.progress = progress
+        return progress
 
     def read_local(self, key: Hashable, candidates: Sequence[Path]) -> GeometryProgress | None:
         """Read the first of ``candidates`` that exists on this machine."""
@@ -136,7 +155,7 @@ class GeometryProgressReader:
                     handle.seek(offset)
                     return handle.read()
 
-            return self.read(key, size=size, read_from=read_from)
+            return self.read(key, size=size, read_from=read_from, source=path)
         return self.read(key, size=None, read_from=lambda _offset: b"")
 
     def read_remote(self, key: Hashable, ssh: SSHConnection, candidates: Sequence[str]) -> GeometryProgress | None:
@@ -151,6 +170,7 @@ class GeometryProgressReader:
                 key,
                 size=int(size),
                 read_from=lambda offset, remote_path=remote_path: ssh.read_bytes(remote_path, offset),
+                source=remote_path,
             )
         return self.read(key, size=None, read_from=lambda _offset: b"")
 

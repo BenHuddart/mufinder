@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from uuid import uuid4
 
 import pytest
@@ -71,6 +72,52 @@ def test_reader_starts_again_when_the_file_is_replaced() -> None:
     progress = reader.read("job", size=len(lbfgs), read_from=lambda offset: lbfgs[offset:])
 
     assert progress is not None and progress.method == "LBFGS"
+
+
+def test_reader_starts_again_when_a_task_farm_file_appears(tmp_path: Path) -> None:
+    farmed = tmp_path / "seed_farm001.castep"
+    master = tmp_path / "seed.castep"
+    full = LBFGS_CONTINUED.read_bytes()
+    master.write_bytes(full[: full.index(b"Run started", full.index(b"Run started") + 1)])
+    reader = GeometryProgressReader()
+    assert reader.read_local("job", (farmed, master)).method == "LBFGS"
+
+    # The farm file is larger than the master offset, so resuming from that
+    # offset would splice the two files together.
+    farmed.write_bytes(BFGS.read_bytes())
+    assert farmed.stat().st_size > master.stat().st_size
+
+    assert reader.read_local("job", (farmed, master)) == parse_geometry_progress(BFGS)
+
+
+def test_reader_does_not_hold_its_lock_while_reading() -> None:
+    reader = GeometryProgressReader()
+    data = BFGS.read_bytes()
+    reading = threading.Event()
+    release = threading.Event()
+
+    def slow_read_from(offset: int) -> bytes:
+        reading.set()
+        release.wait(5)
+        return data[offset:]
+
+    worker = threading.Thread(target=lambda: reader.read("job", size=len(data), read_from=slow_read_from))
+    worker.start()
+    assert reading.wait(5)
+    forgetting = threading.Thread(target=lambda: reader.forget_all_except(()))
+    forgetting.start()
+    forgetting.join(1)
+    try:
+        assert not forgetting.is_alive(), "forgetting waited for the read to finish"
+    finally:
+        release.set()
+        worker.join(5)
+
+    # The read finished after its cursor was forgotten, so nothing was kept:
+    # the next read starts from the beginning.
+    offsets: list[int] = []
+    reader.read("job", size=len(data), read_from=lambda offset: offsets.append(offset) or data[offset:])
+    assert offsets == [0]
 
 
 def test_reader_reports_nothing_for_a_missing_file(tmp_path: Path) -> None:
