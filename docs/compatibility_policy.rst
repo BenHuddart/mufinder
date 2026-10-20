@@ -375,6 +375,23 @@ version or a newer one is loaded as it is. A manifest without
        ``relaxed_fractional_position``. Muon-relaxation completion sets the
        relaxed position and removing the run's records clears it, so after
        the step every relaxed site carries it when its result does.
+   * - 3 to 4
+     - Results (``results`` entities) and the Magnetic Fields form state in
+       ``ui_state``: ``magnetic_field_form`` for the page and the ``form`` of
+       each entry in ``magnetic_field_workspaces``. Schema 3 kept the latest
+       field, dipolar-tensor and nuclear-relaxation results inline in those
+       forms under ``magnetic_field_results``, ``dipolar_tensor_results`` and
+       ``nuclear_relaxation_results``. The step removes the three keys from
+       every form and turns each non-empty value into a result entity of type
+       ``magnetic_field``, ``magnetic_dipolar_tensor`` or
+       ``nuclear_relaxation`` with no ``calculation_run_id``, whose
+       ``data["owner"]`` is ``magnetic_fields`` for the page or the workspace
+       id. A workspace without an id has no owner and keeps its form.
+     - ``mufinder.services.magnetic_field_results`` reads the page's results
+       only from result records and never from the persisted form; the
+       project survey reads a workspace's field results from its record.
+       ``migrate_project_payloads`` receives ``ui_state`` and reports it
+       changed, so the next save rewrites ``state.json``.
 
 A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
 ``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
-from mufinder.persistence.migrations import migrate_project_payloads, stored_schema_version
+from mufinder.persistence.migrations import UI_STATE_KEY, migrate_project_payloads, stored_schema_version
 
 
 def _definition(stage: str, configuration: object, definition_id: str = "def-1") -> dict[str, object]:
@@ -17,7 +17,7 @@ def _definition(stage: str, configuration: object, definition_id: str = "def-1")
 
 
 def test_new_projects_are_written_at_the_current_schema_version() -> None:
-    assert PROJECT_SCHEMA_VERSION == 3
+    assert PROJECT_SCHEMA_VERSION == 4
     assert Project().schema_version == PROJECT_SCHEMA_VERSION
 
 
@@ -214,3 +214,72 @@ def test_manifest_without_a_schema_version_is_read_as_schema_1() -> None:
 
     assert manifest["schema_version"] == PROJECT_SCHEMA_VERSION
     assert definition["parameters"]["configuration"] == {"sweep_values": [300.0]}
+
+
+def _schema_3_magnetic_ui_state() -> dict[str, object]:
+    """Schema 3 Magnetic Fields form state with results kept inline."""
+
+    return {
+        "magnetic_field_form": {
+            "histogram_bins": 512,
+            "magnetic_field_results": {"kind": "commensurate", "results": [{"site_label": "a", "total_T": [0, 0, 1]}]},
+            "dipolar_tensor_results": [],
+            "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4},
+        },
+        "magnetic_field_workspaces": [
+            {
+                "id": "ws-1",
+                "title": "Helix",
+                "form": {
+                    "magnetic_field_results": {"kind": "distribution", "results": [{"site_label": "b"}]},
+                    "dipolar_tensor_results": [{"site_label": "b", "tensor": [[1, 0, 0], [0, 1, 0], [0, 0, -2]]}],
+                },
+            },
+            {"id": "ws-2", "title": "Empty", "form": {"magnetic_field_results": None}},
+            {"title": "No id", "form": {"magnetic_field_results": {"kind": "commensurate", "results": [{}]}}},
+        ],
+    }
+
+
+def test_schema_3_magnetic_field_results_become_result_entities() -> None:
+    ui_state = _schema_3_magnetic_ui_state()
+    entities: dict[str, list[dict[str, object]]] = {}
+
+    changed = migrate_project_payloads({"schema_version": 3}, entities, ui_state)
+
+    results = entities["results"]
+    assert changed == {UI_STATE_KEY} | {("results", str(result["id"])) for result in results}
+    by_owner_and_type = {(result["data"]["owner"], result["result_type"]): result for result in results}
+    assert set(by_owner_and_type) == {
+        ("magnetic_fields", "magnetic_field"),
+        ("magnetic_fields", "nuclear_relaxation"),
+        ("ws-1", "magnetic_field"),
+        ("ws-1", "magnetic_dipolar_tensor"),
+    }
+    page_field = by_owner_and_type[("magnetic_fields", "magnetic_field")]
+    assert page_field["calculation_run_id"] is None
+    assert page_field["output_files"] == []
+    assert page_field["data"] == {
+        "owner": "magnetic_fields",
+        "kind": "commensurate",
+        "results": [{"site_label": "a", "total_T": [0, 0, 1]}],
+    }
+    assert by_owner_and_type[("magnetic_fields", "nuclear_relaxation")]["data"]["result"] == {
+        "mode": "zero_field_powder",
+        "sigma_us_inv": 0.4,
+    }
+    assert by_owner_and_type[("ws-1", "magnetic_dipolar_tensor")]["data"]["results"][0]["site_label"] == "b"
+    assert ui_state["magnetic_field_form"] == {"histogram_bins": 512}
+    assert ui_state["magnetic_field_workspaces"][0]["form"] == {}
+    assert ui_state["magnetic_field_workspaces"][1]["form"] == {}
+    # A workspace without an id has no owner, so its form is left alone.
+    assert "magnetic_field_results" in ui_state["magnetic_field_workspaces"][2]["form"]
+
+
+def test_schema_3_project_without_magnetic_results_changes_nothing() -> None:
+    ui_state: dict[str, object] = {"magnetic_field_form": {"histogram_bins": 512}, "other": {"x": 1}}
+    entities: dict[str, list[dict[str, object]]] = {"results": []}
+
+    assert migrate_project_payloads({"schema_version": 3}, entities, ui_state) == set()
+    assert ui_state == {"magnetic_field_form": {"histogram_bins": 512}, "other": {"x": 1}}
+    assert entities == {"results": []}

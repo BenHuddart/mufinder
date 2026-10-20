@@ -32,6 +32,32 @@ children of ``Magnetic Fields`` in the project tree, can be renamed from their
 page title, and can be deleted from their own page or by right-clicking their
 project-tree node and choosing ``Delete Workspace...``.
 
+Saved Results
+-------------
+
+The latest field, dipolar-tensor and nuclear-relaxation results of the
+Magnetic Fields page and of each saved workspace are project results: each is
+one ``Result`` record in the project, of type ``magnetic_field``,
+``magnetic_dipolar_tensor`` or ``nuclear_relaxation``. The calculations run
+inside MuFinder, so the records belong to no calculation run;
+``data["owner"]`` is ``magnetic_fields`` for the page or the workspace id for
+a saved workspace, and each owner has at most one record of each type.
+
+- ``magnetic_field`` data holds ``kind`` (``commensurate`` or
+  ``distribution``) and ``results``, one entry per site: a commensurate entry
+  stores ``site_label``, ``muon_position``, ``total_T``, ``magnitude_T`` and its
+  field terms (see `Field Terms`_), and a distribution entry stores
+  ``fields_T``, the histogram and ``calculation_parameters``.
+- ``magnetic_dipolar_tensor`` data holds ``results``, the tensor dialog's rows.
+- ``nuclear_relaxation`` data holds ``result``, the nuclear-relaxation result.
+
+A new calculation replaces the owner's record of that type with a new record;
+changing a setting that invalidates the field results, or clearing a dialog's
+results, removes the record. Saving a workspace copies the page's results into
+records the workspace owns, and deleting a workspace deletes its records. The
+page's form settings stay in the project's UI state and do not repeat the
+results.
+
 Magnetic Structure Representation
 ---------------------------------
 
@@ -711,7 +737,7 @@ The user-facing sampling controls are:
 The calculation parameters saved with an incommensurate result include the
 chosen ``phase_sampling`` mode, the active ``independent_q_indices``, the
 ``phase_sample_count`` actually used, and the histogram settings. These fields
-are intended to make convergence checks and later result persistence auditable.
+make convergence checks of the saved result auditable.
 
 Beyond the dipolar sum, the field calculation includes:
 

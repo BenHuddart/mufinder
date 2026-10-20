@@ -26,6 +26,11 @@ from mufinder.domain.models import CalculationDefinition, CalculationRun, Compar
 from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_PAGE_OWNER,
+    MAGNETIC_FIELD_RESULT_TYPE,
+    magnetic_field_results,
+)
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import StageStatus, summarize_project
 from mufinder.services.source_candidates import energy_barrier_generated_sources, quantum_source_relative_energies
@@ -383,17 +388,103 @@ def test_main_window_persists_magnetic_field_calculation_results(qapp, tmp_path:
     window._magnetic_field_view._selected_muon_site = window._magnetic_field_view._default_muon_site()
     window._magnetic_field_view._calculate_fields()
 
-    assert doc.ui_state["magnetic_field_form"]["magnetic_field_results"]["kind"] == "commensurate"
+    assert "magnetic_field_results" not in doc.ui_state["magnetic_field_form"]
+    (record,) = magnetic_field_results(doc)
+    assert record.result_type == MAGNETIC_FIELD_RESULT_TYPE
+    assert record.calculation_run_id is None
+    assert record.data["owner"] == MAGNETIC_FIELD_PAGE_OWNER
+    assert record.data["kind"] == "commensurate"
+    assert record.data["results"][0]["total_T"] == [0.1, 0.2, 0.3]
 
     service.save_project(doc)
     reloaded = service.load_project(doc.project_root)
+    assert [result.id for result in magnetic_field_results(reloaded)] == [record.id]
     reloaded_window = MainWindow()
     reloaded_window._document = reloaded
     reloaded_window._refresh_ui_after_project_change()
 
     assert reloaded_window._magnetic_field_view._result_table.rowCount() == 1
     assert reloaded_window._magnetic_field_view._result_table.item(0, 1).text() == "0.1"
+    assert "magnetic_field_results" not in reloaded.ui_state["magnetic_field_form"]
 
+    # A form change that invalidates the results removes the record.
+    reloaded_window._magnetic_field_view._histogram_bins.setValue(
+        reloaded_window._magnetic_field_view._histogram_bins.value() + 1
+    )
+
+    assert magnetic_field_results(reloaded) == []
+
+    window.close()
+    reloaded_window.close()
+
+
+def test_main_window_pinned_magnetic_field_workspace_owns_a_copy_of_the_page_results(
+    qapp,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window = MainWindow()
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "ui_magnetic_pin_results_doc.mufinder", "UI Magnetic Pin Results")
+    host = Structure(
+        label="Fe",
+        lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+        species=["Fe"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    window._document = doc
+    window._refresh_ui_after_project_change()
+    window._set_active_route("magnetic_fields")
+    view = window._magnetic_field_view
+    view.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "site 1", "total_T": [0.1, 0.2, 0.3], "magnitude_T": 0.374}],
+            },
+            "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4},
+        }
+    )
+    view._emit_form_state_changed()
+    monkeypatch.setattr(
+        main_window_module.QInputDialog,
+        "getText",
+        lambda *_args, **_kwargs: ("Pinned results", True),
+    )
+
+    view._pin_button.click()
+
+    workspace_id = doc.ui_state["magnetic_field_workspaces"][0]["id"]
+    assert "magnetic_field_results" not in doc.ui_state["magnetic_field_workspaces"][0]["form"]
+    page_records = magnetic_field_results(doc, MAGNETIC_FIELD_PAGE_OWNER)
+    workspace_records = magnetic_field_results(doc, workspace_id)
+    assert len(page_records) == 2
+    assert {record.result_type for record in workspace_records} == {
+        record.result_type for record in page_records
+    }
+    assert not {record.id for record in workspace_records} & {record.id for record in page_records}
+    assert window._magnetic_field_workspace_widgets[workspace_id]._result_table.rowCount() == 1
+
+    service.save_project(doc)
+    reloaded = service.load_project(doc.project_root)
+    reloaded_window = MainWindow()
+    reloaded_window._document = reloaded
+    reloaded_window._refresh_ui_after_project_change()
+    reloaded_widget = reloaded_window._magnetic_field_workspace_widgets[workspace_id]
+    assert reloaded_widget._result_table.rowCount() == 1
+    assert reloaded_widget.collect_state()["nuclear_relaxation_results"]["sigma_us_inv"] == 0.4
+
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    reloaded_widget._delete_workspace_button.click()
+
+    assert magnetic_field_results(reloaded, workspace_id) == []
+    assert len(magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER)) == 2
     window.close()
     reloaded_window.close()
 

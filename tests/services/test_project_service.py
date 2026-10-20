@@ -28,6 +28,14 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.journal import build_journal
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
+    MAGNETIC_FIELD_PAGE_OWNER,
+    MAGNETIC_FIELD_RESULT_TYPE,
+    NUCLEAR_RELAXATION_RESULT_TYPE,
+    attach_magnetic_field_results,
+    magnetic_field_results,
+)
 from mufinder.services.project_service import (
     ProjectService,
     SiteHostMismatch,
@@ -1634,6 +1642,56 @@ def test_schema_2_project_sites_are_rewritten_with_the_new_keys_by_the_next_save
         [0.15, 0.25, 0.35]
     )
     assert reloaded.sites[_SCHEMA_2_STAGED_SITE_ID].initial_fractional_position == pytest.approx([0.5, 0.5, 0.5])
+
+
+_SCHEMA_3_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v3_magnetic_results"
+_SCHEMA_3_WORKSPACE_ID = "d3b07384-d9a0-4c9b-8f1e-2a3b4c5d6e7f"
+
+
+def _copy_schema_3_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "schema_v3.mufinder"
+    shutil.copytree(_SCHEMA_3_FIXTURE, root)
+    return root
+
+
+def test_schema_3_project_loads_with_magnetic_field_results_as_result_records(tmp_path: Path) -> None:
+    root = _copy_schema_3_fixture(tmp_path)
+
+    loaded = ProjectService().load_project(root)
+
+    assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
+    page = magnetic_field_results(loaded, MAGNETIC_FIELD_PAGE_OWNER)
+    assert [record.result_type for record in page] == [MAGNETIC_FIELD_RESULT_TYPE]
+    assert page[0].calculation_run_id is None
+    assert page[0].data["results"][0]["total_T"] == [0.1, 0.2, 0.3]
+    workspace = {record.result_type for record in magnetic_field_results(loaded, _SCHEMA_3_WORKSPACE_ID)}
+    assert workspace == {MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE, NUCLEAR_RELAXATION_RESULT_TYPE}
+    assert loaded.ui_state["magnetic_field_form"] == {"histogram_bins": 512}
+    assert loaded.ui_state["magnetic_field_workspaces"][0]["form"] == {"histogram_bins": 256}
+    assert attach_magnetic_field_results(
+        loaded, _SCHEMA_3_WORKSPACE_ID, loaded.ui_state["magnetic_field_workspaces"][0]["form"]
+    )["nuclear_relaxation_results"] == {"mode": "zero_field_powder", "sigma_us_inv": 0.4}
+
+
+def test_schema_3_project_is_persisted_with_result_records_by_the_next_save(tmp_path: Path) -> None:
+    root = _copy_schema_3_fixture(tmp_path)
+    service = ProjectService()
+    loaded = service.load_project(root)
+    record_ids = {record.id for record in magnetic_field_results(loaded)}
+
+    service.save_project(loaded)
+
+    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    state = json.loads((root / "state.json").read_text())
+    assert "magnetic_field_results" not in state["magnetic_field_form"]
+    assert "dipolar_tensor_results" not in state["magnetic_field_workspaces"][0]["form"]
+    assert {path.stem for path in (root / "entities" / "results").glob("*.json")} == {
+        str(record_id) for record_id in record_ids
+    }
+
+    reloaded = ProjectService().load_project(root)
+    assert {record.id for record in magnetic_field_results(reloaded)} == record_ids
+    assert reloaded.ui_state["magnetic_field_form"] == {"histogram_bins": 512}
 
 
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:

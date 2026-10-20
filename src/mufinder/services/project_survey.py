@@ -27,6 +27,11 @@ from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job, Structure
 from mufinder.science.lattice import LatticeError, lattice_cart_to_frac, lattice_frac_to_cart, wrap_fractional
 from mufinder.services.job_results import latest_result_for_job, total_energy_for_job
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_RESULT_TYPE,
+    commensurate_field_entries,
+    magnetic_field_result,
+)
 from mufinder.services.project_document import ProjectDocument, active_host_structure, definitions_for_stage
 from mufinder.services.project_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
@@ -323,14 +328,11 @@ def _barrier_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
 def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
     layers = []
     for workspace in magnetic_field_workspaces(document):
-        form = workspace.get("form")
-        results = form.get("magnetic_field_results") if isinstance(form, Mapping) else None
-        if not isinstance(results, Mapping) or results.get("kind") != "commensurate":
+        result = magnetic_field_result(document, str(workspace.get("id", "")).strip(), MAGNETIC_FIELD_RESULT_TYPE)
+        if result is None or result.data.get("kind") != "commensurate":
             continue
         markers = []
-        for entry in _list(results.get("results")):
-            if not isinstance(entry, Mapping):
-                continue
+        for entry in commensurate_field_entries(result):
             position = _triplet(entry.get("muon_position"))
             magnitude = _float(entry.get("magnitude_T"))
             if position is None or magnitude is None:
