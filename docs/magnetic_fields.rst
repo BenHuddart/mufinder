@@ -563,14 +563,41 @@ at the muon comes from two surfaces:
   ``10.1080/001075199181521``).
 
 ``muesr`` leaves :math:`\mathbf{M}_\mathrm{meas}` to the user, because it
-depends on the sample and the experiment. MuFinder takes it from the magnetic
-model: it is the moment per unit cell of the uniform part of the order, the
-Fourier components whose wavevector is a reciprocal lattice vector, divided by
-the cell volume. Every other component averages to zero over the sample, so an
-antiferromagnet or a helix has no demagnetizing field, whatever Lorentz field
+depends on the sample and the experiment. By default MuFinder takes it from the
+magnetic model: it is the moment per unit cell of the uniform part of the order,
+the Fourier components whose wavevector is a reciprocal lattice vector, divided
+by the cell volume. Every other component averages to zero over the sample, so
+an antiferromagnet or a helix has no demagnetizing field, whatever Lorentz field
 the finite sphere leaves. This assumes the sample is a single magnetic domain,
 or is saturated by an applied field. A multidomain ferromagnet in zero field has
-a smaller bulk magnetisation, and MuFinder overestimates its demagnetizing field.
+a smaller bulk magnetisation, and the model value overestimates its
+demagnetizing field.
+
+The ``Measured bulk magnetisation`` row below the ``Demagnetizing field`` row
+replaces the model value with a measured one, for example from magnetometry on
+the same sample under the same conditions. Tick the box and enter the three
+Cartesian components, ``x``, ``y`` and ``z`` in the frame of the host lattice
+vectors, in Bohr magnetons per formula unit (μB/f.u.). The formula unit is the
+reduced formula of the host's non-muon atoms, which the row names, for example
+``μB per Fe2O3``; the cell holds :math:`Z` of them, the greatest common divisor
+of its element counts. MuFinder then uses
+
+.. math::
+
+   \mathbf{M}_\mathrm{meas} = \frac{Z\,\mathbf{m}_\mathrm{f.u.}\,\mu_B}{V_\mathrm{cell}},
+
+so a supercell of the host gives the same field as its primitive cell. A
+magnetisation quoted per magnetic ion becomes μB/f.u. by multiplying by the
+number of magnetic ions in the formula unit. An empty component counts as zero,
+and a component that is not a finite decimal number stops the calculation with
+an error. The measured value replaces the model value on the commensurate,
+commensurate-approximant and incommensurate paths alike, and has no effect when
+the demagnetizing field is ``None``. Unticking the box returns to the model value
+and keeps the entered components. The form state saves the choice as
+``use_measured_magnetization`` and the components as ``measured_magnetization``;
+an incommensurate distribution records the value it used as
+``measured_magnetization`` in its ``calculation_parameters``, or ``null`` when
+it used the model value.
 
 For a sphere, :math:`N = \tfrac{1}{3}`, so a single-domain sample's Lorentz and
 demagnetizing fields cancel up to the difference between

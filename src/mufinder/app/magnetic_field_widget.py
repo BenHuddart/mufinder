@@ -72,6 +72,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.persistence.codec import to_jsonable
+from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.demagnetization import DemagnetizationError, DemagnetizingSample, demagnetizing_tensor
 from mufinder.science.magnetic_fields import (
     CONTACT_COUPLING_UNIT_OPTIONS,
@@ -5395,6 +5396,19 @@ class MagneticFieldWidget(QWidget):
         self._plate_radio.toggled.connect(self._on_demag_shape_toggled)
         self._none_radio.toggled.connect(self._on_demag_shape_toggled)
         self._advanced_demag_radio.toggled.connect(self._on_demag_shape_toggled)
+        self._measured_magnetization_check = QCheckBox("Measured bulk magnetisation")
+        self._measured_magnetization_check.setToolTip(
+            "Use a measured bulk magnetisation, for example from magnetometry, for the demagnetizing field "
+            "instead of the model's uniform moment, which assumes a single domain."
+        )
+        self._measured_magnetization_check.toggled.connect(self._on_measured_magnetization_toggled)
+        self._measured_magnetization_inputs = tuple(
+            self._measured_magnetization_input(axis) for axis in ("x", "y", "z")
+        )
+        for edit in self._measured_magnetization_inputs:
+            edit.textChanged.connect(self._on_form_setting_changed)
+        self._measured_magnetization_unit = QLabel("μB per formula unit")
+        style_hint_text(self._measured_magnetization_unit)
 
         default_supercell = MagneticFieldOptions().supercell
         self._calc_cells_a = self._calculation_cell_input(default_supercell[0])
@@ -5517,6 +5531,13 @@ class MagneticFieldWidget(QWidget):
         demag_row.addStretch(1)
         results_layout.addLayout(demag_row)
         results_layout.addWidget(self._advanced_demag_summary)
+        magnetization_row = QHBoxLayout()
+        magnetization_row.addWidget(self._measured_magnetization_check)
+        for edit in self._measured_magnetization_inputs:
+            magnetization_row.addWidget(edit)
+        magnetization_row.addWidget(self._measured_magnetization_unit)
+        magnetization_row.addStretch(1)
+        results_layout.addLayout(magnetization_row)
         settings_row = QHBoxLayout()
         settings_row.addWidget(self._calculation_settings_summary, 1)
         settings_row.addWidget(self._calculation_settings_button)
@@ -5576,6 +5597,7 @@ class MagneticFieldWidget(QWidget):
         self.set_workspace_title(title, editable=title_editable, deletable=deletable)
         self._model = self._model_from_document(document, self._host_structure, magnetic_structure=magnetic_structure)
         self._selected_muon_site = self._default_muon_site()
+        self._refresh_measured_magnetization_unit()
         self._sync_enabled_state()
         self._refresh_summary()
         self._refresh_site_summary()
@@ -5585,6 +5607,10 @@ class MagneticFieldWidget(QWidget):
         return {
             "demag_shape": self._demag_shape(),
             "demag_sample": self._demag_sample.to_json(),
+            "use_measured_magnetization": self._measured_magnetization_check.isChecked(),
+            "measured_magnetization": [
+                self._measured_magnetization_component(edit) for edit in self._measured_magnetization_inputs
+            ],
             "supercell": [
                 int(self._calc_cells_a.value()),
                 int(self._calc_cells_b.value()),
@@ -5662,6 +5688,9 @@ class MagneticFieldWidget(QWidget):
                 self._advanced_demag_radio.setChecked(True)
             else:
                 self._none_radio.setChecked(True)
+            self._set_measured_magnetization_from_state(
+                state.get("use_measured_magnetization"), state.get("measured_magnetization")
+            )
 
             supercell = self._state_int_triplet(state.get("supercell"))
             if supercell is not None:
@@ -5723,6 +5752,7 @@ class MagneticFieldWidget(QWidget):
         try:
             self._none_radio.setChecked(True)
             self._demag_sample = DemagnetizingSample()
+            self._set_measured_magnetization_from_state(False, None)
             self._calc_cells_a.setValue(defaults.supercell[0])
             self._calc_cells_b.setValue(defaults.supercell[1])
             self._calc_cells_c.setValue(defaults.supercell[2])
@@ -5785,6 +5815,10 @@ class MagneticFieldWidget(QWidget):
             spinbox.setEnabled(has_host)
         self._hyperfine_coupling.setEnabled(has_host)
         self._hyperfine_units.setEnabled(has_host)
+        self._measured_magnetization_check.setEnabled(has_host)
+        measured = has_host and self._measured_magnetization_check.isChecked()
+        for edit in self._measured_magnetization_inputs:
+            edit.setEnabled(measured)
 
     def _refresh_summary(self) -> None:
         if self._host_structure is None:
@@ -5942,6 +5976,15 @@ class MagneticFieldWidget(QWidget):
         return spinbox
 
     @staticmethod
+    def _measured_magnetization_input(axis: str) -> QLineEdit:
+        edit = QLineEdit("0.0")
+        edit.setValidator(QDoubleValidator(-1_000.0, 1_000.0, 6, edit))
+        edit.setToolTip(f"Cartesian {axis} component of the measured bulk magnetisation, in μB per formula unit.")
+        edit.setMaximumWidth(80)
+        edit.setEnabled(False)
+        return edit
+
+    @staticmethod
     def _hyperfine_coupling_input() -> QLineEdit:
         edit = QLineEdit("0.0")
         edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 8, edit))
@@ -6008,7 +6051,11 @@ class MagneticFieldWidget(QWidget):
             self._calculation_status.setText("Results: select a muon site first.")
             return
 
-        options = self._field_options()
+        try:
+            options = self._field_options()
+        except ValueError as exc:
+            self._calculation_status.setText(f"Results: invalid calculation input - {exc}")
+            return
         try:
             distorted_structures = [self._distorted_structure_for_site(site)]
             classification = classify_magnetic_model(self._host_structure, self._model)
@@ -6262,6 +6309,7 @@ class MagneticFieldWidget(QWidget):
         return MagneticFieldOptions(
             demag_shape=self._demag_shape(),
             demag_sample=self._active_demag_sample(),
+            measured_magnetization=self._measured_magnetization(),
             supercell=(
                 int(self._calc_cells_a.value()),
                 int(self._calc_cells_b.value()),
@@ -6347,6 +6395,54 @@ class MagneticFieldWidget(QWidget):
         else:
             text = "No advanced shape selected."
         self._advanced_demag_summary.setText(text)
+
+    def _measured_magnetization(self) -> tuple[float, float, float] | None:
+        if not self._measured_magnetization_check.isChecked():
+            return None
+        x, y, z = (self._parse_measured_magnetization(edit.text()) for edit in self._measured_magnetization_inputs)
+        return (x, y, z)
+
+    @staticmethod
+    def _parse_measured_magnetization(text: str) -> float:
+        stripped = text.strip()
+        if not stripped:
+            return 0.0
+        try:
+            value = float(stripped)
+        except ValueError as exc:
+            raise ValueError("measured magnetisation components must be decimal numbers") from exc
+        if not np.isfinite(value):
+            raise ValueError("measured magnetisation components must be finite")
+        return value
+
+    def _measured_magnetization_component(self, edit: QLineEdit) -> float:
+        try:
+            return self._parse_measured_magnetization(edit.text())
+        except ValueError:
+            return 0.0
+
+    def _set_measured_magnetization_from_state(self, enabled: object, values: object) -> None:
+        components = (0.0, 0.0, 0.0)
+        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)) and len(values) == 3:
+            try:
+                parsed = tuple(float(value) for value in values)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                parsed = components
+            if all(np.isfinite(parsed)):
+                components = parsed
+        for edit, value in zip(self._measured_magnetization_inputs, components):
+            edit.setText(f"{value:g}")
+        self._measured_magnetization_check.setChecked(bool(enabled))
+
+    def _refresh_measured_magnetization_unit(self) -> None:
+        formula = "" if self._host_structure is None else reduced_formula(self._host_structure.species)[0]
+        self._measured_magnetization_unit.setText(
+            f"μB per {formula} (Cartesian x, y, z)" if formula else "μB per formula unit (Cartesian x, y, z)"
+        )
+
+    def _on_measured_magnetization_toggled(self, _checked: bool) -> None:
+        self._sync_enabled_state()
+        self._on_form_setting_changed()
 
     def _current_hyperfine_unit(self) -> str:
         value = self._hyperfine_units.currentData()

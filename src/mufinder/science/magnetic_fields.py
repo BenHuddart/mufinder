@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from mufinder.domain.models import MuonSite, Structure
+from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
 from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
 from mufinder.science._muesr_compat import muesr_imports
@@ -68,6 +69,8 @@ class MagneticFieldOptions:
     demag_shape: str = "none"
     plate_normal_axis: str = "c"
     demag_sample: DemagnetizingSample | None = None
+    # Measured bulk magnetisation in mu_B per formula unit, Cartesian; None takes it from the model.
+    measured_magnetization: tuple[float, float, float] | None = None
     nnn: int = 2
     rcont: float = 10.0
     contact_coupling: float | None = None
@@ -1237,6 +1240,9 @@ def _distribution_calculation_parameters(options: MagneticFieldOptions, radius: 
         "demag_shape": options.demag_shape,
         "plate_normal_axis": options.plate_normal_axis,
         "demag_sample": None if options.demag_sample is None else options.demag_sample.to_json(),
+        "measured_magnetization": (
+            None if options.measured_magnetization is None else list(options.measured_magnetization)
+        ),
         "nnn": int(options.nnn),
         "rcont": float(options.rcont),
         "contact_coupling": None if options.contact_coupling is None else float(options.contact_coupling),
@@ -1404,12 +1410,44 @@ def _unit_tensor_fourier_components(structure: Structure, indices: Sequence[int]
 
 
 def _demag_field(structure: Structure, models: Sequence[MuesrModelData], options: MagneticFieldOptions) -> np.ndarray:
-    """Return the demagnetizing field ``-mu0 N M`` of the bulk magnetisation, in T."""
+    """Return the demagnetizing field ``-mu0 N M_meas`` of the bulk magnetisation, in T.
 
+    ``M_meas`` is ``options.measured_magnetization`` when it is set and the
+    model's uniform moment otherwise.
+    """
+
+    measured = _measured_magnetization_field(structure, options.measured_magnetization)
     tensor = _demag_tensor(options)
     if tensor is None:
         return np.zeros(3, dtype=float)
-    return -(tensor @ _bulk_magnetization_field(structure, models))
+    bulk = measured if measured is not None else _bulk_magnetization_field(structure, models)
+    return -(tensor @ bulk)
+
+
+def _measured_magnetization_field(
+    structure: Structure, magnetization: Sequence[float] | None
+) -> np.ndarray | None:
+    """Return ``mu0 M`` in T for a measured magnetisation in mu_B per formula unit.
+
+    The formula unit is the reduced formula of the structure's non-muon atoms,
+    so a supercell gives the same field as its primitive cell.
+    """
+
+    if magnetization is None:
+        return None
+    try:
+        moment = np.asarray(magnetization, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise MagneticFieldError("measured_magnetization must be three numbers in mu_B per formula unit") from exc
+    if moment.shape != (3,):
+        raise MagneticFieldError("measured_magnetization must be a three-vector in mu_B per formula unit")
+    if not np.all(np.isfinite(moment)):
+        raise MagneticFieldError("measured_magnetization must be finite")
+    _formula, formula_units = reduced_formula(structure.species)
+    if formula_units <= 0:
+        raise MagneticFieldError("measured_magnetization needs a structure with at least one non-muon atom")
+    volume = abs(float(np.linalg.det(np.asarray(structure.lattice_vectors, dtype=float))))
+    return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment * formula_units / volume
 
 
 def _bulk_magnetization_field(structure: Structure, models: Sequence[MuesrModelData]) -> np.ndarray:

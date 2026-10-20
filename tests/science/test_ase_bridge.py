@@ -11,6 +11,7 @@ from mufinder.science.ase_bridge import (
     StructureConversionError,
     element_symbol,
     is_muon_label,
+    reduced_formula,
     structure_to_ase_atoms,
 )
 
@@ -119,3 +120,9 @@ def test_element_symbol_reads_the_leading_element_and_rejects_unreadable_labels(
         element_symbol("   ")
     with pytest.raises(CallerError, match="Could not resolve element"):
         element_symbol("123", error=CallerError)
+
+
+def test_reduced_formula_counts_formula_units_and_skips_the_muon_and_unreadable_labels() -> None:
+    assert reduced_formula(["Fe1", "Fe2", "O", "O", "O", "Fe", "Fe", "O", "O", "O", "H:mu"]) == ("Fe2O3", 2)
+    assert reduced_formula(["Sr", "Ti", "O", "O", "O", "123"]) == ("SrTiO3", 1)
+    assert reduced_formula(["X", "muon"]) == ("", 0)
