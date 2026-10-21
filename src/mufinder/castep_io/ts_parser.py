@@ -1,16 +1,23 @@
-"""Parser for CASTEP transition-state `.ts` files."""
+"""Parser for CASTEP transition-state `.ts` files.
+
+CASTEP writes `.ts` files in atomic units: energies in Hartree, lattice vectors
+and Cartesian positions in Bohr, and forces in Hartree/Bohr. Every quantity on
+:class:`TransitionStateImage` is converted on parse, so downstream code sees eV,
+Å and eV/Å like the rest of the application.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from ase.units import Hartree
+from ase.units import Bohr, Hartree
 
-# CASTEP writes `.ts` energies in atomic units (Hartree); we expose eV downstream.
-# Reuse ase's CODATA conversion (ase is a hard project dependency) rather than
-# keeping a second hard-coded copy of the constant.
+# Reuse ase's CODATA conversions (ase is a hard project dependency) rather than
+# keeping a second hard-coded copy of the constants.
 HARTREE_TO_EV = Hartree
+BOHR_TO_ANGSTROM = Bohr
+HARTREE_PER_BOHR_TO_EV_PER_ANGSTROM = Hartree / Bohr
 
 
 class TransitionStateParseError(ValueError):
@@ -25,10 +32,11 @@ class TransitionStateImage:
     iteration: int
     reaction_coordinate: float
     energy: float  # eV (converted from the Hartree value stored in the `.ts` file)
+    # Å (converted from the Bohr values stored in the `.ts` file)
     lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
     species: tuple[str, ...]
-    cartesian_positions: tuple[tuple[float, float, float], ...]
-    forces: tuple[tuple[float, float, float], ...]
+    cartesian_positions: tuple[tuple[float, float, float], ...]  # Å (converted from Bohr)
+    forces: tuple[tuple[float, float, float], ...]  # eV/Å (converted from Hartree/Bohr)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +113,7 @@ def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
                 values = stripped.split()
                 if len(values) < 3:
                     raise TransitionStateParseError("Invalid lattice-vector entry in CASTEP `.ts` file.")
-                lattice.append((float(values[0]), float(values[1]), float(values[2])))
+                lattice.append(_scaled_triplet(values[0:3], BOHR_TO_ANGSTROM))
                 index += 1
                 continue
             if "<-- R" in content:
@@ -113,14 +121,14 @@ def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
                 if len(values) < 5:
                     raise TransitionStateParseError("Invalid position entry in CASTEP `.ts` file.")
                 species.append(values[0])
-                positions.append((float(values[2]), float(values[3]), float(values[4])))
+                positions.append(_scaled_triplet(values[2:5], BOHR_TO_ANGSTROM))
                 index += 1
                 continue
             if "<-- F" in content:
                 values = stripped.split()
                 if len(values) < 5:
                     raise TransitionStateParseError("Invalid force entry in CASTEP `.ts` file.")
-                forces.append((float(values[2]), float(values[3]), float(values[4])))
+                forces.append(_scaled_triplet(values[2:5], HARTREE_PER_BOHR_TO_EV_PER_ANGSTROM))
                 index += 1
                 continue
             index += 1
@@ -140,6 +148,12 @@ def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
             )
         )
     return images
+
+
+def _scaled_triplet(values: list[str], factor: float) -> tuple[float, float, float]:
+    """Parse three numeric tokens and convert them with ``factor``."""
+
+    return (float(values[0]) * factor, float(values[1]) * factor, float(values[2]) * factor)
 
 
 def _final_path(images: list[TransitionStateImage]) -> list[TransitionStateImage]:
