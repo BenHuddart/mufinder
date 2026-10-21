@@ -38,8 +38,9 @@ README, the pull-request template and CI refer to its targets. Pass
 - ``make harness`` runs the agent-harness structural tests.
 - ``make screenshots`` renders the documentation screenshots into
   ``docs/_generated/screenshots`` (see `Documentation screenshots`_).
-- ``make docs`` renders the screenshots, then builds this Sphinx site with
-  warnings treated as errors.
+- ``make docs`` renders the screenshots when they are out of date (see `When
+  the renderer runs`_), then builds this Sphinx site with warnings treated as
+  errors.
 - ``make lint`` runs ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``.
 - ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
@@ -155,23 +156,48 @@ Documentation screenshots
 -------------------------
 
 The documentation screenshots are build outputs: no image under ``docs/`` is
-committed for them. ``scripts/render_docs_screenshots.py`` writes each one to
-``docs/_generated/screenshots`` (ignored by git), and a page shows it with a
-``figure`` directive whose path is relative to the page, for example
-``../_generated/screenshots/<name>.png`` from a page in ``docs/user_guide/``.
+committed for them. ``scripts/render_docs_screenshots.py`` runs the
+``scripts/docs_screenshots`` package, which writes each one to
+``docs/_generated/screenshots`` (ignored by git) as ``<name>.webp``, and a page
+shows it with a ``figure`` directive whose path is relative to the page, for
+example ``../_generated/screenshots/<name>.webp`` from a page in
+``docs/user_guide/``.
 
-The script needs no display: Qt draws on its ``offscreen`` platform at twice
+The renderer needs no display: Qt draws on its ``offscreen`` platform at twice
 the logical size, and VTK renders through EGL. pyvistaqt's ``QtInteractor``
-needs a native window, so the script gives the 3D viewers an off-screen
+needs a native window, so the renderer gives the 3D viewers an off-screen
 PyVista plotter that paints its frame instead. Settings and app data go to a
 temporary directory, so a local run leaves the developer's own MuFinder
 configuration alone.
 
+The package
+~~~~~~~~~~~
+
+- ``render.py`` sets the Qt, VTK and settings environment when it is first
+  imported, before anything imports Qt, so every module of the package that
+  touches Qt imports it first. It holds what every scene shares: the
+  off-screen viewer, the grab targets, ``render`` and its project cache,
+  ``synthetic_runs`` and the scene steps more than one example uses.
+- ``synthetic.py`` writes the CASTEP outputs the projects need where no
+  fixture fits: ``-out.cell`` files, ``.castep`` results, a BFGS
+  geometry-optimisation log (``bfgs_log_text``) with falling energies and
+  forces, Gamma-point ``.phonon`` files, NEB ``.ts`` bands and legacy-run
+  outputs. It imports no Qt, so tests import it directly.
+- ``examples/`` holds one module per example project. Each defines its
+  project builders, the scene steps only its scenes use, and ``SCENES``, a
+  dictionary from screenshot name to ``Scene``.
+- ``registry.py`` lists the example modules in render order as ``EXAMPLES``
+  and merges their scenes into ``SCREENSHOTS``. A screenshot name belongs to
+  exactly one example.
+- ``__main__.py`` is the command line. With no arguments it renders every
+  screenshot; ``--example NAME`` renders one example's scenes, names render
+  those screenshots, ``--list`` prints the names it would render, and
+  ``--output`` writes somewhere other than ``docs/_generated/screenshots``.
+
 Scenes
 ~~~~~~
 
-Each entry of the script's ``SCREENSHOTS`` table maps a file name to a
-``Scene``:
+Each entry of an example's ``SCENES`` maps a file name to a ``Scene``:
 
 - a project builder, a function that writes a saved project into a scratch
   directory and returns its root;
@@ -189,45 +215,75 @@ Each entry of the script's ``SCREENSHOTS`` table maps a file name to a
   takes an optional ``prepare`` step that receives the grabbed widget before
   the grab.
 
-The script opens the project in a real ``MainWindow`` with the status bar
+``render`` builds each project builder's project once per process, keyed on
+the builder, and opens a fresh copy of it for every scene, so the scenes of an
+example share one build and a scene that changes or saves its project leaves
+the next scene's copy alone. A saved project stores its paths relative to its
+root, so a copy opens as the original does. A builder that drives a
+``MainWindow`` runs inside the renderer's ``QApplication`` like any scene.
+
+The renderer opens the project in a real ``MainWindow`` with the status bar
 hidden, since its keyword-catalog and cluster-connection warnings describe the
 scratch settings rather than the page. A dialog is dismissed after its grab,
-and a scene whose dialog never opens fails rather than hanging.
+and a scene whose dialog never opens fails rather than hanging. Each window is
+deleted once its scene is saved, so the next window's style sheet is not slowed
+by widgets that are no longer shown.
 
 Prefer ``Page`` grabs about 1000 to 1200 logical pixels wide: the theme scales
 a figure to the content column, so a full-window grab at 1440 pixels makes its
 text small. Keep ``Window`` for views about the window as a whole, such as the
 Project Home and the Job Dashboard.
 
-The fixture project
-~~~~~~~~~~~~~~~~~~~
+Images
+~~~~~~
 
-Most scenes open ``fixture_project``: rutile TiO2 built in code, with ``PBE``
-as the project functional, a saved 2x2x2 supercell, a configured cutoff sweep
-(300 to 800 eV) and k-point sweep (the grids ``Generate From Spacing...``
-gives down to 0.07 1/Ang), none submitted, and eight candidate muon sites
-generated through ``ProjectService.generate_candidate_sites``. The builders
-make the calls the application makes, including the sweep widgets' own form
-logic, so the saved project is one the application could have written. Two
-variants extend it: ``converged_project`` adopts a cutoff and a k-point grid
-with illustrative sweep data pinned on the Convergence Testing overview, and
+Each grab is written as lossless WebP (Qt's WebP writer at quality 100), so
+the decoded pixels are exactly those grabbed, at about half the size of a PNG.
+A ``build-finished`` hook in ``docs/conf.py`` post-processes the HTML pages:
+every WebP image under ``_images/`` gets ``loading="lazy"`` and
+``decoding="async"``, and, unless its figure sets a ``:width:`` or
+``:height:``, explicit ``width`` and ``height`` attributes in CSS pixels, half
+the file's pixel size. The browser reserves each screenshot's space before it
+loads and fetches only the screenshots near the viewport; the theme's
+``max-width: 100%`` and ``height: auto`` still scale an image down to the
+content column. Other images are left alone.
+
+The rutile example
+~~~~~~~~~~~~~~~~~~
+
+``examples/rutile.py`` holds the getting-started and setup scenes. Most open
+``fixture_project``: rutile TiO2 built in code, with ``PBE`` as the project
+functional, a saved 2x2x2 supercell, a configured cutoff sweep (300 to 800 eV)
+and k-point sweep (the grids ``Generate From Spacing...`` gives down to 0.07
+1/Ang), none submitted, and eight candidate muon sites generated through
+``ProjectService.generate_candidate_sites``. The builders make the calls the
+application makes, including the sweep widgets' own form logic, so the saved
+project is one the application could have written. Two variants extend it:
+``converged_project`` adopts a cutoff and a k-point grid with illustrative
+sweep data pinned on the Convergence Testing overview, and
 ``dashboard_project`` binds failed, stopped and cancelled jobs to three cutoff
-rows. The Magnetic Fields scenes use ``magnetic_project``, the one-ion cubic
-cell of the worked examples. No scene runs CASTEP; the Magnetic Fields scenes
-run the real ``muesr`` calculation.
+rows. No scene runs CASTEP.
 
-The results project
+The magnetic example
+~~~~~~~~~~~~~~~~~~~~
+
+``examples/magnetic.py`` holds the Magnetic Fields scenes. Each builder from
+``magnetic_project`` saves the one-ion cubic cell of the worked examples with
+a magnetic model and a Magnetic Fields form; the scenes run the real
+``muesr`` calculation.
+
+The silicon example
 ~~~~~~~~~~~~~~~~~~~
 
-The results and analysis pages open ``results_project``, built on diamond
-silicon's two-atom primitive cell, the cell of the UEP fixture. The builder
-opens the project in a ``MainWindow`` and drives each workflow as its buttons
-do: it adds and runs a pristine relaxation and a UEP source row, stages five
-manual candidate sites as positive-muon relaxations in a saved 2x2x2
-supercell, creates, clusters and pins an analysis workspace, runs the phonon
-job of the lowest Quantum Corrections site, and generates the
-bond-centre to tetrahedral paths on the Energy Barriers page and runs an NEB
-band along the first. Jobs are submitted through
+``examples/silicon.py`` holds the results and analysis scenes, which open
+``results_project``, built on diamond silicon's two-atom primitive cell, the
+cell of the UEP fixture. The builder opens the project in a ``MainWindow`` and
+drives each workflow as its buttons do: it adds and runs a pristine relaxation
+and a UEP source row, stages five manual candidate sites as positive-muon
+relaxations in a saved 2x2x2 supercell, creates, clusters and pins an analysis
+workspace, runs the phonon job of the lowest Quantum Corrections site, and
+generates the bond-centre to tetrahedral paths on the Energy Barriers page and
+runs an NEB band along the first. Jobs are submitted through
 ``JobExecutionController.submit_local_jobs`` with a local runner whose
 ``submit`` writes the job's CASTEP outputs into its directory instead of
 starting CASTEP; each job is then finished through the window's local-runner
@@ -240,9 +296,9 @@ The outputs come from the synthetic test fixtures where one fits:
 UEP source job, and ``tests/fixtures/geometry/Si2_bfgs.castep`` for the
 pristine relaxation, whose relaxed cell is read from the output's final
 configuration. No fixture holds a muon relaxation, a phonon run of a
-muoniated cell or a silicon NEB band, so the script writes those in CASTEP's
-file shapes with illustrative numbers: each muon start relaxes to its nearest
-bond-centre or tetrahedral site, the phonon run reports close to its
+muoniated cell or a silicon NEB band, so ``synthetic.py`` writes those in
+CASTEP's file shapes with illustrative numbers: each muon start relaxes to its
+nearest bond-centre or tetrahedral site, the phonon run reports close to its
 relaxation's energy with one mode per atom and axis, the muon's three the
 highest, and the NEB ``.ts`` band follows the job's own reactant, intermediate
 and product cells. The pages that show these numbers say in their captions
@@ -263,22 +319,45 @@ The Quantum Corrections phonon analysis window has no screenshot: no fixture
 holds a ``.phonon`` output, and a phonon spectrum for the muoniated cell would
 be invented physics.
 
+When the renderer runs
+~~~~~~~~~~~~~~~~~~~~~~
+
+``make screenshots`` always renders every screenshot. A full render ends by
+touching ``docs/_generated/screenshots/.stamp``; a render of named screenshots
+or of one example does not, and neither does a render that fails. ``make
+docs`` depends on the stamp, and the stamp on every file of
+``scripts/docs_screenshots``, ``scripts/render_docs_screenshots.py``,
+``src/mufinder`` and the two fixture directories the silicon example reads,
+so ``make docs`` renders only when one of them is newer than the stamp, and a
+fresh checkout, such as a CI runner, renders once. Delete the stamp to force a
+render from ``make docs``.
+
 Adding a screenshot
 ~~~~~~~~~~~~~~~~~~~
 
-1. Add an entry to ``SCREENSHOTS``, reusing a project builder and the
-   ``setup`` and ``prepare`` steps where they fit.
-2. Render it alone, ``python scripts/render_docs_screenshots.py <name>`` (``--list``
-   prints the names), and look at the image: it must not show an error, an
-   empty table or a clipped control.
+1. Add an entry to the ``SCENES`` of the example whose project it shows,
+   reusing its project builders and the ``setup`` and ``prepare`` steps
+   where they fit. A screenshot that needs a new project adds a builder to
+   that example; one that needs a new kind of host adds an example module and
+   lists it in ``registry.py``.
+2. Render it alone, ``python scripts/render_docs_screenshots.py <name>``
+   (``--list`` prints the names), and look at the image: it must not show an
+   error, an empty table or a clipped control.
 3. Reference it from a page with a ``figure`` directive, an ``:alt:`` text and
    a one-line caption.
 
-``tests/docs/test_docs_screenshots.py`` reads the ``SCREENSHOTS`` keys from the
-script's source and fails if a page references an image the script does not
-render, or the script renders one no page uses. It then renders each
-referenced screenshot in its own process, with its own timeout, so
-``pytest-xdist`` spreads the renders across workers.
+``tests/docs/test_docs_screenshots.py`` runs the renderer in subprocesses,
+since importing ``render.py`` configures Qt and VTK for the whole process. It
+reads the registry's names with ``--list`` and fails if a page references an
+image the registry does not render, the registry renders one no page uses, or
+an example module under ``examples/`` is missing from the registry. It then
+renders each example with ``--example`` in its own process, with a timeout
+proportional to its scene count, so each example's projects are built once
+and ``pytest-xdist`` spreads the examples across workers.
+``tests/docs/test_docs_synthetic.py`` reads the ``synthetic.py`` outputs back
+through the application's CASTEP and geometry-progress parsers, and
+``tests/docs/test_docs_images.py`` builds a one-page Sphinx project with the
+``docs/conf.py`` image hook and checks the attributes it writes.
 
 Shared test helpers
 -------------------
@@ -423,8 +502,8 @@ continuous integration and tag-driven publishing:
     ``make coverage`` in the required ``tests`` job, which combines the shards'
     coverage data and enforces the threshold. ``tests`` fails if any shard
     fails.
-  - ``make docs``: the screenshots, then the ``sphinx`` HTML build with ``-W``
-    enabled. The job uploads nothing.
+  - ``make docs``: the screenshots, rendered once on the fresh runner, then
+    the ``sphinx`` HTML build with ``-W`` enabled. The job uploads nothing.
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
   and macOS artifacts from any branch, tag, or SHA without publishing a release
