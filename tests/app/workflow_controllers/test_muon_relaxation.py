@@ -1481,3 +1481,188 @@ def test_muon_controller_remove_rows_drops_job_and_seed_bindings(tmp_path: Path)
     assert [(row["label"], row["charge_state"]) for row in rows] == [("Site 2", "muonium")]
     assert definition.parameters["job_ids_by_label"] == {"muonium:Site 2": "2"}
     assert definition.parameters["job_seed_names_by_label"] == {"muonium:Site 2": "seed2"}
+
+
+# --------------------------------------------------------------------------- #
+# One site relaxed in both charge states reaches every downstream stage
+# --------------------------------------------------------------------------- #
+
+
+def _host_cell_with_muon(position: tuple[float, float, float]) -> str:
+    x, y, z = position
+    return f"""
+%BLOCK LATTICE_CART
+ang
+4.0 0.0 0.0
+0.0 4.0 0.0
+0.0 0.0 4.0
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.0 0.0 0.0
+H:mu {x} {y} {z}
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def test_site_relaxed_in_both_charge_states_reaches_downstream_stages_in_both(
+    tmp_path: Path,
+) -> None:
+    """Choosing Both charge states relaxes each start twice. The last relaxation
+    to finish must not hide the other one: Quantum Corrections, Energy Barriers
+    and the pinned Muon Sites summary see each site in both charge states."""
+
+    from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
+    from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
+    from mufinder.domain.models import MuonSite, Result
+    from mufinder.services.muon_sites_summary import (
+        build_muon_sites_summary_snapshot,
+        pinned_source_selection,
+        store_muon_sites_summary_snapshot,
+    )
+    from mufinder.services.source_candidates import (
+        charge_state_for_job,
+        eligible_quantum_source_candidates,
+        enumerate_energy_barrier_source_candidates,
+        serialize_quantum_sources,
+    )
+
+    from tests.support.muon_sites import ClusterSpec, clustered_workspace, store_workspaces
+
+    service = ProjectService()
+    document, host = muon_host_document(service, tmp_path)
+    muon_positions = {"Site A": (0.5, 0.5, 0.5), "Site B": (0.25, 0.25, 0.25)}
+    sites = {
+        label: MuonSite(
+            label=label,
+            status="staged",
+            initial_fractional_position=list(position),
+            source_structure_id=host.id,
+        )
+        for label, position in muon_positions.items()
+    }
+    for site in sites.values():
+        document.sites[site.id] = site
+    charge_states = (POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE)
+    rows = tuple(
+        MuonRelaxationRow(
+            site_id=site.id,
+            label=label,
+            initial_fractional_position=tuple(muon_positions[label]),
+            charge_state=charge_state,
+        )
+        for charge_state in charge_states
+        for label, site in sites.items()
+    )
+    definition = service.register_muon_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters=serialize_muon_relaxation_config(MuonRelaxationConfig(rows=rows)),
+        output_directory=document.project_root / "files" / "muon_relaxation",
+    )
+    calc_types = {
+        POSITIVE_MUON_CHARGE_STATE: "castep_positivemuon_relaxation",
+        MUONIUM_CHARGE_STATE: "castep_muonium_relaxation",
+    }
+    prefixes = {POSITIVE_MUON_CHARGE_STATE: "positivemuon", MUONIUM_CHARGE_STATE: "muonium"}
+    jobs_by_row: dict[tuple[str, str], Job] = {}
+    for row in rows:
+        job = _muon_job(service, document, row.label, calc_types[row.charge_state])
+        jobs_by_row[(row.label, row.charge_state)] = job
+    definition.parameters["job_ids_by_label"] = {
+        f"{prefixes[charge_state]}:{label}": str(job.id)
+        for (label, charge_state), job in jobs_by_row.items()
+    }
+    row_by_job_id = {jobs_by_row[(row.label, row.charge_state)].id: row for row in rows}
+
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    deps = _stub_muon_deps(
+        muon_relaxation_definition_and_row_for_job=lambda job: (definition, row_by_job_id[job.id]),
+    )
+    context = make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    # Positive-muon relaxations finish first, then the muonium ones.
+    for row in rows:
+        job = jobs_by_row[(row.label, row.charge_state)]
+        run = CalculationRun(job_id=job.id, run_index=1)
+        document.runs[run.id] = run
+        (output_dir / f"{job.label}-out.cell").write_text(
+            _host_cell_with_muon(muon_positions[row.label]), encoding="utf-8"
+        )
+        artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+        energy = -12.0 if row.charge_state == POSITIVE_MUON_CHARGE_STATE else -13.0
+        parsed = CastepResult(completed=True, total_energy=energy, warnings=())
+        controller_result = controller.build_result(job, parsed, run, artifacts)
+        result = Result(
+            calculation_run_id=run.id,
+            result_type=job.calc_type,
+            data={"total_energy": energy},
+            derived_structure_ids=list(controller_result.derived_structure_ids),
+        )
+        document.results[result.id] = result
+        run.result_id = result.id
+        run.status = JobStatus.COMPLETED
+        run.convergence_achieved = True
+        job.status = JobStatus.COMPLETED
+
+    candidates = eligible_quantum_source_candidates(document)
+    eligible = {(candidate.site.id, charge_state_for_job(candidate.job)) for candidate in candidates}
+    assert eligible == {(site.id, state) for site in sites.values() for state in charge_states}
+    assert len({candidate.key for candidate in candidates}) == 4
+    muonium = [c for c in candidates if charge_state_for_job(c.job) == MUONIUM_CHARGE_STATE]
+    assert {c.total_energy_eV for c in muonium} == {-13.0}
+
+    # Pin one clustered analysis per charge state, as "Pin to Summary" does.
+    workspaces = [
+        clustered_workspace(
+            host,
+            [
+                ClusterSpec(index, jobs_by_row[(label, charge_state)].id)
+                for index, label in enumerate(sites, start=1)
+            ],
+            charge_state=charge_state,
+        )
+        for charge_state in charge_states
+    ]
+    store_workspaces(document, *workspaces)
+    for charge_state, workspace in zip(charge_states, workspaces, strict=True):
+        store_muon_sites_summary_snapshot(
+            document, charge_state, build_muon_sites_summary_snapshot(workspace)
+        )
+
+    selection = pinned_source_selection(document)
+    assert selection.unresolved == ()
+    assert {
+        (source.candidate.site.id, charge_state_for_job(source.candidate.job))
+        for source in selection.sources
+    } == eligible
+
+    # Quantum Corrections stores one source per (site, charge state).
+    stored = serialize_quantum_sources(document, [candidate.key for candidate in candidates])
+    assert {(entry["site_id"], entry["charge_state"]) for entry in stored} == {
+        (str(site.id), state) for site in sites.values() for state in charge_states
+    }
+
+    # Energy Barriers enumerates paths between the two sites in each charge state.
+    for charge_state in charge_states:
+        endpoints = [c for c in candidates if charge_state_for_job(c.job) == charge_state]
+        paths = enumerate_energy_barrier_source_candidates(
+            document, endpoints[0].key, endpoints[1].key
+        )
+        assert paths
+        assert all(charge_state_for_job(path.reactant.job) == charge_state for path in paths)
+    keys = [
+        path.key
+        for charge_state in charge_states
+        for path in enumerate_energy_barrier_source_candidates(
+            document,
+            *[c.key for c in candidates if charge_state_for_job(c.job) == charge_state],
+        )
+    ]
+    assert len(keys) == len(set(keys))

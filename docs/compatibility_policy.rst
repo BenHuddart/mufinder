@@ -47,6 +47,22 @@ Compatibility ledger
        configured is reinterpreted.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that drops task-only rows from ``convergence_form``.
+   * - Bare site-id source keys and Quantum ``sources`` without ``key``
+     - Quantum Corrections and Energy Barriers row keys;
+       ``mufinder.services.source_candidates`` (``quantum_source_key``) and the
+       Quantum Corrections definition ``configuration["sources"]``
+     - A relaxed site's source key is its bare site id for the relaxation the
+       site records, which is every source key a project held before one site
+       could reach those stages in both charge states; a relaxation in the
+       other charge state keys by ``"{site id}:{charge-state prefix}"``. The
+       owning charge state is ``MuonSite.properties["source_key_charge_state"]``,
+       written when the site is first relaxed; a site saved before the property
+       existed takes it from the charge state of its linked relaxation, and the
+       property is written at its next relaxation. A stored Quantum Corrections
+       source entry without ``key`` is read as keyed by its ``site_id``.
+     - Current project data, not deprecated. Row bindings, seed names and
+       generated paths are stored under these keys, so the bare-id form may
+       not change without a schema migration that rewrites them.
    * - Pinned sites without ``representative_job_id``
      - ``muon_sites_summary_snapshots`` UI state, read by
        ``mufinder.services.muon_sites_summary`` (``pinned_muon_sites``)

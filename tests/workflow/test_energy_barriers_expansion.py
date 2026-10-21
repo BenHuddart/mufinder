@@ -243,3 +243,21 @@ def test_strip_legacy_energy_barrier_params_drops_placeholders_only() -> None:
         "tssearch_method": "NEB",
         "tssearch_neb_max_iter": "not-a-number",
     }
+
+
+def test_replace_serialized_sources_for_pair_keeps_the_other_charge_states_paths() -> None:
+    existing = [
+        {"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p", "charge_state": "positive_muon"},
+        {"key": "r:mu:p:mu:1", "reactant_site_id": "r", "product_site_id": "p", "charge_state": "muonium"},
+        {"key": "legacy", "reactant_site_id": "r", "product_site_id": "p"},
+    ]
+
+    replaced = replace_serialized_sources_for_pair(
+        existing,
+        reactant_site_id="r",
+        product_site_id="p",
+        new_sources=[{"key": "r:mu:p:mu:2", "reactant_site_id": "r", "product_site_id": "p"}],
+        charge_state="muonium",
+    )
+
+    assert [source["key"] for source in replaced] == ["r:p:1", "r:mu:p:mu:2"]

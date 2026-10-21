@@ -512,7 +512,10 @@ class QuantumCorrectionsController(WorkflowJobController):
             if isinstance(config, dict):
                 config.setdefault("method", "finite_displacement")
                 config.setdefault("pseudopotential_family", "unknown")
-                config["sources"] = serialize_quantum_sources(document, definition.input_site_ids)
+                config["sources"] = serialize_quantum_sources(
+                    document,
+                    [*_stored_source_keys(config, definition), *(candidate.key for candidate in candidates)],
+                )
         else:
             definition = self._context.project_service.register_quantum_phonon_definition(
                 document,
@@ -521,7 +524,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 parameters={
                     "method": "finite_displacement",
                     "pseudopotential_family": "unknown",
-                    "sources": serialize_quantum_sources(document, [candidate.site.id for candidate in candidates]),
+                    "sources": serialize_quantum_sources(document, [candidate.key for candidate in candidates]),
                     "phonon_job_ids_by_label": {},
                     "job_seed_names_by_label": {},
                 },
@@ -843,6 +846,7 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         states = self.build_states()
         configs: list[QuantumPhononJobConfig] = []
+        config_keys: list[str] = []
         for key in str_keys:
             candidate = self.candidate_by_key(key)
             if candidate is None or not workflow_row_state_is_ready(states, key):
@@ -869,7 +873,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                         source_relaxation_run_id=candidate.run.id,
                         source_relaxation_job_id=candidate.job.id,
                         charge_state=charge_state_for_job(candidate.job),
-                        total_energy_eV=candidate.site.total_energy_eV,
+                        total_energy_eV=candidate.total_energy_eV,
                     ),
                     method=method,
                     pseudopotential_family=str(pseudopotential_family),
@@ -878,6 +882,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                     param_overrides=overrides.param,
                 )
             )
+            config_keys.append(key)
         if not configs:
             return []
 
@@ -892,7 +897,9 @@ class QuantumCorrectionsController(WorkflowJobController):
         # ``job_ids_by_label``, so keep the phonon mapping aliased there.
         definition.parameters["job_ids_by_label"] = phonon_mapping
 
-        specs_by_key = {str(spec.provenance.get("source_site_id", "")): spec for spec in specs}
+        # One spec per config, in order; a site relaxed in both charge states
+        # has two keys with the same source site id.
+        specs_by_key = dict(zip(config_keys, specs, strict=True))
         created: list[Job] = []
         for key in str_keys:
             spec = specs_by_key.get(key)
@@ -1144,6 +1151,24 @@ class QuantumCorrectionsController(WorkflowJobController):
         self._view.set_sources(source_rows)
         self._view.set_results(result_rows)
 
+
+
+def _stored_source_keys(config: dict, definition: CalculationDefinition) -> list[str]:
+    """Return the source keys a definition's stored ``sources`` already select.
+
+    An entry names its ``key``; an entry saved before entries carried one is
+    keyed by its ``site_id``. A definition with no stored ``sources`` list falls
+    back to its input site ids.
+    """
+
+    stored = config.get("sources")
+    if not isinstance(stored, list):
+        return [str(site_id) for site_id in definition.input_site_ids]
+    return [
+        str(entry.get("key") or entry.get("site_id") or "")
+        for entry in stored
+        if isinstance(entry, dict) and (entry.get("key") or entry.get("site_id"))
+    ]
 
 
 def _definition_mapping(definition: CalculationDefinition, name: str) -> dict[str, object]:

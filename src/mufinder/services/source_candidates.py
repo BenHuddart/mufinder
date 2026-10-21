@@ -30,6 +30,7 @@ from mufinder.castep_io.param_parser import parse_param_assignments, run_is_spin
 from mufinder.domain.charge_states import (
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
+    canonical_charge_state,
     muon_charge_state_label,
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
@@ -55,28 +56,45 @@ from mufinder.science.relaxation_analysis import (
 )
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.services.job_paths import job_seed_name
+from mufinder.services.job_results import total_energy_for_job
+from mufinder.services.project_document import definitions_for_stage
 from mufinder.services.project_service import ProjectDocument
+from mufinder.services.project_summary import latest_run_for_job, muon_relaxation_row_jobs
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
     merge_serialized_sources,
 )
+from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.quantum import quantum_source_eligibility
 
 #: ``ui_state`` key of the Energy Barriers form, which holds the generated paths.
 ENERGY_BARRIERS_FORM_STATE_KEY = "energy_barriers_form"
 
+#: ``MuonSite.properties`` key naming the charge state whose relaxation of the
+#: site keys by the bare site id. Written when the site is first relaxed and
+#: never changed, so that key keeps naming one charge state.
+SITE_KEY_CHARGE_STATE_PROPERTY = "source_key_charge_state"
+
 
 @dataclass(frozen=True, slots=True)
 class QuantumSourceCandidate:
-    """A relaxed muon site eligible as a quantum-corrections or barrier endpoint."""
+    """A relaxed muon site in one charge state, eligible as a quantum-corrections or barrier endpoint.
+
+    A site relaxed in both charge states gives one candidate per charge state.
+    ``key`` is the site id for the relaxation the site's own link records and
+    ``"{site id}:{charge-state prefix}"`` for a relaxation in another charge
+    state (see :func:`quantum_source_key`). ``total_energy_eV`` is that
+    relaxation's absolute final total energy.
+    """
 
     key: str
     site: MuonSite
     run: CalculationRun
     job: Job
     structure: Structure
+    total_energy_eV: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,42 +260,137 @@ def charge_state_label_for_job(job: Job | None) -> str:
     return muon_charge_state_label(charge_state) if charge_state is not None else ""
 
 
-def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list[QuantumSourceCandidate]:
-    """Return every relaxed muon site that can seed a quantum-corrections row.
+def site_linked_charge_state(document: ProjectDocument, site: MuonSite) -> str | None:
+    """Return the charge state of the relaxation ``site``'s own link records, if any."""
 
-    A site qualifies when :func:`~mufinder.workflow.quantum.quantum_source_eligibility`
-    accepts it and its relaxation run, job and first derived structure all exist.
-    Candidates are ordered by charge state, then relative energy within their
-    comparable group (sources without an energy last), then site label.
+    run = document.runs.get(site.relaxation_run_id) if site.relaxation_run_id is not None else None
+    job = document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
+    return charge_state_for_job(job)
+
+
+def site_key_charge_state(document: ProjectDocument, site: MuonSite) -> str | None:
+    """Return the charge state whose relaxation of ``site`` keys by the bare site id.
+
+    The charge state recorded under :data:`SITE_KEY_CHARGE_STATE_PROPERTY`, else
+    (a site linked before the property existed) the charge state of the
+    relaxation the site's own link records.
+    """
+
+    raw = site.properties.get(SITE_KEY_CHARGE_STATE_PROPERTY)
+    stored = canonical_charge_state(raw) if isinstance(raw, str) else None
+    return stored or site_linked_charge_state(document, site)
+
+
+def quantum_source_key(document: ProjectDocument, site: MuonSite, job: Job | None) -> str:
+    """Return the source key of ``site`` relaxed by ``job``.
+
+    The relaxation in the charge state :func:`site_key_charge_state` names keys
+    by the site id, so sources stored before a site could be relaxed in both
+    charge states keep their keys, and resetting that relaxation never hands
+    the key to the other charge state; a relaxation in another charge state
+    keys by ``"{site id}:{charge-state prefix}"``.
+    """
+
+    charge_state = charge_state_for_job(job)
+    if charge_state is None or charge_state == site_key_charge_state(document, site):
+        return str(site.id)
+    return f"{site.id}:{muon_charge_state_prefix(charge_state)}"
+
+
+def site_charge_state_relaxation_jobs(document: ProjectDocument) -> dict[UUID, dict[str, Job]]:
+    """Return each site's completed muon-relaxation job per charge state.
+
+    Read from the muon-relaxation rows bound to a site: a start relaxed as both
+    a positive muon and muonium has one completed job in each charge state,
+    while the site's own link records only one of them. The first completed
+    job in document order wins when several rows relax a site in the same
+    charge state.
+    """
+
+    jobs: dict[UUID, dict[str, Job]] = {}
+    for definition in definitions_for_stage(
+        document,
+        WorkflowStage.MUON_RELAXATION,
+        calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE,
+    ):
+        for _label, _row_charge_state, site_id, job in muon_relaxation_row_jobs(document, definition):
+            charge_state = charge_state_for_job(job)
+            if site_id is None or job is None or charge_state is None or job.status != JobStatus.COMPLETED:
+                continue
+            jobs.setdefault(site_id, {}).setdefault(charge_state, job)
+    return jobs
+
+
+def _relaxed_structure_for_run(document: ProjectDocument, run: CalculationRun | None) -> Structure | None:
+    result = document.results.get(run.result_id) if run is not None and run.result_id is not None else None
+    if result is None or not result.derived_structure_ids:
+        return None
+    return document.structures.get(result.derived_structure_ids[0])
+
+
+def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list[QuantumSourceCandidate]:
+    """Return every relaxed muon site, per charge state, that can seed a quantum-corrections row.
+
+    A site qualifies through the relaxation its own link records, and through
+    the latest run of each completed muon-relaxation job of another charge
+    state bound to it by a muon-relaxation row (see
+    :func:`site_charge_state_relaxation_jobs`), when
+    :func:`~mufinder.workflow.quantum.quantum_source_eligibility` accepts it and
+    the relaxation run, job and first derived structure all exist. Candidates
+    are ordered by charge state, then relative energy within their comparable
+    group (sources without an energy last), then site label.
     """
 
     if document is None:
         return []
+    row_jobs = site_charge_state_relaxation_jobs(document)
     candidates: list[QuantumSourceCandidate] = []
     for site in document.sites.values():
         run = document.runs.get(site.relaxation_run_id) if site.relaxation_run_id is not None else None
         job = document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
-        result = document.results.get(run.result_id) if run is not None and run.result_id is not None else None
-        relaxed_structure = None
-        if result is not None and result.derived_structure_ids:
-            relaxed_structure = document.structures.get(result.derived_structure_ids[0])
+        relaxed_structure = _relaxed_structure_for_run(document, run)
         verdict = quantum_source_eligibility(
             site=site,
             run=run,
             job=job,
             relaxed_structure=relaxed_structure,
         )
-        if not verdict.eligible or run is None or job is None or relaxed_structure is None:
-            continue
-        candidates.append(
-            QuantumSourceCandidate(
-                key=str(site.id),
-                site=site,
-                run=run,
-                job=job,
-                structure=relaxed_structure,
+        linked_charge_state = charge_state_for_job(job)
+        if verdict.eligible and run is not None and job is not None and relaxed_structure is not None:
+            candidates.append(
+                QuantumSourceCandidate(
+                    key=quantum_source_key(document, site, job),
+                    site=site,
+                    run=run,
+                    job=job,
+                    structure=relaxed_structure,
+                    total_energy_eV=site.total_energy_eV,
+                )
             )
-        )
+        for charge_state, row_job in row_jobs.get(site.id, {}).items():
+            if charge_state == linked_charge_state or (job is not None and row_job.id == job.id):
+                continue
+            row_run = latest_run_for_job(document, row_job.id)
+            row_structure = _relaxed_structure_for_run(document, row_run)
+            verdict = quantum_source_eligibility(
+                site=site,
+                run=row_run,
+                job=row_job,
+                relaxed_structure=row_structure,
+                site_link=False,
+            )
+            if not verdict.eligible or row_run is None or row_structure is None:
+                continue
+            candidates.append(
+                QuantumSourceCandidate(
+                    key=quantum_source_key(document, site, row_job),
+                    site=site,
+                    run=row_run,
+                    job=row_job,
+                    structure=row_structure,
+                    total_energy_eV=total_energy_for_job(document, row_job.id),
+                )
+            )
     relative = quantum_source_relative_energies(candidates)
 
     def order(item: QuantumSourceCandidate) -> tuple[object, ...]:
@@ -293,8 +406,8 @@ def quantum_source_relative_energies(
 ) -> dict[str, float | None]:
     """Return each relaxed source's energy relative to its comparable minimum.
 
-    ``MuonSite.total_energy_eV`` holds the relaxation's absolute final total
-    energy, which is only comparable between relaxations of the same cell in the
+    ``QuantumSourceCandidate.total_energy_eV`` holds the relaxation's absolute
+    final total energy, which is only comparable between relaxations of the same cell in the
     same charge state. Sources are therefore grouped by charge state and cell
     composition (which separates different supercells), and each is reported
     relative to the lowest-energy source in its group.
@@ -304,7 +417,7 @@ def quantum_source_relative_energies(
     for candidate in candidates:
         composition = tuple(sorted(Counter(candidate.structure.species).items()))
         group = (charge_state_for_job(candidate.job), composition)
-        entries[candidate.key] = (group, candidate.site.total_energy_eV)
+        entries[candidate.key] = (group, candidate.total_energy_eV)
     return grouped_relative_energies(entries)
 
 
@@ -320,17 +433,34 @@ def quantum_source_candidate_by_key(
     return None
 
 
+def quantum_source_base_label(candidate: QuantumSourceCandidate, fallback: str = "site") -> str:
+    """Return a source's label before de-duplication.
+
+    The site label, else the relaxation job label, else ``fallback``. A
+    relaxation in a charge state other than the site's own link adds the
+    charge-state prefix (``"O1_muonium"``), so one site's two charge states
+    name their follow-on jobs apart.
+    """
+
+    base = str(candidate.site.label or candidate.job.label or fallback).strip() or fallback
+    if candidate.key != str(candidate.site.id):
+        charge_state = charge_state_for_job(candidate.job)
+        if charge_state is not None:
+            base = f"{base}_{muon_charge_state_prefix(charge_state)}"
+    return base
+
+
 def quantum_source_labels_by_key(candidates: Iterable[QuantumSourceCandidate]) -> dict[str, str]:
     """Return a unique display label per source key.
 
-    The base label is the site label, else the relaxation job label, else
-    ``"site"``; repeated base labels get ``_2``, ``_3``, ... in candidate order.
+    The base label is :func:`quantum_source_base_label`; repeated base labels
+    get ``_2``, ``_3``, ... in candidate order.
     """
 
     labels_by_key: dict[str, str] = {}
     counts: dict[str, int] = {}
     for candidate in candidates:
-        base = str(candidate.site.label or candidate.job.label or "site").strip() or "site"
+        base = quantum_source_base_label(candidate)
         count = counts.get(base, 0) + 1
         counts[base] = count
         labels_by_key[candidate.key] = base if count == 1 else f"{base}_{count}"
@@ -368,17 +498,22 @@ def quantum_seed_name_for_key(
 
 def serialize_quantum_sources(
     document: ProjectDocument | None,
-    site_ids: Iterable[UUID],
+    keys: Iterable[str | UUID],
 ) -> list[dict[str, object]]:
-    """Return the stored ``sources`` entries of the eligible sources among ``site_ids``."""
+    """Return the stored ``sources`` entries of the eligible sources ``keys`` name.
+
+    A key is a source key (a bare site id names the site's own relaxation);
+    repeated keys are stored once.
+    """
 
     serialized: list[dict[str, object]] = []
-    for raw_site_id in site_ids:
-        candidate = quantum_source_candidate_by_key(document, str(raw_site_id))
+    for key in dict.fromkeys(str(raw_key) for raw_key in keys):
+        candidate = quantum_source_candidate_by_key(document, key)
         if candidate is None:
             continue
         serialized.append(
             {
+                "key": candidate.key,
                 "site_id": str(candidate.site.id),
                 "source_relaxation_run_id": str(candidate.run.id),
                 "source_relaxation_job_id": str(candidate.job.id),
@@ -534,8 +669,8 @@ def selected_energy_barrier_endpoint_keys(
 def energy_barrier_source_label(candidate: EnergyBarrierSourceCandidate) -> str:
     """Return a generated path's label, ``"{initial}_to_{final}_path{n}"``."""
 
-    reactant = candidate.reactant.site.label or candidate.reactant.job.label or "reactant"
-    product = candidate.product.site.label or candidate.product.job.label or "product"
+    reactant = quantum_source_base_label(candidate.reactant, "reactant")
+    product = quantum_source_base_label(candidate.product, "product")
     return f"{reactant}_to_{product}_path{candidate.path_index}"
 
 
@@ -642,7 +777,7 @@ def enumerate_energy_barrier_source_candidates(
         return []
     return [
         EnergyBarrierSourceCandidate(
-            key=f"{reactant.site.id}:{product.site.id}:{path_index}",
+            key=f"{reactant.key}:{product.key}:{path_index}",
             reactant=reactant,
             product=product,
             path=path,
@@ -653,6 +788,24 @@ def enumerate_energy_barrier_source_candidates(
 
 
 _ENDPOINT_FIELDS = ("site", "run", "job", "structure")
+
+
+def _stored_endpoint(
+    document: ProjectDocument,
+    site: MuonSite,
+    run: CalculationRun,
+    job: Job,
+    structure: Structure,
+) -> QuantumSourceCandidate:
+    key = quantum_source_key(document, site, job)
+    return QuantumSourceCandidate(
+        key=key,
+        site=site,
+        run=run,
+        job=job,
+        structure=structure,
+        total_energy_eV=site.total_energy_eV if key == str(site.id) else total_energy_for_job(document, job.id),
+    )
 
 
 def eligible_energy_barrier_source_candidates(
@@ -698,12 +851,12 @@ def eligible_energy_barrier_source_candidates(
         except (TypeError, ValueError):
             continue
         endpoints = {
-            side: QuantumSourceCandidate(
-                key=str(records[(side, "site")].id),
-                site=records[(side, "site")],
-                run=records[(side, "run")],
-                job=records[(side, "job")],
-                structure=records[(side, "structure")],
+            side: _stored_endpoint(
+                document,
+                records[(side, "site")],
+                records[(side, "run")],
+                records[(side, "job")],
+                records[(side, "structure")],
             )
             for side in ("reactant", "product")
         }
@@ -968,6 +1121,7 @@ __all__ = [
     "PristineRelaxationRowLike",
     "QuantumSourceCandidate",
     "RelaxationRowStateLike",
+    "SITE_KEY_CHARGE_STATE_PROPERTY",
     "charge_state_for_job",
     "charge_state_label_for_job",
     "coerce_fractional_triplet",
@@ -988,15 +1142,20 @@ __all__ = [
     "float_from_source",
     "fractional_triplet_from_source",
     "quantum_seed_name_for_key",
+    "quantum_source_base_label",
     "quantum_source_candidate_by_key",
     "quantum_source_label",
     "quantum_source_labels_by_key",
+    "quantum_source_key",
     "quantum_source_relative_energies",
     "relaxation_sources_for_labels",
     "selected_energy_barrier_endpoint_keys",
     "serialize_energy_barrier_neb_sources",
     "serialize_energy_barrier_source_candidates",
     "serialize_quantum_sources",
+    "site_charge_state_relaxation_jobs",
+    "site_key_charge_state",
+    "site_linked_charge_state",
     "source_relaxation_parameter_values",
     "uuid_from_source",
 ]
