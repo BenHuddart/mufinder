@@ -11,6 +11,12 @@ The design behind the importer is described in :doc:`/legacy_import`.
 Using the importer
 ------------------
 
+.. figure:: ../_generated/screenshots/legacy_import_dialog.png
+   :alt: The Import Legacy Relaxations dialog listing three silicon muon runs, two
+         converged and ticked and one completed but unconverged.
+
+   A hand-authored legacy folder of three silicon muon relaxations.
+
 1. Open the project and make sure it has an active host structure that matches
    the legacy calculations. The import refuses to start without one.
 2. Choose ``File > Import Legacy Relaxations...`` and select the legacy working

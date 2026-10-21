@@ -130,6 +130,12 @@ the row over from a clean directory.
 The workflow page
 -----------------
 
+.. figure:: ../_generated/screenshots/quantum_corrections_page.png
+   :alt: The Quantum Corrections page with two pinned sites, one ready for its phonon
+         stage and one for its singlepoint.
+
+   Two pinned silicon sites, the first past its singlepoint; the outputs are illustrative.
+
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
 - ``Pinned muon sites`` (the default): one row per site pinned to the

@@ -25,6 +25,12 @@ mixing in host distortions from two separately relaxed defect cells.
 Workflow overview
 -----------------
 
+.. figure:: ../_generated/screenshots/energy_barriers_page.png
+   :alt: The Paths tab with a bond-centre and a tetrahedral endpoint selected and one
+         generated diffusion path, completed.
+
+   A bond-centre to tetrahedral path in silicon; the relaxed endpoints are illustrative.
+
 The project page is divided into two tabs so the workflow remains usable on
 smaller laptop screens while still separating path generation from NEB
 analysis:
@@ -220,6 +226,12 @@ parses the farmed file for the job's real outcome.
 
 Outputs and interpretation
 --------------------------
+
+.. figure:: ../_generated/screenshots/energy_barrier_inspection.png
+   :alt: The NEB Analysis tab with one completed band, its energy profile and the
+         transition-state image in the viewer.
+
+   An NEB band through that path; the energies are illustrative.
 
 Completed NEB jobs persist the generated CASTEP files and the parsed
 transition-state path data needed for later review. In the ``NEB Analysis``

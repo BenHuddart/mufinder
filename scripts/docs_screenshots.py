@@ -5,15 +5,18 @@ first and Sphinx copies the images into the built site, so no image is
 committed. Each screenshot is a :class:`Scene`: a project builder writes a
 small saved project, the script opens it in a real ``MainWindow`` on one
 navigator route, optionally drives the window, and grabs a :class:`Target`:
-the whole window, one page widget, a dock, or a modal dialog.
+the whole window, one page widget, a dock, a modal dialog, or a non-modal
+window.
 
 Most scenes open :func:`fixture_project`, a rutile TiO2 project with a saved
 2x2x2 supercell, configured but unsubmitted cutoff and k-point sweeps, and
 candidate muon sites. :func:`converged_project` adds adopted convergence
 defaults with illustrative pinned plots, and :func:`dashboard_project` adds
 three finished cutoff jobs for the Job Dashboard. The Magnetic Fields scenes
-open :func:`magnetic_project`, a one-ion cubic cell with a magnetic model. No
-scene runs CASTEP.
+open :func:`magnetic_project`, a one-ion cubic cell with a magnetic model. The
+results and analysis scenes open :func:`results_project`, a silicon project
+whose workflows have run through the application's own submission and
+completion path with synthetic CASTEP outputs. No scene runs CASTEP.
 
 The script needs no display. Qt draws on its ``offscreen`` platform and VTK
 renders through EGL, so it runs on a plain CI runner. pyvistaqt's
@@ -40,6 +43,7 @@ import shutil
 import sys
 import tempfile
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 import weakref
 
 # Qt, VTK and the settings directories are configured before anything imports
@@ -539,6 +543,524 @@ def magnetic_project(name: str, model: MagneticStructureModel, form: dict[str, o
     return build
 
 
+# --- The results project --------------------------------------------------------
+#
+# The results pages need finished calculations. No scene runs CASTEP: the
+# results project submits each workflow's jobs through the application's own
+# controllers and ``JobExecutionController``, with a local runner whose
+# ``submit`` writes the job's CASTEP outputs instead of starting a process, and
+# then finishes each job through ``MainWindow``'s completion handler. Result
+# dispatch, the stored results, derived structures and relaxed sites are
+# therefore exactly what the application builds after a real run.
+#
+# The outputs come from the repository's synthetic fixtures where one fits: the
+# UEP source job is tests/fixtures/uep/Si2.castep with its .den_fmt, and the
+# pristine relaxation is tests/fixtures/geometry/Si2_bfgs.castep. No fixture
+# holds a muon relaxation, a singlepoint of a muoniated cell or a silicon NEB
+# path, so those outputs are written here in CASTEP's file shapes with
+# illustrative numbers (see SI_MUON_SITES and NEB_BARRIER_EV); the captions of
+# the pages that show them say so.
+
+FIXTURES = PROJECT_ROOT / "tests" / "fixtures"
+SI_PRIMITIVE = 2.6954645  # Å, half the cubic edge of tests/fixtures/uep/Si2.cell
+SI_SUPERCELL = [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
+
+# Each candidate start relaxes to the nearest bond-centre (BC) or tetrahedral
+# (T) interstitial, given in host fractional coordinates; BC is the lower site
+# for a positive muon in silicon. The energies, and how far the muon pushes
+# its nearest silicon neighbours outwards, are illustrative.
+SI_MUON_SITES = (  # start, site kind, relaxed site
+    ((0.14, 0.11, 0.13), "BC", (0.125, 0.125, 0.125)),
+    ((0.61, 0.14, 0.12), "BC", (0.625, 0.125, 0.125)),
+    ((0.13, 0.62, 0.14), "BC", (0.125, 0.625, 0.125)),
+    ((0.48, 0.52, 0.50), "T", (0.5, 0.5, 0.5)),
+    ((0.74, 0.77, 0.75), "T", (0.75, 0.75, 0.75)),
+)
+SI_SITE_ENERGY_EV = {"BC": -2741.2364, "T": -2740.9271}
+SI_SITE_PUSH_ANG = {"BC": 0.42, "T": 0.03}
+SI_NEIGHBOUR_RADIUS_ANG = 2.6
+NEB_BARRIER_EV = 0.38  # illustrative height above the reactant
+NEB_IMAGES = 5
+UEP_ROW = "source_01"  # the UEP page's first row label
+BOHR_ANG = 0.529177210903
+HARTREE_EV = 27.211386245988
+
+
+def silicon_host() -> Structure:
+    """Diamond silicon's two-atom primitive cell, the cell of tests/fixtures/uep/Si2.cell."""
+
+    a = SI_PRIMITIVE
+    return Structure(
+        label="Si (diamond)",
+        lattice_vectors=[[a, a, 0.0], [a, 0.0, a], [0.0, a, a]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+
+
+def _cell_text(lattice: Any, species: Any, fractional: Any) -> str:
+    """A minimal ``-out.cell``: the lattice and fractional positions CASTEP writes."""
+
+    rows = "\n".join(f"   {' '.join(f'{value:17.10f}' for value in vector)}" for vector in lattice)
+    atoms = "\n".join(
+        f"   {symbol:<5} {' '.join(f'{float(value):17.10f}' for value in position)}"
+        for symbol, position in zip(species, fractional, strict=True)
+    )
+    return (
+        f"%BLOCK LATTICE_CART\n   ANG\n{rows}\n%ENDBLOCK LATTICE_CART\n\n"
+        f"%BLOCK POSITIONS_FRAC\n{atoms}\n%ENDBLOCK POSITIONS_FRAC\n"
+    )
+
+
+def _final_configuration(castep: Path) -> tuple[list[list[float]], list[str], list[list[float]]]:
+    """The lattice and atoms of a geometry optimisation's ``Final Configuration`` block."""
+
+    import re
+
+    lines = castep.read_text(encoding="utf-8").splitlines()
+    start = max(index for index, line in enumerate(lines) if "Final Configuration" in line)
+    lattice_row = next(index for index in range(start, len(lines)) if "Real Lattice" in lines[index]) + 1
+    lattice = [[float(value) for value in lines[lattice_row + row].split()[:3]] for row in range(3)]
+    atom = re.compile(r"^\s*x\s+([A-Za-z][\w:]*)\s+\d+\s+(\S+)\s+(\S+)\s+(\S+)\s+x\s*$")
+    species: list[str] = []
+    fractional: list[list[float]] = []
+    for line in lines[lattice_row:]:
+        match = atom.match(line)
+        if match:
+            species.append(match.group(1))
+            fractional.append([float(match.group(index)) for index in (2, 3, 4)])
+        elif species and "xxxx" in line:
+            break
+    return lattice, species, fractional
+
+
+def _castep_text(*, energy: float, species: list[str], geometry: bool, wall_time: float) -> str:
+    """A CASTEP output with the lines MuFinder reads: final energy, forces and timing."""
+
+    forces = "\n".join(
+        f" * {symbol:<6} {index:4d} {0.004 * np.sin(1.7 * index):12.5f} {0.003 * np.cos(2.3 * index):12.5f}"
+        f" {-0.002 * np.sin(0.9 * index):12.5f} *"
+        for index, symbol in enumerate(species, start=1)
+    )
+    converged = " BFGS: Geometry optimization completed successfully.\n\n" if geometry else ""
+    return (
+        " Run started: Mon, 12 Oct 2026 09:14:02 +0100\n\n"
+        f" Final energy, E             =  {energy:.10f}     eV\n\n"
+        " ************************** Forces **************************\n"
+        " *               Cartesian components (eV/A)                *\n"
+        f"{forces}\n"
+        " ************************************************************\n\n"
+        f"{converged}"
+        f" Total time          =    {wall_time:.2f} s\n"
+    )
+
+
+def _job_cell(job_dir: Path, seed: str):
+    from mufinder.castep_io.cell_parser import parse_cell_file
+
+    return parse_cell_file(job_dir / f"{seed}.cell")
+
+
+def _relaxed_muon_cell(cell: Any, kind: str, start: Any, site: Any) -> str:
+    """The input supercell with its muon moved to ``site`` and its neighbours pushed out."""
+
+    lattice = np.asarray(cell.lattice_vectors, dtype=float)
+    fractional = np.asarray(cell.fractional_positions, dtype=float)
+    muon = next(index for index, symbol in enumerate(cell.species) if symbol == "H:mu")
+    repeats = np.rint(np.linalg.norm(lattice, axis=1) / np.linalg.norm(silicon_host().lattice_vectors, axis=1))
+    shift = (np.asarray(site) - np.asarray(start) + 0.5) % 1.0 - 0.5
+    fractional[muon] = fractional[muon] + shift / repeats
+    for index in range(len(fractional)):
+        if index == muon:
+            continue
+        separation = (fractional[index] - fractional[muon] + 0.5) % 1.0 - 0.5
+        vector = separation @ lattice
+        distance = float(np.linalg.norm(vector))
+        if distance < SI_NEIGHBOUR_RADIUS_ANG:
+            moved = vector * (1.0 + SI_SITE_PUSH_ANG[kind] / distance)
+            fractional[index] = fractional[muon] + np.linalg.solve(lattice.T, moved)
+    return _cell_text(lattice.tolist(), cell.species, (fractional % 1.0).tolist())
+
+
+@contextmanager
+def refuse_message_boxes(app: QApplication) -> Iterator[None]:
+    """Fail the build, rather than hang it, if the application shows a message box."""
+
+    from PySide6.QtWidgets import QMessageBox
+
+    shown: list[str] = []
+
+    def check() -> None:
+        dialog = app.activeModalWidget()
+        if isinstance(dialog, QMessageBox):
+            shown.append(f"{dialog.windowTitle()}: {dialog.text()}")
+            dialog.reject()
+
+    timer = QTimer()
+    timer.timeout.connect(check)
+    timer.start(MODAL_POLL_MS)
+    try:
+        yield
+    finally:
+        timer.stop()
+    if shown:
+        raise RuntimeError("The results project showed a message box: " + "; ".join(shown))
+
+
+Outputs = Callable[[Any, Path, str], bool]
+
+
+@contextmanager
+def synthetic_runs(window: MainWindow, outputs: Outputs) -> Iterator[None]:
+    """Run the jobs a workflow submits locally without CASTEP.
+
+    Submission goes through ``JobExecutionController.submit_local_jobs`` with a
+    runner whose ``submit`` calls ``outputs(job, job_dir, seed)`` to write the
+    job's CASTEP outputs; a job for which it returns ``True`` is then started
+    and finished through ``MainWindow``'s local-runner handlers, which parse
+    the ``.castep`` and dispatch the result to the owning workflow. A job for
+    which it returns ``False`` is left running.
+    """
+
+    from mufinder.castep_io.output_parser import parse_castep_output
+
+    finished: list[tuple[Any, Path]] = []
+    errors: list[BaseException] = []
+    document = window._document
+
+    def submit(*, job_id: Any, job_dir: Path, seed_name: str, **_options: object) -> None:
+        try:
+            done = outputs(document.jobs[job_id], Path(job_dir), seed_name)
+        except Exception as exc:
+            # The job execution service records a runner error as a failed
+            # submission; a docs build must stop instead.
+            errors.append(exc)
+            raise
+        if done:
+            finished.append((job_id, Path(job_dir) / f"{seed_name}.castep"))
+
+    def submit_jobs_locally(jobs: list[Any], **_options: object) -> None:
+        window._job_execution.submit_local_jobs(
+            jobs,
+            num_cores=8,
+            max_concurrent=1,
+            castep_executable="castep.mpi",
+            mpirun_path="mpirun",
+            retrieval_for_job=window._retrieval_flags_for_job,
+        )
+        if errors:
+            raise errors[0]
+        while finished:
+            job_id, castep = finished.pop(0)
+            window._on_local_job_started(job_id)
+            window._on_local_job_finished(job_id, parse_castep_output(castep))
+
+    window._local_runner.submit = submit
+    window._submit_jobs_locally = submit_jobs_locally
+    try:
+        yield
+    finally:
+        del window._local_runner.submit
+        del window._submit_jobs_locally
+        window._flush_dashboard()
+
+
+def _pristine_outputs(*, running: bool) -> Outputs:
+    """Si2_bfgs.castep and the relaxed cell of its final configuration; cut short while running."""
+
+    def write(_job: Any, job_dir: Path, seed: str) -> bool:
+        source = FIXTURES / "geometry" / "Si2_bfgs.castep"
+        text = source.read_text(encoding="utf-8")
+        if running:
+            # The output as CASTEP has written it part-way through the optimisation.
+            text = text[: text.index(" BFGS: finished iteration     5")]
+        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
+        if not running:
+            (job_dir / f"{seed}-out.cell").write_text(_cell_text(*_final_configuration(source)), encoding="utf-8")
+        return not running
+
+    return write
+
+
+def _muon_outputs(window: MainWindow) -> Outputs:
+    """A relaxed cell and an illustrative CASTEP output for each SI_MUON_SITES start."""
+
+    def write(job: Any, job_dir: Path, seed: str) -> bool:
+        definition, row = window._muon_relaxation_definition_and_row_for_job(job)
+        index, (start, kind, site) = next(
+            (index, entry)
+            for index, entry in enumerate(SI_MUON_SITES)
+            if np.allclose(entry[0], row.initial_fractional_position)
+        )
+        cell = _job_cell(job_dir, seed)
+        (job_dir / f"{seed}-out.cell").write_text(_relaxed_muon_cell(cell, kind, start, site), encoding="utf-8")
+        energy = SI_SITE_ENERGY_EV[kind] + 0.0007 * index
+        text = _castep_text(energy=energy, species=list(cell.species), geometry=True, wall_time=1843.2 + 211.0 * index)
+        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
+        return True
+
+    return write
+
+
+def _uep_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
+    """The synthetic UEP source fixture: Si2.castep, Si2.den_fmt and Si2.cell."""
+
+    for suffix in (".castep", ".den_fmt", ".cell"):
+        shutil.copyfile(FIXTURES / "uep" / f"Si2{suffix}", job_dir / f"{seed}{suffix}")
+    return True
+
+
+def _singlepoint_outputs(window: MainWindow) -> Outputs:
+    """A singlepoint of the relaxed cell at the relaxation's energy, to the tighter tolerance."""
+
+    def write(job: Any, job_dir: Path, seed: str) -> bool:
+        cell = _job_cell(job_dir, seed)
+        controller = window._quantum_corrections_controller
+        definition = controller.active_definition()
+        mapping = definition.parameters.get("singlepoint_job_ids_by_label", {})
+        key = next(key for key, job_id in mapping.items() if job_id == str(job.id))
+        site = window._document.sites[UUID(key)]
+        text = _castep_text(energy=site.total_energy_eV - 0.0004, species=list(cell.species), geometry=False, wall_time=402.6)
+        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
+        return True
+
+    return write
+
+
+def _ts_text(lattice: np.ndarray, species: list[str], images: list[tuple[str, float, float, np.ndarray]]) -> str:
+    """A CASTEP ``.ts`` file in atomic units: one REA, the TST images and one PRO block."""
+
+    def number(value: float) -> str:
+        mantissa, exponent = f"{value:.8E}".split("E")
+        return f"{mantissa}E{int(exponent):+04d}".rjust(18)
+
+    def row(values: Any) -> str:
+        return "".join(f"   {number(float(value))}" for value in values)
+
+    lines = [" TSTYPE TSConfirmation"]
+    for tag, coordinate, energy_ev, cartesian in images:
+        lines.append(f" {tag:<3} {1:4d}   {number(coordinate)}")
+        energy = energy_ev / HARTREE_EV
+        lines.append(" " * 9 + row((energy, energy)) + " " * 21 + "  <-- E")
+        lines.extend(" " * 9 + row(vector / BOHR_ANG) + "  <-- h" for vector in lattice)
+        lines.extend(
+            f" {symbol:<8} {1:4d}" + row(position / BOHR_ANG) + "  <-- R"
+            for symbol, position in zip(species, cartesian, strict=True)
+        )
+        lines.extend(f" {symbol:<8} {1:4d}" + row((0.0, 0.0, 0.0)) + "  <-- F" for symbol in species)
+        lines.append("  ")
+    return "\n".join(lines) + "\n"
+
+
+def _neb_outputs(window: MainWindow) -> Outputs:
+    """An illustrative NEB band through the job's reactant, intermediate and product cells.
+
+    The images follow the input band, reactant to intermediate to product; the
+    energy profile rises NEB_BARRIER_EV above the straight line between the
+    two relaxed endpoint energies.
+    """
+
+    def write(job: Any, job_dir: Path, seed: str) -> bool:
+        cell = _job_cell(job_dir, seed)
+        lattice = np.asarray(cell.lattice_vectors, dtype=float)
+        reactant = np.asarray(cell.fractional_positions, dtype=float)
+
+        def block(name: str) -> np.ndarray:
+            rows = next(item for item in cell.cell_file.blocks if item.name.lower() == name).rows
+            positions = np.asarray([[float(value) for value in row[1:4]] for row in rows], dtype=float)
+            return reactant + (positions - reactant + 0.5) % 1.0 - 0.5
+
+        intermediate = block("positions_frac_intermediate")
+        product = intermediate + (block("positions_frac_product") - intermediate + 0.5) % 1.0 - 0.5
+        reactant_energy, product_energy = source_energies(window, job)
+        images = []
+        for image in range(NEB_IMAGES + 2):
+            coordinate = image / (NEB_IMAGES + 1)
+            tag = "REA" if image == 0 else "PRO" if image == NEB_IMAGES + 1 else "TST"
+            energy = (
+                reactant_energy
+                + (product_energy - reactant_energy) * coordinate
+                + NEB_BARRIER_EV * np.sin(np.pi * coordinate) ** 2
+            )
+            if coordinate <= 0.5:
+                fractional = reactant + (intermediate - reactant) * 2.0 * coordinate
+            else:
+                fractional = intermediate + (product - intermediate) * (2.0 * coordinate - 1.0)
+            images.append((tag, coordinate, energy, fractional @ lattice))
+        (job_dir / f"{seed}.ts").write_text(_ts_text(lattice, list(cell.species), images), encoding="utf-8")
+        text = _castep_text(energy=images[-1][2], species=list(cell.species), geometry=False, wall_time=15214.8)
+        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
+        return True
+
+    return write
+
+
+def source_energies(window: MainWindow, job: Any) -> tuple[float, float]:
+    """The relaxed energies of the NEB job's reactant and product sites."""
+
+    controller = window._energy_barriers_controller
+    _definition, key = controller.definition_and_key_for_job(job)
+    reactant, product = str(key).split(":")[:2]
+    sites = window._document.sites
+    return sites[UUID(reactant)].total_energy_eV, sites[UUID(product)].total_energy_eV
+
+
+def _silicon_document(directory: Path) -> tuple[ProjectService, ProjectDocument]:
+    """The silicon host with ``PBE`` and a saved 2x2x2 supercell for the muon relaxations."""
+
+    host = silicon_host()
+    service, document = _new_project(directory, "Silicon", host)
+    service.set_recommended_xc_functional(document, XC_FUNCTIONAL)
+    service.create_workflow_supercell_asset(
+        document,
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        host_structure_id=host.id,
+        matrix=SI_SUPERCELL,
+        label="Si 2x2x2",
+    )
+    document.project.supercell_matrix = [list(row) for row in SI_SUPERCELL]
+    return service, document
+
+
+def silicon_project(directory: Path) -> Path:
+    """The silicon host alone, for the legacy importer."""
+
+    service, document = _silicon_document(directory)
+    service.save_project(document)
+    return document.project_root
+
+
+def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
+    """Build and save the results project; see the section comment above."""
+
+    app = QApplication.instance()
+    service, document = _silicon_document(directory)
+    for start, _kind, _site in SI_MUON_SITES:
+        service.generate_candidate_sites(
+            document,
+            method="manual",
+            parameters={"coord_system": "fractional", "x": start[0], "y": start[1], "z": start[2]},
+        )
+    service.save_project(document)
+
+    with opened(app, document.project_root) as window, refuse_message_boxes(app):
+        document = window._document
+        # Pristine relaxation: one variable-cell row, run as Run All Locally runs it.
+        pristine = window._pristine_relaxation_view
+        window._set_active_route("pristine_relaxation")
+        pristine._add_row()
+        with synthetic_runs(window, _pristine_outputs(running=running_pristine)):
+            pristine._run_local_selected_rows()
+        if running_pristine:
+            window._save_project()
+            return document.project_root
+        # A comparison table of the relaxed cell against the host.
+        when_modal("ComparisonJobDialog", include_every_job)
+        pristine.generate_comparison_requested.emit()
+
+        # UEP: one source row on the host, then a batch search and its clustering.
+        window._set_active_route("uep")
+        window._uep_view._add_row()
+        with synthetic_runs(window, _uep_outputs):
+            window._uep_view._run_local_selected_rows()
+        run_uep_analysis(window)
+
+        # Muon relaxations of every candidate site in the 2x2x2 supercell.
+        site_ids = [str(site.id) for site in document.sites.values()]
+        when_modal("MuonChargeStateDialog", lambda dialog: dialog.accept())
+        window._on_create_muon_relaxation_jobs_requested(site_ids)
+        relaxations = window._muon_relaxation_view
+        for entry in list(relaxations._row_entries()):
+            relaxations.set_row_supercell(entry.row_id, [list(row) for row in SI_SUPERCELL])
+        with synthetic_runs(window, _muon_outputs(window)):
+            relaxations._run_local_selected_rows()
+
+        # An analysis workspace of every relaxation, clustered and pinned.
+        window._set_active_route("muon_relaxations")
+        relaxations._active_table().selectAll()
+        when_modal("QInputDialog", lambda dialog: (dialog.setTextValue("Positive muon sites"), dialog.accept()))
+        relaxations._create_analysis_button.click()
+        workspace_id = str(window._relaxation_analysis_workspaces()[0]["id"])
+        when_modal("RelaxationClusteringDialog", lambda dialog: dialog._apply_button.click())
+        window._relaxation_analysis_view._open_clustering(workspace_id)
+        window._on_muon_sites_pin_requested(workspace_id)
+
+        # Quantum corrections: stage 1 of the lowest-energy site.
+        window._set_active_route("quantum_corrections")
+        quantum = window._quantum_corrections_controller
+        candidates = sorted(quantum.candidates(), key=lambda candidate: candidate.site.total_energy_eV)
+        with synthetic_runs(window, _singlepoint_outputs(window)):
+            quantum.submit([candidates[0].key], target="local")
+
+        # Energy barriers: the BC-to-T paths, and an NEB band along the first.
+        window._set_active_route("energy_barriers")
+        barriers = window._energy_barriers_controller
+        energies = {row.key: document.sites[UUID(row.key)].total_energy_eV for row in barriers.endpoint_rows()}
+        reactant, product = min(energies, key=energies.get), max(energies, key=energies.get)
+        barriers.select_endpoints(reactant, product)
+        barriers.generate_paths(reactant, product)
+        with synthetic_runs(window, _neb_outputs(window)):
+            barriers.submit([barriers.candidates()[0].key], target="local")
+        window._save_project()
+        return document.project_root
+
+
+def include_every_job(dialog: QDialog) -> None:
+    """Tick every completed relaxation in ``Generate Comparison Table`` and click OK."""
+
+    from PySide6.QtCore import Qt
+
+    for row in range(dialog._table.rowCount()):
+        dialog._table.item(row, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Checked)
+    dialog._accept_if_valid()
+
+
+def run_uep_analysis(window: MainWindow) -> None:
+    """Open the UEP analysis, run a batch search, its ZPE and clustering, as the buttons do.
+
+    The batch search and ZPE run their worker threads' ``run`` in this thread,
+    and the random starts are seeded so every build finds the same minima.
+    """
+
+    from functools import partial
+
+    from mufinder.app import uep_wizard
+    from mufinder.science.site_generation import generate_random_sites
+
+    job = window._uep_controller.jobs_for_keys([UEP_ROW])[0]
+    window._on_open_uep_analysis_requested(UEP_ROW)
+    dialog = window._uep_analysis_dialogs[job.id]
+    threads = (uep_wizard._BatchSearchThread, uep_wizard._BatchZpeThread)
+    starts = [thread.start for thread in threads]
+    for thread in threads:
+        thread.start = lambda worker: (worker.run(), worker.finished.emit())
+    uep_wizard.generate_random_sites = partial(generate_random_sites, seed=7)
+    try:
+        dialog._run_batch_search()
+        dialog._run_batch_zpe()
+        dialog._open_clustering_dialog()
+    finally:
+        for thread, start in zip(threads, starts, strict=True):
+            thread.start = start
+        uep_wizard.generate_random_sites = generate_random_sites
+    settle(QApplication.instance())
+    for child in (dialog._clustering_dialog, dialog):
+        if child is not None:
+            child.close()
+
+
+def results_project(directory: Path) -> Path:
+    """The silicon project with every results workflow finished; see the section comment."""
+
+    return _build_results(directory)
+
+
+def running_relaxation_project(directory: Path) -> Path:
+    """The silicon project with its pristine relaxation part-way through."""
+
+    return _build_results(directory, running_pristine=True)
+
+
 # --- Scenes -------------------------------------------------------------------
 
 WidgetStep = Callable[[QWidget], None]
@@ -555,9 +1077,14 @@ class Window:
 
 @dataclass(frozen=True)
 class Page:
-    """Grab one page widget, a ``MainWindow`` attribute, laid out at ``size``."""
+    """Grab one page widget, laid out at ``size``.
 
-    attribute: str
+    ``attribute`` names the ``MainWindow`` attribute holding the page, or is a
+    callable returning it, for the pages kept per saved item (a comparison
+    table, a saved Magnetic Fields workspace).
+    """
+
+    attribute: str | Callable[[MainWindow], QWidget]
     size: tuple[int, int] = (1100, 820)
     prepare: WidgetStep | None = None
 
@@ -588,7 +1115,21 @@ class Dialog:
     prepare: WidgetStep | None = None
 
 
-Target = Window | Page | Dock | Dialog
+@dataclass(frozen=True)
+class Floating:
+    """Grab the non-modal window that ``open(window)`` shows and returns.
+
+    Some windows (the geometry progress, UEP analysis and clustering windows)
+    stay open beside the main window instead of blocking it. ``size`` gives
+    the window its desktop size before the grab; it is closed afterwards.
+    """
+
+    open: Callable[[MainWindow], QWidget]
+    size: tuple[int, int] | None = None
+    prepare: WidgetStep | None = None
+
+
+Target = Window | Page | Dock | Dialog | Floating
 
 
 @dataclass(frozen=True)
@@ -728,6 +1269,18 @@ def render(app: QApplication, scene: Scene, path: Path) -> None:
         if isinstance(target, Dialog):
             capture_modal(app, window, target, path)
             return
+        if isinstance(target, Floating):
+            floating = target.open(window)
+            try:
+                if target.size is not None:
+                    floating.resize(*target.size)
+                settle(app)
+                if target.prepare is not None:
+                    target.prepare(floating)
+                save(floating, path)
+            finally:
+                floating.close()
+            return
         if isinstance(target, Window):
             window.resize(*target.size)
             widget: QWidget = window
@@ -738,7 +1291,8 @@ def render(app: QApplication, scene: Scene, path: Path) -> None:
                 raise RuntimeError(f"No dock titled {target.title!r}")
             widget = docks[0]
         else:
-            widget = getattr(window, target.attribute)
+            attribute = target.attribute
+            widget = getattr(window, attribute) if isinstance(attribute, str) else attribute(window)
             _fit_page(app, window, widget, target.size)
         settle(app)
         if target.prepare is not None:
@@ -860,6 +1414,155 @@ def select_all_sites(page: QWidget) -> None:
     frame_viewers(page)
 
 
+def current_page(window: MainWindow) -> QWidget:
+    """The page the navigator shows, for pages kept per saved item."""
+
+    return window._main_stack.currentWidget()
+
+
+def open_analysis_workspace(window: MainWindow) -> None:
+    """Open the results project's analysis workspace in the navigator."""
+
+    workspace_id = str(window._relaxation_analysis_workspaces()[0]["id"])
+    window._set_active_route(window._relaxation_analysis_workspace_route(workspace_id))
+
+
+def open_comparison_table(window: MainWindow) -> None:
+    """Open the results project's comparison table in the navigator."""
+
+    table_id = next(iter(window._document.comparison_tables))
+    window._set_active_route(window._comparison_route(table_id))
+
+
+def show_running_progress(window: MainWindow) -> QWidget:
+    """Inspect the running pristine relaxation, as its dashboard Inspect button does.
+
+    Reopening a project ends its local jobs, since no local runner survives
+    the application, so the scene puts the job back in the state the local
+    runner keeps it in while CASTEP writes its ``.castep``.
+    """
+
+    from mufinder.domain.enums import JobStatus
+
+    job = next(job for job in window._document.jobs.values() if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION)
+    job.status = JobStatus.RUNNING
+    castep = window._job_output_directory(job) / f"{window._job_seed_name(job)}.castep"
+    monitor = window._job_progress
+    monitor._local_output_paths = lambda job_id: (castep,) if job_id == job.id else ()
+    monitor._run_in_background = lambda task: task()
+    window._refresh_jobs_table()
+    return window._show_geometry_progress(job)
+
+
+def open_uep_clustering(window: MainWindow) -> QWidget:
+    """Open the UEP analysis of the source job, then its saved batch search's clustering."""
+
+    window._on_open_uep_analysis_requested(UEP_ROW)
+    analysis = next(iter(window._uep_analysis_dialogs.values()))
+    analysis._open_clustering_dialog()
+    analysis.hide()
+    return analysis._clustering_dialog
+
+
+def show_neb_analysis(page: QWidget) -> None:
+    """Show the NEB Analysis tab with the transition-state image in the inspector."""
+
+    page._tabs.setCurrentIndex(1)
+    settle(QApplication.instance())
+    page._apply_preview_index((NEB_IMAGES + 1) // 2)
+    settle(QApplication.instance())
+    frame_viewers(page)
+
+
+def save_magnetic_workspace(window: MainWindow) -> None:
+    """Calculate the field, then click ``Save Workspace`` and name it."""
+
+    page = window._magnetic_field_view
+    calculate(page)
+    when_modal("QInputDialog", lambda dialog: (dialog.setTextValue("Ferromagnet"), dialog.accept()))
+    page._pin_button.click()
+
+
+def _legacy_castep_text(*, energy: float, converged: bool) -> str:
+    """A legacy run's CASTEP output: the header lines the importer reads and the result."""
+
+    tail = " Geometry optimization completed successfully.\n\n" if converged else ""
+    return (
+        " Run started: Tue, 14 Mar 2023 10:02:41 +0000\n\n"
+        " type of calculation                            : geometry optimization\n"
+        " using functional                               : Perdew Burke Ernzerhof\n"
+        " plane wave basis set cut-off                   :   400.0000   eV\n"
+        " net charge of system                           :  1.000\n"
+        " treating system as non-spin-polarized\n\n"
+        "                       MP grid size for SCF calculation is  2  2  2\n\n"
+        f" Final energy, E             =  {energy:.4f}     eV\n\n"
+        f"{tail} Total time          =    2214.37 s\n"
+    )
+
+
+def _legacy_folder(root: Path) -> Path:
+    """A legacy working folder of three silicon muon relaxations, in the documented layout.
+
+    Hand-authored, with illustrative energies: see docs/legacy_import.rst,
+    "Research data boundary". Site 3 stopped before its geometry converged.
+    """
+
+    from mufinder.science.supercell import build_supercell_structure
+
+    supercell, _spins = build_supercell_structure(silicon_host(), SI_SUPERCELL)
+    for index, ((start, kind, site), converged) in enumerate(zip(SI_MUON_SITES[2:], (True, True, False)), start=1):
+        species = [*supercell.species, "H:mu"]
+        initial = [*supercell.fractional_positions, [value / 2.0 for value in start]]
+        relaxed = [*supercell.fractional_positions, [value / 2.0 for value in site]]
+        stem = f"Si_{index}"
+        for folder in ("input", "results", f"run/site{index}"):
+            (root / folder).mkdir(parents=True, exist_ok=True)
+        (root / "input" / f"{stem}.cell").write_text(
+            _cell_text(supercell.lattice_vectors, species, initial) + "\nFIX_ALL_CELL : TRUE\n", encoding="utf-8"
+        )
+        (root / "results" / f"{stem}-out.cell").write_text(
+            _cell_text(supercell.lattice_vectors, species, relaxed), encoding="utf-8"
+        )
+        energy = SI_SITE_ENERGY_EV[kind] + 0.0011 * index
+        (root / "results" / f"{stem}.castep").write_text(
+            _legacy_castep_text(energy=energy, converged=converged), encoding="utf-8"
+        )
+        (root / f"run/site{index}" / f"{stem}.param").write_text(
+            "task : geometryoptimisation\ncharge : +1\nxc_functional : PBE\ncut_off_energy : 400 eV\n"
+            "write_cell_structure : true\ngeom_max_iter : 300\n",
+            encoding="utf-8",
+        )
+    a = 2.0 * SI_PRIMITIVE
+    (root / "Si.cif").write_text(
+        f"data_Si\n_symmetry_space_group_name_H-M 'F d -3 m'\n_cell_length_a {a:.6f}\n_cell_length_b {a:.6f}\n"
+        f"_cell_length_c {a:.6f}\n_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 90\n"
+        "loop_\n_atom_site_label\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\nSi 0 0 0\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def open_legacy_import(window: MainWindow) -> None:
+    """Scan a synthetic legacy folder and open ``Import Legacy Relaxations`` on it.
+
+    ``File > Import Legacy Relaxations...`` scans on a worker thread after a
+    folder dialog; the scene runs the same scan in this thread. Its notice that
+    no keyword catalog is installed, true only of the scratch settings, is
+    dropped as the other scenes hide it.
+    """
+
+    from dataclasses import replace
+
+    from mufinder.app.legacy_import_dialog import LegacyImportDialog
+    from mufinder.services.legacy_import import scan_legacy_folder
+
+    host = window._project_service.active_host_structure(window._document)
+    root = _legacy_folder(Path(tempfile.mkdtemp(prefix="legacy-", dir=_SCRATCH)) / "si-muon-sites")
+    scan = scan_legacy_folder(root, host_lattice=[list(row) for row in host.lattice_vectors], host_species=list(host.species))
+    scan = replace(scan, warnings=tuple(warning for warning in scan.warnings if "keyword catalog" not in warning))
+    LegacyImportDialog(scan, parent=window).exec()
+
+
 # --- Screenshots --------------------------------------------------------------
 
 SCREENSHOTS: dict[str, Scene] = {
@@ -919,6 +1622,38 @@ SCREENSHOTS: dict[str, Scene] = {
         "magnetic_fields",
         Dialog(open_distribution_plot),
     ),
+    "magnetic_field_workspace": Scene(
+        magnetic_project(
+            "Simple cubic ferromagnet",
+            ferromagnet(),
+            {"demag_shape": "sphere", "selected_muon_site": custom_site((0.5, 0.5, 0.0))},
+        ),
+        "magnetic_fields",
+        Page(current_page, (1100, 860)),
+        setup=save_magnetic_workspace,
+    ),
+    "pristine_relaxation_page": Scene(results_project, "pristine_relaxation", Page("_pristine_relaxation_view", (1100, 540))),
+    "geometry_progress_dialog": Scene(
+        running_relaxation_project, "pristine_relaxation", Floating(show_running_progress, size=(820, 640))
+    ),
+    "comparison_table": Scene(results_project, None, Page(current_page, (780, 820)), setup=open_comparison_table),
+    "uep_page": Scene(results_project, "uep", Page("_uep_view", (1100, 540))),
+    "uep_clustering_dialog": Scene(results_project, "uep", Floating(open_uep_clustering, size=(1180, 760), prepare=frame_viewers)),
+    "muon_relaxations_page": Scene(results_project, "muon_relaxations", Page("_muon_relaxation_view", (1100, 540))),
+    "relaxation_analysis_workspace": Scene(
+        results_project, None, Page("_relaxation_analysis_view", (1100, 680), prepare=frame_viewers), setup=open_analysis_workspace
+    ),
+    "muon_sites_summary": Scene(results_project, "muon_sites", Page("_muon_sites_summary_view", (1100, 800), prepare=frame_viewers)),
+    "quantum_corrections_page": Scene(
+        results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 620))
+    ),
+    "energy_barriers_page": Scene(
+        results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))
+    ),
+    "energy_barrier_inspection": Scene(
+        results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 820), prepare=show_neb_analysis)
+    ),
+    "legacy_import_dialog": Scene(silicon_project, None, Dialog(open_legacy_import, kind="LegacyImportDialog", prepare=focus_default_button)),
 }
 
 

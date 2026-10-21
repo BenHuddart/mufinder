@@ -90,6 +90,12 @@ takes effect on resubmission.
 Geometry-optimisation progress
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. figure:: ../_generated/screenshots/geometry_progress_dialog.png
+   :alt: The geometry progress window of a running BFGS relaxation at iteration 4,
+         with its four criteria tabulated and plotted against their tolerances.
+
+   A running pristine relaxation of silicon, read from a synthetic CASTEP output.
+
 A running pristine or muon relaxation shows how far its geometry optimisation
 has got in the narrow ``Progress`` column, as ``iteration · criteria met``: for
 example ``14 · 3/4`` means CASTEP has finished iteration 14 and three of the

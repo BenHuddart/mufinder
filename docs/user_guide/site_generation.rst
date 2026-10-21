@@ -213,6 +213,12 @@ cell when the CASTEP job was run in a supercell.
 Structural Relaxations Tab
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. figure:: ../_generated/screenshots/muon_relaxations_page.png
+   :alt: The Structural Relaxations tab with five completed positive-muon relaxations
+         in a 2x2x2 silicon supercell, their initial and final positions and energies.
+
+   Positive-muon relaxations in silicon; the relaxation outputs are illustrative.
+
 The ``Muon Sites -> Relaxations`` tab is the staging point for full CASTEP
 geometry optimization runs that include one muon or muonium start per row.
 Rows are organized into ``Positive muon`` and ``Muonium`` tabs.  The charge

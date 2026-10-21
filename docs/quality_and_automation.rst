@@ -174,11 +174,14 @@ Each entry of the script's ``SCREENSHOTS`` table maps a file name to a
   ``Calculate Dipolar Field``;
 - the grab target: ``Window`` (the whole main window, optionally with the Job
   Dashboard shown), ``Page`` (one page widget, named by its ``MainWindow``
-  attribute and laid out at a given logical size), ``Dock`` (a dock widget, by
-  title) or ``Dialog`` (the modal dialog an opener callable shows, matched by
-  class name, so a dialog opened from another dialog can be grabbed). Each
-  target takes an optional ``prepare`` step that receives the grabbed widget
-  before the grab.
+  attribute, or returned by a callable for a page kept per saved item, and
+  laid out at a given logical size), ``Dock`` (a dock widget, by title),
+  ``Dialog`` (the modal dialog an opener callable shows, matched by class
+  name, so a dialog opened from another dialog can be grabbed) or
+  ``Floating`` (a non-modal window, such as the geometry progress or UEP
+  clustering window, that an opener callable shows and returns). Each target
+  takes an optional ``prepare`` step that receives the grabbed widget before
+  the grab.
 
 The script opens the project in a real ``MainWindow`` with the status bar
 hidden, since its keyword-catalog and cluster-connection warnings describe the
@@ -206,6 +209,52 @@ with illustrative sweep data pinned on the Convergence Testing overview, and
 rows. The Magnetic Fields scenes use ``magnetic_project``, the one-ion cubic
 cell of the worked examples. No scene runs CASTEP; the Magnetic Fields scenes
 run the real ``muesr`` calculation.
+
+The results project
+~~~~~~~~~~~~~~~~~~~
+
+The results and analysis pages open ``results_project``, built on diamond
+silicon's two-atom primitive cell, the cell of the UEP fixture. The builder
+opens the project in a ``MainWindow`` and drives each workflow as its buttons
+do: it adds and runs a pristine relaxation and a UEP source row, stages five
+manual candidate sites as positive-muon relaxations in a saved 2x2x2
+supercell, creates, clusters and pins an analysis workspace, runs the
+singlepoint stage of the lowest Quantum Corrections site, and generates the
+bond-centre to tetrahedral paths on the Energy Barriers page and runs an NEB
+band along the first. Jobs are submitted through
+``JobExecutionController.submit_local_jobs`` with a local runner whose
+``submit`` writes the job's CASTEP outputs into its directory instead of
+starting CASTEP; each job is then finished through the window's local-runner
+completion handler, so result dispatch, stored results, derived structures and
+relaxed sites are those a real run produces. A message box during the build
+fails it rather than hanging it.
+
+The outputs come from the synthetic test fixtures where one fits:
+``tests/fixtures/uep/Si2.castep``, ``Si2.den_fmt`` and ``Si2.cell`` for the
+UEP source job, and ``tests/fixtures/geometry/Si2_bfgs.castep`` for the
+pristine relaxation, whose relaxed cell is read from the output's final
+configuration. No fixture holds a muon relaxation, a singlepoint of a
+muoniated cell or a silicon NEB band, so the script writes those in CASTEP's
+file shapes with illustrative energies: each muon start relaxes to its nearest
+bond-centre or tetrahedral site, the singlepoint reports close to its
+relaxation's energy, and the NEB ``.ts`` band follows the job's own reactant, intermediate
+and product cells. The pages that show these numbers say in their captions
+that they are illustrative. The UEP batch search and its ZPE run in the
+scene's thread with seeded random starts, so every build finds the same minima.
+
+``running_relaxation_project`` stops the pristine relaxation part-way through
+its output for the geometry progress window. Reopening a project ends its local
+jobs, since no local runner survives the application, so that scene puts the
+job back in the running state the local runner keeps and points the progress
+monitor at its ``.castep``. ``silicon_project`` holds the host alone; the
+legacy-importer scene scans a hand-authored legacy folder of three silicon
+runs in the documented layout (see :doc:`/legacy_import`, "Research data
+boundary") and drops the scan's notice that no keyword catalog is installed,
+as the other scenes hide it.
+
+The Quantum Corrections phonon analysis window has no screenshot: no fixture
+holds a ``.phonon`` output, and a phonon spectrum for the muoniated cell would
+be invented physics.
 
 Adding a screenshot
 ~~~~~~~~~~~~~~~~~~~

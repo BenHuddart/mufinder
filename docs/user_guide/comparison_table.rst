@@ -44,6 +44,12 @@ comparison view, after a confirmation prompt.
 Table Layout
 ------------
 
+.. figure:: ../_generated/screenshots/comparison_table.png
+   :alt: A comparison table of the silicon host against one relaxed cell, grouped into
+         lattice, displacement, bonding and symmetry metrics.
+
+   The silicon host compared with that synthetic pristine relaxation.
+
 The rendered table uses metric rows and one column for the experimental
 reference plus one column per selected DFT structure. Rows are grouped into
 scientific categories:

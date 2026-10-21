@@ -1,6 +1,12 @@
 Structural Relaxation Analysis
 ==============================
 
+.. figure:: ../_generated/screenshots/relaxation_analysis_workspace.png
+   :alt: An analysis workspace with five silicon muon relaxations clustered into two
+         sites, beside a 3D preview of the host cell.
+
+   Illustrative silicon relaxations clustered into bond-centre and tetrahedral sites.
+
 The structural relaxation analysis workspace collects completed muon geometry
 optimisation results and treats their final muon positions as an analysis set.
 The usual order of work is:
@@ -178,6 +184,12 @@ from the muon.
 Muon Sites Summary
 ------------------
 
+.. figure:: ../_generated/screenshots/muon_sites_summary.png
+   :alt: The Muon Sites page with two distinct positive-muon sites pinned and an
+         empty Muonium card.
+
+   The two distinct sites pinned from that workspace; no muonium analysis is pinned.
+
 The **Muon Sites** page (the parent node above Generation, Relaxations, and
 Analysis) is a summary of your headline result: the distinct, symmetry-
 inequivalent candidate stopping sites for each charge state. It has one card for
@@ -258,6 +270,12 @@ site landing on a host ion.
 
 Pristine Relaxation
 -------------------
+
+.. figure:: ../_generated/screenshots/pristine_relaxation_page.png
+   :alt: The Pristine Relaxation page with one completed variable-cell relaxation and
+         its relaxed lattice lengths.
+
+   A pristine relaxation of silicon, from a synthetic CASTEP output.
 
 The optional ``Pristine Relaxation`` stage relaxes the host structure without a
 muon. It is a table of jobs with explicit per-row labels:

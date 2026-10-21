@@ -43,6 +43,12 @@ project-tree node and choosing ``Delete Workspace...``.
 Saved Results
 -------------
 
+.. figure:: ../_generated/screenshots/magnetic_field_workspace.png
+   :alt: A saved Magnetic Fields workspace showing the ferromagnet's restored field
+         result and term breakdown.
+
+   The ferromagnet of `Worked Examples`_ saved as a workspace, with its field result.
+
 The latest field, dipolar-tensor and nuclear-relaxation results of the
 Magnetic Fields page and of each saved workspace are project results: each is
 one ``Result`` record in the project, of type ``magnetic_field``,

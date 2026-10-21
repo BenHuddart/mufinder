@@ -128,6 +128,12 @@ Because the formatted density is mandatory, MuFinder locks
 Workflow Shape
 --------------
 
+.. figure:: ../_generated/screenshots/uep_page.png
+   :alt: The UEP page with one completed source job on the silicon host and its
+         Open Wizard button.
+
+   A completed UEP source job, from a synthetic silicon density.
+
 The UEP stage is deliberately aligned with the existing MuFinder workflow
 pattern. Open ``UEP`` in the project navigator, then:
 
@@ -257,6 +263,12 @@ initial coordinates used different members of the symmetry orbit.
 
 Interpreting Batch Searches
 ---------------------------
+
+.. figure:: ../_generated/screenshots/uep_clustering_dialog.png
+   :alt: The UEP clustering window with a hierarchical dendrogram, the clustered
+         muon positions in the cell and the cluster energy-spread plot.
+
+   Twelve batch-search minima in the synthetic silicon density, in three clusters.
 
 The paper and the original ``pymuonsuite`` workflow both use repeated
 random-start optimizations to estimate which minima have the largest attraction
