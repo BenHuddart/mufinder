@@ -1429,7 +1429,7 @@ each platform's native look:
 - Embedded plots keep their labels inside the plot area at every window size
   (see Plot canvas policy). The plots that share a window with other content,
   namely the relaxation clustering and displacement plots, the UEP clustering
-  plots, the quantum single-particle plot and the pinned convergence plots, have
+  plots, the quantum mode well plot and the pinned convergence plots, have
   a pop-out button in their top-right corner. Their original spot shows a
   ``Show here`` button while the plot is out, and the plot returns when its
   window is closed, when Escape is pressed in it, or when the dialog closes.

@@ -157,7 +157,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         tabs = QTabWidget()
         tabs.setObjectName("quantumAnalysisTabs")
         tabs.addTab(self._phonon_modes_tab(), "Phonon Modes")
-        tabs.addTab(self._single_particle_tab(), "Adiabatic Solver")
+        tabs.addTab(self._single_particle_tab(), "Mode wells and widths")
         tabs.addTab(self._correlation_tab(), "Muon Coupling")
         layout.addWidget(tabs, 1)
 
@@ -280,8 +280,11 @@ class QuantumPhononAnalysisDialog(QDialog):
 
         layout.addLayout(
             _section_header(
-                "Single-particle adiabatic approximation",
-                "Use this view to compare confinement along the selected muon-dominated Gamma modes.",
+                "Harmonic muon wells (weakly-bound limit)",
+                "Each well is the harmonic potential of one muon-dominated Gamma mode, with the host atoms "
+                "fixed and the muon mass. Its ground-state energy therefore reproduces ħω/2; read the "
+                "width Δx and the shape of |ψ|². A DFT line-scan potential would make the well "
+                "anharmonic, and MuFinder does not generate one.",
                 self._show_single_particle_help,
             )
         )
@@ -318,7 +321,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         splitter.addWidget(self._single_particle_table)
         self._figure = Figure(figsize=(6.0, 4.0), tight_layout=True)
         self._canvas = FigureCanvas(self._figure)
-        self._plot_frame = PlotFrame(self._canvas, title="Single-particle plot")
+        self._plot_frame = PlotFrame(self._canvas, title="Mode well plot")
         splitter.addWidget(self._plot_frame)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([480, 760])
@@ -904,22 +907,24 @@ def _format_direction_component(value: float) -> str:
 
 def _single_particle_help_definition() -> dict[str, object]:
     return {
-        "title": "Single-particle adiabatic solver",
+        "title": "Harmonic muon wells (weakly-bound limit)",
         "paragraphs": (
-            "The solver builds a one-dimensional effective potential along each selected muon-dominated Gamma-mode direction. In the current phonon-derived approximation the host atoms remain fixed and the effective mass is the muon mass.",
-            "The ZPE column reports the numerical ground-state energy of the finite-difference Schrodinger problem. The width column reports the RMS spread of the normalized muon probability density along the displacement coordinate.",
-            "The square-root energy scale is a plotting aid for shallow wells: it keeps the minimum visible while compressing the high-energy part of the harmonic potential.",
+            "Each selected muon-dominated Gamma mode defines a one-dimensional harmonic well along the muon's displacement direction. The host atoms are held fixed and the effective mass is the muon mass, which is the harmonic weakly-bound limit of the single-particle approximation of Gomilšek et al. (Commun. Phys. 6, 142, 2023).",
+            "The solver itself is general and accepts tabulated potentials, but the workflow feeds it harmonic wells only. The ZPE column is the numerical ground-state energy of the finite-difference Schrodinger problem and therefore reproduces ħω/2 by construction, identical to the main table. The quantity to read is the width: the RMS spread of the normalized muon probability density, which equals the analytic width of the harmonic ground state.",
+            "The paper's anharmonic line-scan potentials and the strongly-bound effective mass, with relaxed host nuclei, are the next rung of the approximation; MuFinder does not generate them. The square-root energy scale is a plotting aid for shallow wells: it keeps the minimum visible while compressing the high-energy part of the potential.",
         ),
         "equations": (
             r"V(q)=\frac{1}{2}m_\mu\omega^2q^2",
             r"\left[-\frac{\hbar^2}{2m_{\mathrm{eff}}}\frac{d^2}{dq^2}+V(q)\right]\psi(q)=E_0\psi(q)",
             r"\sigma_\mu=\sqrt{\left<q^2\right>-\left<q\right>^2}",
+            r"\Delta x=\sqrt{\hbar/(2 m_\mu \omega)}",
         ),
         "symbols": (
             (r"q", "Muon displacement along the selected phonon-mode direction."),
             (r"\omega=2\pi c\nu", "Angular frequency converted from the CASTEP phonon frequency."),
-            (r"E_0", "Single-particle ground-state energy; reported as ZPE in the table."),
-            (r"\sigma_\mu", "Muon wavefunction width along this one-dimensional coordinate."),
+            (r"E_0", "Ground-state energy of the well; equals ħω/2 for a harmonic well and is reported as ZPE in the table."),
+            (r"\sigma_\mu", "Muon wavefunction width along this one-dimensional coordinate, as computed numerically."),
+            (r"\Delta x", "Analytic ground-state width of the harmonic well; the numerical width reproduces it."),
         ),
     }
 
@@ -931,6 +936,7 @@ def _correlation_help_definition() -> dict[str, object]:
             "The covariance matrix estimates how zero-point displacements of two atoms are coupled by the parsed Gamma-point phonon modes. MuFinder reports the tensor for the selected one-based CASTEP atom indices.",
             "The correlation matrix normalizes each covariance component by the corresponding auto-covariances, so values are dimensionless and easier to compare across atom pairs.",
             "The w2 witness is minus the magnitude of the pair-covariance trace, normalized by the geometric mean of the two auto-covariance traces. It lies between -1 and 0, with values closer to -1 indicating more strongly correlated zero-point motion, and is intended as a comparative diagnostic rather than a standalone proof of many-body quantum behavior.",
+            "Here w2 is the harmonic (phonon-covariance) estimate of the positional entanglement witness w2 = −|c| of Gomilšek et al., where c is the Pearson correlation of the muon and nuclear displacements. For α-N₂ the paper reports ≈ 0.26 in the harmonic approximation against 0.30(4) from path-integral molecular dynamics.",
         ),
         "equations": (
             r"C_{ab}^{ij}=\sum_n \frac{\hbar}{2\omega_n\sqrt{m_am_b}} e_{an}^i e_{bn}^{j*}",
