@@ -450,6 +450,59 @@ def test_base_definition_lookups_read_the_context_document(tmp_path: Path) -> No
     assert controller.job_for_key(newer, "row") is None
 
 
+def test_base_definitions_keep_creation_order_when_the_clock_ties(tmp_path: Path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    from mufinder.domain import models
+    from mufinder.domain.models import Structure
+
+    class _FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 1, 1, tzinfo=tz or UTC)
+
+    # A frozen clock gives every definition registered in this loop the same reading.
+    monkeypatch.setattr(models, "datetime", _FrozenClock)
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(label="host", lattice_vectors=[[3.0, 0, 0], [0, 3.0, 0], [0, 0, 3.0]], species=["Fe"], fractional_positions=[[0, 0, 0]])
+    service.add_structure(document, host)
+    created = [
+        service.register_uep_definition(
+            document, input_structure_id=host.id, parameters={"row": index}, output_directory=tmp_path / "uep"
+        )
+        for index in range(4)
+    ]
+    newest_first = [definition.id for definition in reversed(created)]
+
+    controller = _StagedFakeController(make_context(document=document), states={})
+    assert [definition.id for definition in controller.definitions()] == newest_first
+
+    service.save_project(document)
+    reloaded = service.load_project(document.project_root)
+    controller = _StagedFakeController(make_context(document=reloaded), states={})
+    assert [definition.id for definition in controller.definitions()] == newest_first
+
+
+def test_base_definitions_sharing_a_timestamp_are_ordered_by_id_whatever_the_load_order(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from mufinder.domain.models import CalculationDefinition
+
+    instant = datetime(2025, 1, 1, tzinfo=UTC)
+    orders = []
+    for ids in ((1, 2, 3), (3, 1, 2)):
+        document = ProjectService().create_project(tmp_path / f"p{ids[0]}.mufinder", "P")
+        for value in ids:
+            definition = CalculationDefinition(id=UUID(int=value), workflow_stage=WorkflowStage.UEP, created_at=instant)
+            document.calculations[definition.id] = definition
+        controller = _StagedFakeController(make_context(document=document), states={})
+        orders.append([definition.id.int for definition in controller.definitions()])
+
+    assert orders == [[3, 2, 1], [3, 2, 1]]
+
+
 def test_base_definition_lookups_without_a_document_or_stage(tmp_path: Path) -> None:
     staged = _StagedFakeController(make_context(document=None), states={})
     assert staged.definitions() == []

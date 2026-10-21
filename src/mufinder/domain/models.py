@@ -203,6 +203,16 @@ class Job:
     dismissed_at: datetime | None = None
 
 
+def _created_after(existing: Iterable[datetime]) -> datetime:
+    """Return the current time, or one microsecond after the latest of ``existing`` when the clock ties."""
+
+    now = utc_now()
+    latest = max(existing, default=None)
+    if latest is not None and now <= latest:
+        return latest + timedelta(microseconds=1)
+    return now
+
+
 def next_job_created_at(existing_jobs: Iterable[Job]) -> datetime:
     """Return a creation timestamp later than every job in ``existing_jobs``.
 
@@ -212,11 +222,18 @@ def next_job_created_at(existing_jobs: Iterable[Job]) -> datetime:
     sorting by ``created_at`` reproduces it exactly after a reload.
     """
 
-    now = utc_now()
-    latest = max((job.created_at for job in existing_jobs), default=None)
-    if latest is not None and now <= latest:
-        return latest + timedelta(microseconds=1)
-    return now
+    return _created_after(job.created_at for job in existing_jobs)
+
+
+def next_definition_created_at(existing_definitions: Iterable[CalculationDefinition]) -> datetime:
+    """Return a creation timestamp later than every definition in ``existing_definitions``.
+
+    As for :func:`next_job_created_at`: definitions registered in a tight loop
+    keep a strictly increasing ``created_at``, so the newest-first order of a
+    workflow's definitions is their creation order, before and after a reload.
+    """
+
+    return _created_after(definition.created_at for definition in existing_definitions)
 
 
 @dataclass(slots=True)

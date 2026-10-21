@@ -59,8 +59,10 @@ def definitions_for_stage(
     """Return ``document``'s definitions for ``stage``, newest first.
 
     ``calc_type`` narrows the match to definitions of that calc type; ``None``
-    accepts any calc type at ``stage``. Definitions created at the same instant
-    keep their insertion order.
+    accepts any calc type at ``stage``. Registration gives every definition a
+    strictly later ``created_at`` than the last, so this is creation order;
+    definitions that share a timestamp are ordered by id, so the order never
+    depends on the order the document loaded them in.
     """
 
     definitions = [
@@ -69,7 +71,7 @@ def definitions_for_stage(
         if definition.workflow_stage == stage
         and (calc_type is None or definition.calc_type == calc_type)
     ]
-    definitions.sort(key=lambda definition: definition.created_at, reverse=True)
+    definitions.sort(key=lambda definition: (definition.created_at, str(definition.id)), reverse=True)
     return definitions
 
 
