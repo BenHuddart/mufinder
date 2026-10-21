@@ -145,6 +145,12 @@ reached through the ``autosummary`` directive rather than a toctree, so the
 reachability check skips them. A docstring that is not valid reStructuredText
 fails the ``-W`` build.
 
+Pages that moved when the site was split into sections keep their old URLs:
+``REDIRECTS`` in ``docs/conf.py`` maps each former document name to its new
+page, and the HTML build writes a stub at the old name that forwards the
+browser. ``tests/docs/test_docs_redirects.py`` checks that every target is a
+current page and that no old name is still one. A page that moves adds a row.
+
 Documentation screenshots
 -------------------------
 
