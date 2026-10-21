@@ -155,7 +155,7 @@ Documentation screenshots
 -------------------------
 
 The documentation screenshots are build outputs: no image under ``docs/`` is
-committed for them. ``scripts/docs_screenshots.py`` writes each one to
+committed for them. ``scripts/render_docs_screenshots.py`` writes each one to
 ``docs/_generated/screenshots`` (ignored by git), and a page shows it with a
 ``figure`` directive whose path is relative to the page, for example
 ``../_generated/screenshots/<name>.png`` from a page in ``docs/user_guide/``.
@@ -268,7 +268,7 @@ Adding a screenshot
 
 1. Add an entry to ``SCREENSHOTS``, reusing a project builder and the
    ``setup`` and ``prepare`` steps where they fit.
-2. Render it alone, ``python scripts/docs_screenshots.py <name>`` (``--list``
+2. Render it alone, ``python scripts/render_docs_screenshots.py <name>`` (``--list``
    prints the names), and look at the image: it must not show an error, an
    empty table or a clipped control.
 3. Reference it from a page with a ``figure`` directive, an ``:alt:`` text and

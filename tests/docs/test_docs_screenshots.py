@@ -1,16 +1,17 @@
-"""The documentation screenshots that ``scripts/docs_screenshots.py`` renders.
+"""The documentation screenshots that ``scripts/render_docs_screenshots.py`` renders.
 
 The screenshots are not committed, so the only check that a page can build is
-that the script still writes every image the pages reference. The script's
-``SCREENSHOTS`` table is read from its source, and each referenced screenshot
-is rendered in its own process: the script configures Qt, VTK and the settings
-directories before importing them, which must not leak into the test session,
-and one process per screenshot lets ``pytest-xdist`` spread the renders.
+that the renderer still writes every image the pages reference. The renderer
+runs in subprocesses: importing ``docs_screenshots.render`` configures Qt, VTK
+and the settings directories before importing them, which must not leak into
+the test session. ``--list`` gives the registry's screenshot names, and each
+example module is rendered in one process with ``--example``, so its projects
+are built once and shared by its scenes, and ``pytest-xdist`` spreads the
+examples across workers.
 """
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 import re
 import subprocess
@@ -21,12 +22,18 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = PROJECT_ROOT / "docs"
-SCRIPT = PROJECT_ROOT / "scripts" / "docs_screenshots.py"
+SCRIPT = PROJECT_ROOT / "scripts" / "render_docs_screenshots.py"
+EXAMPLES_ROOT = PROJECT_ROOT / "scripts" / "docs_screenshots" / "examples"
+IMAGE_SUFFIX = ".png"
 
-# One screenshot opens one project in one window; a few seconds is typical.
-RENDER_TIMEOUT_S = 60
+# Listing imports Qt and the application but opens no window.
+LIST_TIMEOUT_S = 60
+# Building an example's projects, the largest of which drives a MainWindow
+# through every results workflow, then one window per scene.
+PROJECT_BUILD_TIMEOUT_S = 60
+SCENE_TIMEOUT_S = 30
 
-_SCREENSHOT_REFERENCE = re.compile(r"_generated/screenshots/([\w.-]+)\.png")
+_SCREENSHOT_REFERENCE = re.compile(r"_generated/screenshots/([\w.-]+)" + re.escape(IMAGE_SUFFIX))
 
 
 def _referenced_screenshots() -> set[str]:
@@ -38,40 +45,53 @@ def _referenced_screenshots() -> set[str]:
     }
 
 
-def _script_screenshots() -> set[str]:
-    """The keys of the script's ``SCREENSHOTS`` dict literal."""
-
-    for node in ast.parse(SCRIPT.read_text(encoding="utf-8")).body:
-        if (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "SCREENSHOTS"
-            and isinstance(node.value, ast.Dict)
-        ):
-            return {key.value for key in node.value.keys if isinstance(key, ast.Constant)}
-    raise AssertionError(f"{SCRIPT.name} has no SCREENSHOTS dict literal")
+def _examples() -> list[str]:
+    return sorted(path.stem for path in EXAMPLES_ROOT.glob("*.py") if path.stem != "__init__")
 
 
-def test_the_pages_reference_exactly_the_screenshots_the_script_renders() -> None:
+def _listed(*arguments: str) -> list[str]:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--list", *arguments],
+        capture_output=True,
+        text=True,
+        timeout=LIST_TIMEOUT_S,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout.split()
+
+
+def test_the_pages_reference_exactly_the_screenshots_the_registry_renders() -> None:
     referenced = _referenced_screenshots()
-    rendered = _script_screenshots()
+    rendered = set(_listed())
 
     assert referenced, "no page references a generated screenshot"
-    assert referenced <= rendered, f"the pages reference screenshots the script does not render: {sorted(referenced - rendered)}"
-    assert rendered <= referenced, f"the script renders screenshots no page uses: {sorted(rendered - referenced)}"
+    assert referenced <= rendered, f"the pages reference screenshots the registry does not render: {sorted(referenced - rendered)}"
+    assert rendered <= referenced, f"the registry renders screenshots no page uses: {sorted(rendered - referenced)}"
+
+
+def test_every_example_module_is_registered() -> None:
+    per_example = [name for example in _examples() for name in _listed("--example", example)]
+
+    assert sorted(per_example) == sorted(_listed()), "an example module is missing from the registry"
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize("name", sorted(_referenced_screenshots()))
-def test_the_screenshot_script_renders_a_referenced_screenshot(name: str, tmp_path: Path) -> None:
+@pytest.mark.timeout(0)  # The subprocess timeout below scales with the scene count.
+@pytest.mark.parametrize("example", _examples())
+def test_the_renderer_renders_every_scene_of_an_example(example: str, tmp_path: Path) -> None:
+    names = _listed("--example", example)
+    timeout = PROJECT_BUILD_TIMEOUT_S + SCENE_TIMEOUT_S * len(names)
+
     completed = subprocess.run(
-        [sys.executable, str(SCRIPT), "--output", str(tmp_path), name],
+        [sys.executable, str(SCRIPT), "--output", str(tmp_path), "--example", example],
         capture_output=True,
         text=True,
-        timeout=RENDER_TIMEOUT_S,
+        timeout=timeout,
         check=False,
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert sorted(path.name for path in tmp_path.glob("*.png")) == [f"{name}.png"]
-    assert (tmp_path / f"{name}.png").stat().st_size > 10_000, f"{name}.png is suspiciously small"
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(f"{name}{IMAGE_SUFFIX}" for name in names)
+    for name in names:
+        assert (tmp_path / f"{name}{IMAGE_SUFFIX}").stat().st_size > 10_000, f"{name}{IMAGE_SUFFIX} is suspiciously small"

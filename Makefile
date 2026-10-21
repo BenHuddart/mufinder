@@ -57,9 +57,10 @@ harness:
 	$(PYTHON) -m pytest --no-cov tests/test_agent_harness.py
 
 # The documentation screenshots are rendered from the application, not committed:
-# scripts/docs_screenshots.py writes them to docs/_generated/screenshots.
+# scripts/render_docs_screenshots.py (the scripts/docs_screenshots package)
+# writes them to docs/_generated/screenshots.
 screenshots:
-	$(PYTHON) scripts/docs_screenshots.py
+	$(PYTHON) scripts/render_docs_screenshots.py
 
 docs: screenshots
 	$(PYTHON) -m sphinx -W -b html docs docs/_build/html
