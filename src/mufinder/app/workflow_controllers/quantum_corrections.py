@@ -47,7 +47,13 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.job_results import parse_numeric
 from mufinder.services.project_service import TERMINAL_RECOVERABLE_JOB_STATUSES
+from mufinder.services.quantum_results import (
+    W1_DEFINITION,
+    mode_widths_from_result_data,
+    w1_from_result_data,
+)
 from mufinder.services.muon_sites_summary import (
     QUANTUM_CORRECTIONS_SCOPE,
     downstream_site_scope,
@@ -116,7 +122,6 @@ from mufinder.app.workflow_parameters import (
     workflow_basic_parameter_names,
 )
 from mufinder.app.workflow_submission import effective_row_status
-from mufinder.app.workflow_table_utils import format_energy_ev
 
 _CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
 _GUI_TO_METHOD = {
@@ -151,18 +156,38 @@ def _write_job_directory(job_spec: JobSpec, output_root: Path, *, seed_name: str
     return job_dir
 
 
-def _format_phonon_eigenvalues(value: object) -> str:
-    """Format a list of gamma-point eigenvalues as ``"1:v1, 2:v2, ..."``."""
+def _format_zpe_ev(value: object) -> str:
+    """Format the muon ZPE for the ``ZPE (eV)`` column: three decimals, no unit."""
 
-    if not isinstance(value, list):
-        return ""
-    entries: list[str] = []
-    for mode_index, eigenvalue in enumerate(value, start=1):
-        try:
-            entries.append(f"{mode_index}:{float(eigenvalue):.1f}")
-        except (TypeError, ValueError):
-            continue
-    return ", ".join(entries)
+    number = parse_numeric(value)
+    return "" if number is None else f"{number:.3f}"
+
+
+def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
+    """Return the ``Muon modes (cm⁻¹)`` and ``Width (Å)`` texts of a phonon payload.
+
+    The selected ``muon_zpe_modes`` frequencies (one decimal) and their
+    zero-point widths (two decimals, from
+    :func:`~mufinder.services.quantum_results.mode_widths_from_result_data`)
+    are listed comma-separated, both in ascending frequency order.
+    """
+
+    modes = data.get("muon_zpe_modes")
+    if not isinstance(modes, list):
+        return "", ""
+    frequencies = [
+        parse_numeric(mode.get("frequency_cm")) for mode in modes if isinstance(mode, Mapping)
+    ]
+    widths = mode_widths_from_result_data(data)
+    pairs = sorted(
+        (frequency, width)
+        for frequency, width in zip(frequencies, widths, strict=True)
+        if frequency is not None
+    )
+    return (
+        ", ".join(f"{frequency:.1f}" for frequency, _width in pairs),
+        ", ".join(f"{width:.2f}" for _frequency, width in pairs),
+    )
 
 
 def _format_relative_energy(value: float | None) -> str:
@@ -1468,10 +1493,12 @@ class QuantumCorrectionsController(WorkflowJobController):
                     "frequency_cm": mode.frequency_cm,
                     "participation": mode.participation,
                     "zpe_eV": mode.zpe_eV,
+                    "width_A": mode.width_A,
                 }
                 for mode in zpe.modes
             ],
             "w1_entanglement_witness": w1_entanglement_witness(phonon),
+            "w1_definition": W1_DEFINITION,
         }
         if zpe.warnings:
             payload["phonon_warnings"] = list(zpe.warnings)
@@ -1576,35 +1603,19 @@ class QuantumCorrectionsController(WorkflowJobController):
                 if job is not None:
                     job_label = job.label
                     job_status = job.status.value
-            eigenvalue_text = (
-                _format_phonon_eigenvalues(result.data.get("phonon_mode_eigenvalues_cm"))
-                if isinstance(result.data, dict)
-                else ""
-            )
-            if not eigenvalue_text and isinstance(result.data, dict):
-                modes = result.data.get("muon_zpe_modes", [])
-                if isinstance(modes, list):
-                    eigenvalue_text = ", ".join(
-                        f"{mode.get('mode_index')}:{float(mode.get('frequency_cm', 0.0)):.1f}"
-                        for mode in modes
-                        if isinstance(mode, dict)
-                    )
+            data = result.data if isinstance(result.data, dict) else {}
+            muon_modes, widths = _muon_mode_texts(data)
+            # A payload stored before ``w1_definition`` holds the witness in an
+            # earlier form; ``w1_from_result_data`` recomputes it as ``P - 3``.
+            witness = w1_from_result_data(data)
             result_rows.append(
                 QuantumResultRow(
                     key=str(result.id),
                     label=job_label or "Quantum phonon",
-                    zpe=format_energy_ev(
-                        result.data.get("muon_zpe_total_eV")
-                        if isinstance(result.data, dict)
-                        else None
-                    ),
-                    eigenvalues=eigenvalue_text,
-                    witness=(
-                        f"{float(result.data['w1_entanglement_witness']):.4g}"
-                        if isinstance(result.data, dict)
-                        and "w1_entanglement_witness" in result.data
-                        else ""
-                    ),
+                    zpe=_format_zpe_ev(data.get("muon_zpe_total_eV")),
+                    muon_modes=muon_modes,
+                    widths=widths,
+                    witness="" if witness is None else f"{witness:.4g}",
                     status=job_status,
                 )
             )

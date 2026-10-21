@@ -557,9 +557,10 @@ def magnetic_project(name: str, model: MagneticStructureModel, form: dict[str, o
 # UEP source job is tests/fixtures/uep/Si2.castep with its .den_fmt, and the
 # pristine relaxation is tests/fixtures/geometry/Si2_bfgs.castep. No fixture
 # holds a muon relaxation, a singlepoint of a muoniated cell or a silicon NEB
-# path, so those outputs are written here in CASTEP's file shapes with
-# illustrative numbers (see SI_MUON_SITES and NEB_BARRIER_EV); the captions of
-# the pages that show them say so.
+# path, a phonon calculation of a muoniated cell or a silicon NEB path, so
+# those outputs are written here in CASTEP's file shapes with illustrative
+# numbers (see SI_MUON_SITES, SI_MUON_MODES_CM and NEB_BARRIER_EV); the
+# captions of the pages that show them say so.
 
 FIXTURES = PROJECT_ROOT / "tests" / "fixtures"
 SI_PRIMITIVE = 2.6954645  # Å, half the cubic edge of tests/fixtures/uep/Si2.cell
@@ -579,6 +580,13 @@ SI_MUON_SITES = (  # start, site kind, relaxed site
 SI_SITE_ENERGY_EV = {"BC": -2741.2364, "T": -2740.9271}
 SI_SITE_PUSH_ANG = {"BC": 0.42, "T": 0.03}
 SI_NEIGHBOUR_RADIUS_ANG = 2.6
+# The phonon of the lowest site: three muon modes at these Γ frequencies, each
+# mixed with one silicon neighbour's motion so that the muon carries
+# SI_MUON_PARTICIPATION of each (w1 = 3 * participation - 3 = -0.14), below a
+# host band up to SI_HOST_TOP_CM. The numbers are illustrative.
+SI_MUON_MODES_CM = (2742.0, 3226.0, 3226.0)
+SI_MUON_PARTICIPATION = 1.0 - 0.14 / 3.0
+SI_HOST_TOP_CM = 520.0
 NEB_BARRIER_EV = 0.38  # illustrative height above the reactant
 NEB_IMAGES = 5
 UEP_ROW = "source_01"  # the UEP page's first row label
@@ -827,6 +835,70 @@ def _singlepoint_outputs(window: MainWindow) -> Outputs:
     return write
 
 
+def _phonon_text(cell: Any) -> str:
+    """A Gamma-only CASTEP ``.phonon`` file for ``cell`` with the SI_MUON_MODES_CM muon modes.
+
+    The eigenvectors are orthonormal: each muon direction is rotated with the
+    same direction of the first silicon atom, which gives a muon mode and a
+    host partner; every other degree of freedom is a host mode of its own.
+    """
+
+    from mufinder.domain.constants import MUON_MASS_AMU
+
+    species = list(cell.species)
+    count = len(species)
+    muon = species.index("H:mu")
+    neighbour = next(index for index, symbol in enumerate(species) if symbol != "H:mu")
+    mix = np.sqrt(SI_MUON_PARTICIPATION)
+    other = np.sqrt(1.0 - SI_MUON_PARTICIPATION)
+    modes: list[tuple[float, np.ndarray]] = []
+    paired: set[tuple[int, int]] = set()
+    for axis, frequency in enumerate(SI_MUON_MODES_CM):
+        muon_mode = np.zeros((count, 3))
+        muon_mode[muon, axis], muon_mode[neighbour, axis] = mix, other
+        partner = np.zeros((count, 3))
+        partner[muon, axis], partner[neighbour, axis] = -other, mix
+        modes += [(frequency, muon_mode), (SI_HOST_TOP_CM * (0.9 + 0.02 * axis), partner)]
+        paired |= {(muon, axis), (neighbour, axis)}
+    host = [(atom, axis) for atom in range(count) for axis in range(3) if (atom, axis) not in paired]
+    for number, (atom, axis) in enumerate(host):
+        vector = np.zeros((count, 3))
+        vector[atom, axis] = 1.0
+        modes.append((SI_HOST_TOP_CM * np.sin(0.5 * np.pi * (number + 1) / (len(host) + 1)), vector))
+    modes.sort(key=lambda mode: mode[0])
+
+    lines = [
+        " BEGIN header",
+        f" Number of ions {count:9d}",
+        f" Number of branches {3 * count:5d}",
+        " Number of wavevectors  1",
+        " Frequencies in         cm-1",
+        " Unit cell vectors (A)",
+        *(f" {row[0]:12.6f}{row[1]:12.6f}{row[2]:12.6f}" for row in np.asarray(cell.lattice_vectors, dtype=float)),
+        " Fractional Co-ordinates",
+    ]
+    for index, (symbol, position) in enumerate(zip(species, cell.fractional_positions, strict=True), start=1):
+        mass = MUON_MASS_AMU if symbol == "H:mu" else 28.0855
+        lines.append(f" {index:5d} {position[0]:12.6f}{position[1]:12.6f}{position[2]:12.6f}   {symbol:<8}{mass:12.6f}")
+    lines += [" END header", "     q-pt=    1    0.000000  0.000000  0.000000      1.0000000000"]
+    lines += [f" {number:7d} {frequency:14.6f}" for number, (frequency, _vector) in enumerate(modes, start=1)]
+    lines += ["                        Phonon Eigenvectors", "Mode Ion                X                                   Y                                   Z"]
+    for number, (_frequency, vector) in enumerate(modes, start=1):
+        for atom in range(count):
+            lines.append(f" {number:3d} {atom + 1:3d}" + "".join(f" {value:15.12f} {0.0:15.12f}" for value in vector[atom]))
+    return "\n".join(lines) + "\n"
+
+
+def _phonon_outputs(job: Any, job_dir: Path, seed: str) -> bool:
+    """The stage-2 phonon of a quantum-corrections row: its ``.phonon`` and ``.castep``."""
+
+    cell = _job_cell(job_dir, seed)
+    (job_dir / f"{seed}.phonon").write_text(_phonon_text(cell), encoding="utf-8")
+    text = _castep_text(energy=SI_SITE_ENERGY_EV["BC"] - 0.0004, species=list(cell.species), geometry=False, wall_time=9126.4)
+    (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
+    return True
+
+
 def _ts_text(lattice: np.ndarray, species: list[str], images: list[tuple[str, float, float, np.ndarray]]) -> str:
     """A CASTEP ``.ts`` file in atomic units: one REA, the TST images and one PRO block."""
 
@@ -985,11 +1057,13 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
         window._relaxation_analysis_view._open_clustering(workspace_id)
         window._on_muon_sites_pin_requested(workspace_id)
 
-        # Quantum corrections: stage 1 of the lowest-energy site.
+        # Quantum corrections: both stages of the lowest-energy site.
         window._set_active_route("quantum_corrections")
         quantum = window._quantum_corrections_controller
         candidates = sorted(quantum.candidates(), key=lambda candidate: candidate.site.total_energy_eV)
         with synthetic_runs(window, _singlepoint_outputs(window)):
+            quantum.submit([candidates[0].key], target="local")
+        with synthetic_runs(window, _phonon_outputs):
             quantum.submit([candidates[0].key], target="local")
 
         # Energy barriers: the BC-to-T paths, and an NEB band along the first.

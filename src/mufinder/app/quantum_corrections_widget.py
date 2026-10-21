@@ -30,6 +30,31 @@ from mufinder.app.workflow_table_utils import (
 )
 
 
+# Header tooltips for the source table, keyed by header label so the mapping survives
+# column changes.
+_SOURCE_HEADER_TOOLTIPS: dict[str, str] = {
+    "Site": "Pinned summary label, or the relaxed site's label (double-click to rename)",
+    "Charge": "Charge state of the source relaxation: positive muon or muonium",
+    "dE (eV)": (
+        "Relaxed total energy relative to the lowest-energy eligible site with the same charge state and cell"
+    ),
+    "Displacements": (
+        "3 \u00d7 atom count: the displaced calculations a FINITEDISPLACEMENT run needs, a guide to its farm "
+        "count; DFPT and linear-response runs do not use it"
+    ),
+    "Source Job": "The muon relaxation the row was built from",
+    "Status": "Status of the row's current job",
+    "Parameters": "Configure the row; locked once its first job has been submitted",
+}
+
+
+def _set_header_tooltips(table: QTableWidget, tooltips: dict[str, str]) -> None:
+    for column in range(table.columnCount()):
+        item = table.horizontalHeaderItem(column)
+        if item is not None and item.text() in tooltips:
+            item.setToolTip(tooltips[item.text()])
+
+
 @dataclass(frozen=True, slots=True)
 class QuantumSourceRow:
     """One relaxed-site source displayed in the Quantum Corrections view."""
@@ -51,14 +76,46 @@ class QuantumSourceRow:
 
 @dataclass(frozen=True, slots=True)
 class QuantumResultRow:
-    """One completed quantum-corrections result row."""
+    """One completed quantum-corrections result row.
+
+    Every field is display text built by the controller: ``zpe`` is the total
+    muon ZPE in eV, ``muon_modes`` the three selected Γ-mode frequencies in
+    cm⁻¹ in frequency order, ``widths`` the muon's zero-point width in Å along
+    each of those modes in the same order, and ``witness`` the ``w1``
+    mode-mixing witness.
+    """
 
     key: str
     label: str
     zpe: str
-    eigenvalues: str
+    muon_modes: str
+    widths: str
     witness: str
     status: str
+
+
+#: Completed Results column headers and their tooltips, in column order.
+RESULT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Job", ""),
+    (
+        "ZPE (eV)",
+        "Total muon zero-point energy, ½ħω summed over the three muon-dominated Γ modes",
+    ),
+    (
+        "Muon modes (cm⁻¹)",
+        "Frequencies of the three Γ modes with the largest muon participation, in frequency order",
+    ),
+    ("Width (Å)", "Zero-point width √(ħ/2m_μω) of the muon along each muon mode"),
+    (
+        "w1",
+        "Mode-mixing witness P − 3: 0 when the muon's motion is contained in its three modes, "
+        "more negative as it mixes with host modes (down to −3)",
+    ),
+    ("Status", ""),
+    ("Analysis", ""),
+)
+RESULT_STATUS_COLUMN = 5
+RESULT_ANALYSIS_COLUMN = 6
 
 
 class QuantumCorrectionsWidget(SourceTableWidget):
@@ -114,15 +171,17 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         header_row.addWidget(title)
 
         subtitle = QLabel(
-            "Estimate local muon zero-point motion and phonon-derived witnesses from completed structural relaxations."
+            "How much zero-point energy each distinct relaxed site carries, how far the muon spreads, "
+            "and whether its motion is entangled with the host."
         )
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
         header_row.addWidget(subtitle)
 
         summary = QLabel(
-            "Each relaxed site runs as a two-stage workflow: a singlepoint first, then a phonon continuation. "
-            "Use the displacement count to choose an appropriate farm count for stage 2."
+            "Gamma-point phonons of each relaxed site in the harmonic approximation, with the muon mass applied. "
+            "Compare the ZPE, widths and w1 between sites computed with the same settings; see the Quantum "
+            "Corrections theory page in the user guide for what the numbers mean."
         )
         summary.setWordWrap(True)
         style_hint_text(summary)
@@ -138,8 +197,9 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         style_section_title(self._source_label)
         sources_layout.addWidget(self._source_label)
         source_hint = QLabel(
-            "Each row inherits a relaxed endpoint structure. Shared electronic settings apply to both stages, "
-            "while phonon method, pseudopotentials, and farms apply only to the stage-2 continuation."
+            "Each row starts from a completed muon relaxation and inherits its electronic settings. The phonon "
+            "method and pseudopotential family are checked at submission and, with the electronic settings, "
+            "locked once the row's first job has been submitted; the farm count applies to the phonon run."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
@@ -152,6 +212,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
             ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
             resize_to_contents_columns=(8,),
         )
+        _set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
@@ -236,21 +297,26 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         style_section_title(self._result_label)
         results_layout.addWidget(self._result_label)
         result_hint = QLabel(
-            "MuFinder reports Gamma-point phonon eigenvalues, selected-mode ZPE, and witness values for completed phonon jobs."
+            "One row per completed phonon run: the total muon ZPE, the muon modes and widths, and the "
+            "mode-mixing witness w1. Launch Analysis opens the modes, wells and atom-pair coupling."
         )
         result_hint.setWordWrap(True)
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
         self._results_table = create_workflow_table(
-            ("Job", "ZPE", "Eigenvalues (cm⁻¹)", "w1", "Status", "Analysis")
+            tuple(title for title, _tip in RESULT_COLUMNS), stretch_last_section=False
         )
         results_header = self._results_table.horizontalHeader()
-        results_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        results_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        results_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        results_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        results_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        results_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        for column, (_title, tooltip) in enumerate(RESULT_COLUMNS):
+            mode = (
+                QHeaderView.ResizeMode.Stretch
+                if column == 0
+                else QHeaderView.ResizeMode.ResizeToContents
+            )
+            results_header.setSectionResizeMode(column, mode)
+            header_item = self._results_table.horizontalHeaderItem(column)
+            if tooltip and header_item is not None:
+                header_item.setToolTip(tooltip)
         results_layout.addWidget(self._results_table)
         layout.addWidget(results_group, 1)
 
@@ -303,25 +369,22 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         _fill_table(
             self._results_table,
             [
-                (row.label, row.zpe, row.eigenvalues, row.witness, row.status)
+                (row.label, row.zpe, row.muon_modes, row.widths, row.witness, row.status)
                 for row in rows
             ],
         )
         for row_index, row in enumerate(rows):
             # Colour the Status cell with the project-standard per-status palette, matching the
             # eligible-sources table and the relaxation/convergence tables.
-            status_item = self._results_table.item(row_index, 4)
+            status_item = self._results_table.item(row_index, RESULT_STATUS_COLUMN)
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
             button = QPushButton("Launch Analysis")
             button.clicked.connect(lambda _checked=False, key=row.key: self.analysis_requested.emit(key))
-            self._results_table.setCellWidget(row_index, 5, button)
+            self._results_table.setCellWidget(row_index, RESULT_ANALYSIS_COLUMN, button)
         if self._results_table.rowCount() > 0:
-            self._results_table.resizeColumnToContents(1)
-            self._results_table.resizeColumnToContents(3)
-            self._results_table.resizeColumnToContents(4)
-            self._results_table.resizeColumnToContents(5)
-            self._results_table.setColumnWidth(3, max(56, self._results_table.columnWidth(3)))
+            for column in range(1, len(RESULT_COLUMNS)):
+                self._results_table.resizeColumnToContents(column)
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt API naming.
         """Re-apply palette-derived status colours on a theme change.
@@ -342,7 +405,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     def _reapply_status_colors(self) -> None:
         self._reapply_source_status_colors()
         for row_index, row in enumerate(self._result_rows):
-            status_item = self._results_table.item(row_index, 4)
+            status_item = self._results_table.item(row_index, RESULT_STATUS_COLUMN)
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
 

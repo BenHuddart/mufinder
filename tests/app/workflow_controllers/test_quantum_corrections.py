@@ -7,6 +7,7 @@ the phonon-method checks and ``validate_artifacts``.
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ import pytest
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Structure
+from mufinder.science.quantum_phonons import mode_width_angstrom
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
@@ -191,6 +193,116 @@ def test_quantum_controller_refresh_view_populates_result_row_status(tmp_path: P
     assert result_row.status == "completed"
 
 
+def _displayed_witness(tmp_path: Path, data: dict) -> str:
+    """Return the witness text ``refresh_view`` shows for one stored phonon payload."""
+
+    return _displayed_result_row(tmp_path, data).witness
+
+
+def _displayed_result_row(tmp_path: Path, data: dict):
+    """Return the result row ``refresh_view`` shows for one stored phonon payload."""
+
+    from mufinder.domain.models import Result
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data=data)
+    document.results[result.id] = result
+    view = _FakeQuantumView()
+    controller = QuantumCorrectionsController(
+        make_context(document=document, project_service=service), _stub_quantum_deps(), view
+    )
+    controller.refresh_view()
+    return view.results[-1][0]
+
+
+_STORED_MODES = [
+    {"mode_index": 4, "frequency_cm": 1600.0, "participation": 0.9, "zpe_eV": 0.099},
+    {"mode_index": 5, "frequency_cm": 2500.0, "participation": 0.8, "zpe_eV": 0.155},
+    {"mode_index": 6, "frequency_cm": 3600.0, "participation": 0.7, "zpe_eV": 0.223},
+]
+
+
+def test_quantum_controller_refresh_view_shows_a_current_witness_as_stored(tmp_path: Path) -> None:
+    data = {
+        "muon_zpe_modes": _STORED_MODES,
+        "w1_entanglement_witness": -0.25,
+        "w1_definition": "participation_minus_3",
+    }
+
+    assert _displayed_witness(tmp_path, data) == "-0.25"
+
+
+def test_quantum_controller_refresh_view_recomputes_a_witness_stored_before_its_definition(
+    tmp_path: Path,
+) -> None:
+    """A payload without ``w1_definition`` holds the earlier ``-sqrt(3 - P)``
+    form; the row shows ``P - 3`` recomputed from the stored participations."""
+
+    old_form = -math.sqrt(3.0 - 2.4)
+    data = {"muon_zpe_modes": _STORED_MODES, "w1_entanglement_witness": old_form}
+
+    assert _displayed_witness(tmp_path, data) == f"{2.4 - 3.0:.4g}"
+
+
+def test_quantum_controller_refresh_view_shows_an_old_witness_without_modes_as_stored(
+    tmp_path: Path,
+) -> None:
+    assert _displayed_witness(tmp_path, {"w1_entanglement_witness": -0.5}) == "-0.5"
+    assert _displayed_witness(tmp_path, {"muon_zpe_total_eV": 0.1}) == ""
+
+
+def test_quantum_controller_refresh_view_shows_muon_modes_and_stored_widths(
+    tmp_path: Path,
+) -> None:
+    """The row lists the three muon modes and their stored ``width_A`` in
+    frequency order, and the ZPE as a bare number (the header carries eV)."""
+
+    data = {
+        "muon_zpe_total_eV": 0.5786,
+        "muon_zpe_modes": [
+            {"mode_index": 9, "frequency_cm": 3226.0, "participation": 0.9, "width_A": 0.2149},
+            {"mode_index": 7, "frequency_cm": 2742.0, "participation": 0.95, "width_A": 0.2331},
+            {"mode_index": 8, "frequency_cm": 3226.0, "participation": 0.9, "width_A": 0.2149},
+        ],
+        "w1_entanglement_witness": -0.14,
+        "w1_definition": "participation_minus_3",
+        "phonon_mode_eigenvalues_cm": [100.0, 400.0, 900.0, 2742.0, 3226.0, 3226.0],
+    }
+
+    row = _displayed_result_row(tmp_path, data)
+
+    assert row.zpe == "0.579"
+    assert row.muon_modes == "2742.0, 3226.0, 3226.0"
+    assert row.widths == "0.23, 0.21, 0.21"
+    assert row.witness == "-0.14"
+
+
+def test_quantum_controller_refresh_view_computes_widths_for_a_payload_without_width(
+    tmp_path: Path,
+) -> None:
+    """A payload stored without ``width_A`` shows widths computed from each
+    mode's frequency with the muon mass."""
+
+    row = _displayed_result_row(tmp_path, {"muon_zpe_modes": _STORED_MODES})
+
+    assert row.muon_modes == "1600.0, 2500.0, 3600.0"
+    assert row.widths == ", ".join(
+        f"{mode_width_angstrom(mode['frequency_cm']):.2f}" for mode in _STORED_MODES
+    )
+
+
+def test_quantum_controller_refresh_view_leaves_mode_cells_blank_without_modes(
+    tmp_path: Path,
+) -> None:
+    row = _displayed_result_row(tmp_path, {"muon_zpe_total_eV": "not a number"})
+
+    assert (row.zpe, row.muon_modes, row.widths) == ("", "", "")
+
+
 def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> None:
     """An unresolved host mismatch silently refuses the submission: the host guard
     returns False, so no submission plan is built and nothing is dispatched."""
@@ -301,7 +413,15 @@ def test_quantum_controller_build_result_phonon_parses_zpe_and_witness(tmp_path:
     assert payload["muon_zpe_total_eV"] > 0.0
     assert len(payload["muon_zpe_modes"]) == 3
     assert all("mode_index" in mode and "frequency_cm" in mode for mode in payload["muon_zpe_modes"])
-    assert isinstance(payload["w1_entanglement_witness"], float)
+    # Each selected mode carries its muon zero-point width, from its frequency.
+    for mode in payload["muon_zpe_modes"]:
+        assert mode["width_A"] == pytest.approx(mode_width_angstrom(mode["frequency_cm"]))
+        assert mode["width_A"] > 0.0
+    # The witness is the paper's ``P - 3`` and the payload names that definition.
+    assert payload["w1_definition"] == "participation_minus_3"
+    assert payload["w1_entanglement_witness"] == pytest.approx(
+        sum(mode["participation"] for mode in payload["muon_zpe_modes"]) - 3.0
+    )
     # No output_files or derived structures contributed by build_result.
     assert result.output_files == []
     assert result.derived_structure_ids == []

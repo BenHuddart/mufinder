@@ -83,7 +83,7 @@ You submit each stage yourself; MuFinder does not chain them automatically.
    ``Reset to Stage 1`` and rerun both stages there.
 5. **Review the result.** When the phonon job completes and its ``.phonon``
    file parses, a row appears under ``Completed Results`` with the muon ZPE,
-   the Gamma-point eigenvalues, and the ``w1`` witness. Check the jobs
+   the three muon-mode frequencies, their widths and the ``w1`` witness. Check the jobs
    dashboard for warnings, in particular the muon-mass warning (see
    `Muon mass across the two stages`_).
 6. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
@@ -131,10 +131,13 @@ The workflow page
 -----------------
 
 .. figure:: ../_generated/screenshots/quantum_corrections_page.png
-   :alt: The Quantum Corrections page with two pinned sites, one ready for its phonon
-         stage and one for its singlepoint.
+   :alt: The Quantum Corrections page with two pinned sites, the first with its phonon
+         stage completed and the second ready for its singlepoint, and one completed
+         result row showing the muon ZPE, three muon-mode frequencies, their widths
+         and the w1 witness.
 
-   Two pinned silicon sites, the first past its singlepoint; the outputs are illustrative.
+   Two pinned silicon sites, the first through both stages with its result under
+   ``Completed Results``; the outputs are illustrative.
 
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
@@ -187,10 +190,16 @@ reset them to stage 1 or stage 2. There is no ``Remove``: rows are derived from
 completed relaxations.
 
 ``Completed Results`` (``Completed phonon analyses``) has one row per completed
-phonon job: ``Job``, ``ZPE`` (total muon ZPE of the three selected modes, eV),
-``Eigenvalues (cm⁻¹)`` (every Gamma-point mode as ``index:frequency``), ``w1``,
-``Status`` (the producing job's status, coloured like the jobs table), and an
-``Analysis`` column with the ``Launch Analysis`` button.
+phonon job: ``Job``; ``ZPE (eV)``, the total muon zero-point energy, ``½ħω``
+summed over the three selected muon-dominated Gamma modes, to three decimals;
+``Muon modes (cm⁻¹)``, the frequencies of those three modes in ascending order;
+``Width (Å)``, the muon's zero-point width ``sqrt(ħ / (2 m_μ ω))`` along each of
+those modes, in the same order; ``w1``, the mode-mixing witness ``P - 3`` (0
+when the muon's motion is contained in its three modes, more negative as it
+mixes with host modes, down to -3); ``Status`` (the producing job's status,
+coloured like the jobs table); and an ``Analysis`` column with the
+``Launch Analysis`` button. Hover a column header for its definition. Every
+Gamma-point mode is listed in the analysis window's ``Phonon Modes`` tab.
 
 Configuration dialog
 --------------------
@@ -391,7 +400,9 @@ Each completed phonon job saves a result with:
 - the source relaxed site and the relaxation job it came from;
 - the path of the CASTEP ``.phonon`` file and whether it is Gamma-only;
 - every Gamma-point eigenvalue in ``cm-1``;
-- the three selected modes: index, frequency, muon participation, and ZPE;
+- the three selected modes: index, frequency, muon participation, ZPE, and the
+  muon's zero-point width along the mode, ``Δx = sqrt(ħ / (2 m_μ ω))`` in Å
+  with ``ω = 2π c ν``;
 - the total muon ZPE of those modes in eV;
 - the ``w1`` witness;
 - warnings, when the muon mass is wrong or a selected mode has a non-positive
@@ -408,10 +419,18 @@ eigenvector written in the ``.phonon`` file):
   in ``cm-1``. A selected mode with a non-positive frequency contributes zero
   and raises a warning: an imaginary muon mode means the relaxed geometry is not
   a true minimum, and the ZPE should not be trusted.
-- **w1**: ``-sqrt(3 - P)``, where ``P`` is the summed participation of the three
-  selected modes. It is ``0`` when the muon's motion is fully contained in three
-  modes, and becomes more negative as muon motion is shared with more host
-  modes.
+- **w1**: ``P - 3``, where ``P`` is the summed participation of the three
+  selected modes, following M. Gomilšek et al., *Commun. Phys.* **6**, 142
+  (2023), doi:10.1038/s42005-023-01260-7. It is ``0`` when the muon's motion is
+  fully contained in the three modes, and becomes more negative as muon motion
+  mixes with host modes, down to ``-3``. A stored result that does not record
+  the witness definition (``w1_definition``) is shown with ``w1`` recomputed
+  from its stored mode participations.
+- **Zero-point width** of a selected mode: ``Δx = sqrt(ħ / (2 m_μ ω))``, the
+  root-mean-square ground-state displacement of a harmonic oscillator with the
+  muon mass at that mode's frequency. A mode with a muon ZPE of 0.17 eV
+  (about 2742 ``cm-1``) has a width of about 0.23 Å; a non-positive frequency
+  has width zero.
 
 The ZPE is a harmonic, Gamma-point estimate for a local defect, not a full
 anharmonic many-body treatment; compare it between sites computed with the

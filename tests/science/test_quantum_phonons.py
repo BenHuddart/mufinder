@@ -13,6 +13,7 @@ from mufinder.science.quantum_phonons import (
     PhononParseError,
     correlation_matrix,
     covariance_matrix,
+    mode_width_angstrom,
     muon_mass_warning,
     muon_zpe,
     muon_mode_participations,
@@ -398,6 +399,71 @@ def test_entanglement_witnesses_and_covariance_are_finite() -> None:
     assert np.isfinite(covariance).all()
     assert np.isfinite(correlation).all()
     assert math.isfinite(w2_entanglement_witness(calculation, 1, 2))
+
+
+@pytest.mark.parametrize("text", [PHONON_TEXT, GAMMA_TEXT], ids=["phonon", "gamma"])
+def test_w1_is_the_top_three_muon_participation_minus_three(text: str) -> None:
+    calculation = parse_phonon_text(text)
+    top_three = sorted(muon_mode_participations(calculation))[-3:]
+
+    w1 = w1_entanglement_witness(calculation)
+
+    assert w1 == pytest.approx(sum(top_three) - 3.0)
+    # It sums the participations of the same modes the ZPE uses.
+    selected = select_muon_modes(calculation)
+    assert w1 == pytest.approx(sum(mode.participation for mode in selected) - 3.0)
+    assert -3.0 <= w1 <= 0.0
+
+
+def _muon_localised_text() -> str:
+    """Six modes: three move only nitrogen, three move only the muon along x, y, z."""
+
+    rows = []
+    for mode in range(1, 7):
+        for ion in (1, 2):
+            vector = [0.0, 0.0, 0.0]
+            moving_ion = 1 if mode <= 3 else 2
+            if ion == moving_ion:
+                vector[(mode - 1) % 3] = 1.0
+            columns = "      ".join(f"{value:.12f}  0.000000000000" for value in vector)
+            rows.append(f"   {mode}   {ion}  {columns}")
+    header, _eigenvectors = PHONON_TEXT.split("Mode Ion")
+    return header + "Mode Ion                X                                   Y                                   Z\n" + "\n".join(rows) + "\n"
+
+
+def test_w1_is_zero_when_the_muon_motion_is_fully_in_three_modes() -> None:
+    calculation = parse_phonon_text(_muon_localised_text())
+
+    assert w1_entanglement_witness(calculation) == pytest.approx(0.0)
+    assert [mode.mode_index for mode in select_muon_modes(calculation)] == [4, 5, 6]
+
+
+@pytest.mark.parametrize(
+    ("frequency_cm", "zpe_eV", "width_A"),
+    [(2742.0, 0.17, 0.23), (3226.0, 0.20, 0.21)],
+    ids=["zpe-0.17eV", "zpe-0.20eV"],
+)
+def test_mode_width_angstrom_is_the_muon_zero_point_spread(
+    frequency_cm: float, zpe_eV: float, width_A: float
+) -> None:
+    assert zpe_from_frequency_cm(frequency_cm) == pytest.approx(zpe_eV, abs=5e-4)
+    assert round(mode_width_angstrom(frequency_cm), 2) == width_A
+
+
+def test_mode_width_angstrom_scales_with_mass_and_is_zero_for_unstable_modes() -> None:
+    muon = mode_width_angstrom(3000.0)
+
+    assert mode_width_angstrom(3000.0, mass_amu=4.0 * MUON_MASS_AMU) == pytest.approx(muon / 2.0)
+    assert mode_width_angstrom(-100.0) == 0.0
+    assert mode_width_angstrom(0.0) == 0.0
+
+
+def test_select_muon_modes_carries_each_modes_width() -> None:
+    modes = select_muon_modes(parse_phonon_text(PHONON_TEXT))
+
+    for mode in modes:
+        assert mode.width_A == pytest.approx(mode_width_angstrom(mode.frequency_cm))
+        assert mode.width_A > 0.0
 
 
 def test_covariance_matrices_are_real_and_finite() -> None:

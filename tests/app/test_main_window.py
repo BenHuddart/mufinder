@@ -712,7 +712,7 @@ def test_main_window_launches_quantum_phonon_analysis_for_result(
     window.close()
 
 
-def test_main_window_quantum_completed_results_show_phonon_eigenvalues(qapp, tmp_path: Path) -> None:
+def test_main_window_quantum_completed_results_show_muon_modes(qapp, tmp_path: Path) -> None:
     window = MainWindow()
 
     service = ProjectService()
@@ -737,6 +737,12 @@ def test_main_window_quantum_completed_results_show_phonon_eigenvalues(qapp, tmp
             "phonon_file": str(phonon_path),
             "muon_zpe_total_eV": 0.1,
             "w1_entanglement_witness": -0.25,
+            "w1_definition": "participation_minus_3",
+            "muon_zpe_modes": [
+                {"mode_index": 6, "frequency_cm": 3600.0, "participation": 0.9, "width_A": 0.12},
+                {"mode_index": 4, "frequency_cm": 1600.0, "participation": 0.9, "width_A": 0.18},
+                {"mode_index": 5, "frequency_cm": 2500.0, "participation": 0.95, "width_A": 0.15},
+            ],
             "phonon_mode_eigenvalues_cm": [100.0, 400.0, 900.0, 1600.0, 2500.0, 3600.0],
         },
     )
@@ -747,11 +753,14 @@ def test_main_window_quantum_completed_results_show_phonon_eigenvalues(qapp, tmp
 
     window._refresh_quantum_corrections_view()
 
-    assert window._quantum_corrections_view._results_table.item(0, 0).text() == "quantum_phonon_siteA"
-    assert window._quantum_corrections_view._results_table.item(0, 2).text() == (
-        "1:100.0, 2:400.0, 3:900.0, 4:1600.0, 5:2500.0, 6:3600.0"
-    )
-    assert window._quantum_corrections_view._results_table.item(0, 3).text() == "-0.25"
+    results_table = window._quantum_corrections_view._results_table
+    assert [results_table.item(0, column).text() for column in range(5)] == [
+        "quantum_phonon_siteA",
+        "0.100",
+        "1600.0, 2500.0, 3600.0",
+        "0.18, 0.15, 0.12",
+        "-0.25",
+    ]
 
     window.close()
 
