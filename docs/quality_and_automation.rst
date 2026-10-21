@@ -357,8 +357,9 @@ reads the registry's names with ``--list`` and fails if a page references an
 image the registry does not render, the registry renders one no page uses, or
 an example module under ``examples/`` is missing from the registry. It then
 renders each example with ``--example`` in its own process, with a timeout
-proportional to its scene count, so each example's projects are built once
-and ``pytest-xdist`` spreads the examples across workers.
+proportional to its scene count; that process shares the example's scenes
+between its ``--jobs`` workers, and ``pytest-xdist`` spreads the examples
+across test workers.
 ``tests/docs/test_docs_synthetic.py`` reads the ``synthetic.py`` outputs back
 through the application's CASTEP and geometry-progress parsers, and
 ``tests/docs/test_docs_images.py`` builds a one-page Sphinx project with the

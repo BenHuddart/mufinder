@@ -179,7 +179,8 @@ The energies above the lowest site, 0.34 and 0.82 eV, are the MuFinder paper's.
 
 ``Analyse Displacements`` shows the F–μ–F distortion directly: the two
 fluorines 1.70 Å from the 4c site move in by half an ångström, the two Co
-2.35 Å away move out, and nothing further away moves.
+2.35 Å away move out, and in the synthetic relaxation nothing further away
+moves.
 
 .. figure:: ../../_generated/screenshots/displacement_analysis_dialog.webp
    :alt: The Analyse Displacements dialog for the 4c site: two F at 1.70 A

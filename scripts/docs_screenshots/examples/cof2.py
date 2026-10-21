@@ -576,33 +576,45 @@ def _outward_displacements(change: float, radius: float) -> Callable[[list[str],
     return changes
 
 
-def _relaxed_site_number(window: MainWindow, row: Any) -> int:
-    """The row's place among the generated sites, in the Generation table's order."""
+def _rank_in_cluster(window: MainWindow, definition: Any, row: Any, kind_of: Callable[[Any], str]) -> int:
+    """How many of the definition's earlier rows of this charge state relax to the same cluster.
 
-    labels = sorted(
-        (site.label for site in window._document.sites.values() if site.generation_method in {"near_element", "random"}),
-        key=window._natural_label_sort_key,
-    )
-    return labels.index(row.label) if row.label in labels else 0
+    Each cluster's first row, in the Relaxations table's order, takes the
+    cluster's energy exactly; later members sit a little above it.
+    """
+
+    from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
+
+    rows = [
+        other
+        for other in deserialize_muon_relaxation_config(definition.parameters["configuration"]).rows
+        if other.charge_state == row.charge_state
+    ]
+    rows.sort(key=lambda other: window._natural_label_sort_key(other.label))
+    kind = kind_of(row.initial_fractional_position)
+    earlier = rows[: next(index for index, other in enumerate(rows) if other.label == row.label)]
+    return sum(1 for other in earlier if kind_of(other.initial_fractional_position) == kind)
 
 
 def _muon_outputs(window: MainWindow) -> Outputs:
     """A relaxed cell and a CASTEP output for each staged start, by charge state and basin."""
 
     def write(job: Any, job_dir: Path, seed: str) -> bool:
-        _definition, row = window._muon_relaxation_definition_and_row_for_job(job)
+        definition, row = window._muon_relaxation_definition_and_row_for_job(job)
         start = row.initial_fractional_position
-        number = _relaxed_site_number(window, row)
         if row.charge_state == MUONIUM_CHARGE_STATE:
             kind = muonium_site_kind(start)
             site, energy_above, change = MUONIUM_SITES[kind]
             displacements = _outward_displacements(change, MUONIUM_NEIGHBOUR_RADIUS)
-            energy = MUONIUM_ENERGY_EV + energy_above + 0.0004 * number
+            rank = _rank_in_cluster(window, definition, row, muonium_site_kind)
+            energy = MUONIUM_ENERGY_EV + energy_above + 0.0004 * rank
         else:
             kind = positive_site_kind(start)
             site, energy_above, entries = POSITIVE_SITES[kind]
             displacements = _ranked_displacements(entries)
-            energy = POSITIVE_ENERGY_EV + energy_above + 0.0006 * number
+            rank = _rank_in_cluster(window, definition, row, positive_site_kind)
+            energy = POSITIVE_ENERGY_EV + energy_above + 0.0006 * rank
+        number = int("".join(character for character in row.label if character.isdigit()) or 0)
         relaxed, _distance = _nearest_image(start, site)
         cell = _job_cell(job_dir, seed)
         (job_dir / f"{seed}-out.cell").write_text(
@@ -1198,15 +1210,13 @@ def calculate_field(page: Any) -> None:
 
 
 def calculate_corner_tensor(dialog: QWidget) -> None:
-    """Take the corner Co sublattice (atom index 0), click ``Calculate`` and show the tensor in Å⁻³."""
+    """Take the corner Co sublattice (atom index 0) and click ``Calculate``."""
 
     from PySide6.QtCore import QEvent
 
     dialog._indices_radio.setChecked(True)
     dialog._indices_edit.setText("0")
     dialog._calculate_button.click()
-    # De Renzi et al. tabulate the tensors in Å⁻³ per μB.
-    dialog._result_unit_combo.setCurrentIndex(dialog._result_unit_combo.findData("angstrom^-3"))
     # The previous result's placeholder goes through deleteLater, which an
     # event loop would run before the next paint.
     QApplication.instance().sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
@@ -1226,7 +1236,7 @@ def save_magnetic_workspace(window: MainWindow) -> None:
 
     page = window._magnetic_field_view
     calculate_field(page)
-    when_modal("QInputDialog", lambda dialog: (dialog.setTextValue("CoF2 antiferromagnet"), dialog.accept()))
+    when_modal("QInputDialog", lambda dialog: (dialog.setTextValue("CoF2 4c site"), dialog.accept()))
     page._pin_button.click()
 
 
@@ -1348,7 +1358,7 @@ SCENES: dict[str, Scene] = {
     "cof2_magnetic_fields_page": Scene(
         results_project,
         "magnetic_fields",
-        Page("_magnetic_field_view", (1100, 1060)),
+        Page("_magnetic_field_view", (1100, 1140)),
         setup=lambda window: calculate_field(window._magnetic_field_view),
     ),
     "cof2_magnetic_structure_builder": Scene(
@@ -1387,7 +1397,7 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "cof2_magnetic_field_workspace": Scene(
-        results_project, "magnetic_fields", Page(current_page, (1100, 1060)), setup=save_magnetic_workspace
+        results_project, "magnetic_fields", Page(current_page, (1100, 1140)), setup=save_magnetic_workspace
     ),
     # Energy barriers.
     "energy_barriers_page": Scene(results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))),
