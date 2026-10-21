@@ -225,6 +225,41 @@ def minimum_image_distance(
     return math.sqrt(cart[0] ** 2 + cart[1] ** 2 + cart[2] ** 2)
 
 
+_NEIGHBOUR_CELL_OFFSETS = np.array(
+    [(x, y, z) for x in (-1.0, 0.0, 1.0) for y in (-1.0, 0.0, 1.0) for z in (-1.0, 0.0, 1.0)]
+)
+
+
+def nearest_image_delta(
+    a: Sequence[float],
+    b: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+) -> list[float]:
+    """Return the fractional displacement from ``b``'s nearest periodic image to ``a``.
+
+    The per-component minimum-image displacement (:func:`minimum_image_delta`)
+    is searched over its 27 neighbouring cells with the lattice metric, which
+    finds the nearest image in skewed cells too; ``b + delta`` is that image.
+    """
+
+    lattice = lattice_matrix(lattice_vectors)
+    delta = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    delta -= np.round(delta)
+    candidates = delta[None, :] + _NEIGHBOUR_CELL_OFFSETS
+    lengths = np.linalg.norm(candidates @ lattice, axis=1)
+    return [float(value) for value in candidates[int(np.argmin(lengths))]]
+
+
+def nearest_image_cartesian_delta(
+    a: Sequence[float],
+    b: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+) -> list[float]:
+    """Return :func:`nearest_image_delta` of ``a - b`` in Cartesian coordinates."""
+
+    return _frac_to_cart(nearest_image_delta(a, b, lattice_vectors), lattice_vectors)
+
+
 def nearest_image_distance(
     a: Sequence[float],
     b: Sequence[float],
@@ -232,16 +267,10 @@ def nearest_image_distance(
 ) -> float:
     """Return the shortest Cartesian distance between ``a`` and any periodic image of ``b``.
 
-    The per-component minimum-image displacement is searched over its 27
-    neighbouring cells, which finds the nearest image in skewed cells too.
+    The length of :func:`nearest_image_cartesian_delta` in Angstrom.
     """
 
-    lattice = lattice_matrix(lattice_vectors)
-    delta = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
-    delta -= np.round(delta)
-    offsets = np.array([(x, y, z) for x in (-1.0, 0.0, 1.0) for y in (-1.0, 0.0, 1.0) for z in (-1.0, 0.0, 1.0)])
-    cartesian = (delta[None, :] + offsets) @ lattice
-    return float(np.min(np.linalg.norm(cartesian, axis=1)))
+    return vector_length(nearest_image_cartesian_delta(a, b, lattice_vectors))
 
 
 def vector_length(vector: Sequence[float]) -> float:
@@ -381,6 +410,8 @@ __all__ = [
     "minimum_image_distance",
     "minimum_image_distance_matrix",
     "near_minimum_indexes",
+    "nearest_image_cartesian_delta",
+    "nearest_image_delta",
     "nearest_image_distance",
     "vector_length",
     "wrap_fractional",
