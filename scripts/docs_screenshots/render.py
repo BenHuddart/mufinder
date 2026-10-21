@@ -37,7 +37,7 @@ for _variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONF
     os.environ[_variable] = str(_SCRATCH / _variable.lower())
 
 import numpy as np  # noqa: E402
-from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtCore import QEvent, QTimer  # noqa: E402
 from PySide6.QtGui import QImage, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog, QDockWidget, QWidget  # noqa: E402
 
@@ -421,6 +421,10 @@ def opened(app: QApplication, project: Path, *, dashboard: bool = False) -> Iter
         window.close()
         window.deleteLater()
         app.processEvents()
+        # processEvents leaves deferred deletes for the event loop, which a
+        # headless run only enters inside a modal dialog. Delete the window
+        # now: every live widget slows the next window's style sheet.
+        app.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
 def _fit_page(app: QApplication, window: MainWindow, page: QWidget, size: tuple[int, int]) -> None:
@@ -498,13 +502,35 @@ def capture_modal(app: QApplication, window: MainWindow, target: Dialog, path: P
         raise RuntimeError(f"No dialog opened for {path.name}")
 
 
-def render(app: QApplication, scene: Scene, path: Path) -> None:
-    """Open ``scene``'s project, drive it, and save its grab target to ``path``."""
+# Each builder's saved project, built once per process.
+_PROJECT_CACHE: dict[ProjectBuilder, Path] = {}
 
-    directory = Path(tempfile.mkdtemp(prefix=f"{path.stem}-", dir=_SCRATCH))
+
+def project_copy(builder: ProjectBuilder, prefix: str) -> Path:
+    """A fresh copy of the project ``builder`` writes, building it on first use.
+
+    A builder runs once per process; every scene that opens its project gets
+    its own copy, so a scene that changes or saves the project leaves the
+    next scene's copy alone. A saved project stores its paths relative to its
+    root, so a copy opens as the original does.
+    """
+
+    built = _PROJECT_CACHE.get(builder)
+    if built is None:
+        built = builder(scratch_directory("project-"))
+        _PROJECT_CACHE[builder] = built
+    copy = scratch_directory(prefix) / built.name
+    shutil.copytree(built, copy)
+    return copy
+
+
+def render(app: QApplication, scene: Scene, path: Path) -> None:
+    """Open a copy of ``scene``'s project, drive it, and save its grab target to ``path``."""
+
+    project = project_copy(scene.project, f"{path.stem}-")
     target = scene.target
     dashboard = isinstance(target, Dock) or (isinstance(target, Window) and target.dashboard)
-    with opened(app, scene.project(directory), dashboard=dashboard) as window:
+    with opened(app, project, dashboard=dashboard) as window:
         if scene.route is None:
             window._show_project_home()
         else:
