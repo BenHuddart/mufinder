@@ -423,6 +423,8 @@ class EnergyBarriersController(WorkflowJobController):
         )
 
     def _image_structure(self, job_label: str, image: TransitionStateImage) -> Structure:
+        # The parser already converts the ``.ts`` geometry from Bohr to Å, so the
+        # lattice and positions feed ``Structure`` (Å throughout) unchanged.
         lattice = [list(vector) for vector in image.lattice_vectors]
         document = self._context.document()
         return Structure(

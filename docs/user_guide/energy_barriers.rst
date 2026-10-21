@@ -286,7 +286,11 @@ plot is the primary scrub surface: click or drag to select the nearest image,
 use the Left/Right arrow keys to step, or use the ``◀ Image n / N ▶`` stepper
 next to the plot. The structure viewer follows the selected image and
 preserves the current camera orientation and zoom while scrubbing along the
-band; the view only resets when a different NEB result is selected.
+band; the view only resets when a different NEB result is selected. CASTEP
+writes the ``.ts`` file in atomic units (Hartree, Bohr and Hartree/Bohr); the
+parser converts every image to eV, Å and eV/Å on read, so the viewer shows
+each image's cell and atoms at the same scale as every other structure in the
+project.
 
 ``Pop Out Viewer`` moves the structure viewer into its own resizable window
 while it stays linked to the reaction-coordinate controls, which is useful
