@@ -13,12 +13,14 @@ pristine relaxation, UEP screening, muon-site generation, relaxation and
 analysis, magnetic fields, quantum corrections, and energy barriers. Jobs run
 locally or on an HPC cluster and are tracked in the job dashboard.
 
-New users should start with :doc:`/getting_started/installation`, then read
-:doc:`/getting_started/running_jobs` and the :doc:`/user_guide/overview` of
-every workflow stage. The user guide follows the order of the stages in the
-application. The reference section covers the CASTEP input MuFinder writes, the
-Python API documents the library packages for scripting, and the developer
-guide describes internal contracts and quality standards.
+New users should start with :doc:`/getting_started/installation`, follow the
+:doc:`/getting_started/first_project` tutorial from an empty project to a
+relaxed muon site, then read :doc:`/getting_started/running_jobs` and the
+:doc:`/user_guide/overview` of every workflow stage. The user guide follows
+the order of the stages in the application. The reference section covers the
+CASTEP input MuFinder writes, the Python API documents the library packages
+for scripting, and the developer guide describes internal contracts and
+quality standards.
 
 .. toctree::
    :maxdepth: 2
@@ -26,6 +28,7 @@ guide describes internal contracts and quality standards.
 
    getting_started/installation
    getting_started/castep_setup
+   getting_started/first_project
    getting_started/running_jobs
 
 .. toctree::

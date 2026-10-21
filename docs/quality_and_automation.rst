@@ -40,7 +40,7 @@ README, the pull-request template and CI refer to its targets. Pass
   ``docs/_generated/screenshots`` (see `Documentation screenshots`_).
 - ``make docs`` renders the screenshots, then builds this Sphinx site with
   warnings treated as errors.
-- ``make lint`` runs ``ruff check`` over ``src``, ``tests`` and ``scripts``.
+- ``make lint`` runs ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``.
 - ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
 To skip the Qt widget tests while iterating, select by marker with
@@ -410,7 +410,7 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``make lint``: ``ruff check`` over ``src``, ``tests`` and ``scripts``
+  - ``make lint``: ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``
   - ``make test-shard SHARD=n SHARDS=4 PYTEST_WORKERS=auto`` on four runners,
     each distributed with ``pytest-xdist`` using ``--dist worksteal``, then
     ``make coverage`` in the required ``tests`` job, which combines the shards'

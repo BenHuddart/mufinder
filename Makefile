@@ -66,6 +66,6 @@ docs: screenshots
 
 # ruff is installed by the dev extra (added alongside the ruff configuration).
 lint:
-	$(PYTHON) -m ruff check src tests scripts
+	$(PYTHON) -m ruff check src tests scripts docs/api/examples
 
 quality: lint test docs

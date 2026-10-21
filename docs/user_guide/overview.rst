@@ -20,6 +20,9 @@ Application shell
 - ``View -> Appearance`` switches between ``Light``, ``Dark`` and ``System``
   themes. MuFinder bundles its own fonts, icons and control styling, so it looks
   the same on macOS, Windows and Linux.
+- The ``Help`` menu opens the documentation site (``User Guide``) and shows the
+  installed version with links to the documentation and source code
+  (``About MuFinder``).
 - The project navigator lists the workflow stages: ``Host Structure``,
   ``Supercell Editor``, ``Convergence Testing`` (``Cutoff Energy`` and
   ``K-Point Grid``), ``Pristine Relaxation``, ``UEP``, ``Muon Sites``
