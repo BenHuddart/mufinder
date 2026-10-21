@@ -39,7 +39,7 @@ Running the workflow
 The editor
 ----------
 
-.. figure:: ../_generated/screenshots/supercell_editor.png
+.. figure:: ../_generated/screenshots/supercell_editor.webp
    :alt: The Supercell Editor with a saved 2x2x2 rutile supercell selected and
          previewed.
 
@@ -59,7 +59,7 @@ workflow selector refreshes immediately after the editor closes.
 Suggesting a supercell
 ~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/supercell_suggestions.png
+.. figure:: ../_generated/screenshots/supercell_suggestions.webp
    :alt: The supercell suggestions for rutile TiO2: three diagonal cells, the
          2x2x4 cell highlighted.
 

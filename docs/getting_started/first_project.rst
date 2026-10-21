@@ -135,7 +135,7 @@ experimental lattice.
 4. When the job completes, read the relaxed ``a (Ang)``, ``b (Ang)`` and
    ``c (Ang)``.
 
-.. figure:: ../_generated/screenshots/pristine_relaxation_page.png
+.. figure:: ../_generated/screenshots/pristine_relaxation_page.webp
    :alt: The Pristine Relaxation page with one completed variable-cell
          relaxation of silicon and its relaxed lattice lengths.
 
@@ -145,7 +145,7 @@ experimental lattice.
 5. Click ``Generate Comparison Table...``, tick ``Include`` for the completed
    job, keep or edit the ``Comparison table label`` and click ``OK``.
 
-.. figure:: ../_generated/screenshots/comparison_table.png
+.. figure:: ../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the silicon host against one relaxed cell,
          grouped into lattice, displacement, bonding and symmetry metrics.
 
@@ -181,7 +181,7 @@ per relaxation.
 7. When the rows complete, compare the ``Initial`` and ``Final`` positions and
    the ``Total Energy (eV)``.
 
-.. figure:: ../_generated/screenshots/muon_relaxations_page.png
+.. figure:: ../_generated/screenshots/muon_relaxations_page.webp
    :alt: The Structural Relaxations tab with five completed positive-muon
          relaxations in a 2x2x2 silicon supercell, their initial and final
          positions and energies.
@@ -215,7 +215,7 @@ the relaxed positions into distinct sites.
 3. Read the clustered sites, ordered by energy relative to the lowest, each
    with its fitted Wyckoff label.
 
-.. figure:: ../_generated/screenshots/relaxation_analysis_workspace.png
+.. figure:: ../_generated/screenshots/relaxation_analysis_workspace.webp
    :alt: An analysis workspace with five silicon muon relaxations clustered
          into two sites, beside a 3D preview of the host cell.
 
@@ -227,7 +227,7 @@ the relaxed positions into distinct sites.
 5. Choose ``File > Save Project``: workspaces are kept until the project is
    saved.
 
-.. figure:: ../_generated/screenshots/muon_sites_summary.png
+.. figure:: ../_generated/screenshots/muon_sites_summary.webp
    :alt: The Muon Sites page with two distinct positive-muon sites pinned and
          an empty Muonium card.
 

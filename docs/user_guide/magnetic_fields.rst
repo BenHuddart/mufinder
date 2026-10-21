@@ -23,7 +23,7 @@ Before you start
 Calculate a field
 -----------------
 
-.. figure:: ../_generated/screenshots/magnetic_fields_page.png
+.. figure:: ../_generated/screenshots/magnetic_fields_page.webp
    :alt: The Magnetic Fields page with a ferromagnet's calculated field and its
          term breakdown.
 
@@ -114,7 +114,7 @@ boundary: MuFinder does not import or simulate spectra from MCIF files.
 Build components in the builder
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/magnetic_structure_builder.png
+.. figure:: ../_generated/screenshots/magnetic_structure_builder.webp
    :alt: The Magnetic Structure Builder showing a helix component, its
          checklist, q-basis table and a four-cell spin preview.
 
@@ -828,7 +828,7 @@ quadrupolar linewidth models are not part of this workflow.
 Save results and workspaces
 ---------------------------
 
-.. figure:: ../_generated/screenshots/magnetic_field_workspace.png
+.. figure:: ../_generated/screenshots/magnetic_field_workspace.webp
    :alt: A saved Magnetic Fields workspace showing the ferromagnet's restored field
          result and term breakdown.
 

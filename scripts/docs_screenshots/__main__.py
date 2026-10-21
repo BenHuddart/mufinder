@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 # The render module configures Qt and VTK, so it is imported before them.
-from .render import DEFAULT_OUTPUT, install_offscreen_viewers, remove_scratch, render
+from .render import DEFAULT_OUTPUT, IMAGE_SUFFIX, install_offscreen_viewers, remove_scratch, render
 from .registry import EXAMPLES, SCREENSHOTS
 
 from PySide6.QtWidgets import QApplication
@@ -61,7 +61,7 @@ def _run(argv: list[str] | None) -> int:
     output: Path = args.output
     output.mkdir(parents=True, exist_ok=True)
     for name in names:
-        render(app, SCREENSHOTS[name], output / f"{name}.png")
+        render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
     return 0
 
 

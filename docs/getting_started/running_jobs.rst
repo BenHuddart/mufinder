@@ -46,7 +46,7 @@ Selected`` because its rows are derived from completed relaxations, and adds a
 Local submission
 ~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/local_submission_dialog.png
+.. figure:: ../_generated/screenshots/local_submission_dialog.webp
    :alt: The local submission dialog for six cutoff-convergence jobs, set to
          run one after another.
 
@@ -206,7 +206,7 @@ right-click menu, or Delete/Backspace):
 The Job Dashboard
 -----------------
 
-.. figure:: ../_generated/screenshots/job_dashboard.png
+.. figure:: ../_generated/screenshots/job_dashboard.webp
    :alt: The main window with the Job Dashboard docked below the Cutoff
          Convergence page, listing a failed, a stopped and a cancelled job.
 
@@ -359,7 +359,7 @@ Watching a relaxation
 Geometry-optimisation progress
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/geometry_progress_dialog.png
+.. figure:: ../_generated/screenshots/geometry_progress_dialog.webp
    :alt: The geometry progress window of a running BFGS relaxation at iteration 4,
          with its four criteria tabulated and plotted against their tolerances.
 
@@ -552,7 +552,7 @@ Running on a cluster
 Cluster profiles and connections
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/cluster_setup_dialog.png
+.. figure:: ../_generated/screenshots/cluster_setup_dialog.webp
    :alt: The Remote Cluster Connections dialog with the built-in SCARF profile
          selected on the Connection tab.
 

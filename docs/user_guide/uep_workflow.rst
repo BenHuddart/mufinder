@@ -87,7 +87,7 @@ Open ``UEP`` in the project navigator, then:
 The UEP page
 ------------
 
-.. figure:: ../_generated/screenshots/uep_page.png
+.. figure:: ../_generated/screenshots/uep_page.webp
    :alt: The UEP page with one completed source job on the silicon host and its
          Open Wizard button.
 
@@ -150,7 +150,7 @@ being stacked into a thin strip.
 Interpreting batch searches
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/uep_clustering_dialog.png
+.. figure:: ../_generated/screenshots/uep_clustering_dialog.webp
    :alt: The UEP clustering window with a hierarchical dendrogram, the clustered
          muon positions in the cell and the cluster energy-spread plot.
 

@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = PROJECT_ROOT / "docs"
 SCRIPT = PROJECT_ROOT / "scripts" / "render_docs_screenshots.py"
 EXAMPLES_ROOT = PROJECT_ROOT / "scripts" / "docs_screenshots" / "examples"
-IMAGE_SUFFIX = ".png"
+IMAGE_SUFFIX = ".webp"
 
 # Listing imports Qt and the application but opens no window.
 LIST_TIMEOUT_S = 60

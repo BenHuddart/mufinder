@@ -57,7 +57,7 @@ counts, whether the starter catalog is active, and any such reason.
 Installing a catalog
 --------------------
 
-.. figure:: _generated/screenshots/castep_setup_dialog.png
+.. figure:: _generated/screenshots/castep_setup_dialog.webp
    :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
          generate one or use an existing file.
 

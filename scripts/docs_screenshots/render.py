@@ -153,9 +153,17 @@ def settle(app: QApplication) -> None:
     app.processEvents()
 
 
+# Screenshots are lossless WebP: Qt's WebP writer is lossless at quality 100.
+IMAGE_SUFFIX = ".webp"
+_IMAGE_FORMAT = "WEBP"
+_LOSSLESS_QUALITY = 100
+
+
 def save(widget: QWidget, path: Path) -> None:
+    """Grab ``widget`` once everything has settled and write it to ``path`` as lossless WebP."""
+
     settle(QApplication.instance())
-    if not widget.grab().save(str(path)):
+    if not widget.grab().save(str(path), _IMAGE_FORMAT, _LOSSLESS_QUALITY):
         raise RuntimeError(f"Could not write {path}")
     print(f"wrote {path}")
 
