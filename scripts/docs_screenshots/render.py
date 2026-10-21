@@ -32,7 +32,12 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["PYVISTA_OFF_SCREEN"] = "true"
 os.environ["VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN"] = "1"
 os.environ["VTK_DEFAULT_OPENGL_WINDOW"] = "vtkEGLRenderWindow"
-os.environ.setdefault("QT_SCALE_FACTOR", "2")
+# The screenshots are rendered at SCALE_FACTOR times their logical size, and
+# docs/conf.py (SCREENSHOT_SCALE) divides the saved pixel size by the same
+# number to give each <img> its logical width and height; the two must match,
+# so an inherited QT_SCALE_FACTOR is overridden rather than kept.
+SCALE_FACTOR = 2
+os.environ["QT_SCALE_FACTOR"] = str(SCALE_FACTOR)
 for _variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONFIGDIR"):
     os.environ[_variable] = str(_SCRATCH / _variable.lower())
 
@@ -51,7 +56,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = PROJECT_ROOT / "docs" / "_generated" / "screenshots"
 FIXTURES = PROJECT_ROOT / "tests" / "fixtures"
 
-# Logical window size; QT_SCALE_FACTOR doubles the saved pixels.
+# Logical window size; the saved pixels are SCALE_FACTOR times larger.
 WINDOW_SIZE = (1440, 1120)
 # How often, and how long, a scene waits for a modal dialog to open.
 MODAL_POLL_MS = 50

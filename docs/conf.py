@@ -94,6 +94,7 @@ def _write_redirects(app, exception) -> None:
 # scales an image down to the content column. ``tests/docs/test_docs_images.py``
 # checks the hook.
 
+# The renderer's SCALE_FACTOR (scripts/docs_screenshots/render.py); a test keeps them equal.
 SCREENSHOT_SCALE = 2
 _IMG_TAG = re.compile(r"<img\b[^>]*>")
 _SRC_ATTRIBUTE = re.compile(r'\bsrc="([^"]+)"')

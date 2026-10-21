@@ -242,8 +242,11 @@ the decoded pixels are exactly those grabbed, at about half the size of a PNG.
 A ``build-finished`` hook in ``docs/conf.py`` post-processes the HTML pages:
 every WebP image under ``_images/`` gets ``loading="lazy"`` and
 ``decoding="async"``, and, unless its figure sets a ``:width:`` or
-``:height:``, explicit ``width`` and ``height`` attributes in CSS pixels, half
-the file's pixel size. The browser reserves each screenshot's space before it
+``:height:``, explicit ``width`` and ``height`` attributes in CSS pixels, the
+file's pixel size divided by the renderer's scale factor. The renderer fixes
+``QT_SCALE_FACTOR`` at that factor rather than inheriting it from the
+environment, and a test keeps the two constants equal. The browser reserves
+each screenshot's space before it
 loads and fetches only the screenshots near the viewport; the theme's
 ``max-width: 100%`` and ``height: auto`` still scale an image down to the
 content column. Other images are left alone.

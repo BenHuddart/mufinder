@@ -6,6 +6,7 @@ in figures, with the repository's hook registered on its application.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 import re
@@ -14,13 +15,27 @@ from PIL import Image
 from sphinx.application import Sphinx
 
 CONF = Path(__file__).resolve().parents[2] / "docs" / "conf.py"
+RENDER = Path(__file__).resolve().parents[2] / "scripts" / "docs_screenshots" / "render.py"
 
 
-def _hook():
+def _conf():
     spec = importlib.util.spec_from_file_location("mufinder_docs_conf", CONF)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module._size_screenshots
+    return module
+
+
+def _hook():
+    return _conf()._size_screenshots
+
+
+def _renderer_scale_factor() -> int:
+    """The renderer's ``SCALE_FACTOR``, read from its source: importing it configures Qt."""
+
+    for node in ast.parse(RENDER.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "SCALE_FACTOR" for t in node.targets):
+            return int(ast.literal_eval(node.value))
+    raise AssertionError(f"{RENDER.name} does not assign SCALE_FACTOR")
 
 
 def _build(tmp_path: Path, page: str) -> str:
@@ -90,3 +105,7 @@ def test_a_failed_build_is_not_post_processed(tmp_path: Path) -> None:
     _hook()(App(), RuntimeError("build failed"))
 
     assert page.read_text(encoding="utf-8") == '<img src="_images/shot.webp" />'
+
+
+def test_the_hook_divides_by_the_scale_the_renderer_draws_at() -> None:
+    assert _conf().SCREENSHOT_SCALE == _renderer_scale_factor()
