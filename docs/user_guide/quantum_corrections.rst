@@ -436,15 +436,21 @@ appears above the tabs.
    full-amplitude mode vectors as fixed reference arrows.
 
 ``Mode wells and widths``
-   The harmonic, weakly-bound limit of the single-particle approximation of
-   Gomilšek *et al.* For each of the three selected modes, builds the
-   one-dimensional harmonic well ``V(q) = (1/2) m_mu omega^2 q^2`` along the
-   muon's direction in that mode (host atoms fixed, effective mass = muon mass),
-   solves the finite-difference Schrödinger equation over ``±Range (Å)``
-   (default ``2.0``), and reports the ground-state energy (``ZPE (eV)``) and the
-   RMS width of the probability density (``Width (Å)``). Because the well is
-   harmonic, the ground-state energy equals ``(1/2) hbar omega`` by
-   construction and matches the main table; the value of the tab is the width
+   For each of the three selected modes, builds the one-dimensional harmonic
+   well ``V(q) = (1/2) m_mu omega^2 q^2`` along the muon's direction in that
+   mode from the mode frequency and the muon mass, solves the finite-difference
+   Schrödinger equation over ``±Range (Å)`` (default ``2.0``, 401 grid points),
+   and reports the ground-state energy (``ZPE (eV)``) and the RMS width of the
+   probability density (``Width (Å)``). For a mode the muon alone moves in
+   (participation close to 1) this is the harmonic, weakly-bound limit of the
+   single-particle approximation of Gomilšek *et al.* (host atoms fixed,
+   effective mass = muon mass); a mode shared with host atoms is an eigenmode
+   of the coupled dynamical matrix, so its well is a harmonic estimate along
+   the mode direction rather than a fixed-host muon potential. Once the range
+   resolves the oscillator, as the default does for muon modes, the
+   ground-state energy converges to ``(1/2) hbar omega``, the value in the main
+   table; a range comparable to the width confines the muon further and raises
+   both numbers. The value of the tab is the width
    ``Δx = sqrt(hbar / (2 m_mu omega))`` and the plot of the potential,
    ground-state level, and probability density ``|ψ|²`` for each mode.
    ``Energy scale`` switches the plot between ``Energy`` and ``Sqrt energy``,
@@ -471,8 +477,9 @@ Scope and limitations
 
 - Phonons are computed at Gamma only, in the harmonic approximation.
 - The ``Mode wells and widths`` tab uses harmonic wells built from the phonon
-  frequencies. MuFinder does not generate or import DFT line scans, so the
-  anharmonic single-particle approximations of Gomilšek *et al.* are not
+  frequencies, which are the harmonic weakly-bound limit only for modes the
+  muon alone moves in. MuFinder does not generate or import DFT line scans, so
+  the anharmonic single-particle approximations of Gomilšek *et al.* are not
   available in the application (see `For developers`_).
 - Path-integral molecular dynamics (PIMD) is out of scope for MuFinder.
 

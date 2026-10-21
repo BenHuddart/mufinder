@@ -281,10 +281,13 @@ class QuantumPhononAnalysisDialog(QDialog):
         layout.addLayout(
             _section_header(
                 "Harmonic muon wells (weakly-bound limit)",
-                "Each well is the harmonic potential of one muon-dominated Gamma mode, with the host atoms "
-                "fixed and the muon mass. Its ground-state energy therefore reproduces ħω/2; read the "
-                "width Δx and the shape of |ψ|². A DFT line-scan potential would make the well "
-                "anharmonic, and MuFinder does not generate one.",
+                "Each well is the harmonic potential of one muon-dominated Gamma mode at its frequency, "
+                "with the muon mass, along the muon's direction in it. With the range and grid resolving "
+                "the oscillator (the default range does for muon modes) the ground-state energy "
+                "converges to ħω/2 and the width to Δx; read the width Δx and the shape of |ψ|². A mode "
+                "the muon alone moves in is the harmonic weakly-bound limit; a mode shared with host "
+                "atoms is a coupled eigenmode, not a fixed-host potential. A DFT line-scan potential "
+                "would make the well anharmonic, and MuFinder does not generate one.",
                 self._show_single_particle_help,
             )
         )
@@ -909,8 +912,8 @@ def _single_particle_help_definition() -> dict[str, object]:
     return {
         "title": "Harmonic muon wells (weakly-bound limit)",
         "paragraphs": (
-            "Each selected muon-dominated Gamma mode defines a one-dimensional harmonic well along the muon's displacement direction. The host atoms are held fixed and the effective mass is the muon mass, which is the harmonic weakly-bound limit of the single-particle approximation of Gomilšek et al. (Commun. Phys. 6, 142, 2023).",
-            "The solver itself is general and accepts tabulated potentials, but the workflow feeds it harmonic wells only. The ZPE column is the numerical ground-state energy of the finite-difference Schrodinger problem and therefore reproduces ħω/2 by construction, identical to the main table. The quantity to read is the width: the RMS spread of the normalized muon probability density, which equals the analytic width of the harmonic ground state.",
+            "Each selected muon-dominated Gamma mode defines a one-dimensional harmonic well along the muon's displacement direction, from the mode frequency and the muon mass. For a mode the muon alone moves in (participation close to 1) this is the harmonic weakly-bound limit of the single-particle approximation of Gomilšek et al. (Commun. Phys. 6, 142, 2023): host atoms fixed, effective mass the muon mass. A mode shared with host atoms is an eigenmode of the coupled dynamical matrix, so its well is a harmonic estimate along the mode direction rather than a fixed-host muon potential; the participation column of the Phonon Modes tab shows how far each selected mode is from pure muon motion.",
+            "The solver itself is general and accepts tabulated potentials, but the workflow feeds it harmonic wells only. The ZPE column is the numerical ground-state energy of the finite-difference Schrodinger problem on ±Range with 401 grid points. Once the range and grid resolve the oscillator it converges to ħω/2, the value in the main table, and the width to the analytic Δx; the default range of 2 Å does so for muon modes, whose widths are a few tenths of an Å. A range comparable to Δx confines the muon further and raises both numbers, and a very large range coarsens the grid. The quantity to read is the width: the RMS spread of the normalized muon probability density.",
             "The paper's anharmonic line-scan potentials and the strongly-bound effective mass, with relaxed host nuclei, are the next rung of the approximation; MuFinder does not generate them. The square-root energy scale is a plotting aid for shallow wells: it keeps the minimum visible while compressing the high-energy part of the potential.",
         ),
         "equations": (

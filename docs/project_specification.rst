@@ -520,7 +520,8 @@ Quantum corrections
   ``Phonon Modes`` tab (all Gamma-point modes, the muon-dominated subset
   highlighted, one selected mode synchronized to a muonated-structure viewer
   with amplitude-controlled playback) and the harmonic mode-well solver
-  (the weakly-bound limit of Gomilšek *et al.*) with energy plots,
+  (the harmonic weakly-bound limit of Gomilšek *et al.* for muon-pure modes)
+  with energy plots,
   square-root energy scaling, and covariance/correlation tensors plus pairwise
   ``w2`` witnesses. Path-integral
   molecular dynamics is out of scope.
