@@ -231,9 +231,12 @@ and gyromagnetic ratio, then a Gamma-point phonon continuation (finite
 displacement by default, with optional task farming). Completed results give
 the muon zero-point energy, covariance and correlation tensors, ``w1`` /
 ``w2`` witnesses and harmonic mode wells, shown in an
-interactive analysis window.
+interactive analysis window. Together they say how much zero-point energy each
+site carries, how far the muon spreads, and whether its motion is entangled
+with the host, which decides how far a harmonic estimate can be trusted.
 
-See :doc:`/user_guide/quantum_corrections`.
+See :doc:`/user_guide/quantum_corrections` and
+:doc:`/user_guide/quantum_corrections_theory`.
 
 Energy Barriers
 ~~~~~~~~~~~~~~~

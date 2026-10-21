@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 
 from mufinder.science.quantum_phonons import (
+    ATOMIC_MASS_KG,
     CM_INV_ZPE_TO_EV,
+    HBAR_J_S,
+    LIGHT_SPEED_M_S,
     MUON_MASS_AMU,
     PhononParseError,
     correlation_matrix,
@@ -25,6 +28,11 @@ from mufinder.science.quantum_phonons import (
     w1_entanglement_witness,
     w2_entanglement_witness,
     zpe_from_frequency_cm,
+)
+from tests.support.phonon_fixtures import (
+    MUON_ATOM_INDEX,
+    NEAREST_NITROGEN_INDEX,
+    n2_mu_n2_phonon_text,
 )
 
 
@@ -523,3 +531,80 @@ def test_correlation_matrix_zero_denominator_yields_zeros() -> None:
 
     assert corr.shape == (3, 3)
     assert np.all(corr == 0.0)
+
+
+# Worked example: the [N2-mu-N2]+ complex of solid nitrogen
+#
+# The numbers below are the harmonic (weakly-bound) row of the worked example in
+# docs/user_guide/quantum_corrections_theory.rst, section "Worked example: solid
+# nitrogen", taken from Gomilsek et al., Commun. Phys. 6, 142 (2023), Table 1.
+# The fixture is a five-atom toy model tuned to reproduce them (see
+# tests/support/phonon_fixtures.py).
+
+
+def _n2_mu_n2():
+    return parse_phonon_text(n2_mu_n2_phonon_text())
+
+
+def test_n2_mu_n2_fixture_parses_as_a_gamma_only_muon_run() -> None:
+    calculation = _n2_mu_n2()
+
+    assert [atom.species for atom in calculation.atoms] == ["N", "N", "H:mu", "N", "N"]
+    assert calculation.atom_index_for_species("H:mu") == MUON_ATOM_INDEX
+    gamma = calculation.gamma_point()
+    assert len(gamma.frequencies_cm) == 15
+    assert all(frequency > 0.0 for frequency in gamma.frequencies_cm)
+    assert list(gamma.frequencies_cm) == sorted(gamma.frequencies_cm)
+    assert muon_mass_warning(calculation) is None
+    # Mass-weighted eigenvectors are orthonormal, so the muon's participation
+    # summed over every mode is exactly its three degrees of freedom.
+    assert sum(muon_mode_participations(calculation)) == pytest.approx(3.0, abs=1e-9)
+
+
+def test_n2_mu_n2_zero_point_energies_match_the_worked_example() -> None:
+    result = muon_zpe(_n2_mu_n2())
+
+    assert result.warnings == ()
+    assert [round(mode.zpe_eV, 2) for mode in result.modes] == [0.17, 0.20, 0.20]
+    assert round(result.total_eV, 2) == 0.58
+    # The muon modes are the stiffest modes here, so the largest-participation
+    # rule picks the same three modes as the paper's highest-frequency rule.
+    assert [mode.mode_index for mode in result.modes] == [13, 14, 15]
+
+
+def test_n2_mu_n2_selected_modes_carry_most_but_not_all_muon_motion() -> None:
+    calculation = _n2_mu_n2()
+    modes = select_muon_modes(calculation)
+
+    summed = sum(mode.participation for mode in modes)
+    assert summed == pytest.approx(2.86, abs=0.01)
+    # The longitudinal mode hybridises with the odd N2 stretch just below it,
+    # which takes most of the muon weight the three selected modes miss.
+    participation = muon_mode_participations(calculation)
+    assert modes[0].participation == pytest.approx(0.87, abs=0.01)
+    unselected = [value for index, value in enumerate(participation) if index + 1 not in {13, 14, 15}]
+    assert max(unselected) == participation[10] == pytest.approx(0.13, abs=0.01)
+
+
+def test_n2_mu_n2_harmonic_widths_match_the_worked_example() -> None:
+    modes = select_muon_modes(_n2_mu_n2())
+
+    muon_mass_kg = ATOMIC_MASS_KG * MUON_MASS_AMU
+    widths = [
+        1e10 * math.sqrt(HBAR_J_S / (2.0 * muon_mass_kg * 2.0 * math.pi * LIGHT_SPEED_M_S * 100.0 * mode.frequency_cm))
+        for mode in modes
+    ]
+    assert [round(width, 2) for width in widths] == [0.23, 0.21, 0.21]
+
+
+def test_n2_mu_n2_muon_correlates_with_its_nearest_nitrogens() -> None:
+    calculation = _n2_mu_n2()
+
+    nearest = w2_entanglement_witness(calculation, MUON_ATOM_INDEX, NEAREST_NITROGEN_INDEX)
+    assert -1.0 <= nearest <= 0.0
+    assert abs(nearest) == pytest.approx(0.26, abs=0.03)
+    # Both nearest nitrogens are equivalent, and the correlation decays with distance.
+    assert w2_entanglement_witness(calculation, MUON_ATOM_INDEX, 4) == pytest.approx(nearest)
+    assert abs(w2_entanglement_witness(calculation, MUON_ATOM_INDEX, 1)) < abs(nearest)
+    # The muon and its nearest nitrogen move together, not against each other.
+    assert np.trace(covariance_matrix(calculation, MUON_ATOM_INDEX, NEAREST_NITROGEN_INDEX)) > 0.0

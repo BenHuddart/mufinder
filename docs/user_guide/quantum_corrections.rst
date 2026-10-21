@@ -1,27 +1,35 @@
 Quantum Corrections
 ===================
 
-Quantum Corrections estimates the muon's zero-point energy (ZPE) and
-phonon-derived correlation metrics from CASTEP Gamma-point phonon calculations.
-It is a follow-on workflow: its inputs are muon sites that MuFinder has already
-relaxed, not unrelaxed candidates from site generation.
+Quantum Corrections answers three questions about each distinct relaxed muon
+site: how much zero-point energy (ZPE) the muon carries there, how far its
+zero-point motion spreads it, and whether that motion is entangled with the
+host nuclei. It is a follow-on workflow: its inputs are muon sites that MuFinder
+has already relaxed, not unrelaxed candidates from site generation. The physics
+behind every number, and a worked example on solid nitrogen, are on
+:doc:`/user_guide/quantum_corrections_theory`.
 
 Scientific intent
 -----------------
 
-This workflow is aimed at the regime where the muon already has a well-defined,
-locally relaxed stopping site and the next question is how strongly local
-vibrational motion modifies that picture. MuFinder therefore computes
-Gamma-point phonons of the relaxed defect cell and extracts the three modes
-with the largest muon participation. The resulting zero-point estimate is a
-local, harmonic approximation to the muon's vibrational ground-state
-contribution, and the witness metrics summarize how strongly the muon motion is
-correlated with the host modes in that reduced description.
+MuFinder computes the Gamma-point phonons of each relaxed muonated supercell,
+with the muon mass applied through ``SPECIES_MASS``, and treats the three modes
+with the largest muon participation as the muon's own vibrations. Each of them
+contributes a ZPE of ``(1/2) hbar omega`` and a width, their summed
+participation gives the mode-mixing witness ``w1`` (zero when the muon modes do
+not mix with host modes), and the analysis window adds the muon–nucleus
+correlation ``w2``.
 
-Because the estimate is harmonic and Gamma-only, Quantum Corrections is best
-used as a comparative tool between already-relaxed sites or charge states,
-rather than as a standalone predictor of absolute quantum energies. See
-`Scope and limitations`_.
+These are harmonic numbers, and how far to trust them depends on the site.
+When ``w1`` is close to zero and the muon modes stand apart from the host
+modes, they describe a muon moving on its own in a near-harmonic well. When
+``w1`` is clearly negative or a muon mode is hybridised with host modes, the
+muon is entangled with the host and single-particle pictures fail; if its well
+is also strongly anharmonic, only path-integral molecular dynamics, which is
+outside MuFinder, is reliable, and the harmonic ZPE is a starting estimate (see
+:ref:`quantum-corrections-choosing` and `Scope and limitations`_). In every case
+ZPEs are most reliable as comparisons between sites or charge states computed
+with the same settings.
 
 Before you start
 ----------------
@@ -83,11 +91,12 @@ You submit each stage yourself; MuFinder does not chain them automatically.
    ``Reset to Stage 1`` and rerun both stages there.
 5. **Review the result.** When the phonon job completes and its ``.phonon``
    file parses, a row appears under ``Completed Results`` with the muon ZPE,
-   the three muon-mode frequencies, their widths and the ``w1`` witness. Check the jobs
-   dashboard for warnings, in particular the muon-mass warning (see
-   `Muon mass across the two stages`_).
+   the three muon-mode frequencies, their widths and the ``w1`` witness
+   (:doc:`/user_guide/quantum_corrections_theory` explains what they mean).
+   Check the jobs dashboard for warnings, in particular the muon-mass warning
+   (see `Muon mass across the two stages`_).
 6. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
-   inspect the modes, the single-particle solver, and atom-pair coupling (see
+   inspect the modes, the mode wells and widths, and atom-pair coupling (see
    `Phonon analysis window`_).
 7. **Compare sites.** Repeat for the other distinct sites or charge states and
    compare their ZPEs and witnesses.

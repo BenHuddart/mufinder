@@ -228,7 +228,7 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
         "quantum_corrections",
         "Quantum Corrections",
         "Complete at least one quantum phonon analysis.",
-        "Zero-point energies of the distinct relaxed sites. Needs relaxed muon sites.",
+        "Zero-point energy, spread and host entanglement of each distinct relaxed site. Needs relaxed muon sites.",
     ),
     WorkflowStageInfo(
         "energy_barriers",
