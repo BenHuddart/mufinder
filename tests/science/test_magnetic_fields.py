@@ -2134,7 +2134,7 @@ def test_real_muesr_dipolar_tensor_maps_a_moment_onto_its_lattice_field(real_mue
         np.testing.assert_allclose(tensor @ axis, expected, rtol=1e-6, atol=1e-9)
 
 
-# Worked examples in docs/magnetic_fields.rst, at the default calculation settings
+# Worked examples in docs/user_guide/magnetic_fields.rst, at the default calculation settings
 
 _FACE_CENTRE = (0.5, 0.5, 0.0)
 _EDGE_CENTRE = (0.5, 0.0, 0.0)

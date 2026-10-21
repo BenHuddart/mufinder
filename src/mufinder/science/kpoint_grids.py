@@ -58,7 +58,7 @@ def grid_from_spacing(
     """Return CASTEP-equivalent KPOINT_MP_GRID for a spacing in 1/Ang.
 
     CASTEP uses reciprocal-vector magnitudes with:
-    n_i = floor(|b_i| / (2*pi*spacing)) + 1
+    ``n_i = floor(|b_i| / (2*pi*spacing)) + 1``
     """
 
     spacing_value = float(spacing)

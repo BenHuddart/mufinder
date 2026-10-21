@@ -385,7 +385,7 @@ version or a newer one is loaded as it is. A manifest without
        counts a ``configure_convergence_cutoff`` record's cutoffs from
        ``sweep_values``, else from ``cutoff_energies``. The widget form state
        (``ui_state["convergence_form"]``) is not part of the step and keeps its
-       own ``cutoff_energies`` key; see :doc:`architecture`.
+       own ``cutoff_energies`` key; see :doc:`/architecture`.
    * - 2 to 3
      - Muon sites (``sites`` entities). Schema 2 stored a site's generated
        position as ``fractional_position`` / ``cartesian_position`` and kept
@@ -474,7 +474,7 @@ migration; code that imported one switches to the replacement named.
 - ``workflow_tick_icon`` (``mufinder.app.icons``): call
   ``workflow_stage_icon("completed")`` or ``workflow_stage_icon("incomplete")``.
 - ``clusters/<name>/keyword_python_command`` (application setting, removed with
-  the shell-loop keyword generator described in :doc:`castep_keyword_catalog`).
+  the shell-loop keyword generator described in :doc:`/castep_keyword_catalog`).
   Cluster keyword generation no longer runs Python on the cluster, so the value
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.

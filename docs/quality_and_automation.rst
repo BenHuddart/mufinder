@@ -137,13 +137,22 @@ to its ``CITED_DOIS`` table. Tests do not pin prose phrases, ``conf.py`` lines
 or stylesheet values: whether a page describes the code correctly is checked in
 review, and the ``-W`` build catches broken references and missing assets.
 
+The Python API pages are build outputs. ``docs/api/index.rst`` holds a recursive
+``autosummary`` over the library packages, and Sphinx writes one page per
+module, class, function and exception into ``docs/api/generated`` (ignored by
+git) from the templates in ``docs/_templates/autosummary``. Those pages are
+reached through the ``autosummary`` directive rather than a toctree, so the
+reachability check skips them. A docstring that is not valid reStructuredText
+fails the ``-W`` build.
+
 Documentation screenshots
 -------------------------
 
 The user-guide screenshots are build outputs: no image under ``docs/`` is
 committed for them. ``scripts/docs_screenshots.py`` writes each one to
 ``docs/_generated/screenshots`` (ignored by git), and a page shows it with a
-``figure`` directive whose path is ``_generated/screenshots/<name>.png``.
+``figure`` directive whose path is relative to the page, for example
+``../_generated/screenshots/<name>.png`` from a page in ``docs/user_guide/``.
 
 Each screenshot saves a small project, opens it in a real ``MainWindow``,
 drives the page through its buttons (a real ``muesr`` calculation included) and
@@ -262,7 +271,7 @@ The harness tests currently verify:
 
 - ``AGENTS.md`` stays within 140 lines and points to the durable docs it depends
   on; ``CLAUDE.md`` imports it.
-- Every ``mufinder.*`` path in the shared-homes table (:doc:`architecture`,
+- Every ``mufinder.*`` path in the shared-homes table (:doc:`/architecture`,
   Shared workflow infrastructure) names a module or package under
   ``src/mufinder``; the check reads the file system and imports nothing.
 - The Sphinx index includes the agent harness, architecture, quality, and
@@ -273,14 +282,14 @@ The harness tests currently verify:
   imports ``PySide6.QtWidgets`` or ``PySide6.QtGui``.
 - The ``_on_submit_*`` / ``_materialize_*`` handlers on ``MainWindow`` match
   the pinned set exactly; the set may only shrink (see
-  :doc:`architecture`, Workflow controllers).
+  :doc:`/architecture`, Workflow controllers).
 - No module in ``mufinder.app`` calls ``subplots_adjust``, and the app modules
   that build a ``FigureCanvasQTAgg`` directly rather than through
   ``create_plot_canvas`` match a pinned set that may only shrink (see
-  :doc:`architecture`, Plot canvas policy).
+  :doc:`/architecture`, Plot canvas policy).
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
-  may appear (see :doc:`architecture`, Shared workflow infrastructure).
+  may appear (see :doc:`/architecture`, Shared workflow infrastructure).
 - The ``*_coverage.py`` test files match a pinned list that may only shrink;
   coverage gaps are closed in the module's own test file.
 - ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and

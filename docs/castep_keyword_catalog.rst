@@ -28,7 +28,7 @@ generates, but not to read everything CASTEP writes back:
   explicit ``SPIN`` that disagrees with their sum stops the run. With a catalog
   loaded it can still be added from a dialog's advanced-parameter picker like
   any other keyword.
-- Legacy-import parameter recovery is less complete (see :doc:`legacy_import`).
+- Legacy-import parameter recovery is less complete (see :doc:`/legacy_import`).
 
 Which catalog is used
 ---------------------

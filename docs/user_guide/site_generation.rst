@@ -392,4 +392,4 @@ requires structural relaxation and clustering. For broader context on
 interstitial-site generation and defect-style candidate enumeration, see the
 ``pymatgen-analysis-defects`` interstitial-generator documentation and the
 ``pymuon-suite`` AIRSS and UEP workflow material referenced in
-:doc:`uep_workflow`.
+:doc:`/user_guide/uep_workflow`.

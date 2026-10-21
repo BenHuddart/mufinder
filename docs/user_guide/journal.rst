@@ -3,7 +3,7 @@ Journal
 
 MuFinder's ``Journal`` is the user-facing view of the project's structured
 provenance stream. Open it from the ``Journal`` entry at the bottom of the
-project navigator, or with ``Open Journal`` on the :doc:`project_home`.
+project navigator, or with ``Open Journal`` on the :doc:`/user_guide/project_home`.
 
 What the Journal includes
 -------------------------

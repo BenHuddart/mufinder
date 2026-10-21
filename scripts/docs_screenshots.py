@@ -193,7 +193,7 @@ def capture_modal(
 
 # --- Projects -----------------------------------------------------------------
 #
-# The models are the worked examples in docs/magnetic_fields.rst: one 1 μB ion
+# The models are the worked examples in docs/user_guide/magnetic_fields.rst: one 1 μB ion
 # in a simple cubic cell with a = 3 Å.
 
 

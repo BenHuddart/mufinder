@@ -264,7 +264,7 @@ muon. It is a table of jobs with explicit per-row labels:
 
 - each row chooses its cell from a ``Supercell`` drop-down listing ``Unit
   cell``, the project's saved supercells, and ``Manage Supercells...``, which
-  opens the :doc:`supercells`;
+  opens the :doc:`/user_guide/supercells`;
 - each row has a ``Fix Cell`` control, written deterministically as CASTEP
   ``FIX_ALL_CELL``;
 - each row's parameters are set in the shared CASTEP parameter dialog;
@@ -283,7 +283,7 @@ outputs. A job whose CASTEP output reports incomplete geometry convergence is
 marked failed. The relaxed geometry in ``-out.cell`` is parsed into lattice,
 species and fractional coordinates, ``a``, ``b`` and ``c`` are stored in the
 job's result, and each successful job adds one derived relaxed ``Structure`` to
-the project. Those structures are what the :doc:`comparison_table` compares
+the project. Those structures are what the :doc:`/user_guide/comparison_table` compares
 with the experimental host, and they can be the comparison host in
 `Displacement Analysis`_.
 
@@ -324,7 +324,7 @@ job is ``completed``, ``failed``, ``stopped`` or ``cancelled``:
   same completion. A continued run that dies before writing a new
   ``-out.cell`` fails rather than reusing the previous one.
 
-:ref:`job-continuation-primitive` in :doc:`job_lifecycle` gives the technical
+:ref:`job-continuation-primitive` in :doc:`/job_lifecycle` gives the technical
 contract: the status transition, the cleared and kept fields, and why this
 differs from the Quantum Corrections stage-1 reset.
 

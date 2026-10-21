@@ -441,22 +441,6 @@ The most reliable reading strategy is usually:
 In other words, a high similarity score is useful, but a preserved topology and
 small RMSD are usually more physically interpretable than the score alone.
 
-Architecture Notes
-------------------
-
-The implementation is intentionally layered:
-
-- normalization in ``mufinder.science.supercell_matching``,
-- atom matching in ``mufinder.science.atom_matching``,
-- bonding and topology analysis in ``mufinder.science.bonding_analysis`` and
-  ``mufinder.science.symmetry_analysis``,
-- metric registry and evaluation in ``mufinder.science.structure_metrics``,
-- orchestration in ``mufinder.science.structure_comparison``,
-- rendering in ``mufinder.app.comparison_table_widget``.
-
-The per-metric help shown by the GUI ``Info`` buttons is sourced from the same
-metric-definition registry used to populate the comparison table.
-
 Export
 ------
 

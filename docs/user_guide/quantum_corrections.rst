@@ -32,17 +32,17 @@ Quantum Corrections needs:
   ``Muon Sites > Relaxations`` and let them complete. Every site whose
   relaxation completed successfully appears automatically on the Quantum
   Corrections page (see `Source eligibility`_). Relaxations brought in through
-  :doc:`legacy_import` are eligible too.
+  :doc:`/user_guide/legacy_import` are eligible too.
 - **A decision about which sites matter.** A phonon calculation is expensive
   (roughly three displacements per atom with finite displacement), so the page
   lists the distinct sites pinned to the ``Muon Sites`` summary by default:
   cluster the relaxed sites under ``Muon Sites > Analysis``
-  (:doc:`structural_relaxation_analysis`) and choose ``Pin to Summary``. Each
+  (:doc:`/user_guide/structural_relaxation_analysis`) and choose ``Pin to Summary``. Each
   pinned site is one row, its cluster's representative relaxation. Tick
   ``Show every relaxed site`` to list every eligible relaxed site instead,
   including relaxed copies of the same site.
 - **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
-  under ``Setup``, and load a keyword catalog (:doc:`castep_keyword_catalog`).
+  under ``Setup``, and load a keyword catalog (:doc:`/castep_keyword_catalog`).
 
 Running the workflow
 --------------------

@@ -6,37 +6,15 @@ produced by the **legacy MuFinder** (the Tkinter-era GitLab application) into a
 project in the current application, so that those relaxed muoniated structures
 can be used as inputs for Quantum Corrections and Energy Barriers calculations.
 
+How to run the importer, what it accepts, where the imported files go and how
+to remove an import are described in :doc:`/user_guide/legacy_import`.
+
 Scope is deliberately narrow: **muon structural relaxations only**. Convergence
 sweeps, pristine relaxations, UEP, and dipolar-field data are out of scope.
 
 Status: implemented (see Phasing). A few parts of the design below are not
 yet built; they are listed under `Implementation status`_ and flagged where they
 appear.
-
-Using the importer
-------------------
-
-1. Open the project and make sure it has an active host structure that matches
-   the legacy calculations. The import refuses to start without one.
-2. Choose ``File > Import Legacy Relaxations...`` and select the legacy working
-   folder (the one containing ``input/``, ``run/``, and ``results/``).
-   MuFinder scans it on a background thread and reports progress in the status
-   bar.
-3. Review the ``Import Legacy Relaxations`` dialog. Each detected run is listed
-   with ``Import``, ``Site``, ``Charge``, ``Status``, ``Supercell``,
-   ``Energy (eV)``, and ``Notes`` columns. Converged runs are pre-ticked; runs
-   that cannot be imported are shown unticked and disabled, with the reason in
-   ``Notes``. ``Select converged`` and ``Select none`` adjust the ticks, and a
-   summary above the table reports parameter disagreements and undetermined
-   charge states.
-4. Click ``OK``. The imported runs appear as read-only ``Legacy Site <N>`` rows in
-   the ``Structural Relaxations`` table (``Muon Sites > Relaxations``) and can
-   be used as sources in Quantum Corrections and as endpoints in Energy
-   Barriers.
-
-To undo an import, choose ``File > Remove Imported Relaxations...``, pick the
-import batch, and confirm. Removal is refused while any downstream calculation,
-comparison table, or analysis workspace still references the imported sites.
 
 Research data boundary
 ----------------------
@@ -193,7 +171,8 @@ carries no ``kpoint_mp_grid``, and the ``.param`` uses ``basis_precision``
 instead of ``cut_off_energy``. A phonon job seeded from it would silently fall
 back to project defaults and run at the wrong cutoff on the wrong grid —
 precisely the failure this feature exists to prevent. This constraint drives the
-on-disk layout below.
+on-disk layout described under "Files on disk" in
+:doc:`/user_guide/legacy_import`.
 
 Decisions
 ---------
@@ -458,29 +437,6 @@ Neither loses anything: an imported row already owns a COMPLETED job.
    the run never used — in a dialog that opens read-only precisely to report what
    the run did use.
 
-Files on disk
--------------
-
-::
-
-    files/muon_relaxation/<charge_prefix>/<legacy_seed>/
-        <legacy_seed>.cell        rendered: true initial structure plus the
-        <legacy_seed>.param       effective parameters read from the .castep
-        <legacy_seed>.castep      byte-exact copy
-        <legacy_seed>-out.cell    byte-exact copy
-        legacy_source/            byte-exact originals + SHA-256 manifest
-
-The **legacy seed name is retained**. It keeps the ``.castep`` self-consistent
-with its own filename, requires no content rewriting, and makes imported job
-directories visibly distinct, which is a provenance feature rather than a cost.
-The seed-name mapping already supports arbitrary seeds.
-
-Rendering the ``.cell`` and ``.param`` from the ``.castep`` record is what makes
-inheritance correct. It is not fabrication: the same atoms, with the grid and
-cutoff that actually ran made explicit. The rendered ``.cell`` must contain the
-**initial** structure, not the relaxed one, so that initial-versus-relaxed
-comparisons stay truthful.
-
 Parameter recovery
 ------------------
 
@@ -602,7 +558,7 @@ structures usable downstream; parsed parameters are informational alongside that
 Blocking an import over an informational-fidelity difference would trade the
 feature's whole value against a cosmetic loss. The wizard notes the catalog in
 use and flags degraded fidelity when running on the starter catalog, pointing at
-``Setup > CASTEP`` as the remedy (see :doc:`castep_keyword_catalog`). The
+``Setup > CASTEP`` as the remedy (see :doc:`/castep_keyword_catalog`). The
 catalog source and its CASTEP version are recorded in the import provenance
 regardless, so a completed import always names the catalog that governed its
 parse.
@@ -756,19 +712,6 @@ design's host-match verdict and application version are not recorded.
 digest) so that a repeat import offers to skip or re-import as new. This is
 **not implemented**; importing the same folder again creates new entities, with
 labels de-duplicated by suffix.
-
-Removal
--------
-
-Refuse while anything still references the site, run or structure; otherwise
-delete the row, mapping entries, job, run, result, structure, site and copied
-files as one unit, and append a provenance record.
-
-The reference scan must be wider than the two obvious workflows. Check at least
-quantum-corrections and energy-barrier definitions, comparison tables,
-relaxation-analysis workspaces held in interface state, and muon-sites summary
-snapshots. Missing any of these turns a removal into a dangling reference rather
-than a refusal.
 
 Layering
 --------

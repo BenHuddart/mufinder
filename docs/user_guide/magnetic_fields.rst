@@ -26,7 +26,7 @@ A typical pass through the page is:
 4. optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card.
 
-.. figure:: _generated/screenshots/magnetic_fields_page.png
+.. figure:: ../_generated/screenshots/magnetic_fields_page.png
    :alt: The Magnetic Fields page with a ferromagnet's calculated field and its
          term breakdown.
 
@@ -143,7 +143,7 @@ Structure Builder`` dialog. The builder owns the component table, ``Preview
 Supercell`` controls, atom selection, a checklist and the live structure
 viewer.
 
-.. figure:: _generated/screenshots/magnetic_structure_builder.png
+.. figure:: ../_generated/screenshots/magnetic_structure_builder.png
    :alt: The Magnetic Structure Builder showing a helix component, its
          checklist, q-basis table and a four-cell spin preview.
 
@@ -419,7 +419,7 @@ distorted-structure reference. The available dialog sources are:
   minima;
 - ``Structural relaxation clustering``, using representative relaxed muon
   endpoints. By default this lists the clusters pinned to the ``Muon Sites``
-  summary (:doc:`structural_relaxation_analysis`), in the summary's charge-state
+  summary (:doc:`/user_guide/structural_relaxation_analysis`), in the summary's charge-state
   and energy order, with the ``Cluster`` column showing the summary label
   (``8c · cluster 1``). A live cluster matches a pin by its workspace and
   representative relaxation job, so re-clustering the analysis without
@@ -438,7 +438,7 @@ opens on ``Structural relaxation clustering`` when that source lists a site
 UEP clustering otherwise.
 
 UEP sites are the one exception to the rule that downstream workflows use
-relaxed sites (see :doc:`project_specification`). A UEP minimum is unrelaxed,
+relaxed sites (see :doc:`/project_specification`). A UEP minimum is unrelaxed,
 and the relaxed muon site can sit some distance from it, so a field computed
 there is a quick estimate made before any relaxation has run. While the UEP
 source is chosen, the dialog shows a one-line note saying so, and the site
@@ -710,7 +710,7 @@ display uses the hyperfine-coupling convention,
 coupling that would give the same field rather than ``muesr``'s raw lattice sum.
 Tensors saved in a project at schema 4 or earlier hold the raw ``Å⁻³`` sum
 and are converted to T/μB when the project is loaded (see
-:doc:`compatibility_policy`).
+:doc:`/compatibility_policy`).
 
 Only tensor-relevant numerical settings are shown in this workflow. The tensor
 dialog reports the lattice-summation supercell used for the calculation, but it
@@ -1107,7 +1107,7 @@ so :math:`p(|B|)` runs between the two semi-axes and peaks at both ends. At
 distribution a single line at 0.2816 T. At ``(1/2, 0, 0)`` it spans 0.3616 T to
 1.1634 T, close to the two fields of the ``q = 1/4`` helix above.
 
-.. figure:: _generated/screenshots/magnetic_field_distribution.png
+.. figure:: ../_generated/screenshots/magnetic_field_distribution.png
    :alt: The field-distribution plot of the incommensurate helix at the edge
          centre, peaking at both ends of its range.
 

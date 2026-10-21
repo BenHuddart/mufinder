@@ -14,31 +14,43 @@ import pytest
 
 DOCS_ROOT = Path(__file__).resolve().parents[2] / "docs"
 
+# Directories under ``docs/`` whose ``.rst`` files are not pages. ``_build`` and
+# ``api/generated`` are build outputs: autosummary writes the API pages into the
+# latter and reaches them through an ``autosummary`` directive's ``:toctree:``
+# option rather than a ``.. toctree::`` directive. ``_templates`` holds the
+# autosummary templates, which Sphinx excludes from the sources.
+_NOT_PAGES = (("_build",), ("api", "generated"), ("_templates",))
+
 _TOCTREE_DIRECTIVE = re.compile(r"^\.\. toctree::\s*$")
 _DOI = re.compile(r"10\.\d{4,9}/[^\s`<>]+")
 
-# Literature cited by the user guides, by page. Dropping one of these from its
-# page loses the attribution for a method MuFinder implements; adding a new
-# citation to a page means adding it here.
+# Literature cited by the user guides, by page path relative to ``docs/``.
+# Dropping one of these from its page loses the attribution for a method
+# MuFinder implements; adding a new citation to a page means adding it here.
 CITED_DOIS: dict[str, tuple[str, ...]] = {
-    "implemented_functionality.rst": ("10.1016/j.cpc.2022.108488",),
-    "magnetic_fields.rst": ("10.1063/1.1703091", "10.1103/PhysRevB.20.850", "10.1080/001075199181521"),
-    "quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
-    "site_generation.rst": ("10.1016/j.cpc.2022.108488",),
-    "structural_relaxation_analysis.rst": (
+    "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
+    "user_guide/magnetic_fields.rst": (
+        "10.1063/1.1703091",
+        "10.1103/PhysRevB.20.850",
+        "10.1080/001075199181521",
+    ),
+    "user_guide/quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
+    "user_guide/site_generation.rst": ("10.1016/j.cpc.2022.108488",),
+    "user_guide/structural_relaxation_analysis.rst": (
         "10.1016/j.cpc.2022.108488",
         "10.1063/1.5024450",
     ),
-    "uep_workflow.rst": ("10.1063/5.0012381", "10.1063/1.5024450"),
+    "user_guide/uep_workflow.rst": ("10.1063/5.0012381", "10.1063/1.5024450"),
 }
 
 
+def _is_not_a_page(path: Path) -> bool:
+    parts = path.relative_to(DOCS_ROOT).parts
+    return any(parts[: len(prefix)] == prefix for prefix in _NOT_PAGES)
+
+
 def _source_pages() -> list[Path]:
-    return sorted(
-        path
-        for path in DOCS_ROOT.rglob("*.rst")
-        if "_build" not in path.relative_to(DOCS_ROOT).parts
-    )
+    return sorted(path for path in DOCS_ROOT.rglob("*.rst") if not _is_not_a_page(path))
 
 
 def _toctree_entries(page: Path) -> list[str]:
@@ -95,7 +107,7 @@ def test_docs_pages_are_restructured_text() -> None:
     markdown = sorted(
         path.relative_to(DOCS_ROOT).as_posix()
         for path in DOCS_ROOT.rglob("*.md")
-        if "_build" not in path.relative_to(DOCS_ROOT).parts
+        if not _is_not_a_page(path)
     )
     assert not markdown, f"Sphinx does not build Markdown; write these as .rst: {markdown}"
 

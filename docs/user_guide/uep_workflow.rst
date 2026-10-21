@@ -135,7 +135,7 @@ pattern. Open ``UEP`` in the project navigator, then:
    host by default).
 2. Click ``Add Job`` to add a row to ``UEP Source Jobs``, choose its
    ``Supercell`` (``Unit cell`` or a saved supercell; ``Manage
-   Supercells...`` opens the :doc:`supercells`), and adjust CASTEP settings
+   Supercells...`` opens the :doc:`/user_guide/supercells`), and adjust CASTEP settings
    with ``Configure...`` if needed.
 3. Submit the rows with the local or cluster run buttons and track them through
    the shared job dashboard.

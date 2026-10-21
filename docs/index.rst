@@ -13,49 +13,53 @@ pristine relaxation, UEP screening, muon-site generation, relaxation and
 analysis, magnetic fields, quantum corrections, and energy barriers. Jobs run
 locally or on an HPC cluster and are tracked in the job dashboard.
 
-New users should start with :doc:`implemented_functionality` for an overview of
-every workflow stage, then set up a CASTEP keyword catalog
-(:doc:`castep_keyword_catalog`) before running calculations. The workflow
-guides that follow are listed in the order the stages appear in the
-application. The reference and developer sections describe internal contracts
-and the quality standards that must be maintained as development expands.
+New users should start with :doc:`/getting_started/installation`, then read
+:doc:`/getting_started/running_jobs` and the :doc:`/user_guide/overview` of
+every workflow stage. The user guide follows the order of the stages in the
+application. The reference section covers the CASTEP input MuFinder writes, the
+Python API documents the library packages for scripting, and the developer
+guide describes internal contracts and quality standards.
 
 .. toctree::
    :maxdepth: 2
    :caption: Getting started
 
-   implemented_functionality
-   castep_keyword_catalog
+   getting_started/installation
+   getting_started/running_jobs
 
 .. toctree::
    :maxdepth: 2
    :caption: User guide
 
-   project_home
-   host_structure
-   supercells
-   convergence_testing
-   comparison_table
-   uep_workflow
-   site_generation
-   structural_relaxation_analysis
-   legacy_import
-   magnetic_fields
-   quantum_corrections
-   energy_barriers
-   journal
-   job_lifecycle
+   user_guide/overview
+   user_guide/project_home
+   user_guide/host_structure
+   user_guide/supercells
+   user_guide/convergence_testing
+   user_guide/comparison_table
+   user_guide/uep_workflow
+   user_guide/site_generation
+   user_guide/structural_relaxation_analysis
+   user_guide/legacy_import
+   user_guide/magnetic_fields
+   user_guide/quantum_corrections
+   user_guide/energy_barriers
+   user_guide/journal
 
 .. toctree::
    :maxdepth: 2
    :caption: Reference
 
-   project_specification
-   compatibility_policy
+   castep_keyword_catalog
    castep/cell_syntax
    castep/param_syntax
    castep/kpoint_spacing_convention
-   api
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Python API
+
+   api/index
 
 .. toctree::
    :maxdepth: 2
@@ -64,4 +68,8 @@ and the quality standards that must be maintained as development expands.
    agent_harness
    architecture
    quality_and_automation
+   compatibility_policy
+   project_specification
+   job_lifecycle
+   legacy_import
    branding

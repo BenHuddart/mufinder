@@ -1,5 +1,5 @@
-Implemented Functionality
-=========================
+Overview
+========
 
 This page is an index of what MuFinder can do. Each section describes one area
 of the application in a few sentences and links the page that explains it. The
@@ -12,10 +12,10 @@ Application shell
 
 - The ``File`` menu creates, opens, reopens (``Open Recent``) and saves
   projects, and holds ``Import Legacy Relaxations...`` and ``Remove Imported
-  Relaxations...`` (see :doc:`legacy_import`).
+  Relaxations...`` (see :doc:`/user_guide/legacy_import`).
 - The ``Setup`` menu configures the local CASTEP installation and keyword
-  catalog (``CASTEP...``, see :doc:`castep_keyword_catalog`) and the cluster
-  profiles (``HPC Clusters...``, see :doc:`job_lifecycle`).
+  catalog (``CASTEP...``, see :doc:`/castep_keyword_catalog`) and the cluster
+  profiles (``HPC Clusters...``, see :doc:`/getting_started/running_jobs`).
 - ``View -> Appearance`` switches between ``Light``, ``Dark`` and ``System``
   themes. MuFinder bundles its own fonts, icons and control styling, so it looks
   the same on macOS, Windows and Linux.
@@ -25,12 +25,12 @@ Application shell
   stage nodes have no context menu.
 - The project home charts the workflow stages with their dependencies and
   progress, opens at the stage last worked on, and surveys the host cell with
-  that stage's muon positions (see :doc:`project_home`).
+  that stage's muon positions (see :doc:`/user_guide/project_home`).
 - Durable project and job state is autosaved. Analysis layouts and viewer
   choices are kept until ``Save Project``, which MuFinder offers whenever a
   project window is closed.
 
-:doc:`architecture` describes how projects are stored and saved (Domain model
+:doc:`/architecture` describes how projects are stored and saved (Domain model
 and persistence) and how the cross-platform appearance is achieved
 (Cross-platform appearance).
 
@@ -46,7 +46,7 @@ in units of ``hbar/2`` and the propagation vector in reciprocal-lattice units,
 and shows the structure in an orthographic 3D viewer with optional spin arrows,
 bonds and unit cell.
 
-See :doc:`host_structure`.
+See :doc:`/user_guide/host_structure`.
 
 Supercells
 ----------
@@ -61,7 +61,7 @@ is never rewritten: editing its matrix saves a new copy.
 Each workflow chooses its own simulation cell, the host unit cell or a saved
 supercell, and a configured calculation keeps the cell it was configured with.
 
-See :doc:`supercells`.
+See :doc:`/user_guide/supercells`.
 
 Convergence testing
 -------------------
@@ -76,7 +76,7 @@ optionally, the maximum stress, plots the results, and recommends a value. The
 ``Convergence Testing`` overview page shows both adopted defaults with the
 plots pinned when they were adopted.
 
-See :doc:`convergence_testing` and, for the grid and spacing round trip,
+See :doc:`/user_guide/convergence_testing` and, for the grid and spacing round trip,
 ``docs/castep/kpoint_spacing_convention.md``.
 
 Project defaults
@@ -94,8 +94,8 @@ Energy Barriers rows take their functional, cutoff, grid and spin treatment
 from the relaxation they start from instead. Every change to a default is
 recorded in the Journal.
 
-See :doc:`convergence_testing` (Adopting a result as a project default),
-:doc:`quantum_corrections` and :doc:`energy_barriers`, and :doc:`architecture`
+See :doc:`/user_guide/convergence_testing` (Adopting a result as a project default),
+:doc:`/user_guide/quantum_corrections` and :doc:`/user_guide/energy_barriers`, and :doc:`/architecture`
 (Project defaults surface).
 
 Pristine relaxation and comparison tables
@@ -114,8 +114,8 @@ displacement, bonding, topology and symmetry metrics, a composite similarity
 score, the parameter differences between the selected jobs, and CSV export.
 Each table is saved as a renamable child of ``Pristine Relaxation``.
 
-See :doc:`structural_relaxation_analysis` (Pristine Relaxation) and
-:doc:`comparison_table`.
+See :doc:`/user_guide/structural_relaxation_analysis` (Pristine Relaxation) and
+:doc:`/user_guide/comparison_table`.
 
 UEP screening
 -------------
@@ -127,7 +127,7 @@ searches for potential minima, an optional harmonic zero-point estimate, and a
 clustering window with hierarchical and k-means views. Cluster
 representatives are offered to muon-site generation.
 
-See :doc:`uep_workflow`.
+See :doc:`/user_guide/uep_workflow`.
 
 Muon-site generation
 --------------------
@@ -145,7 +145,7 @@ Huddart *et al.*, ``MuFinder: A program to determine and analyse muon stopping
 sites``, *Computer Physics Communications* **280**, 108488 (2022), DOI:
 ``10.1016/j.cpc.2022.108488``.
 
-See :doc:`site_generation`.
+See :doc:`/user_guide/site_generation`.
 
 Muon relaxations
 ----------------
@@ -160,8 +160,8 @@ A completed, failed, stopped or cancelled pristine or muon relaxation can be
 continued from its CASTEP checkpoint with ``Continue relaxation…``, which edits
 the row's parameters in place and resumes the same job in the same directory.
 
-See :doc:`site_generation` (Creating Relaxation Jobs),
-:ref:`continue-relaxation` and :doc:`legacy_import`.
+See :doc:`/user_guide/site_generation` (Creating Relaxation Jobs),
+:ref:`continue-relaxation` and :doc:`/user_guide/legacy_import`.
 
 Relaxation analysis and the Muon Sites summary
 ----------------------------------------------
@@ -177,7 +177,7 @@ analysis, and CIF export of the pinned sites. Quantum Corrections, Energy
 Barriers and the Magnetic Fields muon-site dialog list the pinned sites by
 default, with a ``Show every relaxed site`` option for the full list.
 
-See :doc:`structural_relaxation_analysis`.
+See :doc:`/user_guide/structural_relaxation_analysis`.
 
 Legacy relaxation import
 ------------------------
@@ -188,7 +188,7 @@ can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
 ``File > Remove Imported Relaxations...`` removes an import batch that nothing
 downstream still uses.
 
-See :doc:`legacy_import`.
+See :doc:`/user_guide/legacy_import`.
 
 Magnetic fields
 ---------------
@@ -226,7 +226,7 @@ UEP site are labelled as estimates.
 Settings are saved as named workspaces, and the latest results of
 the page and of each workspace are saved as project results.
 
-See :doc:`magnetic_fields`.
+See :doc:`/user_guide/magnetic_fields`.
 
 Quantum corrections
 -------------------
@@ -239,7 +239,7 @@ the muon zero-point energy, covariance and correlation tensors, ``w1`` /
 ``w2`` witnesses and single-particle effective potentials, shown in an
 interactive analysis window.
 
-See :doc:`quantum_corrections`.
+See :doc:`/user_guide/quantum_corrections`.
 
 Energy barriers
 ---------------
@@ -253,7 +253,7 @@ once complete: a results table lists forward and reverse barriers and ``ΔE``,
 and an inspector scrubs the reaction-coordinate profile with a linked
 structure viewer.
 
-See :doc:`energy_barriers`.
+See :doc:`/user_guide/energy_barriers`.
 
 Journal
 -------
@@ -263,7 +263,7 @@ provenance: structure import, workflow configuration, project defaults, site
 generation, job submissions, continuations and outcomes, comparison tables and
 legacy imports. It exports as plain text or Markdown.
 
-See :doc:`journal`.
+See :doc:`/user_guide/journal`.
 
 Jobs and execution
 ------------------
@@ -290,8 +290,8 @@ and shares one set of table behaviours:
 - for relaxations, a choice on resubmission between continuing from the
   checkpoint and starting again.
 
-See :doc:`job_lifecycle`, in particular Job tables and selections, Running
-jobs, :ref:`geometry-optimisation-progress`, :ref:`job-failure-reasons` and
+See :doc:`/getting_started/running_jobs`, in particular Job tables and
+selections, Running jobs, :ref:`geometry-optimisation-progress`, :ref:`job-failure-reasons` and
 :ref:`resubmit-continue-or-start-again`.
 
 CASTEP input and parameters
@@ -306,7 +306,7 @@ from a CASTEP keyword catalog generated from a local or cluster CASTEP, or
 imported. Workflows expand into resolved job specifications that are rendered
 into deterministic ``.cell`` and ``.param`` files.
 
-See :doc:`castep_keyword_catalog`, :doc:`architecture` (CASTEP parameter
+See :doc:`/castep_keyword_catalog`, :doc:`/architecture` (CASTEP parameter
 dialogs, Calculation job generation, Workflow parameter surface policy) and
 ``docs/castep/keyword_catalog.yaml``.
 
@@ -318,5 +318,5 @@ the canonical agent guide, and ``tests/test_agent_harness.py`` enforces its
 structural rules: layer imports, docs indexing, the ``MainWindow`` handler,
 plot-canvas and duplication ratchets, and the pull-request template pointers.
 
-See :doc:`agent_harness`, :doc:`architecture` and :doc:`quality_and_automation`
+See :doc:`/agent_harness`, :doc:`/architecture` and :doc:`/quality_and_automation`
 (Agent harness checks).

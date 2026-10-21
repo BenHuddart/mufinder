@@ -6,7 +6,7 @@ the home button above the project navigator returns to. It answers two
 questions: where the project stands, and what comes next. It has three parts:
 the workflow chart, the field notes for one stage, and a survey of the host
 cell. A line above the chart counts the complete stages and the jobs that are
-active, and ``Open Journal`` opens the :doc:`journal`.
+active, and ``Open Journal`` opens the :doc:`/user_guide/journal`.
 
 Workflow chart
 --------------

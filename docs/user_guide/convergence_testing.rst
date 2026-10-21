@@ -33,7 +33,7 @@ Convergence Testing needs:
   or on a supercell saved from it.
 - **A supercell, if you want one.** By default the sweeps run on the host unit
   cell. To converge on a supercell instead, save it in the
-  :doc:`supercells` first (or from the ``Manage Supercells...`` button on the
+  :doc:`/user_guide/supercells` first (or from the ``Manage Supercells...`` button on the
   sweep page). See `Limitations`_ before choosing a supercell.
 - **A decision about the XC functional.** A converged cutoff or grid is only
   meaningful for the functional it was converged with. New sweep rows take the
@@ -42,7 +42,7 @@ Convergence Testing needs:
   ``XC functional``. With no project functional set, rows use the catalog
   default (``LDA``).
 - **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
-  under ``Setup``, and load a keyword catalog (:doc:`castep_keyword_catalog`).
+  under ``Setup``, and load a keyword catalog (:doc:`/castep_keyword_catalog`).
 
 Running the workflow
 --------------------
@@ -128,7 +128,7 @@ The sweep pages
 ``Simulation Cell``
    A summary of the cell the sweep will run on, a ``Saved supercells``
    drop-down (``Single unit cell`` plus every supercell saved for the active
-   host), ``Manage Supercells...`` to open the :doc:`supercells`, and ``Use
+   host), ``Manage Supercells...`` to open the :doc:`/user_guide/supercells`, and ``Use
    Unit Cell`` to return to the host unit cell. The cell is fixed for a job
    when the job is defined; changing the selection later does not change jobs
    already defined.
@@ -365,7 +365,7 @@ For a k-point recommendation the result line also gives the grid's spacing,
 CASTEP reproduces exactly that grid on the swept cell, so it can be copied into
 a ``.cell`` file. ``1 x 1 x 1`` has no such spacing and is shown without one.
 The convention, and its round-trip guarantee, are described in
-:doc:`castep/kpoint_spacing_convention`.
+:doc:`/castep/kpoint_spacing_convention`.
 
 Adopting a result as a project default
 --------------------------------------

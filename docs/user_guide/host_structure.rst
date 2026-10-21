@@ -52,7 +52,7 @@ project-level magnetic structure. MuFinder derives per-atom scalar spins from
 it and stores them on the host structure, and converts the moments into
 propagation-vector components with the phase correction needed for the
 unit-cell moment at each labelled site to reproduce the imported moment. See
-:doc:`magnetic_fields` for how the magnetic structure is used.
+:doc:`/user_guide/magnetic_fields` for how the magnetic structure is used.
 
 The host-structure panel
 ------------------------
@@ -64,7 +64,7 @@ The host-structure panel
 - The atom table's ``Spin (hbar/2)`` column holds each atom's editable spin,
   and ``Propagation vector (r.l.u.):`` takes the propagation vector in
   reciprocal-lattice units.
-- ``Supercell Editor...`` opens the :doc:`supercells`.
+- ``Supercell Editor...`` opens the :doc:`/user_guide/supercells`.
 
 The viewer is a PyVista/VTK structure viewer that keeps the camera when bonds,
 spins, slice planes, point markers or UEP isosurfaces are redrawn. It is

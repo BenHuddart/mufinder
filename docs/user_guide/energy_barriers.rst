@@ -41,7 +41,7 @@ analysis:
   stepper, a summary readout, and a synchronized structure viewer.
 
 The endpoint selectors list the distinct sites pinned to the ``Muon Sites``
-summary (:doc:`structural_relaxation_analysis`), labelled by Wyckoff label and
+summary (:doc:`/user_guide/structural_relaxation_analysis`), labelled by Wyckoff label and
 cluster (``8c · cluster 1``) in the summary's energy rank, so each physical
 site is offered once. Tick ``Show every relaxed site`` above the selectors to
 offer every eligible relaxed site instead; the choice is saved with the
@@ -162,7 +162,7 @@ to the project's recommended reference lattice. The settings of the reactant
 endpoint's relaxation then override them where its output ``.cell`` and
 ``.param`` are available: its k-point grid, cut-off energy, exchange-correlation
 functional, and spin treatment (read from the source files as for
-:doc:`quantum_corrections`), so the band is computed on the same numerical
+:doc:`/user_guide/quantum_corrections`), so the band is computed on the same numerical
 footing as the structures it connects. Row-level configuration remains
 authoritative, so a specific path can still override any of these without
 affecting the rest of the project.

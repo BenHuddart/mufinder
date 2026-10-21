@@ -110,36 +110,5 @@ mode, and its parameters record ``simulation_cell_mode`` and
 frozen structure, so the expanded lattice, positions and spins are kept even if
 the selection changes later.
 
-How selections are stored
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A saved supercell is an ordinary ``Structure`` entity whose
-``parent_structure_id`` is the active host, with its asset metadata under
-``properties["supercell_asset"]``: ``matrix`` (a 3×3 integer matrix),
-``owner_workflow_stage`` and ``source_asset_structure_id`` (nullable, the clone
-source). Each workflow's selection is stored in ``state.json`` under
-``workflow_supercells``:
-
-.. code-block:: json
-
-   {
-     "workflow_supercells": {
-       "convergence_cutoff": { "mode": "unit_cell" },
-       "muon_relaxation": { "mode": "saved_supercell", "structure_id": "<uuid>" }
-     }
-   }
-
-``unit_cell`` mode resolves to the active host and ``saved_supercell`` mode to
-the selected saved structure. A missing, invalid or other-host selection falls
-back to the host unit cell, and the stored selection can be normalized to
-match. ``Project.supercell_matrix`` only seeds the host preview; it never
-decides a workflow's calculation structure.
-
-Spins follow the host's magnetic data. When a host's scalar spin list is
-missing or invalid, spins are taken from ``magnetic_structure`` moment
-vectors (the ``z`` component), and a host whose scalar spins are all zero while
-its magnetic moments are not is treated as stale and given the moment-derived
-spins. A saved supercell keeps its own explicit spins. A saved supercell whose
-spins are stale zeros is repaired from the host's magnetic data when it is
-selected, resolved or written, so spin-polarized ``.cell`` files keep their
-``SPIN=...`` tokens.
+How these selections are stored in the project is described under "Supercell
+selections" in :doc:`/architecture`.
