@@ -178,10 +178,13 @@ The package
   touches Qt imports it first. It holds what every scene shares: the
   off-screen viewer, the grab targets, ``render`` and its project cache,
   ``synthetic_runs`` and the scene steps more than one example uses.
-- ``synthetic.py`` writes the CASTEP outputs the projects need where no
-  fixture fits: ``-out.cell`` files, ``.castep`` results, a BFGS
-  geometry-optimisation log (``bfgs_log_text``) with falling energies and
-  forces, Gamma-point ``.phonon`` files, NEB ``.ts`` bands and legacy-run
+- ``synthetic.py`` writes the CASTEP outputs the projects need: ``-out.cell``
+  files, ``.castep`` results, a BFGS geometry-optimisation log
+  (``bfgs_log_text``) with falling energies and forces, a model charge density
+  of superposed Gaussian atomic shells (``den_fmt_text``) with the
+  single-point output the UEP analysis reads beside it (``uep_castep_text``),
+  a Gamma-point ``.phonon`` file for a linear X–μ–X complex embedded in a
+  supercell (``triatomic_phonon_text``), NEB ``.ts`` bands and legacy-run
   outputs. It imports no Qt, so tests import it directly.
 - ``examples/`` holds one module per example project. Each defines its
   project builders, the scene steps only its scenes use, and ``SCENES``, a
@@ -193,6 +196,10 @@ The package
   screenshot; ``--example NAME`` renders one example's scenes, names render
   those screenshots, ``--list`` prints the names it would render, and
   ``--output`` writes somewhere other than ``docs/_generated/screenshots``.
+  ``--jobs N`` (default: four, or fewer CPUs) deals the screenshots out in
+  registry order to ``N`` worker processes, each a run with names of its own
+  share, so a project several workers need is built in each of them; ``--jobs
+  1`` renders in one process.
 
 Scenes
 ~~~~~~
@@ -251,76 +258,72 @@ loads and fetches only the screenshots near the viewport; the theme's
 ``max-width: 100%`` and ``height: auto`` still scale an image down to the
 content column. Other images are left alone.
 
-The rutile example
-~~~~~~~~~~~~~~~~~~
+The CoF₂ example
+~~~~~~~~~~~~~~~~
 
-``examples/rutile.py`` holds the getting-started and setup scenes. Most open
-``fixture_project``: rutile TiO2 built in code, with ``PBE`` as the project
-functional, a saved 2x2x2 supercell, a configured cutoff sweep (300 to 800 eV)
-and k-point sweep (the grids ``Generate From Spacing...`` gives down to 0.07
-1/Ang), none submitted, and eight candidate muon sites generated through
-``ProjectService.generate_candidate_sites``. The builders make the calls the
-application makes, including the sweep widgets' own form logic, so the saved
-project is one the application could have written. Two variants extend it:
-``converged_project`` adopts a cutoff and a k-point grid with illustrative
-sweep data pinned on the Convergence Testing overview, and
-``dashboard_project`` binds failed, stopped and cancelled jobs to three cutoff
-rows. No scene runs CASTEP.
+``examples/cof2.py`` holds every scene but the cubic magnetic models. Its
+host is rutile CoF₂ with antiparallel spins on the two Co, ``PBE`` as the
+project functional and a saved 2x2x2 supercell; :doc:`/user_guide/examples/cof2`
+tells the story its scenes illustrate and cites the values its outputs are
+tuned to.
 
-The magnetic example
-~~~~~~~~~~~~~~~~~~~~
+``fixture_project`` is the configured-but-unsubmitted project of the setup
+scenes: a cutoff sweep (300 to 800 eV) and a k-point sweep (the grids
+``Generate From Spacing...`` gives down to 0.05 1/Ang), none submitted, and
+ten candidate muon sites from ``ProjectService.generate_candidate_sites``,
+one 1 Å from each fluorine and six random with a fixed seed. The builders make
+the calls the application makes, including the sweep widgets' own form logic,
+so the saved project is one the application could have written.
+``converged_project`` adopts 600 eV and a 4x4x6 grid with illustrative sweep
+data pinned on the Convergence Testing overview, and ``dashboard_project``
+binds failed, stopped and cancelled jobs to three cutoff rows.
 
-``examples/magnetic.py`` holds the Magnetic Fields scenes. Each builder from
-``magnetic_project`` saves the one-ion cubic cell of the worked examples with
-a magnetic model and a Magnetic Fields form; the scenes run the real
-``muesr`` calculation.
+``results_project`` starts from the converged project, adds six random
+muonium starts of their own and the antiferromagnetic model, opens the project
+in a ``MainWindow`` and drives each workflow as its buttons do: a
+spin-polarised pristine relaxation and its comparison table, a UEP source row
+with a seeded batch search and its clustering, positive-muon and muonium
+relaxations in the 2x2x2 supercell, one analysis workspace per charge state,
+clustered and pinned, the phonon job of the lowest positive-muon site, the
+distortion-corrected 4c site on the Magnetic Fields page, and the 4c to 4c
+paths on the Energy Barriers page with an NEB band along the first. Jobs are
+submitted through ``JobExecutionController.submit_local_jobs`` with a local
+runner whose ``submit`` writes the job's CASTEP outputs into its directory
+instead of starting CASTEP; each job is then finished through the window's
+local-runner completion handler, so result dispatch, stored results, derived
+structures and relaxed sites are those a real run produces. A message box
+during the build fails it rather than hanging it, except the k-point
+rescaling notice the build's supercell rows are known to raise.
 
-The silicon example
-~~~~~~~~~~~~~~~~~~~
-
-``examples/silicon.py`` holds the results and analysis scenes, which open
-``results_project``, built on diamond silicon's two-atom primitive cell, the
-cell of the UEP fixture. The builder opens the project in a ``MainWindow`` and
-drives each workflow as its buttons do: it adds and runs a pristine relaxation
-and a UEP source row, stages five manual candidate sites as positive-muon
-relaxations in a saved 2x2x2 supercell, creates, clusters and pins an analysis
-workspace, runs the phonon job of the lowest Quantum Corrections site, and
-generates the bond-centre to tetrahedral paths on the Energy Barriers page and
-runs an NEB band along the first. Jobs are submitted through
-``JobExecutionController.submit_local_jobs`` with a local runner whose
-``submit`` writes the job's CASTEP outputs into its directory instead of
-starting CASTEP; each job is then finished through the window's local-runner
-completion handler, so result dispatch, stored results, derived structures and
-relaxed sites are those a real run produces. A message box during the build
-fails it rather than hanging it.
-
-The outputs come from the synthetic test fixtures where one fits:
-``tests/fixtures/uep/Si2.castep``, ``Si2.den_fmt`` and ``Si2.cell`` for the
-UEP source job, and ``tests/fixtures/geometry/Si2_bfgs.castep`` for the
-pristine relaxation, whose relaxed cell is read from the output's final
-configuration. No fixture holds a muon relaxation, a phonon run of a
-muoniated cell or a silicon NEB band, so ``synthetic.py`` writes those in
-CASTEP's file shapes with illustrative numbers: each muon start relaxes to its
-nearest bond-centre or tetrahedral site, the phonon run reports close to its
-relaxation's energy with one mode per atom and axis, the muon's three the
-highest, and the NEB ``.ts`` band follows the job's own reactant, intermediate
-and product cells. The pages that show these numbers say in their captions
-that they are illustrative. The UEP batch search and its ZPE run in the
-scene's thread with seeded random starts, so every build finds the same minima.
+The outputs are synthetic and tuned so that the application's analysis of
+them reproduces the cited values. The pristine relaxation ends on the host
+cell with sub-percent changes. The UEP source job is a model density of Co²⁺
+and F⁻ Gaussian shells, not a CASTEP density. Each positive-muon start relaxes
+to one of three clusters (``POSITIVE_SITES``) with the energies and neighbour
+displacements of the MuFinder paper, and each muonium start to one of two
+(``MUONIUM_SITES``). The phonon run embeds the F–μ–F modes of Möller *et
+al.* in the relaxed supercell. The NEB band is illustrative, and its caption
+says so. ``tests/science/test_magnetic_fields.py`` pins the CoF₂ field values
+and ``tests/docs/test_docs_synthetic.py`` pins the phonon, density and
+single-point outputs. The UEP batch search and its ZPE run in the scene's
+thread with seeded random starts, so every build finds the same minima.
 
 ``running_relaxation_project`` stops the pristine relaxation part-way through
 its output for the geometry progress window. Reopening a project ends its local
 jobs, since no local runner survives the application, so that scene puts the
 job back in the running state the local runner keeps and points the progress
-monitor at its ``.castep``. ``silicon_project`` holds the host alone; the
-legacy-importer scene scans a hand-authored legacy folder of three silicon
-runs in the documented layout (see :doc:`/legacy_import`, "Research data
-boundary") and drops the scan's notice that no keyword catalog is installed,
-as the other scenes hide it.
+monitor at its ``.castep``. The legacy-importer scene scans a hand-authored
+legacy folder of three CoF₂ runs in the documented layout (see
+:doc:`/legacy_import`, "Research data boundary") and drops the scan's notice
+that no keyword catalog is installed, as the other scenes hide it.
 
-The Quantum Corrections phonon analysis window has no screenshot: no fixture
-holds a ``.phonon`` output, and a phonon spectrum for the muoniated cell would
-be invented physics.
+The magnetic example
+~~~~~~~~~~~~~~~~~~~~
+
+``examples/magnetic.py`` holds the Magnetic Fields scenes of the cubic worked
+examples. Each builder from ``magnetic_project`` saves the one-ion cubic cell
+of :doc:`/user_guide/magnetic_fields_theory` with a magnetic model and a
+Magnetic Fields form; the scenes run the real ``muesr`` calculation.
 
 When the renderer runs
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -329,10 +332,9 @@ When the renderer runs
 touching ``docs/_generated/screenshots/.stamp``; a render of named screenshots
 or of one example does not, and neither does a render that fails. ``make
 docs`` depends on the stamp, and the stamp on every file of
-``scripts/docs_screenshots``, ``scripts/render_docs_screenshots.py``,
-``src/mufinder`` and the two fixture directories the silicon example reads,
-so ``make docs`` renders only when one of them is newer than the stamp, and a
-fresh checkout, such as a CI runner, renders once. Delete the stamp to force a
+``scripts/docs_screenshots``, ``scripts/render_docs_screenshots.py`` and
+``src/mufinder``, so ``make docs`` renders only when one of them is newer
+than the stamp, and a fresh checkout, such as a CI runner, renders once. Delete the stamp to force a
 render from ``make docs``.
 
 Adding a screenshot

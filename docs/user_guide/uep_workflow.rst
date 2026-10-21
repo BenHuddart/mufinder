@@ -88,10 +88,11 @@ The UEP page
 ------------
 
 .. figure:: ../_generated/screenshots/uep_page.webp
-   :alt: The UEP page with one completed source job on the silicon host and its
+   :alt: The UEP page with one completed source job on the CoF2 host and its
          Open Wizard button.
 
-   A completed UEP source job, from a synthetic silicon density.
+   A completed UEP source job on CoF₂, from a model density rather than a
+   CASTEP one (see :doc:`/user_guide/examples/cof2`).
 
 The page has a ``Source Structure`` group and a ``UEP Source Jobs`` table with
 these columns: ``Label``, ``Supercell``, ``Status``, ``Total Energy (eV)``,
@@ -104,7 +105,16 @@ The analysis window
 -------------------
 
 Completed UEP source jobs open ``UEP Analysis - <job label>`` with three tabs:
-``Batch Search``, ``Isosurfaces``, and ``Slices``. The window offers:
+``Batch Search``, ``Isosurfaces``, and ``Slices``.
+
+.. figure:: ../_generated/screenshots/uep_batch_search.webp
+   :alt: The Batch Search tab of the UEP analysis window after twelve random
+         starts, with the sampling and optimizer controls, the search log and
+         the clustered minima.
+
+   A finished batch search in the CoF₂ model density.
+
+The window offers:
 
 - full-cell 3D potential grids (``Calculate Cell Potential Grid``) shared
   between the isosurface and slice views, with a ``Gaussian width factor``
@@ -154,7 +164,8 @@ Interpreting batch searches
    :alt: The UEP clustering window with a hierarchical dendrogram, the clustered
          muon positions in the cell and the cluster energy-spread plot.
 
-   Twelve batch-search minima in the synthetic silicon density, in three clusters.
+   Twelve batch-search minima in the CoF₂ model density, all images of one 4d
+   position, which the default cut splits into two clusters of equal energy.
 
 The paper and the original ``pymuonsuite`` workflow both use repeated
 random-start optimizations to estimate which minima have the largest attraction

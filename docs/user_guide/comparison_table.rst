@@ -34,6 +34,12 @@ Running the workflow
    is refused.
 4. **Name the table.** Edit the ``Comparison table label`` if needed (it
    defaults to ``Comparison <N>``) and click ``OK``.
+
+   .. figure:: ../_generated/screenshots/comparison_job_dialog.webp
+      :alt: The Generate Comparison Table dialog with one completed CoF2
+            pristine relaxation ticked and its relaxed lattice lengths.
+
+      ``Generate Comparison Table`` with the CoF₂ pristine relaxation ticked.
 5. **Read the table.** MuFinder opens the new table, listed under ``Pristine
    Relaxation`` in the project tree. It is saved with the project.
 6. **Rename or remove it.** The title at the top of an existing table stays
@@ -46,10 +52,11 @@ The comparison table
 --------------------
 
 .. figure:: ../_generated/screenshots/comparison_table.webp
-   :alt: A comparison table of the silicon host against one relaxed cell, grouped into
+   :alt: A comparison table of the CoF2 host against one relaxed cell, grouped into
          lattice, displacement, bonding and symmetry metrics.
 
-   The silicon host compared with that synthetic pristine relaxation.
+   The CoF₂ host of :doc:`/user_guide/examples/cof2` compared with a synthetic
+   pristine relaxation.
 
 The table has a ``Metric`` column, an ``Experimental`` column for the reference
 structure, and one column per selected DFT structure, headed ``DFT (<job

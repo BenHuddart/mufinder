@@ -66,7 +66,7 @@ The Pristine Relaxation page
    :alt: The Pristine Relaxation page with one completed variable-cell relaxation and
          its relaxed lattice lengths.
 
-   A pristine relaxation of silicon, from a synthetic CASTEP output.
+   A pristine relaxation of CoF₂, from a synthetic CASTEP output.
 
 The ``Relaxation Jobs`` table has one row per job:
 
@@ -154,10 +154,11 @@ The workspace page
 ~~~~~~~~~~~~~~~~~~
 
 .. figure:: ../_generated/screenshots/relaxation_analysis_workspace.webp
-   :alt: An analysis workspace with five silicon muon relaxations clustered into two
-         sites, beside a 3D preview of the host cell.
+   :alt: An analysis workspace with ten CoF2 positive-muon relaxations clustered
+         into 4c, 4d and 8i sites, beside a 3D preview of the host cell.
 
-   Illustrative silicon relaxations clustered into bond-centre and tetrahedral sites.
+   Synthetic CoF₂ relaxations clustered into the three sites of
+   :doc:`/user_guide/examples/cof2`.
 
 Each workspace is a tab on the ``Muon Sites -> Analysis`` page. Selecting a
 workspace's node in the project tree opens its tab, and switching tabs selects
@@ -187,6 +188,13 @@ Clustering
 The ``Clustering...`` button opens the ``Clustering - <workspace>`` dialog,
 which provides three methods, selected with ``Method``. Click ``Apply
 Clustering`` to store the result on the workspace.
+
+.. figure:: ../_generated/screenshots/relaxation_clustering_dialog.webp
+   :alt: The Clustering dialog with Connected Components at 0.25 A: a graph of
+         seven, one and two linked sites, the cluster-count plot and the
+         clustered-sites table with 4c, 4d and 8i Wyckoff assignments.
+
+   Connected-components clustering of the CoF₂ positive-muon workspace.
 
 ``Connected Components``
    Two relaxed muon endpoints belong to the same cluster when they are linked
@@ -273,6 +281,12 @@ selected muon site against ion distance from the muon, in the style of Fig. 5(b)
 MuFinder paper. Positive radial displacement means the matched ion moved away
 from the muon.
 
+.. figure:: ../_generated/screenshots/displacement_analysis_dialog.webp
+   :alt: The Analyse Displacements dialog for a CoF2 4c site: the two nearest F
+         moved in by about half an angstrom and the two nearest Co moved out.
+
+   The F–μ–F distortion around the CoF₂ 4c site.
+
 Deleting a workspace
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -292,10 +306,10 @@ The Muon Sites summary
 ----------------------
 
 .. figure:: ../_generated/screenshots/muon_sites_summary.webp
-   :alt: The Muon Sites page with two distinct positive-muon sites pinned and an
-         empty Muonium card.
+   :alt: The Muon Sites page with three positive-muon sites (4c, 4d, 8i) and two
+         muonium sites (8i, 4d) pinned.
 
-   The two distinct sites pinned from that workspace; no muonium analysis is pinned.
+   Both cards populated: the CoF₂ positive-muon and muonium workspaces, pinned.
 
 The ``Muon Sites`` page (the parent node above ``Generation``, ``Relaxations``
 and ``Analysis``) summarises your headline result: the distinct,
