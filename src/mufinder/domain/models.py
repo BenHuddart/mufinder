@@ -99,7 +99,9 @@ class MuonSite:
     a completed relaxation run (``relaxation_run_id``), and ``None`` otherwise.
     The run's result stays the record; the site field is a convenience copy kept
     in step with it. :meth:`current_fractional_position` answers "where is the
-    muon now".
+    muon now". A site relaxed in both charge states links to the relaxation of
+    the charge state it was first relaxed in; the other one is found through
+    its muon-relaxation row (see :mod:`mufinder.services.site_relaxations`).
     """
 
     id: UUID = field(default_factory=uuid4)

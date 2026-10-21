@@ -302,7 +302,11 @@ charge-state tab under ``Muon Sites -> Relaxations`` and changes the
 corresponding site's status from ``generated`` to ``staged``. The initial
 position is carried forward as fractional coordinates in the single host unit
 cell. Choosing both charge states creates one row in each tab for every
-selected initial position.
+selected initial position. Once relaxed, each charge state's relaxation reaches
+Quantum Corrections, Energy Barriers and the ``Muon Sites`` summary on its own:
+the site records the relaxation of the charge state it was first relaxed in,
+and the other charge state's relaxation is read from its row in the
+``Relaxations`` page.
 
 MuFinder writes CASTEP ``charge`` as ``+1`` for positive muon and ``0`` for
 muonium, and keeps ``fix_all_cell`` enabled for these jobs. Job names and

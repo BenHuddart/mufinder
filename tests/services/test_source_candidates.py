@@ -48,6 +48,7 @@ from mufinder.services.source_candidates import (
     fractional_triplet_from_source,
     quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
+    quantum_source_key,
     quantum_source_label,
     quantum_source_labels_by_key,
     quantum_source_relative_energies,
@@ -56,6 +57,7 @@ from mufinder.services.source_candidates import (
     serialize_energy_barrier_neb_sources,
     serialize_energy_barrier_source_candidates,
     serialize_quantum_sources,
+    site_charge_state_relaxation_jobs,
     source_relaxation_parameter_values,
     uuid_from_source,
 )
@@ -63,6 +65,7 @@ from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
 )
+from tests.support.muon_sites import bind_muon_relaxation_row
 from tests.support.structures import host_structure
 
 
@@ -262,6 +265,7 @@ def test_quantum_source_labels_seed_names_and_stored_sources(document: ProjectDo
     stored = serialize_quantum_sources(document, [second.id, uuid4()])
     assert stored == [
         {
+            "key": str(second.id),
             "site_id": str(second.id),
             "source_relaxation_run_id": str(second_candidate.run.id),
             "source_relaxation_job_id": str(second_candidate.job.id),
@@ -656,3 +660,102 @@ def test_completed_pristine_relaxation_jobs_describe_completed_rows(document: Pr
     assert unit_job.total_energy == -3.0
     assert unit_job.lattice_a == 5.1
     assert unit_job.structure_id == document.results[run_unit.result_id].derived_structure_ids[0]
+
+
+# --- one site relaxed in both charge states -----------------------------------
+
+
+def _relax_in_other_charge_state(
+    doc: ProjectDocument,
+    site: MuonSite,
+    charge_state: str,
+    *,
+    energy: float,
+    muon: tuple[float, float, float] = (0.25, 0.25, 0.25),
+) -> Job:
+    """Relax ``site`` again in ``charge_state`` and bind the job to it by a muon-relaxation row."""
+
+    scratch = _add_relaxed_source(doc, site.label, energy=energy, muon=muon, charge_state=charge_state)
+    run = doc.runs[scratch.relaxation_run_id]
+    doc.results[run.result_id].data = {"total_energy": energy}
+    del doc.sites[scratch.id]
+    job = doc.jobs[run.job_id]
+    bind_muon_relaxation_row(doc, site, job, charge_state)
+    return job
+
+
+def test_a_site_relaxed_in_both_charge_states_is_a_source_in_each(document: ProjectDocument) -> None:
+    site = _add_relaxed_source(document, "O1", energy=-10.0)
+    muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
+
+    candidates = eligible_quantum_source_candidates(document)
+
+    by_state = {charge_state_for_job(candidate.job): candidate for candidate in candidates}
+    assert set(by_state) == {POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE}
+    linked, muonium = by_state[POSITIVE_MUON_CHARGE_STATE], by_state[MUONIUM_CHARGE_STATE]
+    # The site's own link keeps the bare site id as its key.
+    assert linked.key == str(site.id)
+    assert muonium.key == f"{site.id}:muonium"
+    assert muonium.job is muonium_job
+    assert (linked.total_energy_eV, muonium.total_energy_eV) == (-10.0, -12.5)
+    assert quantum_source_key(document, site, muonium_job) == muonium.key
+    assert quantum_source_labels_by_key(candidates) == {linked.key: "O1", muonium.key: "O1_muonium"}
+    assert quantum_seed_name_for_key(document, None, muonium.key) == "quantum_O1_muonium"
+    stored = serialize_quantum_sources(document, [muonium.key, site.id, muonium.key])
+    assert [(entry["key"], entry["charge_state"]) for entry in stored] == [
+        (muonium.key, MUONIUM_CHARGE_STATE),
+        (str(site.id), POSITIVE_MUON_CHARGE_STATE),
+    ]
+    assert site_charge_state_relaxation_jobs(document) == {site.id: {MUONIUM_CHARGE_STATE: muonium_job}}
+
+
+def test_the_other_charge_state_needs_a_completed_relaxation(document: ProjectDocument) -> None:
+    site = _add_relaxed_source(document, "O1", energy=-10.0)
+    muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
+
+    muonium_job.status = JobStatus.RUNNING
+    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [str(site.id)]
+
+    muonium_job.status = JobStatus.COMPLETED
+    for run in [run for run in document.runs.values() if run.job_id == muonium_job.id]:
+        del document.runs[run.id]
+    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [str(site.id)]
+
+
+def test_the_other_charge_state_stays_a_source_when_the_site_link_is_cleared(
+    document: ProjectDocument,
+) -> None:
+    site = _add_relaxed_source(document, "O1", energy=-10.0)
+    _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
+
+    site.clear_relaxation()
+
+    candidates = eligible_quantum_source_candidates(document)
+    assert [(candidate.key, charge_state_for_job(candidate.job)) for candidate in candidates] == [
+        (f"{site.id}:muonium", MUONIUM_CHARGE_STATE)
+    ]
+
+
+def test_paths_between_two_sites_are_kept_apart_per_charge_state(document: ProjectDocument) -> None:
+    first = _add_relaxed_source(document, "A", energy=-10.0, muon=(0.25, 0.25, 0.25))
+    second = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
+    _relax_in_other_charge_state(document, first, MUONIUM_CHARGE_STATE, energy=-12.0, muon=(0.25, 0.25, 0.25))
+    _relax_in_other_charge_state(document, second, MUONIUM_CHARGE_STATE, energy=-11.0, muon=(0.75, 0.25, 0.25))
+
+    positive = enumerate_energy_barrier_source_candidates(document, str(first.id), str(second.id))
+    muonium = enumerate_energy_barrier_source_candidates(
+        document, f"{first.id}:muonium", f"{second.id}:muonium"
+    )
+
+    assert positive and muonium
+    assert positive[0].key == f"{first.id}:{second.id}:1"
+    assert muonium[0].key == f"{first.id}:muonium:{second.id}:muonium:1"
+    assert energy_barrier_source_label(muonium[0]) == "A_muonium_to_B_muonium_path1"
+    # Stored paths rebuild their endpoints under the same keys.
+    document.ui_state["energy_barriers_form"] = {
+        "generated_sources": serialize_energy_barrier_source_candidates([*positive, *muonium])
+    }
+    rebuilt = {candidate.key: candidate for candidate in eligible_energy_barrier_source_candidates(document)}
+    assert rebuilt[muonium[0].key].reactant.key == f"{first.id}:muonium"
+    assert rebuilt[muonium[0].key].reactant.total_energy_eV == -12.0
+    assert rebuilt[positive[0].key].reactant.key == str(first.id)

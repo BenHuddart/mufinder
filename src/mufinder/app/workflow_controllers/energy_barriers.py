@@ -352,6 +352,7 @@ class EnergyBarriersController(WorkflowJobController):
             reactant_site_id=str(reactant.site.id),
             product_site_id=str(product.site.id),
             new_sources=serialize_energy_barrier_source_candidates(candidates),
+            charge_state=charge_state_for_job(reactant.job),
         )
         document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY] = state
         self.refresh_view()

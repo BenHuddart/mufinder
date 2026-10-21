@@ -512,7 +512,16 @@ class QuantumCorrectionsController(WorkflowJobController):
             if isinstance(config, dict):
                 config.setdefault("method", "finite_displacement")
                 config.setdefault("pseudopotential_family", "unknown")
-                config["sources"] = serialize_quantum_sources(document, definition.input_site_ids)
+                stored = config.get("sources", [])
+                stored_keys = [
+                    str(entry.get("key") or entry.get("site_id", ""))
+                    for entry in (stored if isinstance(stored, list) else [])
+                    if isinstance(entry, dict)
+                ]
+                config["sources"] = serialize_quantum_sources(
+                    document,
+                    [*definition.input_site_ids, *stored_keys, *(candidate.key for candidate in candidates)],
+                )
         else:
             definition = self._context.project_service.register_quantum_phonon_definition(
                 document,
@@ -521,7 +530,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 parameters={
                     "method": "finite_displacement",
                     "pseudopotential_family": "unknown",
-                    "sources": serialize_quantum_sources(document, [candidate.site.id for candidate in candidates]),
+                    "sources": serialize_quantum_sources(document, [candidate.key for candidate in candidates]),
                     "phonon_job_ids_by_label": {},
                     "job_seed_names_by_label": {},
                 },
@@ -843,6 +852,7 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         states = self.build_states()
         configs: list[QuantumPhononJobConfig] = []
+        config_keys: list[str] = []
         for key in str_keys:
             candidate = self.candidate_by_key(key)
             if candidate is None or not workflow_row_state_is_ready(states, key):
@@ -869,7 +879,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                         source_relaxation_run_id=candidate.run.id,
                         source_relaxation_job_id=candidate.job.id,
                         charge_state=charge_state_for_job(candidate.job),
-                        total_energy_eV=candidate.site.total_energy_eV,
+                        total_energy_eV=candidate.total_energy_eV,
                     ),
                     method=method,
                     pseudopotential_family=str(pseudopotential_family),
@@ -878,6 +888,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                     param_overrides=overrides.param,
                 )
             )
+            config_keys.append(key)
         if not configs:
             return []
 
@@ -892,7 +903,9 @@ class QuantumCorrectionsController(WorkflowJobController):
         # ``job_ids_by_label``, so keep the phonon mapping aliased there.
         definition.parameters["job_ids_by_label"] = phonon_mapping
 
-        specs_by_key = {str(spec.provenance.get("source_site_id", "")): spec for spec in specs}
+        # One spec per config, in order; a site relaxed in both charge states
+        # has two keys with the same source site id.
+        specs_by_key = dict(zip(config_keys, specs, strict=True))
         created: list[Job] = []
         for key in str_keys:
             spec = specs_by_key.get(key)

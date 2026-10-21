@@ -64,6 +64,7 @@ from mufinder.services.definition_mappings import (
     sync_equivalent_mappings,
 )
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
+from mufinder.services.site_relaxations import record_site_relaxation
 from mufinder.science.relaxation_analysis import muon_fractional_position_from_cell
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 from mufinder.workflow.muon_site import (
@@ -1041,10 +1042,15 @@ class MuonRelaxationController(WorkflowJobController):
         # a fresh CalculationRun (``JobExecutionController._create_active_run``),
         # so a continued job's re-completion advances the site's link to the new
         # run rather than leaving it on the superseded one.
+        # A site relaxed in both charge states stays linked to the charge state
+        # it was first relaxed in; the other relaxation is found through its row.
         site = document.sites.get(row.site_id) if row is not None else None
         if site is not None:
-            site.record_relaxation(
-                run.id,
+            record_site_relaxation(
+                document,
+                site,
+                run,
+                job,
                 total_energy_eV=parsed.total_energy,
                 fractional_position=final_host_position,
             )

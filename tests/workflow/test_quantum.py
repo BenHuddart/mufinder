@@ -413,6 +413,26 @@ def test_quantum_source_eligibility_names_the_rejection_reason(
     assert reason in verdict.reason
 
 
+def test_quantum_source_eligibility_off_the_site_link_checks_the_run_belongs_to_the_job() -> None:
+    # A relaxation in another charge state is found through the site's row, not
+    # its link, so the site's status and link are not what is checked.
+    job = Job(id=_JOB_ID, workflow_stage=WorkflowStage.MUON_RELAXATION, status=JobStatus.COMPLETED)
+    run = CalculationRun(job_id=_JOB_ID, status=JobStatus.COMPLETED)
+    site = MuonSite(status="staged", relaxation_run_id=None)
+
+    verdict = quantum_source_eligibility(**_eligibility_inputs(site=site, run=run, job=job), site_link=False)
+    assert verdict.eligible is True
+
+    foreign_run = CalculationRun(job_id=uuid4(), status=JobStatus.COMPLETED)
+    verdict = quantum_source_eligibility(
+        **_eligibility_inputs(site=site, run=foreign_run, job=job), site_link=False
+    )
+    assert verdict.eligible is False
+    assert "recorded relaxation run is missing" in verdict.reason
+    verdict = quantum_source_eligibility(**_eligibility_inputs(site=site, run=None, job=job), site_link=False)
+    assert verdict.eligible is False
+
+
 def test_expand_quantum_singlepoint_jobs_is_a_deprecated_shim_rendering_the_former_stage_one() -> None:
     # Public helper kept for external callers; see the compatibility ledger.
     with pytest.warns(DeprecationWarning, match="expand_quantum_phonon_jobs"):
