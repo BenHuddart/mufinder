@@ -59,6 +59,8 @@ class _FakeEnergyBarriersView:
         self.sources: list[list] = []
         self.neb_results: list[list] = []
         self.site_scopes: list[dict] = []
+        self.neb_previews: list[dict] = []
+        self.cleared_previews: list[str | None] = []
 
     def set_site_scope(self, **kwargs) -> None:
         self.site_scopes.append(kwargs)
@@ -71,6 +73,12 @@ class _FakeEnergyBarriersView:
 
     def set_neb_results(self, rows) -> None:
         self.neb_results.append(list(rows))
+
+    def set_neb_preview(self, **kwargs) -> None:
+        self.neb_previews.append(kwargs)
+
+    def clear_neb_preview(self, title: str | None = None) -> None:
+        self.cleared_previews.append(title)
 
 
 def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
@@ -247,6 +255,57 @@ def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> N
     # build_result contributes no output files or derived structures.
     assert result.output_files == []
     assert result.derived_structure_ids == []
+
+
+def test_energy_barriers_controller_show_neb_preview_structures_are_in_angstrom(tmp_path: Path) -> None:
+    """show_neb_preview hands the view one ``Structure`` per image, with the
+    ``.ts`` geometry already converted from Bohr to Å: the fixture's 6.8431966 Bohr
+    fcc Cu cell must reach the viewer as ~3.6213 Å, not 1.89 times too large."""
+
+    from mufinder.domain.models import Result as _Result
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "eb.mufinder", "EB")
+    job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
+    job.status = JobStatus.COMPLETED
+    ts_path = tmp_path / "barrier.ts"
+    ts_path.write_text(_NEB_TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    result = _Result(
+        calculation_run_id=run.id,
+        result_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+        data={"num_images": 7, "transition_state_file": str(ts_path)},
+    )
+    run.result_id = result.id
+    document.runs[run.id] = run
+    document.results[result.id] = result
+
+    view = _FakeEnergyBarriersView()
+    controller = EnergyBarriersController(
+        make_context(document=document, project_service=service),
+        _stub_energy_barriers_deps(),
+        lambda: view,
+    )
+
+    controller.show_neb_preview(str(result.id))
+
+    assert view.cleared_previews == []
+    preview = view.neb_previews[-1]
+    assert preview["title"] == "barrier_neb (7 images)"
+    structures = preview["structures"]
+    assert [structure.label for structure in structures] == [
+        f"barrier_neb {label}" for label in ("REA", "TST", "TST", "TST", "TST", "TST", "PRO")
+    ]
+    reactant = structures[0]
+    assert reactant.lattice_vectors[0] == pytest.approx([3.6213, 0.0, 0.0], abs=1e-4)
+    assert reactant.lattice_vectors[1] == pytest.approx([0.0, 3.6213, 0.0], abs=1e-4)
+    assert reactant.lattice_vectors[2] == pytest.approx([0.0, 0.0, 3.6213], abs=1e-4)
+    assert reactant.species == ["Cu", "Cu", "Cu", "Cu", "H:mu"]
+    # Fractional coordinates are unit-free, so they only come out right when the
+    # lattice and the Cartesian positions were converted together.
+    assert reactant.fractional_positions[1] == pytest.approx([0.5, 0.5, 0.0])
+    assert reactant.fractional_positions[4] == pytest.approx([0.5, 0.5, 0.5])
+    assert structures[-1].fractional_positions[4] == pytest.approx([0.25, 0.25, 0.25])
 
 
 def test_energy_barriers_controller_build_result_missing_dir_is_empty(tmp_path: Path) -> None:

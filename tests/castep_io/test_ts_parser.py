@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+from ase.units import Bohr, Hartree
 
 from mufinder.castep_io import parse_transition_state_file
 from mufinder.castep_io.ts_parser import (
@@ -74,6 +75,54 @@ def test_parse_neb_path_selects_final_iteration_band() -> None:
     assert parsed.barrier_height_eV == pytest.approx(0.12, abs=2e-3)
     peak = max(parsed.images, key=lambda image: image.energy)
     assert peak.reaction_coordinate == pytest.approx(0.5)
+
+
+def test_parse_neb_path_converts_geometry_from_bohr_to_angstrom() -> None:
+    # The fixture stores an fcc Cu cell with a = 6.8431966 Bohr; the parser must
+    # expose lattice vectors and positions in Å (~3.6213 Å), not raw Bohr.
+    parsed = parse_transition_state_file(_NEB_FIXTURE)
+
+    reactant = parsed.images[0]
+    assert reactant.lattice_vectors[0] == pytest.approx((3.6213, 0.0, 0.0), abs=1e-4)
+    assert reactant.lattice_vectors[1] == pytest.approx((0.0, 3.6213, 0.0), abs=1e-4)
+    assert reactant.lattice_vectors[2] == pytest.approx((0.0, 0.0, 3.6213), abs=1e-4)
+    assert reactant.species == ("Cu", "Cu", "Cu", "Cu", "H:mu")
+    # Second Cu atom sits at (a/2, a/2, 0); the muon starts at the octahedral site (a/2, a/2, a/2).
+    assert reactant.cartesian_positions[1] == pytest.approx((1.81063, 1.81063, 0.0), abs=1e-4)
+    assert reactant.cartesian_positions[4] == pytest.approx((1.81063, 1.81063, 1.81063), abs=1e-4)
+    # The product image moves the muon to the tetrahedral site at (a/4, a/4, a/4).
+    product = parsed.images[-1]
+    assert product.cartesian_positions[4] == pytest.approx((0.90532, 0.90532, 0.90532), abs=1e-4)
+    # Every image in the band shares the (fixed-cell) lattice.
+    for image in parsed.images:
+        for vector, expected in zip(image.lattice_vectors, reactant.lattice_vectors, strict=True):
+            assert vector == pytest.approx(expected)
+
+
+def test_parse_converts_lattice_positions_and_forces_to_ev_angstrom_units() -> None:
+    # One image written in CASTEP atomic units: a 7 Bohr cubic cell, an atom at
+    # 1 Bohr along z and a force of 0.5 Hartree/Bohr on it.
+    body = (
+        "              -1.00000000E+000     -1.00000000E+000                       <-- E\n"
+        "               7.00000000E+000      0.00000000E+000      0.00000000E+000  <-- h\n"
+        "               0.00000000E+000      7.00000000E+000      0.00000000E+000  <-- h\n"
+        "               0.00000000E+000      0.00000000E+000      7.00000000E+000  <-- h\n"
+        " H           1      0.00000000E+000      0.00000000E+000      0.00000000E+000  <-- R\n"
+        " H           2      0.00000000E+000      0.00000000E+000      1.00000000E+000  <-- R\n"
+        " H           1      0.00000000E+000      0.00000000E+000      0.00000000E+000  <-- F\n"
+        " H           2      0.00000000E+000      0.00000000E+000      5.00000000E-001  <-- F\n"
+    )
+    text = " TSTYPE\n" + _block(" REA    1      0.0", body) + _block(" PRO    1      1.0", body)
+    parsed = parse_transition_state_text(text)
+
+    image = parsed.images[0]
+    assert image.energy == pytest.approx(-Hartree)
+    assert image.lattice_vectors[0] == pytest.approx((7.0 * Bohr, 0.0, 0.0))
+    assert image.lattice_vectors[0][0] == pytest.approx(3.7042, abs=1e-4)
+    assert image.cartesian_positions[1] == pytest.approx((0.0, 0.0, Bohr))
+    assert image.forces[0] == pytest.approx((0.0, 0.0, 0.0))
+    assert image.forces[1] == pytest.approx((0.0, 0.0, 0.5 * Hartree / Bohr))
+    assert image.forces[1][2] == pytest.approx(25.711, abs=1e-3)
 
 
 @pytest.mark.parametrize("as_type", [Path, str])
