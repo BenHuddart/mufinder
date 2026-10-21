@@ -267,8 +267,9 @@ MuFinder creates the comparison supercell needed to match the relaxed cell,
 matches host atoms with periodic boundary conditions, and removes the implanted
 muon from the relaxed structure before atom matching. The structure view shows
 the relaxed structure with the comparison host atoms as transparent reference
-points. The plot reports radial ion displacement relative to the selected muon
-site against ion distance from the muon, in the style of Fig. 5(b) in the
+points. Distances are measured from the site the muon relaxed to in the
+relaxed supercell. The plot reports radial ion displacement relative to the
+selected muon site against ion distance from the muon, in the style of Fig. 5(b) in the
 MuFinder paper. Positive radial displacement means the matched ion moved away
 from the muon.
 

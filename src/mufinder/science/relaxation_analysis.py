@@ -20,7 +20,7 @@ from mufinder.science.site_generation import (
     closest_symmetry_equivalent_position,
     symmetry_equivalent_positions,
 )
-from mufinder.science.supercell_matching import normalize_for_comparison
+from mufinder.science.supercell_matching import NormalizedStructurePair, normalize_for_comparison
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
 from mufinder.science.uep_clustering import (
     UepBatchSummary,
@@ -130,6 +130,34 @@ def _muon_position_in_normalized_frame(
     except np.linalg.LinAlgError:
         return muon
     return _wrap_fractional(normalized.tolist())
+
+
+def _muon_image_nearest_marker(
+    muon_fractional_position: Sequence[float],
+    relaxed_structure: Structure,
+    normalized: NormalizedStructurePair,
+) -> tuple[float, float, float] | None:
+    """The image of the muon position nearest the relaxed structure's muon marker, in the supercell frame.
+
+    ``None`` when the comparison was not tiled or the relaxed structure has no
+    single muon marker.
+    """
+
+    markers = [
+        position
+        for species, position in zip(relaxed_structure.species, relaxed_structure.fractional_positions, strict=True)
+        if str(species).strip().casefold() == "h:mu"
+    ]
+    if not normalized.is_supercell or len(markers) != 1:
+        return None
+    matrix = np.asarray(normalized.supercell_matrix, dtype=float)
+    position = np.asarray(muon_fractional_position, dtype=float)
+    marker = np.asarray(markers[0], dtype=float) @ matrix
+    image = position - np.round(position - marker)
+    try:
+        return _wrap_fractional((image @ np.linalg.inv(matrix)).tolist())
+    except np.linalg.LinAlgError:
+        return None
 
 
 def _minimum_energy(sites: Sequence[RelaxedMuonSite]) -> float | None:
@@ -608,7 +636,10 @@ def analyze_displacements(
     The muon position is interpreted in the comparison-structure fractional
     frame. When the comparison structure is tiled into a supercell for matching,
     the muon position is converted into that normalized supercell frame before
-    distances are evaluated.
+    distances are evaluated. A position in the comparison cell names one site
+    in each of the supercell's copies of that cell, so when the relaxed
+    structure carries a muon marker the copy nearest the marker is used: the
+    distances are measured from the site the muon relaxed to.
     """
 
     relaxed_host = host_only_structure(relaxed_structure)
@@ -618,11 +649,13 @@ def analyze_displacements(
     )
     matching = match_structures(normalized.experimental, normalized.dft)
     lattice = normalized.dft.lattice_vectors
-    muon = _muon_position_in_normalized_frame(
-        muon_fractional_position,
-        normalized.supercell_matrix,
-        is_supercell=normalized.is_supercell,
-    )
+    muon = _muon_image_nearest_marker(muon_fractional_position, relaxed_structure, normalized)
+    if muon is None:
+        muon = _muon_position_in_normalized_frame(
+            muon_fractional_position,
+            normalized.supercell_matrix,
+            is_supercell=normalized.is_supercell,
+        )
     points: list[DisplacementPoint] = []
     for pair in matching.pairs:
         comparison_frac = normalized.experimental.fractional_positions[pair.experimental_index]
