@@ -25,6 +25,6 @@ Makefile, or with ``scripts/render_docs_screenshots.py``::
 
     make screenshots
     python scripts/render_docs_screenshots.py --list
-    python scripts/render_docs_screenshots.py --example rutile
+    python scripts/render_docs_screenshots.py --example cof2
     python scripts/render_docs_screenshots.py project_home journal_page
 """
