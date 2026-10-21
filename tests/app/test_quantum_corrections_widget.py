@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QLabel
 
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
@@ -92,3 +93,23 @@ def test_set_sources_empty_then_populated(qapp) -> None:
     assert widget._sources_table.rowCount() == 1
     widget.set_sources([])
     assert widget._sources_table.rowCount() == 0
+
+
+def test_page_guidance_explains_purpose_and_source_headers(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    text = " ".join(label.text() for label in widget.findChildren(QLabel))
+    assert "zero-point energy" in text
+    assert "entangled" in text
+    assert "harmonic" in text
+    assert "relaxed endpoint" not in text
+    assert "locked once the row's first job has been submitted" in text
+    assert "mode-mixing witness w1" in text
+
+    table = widget._sources_table
+    tooltips = {}
+    for column in range(table.columnCount()):
+        item = table.horizontalHeaderItem(column)
+        tooltips[item.text()] = item.toolTip()
+    for header in ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Status", "Parameters"):
+        assert tooltips[header].strip(), header
+    assert "farm count" in tooltips["Displacements"]
