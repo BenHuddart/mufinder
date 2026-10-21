@@ -145,10 +145,11 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
 
     tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
     assert tabs is not None
-    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Phonon Modes", "Adiabatic Solver", "Muon Coupling"]
+    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Phonon Modes", "Mode wells and widths", "Muon Coupling"]
     assert tabs.widget(0).objectName() == "quantumAnalysisTabPage"
     assert tabs.widget(1).objectName() == "quantumAnalysisTabPage"
     assert tabs.widget(2).objectName() == "quantumAnalysisTabPage"
+    assert any(label.text() == "Harmonic muon wells (weakly-bound limit)" for label in dialog.findChildren(QLabel))
     assert dialog._single_particle_table.minimumWidth() == 320
     assert dialog._single_particle_table.item(0, 0).text() == "2"
     direction_item = dialog._single_particle_table.item(0, 1)
@@ -181,7 +182,7 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
 
     hint_texts = [label.text() for label in dialog.findChildren(QLabel) if label.objectName() == "hintText"]
     assert any("embedded viewer" in text for text in hint_texts)
-    assert any("confinement" in text for text in hint_texts)
+    assert any("harmonic potential" in text and "line-scan" in text for text in hint_texts)
     assert any("zero-point motion" in text for text in hint_texts)
 
     dialog.close()
@@ -256,6 +257,56 @@ def test_quantum_analysis_phonon_mode_viewer_animates_and_resets(qapp, tmp_path:
     reset = np.asarray(dialog._phonon_viewer._structure.fractional_positions, dtype=float)
     assert np.allclose(reset, equilibrium)
 
+    dialog.close()
+
+
+def _open_help_dialog_from_tab(qapp, dialog, monkeypatch, tab_index: int) -> QuantumAnalysisHelpDialog:
+    tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
+    tab = tabs.widget(tab_index)
+    opened: list[QuantumAnalysisHelpDialog] = []
+
+    def record(help_dialog: QuantumAnalysisHelpDialog) -> int:
+        opened.append(help_dialog)
+        return 0
+
+    monkeypatch.setattr(QuantumAnalysisHelpDialog, "exec", record)
+    tab.findChild(QToolButton, "quantumAnalysisHelpButton").click()
+    assert len(opened) == 1
+    return opened[0]
+
+
+def test_mode_wells_help_states_harmonic_limit_and_width_equation(qapp, tmp_path: Path, monkeypatch) -> None:
+    phonon_path = tmp_path / "site.phonon"
+    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
+    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_site")
+
+    tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
+    assert tabs.tabText(1) == "Mode wells and widths"
+    help_dialog = _open_help_dialog_from_tab(qapp, dialog, monkeypatch, 1)
+
+    assert help_dialog.windowTitle() == "Harmonic muon wells (weakly-bound limit)"
+    math = [label.math() for label in help_dialog.findChildren(MathLabel)]
+    assert r"\Delta x=\sqrt{\hbar/(2 m_\mu \omega)}" in math
+    text = " ".join(label.text() for label in help_dialog.findChildren(QLabel))
+    assert "harmonic weakly-bound limit" in text
+    assert "not generate" in text or "does not generate" in text
+
+    help_dialog.close()
+    dialog.close()
+
+
+def test_muon_coupling_help_describes_w2_as_harmonic_witness_estimate(qapp, tmp_path: Path, monkeypatch) -> None:
+    phonon_path = tmp_path / "site.phonon"
+    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
+    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_site")
+
+    help_dialog = _open_help_dialog_from_tab(qapp, dialog, monkeypatch, 2)
+
+    text = " ".join(label.text() for label in help_dialog.findChildren(QLabel))
+    assert "harmonic (phonon-covariance) estimate" in text
+    assert "0.30(4)" in text
+
+    help_dialog.close()
     dialog.close()
 
 

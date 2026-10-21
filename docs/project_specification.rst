@@ -519,9 +519,11 @@ Quantum corrections
   provenance. A ``Launch Analysis`` action opens an interactive window with a
   ``Phonon Modes`` tab (all Gamma-point modes, the muon-dominated subset
   highlighted, one selected mode synchronized to a muonated-structure viewer
-  with amplitude-controlled playback) and the single-particle adiabatic solver
-  with Gomilšek-style energy plots, square-root energy scaling, and
-  covariance/correlation tensors plus pairwise ``w2`` witnesses. Path-integral
+  with amplitude-controlled playback) and the harmonic mode-well solver
+  (the harmonic weakly-bound limit of Gomilšek *et al.* for muon-pure modes)
+  with energy plots,
+  square-root energy scaling, and covariance/correlation tensors plus pairwise
+  ``w2`` witnesses. Path-integral
   molecular dynamics is out of scope.
 
 Energy barriers

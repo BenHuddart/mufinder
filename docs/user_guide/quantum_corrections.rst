@@ -454,17 +454,26 @@ appears above the tabs.
    equilibrium phase; ``Show vectors`` (off by default) overlays the
    full-amplitude mode vectors as fixed reference arrows.
 
-``Adiabatic Solver``
+``Mode wells and widths``
    For each of the three selected modes, builds the one-dimensional harmonic
-   potential ``V(q) = (1/2) m_mu omega^2 q^2`` along the muon's direction in that
-   mode (host atoms fixed, effective mass = muon mass), solves the
-   finite-difference Schrödinger equation over ``±Range (Å)`` (default
-   ``2.0``), and reports the ground-state energy (``ZPE (eV)``) and the RMS
-   width of the probability density (``Width (Å)``). Because the potential is
-   harmonic, the solver's ZPE reproduces ``(1/2) hbar omega`` for each mode; the
-   value of the tab is the width and the plot of potential, ground-state
-   level, and probability density. ``Energy scale`` switches the plot between
-   ``Energy`` and ``Sqrt energy``, which keeps shallow wells legible.
+   well ``V(q) = (1/2) m_mu omega^2 q^2`` along the muon's direction in that
+   mode from the mode frequency and the muon mass, solves the finite-difference
+   Schrödinger equation over ``±Range (Å)`` (default ``2.0``, 401 grid points),
+   and reports the ground-state energy (``ZPE (eV)``) and the RMS width of the
+   probability density (``Width (Å)``). For a mode the muon alone moves in
+   (participation close to 1) this is the harmonic, weakly-bound limit of the
+   single-particle approximation of Gomilšek *et al.* (host atoms fixed,
+   effective mass = muon mass); a mode shared with host atoms is an eigenmode
+   of the coupled dynamical matrix, so its well is a harmonic estimate along
+   the mode direction rather than a fixed-host muon potential. Once the range
+   resolves the oscillator, as the default does for muon modes, the
+   ground-state energy converges to ``(1/2) hbar omega``, the value in the main
+   table; a range comparable to the width confines the muon further and raises
+   both numbers. The value of the tab is the width
+   ``Δx = sqrt(hbar / (2 m_mu omega))`` and the plot of the potential,
+   ground-state level, and probability density ``|ψ|²`` for each mode.
+   ``Energy scale`` switches the plot between ``Energy`` and ``Sqrt energy``,
+   which keeps shallow wells legible.
 
 ``Muon Coupling``
    Pick ``Atom A`` and ``Atom B`` by their one-based CASTEP index (Atom A
@@ -474,18 +483,23 @@ appears above the tabs.
    the pairwise witness ``w2 = -|Tr C_ab| / sqrt(Tr C_aa Tr C_bb)``. ``w2`` lies
    between ``-1`` and ``0``; values closer to ``-1`` mean the two atoms'
    zero-point motions are more strongly correlated. It complements the
-   result table's ``w1``.
+   result table's ``w1``. ``w2`` is the harmonic (phonon-covariance) estimate
+   of the positional entanglement witness ``w2 = -|c|`` of Gomilšek *et al.*,
+   where ``c`` is the Pearson correlation of the muon and nuclear
+   displacements.
 
-The ``?`` buttons in the ``Adiabatic Solver`` and ``Muon Coupling`` tabs show
+The ``?`` buttons in the ``Mode wells and widths`` and ``Muon Coupling`` tabs show
 the equations used.
 
 Scope and limitations
 ---------------------
 
 - Phonons are computed at Gamma only, in the harmonic approximation.
-- The ``Adiabatic Solver`` tab uses harmonic, phonon-derived potentials.
-  MuFinder does not generate or import line-scan calculations, so anharmonic
-  potentials are not available from the application (see `For developers`_).
+- The ``Mode wells and widths`` tab uses harmonic wells built from the phonon
+  frequencies, which are the harmonic weakly-bound limit only for modes the
+  muon alone moves in. MuFinder does not generate or import DFT line scans, so
+  the anharmonic single-particle approximations of Gomilšek *et al.* are not
+  available in the application (see `For developers`_).
 - Path-integral molecular dynamics (PIMD) is out of scope for MuFinder.
 
 References
