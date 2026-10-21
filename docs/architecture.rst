@@ -463,9 +463,10 @@ no two workflow widgets may define the same private method.
        comparison and relaxation analysis.
    * - ``mufinder.services.site_relaxations``
      - Recording a completed muon relaxation on its source site
-       (``record_site_relaxation``): the site keeps the relaxation of the
-       charge state it was first relaxed in, and only a relaxation in that
-       charge state advances it.
+       (``record_site_relaxation``): the charge state a site is first relaxed in
+       is recorded on the site and owns its link and its bare site-id source
+       key, and only a relaxation in that charge state links the site, even
+       after that relaxation is reset.
    * - ``mufinder.services.muon_sites_summary``
      - The pinned Muon Sites summary: building, storing and validating the
        per-charge-state snapshots (``build_muon_sites_summary_snapshot``,

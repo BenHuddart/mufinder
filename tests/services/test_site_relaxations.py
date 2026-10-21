@@ -65,3 +65,31 @@ def test_the_site_link_moves_once_the_linked_relaxation_is_gone(tmp_path: Path) 
         doc, site, muonium_run, muonium_job, total_energy_eV=-12.0, fractional_position=None
     )
     assert site.relaxation_run_id == muonium_run.id
+
+
+def test_a_reset_relaxation_keeps_its_charge_state_as_the_site_key_owner(tmp_path: Path) -> None:
+    from mufinder.services.source_candidates import SITE_KEY_CHARGE_STATE_PROPERTY, quantum_source_key
+
+    doc = ProjectService().create_project(tmp_path / "p.mufinder", "P")
+    site = MuonSite(label="O1", status="staged")
+    doc.sites[site.id] = site
+    positive_run, positive_job = _relaxation(doc, POSITIVE_MUON_CHARGE_STATE)
+    record_site_relaxation(doc, site, positive_run, positive_job, total_energy_eV=-10.0, fractional_position=None)
+    assert site.properties[SITE_KEY_CHARGE_STATE_PROPERTY] == POSITIVE_MUON_CHARGE_STATE
+
+    # The positive-muon relaxation is reset; the muonium one then finishes.
+    site.clear_relaxation()
+    muonium_run, muonium_job = _relaxation(doc, MUONIUM_CHARGE_STATE)
+    assert not record_site_relaxation(
+        doc, site, muonium_run, muonium_job, total_energy_eV=-12.0, fractional_position=None
+    )
+    assert site.relaxation_run_id is None
+    # The bare site-id key still names the positive muon, so nothing stored under
+    # either key changes charge state.
+    assert quantum_source_key(doc, site, muonium_job) == f"{site.id}:muonium"
+    assert quantum_source_key(doc, site, positive_job) == str(site.id)
+
+    rerun = CalculationRun(job_id=positive_job.id, run_index=2, status=JobStatus.COMPLETED)
+    doc.runs[rerun.id] = rerun
+    assert record_site_relaxation(doc, site, rerun, positive_job, total_energy_eV=-10.2, fractional_position=None)
+    assert site.relaxation_run_id == rerun.id

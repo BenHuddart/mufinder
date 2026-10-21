@@ -54,9 +54,12 @@ Compatibility ledger
      - A relaxed site's source key is its bare site id for the relaxation the
        site records, which is every source key a project held before one site
        could reach those stages in both charge states; a relaxation in the
-       other charge state keys by ``"{site id}:{charge-state prefix}"``. A
-       stored Quantum Corrections source entry without ``key`` is read as
-       keyed by its ``site_id``.
+       other charge state keys by ``"{site id}:{charge-state prefix}"``. The
+       owning charge state is ``MuonSite.properties["source_key_charge_state"]``,
+       written when the site is first relaxed; a site saved before the property
+       existed takes it from the charge state of its linked relaxation, and the
+       property is written at its next relaxation. A stored Quantum Corrections
+       source entry without ``key`` is read as keyed by its ``site_id``.
      - Current project data, not deprecated. Row bindings, seed names and
        generated paths are stored under these keys, so the bare-id form may
        not change without a schema migration that rewrites them.

@@ -30,6 +30,7 @@ from mufinder.castep_io.param_parser import parse_param_assignments, run_is_spin
 from mufinder.domain.charge_states import (
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
+    canonical_charge_state,
     muon_charge_state_label,
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
@@ -70,6 +71,11 @@ from mufinder.workflow.quantum import quantum_source_eligibility
 
 #: ``ui_state`` key of the Energy Barriers form, which holds the generated paths.
 ENERGY_BARRIERS_FORM_STATE_KEY = "energy_barriers_form"
+
+#: ``MuonSite.properties`` key naming the charge state whose relaxation of the
+#: site keys by the bare site id. Written when the site is first relaxed and
+#: never changed, so that key keeps naming one charge state.
+SITE_KEY_CHARGE_STATE_PROPERTY = "source_key_charge_state"
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,17 +268,31 @@ def site_linked_charge_state(document: ProjectDocument, site: MuonSite) -> str |
     return charge_state_for_job(job)
 
 
+def site_key_charge_state(document: ProjectDocument, site: MuonSite) -> str | None:
+    """Return the charge state whose relaxation of ``site`` keys by the bare site id.
+
+    The charge state recorded under :data:`SITE_KEY_CHARGE_STATE_PROPERTY`, else
+    (a site linked before the property existed) the charge state of the
+    relaxation the site's own link records.
+    """
+
+    raw = site.properties.get(SITE_KEY_CHARGE_STATE_PROPERTY)
+    stored = canonical_charge_state(raw) if isinstance(raw, str) else None
+    return stored or site_linked_charge_state(document, site)
+
+
 def quantum_source_key(document: ProjectDocument, site: MuonSite, job: Job | None) -> str:
     """Return the source key of ``site`` relaxed by ``job``.
 
-    The relaxation in the charge state the site's own link records keys by the
-    site id, so sources stored before a site could be relaxed in both charge
-    states keep their keys; a relaxation in another charge state keys by
-    ``"{site id}:{charge-state prefix}"``.
+    The relaxation in the charge state :func:`site_key_charge_state` names keys
+    by the site id, so sources stored before a site could be relaxed in both
+    charge states keep their keys, and resetting that relaxation never hands
+    the key to the other charge state; a relaxation in another charge state
+    keys by ``"{site id}:{charge-state prefix}"``.
     """
 
     charge_state = charge_state_for_job(job)
-    if charge_state is None or charge_state == site_linked_charge_state(document, site):
+    if charge_state is None or charge_state == site_key_charge_state(document, site):
         return str(site.id)
     return f"{site.id}:{muon_charge_state_prefix(charge_state)}"
 
@@ -339,7 +359,7 @@ def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list
         if verdict.eligible and run is not None and job is not None and relaxed_structure is not None:
             candidates.append(
                 QuantumSourceCandidate(
-                    key=str(site.id),
+                    key=quantum_source_key(document, site, job),
                     site=site,
                     run=run,
                     job=job,
@@ -363,7 +383,7 @@ def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list
                 continue
             candidates.append(
                 QuantumSourceCandidate(
-                    key=f"{site.id}:{muon_charge_state_prefix(charge_state)}",
+                    key=quantum_source_key(document, site, row_job),
                     site=site,
                     run=row_run,
                     job=row_job,
@@ -1101,6 +1121,7 @@ __all__ = [
     "PristineRelaxationRowLike",
     "QuantumSourceCandidate",
     "RelaxationRowStateLike",
+    "SITE_KEY_CHARGE_STATE_PROPERTY",
     "charge_state_for_job",
     "charge_state_label_for_job",
     "coerce_fractional_triplet",
@@ -1133,6 +1154,7 @@ __all__ = [
     "serialize_energy_barrier_source_candidates",
     "serialize_quantum_sources",
     "site_charge_state_relaxation_jobs",
+    "site_key_charge_state",
     "site_linked_charge_state",
     "source_relaxation_parameter_values",
     "uuid_from_source",

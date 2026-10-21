@@ -512,15 +512,9 @@ class QuantumCorrectionsController(WorkflowJobController):
             if isinstance(config, dict):
                 config.setdefault("method", "finite_displacement")
                 config.setdefault("pseudopotential_family", "unknown")
-                stored = config.get("sources", [])
-                stored_keys = [
-                    str(entry.get("key") or entry.get("site_id", ""))
-                    for entry in (stored if isinstance(stored, list) else [])
-                    if isinstance(entry, dict)
-                ]
                 config["sources"] = serialize_quantum_sources(
                     document,
-                    [*definition.input_site_ids, *stored_keys, *(candidate.key for candidate in candidates)],
+                    [*_stored_source_keys(config, definition), *(candidate.key for candidate in candidates)],
                 )
         else:
             definition = self._context.project_service.register_quantum_phonon_definition(
@@ -1157,6 +1151,24 @@ class QuantumCorrectionsController(WorkflowJobController):
         self._view.set_sources(source_rows)
         self._view.set_results(result_rows)
 
+
+
+def _stored_source_keys(config: dict, definition: CalculationDefinition) -> list[str]:
+    """Return the source keys a definition's stored ``sources`` already select.
+
+    An entry names its ``key``; an entry saved before entries carried one is
+    keyed by its ``site_id``. A definition with no stored ``sources`` list falls
+    back to its input site ids.
+    """
+
+    stored = config.get("sources")
+    if not isinstance(stored, list):
+        return [str(site_id) for site_id in definition.input_site_ids]
+    return [
+        str(entry.get("key") or entry.get("site_id") or "")
+        for entry in stored
+        if isinstance(entry, dict) and (entry.get("key") or entry.get("site_id"))
+    ]
 
 
 def _definition_mapping(definition: CalculationDefinition, name: str) -> dict[str, object]:

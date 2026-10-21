@@ -25,6 +25,7 @@ from mufinder.domain.models import (
     Structure,
 )
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from mufinder.services.project_summary import latest_run_for_job
 from mufinder.services.source_candidates import (
     CompletedRelaxationAnalysisSource,
     charge_state_for_job,
@@ -759,3 +760,22 @@ def test_paths_between_two_sites_are_kept_apart_per_charge_state(document: Proje
     assert rebuilt[muonium[0].key].reactant.key == f"{first.id}:muonium"
     assert rebuilt[muonium[0].key].reactant.total_energy_eV == -12.0
     assert rebuilt[positive[0].key].reactant.key == str(first.id)
+
+
+def test_the_bare_key_stays_with_its_charge_state_after_a_reset(document: ProjectDocument) -> None:
+    from mufinder.services.site_relaxations import record_site_relaxation
+
+    site = _add_relaxed_source(document, "O1", energy=-10.0)
+    linked_run = document.runs[site.relaxation_run_id]
+    record_site_relaxation(
+        document, site, linked_run, document.jobs[linked_run.job_id], total_energy_eV=-10.0, fractional_position=None
+    )
+    muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
+
+    site.clear_relaxation()
+    muonium_run = latest_run_for_job(document, muonium_job.id)
+    assert not record_site_relaxation(
+        document, site, muonium_run, muonium_job, total_energy_eV=-12.5, fractional_position=None
+    )
+
+    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [f"{site.id}:muonium"]
