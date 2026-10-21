@@ -30,6 +30,31 @@ from mufinder.app.workflow_table_utils import (
 )
 
 
+# Header tooltips for the source table, keyed by header label so the mapping survives
+# column changes.
+_SOURCE_HEADER_TOOLTIPS: dict[str, str] = {
+    "Site": "Pinned summary label, or the relaxed site's label (double-click to rename)",
+    "Charge": "Charge state of the source relaxation: positive muon or muonium",
+    "dE (eV)": (
+        "Relaxed total energy relative to the lowest-energy eligible site with the same charge state and cell"
+    ),
+    "Displacements": (
+        "3 \u00d7 atom count: the displaced calculations a FINITEDISPLACEMENT run needs, a guide to its farm "
+        "count; DFPT and linear-response runs do not use it"
+    ),
+    "Source Job": "The muon relaxation the row was built from",
+    "Status": "Status of the row's current job",
+    "Parameters": "Configure the row; locked once its first job has been submitted",
+}
+
+
+def _set_header_tooltips(table: QTableWidget, tooltips: dict[str, str]) -> None:
+    for column in range(table.columnCount()):
+        item = table.horizontalHeaderItem(column)
+        if item is not None and item.text() in tooltips:
+            item.setToolTip(tooltips[item.text()])
+
+
 @dataclass(frozen=True, slots=True)
 class QuantumSourceRow:
     """One relaxed-site source displayed in the Quantum Corrections view."""
@@ -114,15 +139,17 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         header_row.addWidget(title)
 
         subtitle = QLabel(
-            "Estimate local muon zero-point motion and phonon-derived witnesses from completed structural relaxations."
+            "How much zero-point energy each distinct relaxed site carries, how far the muon spreads, "
+            "and whether its motion is entangled with the host."
         )
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
         header_row.addWidget(subtitle)
 
         summary = QLabel(
-            "Each relaxed site runs as a two-stage workflow: a singlepoint first, then a phonon continuation. "
-            "Use the displacement count to choose an appropriate farm count for stage 2."
+            "Gamma-point phonons of each relaxed site in the harmonic approximation, with the muon mass applied. "
+            "Compare the ZPE, widths and w1 between sites computed with the same settings; see the Quantum "
+            "Corrections theory page in the user guide for what the numbers mean."
         )
         summary.setWordWrap(True)
         style_hint_text(summary)
@@ -138,8 +165,9 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         style_section_title(self._source_label)
         sources_layout.addWidget(self._source_label)
         source_hint = QLabel(
-            "Each row inherits a relaxed endpoint structure. Shared electronic settings apply to both stages, "
-            "while phonon method, pseudopotentials, and farms apply only to the stage-2 continuation."
+            "Each row starts from a completed muon relaxation and inherits its electronic settings. The phonon "
+            "method and pseudopotential family are checked at submission and, with the electronic settings, "
+            "locked once the row's first job has been submitted; the farm count applies to the phonon run."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
@@ -152,6 +180,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
             ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
             resize_to_contents_columns=(8,),
         )
+        _set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
@@ -236,7 +265,8 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         style_section_title(self._result_label)
         results_layout.addWidget(self._result_label)
         result_hint = QLabel(
-            "MuFinder reports Gamma-point phonon eigenvalues, selected-mode ZPE, and witness values for completed phonon jobs."
+            "One row per completed phonon run: the total muon ZPE, the muon modes and widths, and the "
+            "mode-mixing witness w1. Launch Analysis opens the modes, wells and atom-pair coupling."
         )
         result_hint.setWordWrap(True)
         style_hint_text(result_hint)
