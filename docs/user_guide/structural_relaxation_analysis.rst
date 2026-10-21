@@ -414,9 +414,7 @@ choose ``Continue from the checkpoint`` (see :doc:`/getting_started/running_jobs
 Neither route deletes the run directory's contents. ``Reset Failed Jobs...``
 with its optional clean-up does: it deletes the local ``.check`` and
 ``.castep`` files and ``{seed}-out.cell``, keeping only the ``.cell`` and
-``.param`` inputs, although it never cleans a folder another job still uses,
-such as the seed directory a Quantum Corrections phonon job shares with its
-completed stage-1 singlepoint.
+``.param`` inputs, although it never cleans a folder another job still uses.
 
 The regenerated ``.cell`` always holds the row's own structure: there is no
 mode that writes the latest relaxed geometry into it, and MuFinder does not use
@@ -512,8 +510,8 @@ For developers
 
 The CIF export is implemented by
 :func:`mufinder.science.structure_io.export_structure_with_muon_sites`. The
-continuation contract (status transition, cleared and kept fields, and how it
-differs from the Quantum Corrections stage-1 reset) is described in
+continuation contract (status transition and the cleared and kept fields) is
+described in
 :ref:`job-continuation-primitive` in :doc:`/job_lifecycle`; the checkpoint probe
 is :ref:`remote-checkpoint-probe`. Package layers and the shared workflow
 infrastructure are described in :doc:`/architecture`.

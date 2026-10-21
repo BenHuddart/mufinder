@@ -90,6 +90,35 @@ Compatibility ledger
        into the Energy Barriers form state. The search calc type names what
        CASTEP ran, so a stored job or result keeps it; drop its readers only
        when projects holding such records are no longer supported.
+   * - ``castep_quantum_singlepoint`` calc type
+     - ``QUANTUM_SINGLEPOINT_CALC_TYPE`` (``mufinder.workflow.quantum``) / job
+       and result entity files
+     - Calc type of the singlepoint job Quantum Corrections ran before each
+       phonon job; it now runs one phonon job per row and creates no such
+       job. It is read so an older project's records still load and collect:
+       ``QuantumCorrectionsController`` owns jobs of the type, contributes an
+       empty result for them, shows a row whose singlepoint is still active
+       with that job's status and refuses to submit it, and names a finished
+       one as the phonon job's directory companion for the shared reset.
+     - Project-file shim. The calc type names what CASTEP ran, so a stored
+       job or result keeps it; drop its readers only when projects holding
+       such records are no longer supported.
+   * - ``singlepoint_job_ids_by_label`` /
+       ``singlepoint_seed_names_by_label`` definition keys
+     - Quantum Corrections ``castep_quantum_phonon_set`` definitions;
+       ``QUANTUM_SINGLEPOINT_JOB_MAPPING`` / ``QUANTUM_SINGLEPOINT_SEED_MAPPING``
+       (``mufinder.services.job_paths``)
+     - ``singlepoint_job_ids_by_label`` binds a row to its legacy singlepoint
+       job; new definitions no longer write it. It is read by
+       ``QuantumCorrectionsController`` (``legacy_singlepoint_job_for_key``,
+       ``definition_and_key_for_job``), by ``job_output_directory`` to find
+       the job's directory and by ``JobFileCleanup.delete_job_records``, which
+       unbinds a deleted job. ``singlepoint_seed_names_by_label`` is written
+       only when such a row's new phonon job is given a fresh seed because the
+       shared seed directory already exists; it keeps the singlepoint's
+       directory resolving to the seed it ran under.
+     - Project-file shim, read only for rows that hold a legacy singlepoint
+       job. Keep both keys with the ``castep_quantum_singlepoint`` readers.
    * - ``recommended_cutoff_*`` project fields
      - ``Project`` / project manifest
      - Persisted project defaults used by current cutoff, k-point, relaxation,

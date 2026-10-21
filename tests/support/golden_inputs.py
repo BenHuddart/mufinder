@@ -47,7 +47,6 @@ from mufinder.workflow.quantum import (
     QuantumPhononJobConfig,
     QuantumPhononSource,
     expand_quantum_phonon_jobs,
-    expand_quantum_singlepoint_jobs,
 )
 from mufinder.workflow.renderer import render_job
 from mufinder.workflow.types import JobSpec, StructureSpec
@@ -232,21 +231,12 @@ def _quantum_source(*, muonium: bool) -> QuantumPhononSource:
     )
 
 
-def build_quantum_singlepoint() -> list[tuple[str, JobSpec]]:
-    jobs = expand_quantum_singlepoint_jobs(
-        jobs=(
-            QuantumPhononJobConfig(source=_quantum_source(muonium=False)),
-            QuantumPhononJobConfig(source=_quantum_source(muonium=True)),
-        ),
-        name_prefix="quantum_singlepoint",
-    )
-    return [(job.name, job) for job in jobs]
-
-
 def build_quantum_phonon() -> list[tuple[str, JobSpec]]:
+    # One job per site: the farmed positive-muon case pins NUM_FARMS, the
+    # muonium case the neutral, spin-polarised, unfarmed inputs.
     jobs = expand_quantum_phonon_jobs(
         jobs=(
-            QuantumPhononJobConfig(source=_quantum_source(muonium=False)),
+            QuantumPhononJobConfig(source=_quantum_source(muonium=False), num_farms=4),
             QuantumPhononJobConfig(source=_quantum_source(muonium=True)),
         ),
         name_prefix="quantum_phonon",
@@ -345,7 +335,6 @@ BUILDERS = {
     "pristine_relaxation": build_pristine_relaxation,
     "muon_relaxation": build_muon_relaxation,
     "uep": build_uep,
-    "quantum_singlepoint": build_quantum_singlepoint,
     "quantum_phonon": build_quantum_phonon,
     "neb": build_neb,
 }

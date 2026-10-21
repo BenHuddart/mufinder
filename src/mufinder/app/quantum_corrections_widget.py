@@ -23,7 +23,8 @@ from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_row_widget import SourceTableWidget
 from mufinder.app.workflow_table_utils import (
-    RowMenuAction,
+    RESET_FAILED_ACTION_TEXT,
+    RESETTABLE_ROW_STATUSES,
     SelectionFeedback,
     create_workflow_table,
     set_workflow_table_item,
@@ -65,12 +66,9 @@ class QuantumSourceRow:
     relative_energy: str
     displacements: str
     source_job: str
-    stage: str
     num_farms_display: str
     status: str
     configured: bool = False
-    resettable: bool = False
-    stage_two_resettable: bool = False
     pinned_label: str = ""
 
 
@@ -122,8 +120,9 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     """Display eligible relaxed muon sources and completed phonon analyses.
 
     The source table and its targeting come from :class:`SourceTableWidget`;
-    this widget adds the per-row stage and farm columns, the editable site
-    label and the "Reset to Stage 1" / "Reset to Stage 2" actions.
+    this widget adds the farm column, the editable site label and a
+    "Reset Failed Jobs..." button beside the run buttons, which the shared
+    failed-job reset handles like the row-menu entry.
     """
 
     configure_requested = Signal(object)
@@ -132,14 +131,13 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     submit_cluster_requested = Signal(list)
     cancel_requested = Signal(object)
     inspect_failed_requested = Signal(object)
-    reset_stage_requested = Signal(list)
-    reset_stage_two_requested = Signal(list)
+    reset_failed_requested = Signal(object)
     analysis_requested = Signal(str)
     show_every_site_toggled = Signal(bool)
     open_muon_sites_requested = Signal()
 
-    _SOURCE_STATUS_COLUMN = 7
-    _SOURCE_CONFIGURE_COLUMN = 8
+    _SOURCE_STATUS_COLUMN = 6
+    _SOURCE_CONFIGURE_COLUMN = 7
     _SOURCE_WORKFLOW_LABEL = "Quantum Corrections"
     _CONFIGURE_SIGNAL = "configure_requested"
     _SUBMIT_LOCAL_SIGNAL = "submit_local_requested"
@@ -197,9 +195,10 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         style_section_title(self._source_label)
         sources_layout.addWidget(self._source_label)
         source_hint = QLabel(
-            "Each row starts from a completed muon relaxation and inherits its electronic settings. The phonon "
-            "method and pseudopotential family are checked at submission and, with the electronic settings, "
-            "locked once the row's first job has been submitted; the farm count applies to the phonon run."
+            "Each row starts from a completed muon relaxation and inherits its electronic settings. The "
+            "electronic settings, phonon method, pseudopotential family and farm count all apply to the row's "
+            "phonon job; the method and pseudopotential family are checked at submission, and every setting is "
+            "locked once the row's job has been submitted."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
@@ -209,8 +208,8 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         self._site_scope.open_muon_sites_requested.connect(self.open_muon_sites_requested)
         sources_layout.addWidget(self._site_scope)
         self._sources_table = create_workflow_table(
-            ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
-            resize_to_contents_columns=(8,),
+            ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Farms", "Status", "Parameters"),
+            resize_to_contents_columns=(7,),
         )
         _set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -230,56 +229,28 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         # Selected ...") from the selection.
         self._submit_local_button = QPushButton()
         self._submit_cluster_button = QPushButton()
-        self._reset_stage_button = QPushButton("Reset to Stage 1")
-        self._reset_stage_two_button = QPushButton("Reset to Stage 2")
-        self._reset_stage_two_button.setToolTip(
-            "Return a failed phonon job to 'defined', keeping the completed stage 1."
+        self._reset_failed_button = QPushButton(RESET_FAILED_ACTION_TEXT)
+        self._reset_failed_button.setToolTip(
+            "Return the selected failed, stopped or cancelled phonon jobs to 'defined' for a rerun."
         )
         self._batch_configure_button.clicked.connect(self._emit_batch_configure)
         self._submit_local_button.clicked.connect(self._emit_submit_local)
         self._submit_cluster_button.clicked.connect(self._emit_submit_cluster)
-        self._reset_stage_button.clicked.connect(self._emit_reset_stage)
-        self._reset_stage_two_button.clicked.connect(self._emit_reset_stage_two)
+        self._reset_failed_button.clicked.connect(self._emit_reset_failed_selection)
         actions.addWidget(self._submit_local_button)
         actions.addWidget(self._submit_cluster_button)
-        actions.addWidget(self._reset_stage_button)
-        actions.addWidget(self._reset_stage_two_button)
+        actions.addWidget(self._reset_failed_button)
         actions.addStretch(1)
         actions.addWidget(self._selection_count_label)
         actions.addWidget(self._batch_configure_button)
         sources_layout.addLayout(actions)
 
         # Rows here are derived from completed relaxations, so there is no
-        # Remove, and the recovery actions are the stage resets rather than the
-        # shared failed-job reset.
+        # Remove; a failed row recovers through the shared failed-job reset.
         self._sources_table.setToolTip(
-            "Right-click selected rows to run, cancel, inspect, configure, or reset them to stage 1 or 2."
+            "Right-click selected rows to run, cancel, inspect, reset, or configure them."
         )
-        self._bind_source_row_menu(
-            extra_actions=(
-                RowMenuAction(
-                    text="Reset to Stage 1",
-                    is_enabled=lambda rows: any(
-                        self._source_rows[int(row)].resettable
-                        for row in rows
-                        if 0 <= int(row) < len(self._source_rows)
-                    ),
-                    trigger=lambda _rows: self._emit_reset_stage(),
-                    on_rows=True,
-                    separator_before=True,
-                ),
-                RowMenuAction(
-                    text="Reset to Stage 2",
-                    is_enabled=lambda rows: any(
-                        self._source_rows[int(row)].stage_two_resettable
-                        for row in rows
-                        if 0 <= int(row) < len(self._source_rows)
-                    ),
-                    trigger=lambda _rows: self._emit_reset_stage_two(),
-                    on_rows=True,
-                ),
-            ),
-        )
+        self._bind_source_row_menu(emit_reset=self.reset_failed_requested.emit)
         self._sources_feedback = SelectionFeedback(
             self._sources_table,
             count_label=self._selection_count_label,
@@ -416,7 +387,6 @@ class QuantumCorrectionsWidget(SourceTableWidget):
             row.relative_energy,
             row.displacements,
             row.source_job,
-            row.stage,
             row.num_farms_display,
             row.status,
         )
@@ -433,14 +403,16 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
 
     def refresh_source_actions(self, selected_rows: Sequence[QuantumSourceRow]) -> None:
-        self._reset_stage_button.setEnabled(any(row.resettable for row in selected_rows))
-        self._reset_stage_two_button.setEnabled(any(row.stage_two_resettable for row in selected_rows))
+        self._reset_failed_button.setEnabled(
+            any(row.status in RESETTABLE_ROW_STATUSES for row in selected_rows)
+        )
 
-    def _emit_reset_stage(self) -> None:
-        self.reset_stage_requested.emit(self.selected_source_keys())
+    def _emit_reset_failed_selection(self) -> None:
+        """Emit the selected failed, stopped or cancelled rows for the shared reset."""
 
-    def _emit_reset_stage_two(self) -> None:
-        self.reset_stage_two_requested.emit(self.selected_source_keys())
+        keys = [row.key for row in self._selected_source_rows() if row.status in RESETTABLE_ROW_STATUSES]
+        if keys:
+            self.reset_failed_requested.emit(keys)
 
     def _on_source_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_sources or item.column() != 0:

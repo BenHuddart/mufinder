@@ -15,11 +15,9 @@ from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.types import CellTemplate, ParamTemplate
 from mufinder.workflow.quantum import (
-    QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
     QuantumPhononJobConfig,
     QuantumPhononSource,
-    expand_quantum_singlepoint_jobs,
     expand_quantum_phonon_jobs,
     method_to_castep,
     phonon_method_compatibility,
@@ -72,19 +70,6 @@ def test_expand_quantum_phonon_jobs_seeds_muonium_spin_polarized() -> None:
     assert "SPIN=1" in cell_text
 
 
-def test_expand_quantum_singlepoint_jobs_seeds_muonium_spin_polarized() -> None:
-    jobs = expand_quantum_singlepoint_jobs(
-        jobs=(QuantumPhononJobConfig(source=_muonium_source()),),
-        name_prefix="quantum_singlepoint",
-    )
-    job = jobs[0]
-    param_text = write_param(job.param_file)
-    cell_text = write_cell(job.cell_file)
-    assert "CHARGE : 0" in param_text
-    assert "SPIN_POLARIZED : TRUE" in param_text
-    assert "SPIN=1" in cell_text
-
-
 def test_expand_quantum_phonon_jobs_positive_muon_has_no_spin() -> None:
     jobs = expand_quantum_phonon_jobs(
         jobs=(QuantumPhononJobConfig(source=_source()),),
@@ -96,10 +81,10 @@ def test_expand_quantum_phonon_jobs_positive_muon_has_no_spin() -> None:
     assert "SPIN=" not in write_cell(job.cell_file)
 
 
-def test_expand_quantum_singlepoint_jobs_omits_charge_without_a_charge_state() -> None:
-    jobs = expand_quantum_singlepoint_jobs(
+def test_expand_quantum_phonon_jobs_omits_charge_without_a_charge_state() -> None:
+    jobs = expand_quantum_phonon_jobs(
         jobs=(QuantumPhononJobConfig(source=_source(charge_state=None)),),
-        name_prefix="quantum_singlepoint",
+        name_prefix="quantum_phonon",
     )
 
     assert "CHARGE" not in write_param(jobs[0].param_file)
@@ -121,50 +106,24 @@ def test_expand_quantum_phonon_jobs_muonium_spin_polarized_is_overridable() -> N
     assert "SPIN_POLARIZED : FALSE" in write_param(job.param_file)
 
 
-def test_expand_quantum_singlepoint_jobs_writes_singlepoint_inputs() -> None:
-    jobs = expand_quantum_singlepoint_jobs(
-        jobs=(QuantumPhononJobConfig(source=_source()),),
-        name_prefix="quantum_singlepoint",
-    )
-
-    assert len(jobs) == 1
-    job = jobs[0]
-    assert job.name == "quantum_singlepoint_site1"
-    assert job.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
-    assert job.provenance["calc_type"] == QUANTUM_SINGLEPOINT_CALC_TYPE
-
-    cell_text = write_cell(job.cell_file)
-    param_text = write_param(job.param_file)
-    assert "PHONON_KPOINT_MP_GRID 1 1 1" not in cell_text
-    assert "TASK : SINGLEPOINT" in param_text
-    assert "PHONON_METHOD" not in param_text
-    assert "CONTINUATION" not in param_text
-    assert "CHARGE : 1" in param_text
-
-
-def test_expand_quantum_singlepoint_jobs_merges_param_overrides() -> None:
+def test_expand_quantum_phonon_jobs_merges_param_overrides_into_the_phonon_task() -> None:
     overrides = ParamTemplate(keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(500.0, "eV")),))
-    jobs = expand_quantum_singlepoint_jobs(
+    jobs = expand_quantum_phonon_jobs(
         jobs=(QuantumPhononJobConfig(source=_source(), param_overrides=overrides),),
-        name_prefix="quantum_singlepoint",
+        name_prefix="quantum_phonon",
     )
 
     param_text = write_param(jobs[0].param_file)
-    assert "TASK : SINGLEPOINT" in param_text
+    assert "TASK : PHONON" in param_text
     assert "CUT_OFF_ENERGY : 500 eV" in param_text
 
 
-def test_expand_quantum_singlepoint_jobs_writes_muon_species_mass() -> None:
-    """Stage 1 must carry SPECIES_MASS, not just stage 2.
+def test_expand_quantum_phonon_jobs_writes_muon_species_mass_in_its_own_cell() -> None:
+    """The one phonon job carries the muon mass and gamma: a fresh run reads them."""
 
-    The stage-2 phonon job is a CONTINUATION and CASTEP restores species masses
-    from the stage-1 checkpoint, so a mass written only in stage 2 is ignored and
-    the phonons run with the default hydrogen mass.
-    """
-
-    jobs = expand_quantum_singlepoint_jobs(
+    jobs = expand_quantum_phonon_jobs(
         jobs=(QuantumPhononJobConfig(source=_source()),),
-        name_prefix="quantum_singlepoint",
+        name_prefix="quantum_phonon",
     )
 
     cell_text = write_cell(jobs[0].cell_file)
@@ -175,39 +134,35 @@ def test_expand_quantum_singlepoint_jobs_writes_muon_species_mass() -> None:
     assert jobs[0].provenance["muon_mass_amu"] == MUON_MASS_AMU
 
 
-def test_quantum_stages_agree_on_the_muon_species_mass() -> None:
-    """Both stages must declare the same mass for the same muon species."""
-
-    config = QuantumPhononJobConfig(source=_source())
-    singlepoint = expand_quantum_singlepoint_jobs(
-        jobs=(config,), name_prefix="quantum_singlepoint"
-    )[0]
-    phonon = expand_quantum_phonon_jobs(jobs=(config,), name_prefix="quantum_phonon")[0]
-
-    def _species_block(job, name: str):
-        return next(block for block in job.cell_file.blocks if block.name == name)
-
-    for name in ("species_mass", "species_gamma"):
-        assert _species_block(singlepoint, name).rows == _species_block(phonon, name).rows
-
-
-def test_expand_quantum_singlepoint_jobs_allows_overriding_species_mass() -> None:
-    """A caller-supplied SPECIES_MASS block still wins over the stage-1 base."""
+def test_expand_quantum_phonon_jobs_allows_overriding_species_mass() -> None:
+    """A caller-supplied SPECIES_MASS block still wins over the base template."""
 
     override = BlockSection("species_mass", (("H:mu", 0.5),), unit="AMU")
-    jobs = expand_quantum_singlepoint_jobs(
+    jobs = expand_quantum_phonon_jobs(
         jobs=(
             QuantumPhononJobConfig(
                 source=_source(),
                 cell_overrides=CellTemplate(extra_blocks=(override,)),
             ),
         ),
-        name_prefix="quantum_singlepoint",
+        name_prefix="quantum_phonon",
     )
 
     cell_text = write_cell(jobs[0].cell_file)
     assert "H:mu 0.5" in cell_text
     assert f"H:mu {MUON_MASS_AMU}" not in cell_text
+
+
+def test_expand_quantum_phonon_jobs_omits_num_farms_for_a_single_farm() -> None:
+    jobs = expand_quantum_phonon_jobs(
+        jobs=(QuantumPhononJobConfig(source=_source(), num_farms=1),),
+        name_prefix="quantum_phonon",
+    )
+
+    param_text = write_param(jobs[0].param_file)
+    assert "NUM_FARMS" not in param_text
+    assert "TASK : PHONON" in param_text
+    assert jobs[0].provenance["num_farms"] == 1
 
 
 def test_expand_quantum_phonon_jobs_writes_gamma_phonon_inputs() -> None:
@@ -356,16 +311,14 @@ def test_expand_quantum_phonon_jobs_rejects_incompatible_method() -> None:
         )
 
 
-@pytest.mark.parametrize("expand", [expand_quantum_singlepoint_jobs, expand_quantum_phonon_jobs])
-def test_quantum_expansion_requires_at_least_one_job(expand) -> None:
+def test_quantum_expansion_requires_at_least_one_job() -> None:
     with pytest.raises(ValueError, match="At least one quantum"):
-        expand(jobs=(), name_prefix="q")
+        expand_quantum_phonon_jobs(jobs=(), name_prefix="q")
 
 
-@pytest.mark.parametrize("expand", [expand_quantum_singlepoint_jobs, expand_quantum_phonon_jobs])
-def test_quantum_expansion_rejects_blank_labels(expand) -> None:
+def test_quantum_expansion_rejects_blank_labels() -> None:
     with pytest.raises(ValueError, match="labels must not be empty"):
-        expand(jobs=(QuantumPhononJobConfig(source=_source(label="   ")),), name_prefix="q")
+        expand_quantum_phonon_jobs(jobs=(QuantumPhononJobConfig(source=_source(label="   ")),), name_prefix="q")
 
 
 def _eligibility_inputs(**overrides: Any) -> dict[str, Any]:

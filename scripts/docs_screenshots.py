@@ -556,11 +556,10 @@ def magnetic_project(name: str, model: MagneticStructureModel, form: dict[str, o
 # The outputs come from the repository's synthetic fixtures where one fits: the
 # UEP source job is tests/fixtures/uep/Si2.castep with its .den_fmt, and the
 # pristine relaxation is tests/fixtures/geometry/Si2_bfgs.castep. No fixture
-# holds a muon relaxation, a singlepoint of a muoniated cell or a silicon NEB
-# path, a phonon calculation of a muoniated cell or a silicon NEB path, so
-# those outputs are written here in CASTEP's file shapes with illustrative
-# numbers (see SI_MUON_SITES, SI_MUON_MODES_CM and NEB_BARRIER_EV); the
-# captions of the pages that show them say so.
+# holds a muon relaxation, a phonon run of a muoniated cell or a silicon NEB
+# path, so those outputs are written here in CASTEP's file shapes with
+# illustrative numbers (see SI_MUON_SITES, SI_MUON_MODES_CM and NEB_BARRIER_EV);
+# the captions of the pages that show them say so.
 
 FIXTURES = PROJECT_ROOT / "tests" / "fixtures"
 SI_PRIMITIVE = 2.6954645  # Å, half the cubic edge of tests/fixtures/uep/Si2.cell
@@ -818,23 +817,6 @@ def _uep_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
     return True
 
 
-def _singlepoint_outputs(window: MainWindow) -> Outputs:
-    """A singlepoint of the relaxed cell at the relaxation's energy, to the tighter tolerance."""
-
-    def write(job: Any, job_dir: Path, seed: str) -> bool:
-        cell = _job_cell(job_dir, seed)
-        controller = window._quantum_corrections_controller
-        definition = controller.active_definition()
-        mapping = definition.parameters.get("singlepoint_job_ids_by_label", {})
-        key = next(key for key, job_id in mapping.items() if job_id == str(job.id))
-        site = window._document.sites[UUID(key)]
-        text = _castep_text(energy=site.total_energy_eV - 0.0004, species=list(cell.species), geometry=False, wall_time=402.6)
-        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
-        return True
-
-    return write
-
-
 def _phonon_text(cell: Any) -> str:
     """A Gamma-only CASTEP ``.phonon`` file for ``cell`` with the SI_MUON_MODES_CM muon modes.
 
@@ -1057,12 +1039,10 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
         window._relaxation_analysis_view._open_clustering(workspace_id)
         window._on_muon_sites_pin_requested(workspace_id)
 
-        # Quantum corrections: both stages of the lowest-energy site.
+        # Quantum corrections: the phonon job of the lowest-energy site.
         window._set_active_route("quantum_corrections")
         quantum = window._quantum_corrections_controller
         candidates = sorted(quantum.candidates(), key=lambda candidate: candidate.site.total_energy_eV)
-        with synthetic_runs(window, _singlepoint_outputs(window)):
-            quantum.submit([candidates[0].key], target="local")
         with synthetic_runs(window, _phonon_outputs):
             quantum.submit([candidates[0].key], target="local")
 

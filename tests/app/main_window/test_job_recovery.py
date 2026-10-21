@@ -1038,13 +1038,7 @@ _ROW_ACTION_SIGNALS = [
 
 @pytest.mark.parametrize(
     ("view_attr", "controller_attr", "keys", "signal_name", "handler_name"),
-    [
-        (*view, *signal)
-        for view in _ROW_ACTION_VIEWS
-        for signal in _ROW_ACTION_SIGNALS
-        # Quantum rows reset through "Reset to stage 1", not a failed-job reset.
-        if not (view[0] == "_quantum_corrections_view" and signal[0] == "reset_failed_requested")
-    ],
+    [(*view, *signal) for view in _ROW_ACTION_VIEWS for signal in _ROW_ACTION_SIGNALS],
 )
 def test_main_window_routes_workflow_row_actions_through_the_controller(
     main_window,

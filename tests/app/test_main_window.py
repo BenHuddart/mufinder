@@ -30,7 +30,7 @@ from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
 from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
-from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -775,7 +775,7 @@ def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> N
     assert window._shutting_down is True
 
 
-def test_main_window_materializes_quantum_singlepoint_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
+def test_main_window_materializes_one_quantum_phonon_job_from_relaxed_sources(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_doc.mufinder", "Quantum")
@@ -843,27 +843,31 @@ def test_main_window_materializes_quantum_singlepoint_jobs_from_relaxed_sources(
     jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert len(jobs) == 1
-    assert jobs[0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
-    assert jobs[0].label == "quantum_singlepoint_siteA"
+    assert jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
+    assert jobs[0].label == "quantum_phonon_siteA"
     output_dir = window._job_output_directory(jobs[0])
     assert output_dir is not None
     assert output_dir.name == "quantum_siteA"
     cell_text = (output_dir / "quantum_siteA.cell").read_text(encoding="utf-8")
     param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
-    assert "PHONON_KPOINT_MP_GRID 1 1 1" not in cell_text
+    assert "PHONON_KPOINT_MP_GRID 1 1 1" in cell_text
+    assert "%BLOCK SPECIES_MASS" in cell_text
+    assert "%BLOCK SPECIES_GAMMA" in cell_text
     assert "KPOINT_MP_GRID 4 1 1" in cell_text
     assert "KPOINT_MP_GRID 2 2 1" not in cell_text
-    assert "TASK : SINGLEPOINT" in param_text
+    assert "TASK : PHONON" in param_text
+    assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
+    assert "CONTINUATION : DEFAULT" in param_text
     assert "CUT_OFF_ENERGY : 700 eV" in param_text
     assert "CUT_OFF_ENERGY : 620" not in param_text
     assert "ELEC_ENERGY_TOL : 1e-09 eV" in param_text
-    assert "PHONON_METHOD" not in param_text
+    assert "NUM_FARMS" not in param_text
 
 
-def test_main_window_materializes_quantum_phonon_continuation_after_singlepoint(qapp, tmp_path: Path) -> None:
+def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_farms(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "quantum_stage2_doc.mufinder", "QuantumStage2")
+    doc = service.create_project(tmp_path / "quantum_farms_doc.mufinder", "QuantumFarms")
     window._document = doc
 
     relaxed_structure = Structure(
@@ -922,18 +926,13 @@ def test_main_window_materializes_quantum_phonon_continuation_after_singlepoint(
         }
     }
 
-    singlepoint_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
-    assert len(singlepoint_jobs) == 1
-    singlepoint_job = singlepoint_jobs[0]
-    assert singlepoint_job.calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
-    singlepoint_job.status = JobStatus.COMPLETED
     window._refresh_quantum_corrections_view()
     assert window._quantum_corrections_view._sources_table.item(0, 3).text() == "6"
-    assert window._quantum_corrections_view._sources_table.item(0, 5).text() == "phonon"
-    assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "4"
-    assert window._quantum_corrections_view._sources_table.item(0, 7).text() == "ready"
+    assert window._quantum_corrections_view._sources_table.item(0, 5).text() == "4"
+    assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "ready"
 
     phonon_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
+    assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "defined"
 
     assert len(phonon_jobs) == 1
     assert phonon_jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
@@ -1029,7 +1028,7 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
     }
 
     window._refresh_quantum_corrections_view()
-    configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 8)
+    configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 7)
     assert configure_button.text() == "Configured..."
 
     jobs = window._quantum_corrections_controller.materialize([str(site.id)])
@@ -1039,12 +1038,13 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
     assert output_dir is not None
     cell_text = (output_dir / "quantum_siteA.cell").read_text(encoding="utf-8")
     param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
-    assert "PHONON_METHOD" not in param_text
+    assert "PHONON_METHOD : DFPT" in param_text
     assert "CUT_OFF_ENERGY : 650" in param_text
     assert "CUT_OFF_ENERGY : 710" not in param_text
     assert "KPOINT_MP_GRID 2 2 2" in cell_text
     assert "KPOINT_MP_GRID 4 4 1" not in cell_text
-    assert "TASK : SINGLEPOINT" in param_text
+    assert "TASK : PHONON" in param_text
+    assert "NUM_FARMS : 3" in param_text
 
 
 def test_main_window_quantum_corrections_hides_fine_cutoff_from_default_rows(qapp) -> None:
@@ -1172,7 +1172,7 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
         [candidate.key for candidate in window._quantum_corrections_controller.candidates()]
     )
 
-    assert [job.label for job in jobs] == ["quantum_singlepoint_siteA", "quantum_singlepoint_siteA_2"]
+    assert [job.label for job in jobs] == ["quantum_phonon_siteA", "quantum_phonon_siteA_2"]
 
     window.close()
 
@@ -1220,17 +1220,17 @@ def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_
     assert definition is not None
     stale_job = service.add_job(
         doc,
-        label=f"quantum_singlepoint_siteA_{str(site.id)[:8]}",
+        label=f"quantum_phonon_siteA_{str(site.id)[:8]}",
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
     )
-    definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(stale_job.id)}
+    definition.parameters["phonon_job_ids_by_label"] = {str(site.id): str(stale_job.id)}
 
     jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert [job.id for job in jobs] == [stale_job.id]
-    assert stale_job.label == "quantum_singlepoint_siteA"
-    assert definition.parameters["singlepoint_job_ids_by_label"][str(site.id)] == str(stale_job.id)
+    assert stale_job.label == "quantum_phonon_siteA"
+    assert definition.parameters["phonon_job_ids_by_label"][str(site.id)] == str(stale_job.id)
     output_dir = window._job_output_directory(stale_job)
     assert output_dir is not None
     assert output_dir.name == "quantum_siteA"

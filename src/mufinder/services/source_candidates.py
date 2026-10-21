@@ -64,10 +64,6 @@ from mufinder.workflow.energy_barriers import (
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.quantum import quantum_source_eligibility
 
-#: Stage identifiers for a two-stage quantum-corrections source row.
-QUANTUM_STAGE_SINGLEPOINT = "singlepoint"
-QUANTUM_STAGE_PHONON = "phonon"
-
 #: ``ui_state`` key of the Energy Barriers form, which holds the generated paths.
 ENERGY_BARRIERS_FORM_STATE_KEY = "energy_barriers_form"
 
@@ -81,15 +77,6 @@ class QuantumSourceCandidate:
     run: CalculationRun
     job: Job
     structure: Structure
-
-
-@dataclass(frozen=True, slots=True)
-class QuantumStageState:
-    """Current two-stage quantum-corrections state for one source row."""
-
-    stage: str
-    status: str
-    current_job: Job | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,7 +349,7 @@ def quantum_seed_name_for_key(
     definition: CalculationDefinition | None,
     key: str,
 ) -> str:
-    """Return the seed name both stages of a quantum-corrections row run under.
+    """Return the seed name a quantum-corrections row's phonon job runs under.
 
     The name recorded in the definition's ``job_seed_names_by_label`` wins;
     otherwise it is derived from the source's display label, or ``"quantum"``
@@ -456,38 +443,6 @@ def source_relaxation_parameter_values(
         # would otherwise save an unticked box over the workflow's own default.
         values["spin_polarized"] = True
     return values
-
-
-def quantum_stage_state(
-    *,
-    singlepoint_job: Job | None,
-    phonon_job: Job | None,
-    row_status: Callable[[Job], str],
-) -> QuantumStageState:
-    """Resolve one quantum-corrections row's current stage from its two jobs.
-
-    A phonon job puts the row on the phonon stage with that job's status. With
-    no phonon job, a completed singlepoint makes the phonon stage ready, any
-    other singlepoint keeps the row on the singlepoint stage with its status,
-    and no singlepoint at all leaves the singlepoint stage ready. ``row_status``
-    projects a job onto the status string its workflow-table row shows.
-    """
-
-    if phonon_job is not None:
-        return QuantumStageState(
-            stage=QUANTUM_STAGE_PHONON,
-            status=row_status(phonon_job),
-            current_job=phonon_job,
-        )
-    if singlepoint_job is None:
-        return QuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready")
-    if singlepoint_job.status == JobStatus.COMPLETED:
-        return QuantumStageState(stage=QUANTUM_STAGE_PHONON, status="ready")
-    return QuantumStageState(
-        stage=QUANTUM_STAGE_SINGLEPOINT,
-        status=row_status(singlepoint_job),
-        current_job=singlepoint_job,
-    )
 
 
 # --- energy-barrier sources ---------------------------------------------------
@@ -1011,10 +966,7 @@ __all__ = [
     "EnergyBarrierSourceCandidate",
     "MuonRelaxationRowJob",
     "PristineRelaxationRowLike",
-    "QUANTUM_STAGE_PHONON",
-    "QUANTUM_STAGE_SINGLEPOINT",
     "QuantumSourceCandidate",
-    "QuantumStageState",
     "RelaxationRowStateLike",
     "charge_state_for_job",
     "charge_state_label_for_job",
@@ -1040,7 +992,6 @@ __all__ = [
     "quantum_source_label",
     "quantum_source_labels_by_key",
     "quantum_source_relative_energies",
-    "quantum_stage_state",
     "relaxation_sources_for_labels",
     "selected_energy_barrier_endpoint_keys",
     "serialize_energy_barrier_neb_sources",

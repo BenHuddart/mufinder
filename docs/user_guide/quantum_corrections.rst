@@ -55,98 +55,93 @@ Quantum Corrections needs:
 Running the workflow
 --------------------
 
-Each relaxed site runs as a **two-stage job**: a stage-1 singlepoint, then a
-stage-2 phonon calculation that continues from the singlepoint's checkpoint.
-You submit each stage yourself; MuFinder does not chain them automatically.
+Each relaxed site runs as **one CASTEP phonon job**: a fresh ``TASK : PHONON``
+run converges the ground state and then computes the Gamma-point phonons, so a
+row is submitted once.
 
 1. **Open the page.** Select ``Quantum Corrections`` in the workflow navigator.
    The ``Quantum Phonon Jobs`` table lists the pinned sites with
-   ``Stage`` = ``singlepoint`` and ``Status`` = ``ready``.
-2. **Configure before the first submission.** Click a row's ``Configure...``
-   button, or select several rows and click ``Configure Selected
-   Parameters...``. Check the electronic settings (inherited from the source
-   relaxation, see `Configuration dialog`_), choose the ``Phonon Method``, set
-   ``Pseudopotentials`` to the family you use, and set ``Stage 2 farms`` if you
-   want task farming. These settings apply to both stages and are **locked once
-   stage 1 has been submitted**; changing them afterwards means resetting the
-   row (see below).
-3. **Submit stage 1.** Select the rows and click ``Run Selected Locally`` or
+   ``Status`` = ``ready``.
+2. **Configure before submitting.** Click a row's ``Configure...`` button, or
+   select several rows and click ``Configure Selected Parameters...``. Check
+   the electronic settings (inherited from the source relaxation, see
+   `Configuration dialog`_), choose the ``Phonon Method``, set
+   ``Pseudopotentials`` to the family you use, and set ``Farms`` if you want
+   task farming. The settings stay editable until the row's job is submitted.
+3. **Submit.** Select the rows and click ``Run Selected Locally`` or
    ``Run Selected on Cluster``. With nothing selected the buttons read
    ``Run All Locally`` / ``Run All on Cluster`` and submit every ready row. The
-   row's ``Status`` then follows the job through the queue.
-4. **Submit stage 2 on the same target.** When the singlepoint completes the
-   row changes to ``Stage`` = ``phonon`` with ``Status`` = ``ready`` and the
-   ``Farms`` column fills in. You can still change ``Stage 2 farms`` at this
-   point (nothing else). Select the row and submit it again **to the same
-   execution target as stage 1** — the same local machine, or the same
-   cluster. The phonon run is a CASTEP continuation and needs the stage-1
-   ``.check`` file, which exists only where the singlepoint ran: MuFinder
-   neither downloads checkpoint files from a cluster nor uploads them to one.
-   MuFinder therefore refuses, with an explanation, a stage-2 row sent to the
-   other kind of target, and a cluster submission of stage-2 rows whose
-   singlepoints ran on different clusters (submit each cluster's rows
-   separately). ``Run Selected on Cluster`` opens the submission dialog with
-   the stage-1 cluster already selected; if you pick another cluster there,
-   the phonon job is not submitted. To move a row to a different target, use
-   ``Reset to Stage 1`` and rerun both stages there.
-5. **Review the result.** When the phonon job completes and its ``.phonon``
+   row's ``Status`` then follows the job through the queue. Any execution
+   target will do: the job needs no files from an earlier run.
+4. **Review the result.** When the phonon job completes and its ``.phonon``
    file parses, a row appears under ``Completed Results`` with the muon ZPE,
    the three muon-mode frequencies, their widths and the ``w1`` witness
    (:doc:`/user_guide/quantum_corrections_theory` explains what they mean).
    Check the jobs dashboard for warnings, in particular the muon-mass warning
-   (see `Muon mass across the two stages`_).
-6. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
+   (see `Muon mass`_).
+5. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
    inspect the modes, the mode wells and widths, and atom-pair coupling (see
    `Phonon analysis window`_).
-7. **Compare sites.** Repeat for the other distinct sites or charge states and
+6. **Compare sites.** Repeat for the other distinct sites or charge states and
    compare their ZPEs and witnesses.
 
-**Changing your mind or recovering from a failure.** Once stage 1 has been
-submitted the shared parameters are locked so the stage-2 continuation stays
-traceable to the singlepoint it continues. When ``Configure...`` opens a locked
-row read-only, the dialog says why and names the reset that unlocks it. Two
-row actions, on the button row and the right-click menu, reopen a row; each
-asks for confirmation first, with ``No`` as the default:
+**Changing your mind or recovering from a failure.** Once a row's job has been
+submitted its parameters are locked, so the stored inputs stay traceable to the
+run. When ``Configure...`` opens a locked row read-only, the dialog says why in
+one line. A row recovers through the shared failed-job reset, as in every
+workflow table: ``Reset Failed Jobs...`` on the button row and in the
+right-click menu returns a failed, stopped or cancelled phonon job to
+``defined`` (see :doc:`/getting_started/running_jobs`). The reset asks first and
+offers to clean the job directory:
 
-- ``Reset to Stage 1`` deletes both staged job records and the row's output
-  directory and returns the row to ``singlepoint`` / ``ready``, with every
-  parameter editable and the stored configuration kept. It is offered for any
-  row that has staged a job, whatever that job's state, unless the job is
-  submitting, queued, running or being retrieved: cancel an active job first.
-  A row whose directory is also used by a job outside the row is not reset,
-  and the message names that folder.
-- ``Reset to Stage 2`` is for a row whose singlepoint completed and whose
-  phonon job failed, was stopped or was cancelled. It returns only the phonon
-  job to ``defined`` and keeps the shared seed directory, including the
-  stage-1 ``.check`` checkpoint the continuation reads. The row then reads
-  ``phonon`` / ``defined``: change ``Stage 2 farms`` and submit it again
-  without rerunning stage 1. A completed phonon job is not offered this reset,
-  because its run has rewritten the checkpoint; use ``Reset to Stage 1``.
+- **Clean the directory** to start the row again. The rerun is a fresh phonon
+  job and can go to any execution target.
+- **Keep the files** to continue. The job writes ``CONTINUATION : DEFAULT``, so
+  a rerun in the kept local directory resumes from the ``.check`` checkpoint
+  when CASTEP wrote one there; clean the directory instead when you change
+  parameters before the rerun. A cluster resubmission works out its remote
+  directory again and asks before deleting one that already exists, so it
+  starts again.
 
-A stage-1 job that is still ``defined`` (staged but never submitted, or returned
-there by the Job Dashboard's ``Reset``) stays fully editable: submitting the row
-rewrites its input files from the stored configuration. Dismissing a failed job
-from the Job Dashboard also reopens its stage, as for every workflow (see
-:doc:`/getting_started/running_jobs`).
+The row then reads ``defined`` with every parameter editable; submit it again.
+Cancel an active job before resetting it. A completed phonon job is not reset:
+to run the row again with other parameters, delete the job from the Job
+Dashboard. A job still ``defined`` (staged but never submitted) stays editable,
+because submitting the row rewrites its input files from the stored
+configuration, and dismissing a failed job from the Job Dashboard reopens its
+row, as for every workflow.
 
-The Job Dashboard's own ``Reset`` returns a failed phonon job to ``defined``
-like ``Reset to Stage 2``, and its optional directory cleanup leaves the shared
-seed directory alone, because the completed singlepoint's ``.check``
-checkpoint and ``.castep`` output in it are what the next stage-2 run continues
-from. The message lists the folder as kept. Use ``Reset to Stage 1`` to start
-the row over from a clean directory.
+**Projects that hold singlepoint jobs.** A project saved with a MuFinder
+version that ran a singlepoint job before each phonon job, in the same seed
+directory, is read as follows:
+
+- A row with a phonon job keeps it, whatever its state, and a completed phonon
+  job keeps its result. Resetting a failed one with the directory cleaned
+  empties the shared directory, singlepoint files included, so the row reruns
+  as a fresh phonon job on any target. Resetting it with the files kept leaves
+  the singlepoint's checkpoint in place, and a local rerun continues from it;
+  clean the directory to move the row to another target.
+- A row with only a singlepoint job reads ``ready``. Its phonon job is written
+  to a directory of its own (when the singlepoint's directory still exists,
+  the seed gains a ``_phonon`` suffix), so it never starts from the
+  singlepoint's checkpoint.
+- A row whose singlepoint is still submitting, queued, running or being
+  retrieved shows that job's status, and submitting it is refused with an
+  explanation until the singlepoint finishes or is cancelled.
+
+The singlepoint jobs stay in the Job Dashboard as records, collect normally
+when they finish, and can be dismissed or deleted there.
 
 The workflow page
 -----------------
 
 .. figure:: ../_generated/screenshots/quantum_corrections_page.png
-   :alt: The Quantum Corrections page with two pinned sites, the first with its phonon
-         stage completed and the second ready for its singlepoint, and one completed
-         result row showing the muon ZPE, three muon-mode frequencies, their widths
-         and the w1 witness.
+   :alt: The Quantum Corrections page with two pinned sites, one with a completed phonon
+         job and one ready to submit, and one completed result row showing the muon
+         ZPE, three muon-mode frequencies, their widths and the w1 witness.
 
-   Two pinned silicon sites, the first through both stages with its result under
-   ``Completed Results``; the outputs are illustrative.
+   Two pinned silicon sites, the first with a completed phonon job and its result
+   under ``Completed Results``; the outputs are illustrative.
 
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
@@ -180,23 +175,25 @@ and counts pinned sites that no longer resolve to an eligible relaxed site
    ``dE``.
 ``Displacements``
    ``3 x atom count`` for the relaxed defect cell — an approximate count of the
-   finite-displacement calculations the phonon stage needs, and therefore a
-   guide to choosing ``Stage 2 farms``.
+   finite-displacement calculations the phonon job needs, and therefore a
+   guide to choosing ``Farms``.
 ``Source Job``
    The muon relaxation the row was built from.
-``Stage``
-   ``singlepoint`` or ``phonon``.
 ``Farms``
-   The stage-2 farm count; shown once the row reaches the phonon stage.
+   The configured farm count, ``1`` when task farming is off.
 ``Status``
-   The current stage's job status.
+   ``ready`` before the row has a job, then the phonon job's status. A row of
+   an older project whose singlepoint is still in progress shows that job's
+   status (see `Running the workflow`_).
 ``Parameters``
    ``Configure...`` (``Configured...`` once custom values are stored, or once
    the row is locked).
 
-Right-click selected rows to run, cancel, inspect a failure, configure, or
-reset them to stage 1 or stage 2. There is no ``Remove``: rows are derived from
-completed relaxations.
+Below the table, ``Reset Failed Jobs...`` sits beside the run buttons and is
+enabled while a selected row's job failed, was stopped or was cancelled.
+Right-click selected rows to run, cancel, inspect a failure, reset failed jobs,
+or configure them. There is no ``Remove``: rows are derived from completed
+relaxations.
 
 ``Completed Results`` (``Completed phonon analyses``) has one row per completed
 phonon job: ``Job``; ``ZPE (eV)``, the total muon zero-point energy, ``½ħω``
@@ -221,14 +218,12 @@ rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
   ``LINEARRESPONSE`` (see `CASTEP phonon methods`_);
 - ``Pseudopotentials`` — ``Unknown / not set``, ``Norm-conserving``, or
   ``Ultrasoft``; MuFinder uses this only for the DFPT compatibility check;
-- ``Stage 2 farms`` — the ``NUM_FARMS`` value for the phonon stage; ``1``
-  disables task farming.
+- ``Farms`` — the ``NUM_FARMS`` value; ``1`` disables task farming.
 
-The ``Task`` row is shown locked: MuFinder writes ``SINGLEPOINT`` for stage 1
-and ``PHONON`` for stage 2. Further CASTEP parameters supported for this
-workflow (for example ``NONSCF_EIGENVALUE_TOL``) can be added with
-``Add Parameter``, which searches keyword names, aliases, descriptions, and
-categories.
+The ``Task`` row is shown locked at ``PHONON``. Further CASTEP parameters
+supported for this workflow (for example ``NONSCF_EIGENVALUE_TOL``) can be
+added with ``Add Parameter``, which searches keyword names, aliases,
+descriptions, and categories.
 
 **Defaults.** When the source relaxation's input files are still on disk, each
 row inherits that relaxation's ``CUT_OFF_ENERGY``, ``KPOINT_MP_GRID``,
@@ -255,46 +250,33 @@ between rows are marked as mixed and are left untouched unless you edit them.
 
    * - Row state
      - What you can change
-   * - ``singlepoint`` / ``ready`` or ``defined``
+   * - ``ready`` (no job, or its failed job dismissed) or ``defined``
      - Everything.
-   * - ``phonon`` / ``ready`` or ``defined`` (stage 1 complete, stage 2 not
-       yet submitted, reset to stage 2, or its failure dismissed)
-     - ``Stage 2 farms`` only.
-   * - Anything else, or a selection mixing the two rows above
+   * - Anything else, for any selected row
      - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections
        Parameters`` so the stored inputs stay traceable to the submitted job.
-       Its text says why and names the action that unlocks the row: cancel an
-       active job, ``Reset to Stage 2`` after a phonon failure, or ``Reset to
-       Stage 1``.
+       One line says why and what unlocks the row: cancel an active job and
+       reset it, use ``Reset Failed Jobs...`` on a failed, stopped or cancelled
+       job, or delete a completed job from the Job Dashboard.
 
 What MuFinder writes
 --------------------
 
-Both stages share one seed directory under
-``files/quantum_corrections/<seed>/`` in the project, so the continuation finds
-the stage-1 checkpoint.
+Each row's phonon job is written to its own seed directory under
+``files/quantum_corrections/<seed>/`` in the project:
 
-.. list-table::
-   :header-rows: 1
+- ``TASK : PHONON``, ``PHONON_METHOD`` and ``CONTINUATION : DEFAULT`` (a new
+  run when the directory holds no ``.check`` file, a continuation of it
+  otherwise);
+- ``PHONON_KPOINT_MP_GRID 1 1 1`` (Gamma only, always);
+- ``NONSCF_EIGENVALUE_TOL`` = the smaller of ``ELEC_ENERGY_TOL`` and
+  ``1e-9 eV``;
+- ``NUM_FARMS`` when ``Farms`` is greater than 1;
+- ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``;
+- ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium).
 
-   * - Stage 1 (singlepoint)
-     - Stage 2 (phonon continuation)
-   * - ``TASK : SINGLEPOINT``
-     - ``TASK : PHONON``, ``CONTINUATION : DEFAULT``, ``PHONON_METHOD``
-   * -
-     - ``PHONON_KPOINT_MP_GRID 1 1 1`` (Gamma only, always)
-   * -
-     - ``NONSCF_EIGENVALUE_TOL`` = the smaller of ``ELEC_ENERGY_TOL`` and
-       ``1e-9 eV``
-   * -
-     - ``NUM_FARMS`` when ``Stage 2 farms`` is greater than 1
-   * - ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``
-     - ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``
-   * - ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium)
-     - ``CHARGE`` (same)
-
-For a muonium source both stages also default to ``SPIN_POLARIZED : TRUE`` and
-seed a spin of +1 on the muon, as the muon relaxation does.
+For a muonium source the job also defaults to ``SPIN_POLARIZED : TRUE`` and
+seeds a spin of +1 on the muon, as the muon relaxation does.
 
 Source eligibility
 ------------------
@@ -331,14 +313,12 @@ DFPT / linear response (``DFPT``, ``LINEARRESPONSE``)
   functionals, non-collinear magnetism or spin-orbit coupling, or the newer
   dispersion corrections.
 
-MuFinder checks only the pseudopotential family, when you submit a row at
-either stage (the method is fixed once stage 1 has been submitted, so a
-problem is caught before the singlepoint runs):
+MuFinder checks only the pseudopotential family, when you submit a row:
 
 - with ``Pseudopotentials`` set to ``Ultrasoft``, a DFPT or linear-response row
   is refused with a message naming the rows; change the row to
-  ``FINITEDISPLACEMENT`` (or reset a stage-2 row to stage 1 first), or set
-  ``Pseudopotentials`` to ``Norm-conserving`` if that is what you use;
+  ``FINITEDISPLACEMENT``, or set ``Pseudopotentials`` to ``Norm-conserving`` if
+  that is what you use;
 - with ``Unknown / not set``, MuFinder lists the DFPT rows and the methods
   CASTEP's DFPT does not support, and asks whether to submit anyway (the
   default answer is no). The reminder is also recorded in the job's
@@ -348,58 +328,40 @@ It does not detect Hubbard U, hybrid functionals, spin-orbit coupling, or
 dispersion corrections in your parameters; if you use any of these, choose
 finite displacement.
 
-Muon mass across the two stages
--------------------------------
+Muon mass
+---------
 
-Both stages write the muon ``SPECIES_MASS`` and ``SPECIES_GAMMA`` blocks into
-their ``.cell`` file, and this is not redundant. Stage 2 runs as a
-``CONTINUATION``, and CASTEP rebuilds the model — species masses included — from
-the stage-1 ``.check`` file in the shared seed directory. A mass declared only in
-the stage-2 cell is therefore ignored: the phonon calculation runs with the
-default hydrogen mass for ``H:mu``, roughly 8.9 times the muon mass. Because a
-harmonic frequency scales as the inverse square root of the mass, the reported
-frequencies and the muon ZPE come out about a factor of three too low, and
-displacement amplitudes are wrong by the same square-root factor. Writing the
-blocks in the stage-1 singlepoint is what puts the muon mass into the checkpoint
-the continuation reads; masses do not affect a singlepoint SCF energy, so this is
-inert for the stage-1 result itself.
+The phonon job writes the muon ``SPECIES_MASS`` and ``SPECIES_GAMMA`` blocks
+into its own ``.cell`` file, and a fresh CASTEP run reads them from there.
+Without them CASTEP would give ``H:mu`` the default hydrogen mass, roughly 8.9
+times the muon mass; because a harmonic frequency scales as the inverse square
+root of the mass, the frequencies and the muon ZPE would come out about a
+factor of three too low.
 
-Two guards protect against a run made at the wrong mass:
-
-- **Before submission.** A stage-2 phonon continuation is refused when the
-  stage-1 singlepoint ``.cell`` still on disk has no ``SPECIES_MASS`` block, with
-  an explanation pointing at ``Reset to Stage 1``. The guard fails open — a
-  missing or unparseable cell never blocks a submission — and it has one blind
-  spot: both stages write ``{seed}.cell`` to the same path, so a row whose
-  stage-2 job was already materialized no longer has stage-1 evidence on disk.
-- **After completion.** CASTEP records the mass it actually used in the
-  ``.phonon`` header, so MuFinder compares it against the muon mass on every
-  parsed phonon run. A mismatch is raised as a job warning,
-  stored with the result, and shown as a banner in the analysis window.
-  This catches the rows the pre-submission guard cannot, including projects whose
-  stage-1 singlepoint was written without the block.
-
-Neither guard can repair an affected run: the row has to be reset to stage 1 and
-both stages rerun.
+A run can still end up with another mass: when the row's settings override
+``SPECIES_MASS``, or when it continued from a checkpoint written without the
+muon mass (CASTEP restores species masses from the checkpoint on a
+continuation). CASTEP records the mass it actually used in the ``.phonon``
+header, so MuFinder compares it against the muon mass on every parsed phonon
+run. A mismatch is raised as a job warning, stored with the result, and shown
+as a banner in the analysis window. It cannot be repaired after the fact:
+delete the job and its files from the Job Dashboard and run the row again.
 
 Task farming and execution targets
 ----------------------------------
 
-When ``Stage 2 farms`` is greater than one, MuFinder writes ``NUM_FARMS`` into
-the phonon ``.param`` file so CASTEP spreads the displacement calculations over
-that many farms. The ``Displacements`` column is a guide to a sensible value.
+When ``Farms`` is greater than one, MuFinder writes ``NUM_FARMS`` into the
+phonon ``.param`` file. CASTEP sets up the farms before the ground state, runs
+the ground state once and shares it, and spreads the displacement calculations
+over the farms. The ``Displacements`` column is a guide to a sensible value.
 With task farming active MuFinder reads ``<seed>_farm001.castep`` as the
 primary output.
 
-For cluster runs, MuFinder reuses the completed stage-1 remote directory when
-the phonon stage is submitted to the same cluster. It uploads refreshed
-``.cell``, ``.param``, and ``run.sh`` files without asking to delete the remote
-directory first, preserving the singlepoint outputs and the ``.check`` file
-already there. A phonon job is never submitted anywhere else: the Quantum
-Corrections page refuses the row before any dialog opens, and the local and
-cluster submission backends refuse it again on every other route, such as the
-jobs dashboard or choosing a different cluster in the submission dialog (see
-step 4 of `Running the workflow`_).
+A phonon job is a self-contained CASTEP run, so it can be submitted locally or
+to any configured cluster, from the Quantum Corrections page or the Job
+Dashboard. A job resubmitted into a directory that still holds its ``.check``
+file continues from that checkpoint; see `Running the workflow`_ for how the
+shared reset keeps or cleans the directory.
 
 Outputs and interpretation
 --------------------------

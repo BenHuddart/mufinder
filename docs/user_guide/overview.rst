@@ -225,10 +225,10 @@ See :doc:`/user_guide/magnetic_fields`.
 Quantum Corrections
 ~~~~~~~~~~~~~~~~~~~
 
-``Quantum Corrections`` lists every successfully relaxed muon site and runs a
-two-stage CASTEP calculation for each: a single-point with explicit muon mass
-and gyromagnetic ratio, then a Gamma-point phonon continuation (finite
-displacement by default, with optional task farming). Completed results give
+``Quantum Corrections`` lists every successfully relaxed muon site and runs one
+Gamma-point CASTEP phonon calculation for each, with explicit muon mass and
+gyromagnetic ratio (finite displacement by default, with optional task
+farming). Completed results give
 the muon zero-point energy, covariance and correlation tensors, ``w1`` /
 ``w2`` witnesses and harmonic mode wells, shown in an
 interactive analysis window. Together they say how much zero-point energy each

@@ -21,8 +21,6 @@ from mufinder.services.cluster_submission_planner import (
     plan_remote_targets,
     remote_check_failures,
     resolve_overwrite_decisions,
-    split_stranded_quantum_jobs,
-    stranded_quantum_jobs_message,
     unsafe_job_labels_message,
 )
 from mufinder.services.job_artifacts import RetrievalFlags
@@ -54,25 +52,18 @@ def _remote_job_directory(*, working_directory: str, seed_name: str) -> str:
     return f"{working_directory}/{seed_name}"
 
 
-def _no_quantum(_job: Job, *, cluster_name: str) -> str:
-    return ""
-
-
 def _plan(
     jobs: list[Job],
     *,
-    quantum: dict[UUID, str] | None = None,
     fresh_start_job_ids: tuple[UUID, ...] = (),
     reuse_existing_remote_files: bool = False,
 ) -> ClusterTargetPlan:
-    quantum = quantum or {}
     return plan_remote_targets(
         jobs,
         cluster_name="alpha",
         working_directory="/remote/work",
         seed_name_by_job={job.id: f"seed_{job.label}" for job in jobs},
         remote_job_directory=_remote_job_directory,
-        quantum_continuation_target=lambda job, *, cluster_name: quantum.get(job.id, ""),
         fresh_start_job_ids=fresh_start_job_ids,
         reuse_existing_remote_files=reuse_existing_remote_files,
     )
@@ -145,17 +136,6 @@ def test_resubmission_reuses_its_previous_directory_without_uploading() -> None:
     assert target.remote_target == "/remote/old/a"
     assert target.reuse_existing_files and not target.allow_existing_remote_directory
     assert plan.targets_to_check() == []
-
-
-def test_quantum_phonon_job_submits_into_its_stage_one_directory() -> None:
-    job = make_job("phonon")
-
-    plan = _plan([job], quantum={job.id: "/remote/work/singlepoint"})
-
-    (target,) = plan.targets
-    assert target.remote_target == "/remote/work/singlepoint"
-    assert target.allow_existing_remote_directory
-    assert plan.protected_remote_targets() == {"/remote/work/singlepoint"}
 
 
 def test_start_again_job_deletes_its_own_directory_without_a_prompt() -> None:
@@ -372,27 +352,6 @@ def test_remote_check_failures_name_each_failed_job() -> None:
     ]
 
 
-def test_stranded_quantum_jobs_are_split_out_and_explained() -> None:
-    ordinary, stranded_local, stranded_remote, continuing = (make_job(label) for label in "abcd")
-    stage_one = {stranded_local.id: "local", stranded_remote.id: "beta", continuing.id: "alpha"}
-
-    kept, stranded = split_stranded_quantum_jobs(
-        [ordinary, stranded_local, stranded_remote, continuing],
-        cluster_name="alpha",
-        stage_one_target=lambda job: stage_one.get(job.id),
-        continuation_target=lambda job, *, cluster_name: "/remote/sp" if job is continuing else "",
-    )
-
-    assert kept == [ordinary, continuing]
-    assert stranded == [(stranded_local, "local"), (stranded_remote, "beta")]
-    assert stranded_quantum_jobs_message("alpha", stranded) == (
-        "These phonon jobs were not submitted to alpha because their stage-1 checkpoint (.check) "
-        "is not in a directory there:\n\n"
-        "  - b (stage 1 ran on this computer)\n"
-        "  - c (stage 1 ran on beta)"
-    )
-
-
 def test_unsafe_labels_are_detected_and_explained() -> None:
     invalid = invalid_remote_job_labels(["ok_1.a-b", "bad label", "bad/label"])
 
@@ -435,7 +394,6 @@ def _drive(jobs: list[Job], **overrides):
         submission=_Settings(),
         seed_name_by_job={job.id: f"seed_{job.label}" for job in jobs},
         remote_job_directory=_remote_job_directory,
-        quantum_continuation_target=_no_quantum,
         output_directory=lambda job: Path("/local") / job.label,
         retrieval_flags=lambda _job: RetrievalFlags(),
         check_remote_directories=lambda targets: calls["check"].append(targets) or {"existing": [], "errors": {}},

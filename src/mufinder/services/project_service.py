@@ -1037,14 +1037,14 @@ class ProjectService:
     ) -> CalculationDefinition:
         """Persist one Quantum Corrections phonon configuration.
 
-        The configuration's per-stage job and seed-name maps are also lifted to
+        The configuration's phonon-job and seed-name maps are also lifted to
         top-level definition parameters; the provenance record omits them.
         """
 
         _require_known_inputs(document, input_structure_ids, input_site_ids)
         snapshot = to_jsonable(parameters)
         lifted_maps: dict[str, Any] = {}
-        for key in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_seed_names_by_label"):
+        for key in ("phonon_job_ids_by_label", "job_seed_names_by_label"):
             value = snapshot.get(key, {})
             lifted_maps[key] = dict(value) if isinstance(value, dict) else {}
         return self._register_definition(

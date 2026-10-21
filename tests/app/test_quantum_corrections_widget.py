@@ -22,8 +22,7 @@ def _source_row(key: str = "site-a", status: str = "ready") -> QuantumSourceRow:
         relative_energy="0.00",
         displacements="9",
         source_job="relax-a",
-        stage="Stage 1",
-        num_farms_display="",
+        num_farms_display="1",
         status=status,
     )
 
@@ -84,7 +83,7 @@ def test_theme_change_reapplies_status_colors(qapp) -> None:
     # and must not raise.
     widget.changeEvent(QEvent(QEvent.Type.PaletteChange))
 
-    assert widget._sources_table.item(0, 7) is not None
+    assert widget._sources_table.item(0, 6) is not None
     assert widget._results_table.item(0, 5) is not None
 
 
@@ -167,7 +166,7 @@ def test_page_guidance_explains_purpose_and_source_headers(qapp) -> None:
     assert "entangled" in text
     assert "harmonic" in text
     assert "relaxed endpoint" not in text
-    assert "locked once the row's first job has been submitted" in text
+    assert "locked once the row's job has been submitted" in text
     assert "mode-mixing witness w1" in text
 
     table = widget._sources_table

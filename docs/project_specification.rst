@@ -486,34 +486,32 @@ Quantum corrections
   relaxation results. UEP candidates, generated sites, pristine relaxations,
   failed jobs and manual sites without relaxation provenance are not valid
   sources.
-- The workflow is row-driven and stage-aware: each eligible relaxed site runs a
-  stage-1 singlepoint job before its stage-2 phonon continuation becomes ready.
-  The source table exposes per-row ``Displacements`` (``3 × atom count``),
-  ``Stage`` and ``Farms``. Once stage 1 completes, the row's shared parameters
-  are frozen so only the stage-2 farm count remains editable before phonon
-  materialization, and an explicit reset-to-stage-1 action clears the row's
-  staged job records and shared outputs.
-- Stage-1 inputs write ``TASK : SINGLEPOINT`` and explicit ``H:mu``
-  ``SPECIES_MASS`` / ``SPECIES_GAMMA`` blocks, because the stage-2
-  continuation restores species masses from the stage-1 checkpoint. Stage-2
-  jobs are Gamma-point only and write ``TASK : PHONON``,
-  ``CONTINUATION : DEFAULT``, ``PHONON_KPOINT_MP_GRID 1 1 1``, the selected
-  ``PHONON_METHOD`` and the explicit ``H:mu`` blocks; ``num_farms`` greater
-  than one adds ``NUM_FARMS``.
+- The workflow is row-driven: each eligible relaxed site runs one CASTEP
+  phonon job. The source table exposes per-row ``Displacements``
+  (``3 × atom count``) and ``Farms``, and the row's status is its job's status,
+  ``ready`` before it has one. A row's parameters are editable while it has no
+  job or its job is ``defined``, and read-only otherwise with a one-line
+  reason; a failed, stopped or cancelled job recovers through the shared
+  failed-job reset, with optional directory clean-up.
+- Each job writes ``TASK : PHONON``, ``CONTINUATION : DEFAULT`` (a new run
+  without a checkpoint, a resumed one with it), ``PHONON_KPOINT_MP_GRID 1 1 1``,
+  the selected ``PHONON_METHOD``, ``NONSCF_EIGENVALUE_TOL`` and explicit
+  ``H:mu`` ``SPECIES_MASS`` / ``SPECIES_GAMMA`` blocks, which a fresh run reads
+  from its own ``.cell``; ``num_farms`` greater than one adds ``NUM_FARMS``.
 - Finite displacement is the default method. DFPT or linear-response runs
   reject known ultrasoft pseudopotentials and warn for unknown pseudopotential
-  family metadata at submission of either stage, naming the affected rows; a
-  refusal never surfaces only as a generic no-ready-jobs message, and the
-  unknown-family warning asks for confirmation.
-- Only completed stage-2 jobs produce persisted result rows. ``.phonon`` files
+  family metadata at submission, naming the affected rows; a refusal never
+  surfaces only as a generic no-ready-jobs message, and the unknown-family
+  warning asks for confirmation.
+- Only completed phonon jobs produce persisted result rows. ``.phonon`` files
   are expected outputs and are retrieved from cluster runs; with task farming
-  active, ``*_farm001.castep`` is accepted as the primary CASTEP output.
-- A stage-2 job runs on the execution target of its stage-1 job (the stage-1
-  ``.check`` is never transferred): submissions to a different target, or a
-  cluster submission spanning stage-1 runs on several clusters, are refused
-  with an explanation, and cluster submissions preselect the stage-1 cluster.
-  Same-cluster stage-2 submissions reuse the completed stage-1 remote
-  directory without a deletion prompt while uploading refreshed inputs.
+  active, ``*_farm001.castep`` is accepted as the primary CASTEP output. The
+  muon mass CASTEP reports in the ``.phonon`` header is checked on every run.
+- A phonon job can run on any execution target. Projects that hold the
+  ``castep_quantum_singlepoint`` jobs of the earlier two-job design keep them as
+  records: a row with only such a job is ready and writes its phonon job to a
+  directory of its own, and a row whose singlepoint is still active is refused
+  submission until it finishes or is cancelled.
 - Parsed results persist the selected muon-dominated modes, per-mode and total
   zero-point energy, witness metrics, output files and source relaxation
   provenance. A ``Launch Analysis`` action opens an interactive window with a

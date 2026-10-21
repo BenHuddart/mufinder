@@ -1,30 +1,32 @@
 """Tests for :class:`QuantumCorrectionsController`.
 
-Covers the two-stage (singlepoint, then phonon) submission, ``build_result`` on
-a real ``.phonon`` file, the stage-two species-mass and execution-target guards,
-the phonon-method checks and ``validate_artifacts``.
+Covers the one-phonon-job-per-row submission and row lifecycle, ``build_result``
+on a real ``.phonon`` file, the Configure dialog's editable and read-only
+states, the phonon-method checks, ``validate_artifacts`` and how rows of a
+project that ran the legacy singlepoint job first are read.
 """
 
 from __future__ import annotations
 
 import math
-import re
+from datetime import datetime, timezone
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Job, Structure
+from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.science.quantum_phonons import mode_width_angstrom
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
+from mufinder.services.job_paths import job_output_directory
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from mufinder.services.source_candidates import quantum_seed_name_for_key
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 
+from mufinder.app.workflow_config_codecs import store_workflow_row_configuration
 from mufinder.app.workflow_controllers.quantum_corrections import (
-    QUANTUM_STAGE_PHONON,
-    QUANTUM_STAGE_SINGLEPOINT,
     QuantumCorrectionsController,
     QuantumCorrectionsDeps,
 )
@@ -42,14 +44,12 @@ from tests.support.controllers import (
 # QuantumCorrectionsController
 # --------------------------------------------------------------------------- #
 #
-# The two-stage (singlepoint → phonon) migration. Its ``build_result`` carries the
-# richest result logic — parsing a real ``.phonon`` file into the muon ZPE,
-# eigenvalues, mode participations, and the ``w1`` entanglement witness — for a
-# quantum-*phonon* job, while a quantum-*singlepoint* job contributes an empty
-# result (but is still ``handles_job``-owned so the two-stage pair is coherent).
-# ``pre_submit_check`` runs the shared host guard; ``materialize`` dispatches each
-# selected source to its current stage. Driven below with narrow fakes (no
-# MainWindow) and a REAL ``.phonon`` fixture containing an ``H:mu`` muon.
+# Each row runs one CASTEP phonon job. ``build_result`` carries the richest
+# result logic — parsing a real ``.phonon`` file into the muon ZPE, eigenvalues,
+# mode participations, and the ``w1`` entanglement witness — while a legacy
+# quantum-*singlepoint* job an older project still holds contributes an empty
+# result. Driven below with narrow fakes (no MainWindow) and a REAL ``.phonon``
+# fixture containing an ``H:mu`` muon.
 
 
 # A minimal, valid CASTEP ``.phonon`` file with one Gamma q-point and an H:mu
@@ -115,9 +115,6 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
         confirm=lambda _title, _text: True,
-        warn=lambda _title, _text: None,
-        reset_jobs_keeping_files=lambda jobs: (len(jobs), []),
-        refresh_after_reset=lambda: None,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
@@ -132,7 +129,7 @@ def _quantum_job(service: ProjectService, document: ProjectDocument, label: str,
     )
 
 
-def test_quantum_controller_handles_both_stage_calc_types(tmp_path: Path) -> None:
+def test_quantum_controller_handles_phonon_and_legacy_singlepoint_calc_types(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "q.mufinder", "Q")
     controller = QuantumCorrectionsController(
@@ -146,7 +143,7 @@ def test_quantum_controller_handles_both_stage_calc_types(tmp_path: Path) -> Non
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type="castep_uep_source",
     )
-    # Both stage calc types are owned so the two-stage pair is coherent.
+    # The legacy singlepoint type stays owned so an older project's job still collects.
     assert controller.handles_job(singlepoint) is True
     assert controller.handles_job(phonon) is True
     assert controller.handles_job(other) is False
@@ -308,7 +305,7 @@ def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -
     returns False, so no submission plan is built and nothing is dispatched."""
 
     service = ProjectService()
-    document, _definition, candidates, _output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    document, _definition, candidates, _output_root = _seed_quantum_document(service, tmp_path)
     other_host = Structure(
         label="other host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -341,7 +338,7 @@ def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -
 
 def test_quantum_controller_pre_submit_check_passes_when_host_matches(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, candidates, _output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    document, _definition, candidates, _output_root = _seed_quantum_document(service, tmp_path)
     mismatches: list[object] = []
     deps = _stub_quantum_deps(
         handle_structure_host_mismatch=lambda mismatch: mismatches.append(mismatch) or False,
@@ -355,9 +352,8 @@ def test_quantum_controller_pre_submit_check_passes_when_host_matches(tmp_path: 
 
 
 def test_quantum_controller_build_result_singlepoint_is_empty_but_handled(tmp_path: Path) -> None:
-    """A quantum-singlepoint job contributes an empty ControllerResult (base
-    payload only), yet is still owned by the controller so the two-stage pair is
-    coherent for result dispatch."""
+    """A legacy quantum-singlepoint job contributes an empty ControllerResult (base
+    payload only), yet is still owned by the controller so it collects cleanly."""
 
     service = ProjectService()
     document = service.create_project(tmp_path / "q.mufinder", "Q")
@@ -487,7 +483,7 @@ def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: P
     assert controller.build_result(job, completed_castep_result(), run, ParsedJobArtifacts()).payload == {}
 
 
-def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
+def _seed_quantum_document(service: ProjectService, tmp_path: Path):
     """Seed a document with two eligible relaxed sources sharing one definition.
 
     Returns ``(document, definition, candidates, output_root)``; ``candidates``
@@ -553,7 +549,6 @@ def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
         parameters={
             "method": "finite_displacement",
             "pseudopotential_family": "unknown",
-            "singlepoint_job_ids_by_label": {},
             "phonon_job_ids_by_label": {},
             "job_seed_names_by_label": {},
         },
@@ -562,23 +557,6 @@ def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
     candidates = {candidate.key: candidate for candidate in eligible_quantum_source_candidates(document)}
     assert [candidate.site.label for candidate in candidates.values()] == ["siteA", "siteB"]
     return document, definition, candidates, output_root
-
-
-def _complete_stage_one(
-    service: ProjectService,
-    document: ProjectDocument,
-    definition,
-    key: str,
-    *,
-    execution_target: str = "local",
-) -> Job:
-    """Bind a completed stage-1 singlepoint to ``key`` so the row is on the phonon stage."""
-
-    singlepoint = _quantum_job(service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE)
-    singlepoint.status = JobStatus.COMPLETED
-    singlepoint.execution_target = execution_target
-    definition.parameters["singlepoint_job_ids_by_label"][key] = str(singlepoint.id)
-    return singlepoint
 
 
 def _quantum_document_controller(service: ProjectService, document, output_root, *, deps=None, **context_kwargs):
@@ -591,183 +569,167 @@ def _quantum_document_controller(service: ProjectService, document, output_root,
     return QuantumCorrectionsController(context, deps or _stub_quantum_deps(), _FakeQuantumView())
 
 
-def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> None:
-    """Mixed selection where one source is at the singlepoint stage and another at
-    the phonon stage: materialize writes each key into the correct per-stage
-    mapping with the correct calc_type, in one pass."""
+def _bind_phonon(
+    service: ProjectService,
+    document: ProjectDocument,
+    definition,
+    key: str,
+    *,
+    status: JobStatus = JobStatus.DEFINED,
+) -> Job:
+    """Bind a phonon job in ``status`` to the row ``key``."""
 
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
-        service, tmp_path
-    )
-    singlepoint_key, phonon_key = list(candidates)
-
-    # siteA is fresh (singlepoint stage); siteB already has a COMPLETED singlepoint
-    # job, so its stage has advanced to phonon.
-    completed_singlepoint = _complete_stage_one(service, document, definition, phonon_key)
-    controller = _quantum_document_controller(service, document, output_root)
-
-    jobs = controller.materialize([singlepoint_key, phonon_key])
-
-    assert len(jobs) == 2
-    calc_types = {job.calc_type for job in jobs}
-    assert calc_types == {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE}
-
-    singlepoint_mapping = definition.parameters["singlepoint_job_ids_by_label"]
-    phonon_mapping = definition.parameters["phonon_job_ids_by_label"]
-    # siteA got a fresh singlepoint job; siteB got a fresh phonon continuation.
-    assert singlepoint_key in singlepoint_mapping
-    new_singlepoint_id = singlepoint_mapping[singlepoint_key]
-    assert document.jobs[UUID(new_singlepoint_id)].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
-    assert phonon_key in phonon_mapping
-    new_phonon_id = phonon_mapping[phonon_key]
-    assert document.jobs[UUID(new_phonon_id)].calc_type == QUANTUM_PHONON_CALC_TYPE
-    # The pre-existing completed singlepoint for siteB is untouched (not re-created).
-    assert singlepoint_mapping.get(phonon_key) == str(completed_singlepoint.id)
-    # Both seed names were recorded, and both stages write into the seed directory.
-    seed_mapping = definition.parameters["job_seed_names_by_label"]
-    assert seed_mapping == {singlepoint_key: "quantum_siteA", phonon_key: "quantum_siteB"}
-    assert (output_root / "quantum_siteA" / "quantum_siteA.param").is_file()
-    assert (output_root / "quantum_siteB" / "quantum_siteB.cell").is_file()
-    # The phonon mapping stays aliased into job_ids_by_label (load-bearing fallback).
-    assert definition.parameters["job_ids_by_label"] is phonon_mapping
+    phonon = _quantum_job(service, document, f"quantum_phonon_{key}", QUANTUM_PHONON_CALC_TYPE)
+    phonon.status = status
+    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    return phonon
 
 
-def _write_stage_one_cell(output_root: Path, seed_name: str, *, with_species_mass: bool) -> Path:
-    """Write a stage-1 singlepoint ``.cell`` into the shared seed directory."""
+def _bind_legacy_singlepoint(
+    service: ProjectService,
+    document: ProjectDocument,
+    definition,
+    key: str,
+    *,
+    status: JobStatus = JobStatus.COMPLETED,
+) -> Job:
+    """Bind the singlepoint an older MuFinder version ran first (``singlepoint_job_ids_by_label``)."""
+
+    singlepoint = _quantum_job(service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    singlepoint.status = status
+    definition.parameters.setdefault("singlepoint_job_ids_by_label", {})[key] = str(singlepoint.id)
+    return singlepoint
+
+
+def _write_legacy_seed_directory(output_root: Path, seed_name: str) -> Path:
+    """Leave the files a legacy singlepoint wrote in the row's seed directory."""
 
     job_dir = output_root / seed_name
     job_dir.mkdir(parents=True, exist_ok=True)
-    cell_path = job_dir / f"{seed_name}.cell"
-    species_mass = (
-        "\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.11342892566\n%ENDBLOCK SPECIES_MASS\n"
-        if with_species_mass
-        else ""
-    )
-    cell_path.write_text(
-        "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n"
-        "\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n"
-        f"{species_mass}",
-        encoding="utf-8",
-    )
-    return cell_path
+    (job_dir / f"{seed_name}.param").write_text("TASK : SINGLEPOINT\n", encoding="utf-8")
+    (job_dir / f"{seed_name}.check").write_bytes(b"legacy checkpoint")
+    return job_dir
 
 
-def _quantum_stage_two_guard_setup(service: ProjectService, tmp_path: Path, *, stage_one_done: bool = True):
-    """Return ``(controller, phonon_key, seed_name, output_root, infos)`` for the guard.
+def test_quantum_controller_materialize_writes_one_phonon_job_per_row(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    store_workflow_row_configuration(definition, second, {"num_farms": 3})
+    controller = _quantum_document_controller(service, document, output_root)
 
-    ``siteA`` is on the phonon stage (its singlepoint completed) unless
-    ``stage_one_done`` is false.
-    """
+    jobs = controller.materialize([first, second])
 
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
-        service, tmp_path
-    )
-    phonon_key = list(candidates)[0]
-    if stage_one_done:
-        _complete_stage_one(service, document, definition, phonon_key)
-    infos: list[tuple[str, str]] = []
-    controller = _quantum_document_controller(service, document, output_root, infos=infos)
-    return controller, phonon_key, controller.seed_name_for_key(definition, phonon_key), output_root, infos
+    assert [job.calc_type for job in jobs] == [QUANTUM_PHONON_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE]
+    assert [job.label for job in jobs] == ["quantum_phonon_siteA", "quantum_phonon_siteB"]
+    assert all(job.status == JobStatus.DEFINED for job in jobs)
+    phonon_mapping = definition.parameters["phonon_job_ids_by_label"]
+    assert phonon_mapping == {first: str(jobs[0].id), second: str(jobs[1].id)}
+    # The phonon mapping stays aliased into job_ids_by_label (load-bearing fallback).
+    assert definition.parameters["job_ids_by_label"] is phonon_mapping
+    assert "singlepoint_job_ids_by_label" not in definition.parameters
+    assert definition.parameters["job_seed_names_by_label"] == {first: "quantum_siteA", second: "quantum_siteB"}
 
-
-def test_quantum_controller_refuses_stage_two_when_stage_one_omits_species_mass(
-    tmp_path: Path,
-) -> None:
-    """A phonon continuation whose stage-1 cell has no SPECIES_MASS is refused.
-
-    CASTEP restores species masses from the stage-1 checkpoint, so continuing from
-    a singlepoint that ran without the muon mass would silently produce phonons at
-    the default hydrogen mass. The refusal explains itself rather than being silent.
-    """
-
-    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
-        ProjectService(), tmp_path
-    )
-    _write_stage_one_cell(output_root, seed_name, with_species_mass=False)
-
-    assert controller.pre_submit_check([phonon_key]) is False
-    assert len(infos) == 1
-    title, message = infos[0]
-    assert title == "Stage-1 muon mass missing"
-    assert "SPECIES_MASS" in message
-    assert "siteA" in message
+    param_text = (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(encoding="utf-8")
+    cell_text = (output_root / "quantum_siteA" / "quantum_siteA.cell").read_text(encoding="utf-8")
+    assert "TASK : PHONON" in param_text
+    assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
+    assert "CONTINUATION : DEFAULT" in param_text
+    assert "CHARGE : 1" in param_text
+    assert "NUM_FARMS" not in param_text
+    assert "SINGLEPOINT" not in param_text
+    assert "%BLOCK SPECIES_MASS" in cell_text
+    assert "%BLOCK SPECIES_GAMMA" in cell_text
+    assert "PHONON_KPOINT_MP_GRID 1 1 1" in cell_text
+    farmed = (output_root / "quantum_siteB" / "quantum_siteB.param").read_text(encoding="utf-8")
+    assert "NUM_FARMS : 3" in farmed
 
 
-def test_quantum_controller_allows_stage_two_when_stage_one_declares_species_mass(
-    tmp_path: Path,
-) -> None:
-    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
-        ProjectService(), tmp_path
-    )
-    _write_stage_one_cell(output_root, seed_name, with_species_mass=True)
-
-    assert controller.pre_submit_check([phonon_key]) is True
-    assert infos == []
-
-
-def test_quantum_controller_stage_two_guard_fails_open_without_a_stage_one_cell(
-    tmp_path: Path,
-) -> None:
-    """No readable stage-1 cell is no evidence: the guard must not block."""
-
-    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
-        ProjectService(), tmp_path
-    )
-    unreadable = output_root / seed_name / f"{seed_name}.cell"
-    unreadable.parent.mkdir(parents=True, exist_ok=True)
-    unreadable.write_text("this is not a cell file", encoding="utf-8")
-
-    # Unparseable cell, and (below) no cell at all: both allow submission.
-    assert controller.pre_submit_check([phonon_key]) is True
-    unreadable.unlink()
-    assert controller.pre_submit_check([phonon_key]) is True
-    assert infos == []
-
-
-def test_quantum_controller_stage_two_guard_ignores_stage_one_rows(tmp_path: Path) -> None:
-    """A row still on stage 1 is never blocked: it has no checkpoint to inherit."""
-
-    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
-        ProjectService(), tmp_path, stage_one_done=False
-    )
-    _write_stage_one_cell(output_root, seed_name, with_species_mass=False)
-
-    assert controller.pre_submit_check([phonon_key]) is True
-    assert infos == []
-
-
-def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
-    """End-to-end submit wiring: build_states → is_ready (base default) →
-    jobs_for_keys → materialize → local backend, dispatched as a single group with
-    no extra kwargs (task farming lives in the shared backend, not the controller)."""
+def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> None:
+    """A defined job is rewritten from the row's configuration; a finished one is left alone."""
 
     service = ProjectService()
-    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(
-        service, tmp_path
-    )
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    defined = _bind_phonon(service, document, definition, first)
+    failed = _bind_phonon(service, document, definition, second, status=JobStatus.FAILED)
+    store_workflow_row_configuration(definition, first, {"num_farms": 2})
+    controller = _quantum_document_controller(service, document, output_root)
+
+    jobs = controller.materialize([first, second])
+
+    # Only the ready row is materialized; the failed row is not ready.
+    assert jobs == [defined]
+    assert len(document.jobs) == 2 + 2  # two source relaxations, two phonon jobs
+    assert "NUM_FARMS : 2" in (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(encoding="utf-8")
+    assert not (output_root / "quantum_siteB").exists()
+    assert failed.status == JobStatus.FAILED
+
+
+def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
     local = RecordingBackend()
-    cluster = RecordingBackend()
-    controller = _quantum_document_controller(
-        service, document, output_root, local_backend=local, cluster_backend=cluster
+    view = _FakeQuantumView()
+    context = make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        definition_output_directory=lambda _definition: output_root,
     )
+    controller = QuantumCorrectionsController(context, _stub_quantum_deps(), view)
+
+    assert controller.build_states()[key].status == "ready"
+    assert controller.jobs_for_keys([key]) == []
 
     controller.submit([key], target="local")
 
-    assert cluster.calls == []
-    assert len(local.calls) == 1
-    submitted, extras = local.calls[0]
+    ((submitted, extras),) = local.calls
     assert extras == {}
-    assert len(submitted) == 1
-    assert submitted[0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+    (job,) = submitted
+    assert job.calc_type == QUANTUM_PHONON_CALC_TYPE
+    assert controller.build_states()[key].status == "defined"
+    assert controller.jobs_for_keys([key]) == [job]
+
+    job.status = JobStatus.RUNNING
+    assert controller.build_states()[key].status == "running"
+    # Submitting again leaves a running row alone: nothing new is created.
+    controller.submit([key], target="local")
+    assert controller.jobs_for_keys([key]) == [job]
+    assert sum(1 for other in document.jobs.values() if other.calc_type == QUANTUM_PHONON_CALC_TYPE) == 1
+
+    job.status = JobStatus.COMPLETED
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data={"muon_zpe_total_eV": 0.2})
+    document.results[result.id] = result
+    controller.refresh_view()
+
+    source_row = next(row for row in view.sources[-1] if row.key == key)
+    assert source_row.status == "completed"
+    assert [row.label for row in view.results[-1]] == ["quantum_phonon_siteA"]
+
+
+def test_quantum_controller_refresh_view_always_shows_the_farm_count(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    store_workflow_row_configuration(definition, second, {"num_farms": 4})
+    view = _FakeQuantumView()
+    controller = QuantumCorrectionsController(
+        make_context(document=document, project_service=service), _stub_quantum_deps(), view
+    )
+    controller.set_show_every_site(True)
+
+    rows = {row.key: row for row in view.sources[-1]}
+    assert (rows[first].num_farms_display, rows[first].status) == ("1", "ready")
+    assert (rows[second].num_farms_display, rows[second].configured) == ("4", True)
 
 
 def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(
-        service, tmp_path
-    )
+    document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
     local = RecordingBackend()
     cluster = RecordingBackend()
@@ -778,14 +740,45 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
     controller.submit([key], target="cluster")
 
     assert local.calls == []
-    assert len(cluster.calls) == 1
-    assert cluster.calls[0][0][0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+    ((submitted, extras),) = cluster.calls
+    # No preselected cluster: a phonon job can run on any target.
+    assert extras == {}
+    assert [job.calc_type for job in submitted] == [QUANTUM_PHONON_CALC_TYPE]
 
 
+def test_quantum_controller_dismissed_failed_job_resubmits_without_a_new_job(tmp_path: Path) -> None:
+    """A dismissed failed row reads ready; the shared submit cycle resets and rewrites its job."""
 
-def test_quantum_controller_configure_request_opens_editable_stage_one_rows(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    phonon = _bind_phonon(service, document, definition, key, status=JobStatus.FAILED)
+    phonon.dismissed_at = datetime.now(timezone.utc)
+    reset: list[list[Job]] = []
+
+    def _reset(jobs) -> bool:
+        reset.append(list(jobs))
+        for job in jobs:
+            service.reset_failed_job(job)
+        return True
+
+    local = RecordingBackend()
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, prepare_jobs_for_resubmission=_reset
+    )
+
+    assert controller.build_states()[key].status == "ready"
+    controller.submit([key], target="local")
+
+    assert reset == [[phonon]]
+    assert local.calls[0][0] == [phonon]
+    assert phonon.status == JobStatus.DEFINED
+    assert (output_root / "quantum_siteA" / "quantum_siteA.param").is_file()
+
+
+def test_quantum_controller_configure_request_opens_editable_ready_rows(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     controller = _quantum_document_controller(service, document, output_root)
 
     request = controller.configure_request([*candidates, "not-a-source"])
@@ -793,14 +786,15 @@ def test_quantum_controller_configure_request_opens_editable_stage_one_rows(tmp_
     assert request is not None
     assert request.keys == tuple(candidates)
     assert request.title == "Configure Quantum Corrections Parameters"
-    assert (request.read_only, request.fully_editable, request.farms_only) == (False, True, False)
+    assert request.read_only is False
+    assert request.locked_reason == ""
     assert request.pseudopotential_family == "unknown"
     assert request.num_farms == 1
     assert request.species_options == ("Si", "H:mu")
     assert "Selected sources: 2" in request.intro_text
-    assert "Current stage: mixed/selected" in request.intro_text
-    assert "Displacements required for the phonon stage: 6" in request.intro_text
-    # Every row inherits the tight stage default and the legacy method.
+    assert "Displacements required for the phonon run: 6" in request.intro_text
+    assert "stage" not in request.intro_text.lower()
+    # Every row inherits the tight default and the legacy method.
     assert all(values["phonon_method"] == "FINITEDISPLACEMENT" for values in request.row_values)
     assert controller.configure_request(["not-a-source"]) is None
     assert QuantumCorrectionsController(
@@ -808,118 +802,338 @@ def test_quantum_controller_configure_request_opens_editable_stage_one_rows(tmp_
     ).configure_request(list(candidates)) is None
 
 
-def test_quantum_controller_configure_request_follows_each_rows_stage(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    stage_one_key, stage_two_key = list(candidates)
-    _complete_stage_one(service, document, definition, stage_two_key)
-    controller = _quantum_document_controller(service, document, output_root)
-
-    farms_only = controller.configure_request([stage_two_key])
-    assert farms_only is not None
-    assert farms_only.title == "Configure Quantum Corrections Stage 2 Farms"
-    assert (farms_only.read_only, farms_only.fully_editable, farms_only.farms_only) == (False, False, True)
-    assert "Current stage: phonon" in farms_only.intro_text
-
-    assert "only Stage 2 farms can change" in farms_only.locked_reason
-    assert farms_only.locked_reason in farms_only.intro_text
-
-    mixed = controller.configure_request([stage_one_key, stage_two_key])
-    assert mixed is not None
-    assert mixed.title == "Inspect Quantum Corrections Parameters"
-    assert mixed.read_only is True
-    assert mixed.locked_reason == "The selection mixes stage-1 and stage-2 rows. Configure them separately."
-
-
-def test_quantum_controller_configure_request_edits_a_defined_singlepoint(tmp_path: Path) -> None:
-    """A staged-but-unsubmitted or dashboard-reset singlepoint is rewritten on submit, so it stays editable."""
+@pytest.mark.parametrize("dismissed", [False, True])
+def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(tmp_path: Path, dismissed: bool) -> None:
+    """A job still defined (or dismissed, so its row reads ready) is rewritten on submit."""
 
     service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key = next(iter(candidates))
-    singlepoint = _quantum_job(service, document, "quantum_singlepoint_siteA", QUANTUM_SINGLEPOINT_CALC_TYPE)
-    definition.parameters["singlepoint_job_ids_by_label"][key] = str(singlepoint.id)
+    phonon = _bind_phonon(service, document, definition, key)
+    if dismissed:
+        phonon.status = JobStatus.FAILED
+        phonon.dismissed_at = datetime.now(timezone.utc)
     controller = _quantum_document_controller(service, document, output_root)
 
     request = controller.configure_request([key])
 
-    assert singlepoint.status == JobStatus.DEFINED
     assert request is not None
-    assert (request.read_only, request.fully_editable, request.farms_only) == (False, True, False)
+    assert request.read_only is False
     assert request.title == "Configure Quantum Corrections Parameters"
     assert request.locked_reason == ""
 
 
-@pytest.mark.parametrize("dismissed", [False, True])
-def test_quantum_controller_configure_request_edits_farms_of_a_reopened_phonon_job(
-    tmp_path: Path, dismissed: bool
-) -> None:
-    """After a phonon failure is reset to ``defined`` or dismissed, its farms can change again."""
-
-    from datetime import datetime, timezone
-
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _complete_stage_one(service, document, definition, key)
-    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-    if dismissed:
-        phonon.status = JobStatus.FAILED
-        phonon.dismissed_at = datetime.now(timezone.utc)
-    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
-    controller = _quantum_document_controller(service, document, output_root)
-
-    request = controller.configure_request([key])
-
-    assert request is not None
-    assert (request.read_only, request.fully_editable, request.farms_only) == (False, False, True)
-    assert request.title == "Configure Quantum Corrections Stage 2 Farms"
-
-
 @pytest.mark.parametrize(
-    ("singlepoint_status", "phonon_status", "expected"),
+    ("status", "expected"),
     [
-        (JobStatus.FAILED, None, "stage-1 singlepoint is failed. Use Reset to Stage 1"),
-        (JobStatus.RUNNING, None, "job is running. Cancel the job first, then use Reset to Stage 1"),
-        (JobStatus.COMPLETED, JobStatus.QUEUED, "job is queued. Cancel the job first"),
-        (JobStatus.COMPLETED, JobStatus.FAILED, "phonon job is failed. Use Reset to Stage 2"),
-        (JobStatus.COMPLETED, JobStatus.CANCELLED, "phonon job is cancelled. Use Reset to Stage 2"),
-        (JobStatus.COMPLETED, JobStatus.COMPLETED, "completed both stages. Use Reset to Stage 1"),
+        (JobStatus.RUNNING, "phonon job is running; cancel it, then use Reset Failed Jobs..."),
+        (JobStatus.QUEUED, "phonon job is queued; cancel it"),
+        (JobStatus.FAILED, "phonon job is failed; use Reset Failed Jobs... to edit"),
+        (JobStatus.CANCELLED, "phonon job is cancelled; use Reset Failed Jobs..."),
+        (JobStatus.COMPLETED, "phonon job has completed; delete it from the Job Dashboard"),
     ],
 )
-def test_quantum_controller_read_only_configure_names_the_unlocking_reset(
-    tmp_path: Path, singlepoint_status: JobStatus, phonon_status: JobStatus | None, expected: str
+def test_quantum_controller_read_only_configure_gives_one_reason(
+    tmp_path: Path, status: JobStatus, expected: str
 ) -> None:
     service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    singlepoint = _complete_stage_one(service, document, definition, key)
-    singlepoint.status = singlepoint_status
-    if phonon_status is not None:
-        phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-        phonon.status = phonon_status
-        definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    _bind_phonon(service, document, definition, first, status=status)
     controller = _quantum_document_controller(service, document, output_root)
 
-    request = controller.configure_request([key])
+    # One locked row makes the whole selection read-only.
+    request = controller.configure_request([second, first])
 
     assert request is not None
     assert request.read_only is True
     assert request.title == "Inspect Quantum Corrections Parameters"
     assert expected in request.locked_reason
+    assert "\n" not in request.locked_reason
     assert request.intro_text.endswith(request.locked_reason)
+
+
+def _phonon_method_controller(
+    service: ProjectService,
+    tmp_path: Path,
+    *,
+    rows: dict[str, tuple[str, str]],
+    infos: list[tuple[str, str]],
+    questions: list[tuple[str, str]],
+    answer: bool,
+    local: RecordingBackend,
+):
+    """Build a controller whose rows ``siteA``/``siteB`` are ready to submit.
+
+    ``rows`` maps a site label to ``(GUI phonon method, pseudopotential family)``,
+    stored as the row's configuration; materialize hands back one defined job per
+    row so an allowed submission reaches the local backend.
+    """
+
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    by_label = {candidate.site.label: key for key, candidate in candidates.items()}
+    keys = []
+    for label, (method, family) in rows.items():
+        key = by_label[label]
+        keys.append(key)
+        store_workflow_row_configuration(
+            definition,
+            key,
+            {"parameter_values": {"phonon_method": method}, "pseudopotential_family": family},
+        )
+    controller = _quantum_document_controller(
+        service,
+        document,
+        output_root,
+        deps=_stub_quantum_deps(confirm=lambda title, text: questions.append((title, text)) or answer),
+        local_backend=local,
+        infos=infos,
+    )
+    jobs = {key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_PHONON_CALC_TYPE) for key in keys}
+    controller.materialize = lambda values: [jobs[str(value)] for value in values]  # type: ignore[assignment]
+    return controller, keys
+
+
+def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name(tmp_path: Path) -> None:
+    """The refusal names the rows instead of ending in a generic "No ready jobs"."""
+
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={"siteA": ("DFPT", "ultrasoft"), "siteB": ("LINEARRESPONSE", "ultrasoft")},
+        infos=infos,
+        questions=questions,
+        answer=True,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert local.calls == []
+    assert questions == []
+    ((title, message),) = infos
+    assert title == "Phonon method needs norm-conserving pseudopotentials"
+    assert "siteA (DFPT)" in message
+    assert "siteB (LINEARRESPONSE)" in message
+    assert "stage" not in message.lower()
+
+
+def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_family(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={"siteA": ("DFPT", "unknown")},
+        infos=infos,
+        questions=questions,
+        answer=False,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert local.calls == []
+    assert infos == []
+    ((title, message),) = questions
+    assert title == "Check pseudopotentials for DFPT"
+    assert "siteA (DFPT)" in message
+    assert "norm-conserving" in message
+
+
+def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={"siteA": ("DFPT", "unknown")},
+        infos=infos,
+        questions=questions,
+        answer=True,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert len(questions) == 1
+    assert len(local.calls) == 1
+
+
+def test_quantum_controller_submits_finite_displacement_without_asking(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={"siteA": ("FINITEDISPLACEMENT", "ultrasoft"), "siteB": ("DFPT", "norm_conserving")},
+        infos=infos,
+        questions=questions,
+        answer=False,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert infos == []
+    assert questions == []
+    assert len(local.calls) == 1
+
+
+# --- projects that ran the legacy singlepoint job first ----------------------
+
+
+def test_quantum_controller_keeps_a_completed_legacy_pairs_phonon_result(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    _bind_legacy_singlepoint(service, document, definition, key)
+    phonon = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
+    run = CalculationRun(job_id=phonon.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data={"muon_zpe_total_eV": 0.3})
+    document.results[result.id] = result
+    view = _FakeQuantumView()
+    context = make_context(
+        document=document, project_service=service, definition_output_directory=lambda _d: output_root
+    )
+    controller = QuantumCorrectionsController(context, _stub_quantum_deps(), view)
+
+    assert controller.build_states()[key].status == "completed"
+    assert controller.jobs_for_keys([key]) == [phonon]
+    assert controller.materialize([key]) == []
+    controller.refresh_view()
+    assert [row.key for row in view.results[-1]] == [str(result.id)]
+    assert controller.phonon_result(str(result.id)) is result
+
+
+@pytest.mark.parametrize("legacy_status", [JobStatus.COMPLETED, JobStatus.FAILED])
+def test_quantum_controller_singlepoint_only_row_is_ready_with_a_fresh_directory(
+    tmp_path: Path, legacy_status: JobStatus
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint = _bind_legacy_singlepoint(service, document, definition, key, status=legacy_status)
+    definition.parameters["job_seed_names_by_label"][key] = "quantum_siteA"
+    legacy_dir = _write_legacy_seed_directory(output_root, "quantum_siteA")
+    controller = _quantum_document_controller(service, document, output_root)
+
+    assert controller.build_states()[key].status == "ready"
+    assert controller.jobs_for_keys([key]) == []
+
+    (job,) = controller.materialize([key])
+
+    assert job.calc_type == QUANTUM_PHONON_CALC_TYPE
+    assert definition.parameters["job_seed_names_by_label"][key] == "quantum_siteA_phonon"
+    assert definition.parameters["singlepoint_seed_names_by_label"] == {key: "quantum_siteA"}
+    assert (output_root / "quantum_siteA_phonon" / "quantum_siteA_phonon.param").is_file()
+    assert not (output_root / "quantum_siteA_phonon" / "quantum_siteA_phonon.check").exists()
+    # The legacy singlepoint keeps its directory and its record.
+    assert (legacy_dir / "quantum_siteA.check").read_bytes() == b"legacy checkpoint"
+    assert document.jobs[singlepoint.id] is singlepoint
+    assert job_output_directory(
+        document,
+        singlepoint,
+        quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(document, definition, row),
+    ) == output_root / "quantum_siteA"
+    assert job_output_directory(
+        document,
+        job,
+        quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(document, definition, row),
+    ) == output_root / "quantum_siteA_phonon"
+
+
+def test_quantum_controller_fresh_seed_skips_names_already_taken(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    definition.parameters["job_seed_names_by_label"].update({first: "quantum_siteA", second: "quantum_siteA_phonon"})
+    _write_legacy_seed_directory(output_root, "quantum_siteA")
+    (output_root / "quantum_siteA_phonon_2").mkdir()
+    controller = _quantum_document_controller(service, document, output_root)
+
+    controller.materialize([first])
+
+    assert definition.parameters["job_seed_names_by_label"][first] == "quantum_siteA_phonon_3"
+    # No legacy singlepoint is bound, so none is recorded.
+    assert "singlepoint_seed_names_by_label" not in definition.parameters
+
+
+@pytest.mark.parametrize(
+    "status", [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING]
+)
+def test_quantum_controller_refuses_a_row_whose_legacy_singlepoint_is_active(
+    tmp_path: Path, status: JobStatus
+) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint = _bind_legacy_singlepoint(service, document, definition, key, status=status)
+    infos: list[tuple[str, str]] = []
+    local = RecordingBackend()
+    controller = _quantum_document_controller(service, document, output_root, local_backend=local, infos=infos)
+
+    # The row shows the singlepoint, so it can be cancelled from the table.
+    assert controller.build_states()[key].status == status.value
+    assert controller.jobs_for_keys([key]) == [singlepoint]
+    request = controller.configure_request([key])
+    assert request is not None and request.read_only is True
+    assert "older MuFinder version" in request.locked_reason
+
+    controller.submit([key], target="local")
+
+    assert local.calls == []
+    ((title, message),) = infos
+    assert title == "Singlepoint still in progress"
+    assert f"siteA ({status.value})" in message
+    assert "phonon_job_ids_by_label" in definition.parameters
+    assert definition.parameters["phonon_job_ids_by_label"] == {}
+
+
+def test_quantum_controller_directory_companions_name_the_legacy_singlepoint(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    definition.parameters["job_seed_names_by_label"].update({first: "quantum_siteA", second: "quantum_siteB"})
+    singlepoint = _bind_legacy_singlepoint(service, document, definition, first)
+    phonon = _bind_phonon(service, document, definition, first, status=JobStatus.FAILED)
+    lone_phonon = _bind_phonon(service, document, definition, second, status=JobStatus.FAILED)
+
+    def resolve(job: Job) -> Path | None:
+        return job_output_directory(
+            document,
+            job,
+            quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(document, definition, row),
+        )
+
+    controller = _quantum_document_controller(service, document, output_root, job_output_directory=resolve)
+
+    assert controller.definition_and_key_for_job(phonon) == (definition, first)
+    assert controller.directory_companions(phonon) == [singlepoint]
+    assert controller.directory_companions(singlepoint) == []
+    assert controller.directory_companions(lone_phonon) == []
+    singlepoint.status = JobStatus.RUNNING
+    assert controller.directory_companions(phonon) == []
+    singlepoint.status = JobStatus.COMPLETED
+    # Once the singlepoint records its own seed, it no longer shares the directory.
+    definition.parameters["singlepoint_seed_names_by_label"] = {first: "quantum_siteA_legacy"}
+    assert controller.directory_companions(phonon) == []
 
 
 def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path) -> None:
     import dataclasses
 
-    from mufinder.app.workflow_config_codecs import (
-        store_workflow_row_configuration,
-        workflow_row_configuration,
-    )
+    from mufinder.app.workflow_config_codecs import workflow_row_configuration
 
     service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     first, second = list(candidates)
     store_workflow_row_configuration(definition, first, {"parameter_values": {"max_scf_cycles": 80}})
     persisted: list[str] = []
@@ -935,7 +1149,7 @@ def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path)
 
     controller.apply_configuration(
         [first, second],
-        configure_result({"task": "SINGLEPOINT", "xc_functional": "PBE"}, untouched={"max_scf_cycles"}),
+        configure_result({"task": "PHONON", "xc_functional": "PBE"}, untouched={"max_scf_cycles"}),
         {"pseudopotential_family": "norm_conserving", "num_farms": 2},
     )
 
@@ -951,7 +1165,7 @@ def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path)
 
 def test_quantum_controller_renames_a_source_site(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     key, candidate = next(iter(candidates.items()))
     controller = _quantum_document_controller(service, document, output_root)
 
@@ -961,312 +1175,6 @@ def test_quantum_controller_renames_a_source_site(tmp_path: Path) -> None:
     assert candidate.site.label == "siteA"
     assert controller.rename_source(key, " renamed ") is True
     assert document.sites[candidate.site.id].label == "renamed"
-
-
-def test_quantum_controller_lists_stage_one_resets(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    finished_key, running_key = list(candidates)
-    singlepoint = _complete_stage_one(service, document, definition, finished_key)
-    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-    phonon.status = JobStatus.FAILED
-    definition.parameters["phonon_job_ids_by_label"][finished_key] = str(phonon.id)
-    running = _complete_stage_one(service, document, definition, running_key)
-    running.status = JobStatus.RUNNING
-    definition.parameters["job_seed_names_by_label"][finished_key] = "quantum_siteA"
-    controller = _quantum_document_controller(service, document, output_root)
-
-    resets = controller.stage_one_resets([finished_key, running_key, "missing"])
-
-    assert resets is not None
-    assert [(reset.key, reset.label, reset.jobs) for reset in resets] == [
-        (finished_key, "siteA", (phonon, singlepoint))
-    ]
-    controller.forget_seed_name(finished_key)
-    assert finished_key not in definition.parameters["job_seed_names_by_label"]
-
-    empty = service.create_project(tmp_path / "empty.mufinder", "Empty")
-    assert _quantum_document_controller(service, empty, output_root).stage_one_resets([finished_key]) is None
-
-
-@pytest.mark.parametrize(
-    ("status", "resettable"),
-    [
-        (JobStatus.DEFINED, True),
-        (JobStatus.COMPLETED, True),
-        (JobStatus.FAILED, True),
-        (JobStatus.STOPPED, True),
-        (JobStatus.CANCELLED, True),
-        (JobStatus.SUBMITTING, False),
-        (JobStatus.QUEUED, False),
-        (JobStatus.RUNNING, False),
-        (JobStatus.RETRIEVING, False),
-    ],
-)
-def test_quantum_controller_resets_to_stage_one_from_any_inactive_phonon_job(
-    tmp_path: Path, status: JobStatus, resettable: bool
-) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _complete_stage_one(service, document, definition, key)
-    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-    phonon.status = status
-    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
-    controller = _quantum_document_controller(service, document, output_root)
-
-    assert controller.can_reset_to_stage_one(definition, candidates[key]) is resettable
-
-
-def _reset_recording_controller(service, document, output_root, *, confirm: bool, refusal: str | None = None):
-    """Return a controller whose reset collaborators record what they were asked to do.
-
-    File and record clean-up runs through the context's real ``JobFileCleanup``,
-    wrapped to record the paths and jobs it deletes; ``refusal`` stands in for
-    another job using the row's directory.
-    """
-
-    import dataclasses
-
-    calls: dict[str, list] = {
-        "confirm": [],
-        "deleted_paths": [],
-        "deleted_jobs": [],
-        "reset_jobs": [],
-        "refreshes": [],
-        "warnings": [],
-        "infos": [],
-        "status": [],
-        "persisted": [],
-    }
-
-    def reset_jobs_keeping_files(jobs) -> tuple[int, list[str]]:
-        calls["reset_jobs"].append(list(jobs))
-        for job in jobs:
-            service.reset_failed_job(job)
-        return len(jobs), []
-
-    deps = _stub_quantum_deps(
-        confirm=lambda title, text: calls["confirm"].append((title, text)) or confirm,
-        warn=lambda title, text: calls["warnings"].append(text),
-        reset_jobs_keeping_files=reset_jobs_keeping_files,
-        refresh_after_reset=lambda: calls["refreshes"].append(True),
-    )
-    context = make_context(
-        document=document,
-        project_service=service,
-        infos=calls["infos"],
-        definition_output_directory=lambda _definition: output_root,
-        job_output_directory=lambda job: (
-            output_root / "quantum_siteA" if job.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS else None
-        ),
-        job_seed_name=lambda _job: "quantum_siteA",
-    )
-    context = dataclasses.replace(
-        context,
-        status_message=calls["status"].append,
-        persist_ui_state=lambda **kwargs: calls["persisted"].append(kwargs["failure_message"]),
-    )
-    cleanup = context.job_file_cleanup
-    real_delete_path, real_delete_job_records = cleanup.delete_path, cleanup.delete_job_records
-
-    def delete_path(path) -> None:
-        calls["deleted_paths"].append(path)
-        real_delete_path(path)
-
-    def delete_job_records(job_id) -> None:
-        calls["deleted_jobs"].append(job_id)
-        real_delete_job_records(job_id)
-
-    cleanup.delete_path = delete_path  # type: ignore[method-assign]
-    cleanup.delete_job_records = delete_job_records  # type: ignore[method-assign]
-    if refusal is not None:
-        cleanup.directory_ownership_refusals = (  # type: ignore[method-assign]
-            lambda jobs, **_kwargs: {jobs[0].id: refusal}
-        )
-    return QuantumCorrectionsController(context, deps, _FakeQuantumView()), calls
-
-
-def _row_with_failed_phonon(service, document, definition, key):
-    singlepoint = _complete_stage_one(service, document, definition, key)
-    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-    phonon.status = JobStatus.FAILED
-    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
-    definition.parameters["job_seed_names_by_label"][key] = "quantum_siteA"
-    return singlepoint, phonon
-
-
-def test_quantum_controller_reset_to_stage_one_deletes_the_row_after_confirmation(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    singlepoint, phonon = _row_with_failed_phonon(service, document, definition, key)
-    (output_root / "quantum_siteA").mkdir(parents=True)
-    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
-
-    controller.reset_to_stage_one([key])
-
-    assert calls["confirm"][0][0] == "Reset Quantum Corrections"
-    assert calls["deleted_paths"] == [output_root / "quantum_siteA"]
-    assert not (output_root / "quantum_siteA").exists()
-    assert calls["deleted_jobs"] == [phonon.id, singlepoint.id]
-    assert phonon.id not in document.jobs and singlepoint.id not in document.jobs
-    assert key not in definition.parameters["job_seed_names_by_label"]
-    assert calls["refreshes"] == [True]
-    assert calls["status"] == ["Reset 1 Quantum Corrections row(s) to stage 1"]
-    assert calls["persisted"] == ["Quantum Corrections stage reset was recorded, but autosave failed."]
-
-
-def test_quantum_controller_reset_to_stage_one_does_nothing_when_declined(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _row_with_failed_phonon(service, document, definition, key)
-    controller, calls = _reset_recording_controller(service, document, output_root, confirm=False)
-
-    controller.reset_to_stage_one([key])
-
-    assert len(calls["confirm"]) == 1
-    assert calls["deleted_paths"] == calls["deleted_jobs"] == calls["refreshes"] == calls["status"] == []
-    assert definition.parameters["job_seed_names_by_label"] == {key: "quantum_siteA"}
-
-
-def test_quantum_controller_reset_to_stage_one_keeps_a_shared_directory(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _row_with_failed_phonon(service, document, definition, key)
-    controller, calls = _reset_recording_controller(
-        service, document, output_root, confirm=True, refusal="- quantum_siteA: another job uses the same output folder"
-    )
-
-    controller.reset_to_stage_one([key])
-
-    assert calls["deleted_paths"] == calls["deleted_jobs"] == calls["status"] == []
-    assert calls["warnings"] == [
-        "Some Quantum Corrections rows could not be reset cleanly:\n"
-        "- quantum_siteA: another job uses the same output folder; the row was not reset"
-    ]
-
-
-def test_quantum_controller_reset_to_stage_one_explains_an_active_row(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _complete_stage_one(service, document, definition, key).status = JobStatus.QUEUED
-    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
-
-    controller.reset_to_stage_one([key])
-
-    assert calls["confirm"] == []
-    assert calls["infos"][0][0] == "No resettable rows"
-    assert "Cancel an active job first." in calls["infos"][0][1]
-
-
-@pytest.mark.parametrize(
-    ("singlepoint_status", "phonon_status", "resettable"),
-    [
-        (JobStatus.COMPLETED, JobStatus.FAILED, True),
-        (JobStatus.COMPLETED, JobStatus.STOPPED, True),
-        (JobStatus.COMPLETED, JobStatus.CANCELLED, True),
-        (JobStatus.COMPLETED, JobStatus.COMPLETED, False),
-        (JobStatus.COMPLETED, JobStatus.DEFINED, False),
-        (JobStatus.COMPLETED, JobStatus.RUNNING, False),
-        (JobStatus.COMPLETED, None, False),
-        (JobStatus.FAILED, None, False),
-    ],
-)
-def test_quantum_controller_reset_to_stage_two_gate(
-    tmp_path: Path, singlepoint_status: JobStatus, phonon_status: JobStatus | None, resettable: bool
-) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _complete_stage_one(service, document, definition, key).status = singlepoint_status
-    if phonon_status is not None:
-        phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-        phonon.status = phonon_status
-        definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
-    controller = _quantum_document_controller(service, document, output_root)
-
-    assert controller.can_reset_to_stage_two(definition, candidates[key]) is resettable
-    assert bool(controller.stage_two_resets([key])) is resettable
-
-
-def test_quantum_controller_reset_to_stage_two_reopens_only_the_phonon_job(tmp_path: Path) -> None:
-    from mufinder.app.workflow_config_codecs import store_workflow_row_configuration
-
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    singlepoint, phonon = _row_with_failed_phonon(service, document, definition, key)
-    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
-
-    controller.reset_to_stage_two([key])
-
-    assert calls["confirm"][0][0] == "Reset Quantum Corrections to stage 2"
-    assert calls["reset_jobs"] == [[phonon]]
-    assert calls["deleted_paths"] == calls["deleted_jobs"] == []
-    assert phonon.status == JobStatus.DEFINED
-    assert singlepoint.status == JobStatus.COMPLETED
-    assert calls["status"] == ["Reset 1 Quantum Corrections row(s) to stage 2"]
-
-    # The reopened phonon stage takes a new farm count and is rewritten on submit.
-    request = controller.configure_request([key])
-    assert request is not None and request.farms_only is True
-    store_workflow_row_configuration(definition, key, {"num_farms": 3})
-    assert controller.materialize([key]) == [phonon]
-    param_text = (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(encoding="utf-8")
-    assert re.search(r"^NUM_FARMS\s*:\s*3\s*$", param_text, re.MULTILINE)
-    assert re.search(r"^TASK\s*:\s*PHONON\s*$", param_text, re.MULTILINE)
-
-
-def test_quantum_controller_reset_to_stage_two_does_nothing_when_declined(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _singlepoint, phonon = _row_with_failed_phonon(service, document, definition, key)
-    controller, calls = _reset_recording_controller(service, document, output_root, confirm=False)
-
-    controller.reset_to_stage_two([key])
-
-    assert len(calls["confirm"]) == 1
-    assert calls["reset_jobs"] == calls["status"] == []
-    assert phonon.status == JobStatus.FAILED
-
-
-def test_quantum_controller_reset_to_stage_two_explains_when_nothing_qualifies(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    _complete_stage_one(service, document, definition, key)
-    controller, calls = _reset_recording_controller(service, document, output_root, confirm=True)
-
-    controller.reset_to_stage_two([key])
-
-    assert calls["confirm"] == []
-    assert calls["infos"][0][0] == "No rows to reset to stage 2"
-
-
-def test_quantum_controller_resolves_where_a_phonon_job_continues(tmp_path: Path) -> None:
-    service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    key = next(iter(candidates))
-    singlepoint = _complete_stage_one(service, document, definition, key, execution_target="archer2")
-    singlepoint.remote_directory = "/work/quantum_siteA"
-    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
-    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
-    controller = _quantum_document_controller(service, document, output_root)
-
-    assert controller.definition_and_key_for_job(phonon) == (definition, key)
-    assert controller.stage_one_target(phonon) == "archer2"
-    assert controller.continuation_remote_target(phonon, cluster_name="ARCHER2 ") == "/work/quantum_siteA"
-    assert controller.continuation_remote_target(phonon, cluster_name="young") == ""
-    # A singlepoint job has no stage-1 target of its own.
-    assert controller.stage_one_target(singlepoint) is None
-    assert controller.continuation_remote_target(singlepoint, cluster_name="archer2") == ""
-    singlepoint.status = JobStatus.FAILED
-    assert controller.stage_one_target(phonon) is None
 
 
 def test_quantum_controller_resolves_the_phonon_analysis_input(tmp_path: Path) -> None:
@@ -1297,263 +1205,6 @@ def test_quantum_controller_resolves_the_phonon_analysis_input(tmp_path: Path) -
     assert controller.phonon_analysis_input(result) == (phonon_path, "quantum_phonon_siteA")
 
 
-def _stage_two_target_controller(
-    service: ProjectService,
-    tmp_path: Path,
-    *,
-    stage_one_targets: list[str],
-    infos: list[tuple[str, str]],
-    local: RecordingBackend | None = None,
-    cluster: RecordingBackend | None = None,
-):
-    """Build a controller whose rows are all ready for stage 2.
-
-    Row ``i`` (sites ``siteA``, ``siteB``) has a completed stage-1 singlepoint
-    that ran on ``stage_one_targets[i]``. Materialize is stubbed to hand back one
-    defined phonon job per row, so an allowed submission reaches the backend.
-    """
-
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    keys = list(candidates)[: len(stage_one_targets)]
-    for key, stage_one in zip(keys, stage_one_targets, strict=True):
-        _complete_stage_one(service, document, definition, key, execution_target=stage_one)
-    controller = _quantum_document_controller(
-        service, document, output_root, local_backend=local, cluster_backend=cluster, infos=infos
-    )
-    phonon_jobs = {
-        key: _quantum_job(service, document, f"quantum_phonon_{key}", QUANTUM_PHONON_CALC_TYPE) for key in keys
-    }
-    controller.materialize = lambda values: [phonon_jobs[str(value)] for value in values]  # type: ignore[assignment]
-    return controller, keys
-
-
-def test_quantum_controller_refuses_local_stage_two_after_a_cluster_singlepoint(tmp_path: Path) -> None:
-    """The stage-1 checkpoint is never downloaded, so a local continuation would fail."""
-
-    infos: list[tuple[str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _stage_two_target_controller(
-        ProjectService(), tmp_path, stage_one_targets=["archer2"], infos=infos, local=local
-    )
-
-    controller.submit(keys, target="local")
-
-    assert local.calls == []
-    assert len(infos) == 1
-    title, message = infos[0]
-    assert title == "Phonon stage must run where stage 1 ran"
-    assert "siteA (stage 1 ran on archer2)" in message
-
-
-def test_quantum_controller_refuses_cluster_stage_two_after_a_local_singlepoint(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    cluster = RecordingBackend()
-    controller, keys = _stage_two_target_controller(
-        ProjectService(), tmp_path, stage_one_targets=["local"], infos=infos, cluster=cluster
-    )
-
-    controller.submit(keys, target="cluster")
-
-    assert cluster.calls == []
-    assert len(infos) == 1
-    assert "ran on this computer" in infos[0][1]
-    assert "siteA" in infos[0][1]
-
-
-def test_quantum_controller_refuses_stage_two_rows_from_different_clusters(tmp_path: Path) -> None:
-    """One cluster submission cannot reach two checkpoints on two clusters."""
-
-    infos: list[tuple[str, str]] = []
-    cluster = RecordingBackend()
-    controller, keys = _stage_two_target_controller(
-        ProjectService(), tmp_path, stage_one_targets=["archer2", "young"], infos=infos, cluster=cluster
-    )
-
-    controller.submit(keys, target="cluster")
-
-    assert cluster.calls == []
-    assert infos[0][0] == "Submit each cluster's rows separately"
-    assert "archer2: siteA" in infos[0][1]
-    assert "young: siteB" in infos[0][1]
-
-
-def test_quantum_controller_preselects_the_stage_one_cluster_for_stage_two(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    cluster = RecordingBackend()
-    controller, keys = _stage_two_target_controller(
-        ProjectService(), tmp_path, stage_one_targets=["archer2", "archer2"], infos=infos, cluster=cluster
-    )
-
-    controller.submit(keys, target="cluster")
-
-    assert infos == []
-    assert len(cluster.calls) == 1
-    jobs, kwargs = cluster.calls[0]
-    assert len(jobs) == 2
-    assert kwargs["default_cluster_name"] == "archer2"
-    # The preselection does not leak into the next submission.
-    assert controller.submission_groups(jobs) == [(jobs, {})]
-
-
-def test_quantum_controller_runs_local_stage_two_after_a_local_singlepoint(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _stage_two_target_controller(
-        ProjectService(), tmp_path, stage_one_targets=["local"], infos=infos, local=local
-    )
-
-    controller.submit(keys, target="local")
-
-    assert infos == []
-    assert len(local.calls) == 1
-    assert local.calls[0][1] == {}
-
-
-def _phonon_method_controller(
-    service: ProjectService,
-    tmp_path: Path,
-    *,
-    rows: dict[str, tuple[str, str, str]],
-    infos: list[tuple[str, str]],
-    questions: list[tuple[str, str]],
-    answer: bool,
-    local: RecordingBackend,
-):
-    """Build a controller whose rows ``siteA``/``siteB`` are ready to submit.
-
-    ``rows`` maps a site label to ``(stage, GUI phonon method, pseudopotential
-    family)``, stored as the row's configuration; materialize hands back one
-    defined job per row so an allowed submission reaches the local backend.
-    """
-
-    from mufinder.app.workflow_config_codecs import store_workflow_row_configuration
-
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
-    by_label = {candidate.site.label: key for key, candidate in candidates.items()}
-    keys = []
-    for label, (stage, method, family) in rows.items():
-        key = by_label[label]
-        keys.append(key)
-        if stage == QUANTUM_STAGE_PHONON:
-            _complete_stage_one(service, document, definition, key)
-        store_workflow_row_configuration(
-            definition,
-            key,
-            {"parameter_values": {"phonon_method": method}, "pseudopotential_family": family},
-        )
-    controller = _quantum_document_controller(
-        service,
-        document,
-        output_root,
-        deps=_stub_quantum_deps(confirm=lambda title, text: questions.append((title, text)) or answer),
-        local_backend=local,
-        infos=infos,
-    )
-    jobs = {key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE) for key in keys}
-    controller.materialize = lambda values: [jobs[str(value)] for value in values]  # type: ignore[assignment]
-    return controller, keys
-
-
-def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name(tmp_path: Path) -> None:
-    """The refusal names the rows instead of ending in a generic "No ready jobs"."""
-
-    infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={
-            "siteA": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "ultrasoft"),
-            "siteB": (QUANTUM_STAGE_PHONON, "LINEARRESPONSE", "ultrasoft"),
-        },
-        infos=infos,
-        questions=questions,
-        answer=True,
-        local=local,
-    )
-
-    controller.submit(keys, target="local")
-
-    assert local.calls == []
-    assert questions == []
-    assert len(infos) == 1
-    title, message = infos[0]
-    assert title == "Phonon method needs norm-conserving pseudopotentials"
-    assert "siteA (DFPT, stage 1)" in message
-    assert "siteB (LINEARRESPONSE, stage 2)" in message
-    assert "No ready jobs" not in title
-
-
-def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_family(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={"siteA": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "unknown")},
-        infos=infos,
-        questions=questions,
-        answer=False,
-        local=local,
-    )
-
-    controller.submit(keys, target="local")
-
-    assert local.calls == []
-    assert infos == []
-    assert len(questions) == 1
-    title, message = questions[0]
-    assert title == "Check pseudopotentials for DFPT"
-    assert "siteA (DFPT, stage 1)" in message
-    assert "norm-conserving" in message
-
-
-def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={"siteA": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "unknown")},
-        infos=infos,
-        questions=questions,
-        answer=True,
-        local=local,
-    )
-
-    controller.submit(keys, target="local")
-
-    assert len(questions) == 1
-    assert len(local.calls) == 1
-
-
-def test_quantum_controller_submits_finite_displacement_without_asking(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={
-            "siteA": (QUANTUM_STAGE_SINGLEPOINT, "FINITEDISPLACEMENT", "ultrasoft"),
-            "siteB": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "norm_conserving"),
-        },
-        infos=infos,
-        questions=questions,
-        answer=False,
-        local=local,
-    )
-
-    controller.submit(keys, target="local")
-
-    assert infos == []
-    assert questions == []
-    assert len(local.calls) == 1
-
-
 def test_quantum_controller_validate_artifacts_checks_phonon_jobs_only(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "q.mufinder", "Q")
@@ -1575,3 +1226,32 @@ def test_quantum_controller_validate_artifacts_checks_phonon_jobs_only(tmp_path:
         phonon, parsed, run, ParsedJobArtifacts(phonon_error="no Gamma point")
     ) == "Failed to parse CASTEP phonon output: no Gamma point"
     assert controller.validate_artifacts(phonon, parsed, run, no_artifacts()) is None
+
+
+def test_quantum_controller_fresh_seed_and_legacy_binding_survive_a_reload(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint = _bind_legacy_singlepoint(service, document, definition, key)
+    definition.parameters["job_seed_names_by_label"][key] = "quantum_siteA"
+    _write_legacy_seed_directory(output_root, "quantum_siteA")
+    (job,) = _quantum_document_controller(service, document, output_root).materialize([key])
+    service.save_project(document)
+
+    loaded = service.load_project(document.project_root)
+    controller = _quantum_document_controller(service, loaded, output_root)
+    loaded_definition = controller.active_definition()
+
+    assert loaded_definition is not None
+    assert controller.phonon_job_for_key(loaded_definition, key).id == job.id
+    assert controller.legacy_singlepoint_job_for_key(loaded_definition, key).id == singlepoint.id
+    assert loaded_definition.parameters["job_seed_names_by_label"][key] == "quantum_siteA_phonon"
+    assert loaded_definition.parameters["singlepoint_seed_names_by_label"] == {key: "quantum_siteA"}
+    assert controller.build_states()[key].status == "defined"
+
+    def seed(owner, row: str) -> str:
+        return quantum_seed_name_for_key(loaded, owner, row)
+
+    assert job_output_directory(loaded, loaded.jobs[singlepoint.id], quantum_seed_name=seed) == (
+        output_root / "quantum_siteA"
+    )

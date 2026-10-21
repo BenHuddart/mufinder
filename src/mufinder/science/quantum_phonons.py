@@ -288,10 +288,11 @@ def muon_mass_warning(
     frequencies and a ZPE roughly a factor of three too low, and displacement
     amplitudes wrong by the same square-root factor.
 
-    The usual cause is a stage-1 singlepoint written without a ``SPECIES_MASS``
-    block: the stage-2 phonon runs as a ``CONTINUATION`` and restores the species
-    masses from the stage-1 checkpoint, so a mass present only in the stage-2 cell
-    is ignored. Such a row has to be reset to stage 1 and rerun.
+    A fresh phonon run reads the muon mass from its own ``.cell``. The run can
+    still end up with another mass when the row's settings override
+    ``SPECIES_MASS``, or when it continued from a checkpoint written without the
+    muon mass: CASTEP restores species masses from the checkpoint on a
+    continuation. Such a run has to be repeated from a clean directory.
 
     Returns ``None`` when the mass matches, and also when the muon cannot be
     identified in the header — callers that need the muon raise their own
@@ -308,10 +309,10 @@ def muon_mass_warning(
     return (
         f"CASTEP used {reported:.6g} AMU for {muon_species}, not the muon mass "
         f"{MUON_MASS_AMU:.6g} AMU. Frequencies scale as 1/sqrt(mass), so this run's "
-        "ZPE, mode frequencies, and displacement amplitudes are wrong. The stage-1 "
-        "singlepoint most likely ran without a SPECIES_MASS block and the stage-2 "
-        "continuation restored the wrong mass from its checkpoint: reset the row to "
-        "stage 1 and rerun both stages."
+        "ZPE, mode frequencies, and displacement amplitudes are wrong. Either the "
+        "row's settings override SPECIES_MASS, or the run continued from a checkpoint "
+        "written without the muon mass: delete the job and its files from the Job "
+        "Dashboard and run the row again."
     )
 
 

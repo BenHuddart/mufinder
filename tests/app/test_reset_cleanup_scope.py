@@ -1,10 +1,11 @@
 """Reset's directory cleanup never deletes files another job still depends on.
 
-A Quantum Corrections phonon job continues from the stage-1 singlepoint's
-checkpoint in the same seed directory (both stages write ``{seed}.*`` there), so
-cleaning the phonon job's directory on Reset used to delete the completed
-singlepoint's ``.check`` and ``.castep`` and leave the row unable to rerun stage
-2. Reset now keeps any directory shared with a job it is not also resetting.
+A job's directory is cleaned on Reset only when no other job uses it, unless
+that job is reset at the same time or is a directory companion its controller
+names. The one companion is the singlepoint job an older MuFinder version ran
+for a Quantum Corrections row before the phonon job, in the same seed
+directory: resetting the phonon job with clean-up empties that directory, so
+the row reruns as a fresh phonon job, and the singlepoint keeps its record.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 from tests.app.test_fresh_start_safety import ALL_FILES, SEED, _job_directory, _pristine_job
-from tests.support.main_window import stage_quantum_row_with_singlepoint
+from tests.support.main_window import stage_quantum_row
 
 QUANTUM_SEED = "quantum_siteA"
 QUANTUM_FILES = sorted(
@@ -32,16 +33,17 @@ QUANTUM_FILES = sorted(
         f"{QUANTUM_SEED}.0001.err",
     ]
 )
+QUANTUM_INPUTS = [f"{QUANTUM_SEED}.cell", f"{QUANTUM_SEED}.param"]
 
 
-def _quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon_status: JobStatus):
-    """A Quantum Corrections row whose singlepoint and phonon share one seed directory."""
+def _legacy_quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon_status: JobStatus):
+    """A legacy Quantum Corrections row whose singlepoint and phonon share one seed directory."""
 
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_reset.mufinder", "QuantumReset")
     window._document = doc
-    definition, candidate, singlepoint = stage_quantum_row_with_singlepoint(
+    definition, candidate, singlepoint = stage_quantum_row(
         window, service, doc, singlepoint_status=singlepoint_status
     )
     definition.parameters["job_seed_names_by_label"] = {candidate.key: QUANTUM_SEED}
@@ -62,14 +64,6 @@ def _quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon_status
     return window, doc, definition, candidate, singlepoint, phonon, directory
 
 
-def _answer_yes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        lambda *_args: main_window_module.QMessageBox.StandardButton.Yes,
-    )
-
-
 def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -78,31 +72,29 @@ def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return warnings
 
 
-def test_resetting_a_failed_phonon_keeps_the_stage_one_checkpoint(
+def test_resetting_a_legacy_phonon_with_cleanup_empties_the_shared_directory(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, _doc, _definition, _candidate, singlepoint, phonon, directory = _quantum_row(
+    window, doc, _definition, _candidate, singlepoint, phonon, directory = _legacy_quantum_row(
         tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
     )
     warnings = _capture_warnings(monkeypatch)
 
     window._reset_failed_jobs([phonon], cleanup_choice=True)
 
-    # The phonon job is reset, but the shared directory is left untouched.
+    # The legacy checkpoint is gone, so the rerun is a fresh phonon job.
+    assert warnings == []
     assert phonon.status == JobStatus.DEFINED
-    assert singlepoint.status == JobStatus.COMPLETED
-    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
-    assert (
-        f"- quantum_phonon_siteA: another job uses the same output folder ({directory.resolve()}); "
-        "its folder was kept"
-    ) in warnings[0]
+    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_INPUTS
+    # The singlepoint stays as a record in the Job Dashboard.
+    assert doc.jobs[singlepoint.id].status == JobStatus.COMPLETED
     window.close()
 
 
-def test_resetting_both_stages_together_cleans_their_directory(
+def test_resetting_both_legacy_jobs_together_cleans_their_directory(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, _doc, _definition, _candidate, singlepoint, phonon, directory = _quantum_row(
+    window, _doc, _definition, _candidate, singlepoint, phonon, directory = _legacy_quantum_row(
         tmp_path, singlepoint_status=JobStatus.FAILED, phonon_status=JobStatus.FAILED
     )
     warnings = _capture_warnings(monkeypatch)
@@ -110,26 +102,53 @@ def test_resetting_both_stages_together_cleans_their_directory(
     window._reset_failed_jobs([singlepoint, phonon], cleanup_choice=True)
 
     assert warnings == []
-    assert sorted(path.name for path in directory.iterdir()) == [
-        f"{QUANTUM_SEED}.cell",
-        f"{QUANTUM_SEED}.param",
-    ]
+    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_INPUTS
     window.close()
 
 
-def test_reset_without_cleanup_never_asks_about_sharing(
+def test_resetting_a_legacy_phonon_without_cleanup_keeps_its_checkpoint(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    window, _doc, _definition, _candidate, _singlepoint, phonon, directory = _quantum_row(
+    window, _doc, _definition, _candidate, singlepoint, phonon, directory = _legacy_quantum_row(
         tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
     )
     warnings = _capture_warnings(monkeypatch)
 
     window._reset_failed_jobs([phonon], cleanup_choice=False)
 
+    # The rerun continues from the checkpoint in the kept directory.
     assert warnings == []
     assert phonon.status == JobStatus.DEFINED
+    assert singlepoint.status == JobStatus.COMPLETED
     assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
+    window.close()
+
+
+def test_resetting_a_phonon_keeps_a_folder_an_unrelated_job_uses(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, doc, _definition, _candidate, _singlepoint, phonon, directory = _legacy_quantum_row(
+        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
+    )
+    stranger = ProjectService().add_job(
+        doc, label="stranger", workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS, calc_type="castep"
+    )
+    original_lookup = window._job_output_directory
+    monkeypatch.setattr(
+        window,
+        "_job_output_directory",
+        lambda job: directory if job.id == stranger.id else original_lookup(job),
+    )
+    warnings = _capture_warnings(monkeypatch)
+
+    window._reset_failed_jobs([phonon], cleanup_choice=True)
+
+    assert phonon.status == JobStatus.DEFINED
+    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
+    assert (
+        f"- quantum_phonon_siteA: another job uses the same output folder ({directory.resolve()}); "
+        "its folder was kept"
+    ) in warnings[0]
     window.close()
 
 
@@ -150,66 +169,6 @@ def test_resetting_a_relaxation_keeps_a_folder_its_replacement_uses(
     assert old.status == JobStatus.DEFINED
     assert sorted(path.name for path in directory.iterdir()) == ALL_FILES
     assert f"- {SEED}: another job uses the same output folder" in warnings[0]
-    window.close()
-
-
-def test_reset_to_stage_one_still_clears_its_own_directory(
-    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window, doc, definition, candidate, singlepoint, phonon, directory = _quantum_row(
-        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
-    )
-    _answer_yes(monkeypatch)
-
-    window._quantum_corrections_controller.reset_to_stage_one([candidate.key])
-
-    # Both stages belong to the row, so rewinding it removes the directory.
-    assert not directory.exists()
-    assert singlepoint.id not in doc.jobs and phonon.id not in doc.jobs
-    window.close()
-
-
-def test_reset_to_stage_two_keeps_the_shared_directory(
-    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window, doc, definition, candidate, singlepoint, phonon, directory = _quantum_row(
-        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
-    )
-    _answer_yes(monkeypatch)
-
-    window._quantum_corrections_controller.reset_to_stage_two([candidate.key])
-
-    # Only the phonon job is reopened; the stage-1 checkpoint it continues from stays.
-    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
-    assert phonon.status == JobStatus.DEFINED
-    assert singlepoint.status == JobStatus.COMPLETED
-    window.close()
-
-
-def test_reset_to_stage_one_refuses_a_directory_shared_with_another_row(
-    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window, doc, definition, candidate, singlepoint, phonon, directory = _quantum_row(
-        tmp_path, singlepoint_status=JobStatus.COMPLETED, phonon_status=JobStatus.FAILED
-    )
-    stranger = ProjectService().add_job(
-        doc, label="stranger", workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS, calc_type="castep"
-    )
-    original_lookup = window._job_output_directory
-    monkeypatch.setattr(
-        window,
-        "_job_output_directory",
-        lambda job: directory if job.id == stranger.id else original_lookup(job),
-    )
-    _answer_yes(monkeypatch)
-    warnings = _capture_warnings(monkeypatch)
-
-    window._quantum_corrections_controller.reset_to_stage_one([candidate.key])
-
-    assert sorted(path.name for path in directory.iterdir()) == QUANTUM_FILES
-    assert singlepoint.id in doc.jobs and phonon.id in doc.jobs
-    assert "another job uses the same output folder" in warnings[0]
-    assert "the row was not reset" in warnings[0]
     window.close()
 
 

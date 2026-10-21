@@ -8,7 +8,6 @@ a keyword-only module-level ``expand_*`` function rather than a class:
 - :func:`mufinder.workflow.muon_site.expand_muon_site_jobs`
 - :func:`mufinder.workflow.relaxation.expand_relaxation_jobs`
 - :func:`mufinder.workflow.energy_barriers.expand_nudged_elastic_band_jobs`
-- :func:`mufinder.workflow.quantum.expand_quantum_singlepoint_jobs`
 - :func:`mufinder.workflow.quantum.expand_quantum_phonon_jobs`
 
 Contract for an ``expand_*`` function:
