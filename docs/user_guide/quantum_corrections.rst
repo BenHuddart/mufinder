@@ -83,7 +83,7 @@ You submit each stage yourself; MuFinder does not chain them automatically.
    ``Reset to Stage 1`` and rerun both stages there.
 5. **Review the result.** When the phonon job completes and its ``.phonon``
    file parses, a row appears under ``Completed Results`` with the muon ZPE,
-   the Gamma-point eigenvalues, and the ``w1`` witness. Check the jobs
+   the three muon-mode frequencies, their widths and the ``w1`` witness. Check the jobs
    dashboard for warnings, in particular the muon-mass warning (see
    `Muon mass across the two stages`_).
 6. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
@@ -131,10 +131,13 @@ The workflow page
 -----------------
 
 .. figure:: ../_generated/screenshots/quantum_corrections_page.png
-   :alt: The Quantum Corrections page with two pinned sites, one ready for its phonon
-         stage and one for its singlepoint.
+   :alt: The Quantum Corrections page with two pinned sites, the first with its phonon
+         stage completed and the second ready for its singlepoint, and one completed
+         result row showing the muon ZPE, three muon-mode frequencies, their widths
+         and the w1 witness.
 
-   Two pinned silicon sites, the first past its singlepoint; the outputs are illustrative.
+   Two pinned silicon sites, the first through both stages with its result under
+   ``Completed Results``; the outputs are illustrative.
 
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
@@ -187,10 +190,16 @@ reset them to stage 1 or stage 2. There is no ``Remove``: rows are derived from
 completed relaxations.
 
 ``Completed Results`` (``Completed phonon analyses``) has one row per completed
-phonon job: ``Job``, ``ZPE`` (total muon ZPE of the three selected modes, eV),
-``Eigenvalues (cm⁻¹)`` (every Gamma-point mode as ``index:frequency``), ``w1``,
-``Status`` (the producing job's status, coloured like the jobs table), and an
-``Analysis`` column with the ``Launch Analysis`` button.
+phonon job: ``Job``; ``ZPE (eV)``, the total muon zero-point energy, ``½ħω``
+summed over the three selected muon-dominated Gamma modes, to three decimals;
+``Muon modes (cm⁻¹)``, the frequencies of those three modes in ascending order;
+``Width (Å)``, the muon's zero-point width ``sqrt(ħ / (2 m_μ ω))`` along each of
+those modes, in the same order; ``w1``, the mode-mixing witness ``P - 3`` (0
+when the muon's motion is contained in its three modes, more negative as it
+mixes with host modes, down to -3); ``Status`` (the producing job's status,
+coloured like the jobs table); and an ``Analysis`` column with the
+``Launch Analysis`` button. Hover a column header for its definition. Every
+Gamma-point mode is listed in the analysis window's ``Phonon Modes`` tab.
 
 Configuration dialog
 --------------------

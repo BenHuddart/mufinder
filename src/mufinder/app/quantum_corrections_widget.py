@@ -76,14 +76,46 @@ class QuantumSourceRow:
 
 @dataclass(frozen=True, slots=True)
 class QuantumResultRow:
-    """One completed quantum-corrections result row."""
+    """One completed quantum-corrections result row.
+
+    Every field is display text built by the controller: ``zpe`` is the total
+    muon ZPE in eV, ``muon_modes`` the three selected Γ-mode frequencies in
+    cm⁻¹ in frequency order, ``widths`` the muon's zero-point width in Å along
+    each of those modes in the same order, and ``witness`` the ``w1``
+    mode-mixing witness.
+    """
 
     key: str
     label: str
     zpe: str
-    eigenvalues: str
+    muon_modes: str
+    widths: str
     witness: str
     status: str
+
+
+#: Completed Results column headers and their tooltips, in column order.
+RESULT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Job", ""),
+    (
+        "ZPE (eV)",
+        "Total muon zero-point energy, ½ħω summed over the three muon-dominated Γ modes",
+    ),
+    (
+        "Muon modes (cm⁻¹)",
+        "Frequencies of the three Γ modes with the largest muon participation, in frequency order",
+    ),
+    ("Width (Å)", "Zero-point width √(ħ/2m_μω) of the muon along each muon mode"),
+    (
+        "w1",
+        "Mode-mixing witness P − 3: 0 when the muon's motion is contained in its three modes, "
+        "more negative as it mixes with host modes (down to −3)",
+    ),
+    ("Status", ""),
+    ("Analysis", ""),
+)
+RESULT_STATUS_COLUMN = 5
+RESULT_ANALYSIS_COLUMN = 6
 
 
 class QuantumCorrectionsWidget(SourceTableWidget):
@@ -272,15 +304,19 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
         self._results_table = create_workflow_table(
-            ("Job", "ZPE", "Eigenvalues (cm⁻¹)", "w1", "Status", "Analysis")
+            tuple(title for title, _tip in RESULT_COLUMNS), stretch_last_section=False
         )
         results_header = self._results_table.horizontalHeader()
-        results_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        results_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        results_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        results_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        results_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        results_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        for column, (_title, tooltip) in enumerate(RESULT_COLUMNS):
+            mode = (
+                QHeaderView.ResizeMode.Stretch
+                if column == 0
+                else QHeaderView.ResizeMode.ResizeToContents
+            )
+            results_header.setSectionResizeMode(column, mode)
+            header_item = self._results_table.horizontalHeaderItem(column)
+            if tooltip and header_item is not None:
+                header_item.setToolTip(tooltip)
         results_layout.addWidget(self._results_table)
         layout.addWidget(results_group, 1)
 
@@ -333,25 +369,22 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         _fill_table(
             self._results_table,
             [
-                (row.label, row.zpe, row.eigenvalues, row.witness, row.status)
+                (row.label, row.zpe, row.muon_modes, row.widths, row.witness, row.status)
                 for row in rows
             ],
         )
         for row_index, row in enumerate(rows):
             # Colour the Status cell with the project-standard per-status palette, matching the
             # eligible-sources table and the relaxation/convergence tables.
-            status_item = self._results_table.item(row_index, 4)
+            status_item = self._results_table.item(row_index, RESULT_STATUS_COLUMN)
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
             button = QPushButton("Launch Analysis")
             button.clicked.connect(lambda _checked=False, key=row.key: self.analysis_requested.emit(key))
-            self._results_table.setCellWidget(row_index, 5, button)
+            self._results_table.setCellWidget(row_index, RESULT_ANALYSIS_COLUMN, button)
         if self._results_table.rowCount() > 0:
-            self._results_table.resizeColumnToContents(1)
-            self._results_table.resizeColumnToContents(3)
-            self._results_table.resizeColumnToContents(4)
-            self._results_table.resizeColumnToContents(5)
-            self._results_table.setColumnWidth(3, max(56, self._results_table.columnWidth(3)))
+            for column in range(1, len(RESULT_COLUMNS)):
+                self._results_table.resizeColumnToContents(column)
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt API naming.
         """Re-apply palette-derived status colours on a theme change.
@@ -372,7 +405,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     def _reapply_status_colors(self) -> None:
         self._reapply_source_status_colors()
         for row_index, row in enumerate(self._result_rows):
-            status_item = self._results_table.item(row_index, 4)
+            status_item = self._results_table.item(row_index, RESULT_STATUS_COLUMN)
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
 

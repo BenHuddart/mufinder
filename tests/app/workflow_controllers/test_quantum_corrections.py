@@ -196,6 +196,12 @@ def test_quantum_controller_refresh_view_populates_result_row_status(tmp_path: P
 def _displayed_witness(tmp_path: Path, data: dict) -> str:
     """Return the witness text ``refresh_view`` shows for one stored phonon payload."""
 
+    return _displayed_result_row(tmp_path, data).witness
+
+
+def _displayed_result_row(tmp_path: Path, data: dict):
+    """Return the result row ``refresh_view`` shows for one stored phonon payload."""
+
     from mufinder.domain.models import Result
 
     service = ProjectService()
@@ -210,7 +216,7 @@ def _displayed_witness(tmp_path: Path, data: dict) -> str:
         make_context(document=document, project_service=service), _stub_quantum_deps(), view
     )
     controller.refresh_view()
-    return view.results[-1][0].witness
+    return view.results[-1][0]
 
 
 _STORED_MODES = [
@@ -247,6 +253,54 @@ def test_quantum_controller_refresh_view_shows_an_old_witness_without_modes_as_s
 ) -> None:
     assert _displayed_witness(tmp_path, {"w1_entanglement_witness": -0.5}) == "-0.5"
     assert _displayed_witness(tmp_path, {"muon_zpe_total_eV": 0.1}) == ""
+
+
+def test_quantum_controller_refresh_view_shows_muon_modes_and_stored_widths(
+    tmp_path: Path,
+) -> None:
+    """The row lists the three muon modes and their stored ``width_A`` in
+    frequency order, and the ZPE as a bare number (the header carries eV)."""
+
+    data = {
+        "muon_zpe_total_eV": 0.5786,
+        "muon_zpe_modes": [
+            {"mode_index": 9, "frequency_cm": 3226.0, "participation": 0.9, "width_A": 0.2149},
+            {"mode_index": 7, "frequency_cm": 2742.0, "participation": 0.95, "width_A": 0.2331},
+            {"mode_index": 8, "frequency_cm": 3226.0, "participation": 0.9, "width_A": 0.2149},
+        ],
+        "w1_entanglement_witness": -0.14,
+        "w1_definition": "participation_minus_3",
+        "phonon_mode_eigenvalues_cm": [100.0, 400.0, 900.0, 2742.0, 3226.0, 3226.0],
+    }
+
+    row = _displayed_result_row(tmp_path, data)
+
+    assert row.zpe == "0.579"
+    assert row.muon_modes == "2742.0, 3226.0, 3226.0"
+    assert row.widths == "0.23, 0.21, 0.21"
+    assert row.witness == "-0.14"
+
+
+def test_quantum_controller_refresh_view_computes_widths_for_a_payload_without_width(
+    tmp_path: Path,
+) -> None:
+    """A payload stored without ``width_A`` shows widths computed from each
+    mode's frequency with the muon mass."""
+
+    row = _displayed_result_row(tmp_path, {"muon_zpe_modes": _STORED_MODES})
+
+    assert row.muon_modes == "1600.0, 2500.0, 3600.0"
+    assert row.widths == ", ".join(
+        f"{mode_width_angstrom(mode['frequency_cm']):.2f}" for mode in _STORED_MODES
+    )
+
+
+def test_quantum_controller_refresh_view_leaves_mode_cells_blank_without_modes(
+    tmp_path: Path,
+) -> None:
+    row = _displayed_result_row(tmp_path, {"muon_zpe_total_eV": "not a number"})
+
+    assert (row.zpe, row.muon_modes, row.widths) == ("", "", "")
 
 
 def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> None:
