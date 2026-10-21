@@ -15,11 +15,12 @@ import time
 from typing import TypeVar
 from uuid import UUID, uuid4
 
-from PySide6.QtCore import QByteArray, QEventLoop, QSize, QSettings, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QEventLoop, QSize, QSettings, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
     QColor,
+    QDesktopServices,
     QGuiApplication,
     QKeySequence,
     QPixmap,
@@ -56,7 +57,12 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.castep_setup import load_castep_setup
+from mufinder._version import current_version
 from mufinder.branding import (
+    DOCUMENTATION_URL,
+    PRODUCT_NAME,
+    PRODUCT_TAGLINE,
+    REPOSITORY_URL,
     app_icon,
     logo_path,
 )
@@ -1415,6 +1421,25 @@ class MainWindow(QMainWindow):
             light_action.setChecked(True)
         else:
             system_action.setChecked(True)
+
+        help_menu = self.menuBar().addMenu("Help")
+        user_guide_action = help_menu.addAction("User Guide")
+        user_guide_action.triggered.connect(self._open_user_guide)
+        about_action = help_menu.addAction(f"About {PRODUCT_NAME}")
+        about_action.triggered.connect(self._show_about_dialog)
+
+    def _open_user_guide(self) -> None:
+        QDesktopServices.openUrl(QUrl(DOCUMENTATION_URL))
+
+    def _show_about_dialog(self) -> None:
+        QMessageBox.about(
+            self,
+            f"About {PRODUCT_NAME}",
+            f"<h3>{PRODUCT_NAME} {current_version()}</h3>"
+            f"<p>{PRODUCT_TAGLINE}</p>"
+            f'<p><a href="{DOCUMENTATION_URL}">Documentation</a> | '
+            f'<a href="{REPOSITORY_URL}">Source code</a></p>',
+        )
 
     def _set_appearance_mode(self, mode: str) -> None:
         self._appearance_mode = mode

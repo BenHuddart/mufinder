@@ -17,7 +17,7 @@ The harness has four parts:
   ``.github/copilot-instructions.md`` points to it, so no rule lives only in a
   vendor-specific file. It states the rules and links to the docs for the rationale,
   and stays within 140 lines. Inventories that grow with the code, such as the
-  shared home for each cross-workflow concern, live in ``docs/`` (:doc:`architecture`,
+  shared home for each cross-workflow concern, live in ``docs/`` (:doc:`/architecture`,
   Shared workflow infrastructure), where a harness test checks that each listed
   module still exists.
 - ``docs/`` is the system of record for product behavior, architecture, quality gates,
@@ -33,8 +33,8 @@ Agent workflow
 For non-trivial changes, use this loop:
 
 1. Read ``AGENTS.md`` and the relevant document in ``docs/``.
-2. Identify the package layer that owns the behavior in :doc:`architecture`, and the
-   shared home for any cross-workflow concern (:doc:`architecture`, Shared
+2. Identify the package layer that owns the behavior in :doc:`/architecture`, and the
+   shared home for any cross-workflow concern (:doc:`/architecture`, Shared
    workflow infrastructure).
 3. Update implementation, tests, and documentation together.
 4. Run focused tests for the touched area.
@@ -50,18 +50,18 @@ Sources of truth
 
 Use these documents as the first stop for common tasks:
 
-- :doc:`project_specification` defines product and workflow requirements.
-- :doc:`architecture` defines package responsibilities, dependency directions,
+- :doc:`/project_specification` defines product and workflow requirements.
+- :doc:`/architecture` defines package responsibilities, dependency directions,
   the shared homes for cross-workflow code and the workflow-controller contract.
-- :doc:`implemented_functionality` summarizes the current feature surface.
-- :doc:`quality_and_automation` lists quality gates, local commands, and targeted checks.
-- :doc:`compatibility_policy` records compatibility aliases and expiry rules.
-- :doc:`job_lifecycle` is the job state-transition contract.
+- :doc:`/user_guide/overview` summarizes the current feature surface.
+- :doc:`/quality_and_automation` lists quality gates, local commands, and targeted checks.
+- :doc:`/compatibility_policy` records compatibility aliases and expiry rules.
+- :doc:`/job_lifecycle` is the job state-transition contract.
 
 Executable guardrails
 ---------------------
 
-``tests/test_agent_harness.py`` holds the structural checks; :doc:`quality_and_automation`
+``tests/test_agent_harness.py`` holds the structural checks; :doc:`/quality_and_automation`
 (Agent harness checks) lists what they currently verify. Feature-specific tests live next
 to the relevant domain, service, app, docs, or packaging area.
 
@@ -76,9 +76,9 @@ MuFinder prefers small, continuous cleanup over large occasional rewrites. Good 
 candidates are:
 
 - per-workflow widget or controller code that duplicates a sibling workflow and belongs
-  in one of the shared homes listed in :doc:`architecture`
+  in one of the shared homes listed in :doc:`/architecture`
 - feature-local styling that belongs in ``mufinder.app.theme``
-- compatibility aliases without an entry in :doc:`compatibility_policy`, or past their
+- compatibility aliases without an entry in :doc:`/compatibility_policy`, or past their
   expiry condition
 - UI behavior that depends on platform-specific input handling
 - code that crosses package layers without a deliberate architecture update

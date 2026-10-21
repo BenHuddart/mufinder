@@ -6,7 +6,7 @@ MuFinder, a PySide6 desktop application for muon stopping-site workflows built
 around CASTEP and scientific Python tools. It states what the product must do
 and the constraints every feature must satisfy. The development process itself
 (branching, gates, where code lives) is defined by ``AGENTS.md`` and
-:doc:`architecture`; the per-workflow user guides describe the implemented
+:doc:`/architecture`; the per-workflow user guides describe the implemented
 behaviour in detail.
 
 When a change alters user-visible behaviour, architecture, validation logic or
@@ -74,7 +74,7 @@ and stage panels surface their prerequisites and dependency gaps.
 The project home shows where a project stands: a chart of the workflow stages
 with their dependencies and progress, opened at the stage the user last worked
 on; notes on the selected stage with a link to it; and a survey of the host
-cell with that stage's muon positions (see :doc:`project_home`).
+cell with that stage's muon positions (see :doc:`/user_guide/project_home`).
 
 Project model and persistence
 -----------------------------
@@ -104,7 +104,7 @@ Persistence requirements:
 - cross-entity references are validated before save
 - saved supercell assets are persisted as ``Structure`` entities with
   ``properties.supercell_asset`` metadata rather than as a separate entity type
-- persisted names and compatibility shims follow :doc:`compatibility_policy`
+- persisted names and compatibility shims follow :doc:`/compatibility_policy`
 
 Domain model
 ------------
@@ -127,7 +127,7 @@ Job records move through ``defined``, ``submitting``, ``queued``, ``running``
 and ``retrieving`` to a terminal ``completed``, ``failed``, ``stopped`` or
 ``cancelled`` state (``JobStatus`` in ``mufinder.domain.enums``); workflow rows
 show a ``defined`` job whose inputs are configured as ``ready``.
-:doc:`job_lifecycle` is the authoritative transition contract. The job system
+:doc:`/job_lifecycle` is the authoritative transition contract. The job system
 provides a centralized registry and dashboard, typed tags for stage and
 calculation type, strictly validated lifecycle transitions, and restart and
 reload synchronization.
@@ -285,7 +285,7 @@ UI architecture
 - MVVM-like separation with a service layer: views are thin and delegate to
   services; services own orchestration and validation; the domain layer stays
   GUI-independent. The package layers and their dependency directions are
-  defined in :doc:`architecture`.
+  defined in :doc:`/architecture`.
 - Long-running operations never block the UI; background execution signals
   updates thread-safely.
 - Startup shows the splash screen as early as practical after ``QApplication``
@@ -332,7 +332,7 @@ Convergence testing
   method metadata used to determine it. Project-level defaults, including the
   cutoff, are visible from the GUI.
 - The k-point spacing and grid mapping follows
-  :doc:`castep/kpoint_spacing_convention`.
+  :doc:`/castep/kpoint_spacing_convention`.
 
 Project defaults
 ~~~~~~~~~~~~~~~~
@@ -380,7 +380,7 @@ Pristine relaxation
 - A ``Generate Comparison Table`` feature compares one or more completed DFT
   relaxations against the active experimental host structure as a persisted
   subtab with editable title, per-metric information dialogs and CSV export
-  (see :doc:`comparison_table`).
+  (see :doc:`/user_guide/comparison_table`).
 
 Muon site generation and relaxation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -389,7 +389,7 @@ Muon site generation and relaxation
   separation or by a target number of positions with automatic spacing
   estimation), near-element placement, manual entry (fractional or Cartesian),
   and UEP cluster source rows from saved UEP analysis state (see
-  :doc:`uep_workflow`).
+  :doc:`/user_guide/uep_workflow`).
 - Generation constraints: periodic minimum-image muon-muon and muon-atom
   distances, attempt-capped sampling, symmetry-equivalent random-position
   reservation, and an internal deterministic seed for regression tests (not
@@ -400,7 +400,7 @@ Muon site generation and relaxation
   column, and CASTEP total charge stays workflow-controlled: ``+1`` for the
   positive muon and ``0`` for muonium.
 - Relaxations performed outside MuFinder can be imported as read-only rows
-  (see :doc:`legacy_import`).
+  (see :doc:`/user_guide/legacy_import`).
 
 Relaxation analysis and clustering
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -408,7 +408,7 @@ Relaxation analysis and clustering
 - Relaxed sites and energies are extracted from completed relaxations,
   filtered by displacement and quality constraints, clustered, and summarised
   as distinct sites with representative structures (see
-  :doc:`structural_relaxation_analysis` and :doc:`site_generation`).
+  :doc:`/user_guide/structural_relaxation_analysis` and :doc:`/user_guide/site_generation`).
 - Distinct sites can be pinned on the Muon Sites summary page, which is the
   source downstream workflows read, and exported as CIF. Each pinned site
   records its cluster's representative relaxation job, which resolves it to the
@@ -435,7 +435,7 @@ Host structure magnetic editing and the supercell editor
   name, edit, delete and select reusable project supercells. Editing the
   matrix of a saved supercell already frozen into a configured calculation
   creates a future-use copy rather than rewriting the frozen structure (see
-  :doc:`supercells`).
+  :doc:`/user_guide/supercells`).
 
 Workflow-scoped simulation cells and supercell assets
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -477,7 +477,7 @@ Magnetic fields
   dipolar linewidths are evaluated at muon sites, with symmetry-equivalent
   sites and muon-induced distortion corrections available; optional
   ``muesr`` / ``muLFC`` backends are used where installed, with clear errors
-  otherwise (see :doc:`magnetic_fields`).
+  otherwise (see :doc:`/user_guide/magnetic_fields`).
 
 Quantum corrections
 ~~~~~~~~~~~~~~~~~~~
@@ -545,7 +545,7 @@ Energy barriers
   inspector with image-by-image geometry preview in the shared structure
   viewer and a plotted reaction-coordinate profile synchronized with the image
   table, slider and viewer. Profiles are persisted and exportable (see
-  :doc:`energy_barriers`).
+  :doc:`/user_guide/energy_barriers`).
 
 Structure import and MCIF magnetic extraction
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -588,7 +588,7 @@ Engineering requirements and definition of done
 -----------------------------------------------
 
 Every feature and bug fix must satisfy these requirements, which CI enforces
-(:doc:`quality_and_automation`):
+(:doc:`/quality_and_automation`):
 
 1. Tests in ``tests/`` cover the normal execution paths, input validation and
    failure modes, and persistence behaviour where the feature writes or reads

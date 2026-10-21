@@ -98,4 +98,4 @@ The workflow reads as an expedition journal:
   sections are named regions,
   dependencies are inked, dashed or dotted routes, completed stages carry the
   same gold seal as the navigator, and a red flag marks where the user left
-  off (see :doc:`project_home`).
+  off (see :doc:`/user_guide/project_home`).

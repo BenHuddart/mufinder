@@ -9,7 +9,7 @@ contributor-facing source of truth for that subset is
 ``tests/castep_io/test_schema.py`` checks that the two agree. How the runtime
 schema is built from a discovered ``castep_keywords.json``, and when the
 starter catalog is used instead, is described in
-:doc:`../castep_keyword_catalog`.
+:doc:`/castep_keyword_catalog`.
 
 Formatting conventions
 ----------------------
@@ -105,7 +105,7 @@ The ``.cell`` entries in the starter catalog are:
 
 Anything outside this subset is unsupported until it is added to the catalog,
 the schema and the tests. The mapping between ``KPOINT_MP_SPACING`` and
-``KPOINT_MP_GRID`` is described in :doc:`kpoint_spacing_convention`.
+``KPOINT_MP_GRID`` is described in :doc:`/castep/kpoint_spacing_convention`.
 
 Example
 -------

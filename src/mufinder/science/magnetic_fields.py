@@ -156,7 +156,7 @@ class MagneticFieldResult:
 
 @dataclass(frozen=True, slots=True)
 class DistributionConvergenceCheck:
-    """How sensitive one sampled p(|B|) distribution is to one numerical setting.
+    """How sensitive one sampled ``p(|B|)`` distribution is to one numerical setting.
 
     ``setting`` names the :class:`MagneticFieldOptions` field (``nangles``,
     ``phase_sample_count`` or ``histogram_bins``). For ``nangles`` and

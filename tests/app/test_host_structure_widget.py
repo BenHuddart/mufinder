@@ -81,6 +81,18 @@ def test_host_structure_widget_splitter_fits_small_screen_width(qapp) -> None:
     assert widget._viewer.minimumWidth() + widget._atom_table.minimumWidth() < 1280
 
 
+def test_host_structure_widget_gives_spare_height_to_the_table_and_viewer(qapp) -> None:
+    """Extra height goes to the table/viewer splitter, not to gaps between the header rows."""
+    widget = HostStructureWidget()
+    widget.set_structure(_sample_structure())
+    widget.resize(1100, 1000)
+    widget.show()
+    qapp.processEvents()
+
+    splitter = widget._viewer.parentWidget()
+    assert splitter.height() > widget.height() // 2
+
+
 def _hexagonal_structure() -> Structure:
     a = 4.2
     c = 6.8

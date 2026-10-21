@@ -32,17 +32,17 @@ Quantum Corrections needs:
   ``Muon Sites > Relaxations`` and let them complete. Every site whose
   relaxation completed successfully appears automatically on the Quantum
   Corrections page (see `Source eligibility`_). Relaxations brought in through
-  :doc:`legacy_import` are eligible too.
+  :doc:`/user_guide/legacy_import` are eligible too.
 - **A decision about which sites matter.** A phonon calculation is expensive
   (roughly three displacements per atom with finite displacement), so the page
   lists the distinct sites pinned to the ``Muon Sites`` summary by default:
   cluster the relaxed sites under ``Muon Sites > Analysis``
-  (:doc:`structural_relaxation_analysis`) and choose ``Pin to Summary``. Each
+  (:doc:`/user_guide/structural_relaxation_analysis`) and choose ``Pin to Summary``. Each
   pinned site is one row, its cluster's representative relaxation. Tick
   ``Show every relaxed site`` to list every eligible relaxed site instead,
   including relaxed copies of the same site.
 - **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
-  under ``Setup``, and load a keyword catalog (:doc:`castep_keyword_catalog`).
+  under ``Setup``, and load a keyword catalog (:doc:`/castep_keyword_catalog`).
 
 Running the workflow
 --------------------
@@ -118,7 +118,7 @@ A stage-1 job that is still ``defined`` (staged but never submitted, or returned
 there by the Job Dashboard's ``Reset``) stays fully editable: submitting the row
 rewrites its input files from the stored configuration. Dismissing a failed job
 from the Job Dashboard also reopens its stage, as for every workflow (see
-:ref:`dismissed-rows-stay-resubmittable`).
+:doc:`/getting_started/running_jobs`).
 
 The Job Dashboard's own ``Reset`` returns a failed phonon job to ``defined``
 like ``Reset to Stage 2``, and its optional directory cleanup leaves the shared
@@ -129,6 +129,12 @@ the row over from a clean directory.
 
 The workflow page
 -----------------
+
+.. figure:: ../_generated/screenshots/quantum_corrections_page.png
+   :alt: The Quantum Corrections page with two pinned sites, one ready for its phonon
+         stage and one for its singlepoint.
+
+   Two pinned silicon sites, the first past its singlepoint; the outputs are illustrative.
 
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
@@ -275,21 +281,20 @@ seed a spin of +1 on the muon, as the muon relaxation does.
 Source eligibility
 ------------------
 
-A relaxed site is listed only when (a pinned site is listed when the relaxed
-site of its cluster's representative relaxation passes the same checks, in the
+A relaxed site is listed only when all of these hold (a pinned site is listed
+when the relaxation that represents its cluster passes the same checks, in the
 pin's charge state):
 
-- the ``MuonSite`` status is ``relaxed`` and the site records its relaxation run;
+- the site has been relaxed and records its relaxation run;
 - that run, and the job that produced it, completed successfully;
-- the job belongs to ``WorkflowStage.MUON_RELAXATION``;
-- the run produced a parsed relaxed structure with
-  ``origin == "muon_relaxation"`` and muon-relaxation provenance;
+- the job is a muon relaxation from ``Muon Sites -> Relaxations``, or a
+  relaxation brought in through :doc:`/user_guide/legacy_import`;
+- the run produced a parsed relaxed structure;
 - the relaxed structure contains an ``H:mu`` atom.
 
 UEP candidates, generated sites, failed relaxations, pristine relaxations, and
-manual sites without structural-relaxation provenance are excluded because
-their ionic coordinates have not been relaxed for a phonon calculation. The
-check is :func:`mufinder.workflow.quantum.quantum_source_eligibility`.
+manual sites without a structural relaxation are excluded because their ionic
+coordinates have not been relaxed for a phonon calculation.
 
 CASTEP phonon methods
 ---------------------
@@ -350,12 +355,11 @@ Two guards protect against a run made at the wrong mass:
   spot: both stages write ``{seed}.cell`` to the same path, so a row whose
   stage-2 job was already materialized no longer has stage-1 evidence on disk.
 - **After completion.** CASTEP records the mass it actually used in the
-  ``.phonon`` header, so
-  :func:`~mufinder.science.quantum_phonons.muon_mass_warning` compares it against
-  the muon mass on every parsed phonon run. A mismatch is raised as a job warning,
-  recorded in the result payload, and shown as a banner in the analysis window.
+  ``.phonon`` header, so MuFinder compares it against the muon mass on every
+  parsed phonon run. A mismatch is raised as a job warning,
+  stored with the result, and shown as a banner in the analysis window.
   This catches the rows the pre-submission guard cannot, including projects whose
-  stage 1 ran before both stages emitted the block.
+  stage-1 singlepoint was written without the block.
 
 Neither guard can repair an affected run: the row has to be reset to stage 1 and
 both stages rerun.
@@ -382,9 +386,9 @@ step 4 of `Running the workflow`_).
 Outputs and interpretation
 --------------------------
 
-Each completed phonon job stores a result with:
+Each completed phonon job saves a result with:
 
-- the source relaxed site, relaxation run, and relaxation job;
+- the source relaxed site and the relaxation job it came from;
 - the path of the CASTEP ``.phonon`` file and whether it is Gamma-only;
 - every Gamma-point eigenvalue in ``cm-1``;
 - the three selected modes: index, frequency, muon participation, and ZPE;
@@ -460,14 +464,9 @@ Scope and limitations
 ---------------------
 
 - Phonons are computed at Gamma only, in the harmonic approximation.
-- The ``Adiabatic Solver`` tab uses harmonic, phonon-derived potentials. The
-  science layer also provides a general solver for tabulated 1D potentials
-  (:func:`~mufinder.science.quantum_adiabatic.solve_single_particle_ground_state`)
-  and the strongly-bound effective mass ``m_mu + sum_i m_i |dR_i/dx_mu|^2``
-  (:func:`~mufinder.science.quantum_adiabatic.effective_mass_from_relaxed_scan`),
-  following the single-particle approximations of Gomilšek *et al.*, but
-  MuFinder does not yet generate or import the line-scan calculations that
-  would feed them, so anharmonic potentials are not available from the UI.
+- The ``Adiabatic Solver`` tab uses harmonic, phonon-derived potentials.
+  MuFinder does not generate or import line-scan calculations, so anharmonic
+  potentials are not available from the application (see `For developers`_).
 - Path-integral molecular dynamics (PIMD) is out of scope for MuFinder.
 
 References
@@ -478,3 +477,17 @@ References
 - M. Gomilšek, F. L. Pratt, S. P. Cottrell, S. J. Clark, and T. Lancaster,
   *Many-body quantum muon effects and quadrupolar coupling in solids*,
   Commun. Phys. **6**, 142 (2023), DOI: ``10.1038/s42005-023-01260-7``.
+
+For developers
+--------------
+
+The check behind `Source eligibility`_ is
+:func:`mufinder.workflow.quantum.quantum_source_eligibility`, and the mass check
+is :func:`~mufinder.science.quantum_phonons.muon_mass_warning`. The science
+layer also provides a general solver for tabulated 1D potentials
+(:func:`~mufinder.science.quantum_adiabatic.solve_single_particle_ground_state`)
+and the strongly-bound effective mass ``m_mu + sum_i m_i |dR_i/dx_mu|^2``
+(:func:`~mufinder.science.quantum_adiabatic.effective_mass_from_relaxed_scan`),
+following the single-particle approximations of Gomilšek *et al.*; no workflow
+feeds them yet. Package layers and the shared workflow infrastructure are
+described in :doc:`/architecture`.

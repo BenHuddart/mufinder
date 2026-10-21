@@ -36,11 +36,11 @@ README, the pull-request template and CI refer to its targets. Pass
   runs the targeted execution checks listed below; ``make test-fast
   FILES="tests/science/test_supercell.py"`` runs the files you name.
 - ``make harness`` runs the agent-harness structural tests.
-- ``make screenshots`` renders the user-guide screenshots into
+- ``make screenshots`` renders the documentation screenshots into
   ``docs/_generated/screenshots`` (see `Documentation screenshots`_).
 - ``make docs`` renders the screenshots, then builds this Sphinx site with
   warnings treated as errors.
-- ``make lint`` runs ``ruff check`` over ``src``, ``tests`` and ``scripts``.
+- ``make lint`` runs ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``.
 - ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
 To skip the Qt widget tests while iterating, select by marker with
@@ -137,28 +137,147 @@ to its ``CITED_DOIS`` table. Tests do not pin prose phrases, ``conf.py`` lines
 or stylesheet values: whether a page describes the code correctly is checked in
 review, and the ``-W`` build catches broken references and missing assets.
 
+The Python API pages are build outputs. ``docs/api/index.rst`` holds a recursive
+``autosummary`` over the library packages, and Sphinx writes one page per
+module, class, function and exception into ``docs/api/generated`` (ignored by
+git) from the templates in ``docs/_templates/autosummary``. Those pages are
+reached through the ``autosummary`` directive rather than a toctree, so the
+reachability check skips them. A docstring that is not valid reStructuredText
+fails the ``-W`` build.
+
+Pages that moved when the site was split into sections keep their old URLs:
+``REDIRECTS`` in ``docs/conf.py`` maps each former document name to its new
+page, and the HTML build writes a stub at the old name that forwards the
+browser. ``tests/docs/test_docs_redirects.py`` checks that every target is a
+current page and that no old name is still one. A page that moves adds a row.
+
 Documentation screenshots
 -------------------------
 
-The user-guide screenshots are build outputs: no image under ``docs/`` is
+The documentation screenshots are build outputs: no image under ``docs/`` is
 committed for them. ``scripts/docs_screenshots.py`` writes each one to
 ``docs/_generated/screenshots`` (ignored by git), and a page shows it with a
-``figure`` directive whose path is ``_generated/screenshots/<name>.png``.
+``figure`` directive whose path is relative to the page, for example
+``../_generated/screenshots/<name>.png`` from a page in ``docs/user_guide/``.
 
-Each screenshot saves a small project, opens it in a real ``MainWindow``,
-drives the page through its buttons (a real ``muesr`` calculation included) and
-grabs the window or the dialog it opens. The script needs no display: Qt draws
-on its ``offscreen`` platform at twice the logical size, and VTK renders
-through EGL. pyvistaqt's ``QtInteractor`` needs a native window, so the script
-gives the 3D viewers an off-screen PyVista plotter that paints its frame
-instead. Settings and app data go to a temporary directory, so a local run
-leaves the developer's own MuFinder configuration alone.
+The script needs no display: Qt draws on its ``offscreen`` platform at twice
+the logical size, and VTK renders through EGL. pyvistaqt's ``QtInteractor``
+needs a native window, so the script gives the 3D viewers an off-screen
+PyVista plotter that paints its frame instead. Settings and app data go to a
+temporary directory, so a local run leaves the developer's own MuFinder
+configuration alone.
 
-To add a screenshot, add a function to the script's ``SCREENSHOTS`` table and
-reference its file from a page. ``tests/docs/test_docs_screenshots.py`` runs the
-script and fails if a page references an image the script does not write, or
-the script writes one no page uses. To render only some of them, name them:
-``python scripts/docs_screenshots.py magnetic_fields_page``.
+Scenes
+~~~~~~
+
+Each entry of the script's ``SCREENSHOTS`` table maps a file name to a
+``Scene``:
+
+- a project builder, a function that writes a saved project into a scratch
+  directory and returns its root;
+- the navigator route to open (``None`` leaves the Project Home showing);
+- an optional ``setup`` step that drives the window, such as clicking
+  ``Calculate Dipolar Field``;
+- the grab target: ``Window`` (the whole main window, optionally with the Job
+  Dashboard shown), ``Page`` (one page widget, named by its ``MainWindow``
+  attribute, or returned by a callable for a page kept per saved item, and
+  laid out at a given logical size), ``Dock`` (a dock widget, by title),
+  ``Dialog`` (the modal dialog an opener callable shows, matched by class
+  name, so a dialog opened from another dialog can be grabbed) or
+  ``Floating`` (a non-modal window, such as the geometry progress or UEP
+  clustering window, that an opener callable shows and returns). Each target
+  takes an optional ``prepare`` step that receives the grabbed widget before
+  the grab.
+
+The script opens the project in a real ``MainWindow`` with the status bar
+hidden, since its keyword-catalog and cluster-connection warnings describe the
+scratch settings rather than the page. A dialog is dismissed after its grab,
+and a scene whose dialog never opens fails rather than hanging.
+
+Prefer ``Page`` grabs about 1000 to 1200 logical pixels wide: the theme scales
+a figure to the content column, so a full-window grab at 1440 pixels makes its
+text small. Keep ``Window`` for views about the window as a whole, such as the
+Project Home and the Job Dashboard.
+
+The fixture project
+~~~~~~~~~~~~~~~~~~~
+
+Most scenes open ``fixture_project``: rutile TiO2 built in code, with ``PBE``
+as the project functional, a saved 2x2x2 supercell, a configured cutoff sweep
+(300 to 800 eV) and k-point sweep (the grids ``Generate From Spacing...``
+gives down to 0.07 1/Ang), none submitted, and eight candidate muon sites
+generated through ``ProjectService.generate_candidate_sites``. The builders
+make the calls the application makes, including the sweep widgets' own form
+logic, so the saved project is one the application could have written. Two
+variants extend it: ``converged_project`` adopts a cutoff and a k-point grid
+with illustrative sweep data pinned on the Convergence Testing overview, and
+``dashboard_project`` binds failed, stopped and cancelled jobs to three cutoff
+rows. The Magnetic Fields scenes use ``magnetic_project``, the one-ion cubic
+cell of the worked examples. No scene runs CASTEP; the Magnetic Fields scenes
+run the real ``muesr`` calculation.
+
+The results project
+~~~~~~~~~~~~~~~~~~~
+
+The results and analysis pages open ``results_project``, built on diamond
+silicon's two-atom primitive cell, the cell of the UEP fixture. The builder
+opens the project in a ``MainWindow`` and drives each workflow as its buttons
+do: it adds and runs a pristine relaxation and a UEP source row, stages five
+manual candidate sites as positive-muon relaxations in a saved 2x2x2
+supercell, creates, clusters and pins an analysis workspace, runs the
+singlepoint stage of the lowest Quantum Corrections site, and generates the
+bond-centre to tetrahedral paths on the Energy Barriers page and runs an NEB
+band along the first. Jobs are submitted through
+``JobExecutionController.submit_local_jobs`` with a local runner whose
+``submit`` writes the job's CASTEP outputs into its directory instead of
+starting CASTEP; each job is then finished through the window's local-runner
+completion handler, so result dispatch, stored results, derived structures and
+relaxed sites are those a real run produces. A message box during the build
+fails it rather than hanging it.
+
+The outputs come from the synthetic test fixtures where one fits:
+``tests/fixtures/uep/Si2.castep``, ``Si2.den_fmt`` and ``Si2.cell`` for the
+UEP source job, and ``tests/fixtures/geometry/Si2_bfgs.castep`` for the
+pristine relaxation, whose relaxed cell is read from the output's final
+configuration. No fixture holds a muon relaxation, a singlepoint of a
+muoniated cell or a silicon NEB band, so the script writes those in CASTEP's
+file shapes with illustrative energies: each muon start relaxes to its nearest
+bond-centre or tetrahedral site, the singlepoint reports close to its
+relaxation's energy, and the NEB ``.ts`` band follows the job's own reactant, intermediate
+and product cells. The pages that show these numbers say in their captions
+that they are illustrative. The UEP batch search and its ZPE run in the
+scene's thread with seeded random starts, so every build finds the same minima.
+
+``running_relaxation_project`` stops the pristine relaxation part-way through
+its output for the geometry progress window. Reopening a project ends its local
+jobs, since no local runner survives the application, so that scene puts the
+job back in the running state the local runner keeps and points the progress
+monitor at its ``.castep``. ``silicon_project`` holds the host alone; the
+legacy-importer scene scans a hand-authored legacy folder of three silicon
+runs in the documented layout (see :doc:`/legacy_import`, "Research data
+boundary") and drops the scan's notice that no keyword catalog is installed,
+as the other scenes hide it.
+
+The Quantum Corrections phonon analysis window has no screenshot: no fixture
+holds a ``.phonon`` output, and a phonon spectrum for the muoniated cell would
+be invented physics.
+
+Adding a screenshot
+~~~~~~~~~~~~~~~~~~~
+
+1. Add an entry to ``SCREENSHOTS``, reusing a project builder and the
+   ``setup`` and ``prepare`` steps where they fit.
+2. Render it alone, ``python scripts/docs_screenshots.py <name>`` (``--list``
+   prints the names), and look at the image: it must not show an error, an
+   empty table or a clipped control.
+3. Reference it from a page with a ``figure`` directive, an ``:alt:`` text and
+   a one-line caption.
+
+``tests/docs/test_docs_screenshots.py`` reads the ``SCREENSHOTS`` keys from the
+script's source and fails if a page references an image the script does not
+render, or the script renders one no page uses. It then renders each
+referenced screenshot in its own process, with its own timeout, so
+``pytest-xdist`` spreads the renders across workers.
 
 Shared test helpers
 -------------------
@@ -262,7 +381,7 @@ The harness tests currently verify:
 
 - ``AGENTS.md`` stays within 140 lines and points to the durable docs it depends
   on; ``CLAUDE.md`` imports it.
-- Every ``mufinder.*`` path in the shared-homes table (:doc:`architecture`,
+- Every ``mufinder.*`` path in the shared-homes table (:doc:`/architecture`,
   Shared workflow infrastructure) names a module or package under
   ``src/mufinder``; the check reads the file system and imports nothing.
 - The Sphinx index includes the agent harness, architecture, quality, and
@@ -273,14 +392,14 @@ The harness tests currently verify:
   imports ``PySide6.QtWidgets`` or ``PySide6.QtGui``.
 - The ``_on_submit_*`` / ``_materialize_*`` handlers on ``MainWindow`` match
   the pinned set exactly; the set may only shrink (see
-  :doc:`architecture`, Workflow controllers).
+  :doc:`/architecture`, Workflow controllers).
 - No module in ``mufinder.app`` calls ``subplots_adjust``, and the app modules
   that build a ``FigureCanvasQTAgg`` directly rather than through
   ``create_plot_canvas`` match a pinned set that may only shrink (see
-  :doc:`architecture`, Plot canvas policy).
+  :doc:`/architecture`, Plot canvas policy).
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
-  may appear (see :doc:`architecture`, Shared workflow infrastructure).
+  may appear (see :doc:`/architecture`, Shared workflow infrastructure).
 - The ``*_coverage.py`` test files match a pinned list that may only shrink;
   coverage gaps are closed in the module's own test file.
 - ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
@@ -297,7 +416,7 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``make lint``: ``ruff check`` over ``src``, ``tests`` and ``scripts``
+  - ``make lint``: ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``
   - ``make test-shard SHARD=n SHARDS=4 PYTEST_WORKERS=auto`` on four runners,
     each distributed with ``pytest-xdist`` using ``--dist worksteal``, then
     ``make coverage`` in the required ``tests`` job, which combines the shards'

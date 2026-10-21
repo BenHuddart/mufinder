@@ -33,7 +33,7 @@ Convergence Testing needs:
   or on a supercell saved from it.
 - **A supercell, if you want one.** By default the sweeps run on the host unit
   cell. To converge on a supercell instead, save it in the
-  :doc:`supercells` first (or from the ``Manage Supercells...`` button on the
+  :doc:`/user_guide/supercells` first (or from the ``Manage Supercells...`` button on the
   sweep page). See `Limitations`_ before choosing a supercell.
 - **A decision about the XC functional.** A converged cutoff or grid is only
   meaningful for the functional it was converged with. New sweep rows take the
@@ -42,7 +42,7 @@ Convergence Testing needs:
   ``XC functional``. With no project functional set, rows use the catalog
   default (``LDA``).
 - **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
-  under ``Setup``, and load a keyword catalog (:doc:`castep_keyword_catalog`).
+  under ``Setup``, and load a keyword catalog (:doc:`/castep_keyword_catalog`).
 
 Running the workflow
 --------------------
@@ -98,6 +98,12 @@ functional (see `Stale defaults`_).
 The overview page
 -----------------
 
+.. figure:: ../_generated/screenshots/convergence_overview.png
+   :alt: The Convergence Testing overview with a 600 eV cutoff and a 3 x 3 x 4
+         grid adopted and their plots pinned.
+
+   The overview after adopting a cutoff and a grid; the pinned sweeps are illustrative data.
+
 The ``Convergence Testing`` page has two cards, ``Cutoff Convergence`` and
 ``K-Point Convergence``. Each card has an ``Open ...`` button that jumps to its
 sweep page and lists:
@@ -119,6 +125,12 @@ hand, or when the active host structure has changed.
 The sweep pages
 ---------------
 
+.. figure:: ../_generated/screenshots/cutoff_convergence_page.png
+   :alt: The Cutoff Convergence page with six cutoff rows from 300 to 800 eV
+         ready to run.
+
+   The ``Cutoff Convergence`` page with six configured cutoffs ready to run.
+
 ``Cutoff Convergence`` and ``K-Point Convergence`` share one layout.
 
 ``Project defaults`` strip
@@ -128,7 +140,7 @@ The sweep pages
 ``Simulation Cell``
    A summary of the cell the sweep will run on, a ``Saved supercells``
    drop-down (``Single unit cell`` plus every supercell saved for the active
-   host), ``Manage Supercells...`` to open the :doc:`supercells`, and ``Use
+   host), ``Manage Supercells...`` to open the :doc:`/user_guide/supercells`, and ``Use
    Unit Cell`` to return to the host unit cell. The cell is fixed for a job
    when the job is defined; changing the selection later does not change jobs
    already defined.
@@ -167,10 +179,9 @@ Cutoff Parameters`` / ``Inspect K-Point Parameters``. A row whose job was
 cancelled stays editable. Values must be unique within a sweep; MuFinder
 refuses to run a sweep with a duplicate or non-numeric value.
 
-A sweep's rows are restored from the saved form state when the project is
-reopened, or from the active convergence definition when that state is
-incomplete. Rows that use the default parameters keep their completed jobs
-across a reload, so adding a cutoff and running submits only the new row. A
+A sweep's rows are restored when the project is reopened. Rows that use the
+default parameters keep their completed jobs across a reload, so adding a
+cutoff and running submits only the new row. A
 regenerated list starts as fresh ``ready`` rows and does not inherit the status
 or results of an earlier definition.
 
@@ -192,6 +203,12 @@ remembers its last values.
 Generating k-point grids
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. figure:: ../_generated/screenshots/kpoint_convergence_page.png
+   :alt: The K-Point Convergence page with the grids generated for rutile TiO2
+         down to 0.07 1/Ang.
+
+   Grids generated for rutile TiO2 with a minimum spacing of 0.07 1/Ang.
+
 ``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
 
 ``Generate From Spacing...`` opens ``Generate K-Point Grids``. MuFinder walks
@@ -211,6 +228,12 @@ the grids again with ``Replace existing grid list`` ticked.
 
 Parameter dialogs
 ~~~~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/parameter_dialog.png
+   :alt: The parameter dialog of the 500 eV cutoff row, with the swept cutoff
+         shown as set by the sweep.
+
+   The ``Configure...`` dialog of the 500 eV row.
 
 The row dialog follows the shared workflow layout, with the swept keyword
 shown as ``Variable (set by sweep)``. ``+ Add Parameter`` adds any other
@@ -296,9 +319,7 @@ how many atoms are used for per-atom normalization.
    (eV/Ang)`` (default 0.05), and an optional ``Stress threshold (GPa)``
    (default 0.1, matching the usual ``GEOM_STRESS_TOL``). The force and
    stress thresholds cannot go below the precision CASTEP prints those
-   quantities to, 0.00001 eV/Ang and 0.000001 GPa (``firstd_output_forces``
-   and ``firstd_output_stress`` in CASTEP's ``Source/Functional/firstd.f90``):
-   a finer threshold could only be met by values that print identically. A
+   quantities to, 0.00001 eV/Ang and 0.000001 GPa: a finer threshold could only be met by values that print identically. A
    smaller value snaps to the minimum, and the field shows the value the
    analysis used. The energy threshold only has to be positive, since CASTEP
    prints energies to 13 significant figures. The stress box can only be
@@ -365,7 +386,7 @@ For a k-point recommendation the result line also gives the grid's spacing,
 CASTEP reproduces exactly that grid on the swept cell, so it can be copied into
 a ``.cell`` file. ``1 x 1 x 1`` has no such spacing and is shown without one.
 The convention, and its round-trip guarantee, are described in
-:doc:`castep/kpoint_spacing_convention`.
+:doc:`/castep/kpoint_spacing_convention`.
 
 Adopting a result as a project default
 --------------------------------------

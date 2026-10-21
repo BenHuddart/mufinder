@@ -12,6 +12,7 @@ build/
 dist/
 docs/_build/
 docs/_generated/
+docs/api/generated/
 src/*.egg-info/
 
 .DS_Store

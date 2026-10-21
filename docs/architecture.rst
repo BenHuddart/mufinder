@@ -24,7 +24,7 @@ Package layers
    in ``mufinder.domain.models``, currently 5); ``mufinder.persistence.migrations``
    upgrades the raw payloads of a project saved at an older version when it is
    loaded, one version-keyed step at a time. See
-   :doc:`compatibility_policy` for each step.
+   :doc:`/compatibility_policy` for each step.
 
 ``mufinder.science``
    Numerical and crystallographic algorithms, including site generation,
@@ -62,7 +62,7 @@ Package layers
    local and cluster job runners share a structural contract, ``JobRunner``
    (``mufinder.services.runner_protocol``), which documents the runner signal
    surface, the deliberately-different submit error contracts, and the rule that
-   runners never mutate ``Job`` objects; see :doc:`job_lifecycle` for the full
+   runners never mutate ``Job`` objects; see :doc:`/job_lifecycle` for the full
    state-authority contract.
 
 ``mufinder.app``
@@ -147,7 +147,7 @@ policy, move the reusable part into the appropriate shared layer:
 - shared adapter logic that turns GUI value dicts into workflow templates
   belongs in ``mufinder.app.adapter_common``
 - persisted compatibility behavior belongs in ``mufinder.persistence`` or the
-  owning service, with a ledger entry in :doc:`compatibility_policy`; a
+  owning service, with a ledger entry in :doc:`/compatibility_policy`; a
   rewrite of saved-project payloads is a step in
   ``mufinder.persistence.migrations`` behind a schema version bump
 
@@ -365,7 +365,7 @@ no two workflow widgets may define the same private method.
        canvas policy).
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
-       and retrieval (``JobExecutionController``; see :doc:`job_lifecycle`).
+       and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`).
    * - ``mufinder.services.job_paths``
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
@@ -470,14 +470,14 @@ no two workflow widgets may define the same private method.
        functions), the muon-relaxation row and job lookups those rules share
        (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
        per-stage project summary (``summarize_project``; see
-       :doc:`project_home`).
+       :doc:`/user_guide/project_home`).
    * - ``mufinder.services.magnetic_field_results``
      - The Magnetic Fields page's and each saved magnetic-field workspace's
        latest field, dipolar-tensor and nuclear-relaxation results as
        ``Result`` records with no calculation run, keyed by owner
        (``store_magnetic_field_results``, ``attach_magnetic_field_results``,
        ``remove_magnetic_field_results``, ``magnetic_field_results``; see
-       :doc:`magnetic_fields`).
+       :doc:`/user_guide/magnetic_fields`).
    * - ``mufinder.services.project_survey``
      - The positions each stage has found, in the active host's cell, for the
        project home's cell survey (``survey_layers``,
@@ -547,7 +547,7 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.castep_io``
      - CASTEP syntax: cell and param parsing and writing, keyword metadata
        (``schema``) and validation (``validators``); see
-       :doc:`castep_keyword_catalog`.
+       :doc:`/castep_keyword_catalog`.
    * - ``mufinder.persistence.project_codec``
      - Decoding each persisted project entity into its domain record
        (``*_from_dict``, ``ENTITY_DECODERS``, ``jobs_in_creation_order``) and
@@ -906,7 +906,7 @@ runs the stale-output cleanup prompt and resets them to ``defined``; returning
 directories for ``defined`` jobs and the first pass ran before the reset. Both
 steps act on the plan's own job objects, so a row never gains a duplicate job,
 and non-dismissed failed jobs are never passed to the hook (see
-:doc:`job_lifecycle`, Dismissed rows stay resubmittable).
+:doc:`/job_lifecycle`, Dismissed rows stay resubmittable).
 
 Task farming for the quantum-phonon and NEB stages is applied by the shared
 local submit backend, which resolves each job's farm count by calc type; the
@@ -935,7 +935,7 @@ runner worker thread. Each runner calls
 :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` carrier with the
 ``job_finished`` signal. Collection follows the
 :class:`~mufinder.services.job_artifacts.RetrievalFlags` the runners track
-(per-calc-type output flags plus the farm count; see :doc:`job_lifecycle`),
+(per-calc-type output flags plus the farm count; see :doc:`/job_lifecycle`),
 and every failure travels as data (missing-file flags and
 error strings), never as an exception across the signal boundary. Callers with
 no carrier (reconciliation, retry, direct test invocation) fall back to one
@@ -1253,7 +1253,7 @@ Workflow parameter entry is metadata-driven (``mufinder.app.param_dialog``,
 opened through ``mufinder.app.workflow_dialogs``):
 
 - The parameters a dialog offers depend on the job type and are read from the
-  CASTEP keyword metadata (:doc:`castep_keyword_catalog`).
+  CASTEP keyword metadata (:doc:`/castep_keyword_catalog`).
 - Parameters are split into basic and advanced ones, and advanced parameters
   are disclosed on demand.
 - Each parameter kind has its own typed widget: drop-downs, checkboxes,
@@ -1296,7 +1296,7 @@ Domain model and persistence
 
 The core domain records are ``Project``, ``Structure``, ``MuonSite``,
 ``CalculationDefinition``, ``CalculationRun``, ``Result``, ``Job`` and the
-structured ``ProvenanceRecord`` (:doc:`project_specification` lists the full
+structured ``ProvenanceRecord`` (:doc:`/project_specification` lists the full
 model and the project directory layout). A project is stored as JSON, one file
 per entity under ``entities/``, alongside a project manifest, a state snapshot
 and a provenance JSONL stream. Cross-entity references are validated before
@@ -1342,6 +1342,60 @@ Saving is split between autosave and manual save:
 ``Save Project`` is therefore the action that commits the current analysis
 layout and visualization choices for the next session, while autosave
 protects durable project and job state.
+
+Supercell selections
+~~~~~~~~~~~~~~~~~~~~
+
+The per-workflow simulation cells described in :doc:`/user_guide/supercells`
+are stored as follows.
+
+A saved supercell is an ordinary ``Structure`` entity whose
+``parent_structure_id`` is the active host, with its asset metadata under
+``properties["supercell_asset"]``: ``matrix`` (a 3×3 integer matrix),
+``owner_workflow_stage`` and ``source_asset_structure_id`` (nullable, the clone
+source). Each workflow's selection is stored in ``state.json`` under
+``workflow_supercells``:
+
+.. code-block:: json
+
+   {
+     "workflow_supercells": {
+       "convergence_cutoff": { "mode": "unit_cell" },
+       "muon_relaxation": { "mode": "saved_supercell", "structure_id": "<uuid>" }
+     }
+   }
+
+``unit_cell`` mode resolves to the active host and ``saved_supercell`` mode to
+the selected saved structure. A missing, invalid or other-host selection falls
+back to the host unit cell, and the stored selection can be normalized to
+match. ``Project.supercell_matrix`` only seeds the host preview; it never
+decides a workflow's calculation structure.
+
+Spins follow the host's magnetic data. When a host's scalar spin list is
+missing or invalid, spins are taken from ``magnetic_structure`` moment
+vectors (the ``z`` component), and a host whose scalar spins are all zero while
+its magnetic moments are not is treated as stale and given the moment-derived
+spins. A saved supercell keeps its own explicit spins. A saved supercell whose
+spins are stale zeros is repaired from the host's magnetic data when it is
+selected, resolved or written, so spin-polarized ``.cell`` files keep their
+``SPIN=...`` tokens.
+
+Structure comparison
+--------------------
+
+The :doc:`/user_guide/comparison_table` is computed by the ``science`` layer and
+rendered by ``app``. The implementation is intentionally layered:
+
+- normalization in ``mufinder.science.supercell_matching``,
+- atom matching in ``mufinder.science.atom_matching``,
+- bonding and topology analysis in ``mufinder.science.bonding_analysis`` and
+  ``mufinder.science.symmetry_analysis``,
+- metric registry and evaluation in ``mufinder.science.structure_metrics``,
+- orchestration in ``mufinder.science.structure_comparison``,
+- rendering in ``mufinder.app.comparison_table_widget``.
+
+The per-metric help shown by the GUI ``Info`` buttons is sourced from the same
+metric-definition registry used to populate the comparison table.
 
 Cross-platform appearance
 -------------------------

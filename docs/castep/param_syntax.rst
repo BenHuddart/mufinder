@@ -7,7 +7,7 @@ contributor-facing source of truth for that subset is
 (``docs/castep/keyword_catalog.yaml``), mirrored as the packaged starter catalog
 ``src/mufinder/assets/keyword_catalog.yaml``. How the runtime schema is built
 from a discovered ``castep_keywords.json``, and when the starter catalog is used
-instead, is described in :doc:`../castep_keyword_catalog`.
+instead, is described in :doc:`/castep_keyword_catalog`.
 
 Formatting conventions
 ----------------------

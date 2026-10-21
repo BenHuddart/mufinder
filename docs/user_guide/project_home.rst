@@ -6,10 +6,44 @@ the home button above the project navigator returns to. It answers two
 questions: where the project stands, and what comes next. It has three parts:
 the workflow chart, the field notes for one stage, and a survey of the host
 cell. A line above the chart counts the complete stages and the jobs that are
-active, and ``Open Journal`` opens the :doc:`journal`.
+active, and ``Open Journal`` opens the :doc:`/user_guide/journal`.
+
+Before you start
+----------------
+
+Open or create a project (``File > New Project`` or ``File > Open Project``).
+The home needs nothing else: it reads the project's current state, so it is
+useful on an empty project (it shows what to do first) and on a finished one.
+
+Using the project home
+----------------------
+
+1. **Find where you left off.** The chart opens with the stage you last
+   worked on selected and flagged in red.
+2. **Read the field notes.** Click a waypoint to select a stage. The field
+   notes beside the chart show its status, a few facts about the project and
+   what the stage is for (see `Field notes`_). A stage that has not started
+   lists, under ``Needs``, the required earlier stages that have not started
+   either.
+3. **Go to the stage.** Click the ``Open <stage>`` button in the field notes (for
+   example ``Open UEP``), double-click the waypoint, or press
+   Return. The arrow keys move the selection through the stages in workflow
+   order.
+4. **Check the cell.** The survey of the host cell follows the selected
+   waypoint and shows that stage's results (see `Survey of the cell`_). The
+   ``a``, ``b`` and ``c`` buttons next to ``View down`` look down another lattice
+   vector.
+5. **Come back.** Click the home button above the project navigator at any
+   time to return here.
 
 Workflow chart
 --------------
+
+.. figure:: ../_generated/screenshots/project_home.png
+   :alt: The project home of a rutile TiO2 project: the workflow chart, the
+         field notes and the cell survey.
+
+   The project home of a rutile TiO2 project with three stages complete.
 
 The chart draws every workflow stage as a waypoint, laid out in the order the
 work usually goes, with the navigator's Convergence Testing and Muon Sites
@@ -72,15 +106,16 @@ The field notes describe the selected stage: its status, a few facts about the
 project (the host's formula and atom count, the default cutoff and k-point
 grid, saved supercells, relaxations relaxed per charge state, analysis
 workspaces and pinned distinct sites, barrier heights and so on), what the
-stage is for, and an ``Open`` button that goes to its page. A stage that has
+stage is for, and an ``Open <stage>`` button that goes to its page. A stage that has
 not started lists, under ``Needs``, the required earlier stages that have not
 started either.
 
 Survey of the cell
 ------------------
 
-The survey draws the active host's unit cell looking down one lattice vector,
-chosen with the ``a``, ``b`` and ``c`` buttons; the corner caption names the
+The ``Survey of the cell`` draws the active host's unit cell looking down one
+lattice vector, chosen with the ``a``, ``b`` and ``c`` buttons beside ``View
+down``; the corner caption names the
 lattice vectors running across and up the drawing. Atoms on the cell faces appear
 on every face they touch, atoms deeper in the cell are drawn fainter, and a key
 names each element's colour. Hovering an atom or a marker shows what it is.
@@ -126,5 +161,8 @@ it. Results tied to a different host, for example candidate sites generated
 before a relaxed pristine structure became the active host, are left out and
 counted in a note.
 
-The stage the user last worked on is saved with the project in UI state under
-``project_home_stage``.
+For developers
+--------------
+
+The stage last worked on is saved with the project's UI state under
+``project_home_stage``; see :doc:`/architecture`.

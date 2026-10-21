@@ -56,7 +56,7 @@ test-fast:
 harness:
 	$(PYTHON) -m pytest --no-cov tests/test_agent_harness.py
 
-# The user-guide screenshots are rendered from the application, not committed:
+# The documentation screenshots are rendered from the application, not committed:
 # scripts/docs_screenshots.py writes them to docs/_generated/screenshots.
 screenshots:
 	$(PYTHON) scripts/docs_screenshots.py
@@ -66,6 +66,6 @@ docs: screenshots
 
 # ruff is installed by the dev extra (added alongside the ruff configuration).
 lint:
-	$(PYTHON) -m ruff check src tests scripts
+	$(PYTHON) -m ruff check src tests scripts docs/api/examples
 
 quality: lint test docs

@@ -22,12 +22,63 @@ MuFinder shows the migration geometry in the matching undistorted pristine
 supercell so the user can inspect the start and end muon positions without
 mixing in host distortions from two separately relaxed defect cells.
 
-Workflow overview
------------------
+Before you start
+----------------
 
-The project page is divided into two tabs so the workflow remains usable on
-smaller laptop screens while still separating path generation from NEB
-analysis:
+Energy Barriers needs:
+
+- **Two completed relaxed muon sites** of the same host and charge state. Run
+  the structural relaxations under ``Muon Sites -> Relaxations`` first
+  (:doc:`/user_guide/site_generation`), then cluster and pin them in
+  :doc:`/user_guide/structural_relaxation_analysis`. The endpoint selectors
+  list the distinct sites pinned to the ``Muon Sites`` summary (see `The
+  Energy Barriers page`_). To use the same site twice, select it as both
+  endpoints.
+- **Project defaults, ideally.** The NEB rows start from the project's
+  convergence defaults (:doc:`/user_guide/convergence_testing`) and are then
+  overridden by the settings of the reactant endpoint's relaxation (see
+  `Configuration UI`_).
+- **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
+  under ``Setup``, and load a keyword catalog (:doc:`/castep_keyword_catalog`).
+
+Running the workflow
+--------------------
+
+1. **Open the page.** Select ``Energy Barriers`` in the navigator and stay on
+   the ``Paths`` tab.
+2. **Choose the endpoints.** Under ``Path Endpoints``, pick the ``Initial`` and
+   ``Final`` relaxed structures.
+3. **Cap the path length (optional).** Set ``Max path length (Å)`` to limit the
+   hop length for this generation pass. Leave it blank, shown as ``Auto``, to
+   use MuFinder's automatic cutoff.
+4. **Generate the paths.** Click ``Generate Paths`` to enumerate
+   symmetry-distinct muon paths for that ordered pair only, including
+   symmetry-equivalent hops of the same relaxed site when the same endpoint is
+   selected twice. Each path becomes a row of the ``Diffusion Paths`` table.
+5. **Preview a path (optional).** Click a row's ``View...`` button to inspect
+   the hop before submission.
+6. **Remove paths you do not need.** Use ``Remove Selected``, the row menu's
+   ``Remove`` entry, or the ``Delete`` / ``Backspace`` shortcuts.
+7. **Configure the NEB jobs.** Select the paths and click ``Configure Selected
+   Parameters...``, or use a row's ``Configure...`` button (see `Configuration
+   UI`_).
+8. **Run them.** Click ``Run All Locally`` or ``Run All on Cluster``; the
+   buttons read ``Run Selected ...`` when rows are selected. MuFinder builds
+   and submits the NEB jobs (see :doc:`/getting_started/running_jobs`).
+9. **Inspect the results.** When jobs complete, open the ``NEB Analysis`` tab
+   (see `Outputs and interpretation`_).
+
+The Energy Barriers page
+------------------------
+
+.. figure:: ../_generated/screenshots/energy_barriers_page.png
+   :alt: The Paths tab with a bond-centre and a tetrahedral endpoint selected and one
+         generated diffusion path, completed.
+
+   A bond-centre to tetrahedral path in silicon; the relaxed endpoints are illustrative.
+
+The page is divided into two tabs so the workflow remains usable on smaller
+laptop screens while still separating path generation from NEB analysis:
 
 ``Paths``
   Select the initial and final relaxed endpoints (each entry shows the site's
@@ -41,7 +92,7 @@ analysis:
   stepper, a summary readout, and a synchronized structure viewer.
 
 The endpoint selectors list the distinct sites pinned to the ``Muon Sites``
-summary (:doc:`structural_relaxation_analysis`), labelled by Wyckoff label and
+summary (:doc:`/user_guide/structural_relaxation_analysis`), labelled by Wyckoff label and
 cluster (``8c · cluster 1``) in the summary's energy rank, so each physical
 site is offered once. Tick ``Show every relaxed site`` above the selectors to
 offer every eligible relaxed site instead; the choice is saved with the
@@ -53,26 +104,6 @@ replaced by the first listed site (the final endpoint by the first other one),
 so widening the list keeps the pair the selectors showed. Paths already
 generated stay in the ``Diffusion Paths``
 table whichever list the selectors show.
-
-The intended user flow is:
-
-- complete structural relaxation for the two sites of interest;
-- choose the initial and final relaxed structures in the ``Paths`` tab;
-- optionally set ``Max path length (Å)`` to cap the allowed hop length for
-  that generation pass (leave it blank, shown as ``Auto``, to use MuFinder's
-  automatic cutoff);
-- click ``Generate Paths`` to enumerate symmetry-distinct muon paths for that
-  ordered pair only, including symmetry-equivalent hops of the same relaxed
-  site when the same endpoint is selected twice;
-- optionally inspect a path with ``View...`` before submission;
-- remove generated paths that are no longer relevant with ``Remove Selected``,
-  the row menu's ``Remove`` entry, or the ``Delete`` / ``Backspace`` shortcuts;
-- configure the selected paths with ``Configure Selected Parameters...`` (or
-  the row menu's ``Configure...``), then build and run the NEB jobs with
-  ``Run All Locally`` / ``Run All on Cluster`` (the buttons read ``Run
-  Selected ...`` when rows are selected);
-- inspect completed NEB paths in the ``NEB Analysis`` tab with the
-  reaction-coordinate plot, image stepper, and synchronized structure viewer.
 
 Path generation and assumptions
 -------------------------------
@@ -104,7 +135,7 @@ Right-clicking selected rows offers the shared row actions (``Run Local``,
 Jobs...``, ``Configure...``, ``Remove``).
 
 Generated path rows remain in the table after the endpoint selectors change,
-so previously generated hops stay available for inspection and submission
+so hops generated earlier stay available for inspection and submission
 while the user prepares another pair.
 
 Path preview
@@ -118,10 +149,11 @@ clear without showing relaxed host distortions. ``View...`` always opens the
 viewer for the row whose button was clicked, regardless of the current table
 selection.
 
-NEB inputs
-----------
+What MuFinder writes
+--------------------
 
-For NEB jobs, MuFinder prepares aligned reactant and product structures for
+Each NEB job runs in its own folder under the project's
+``files/energy_barriers_neb`` folder. For NEB jobs, MuFinder prepares aligned reactant and product structures for
 the selected path and writes CASTEP inputs with
 ``TASK : TRANSITIONSTATESEARCH`` and ``TSSEARCH_METHOD : NEB`` locked by the
 workflow. CASTEP additionally requires an intermediate image between the two
@@ -162,7 +194,7 @@ to the project's recommended reference lattice. The settings of the reactant
 endpoint's relaxation then override them where its output ``.cell`` and
 ``.param`` are available: its k-point grid, cut-off energy, exchange-correlation
 functional, and spin treatment (read from the source files as for
-:doc:`quantum_corrections`), so the band is computed on the same numerical
+:doc:`/user_guide/quantum_corrections`), so the band is computed on the same numerical
 footing as the structures it connects. Row-level configuration remains
 authoritative, so a specific path can still override any of these without
 affecting the rest of the project.
@@ -221,8 +253,14 @@ parses the farmed file for the job's real outcome.
 Outputs and interpretation
 --------------------------
 
-Completed NEB jobs persist the generated CASTEP files and the parsed
-transition-state path data needed for later review. In the ``NEB Analysis``
+.. figure:: ../_generated/screenshots/energy_barrier_inspection.png
+   :alt: The NEB Analysis tab with one completed band, its energy profile and the
+         transition-state image in the viewer.
+
+   An NEB band through that path; the energies are illustrative.
+
+MuFinder keeps the generated CASTEP files of completed NEB jobs and the
+parsed transition-state path data needed for later review. In the ``NEB Analysis``
 tab, the completed-calculations table summarises each result with:
 
 - the path described as ``initial → final`` site labels (falling back to the
@@ -265,8 +303,8 @@ the viewer so the viewer keeps a usable size.
 
 The barrier values shown in the table are taken from the parsed CASTEP
 transition-state output. Reverse barriers and ``ΔE`` are derived from the
-persisted per-image energies; results recorded before per-image energies were
-stored show only the forward barrier. Barriers should be interpreted together
+stored per-image energies; a result without stored per-image energies shows
+only the forward barrier. Barriers should be interpreted together
 with the selected path definition and the endpoint structures used to
 generate that path.
 

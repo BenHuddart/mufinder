@@ -23,7 +23,7 @@ cluster and are tracked in a job dashboard.
 | Product requirements | `docs/project_specification.rst` |
 | CASTEP keyword catalog discovery and generation | `docs/castep_keyword_catalog.rst` |
 | k-point spacing and grid round-trip rules | `docs/castep/kpoint_spacing_convention.rst` |
-| Feature surface per workflow | `docs/implemented_functionality.rst` and the user guide |
+| Feature surface per workflow | `docs/user_guide/overview.rst` and the user guide |
 | How this repository is organised for agents | `docs/agent_harness.rst` |
 
 ## Making a change

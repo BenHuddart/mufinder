@@ -28,7 +28,7 @@ generates, but not to read everything CASTEP writes back:
   explicit ``SPIN`` that disagrees with their sum stops the run. With a catalog
   loaded it can still be added from a dialog's advanced-parameter picker like
   any other keyword.
-- Legacy-import parameter recovery is less complete (see :doc:`legacy_import`).
+- Legacy-import parameter recovery is less complete (see :doc:`/legacy_import`).
 
 Which catalog is used
 ---------------------
@@ -56,6 +56,12 @@ counts, whether the starter catalog is active, and any such reason.
 
 Installing a catalog
 --------------------
+
+.. figure:: _generated/screenshots/castep_setup_dialog.png
+   :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
+         generate one or use an existing file.
+
+   ``Setup > CASTEP`` before a keyword catalog is installed.
 
 ``Setup > CASTEP`` offers two routes, and both end the same way:
 

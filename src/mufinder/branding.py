@@ -7,6 +7,11 @@ import sys
 
 from PySide6.QtGui import QIcon
 
+PRODUCT_NAME = "MuFinder"
+PRODUCT_TAGLINE = "Muon stopping-site workflows with CASTEP."
+DOCUMENTATION_URL = "https://benhuddart.github.io/mufinder/"
+REPOSITORY_URL = "https://github.com/BenHuddart/mufinder"
+
 
 def logo_path() -> str:
     """Return the packaged MuFinder logo path."""

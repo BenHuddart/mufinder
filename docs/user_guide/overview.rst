@@ -1,55 +1,64 @@
-Implemented Functionality
-=========================
+Overview
+========
 
-This page is an index of what MuFinder can do. Each section describes one area
-of the application in a few sentences and links the page that explains it. The
-workflow sections follow the order of the stages in the project navigator; the
-sections after them cover the job system, CASTEP input and the development
-harness that every workflow shares.
+This page is an index of what MuFinder can do. It describes the application
+shell, then each stage of the project navigator in the order the navigator
+lists them, then the behaviour every workflow shares. Each section gives a few
+sentences and links the page that explains the stage as a task.
 
 Application shell
 -----------------
 
-- The ``File`` menu creates, opens, reopens (``Open Recent``) and saves
-  projects, and holds ``Import Legacy Relaxations...`` and ``Remove Imported
-  Relaxations...`` (see :doc:`legacy_import`).
+- The ``File`` menu creates (``New Project``), opens (``Open Project``),
+  reopens (``Open Recent``) and saves (``Save Project``) projects, and holds
+  ``Import Legacy Relaxations...`` and ``Remove Imported Relaxations...`` (see
+  :doc:`/user_guide/legacy_import`).
 - The ``Setup`` menu configures the local CASTEP installation and keyword
-  catalog (``CASTEP...``, see :doc:`castep_keyword_catalog`) and the cluster
-  profiles (``HPC Clusters...``, see :doc:`job_lifecycle`).
+  catalog (``CASTEP...``, see :doc:`/getting_started/castep_setup`) and the
+  cluster profiles (``HPC Clusters...``, see
+  :doc:`/getting_started/running_jobs`).
 - ``View -> Appearance`` switches between ``Light``, ``Dark`` and ``System``
   themes. MuFinder bundles its own fonts, icons and control styling, so it looks
   the same on macOS, Windows and Linux.
-- The project navigator lists the workflow stages, and a project-wide Job
-  Dashboard dock tracks every job. Analysis-workspace and saved
+- The ``Help`` menu opens the documentation site (``User Guide``) and shows the
+  installed version with links to the documentation and source code
+  (``About MuFinder``).
+- The project navigator lists the workflow stages: ``Host Structure``,
+  ``Supercell Editor``, ``Convergence Testing`` (``Cutoff Energy`` and
+  ``K-Point Grid``), ``Pristine Relaxation``, ``UEP``, ``Muon Sites``
+  (``Generation``, ``Relaxations`` and ``Analysis``), ``Magnetic Fields``,
+  ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button
+  above it returns to the project home. Analysis-workspace and saved
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
+- The ``Job Dashboard`` dock tracks every job in the project (see `Jobs and
+  execution`_).
 - The project home charts the workflow stages with their dependencies and
   progress, opens at the stage last worked on, and surveys the host cell with
-  that stage's muon positions (see :doc:`project_home`).
+  that stage's muon positions (see :doc:`/user_guide/project_home`).
 - Durable project and job state is autosaved. Analysis layouts and viewer
   choices are kept until ``Save Project``, which MuFinder offers whenever a
   project window is closed.
 
-:doc:`architecture` describes how projects are stored and saved (Domain model
-and persistence) and how the cross-platform appearance is achieved
-(Cross-platform appearance).
+Workflow stages
+---------------
 
-Host structure
---------------
+Host Structure
+~~~~~~~~~~~~~~
 
-A project starts from a host crystal structure imported from a CIF, magnetic
-CIF (``.mcif``) or CASTEP ``.cell`` file. The source file is copied into the
-project, and MCIF magnetic metadata (propagation vectors and atom-site moments)
-becomes the project magnetic structure and the host's per-atom spins. The
-``Host Structure`` panel switches between imported hosts, edits per-atom spins
-in units of ``hbar/2`` and the propagation vector in reciprocal-lattice units,
-and shows the structure in an orthographic 3D viewer with optional spin arrows,
-bonds and unit cell.
+A project starts from a host crystal structure imported with ``Load Structure
+(.cif/.mcif/.cell)`` from a CIF, magnetic CIF (``.mcif``) or CASTEP ``.cell``
+file. The source file is copied into the project, and MCIF magnetic metadata
+(propagation vectors and atom-site moments) becomes the project magnetic
+structure and the host's per-atom spins. The ``Host Structure`` panel switches
+between imported hosts, edits per-atom spins in units of ``hbar/2`` and the
+propagation vector in reciprocal-lattice units, and shows the structure in an
+orthographic 3D viewer with optional spin arrows, bonds and unit cell.
 
-See :doc:`host_structure`.
+See :doc:`/user_guide/host_structure`.
 
-Supercells
-----------
+Supercell Editor
+~~~~~~~~~~~~~~~~
 
 The ``Supercell Editor`` saves named, reusable supercells of the active host,
 from a diagonal ``Nx``/``Ny``/``Nz`` scaling or a full 3×3 integer matrix, with
@@ -61,26 +70,21 @@ is never rewritten: editing its matrix saves a new copy.
 Each workflow chooses its own simulation cell, the host unit cell or a saved
 supercell, and a configured calculation keeps the cell it was configured with.
 
-See :doc:`supercells`.
+See :doc:`/user_guide/supercells`.
 
-Convergence testing
--------------------
+Convergence Testing
+~~~~~~~~~~~~~~~~~~~
 
-Convergence testing sweeps ``CUT_OFF_ENERGY`` and then ``KPOINT_MP_GRID`` in
-single-point CASTEP calculations on the host unit cell or a saved supercell.
-Cutoffs are listed by hand or generated from a range; k-point grids are listed
-by hand or generated as every distinct grid CASTEP produces down to a minimum
-spacing. An examiner judges convergence of the energy (Delta-Threshold,
-Derivative or Asymptotic Extrapolation for cutoffs), the maximum force and,
-optionally, the maximum stress, plots the results, and recommends a value. The
-``Convergence Testing`` overview page shows both adopted defaults with the
-plots pinned when they were adopted.
-
-See :doc:`convergence_testing` and, for the grid and spacing round trip,
-``docs/castep/kpoint_spacing_convention.md``.
-
-Project defaults
-----------------
+``Convergence Testing`` sweeps ``CUT_OFF_ENERGY`` (``Cutoff Energy``) and then
+``KPOINT_MP_GRID`` (``K-Point Grid``) in single-point CASTEP calculations on
+the host unit cell or a saved supercell. Cutoffs are listed by hand or
+generated from a range; k-point grids are listed by hand or generated as every
+distinct grid CASTEP produces down to a minimum spacing. An examiner judges
+convergence of the energy (Delta-Threshold, Derivative or Asymptotic
+Extrapolation for cutoffs), the maximum force and, optionally, the maximum
+stress, plots the results, and recommends a value. The ``Convergence Testing``
+overview page shows both adopted defaults with the plots pinned when they were
+adopted.
 
 A project carries three calculation defaults that later workflows inherit: the
 XC functional, the plane-wave cutoff energy and the Monkhorst-Pack k-point
@@ -94,12 +98,13 @@ Energy Barriers rows take their functional, cutoff, grid and spin treatment
 from the relaxation they start from instead. Every change to a default is
 recorded in the Journal.
 
-See :doc:`convergence_testing` (Adopting a result as a project default),
-:doc:`quantum_corrections` and :doc:`energy_barriers`, and :doc:`architecture`
-(Project defaults surface).
+See :doc:`/user_guide/convergence_testing` (Adopting a result as a project
+default), :doc:`/user_guide/quantum_corrections` and
+:doc:`/user_guide/energy_barriers`. For the grid and spacing round trip, see
+:doc:`/castep/kpoint_spacing_convention`.
 
-Pristine relaxation and comparison tables
------------------------------------------
+Pristine Relaxation
+~~~~~~~~~~~~~~~~~~~
 
 The optional ``Pristine Relaxation`` stage relaxes the host without a muon. Each
 labelled row chooses its own unit cell or saved supercell, whether the cell is
@@ -114,11 +119,11 @@ displacement, bonding, topology and symmetry metrics, a composite similarity
 score, the parameter differences between the selected jobs, and CSV export.
 Each table is saved as a renamable child of ``Pristine Relaxation``.
 
-See :doc:`structural_relaxation_analysis` (Pristine Relaxation) and
-:doc:`comparison_table`.
+See :doc:`/user_guide/structural_relaxation_analysis` (Pristine Relaxation) and
+:doc:`/user_guide/comparison_table`.
 
-UEP screening
--------------
+UEP
+~~~
 
 The ``UEP`` stage runs CASTEP single-point source calculations for the host
 charge density and then analyses the unperturbed electrostatic potential: full
@@ -127,10 +132,10 @@ searches for potential minima, an optional harmonic zero-point estimate, and a
 clustering window with hierarchical and k-means views. Cluster
 representatives are offered to muon-site generation.
 
-See :doc:`uep_workflow`.
+See :doc:`/user_guide/uep_workflow`.
 
-Muon-site generation
---------------------
+Muon Sites: Generation
+~~~~~~~~~~~~~~~~~~~~~~
 
 ``Muon Sites -> Generation`` commits initial muon positions to the project by
 four methods: symmetry-aware random filling (by muon-muon separation or by a
@@ -145,10 +150,10 @@ Huddart *et al.*, ``MuFinder: A program to determine and analyse muon stopping
 sites``, *Computer Physics Communications* **280**, 108488 (2022), DOI:
 ``10.1016/j.cpc.2022.108488``.
 
-See :doc:`site_generation`.
+See :doc:`/user_guide/site_generation`.
 
-Muon relaxations
-----------------
+Muon Sites: Relaxations
+~~~~~~~~~~~~~~~~~~~~~~~
 
 ``Muon Sites -> Relaxations`` holds one fixed-cell CASTEP geometry optimization
 per staged position, in separate ``Positive muon`` and ``Muonium`` tabs. MuFinder
@@ -160,11 +165,11 @@ A completed, failed, stopped or cancelled pristine or muon relaxation can be
 continued from its CASTEP checkpoint with ``Continue relaxation…``, which edits
 the row's parameters in place and resumes the same job in the same directory.
 
-See :doc:`site_generation` (Creating Relaxation Jobs),
-:ref:`continue-relaxation` and :doc:`legacy_import`.
+See :doc:`/user_guide/site_generation` (Creating Relaxation Jobs),
+:ref:`continue-relaxation` and :doc:`/user_guide/legacy_import`.
 
-Relaxation analysis and the Muon Sites summary
-----------------------------------------------
+Muon Sites: Analysis
+~~~~~~~~~~~~~~~~~~~~
 
 ``Muon Sites -> Analysis`` collects completed relaxations of one charge state
 into named workspaces. A workspace orders the relaxed sites by energy, clusters
@@ -177,31 +182,20 @@ analysis, and CIF export of the pinned sites. Quantum Corrections, Energy
 Barriers and the Magnetic Fields muon-site dialog list the pinned sites by
 default, with a ``Show every relaxed site`` option for the full list.
 
-See :doc:`structural_relaxation_analysis`.
+See :doc:`/user_guide/structural_relaxation_analysis`.
 
-Legacy relaxation import
-------------------------
-
-``File > Import Legacy Relaxations...`` imports muon structural relaxations
-run by the legacy MuFinder application as read-only relaxation rows, so they
-can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
-``File > Remove Imported Relaxations...`` removes an import batch that nothing
-downstream still uses.
-
-See :doc:`legacy_import`.
-
-Magnetic fields
----------------
+Magnetic Fields
+~~~~~~~~~~~~~~~
 
 The ``Magnetic Fields`` workflow builds magnetic structures in the
 propagation-vector formalism, including from the host spins and as skyrmion or
-custom Fourier textures, from components that can be edited, duplicated,
-reordered and disabled without deleting them, with a panel that shows and
-edits the stored propagation-vector basis and which components use each row,
-a component q taken from a basis row or a combination of rows, guided helix,
-conical, cycloid and spin-density-wave presets set from the crystal axes, and
-a checklist that tracks the build and flags disabled, zero-moment and
-unpreviewed incommensurate structures, and calculates at a chosen muon site:
+custom Fourier textures, and calculates at a chosen muon site. Components can be
+edited, duplicated, reordered and disabled without deleting them. A panel shows
+and edits the stored propagation-vector basis and which components use each
+row, and a component q can be taken from a basis row or a combination of rows.
+Guided helix, conical, cycloid and spin-density-wave presets are set from the
+crystal axes, and a checklist tracks the build and flags disabled,
+zero-moment and unpreviewed incommensurate structures. It calculates:
 
 - the dipolar field of commensurate structures, optionally corrected for the
   host-ion displacements in a relaxed muon supercell at the site and its
@@ -222,16 +216,16 @@ unpreviewed incommensurate structures, and calculates at a chosen muon site:
 Muon sites come from relaxation clustering, UEP clustering or a custom
 fractional position; relaxation clusters are offered first once they exist,
 and fields, dipolar tensors and nuclear relaxation computed at an unrelaxed
-UEP site are labelled as estimates.
-Settings are saved as named workspaces, and the latest results of
-the page and of each workspace are saved as project results.
+UEP site are labelled as estimates. Settings are saved as named workspaces, and
+the latest results of the page and of each workspace are saved as project
+results.
 
-See :doc:`magnetic_fields`.
+See :doc:`/user_guide/magnetic_fields`.
 
-Quantum corrections
--------------------
+Quantum Corrections
+~~~~~~~~~~~~~~~~~~~
 
-Quantum Corrections lists every successfully relaxed muon site and runs a
+``Quantum Corrections`` lists every successfully relaxed muon site and runs a
 two-stage CASTEP calculation for each: a single-point with explicit muon mass
 and gyromagnetic ratio, then a Gamma-point phonon continuation (finite
 displacement by default, with optional task farming). Completed results give
@@ -239,12 +233,12 @@ the muon zero-point energy, covariance and correlation tensors, ``w1`` /
 ``w2`` witnesses and single-particle effective potentials, shown in an
 interactive analysis window.
 
-See :doc:`quantum_corrections`.
+See :doc:`/user_guide/quantum_corrections`.
 
-Energy barriers
----------------
+Energy Barriers
+~~~~~~~~~~~~~~~
 
-Energy Barriers takes an ordered pair of relaxed muon sites, generates the
+``Energy Barriers`` takes an ordered pair of relaxed muon sites, generates the
 symmetry-distinct paths between them (including same-site hops, with an
 optional maximum length), and builds a climbing-image NEB job for each chosen
 path from the two relaxed endpoints. Paths can be previewed in the pristine
@@ -253,20 +247,34 @@ once complete: a results table lists forward and reverse barriers and ``ΔE``,
 and an inspector scrubs the reaction-coordinate profile with a linked
 structure viewer.
 
-See :doc:`energy_barriers`.
+See :doc:`/user_guide/energy_barriers`.
 
 Journal
--------
+~~~~~~~
 
 The ``Journal`` is a curated, day-grouped narrative of the project's
 provenance: structure import, workflow configuration, project defaults, site
 generation, job submissions, continuations and outcomes, comparison tables and
 legacy imports. It exports as plain text or Markdown.
 
-See :doc:`journal`.
+See :doc:`/user_guide/journal`.
+
+Across the workflows
+--------------------
+
+Legacy relaxation import
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+``File > Import Legacy Relaxations...`` imports muon structural relaxations
+run by the legacy MuFinder application as read-only relaxation rows, so they
+can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
+``File > Remove Imported Relaxations...`` removes an import batch that nothing
+downstream still uses.
+
+See :doc:`/user_guide/legacy_import`.
 
 Jobs and execution
-------------------
+~~~~~~~~~~~~~~~~~~
 
 Every workflow table runs its ready rows on this computer or on an HPC cluster
 and shares one set of table behaviours:
@@ -281,7 +289,7 @@ and shares one set of table behaviours:
   several named queues (partitions) per profile with per-queue walltime,
   cores, memory, executable and template overrides, a queue choice on every
   submission, and queue polling and automatic output retrieval;
-- a Job Dashboard of the jobs that still need attention, with per-row
+- a ``Job Dashboard`` of the jobs that still need attention, with per-row
   ``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset`` and
   ``Dismiss``, a failure cause on each failed or stopped row, the
   geometry-optimisation progress of each running relaxation (iteration and
@@ -290,12 +298,12 @@ and shares one set of table behaviours:
 - for relaxations, a choice on resubmission between continuing from the
   checkpoint and starting again.
 
-See :doc:`job_lifecycle`, in particular Job tables and selections, Running
-jobs, :ref:`geometry-optimisation-progress`, :ref:`job-failure-reasons` and
-:ref:`resubmit-continue-or-start-again`.
+See :doc:`/getting_started/running_jobs`, in particular Job tables and
+selections, Running jobs, :ref:`geometry-optimisation-progress`,
+:ref:`job-failure-reasons` and :ref:`resubmit-continue-or-start-again`.
 
 CASTEP input and parameters
----------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Every workflow configures CASTEP through the same metadata-driven parameter
 dialog: job-type-aware basic and advanced parameters, typed controls, help
@@ -303,20 +311,18 @@ from the keyword metadata, a search filter, and one dialog for several rows in
 which values that differ are marked ``mixed`` and kept unless edited. The
 shared parameters come first in every workflow. The keyword metadata comes
 from a CASTEP keyword catalog generated from a local or cluster CASTEP, or
-imported. Workflows expand into resolved job specifications that are rendered
-into deterministic ``.cell`` and ``.param`` files.
+imported (see :doc:`/getting_started/castep_setup`). Workflows expand into
+resolved job specifications that are rendered into deterministic ``.cell`` and
+``.param`` files.
 
-See :doc:`castep_keyword_catalog`, :doc:`architecture` (CASTEP parameter
-dialogs, Calculation job generation, Workflow parameter surface policy) and
-``docs/castep/keyword_catalog.yaml``.
+For developers
+--------------
 
-Development harness
--------------------
-
-The repository is organised for development by coding agents. ``AGENTS.md`` is
-the canonical agent guide, and ``tests/test_agent_harness.py`` enforces its
-structural rules: layer imports, docs indexing, the ``MainWindow`` handler,
-plot-canvas and duplication ratchets, and the pull-request template pointers.
-
-See :doc:`agent_harness`, :doc:`architecture` and :doc:`quality_and_automation`
-(Agent harness checks).
+:doc:`/architecture` describes how projects are stored and saved (Domain model
+and persistence), how the cross-platform appearance is achieved (Cross-platform
+appearance), the Project defaults surface, and the CASTEP parameter dialogs,
+Calculation job generation and Workflow parameter surface policy.
+:doc:`/castep_keyword_catalog` and ``docs/castep/keyword_catalog.yaml`` define
+the keyword metadata. The repository is organised for development by coding
+agents; see :doc:`/agent_harness` and :doc:`/quality_and_automation` (Agent
+harness checks).
