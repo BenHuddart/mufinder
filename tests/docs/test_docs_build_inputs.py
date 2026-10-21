@@ -35,6 +35,7 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1080/001075199181521",
     ),
     "user_guide/quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
+    "user_guide/quantum_corrections_theory.rst": ("10.1038/s42005-023-01260-7",),
     "user_guide/site_generation.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/structural_relaxation_analysis.rst": (
         "10.1016/j.cpc.2022.108488",
