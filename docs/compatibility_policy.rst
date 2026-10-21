@@ -347,6 +347,19 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that copies the selected site's source into each
        stored ``magnetic_field`` record.
+   * - ``w1_entanglement_witness`` result payloads without ``w1_definition``
+     - ``mufinder.services.quantum_results`` (``w1_from_result_data``), read
+       by the Quantum Corrections results table
+     - A quantum-phonon result stores the ``w1`` witness with
+       ``w1_definition: "participation_minus_3"``, the ``P - 3`` definition
+       of Gomilšek et al. A payload without ``w1_definition`` holds the value
+       as ``-sqrt(3 - P)``, so the witness shown is recomputed as the summed
+       ``participation`` of its ``muon_zpe_modes`` minus 3. When the payload
+       has no usable ``muon_zpe_modes`` the stored value is shown as it is.
+       The stored value is never rewritten.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that rewrites the stored witness of each
+       quantum-phonon result, or indefinitely.
 
 Saved-project schema migrations
 -------------------------------

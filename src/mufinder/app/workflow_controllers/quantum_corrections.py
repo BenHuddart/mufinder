@@ -48,6 +48,7 @@ from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.project_service import TERMINAL_RECOVERABLE_JOB_STATUSES
+from mufinder.services.quantum_results import W1_DEFINITION, w1_from_result_data
 from mufinder.services.muon_sites_summary import (
     QUANTUM_CORRECTIONS_SCOPE,
     downstream_site_scope,
@@ -1468,10 +1469,12 @@ class QuantumCorrectionsController(WorkflowJobController):
                     "frequency_cm": mode.frequency_cm,
                     "participation": mode.participation,
                     "zpe_eV": mode.zpe_eV,
+                    "width_A": mode.width_A,
                 }
                 for mode in zpe.modes
             ],
             "w1_entanglement_witness": w1_entanglement_witness(phonon),
+            "w1_definition": W1_DEFINITION,
         }
         if zpe.warnings:
             payload["phonon_warnings"] = list(zpe.warnings)
@@ -1589,6 +1592,11 @@ class QuantumCorrectionsController(WorkflowJobController):
                         for mode in modes
                         if isinstance(mode, dict)
                     )
+            # A payload stored before ``w1_definition`` holds the witness in an
+            # earlier form; ``w1_from_result_data`` recomputes it as ``P - 3``.
+            witness = (
+                w1_from_result_data(result.data) if isinstance(result.data, dict) else None
+            )
             result_rows.append(
                 QuantumResultRow(
                     key=str(result.id),
@@ -1599,12 +1607,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                         else None
                     ),
                     eigenvalues=eigenvalue_text,
-                    witness=(
-                        f"{float(result.data['w1_entanglement_witness']):.4g}"
-                        if isinstance(result.data, dict)
-                        and "w1_entanglement_witness" in result.data
-                        else ""
-                    ),
+                    witness="" if witness is None else f"{witness:.4g}",
                     status=job_status,
                 )
             )
