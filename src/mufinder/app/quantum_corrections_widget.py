@@ -39,7 +39,8 @@ _SOURCE_HEADER_TOOLTIPS: dict[str, str] = {
         "Relaxed total energy relative to the lowest-energy eligible site with the same charge state and cell"
     ),
     "Displacements": (
-        "3 \u00d7 atom count: the finite-displacement calculations the phonon run needs, a guide to the farm count"
+        "3 \u00d7 atom count: the displaced calculations a FINITEDISPLACEMENT run needs, a guide to its farm "
+        "count; DFPT and linear-response runs do not use it"
     ),
     "Source Job": "The muon relaxation the row was built from",
     "Status": "Status of the row's current job",
