@@ -3,56 +3,39 @@ Host Structure
 
 Every project starts from a host crystal structure. The ``Host Structure``
 panel loads it, shows it in a 3D viewer, and holds the per-atom spins and
-propagation vector that the magnetic and spin-polarized workflows use.
+propagation vector that the magnetic and spin-polarized workflows use. Every
+other stage works on the active host chosen here.
+
+Before you start
+----------------
+
+You need a crystal structure file for the material you are studying, in one of
+these formats:
+
+- CIF files (``.cif``);
+- magnetic CIF files (``.mcif``);
+- CASTEP cell files (``.cell``).
+
+Nothing else has to exist first: the host is the first thing a project needs.
 
 Importing a structure
 ---------------------
 
-``Load Structure (.cif/.mcif/.cell)`` imports:
+1. **Open the panel.** Select ``Host Structure`` in the project navigator.
+2. **Load the file.** Click ``Load Structure (.cif/.mcif/.cell)`` and choose the
+   file.
+3. **Check the result.** The atom table, the 3D viewer and the summary above
+   them (label, source, atom count, species) show the structure that was read.
+   The new structure becomes the active host.
+4. **Add spins if you need them.** Edit the ``Spin (hbar/2)`` column in the
+   atom table, and set ``Propagation vector (r.l.u.):`` for magnetic work (see
+   `Setting spins and the propagation vector`_).
+5. **Switch hosts when you have several.** Choose another structure from
+   ``Active host structure:``. Every stage that follows uses the one selected
+   there.
 
-- CIF files (``.cif``);
-- magnetic CIF files (``.mcif``), read through the CIF parser;
-- CASTEP cell files (``.cell``).
-
-CIF and MCIF files are parsed with ASE-backed readers. ``.cell`` files are read
-by MuFinder's own CASTEP cell parser (``mufinder.castep_io.cell_parser``),
-which reads only the lattice and position blocks, so a CASTEP ``-out.cell``
-imports whatever calculation keywords it carries. Inline ``SPIN=...`` tokens on
-``POSITIONS_FRAC`` rows become per-atom spins.
-
-CIF comments follow the CIF syntax rules. A comment beside a loop heading, and
-comment-only or blank lines between loop headings, are accepted: ASE's reader
-takes a loop heading only from a line holding that one tag, so MuFinder hands
-ASE an in-memory copy with those comments and blank lines removed from loop
-heading lists. The source file is never modified. A ``#`` starts a comment only
-where a token could start, so hashes inside quoted strings, inside semicolon
-text fields and within unquoted values (``C#1``) are kept as data; MCIF
-magnetic metadata is read with the same rules. LF, CRLF and CR line endings are
-all accepted. ASE's reader still rejects a quoted loop value that contains a
-space followed by ``#`` (``'C #1'``).
-
-On import MuFinder copies the source file into the project's ``imports/``
-folder, makes the structure the active host by default, and records the import
-in the project provenance. An unsupported extension, invalid content or a
-missing file is reported with an explicit error.
-
-From an MCIF file MuFinder also extracts the magnetic metadata:
-
-- atom labels, single-vector legacy propagation-vector tags,
-  ``_magnetic_propagation_vector_kxkykz`` entries, and atom-site moment
-  vectors;
-- every imported propagation vector, kept in reciprocal-lattice units as
-  ``propagation_vectors_rlu`` metadata, with the first also mirrored to the
-  legacy ``propagation_vector`` property;
-- moment labels mapped onto atom indices by exact MCIF label match or by the
-  unique ``label_...`` expansion used by mag2spectra MCIF files.
-
-When the imported structure becomes the active host, this metadata becomes the
-project-level magnetic structure. MuFinder derives per-atom scalar spins from
-it and stores them on the host structure, and converts the moments into
-propagation-vector components with the phase correction needed for the
-unit-cell moment at each labelled site to reproduce the imported moment. See
-:doc:`/user_guide/magnetic_fields` for how the magnetic structure is used.
+An unsupported extension, invalid content or a missing file is reported with an
+explicit error.
 
 The host-structure panel
 ------------------------
@@ -72,9 +55,8 @@ The host-structure panel
   reciprocal-lattice units.
 - ``Supercell Editor...`` opens the :doc:`/user_guide/supercells`.
 
-The viewer is a PyVista/VTK structure viewer that keeps the camera when bonds,
-spins, slice planes, point markers or UEP isosurfaces are redrawn. It is
-orthographic only.
+The viewer is an orthographic structure viewer that keeps the camera when
+bonds, spins, slice planes, point markers or UEP isosurfaces are redrawn.
 
 - Spins are drawn as 3D arrows with shafts and cones, centred on the atoms and
   coloured by sign for up and down moments. Spin display is off by default and
@@ -96,3 +78,70 @@ orthographic only.
 
 The same viewer is used across the workflows, for example in the supercell
 editor, the UEP analysis window and the relaxation analysis workspaces.
+
+Setting spins and the propagation vector
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Spins are in units of ``hbar/2`` and are stored on the host structure; the
+propagation vector is in reciprocal-lattice units. The magnetic and
+spin-polarized workflows use them (see :doc:`/user_guide/magnetic_fields`). A ``.cell`` file's inline ``SPIN=...`` tokens on
+``POSITIONS_FRAC`` rows become per-atom spins on import, and an MCIF file sets
+them from its moments (see `What is read from each format`_).
+
+What MuFinder stores
+--------------------
+
+On import MuFinder copies the source file into the project's ``imports/``
+folder, makes the structure the active host by default, and records the import
+in the project provenance (the :doc:`/user_guide/journal`). The original file
+is never modified.
+
+What is read from each format
+-----------------------------
+
+CIF
+   CIF comments follow the CIF syntax rules. A comment beside a loop heading,
+   and comment-only or blank lines between loop headings, are accepted. A
+   ``#`` inside a quoted string, inside a semicolon text field or within an
+   unquoted value such as ``C#1`` is kept as data, and LF, CRLF and CR line
+   endings are all accepted. A quoted loop value that contains a space
+   followed by ``#`` (``'C #1'``) is rejected.
+MCIF
+   Read like a CIF, plus the magnetic metadata:
+
+   - atom labels, single-vector legacy propagation-vector tags,
+     ``_magnetic_propagation_vector_kxkykz`` entries, and atom-site moment
+     vectors;
+   - every imported propagation vector, kept in reciprocal-lattice units;
+   - moment labels mapped onto atoms by exact MCIF label match or by the
+     unique ``label_...`` expansion used by mag2spectra MCIF files.
+
+   When the imported structure becomes the active host, this metadata becomes
+   the project's magnetic structure: MuFinder derives per-atom scalar spins
+   from it and converts the moments into propagation-vector components, with
+   the phase correction needed for the unit-cell moment at each labelled site
+   to reproduce the imported moment. See :doc:`/user_guide/magnetic_fields`
+   for how the magnetic structure is used.
+CASTEP ``.cell``
+   Only the lattice and position blocks are read, so a CASTEP ``-out.cell``
+   imports whatever calculation keywords it carries. Inline ``SPIN=...``
+   tokens on ``POSITIONS_FRAC`` rows become per-atom spins.
+
+Limitations
+-----------
+
+- The viewer is orthographic only.
+- A CIF with a quoted loop value containing a space followed by ``#`` cannot
+  be imported (see `What is read from each format`_).
+
+For developers
+--------------
+
+CIF and MCIF files are read with ASE-backed readers. As ASE takes a loop
+heading only from a line holding that one tag, MuFinder hands ASE an in-memory
+copy with the accepted loop-heading comments and blank lines removed; the
+quoted-value limitation above comes from ASE's reader. ``.cell`` files are read
+by MuFinder's own parser, ``mufinder.castep_io.cell_parser``. MCIF propagation
+vectors are kept as ``propagation_vectors_rlu`` metadata, with the first also
+mirrored to the legacy ``propagation_vector`` property. The viewer uses the
+PyVista/VTK stack. See :doc:`/architecture`.

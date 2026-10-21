@@ -179,10 +179,9 @@ Cutoff Parameters`` / ``Inspect K-Point Parameters``. A row whose job was
 cancelled stays editable. Values must be unique within a sweep; MuFinder
 refuses to run a sweep with a duplicate or non-numeric value.
 
-A sweep's rows are restored from the saved form state when the project is
-reopened, or from the active convergence definition when that state is
-incomplete. Rows that use the default parameters keep their completed jobs
-across a reload, so adding a cutoff and running submits only the new row. A
+A sweep's rows are restored when the project is reopened. Rows that use the
+default parameters keep their completed jobs across a reload, so adding a
+cutoff and running submits only the new row. A
 regenerated list starts as fresh ``ready`` rows and does not inherit the status
 or results of an earlier definition.
 
@@ -320,9 +319,7 @@ how many atoms are used for per-atom normalization.
    (eV/Ang)`` (default 0.05), and an optional ``Stress threshold (GPa)``
    (default 0.1, matching the usual ``GEOM_STRESS_TOL``). The force and
    stress thresholds cannot go below the precision CASTEP prints those
-   quantities to, 0.00001 eV/Ang and 0.000001 GPa (``firstd_output_forces``
-   and ``firstd_output_stress`` in CASTEP's ``Source/Functional/firstd.f90``):
-   a finer threshold could only be met by values that print identically. A
+   quantities to, 0.00001 eV/Ang and 0.000001 GPa: a finer threshold could only be met by values that print identically. A
    smaller value snaps to the minimum, and the field shows the value the
    analysis used. The energy threshold only has to be positive, since CASTEP
    prints energies to 13 significant figures. The stress box can only be

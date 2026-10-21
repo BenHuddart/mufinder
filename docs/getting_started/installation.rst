@@ -68,7 +68,7 @@ Setting up CASTEP
 -----------------
 
 Before running calculations, open ``Setup > CASTEP`` to set the local CASTEP
-executable and ``mpirun`` paths and to load a CASTEP keyword catalog
-(:doc:`/castep_keyword_catalog`). Cluster profiles are configured under
-``Setup > HPC Clusters``. Both are described in
+executable and MPI launcher and to install a CASTEP keyword catalog; the steps
+are in :doc:`/getting_started/castep_setup`. Cluster profiles are configured
+under ``Setup > HPC Clusters`` and described in
 :doc:`/getting_started/running_jobs`.

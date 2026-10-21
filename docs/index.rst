@@ -25,6 +25,7 @@ guide describes internal contracts and quality standards.
    :caption: Getting started
 
    getting_started/installation
+   getting_started/castep_setup
    getting_started/running_jobs
 
 .. toctree::

@@ -1,48 +1,49 @@
 Generate Comparison Table
 =========================
 
-Overview
---------
+The comparison table checks how well a DFT-relaxed host reproduces the
+experimental structure you started from. In ``Pristine Relaxation``, click
+``Generate Comparison Table...`` to compare the project's active
+(experimental) host structure against one or more completed pristine-relaxation
+structures. MuFinder normalizes the cells into a common frame, matches atoms
+under periodic boundary conditions, and reports lattice, displacement, bonding,
+topology and symmetry metrics next to a heuristic overall similarity score. The
+comparison is a supercell-aware structural analysis, not a row-by-row text diff
+of imported files.
 
-The ``Generate Comparison Table...`` feature in ``Pristine Relaxation`` compares
-the project's active (experimental) host structure against one or more completed pristine-relaxation
-DFT structures. The comparison is not a direct row-by-row text diff of imported
-files. It is a supercell-aware structural analysis pipeline that:
+Before you start
+----------------
 
-1. normalizes the experimental and DFT cells into a common comparison frame,
-2. matches atoms under periodic boundary conditions,
-3. evaluates lattice, displacement, bonding, topology, and symmetry metrics,
-4. reports a heuristic overall similarity score alongside the raw metrics.
+The comparison table needs:
 
-Each generated table is saved as a child item under ``Pristine Relaxation`` in
-the project tree and persists across project save/load. The per-metric ``Info`` buttons in the
-table expose a condensed version of the same method note documented here.
+- **A loaded host structure.** The table compares against the active host.
+- **At least one completed pristine relaxation.** Run the jobs in ``Pristine
+  Relaxation`` first (:doc:`/user_guide/structural_relaxation_analysis`; jobs
+  are described in :doc:`/getting_started/running_jobs`). MuFinder reports which
+  of the two is missing when you click the button.
 
-User Flow
----------
+Running the workflow
+--------------------
 
-Prerequisites: a loaded host structure and at least one completed
-pristine-relaxation job (MuFinder reports which is missing otherwise).
+1. **Open the page.** Select ``Pristine Relaxation`` in the navigator.
+2. **Start the comparison.** Click ``Generate Comparison Table...``.
+3. **Choose the relaxations.** In the ``Generate Comparison Table`` dialog, tick
+   ``Include`` for one or more completed pristine-relaxation jobs. Each row
+   shows the job's ``Label``, ``Supercell``, ``Status``, ``Total Energy (eV)``,
+   and relaxed ``a (Ang)``, ``b (Ang)`` and ``c (Ang)`` lengths. Ticking nothing
+   is refused.
+4. **Name the table.** Edit the ``Comparison table label`` if needed (it
+   defaults to ``Comparison <N>``) and click ``OK``.
+5. **Read the table.** MuFinder opens the new table, listed under ``Pristine
+   Relaxation`` in the project tree. It is saved with the project.
+6. **Rename or remove it.** The title at the top of an existing table stays
+   editable: editing it updates the table's label in the project tree and is
+   saved with the project. The ``Remove`` button at the top right deletes the
+   table after a confirmation prompt, with ``No`` as the default.
+7. **Export it (optional).** Click ``Export CSV...`` (see `Export`_).
 
-1. Open ``Pristine Relaxation``.
-2. Click ``Generate Comparison Table...``.
-3. In the dialog, tick ``Include`` for one or more completed pristine-relaxation
-   jobs. Each row shows the job's ``Label``, ``Supercell``, ``Status``,
-   ``Total Energy (eV)``, and relaxed ``a``/``b``/``c`` lengths.
-4. Edit the ``Comparison table label`` if needed (it defaults to
-   ``Comparison <N>``) and click ``OK``.
-5. MuFinder opens the new table, listed under ``Pristine Relaxation`` in the
-   project tree.
-
-The title shown at the top of an existing comparison table remains editable
-after creation. Editing the title updates the table's label in the project tree
-and is saved with the project.
-
-A table is deleted with the ``Remove`` button at the top right of the
-comparison view, after a confirmation prompt.
-
-Table Layout
-------------
+The comparison table
+--------------------
 
 .. figure:: ../_generated/screenshots/comparison_table.png
    :alt: A comparison table of the silicon host against one relaxed cell, grouped into
@@ -50,22 +51,51 @@ Table Layout
 
    The silicon host compared with that synthetic pristine relaxation.
 
-The rendered table uses metric rows and one column for the experimental
-reference plus one column per selected DFT structure. Rows are grouped into
-scientific categories:
+The table has a ``Metric`` column, an ``Experimental`` column for the reference
+structure, and one column per selected DFT structure, headed ``DFT (<job
+label>)``. Rows are grouped into scientific categories:
 
-- lattice parameters,
-- lattice changes,
-- atomic displacements,
-- bonding,
-- symmetry,
-- overall similarity.
+- ``Lattice Parameters``,
+- ``Lattice Changes``,
+- ``Atomic Displacements``,
+- ``Bonding``,
+- ``Symmetry``,
+- ``Overall`` (the similarity score).
+
+Each metric row has an ``Info`` button that opens a condensed version of the
+method note under `Method`_. When two or more DFT columns have a numeric value
+for a metric, the column closest to experiment is shown in bold green. A
+warning banner above the table lists problems found while comparing, such as a
+failed supercell detection or a partial atom matching.
 
 The collapsible ``DFT Parameter Differences`` section lists only those CASTEP
 input parameters that differ across the selected pristine-relaxation jobs.
 
+Interpreting the table
+~~~~~~~~~~~~~~~~~~~~~~
+
+The most reliable reading strategy is usually:
+
+1. check the warnings for failed supercell detection or partial atom matching,
+2. inspect lattice changes and RMSD to judge global agreement,
+3. inspect coordination and topology rows to detect chemistry-changing events,
+4. use the similarity score only as a compact summary after the raw metrics have been reviewed.
+
+In other words, a high similarity score is useful, but a preserved topology and
+small RMSD are usually more physically interpretable than the score alone.
+
+Method
+------
+
+The comparison runs these steps:
+
+1. normalizes the experimental and DFT cells into a common comparison frame,
+2. matches atoms under periodic boundary conditions,
+3. evaluates lattice, displacement, bonding, topology, and symmetry metrics,
+4. reports a heuristic overall similarity score alongside the raw metrics.
+
 Notation
---------
+~~~~~~~~
 
 The equations below use the following symbols.
 
@@ -84,10 +114,10 @@ The equations below use the following symbols.
   is true and 0 otherwise.
 
 Normalization and Atom Matching
--------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Supercell detection
-~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^
 
 MuFinder first tries to detect whether the DFT cell is an integer supercell of
 the experimental cell. It forms the candidate matrix
@@ -115,7 +145,7 @@ are computed. This prevents artificial disagreement caused solely by comparing
 different cell sizes.
 
 Periodic atom matching
-~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^
 
 After normalization, atoms are matched species-by-species with a Hungarian
 assignment. The pairwise cost between experimental atom :math:`i` and DFT atom
@@ -140,12 +170,12 @@ If exact one-to-one matching is impossible, MuFinder keeps the best partial
 correspondence and records a warning in the comparison table.
 
 Lattice Metrics
----------------
+~~~~~~~~~~~~~~~
 
 The lattice metrics quantify cell shape and size after normalization.
 
 Lengths
-~~~~~~~
+^^^^^^^
 
 The direct-lattice lengths are
 
@@ -161,7 +191,7 @@ Physically, these track axial dilation or contraction of the relaxed DFT cell
 relative to experiment.
 
 Angles
-~~~~~~
+^^^^^^
 
 The lattice angles are obtained from the usual dot-product relations,
 
@@ -187,7 +217,7 @@ These respond primarily to shear and cell-shape distortion rather than pure
 volumetric expansion.
 
 Volume
-~~~~~~
+^^^^^^
 
 The cell volume is
 
@@ -199,7 +229,7 @@ Large deviations often indicate over-relaxation, under-relaxation, or a true
 change in the equilibrium cell size.
 
 Percent changes relative to experiment
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The signed percent changes shown in the table are
 
@@ -219,13 +249,13 @@ Values close to zero indicate good lattice agreement. Positive values indicate
 expansion relative to experiment, while negative values indicate contraction.
 
 Atomic-Displacement Metrics
----------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Once the atom mapping is fixed, each matched pair contributes a minimum-image
 displacement magnitude :math:`d_i`.
 
 RMSD
-~~~~
+^^^^
 
 The root-mean-square displacement is
 
@@ -239,7 +269,7 @@ Because the square is taken before averaging, RMSD weights larger relaxations
 more strongly than the simple mean displacement.
 
 Mean and maximum displacement
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The other two displacement summaries are
 
@@ -254,7 +284,7 @@ the maximum displacement is useful for spotting one strongly reconstructed site
 inside an otherwise well-preserved structure.
 
 Bonding Metrics
----------------
+~~~~~~~~~~~~~~~
 
 Bonding-derived metrics use a simple, explicit neighbour rule. Two atoms are
 treated as bonded when
@@ -269,7 +299,7 @@ universal physical law. The same rule is used for coordination numbers,
 topology, and local bond-angle environments.
 
 Nearest-neighbour bond-length changes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 For each site,
 
@@ -294,7 +324,7 @@ These are local-scale metrics. They are often more chemically intuitive than a
 cell-wide volume change when the main relaxation is confined to one region.
 
 Bond-angle changes
-~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
 For each site with at least two neighbours, MuFinder computes all unique
 neighbour-neighbour angles and averages them to obtain a local mean angle
@@ -321,7 +351,7 @@ This metric is informative for coordination-polyhedron distortions, but it is
 less stable when a site has very low coordination.
 
 Coordination-number changes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The coordination number of site :math:`i` is
 
@@ -341,10 +371,10 @@ This is one of the clearest discrete indicators of bond breaking or bond
 formation.
 
 Symmetry and Topology
----------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 Space-group comparison
-~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^
 
 MuFinder uses ``spglib`` to identify the international space-group number and
 symbol for each normalized structure. The comparison-table row is a Boolean
@@ -359,7 +389,7 @@ the usual care: the result depends on the chosen symmetry tolerance and on the
 numerical quality of the input structure.
 
 Topology preservation
-~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^
 
 Using the same neighbour rule as above, MuFinder builds an undirected bond-edge
 set
@@ -381,7 +411,7 @@ This is stricter than a coordination-number comparison. Two structures can have
 the same coordination counts but different bond connectivity.
 
 Similarity Score
-----------------
+~~~~~~~~~~~~~~~~
 
 The ``Similarity score`` is a heuristic composite, intended as a quick ranking
 aid rather than a replacement for the raw metrics.
@@ -434,26 +464,13 @@ Important details:
 - topology and bond-angle metrics are informative diagnostics but do not enter
   the score directly in the current implementation.
 
-Interpreting the Table
-----------------------
-
-The most reliable reading strategy is usually:
-
-1. check the warnings for failed supercell detection or partial atom matching,
-2. inspect lattice changes and RMSD to judge global agreement,
-3. inspect coordination and topology rows to detect chemistry-changing events,
-4. use the similarity score only as a compact summary after the raw metrics have been reviewed.
-
-In other words, a high similarity score is useful, but a preserved topology and
-small RMSD are usually more physically interpretable than the score alone.
-
 Export
 ------
 
 Use ``Export CSV...`` in the comparison view to export the displayed values for
 external analysis or record-keeping.
 
-Known Limitations
+Known limitations
 -----------------
 
 - Space-group comparison depends on ``spglib`` and on the selected symmetry
