@@ -224,8 +224,8 @@ silicon's two-atom primitive cell, the cell of the UEP fixture. The builder
 opens the project in a ``MainWindow`` and drives each workflow as its buttons
 do: it adds and runs a pristine relaxation and a UEP source row, stages five
 manual candidate sites as positive-muon relaxations in a saved 2x2x2
-supercell, creates, clusters and pins an analysis workspace, runs the
-singlepoint stage of the lowest Quantum Corrections site, and generates the
+supercell, creates, clusters and pins an analysis workspace, runs the phonon
+job of the lowest Quantum Corrections site, and generates the
 bond-centre to tetrahedral paths on the Energy Barriers page and runs an NEB
 band along the first. Jobs are submitted through
 ``JobExecutionController.submit_local_jobs`` with a local runner whose
@@ -239,11 +239,12 @@ The outputs come from the synthetic test fixtures where one fits:
 ``tests/fixtures/uep/Si2.castep``, ``Si2.den_fmt`` and ``Si2.cell`` for the
 UEP source job, and ``tests/fixtures/geometry/Si2_bfgs.castep`` for the
 pristine relaxation, whose relaxed cell is read from the output's final
-configuration. No fixture holds a muon relaxation, a singlepoint of a
+configuration. No fixture holds a muon relaxation, a phonon run of a
 muoniated cell or a silicon NEB band, so the script writes those in CASTEP's
-file shapes with illustrative energies: each muon start relaxes to its nearest
-bond-centre or tetrahedral site, the singlepoint reports close to its
-relaxation's energy, and the NEB ``.ts`` band follows the job's own reactant, intermediate
+file shapes with illustrative numbers: each muon start relaxes to its nearest
+bond-centre or tetrahedral site, the phonon run reports close to its
+relaxation's energy with one mode per atom and axis, the muon's three the
+highest, and the NEB ``.ts`` band follows the job's own reactant, intermediate
 and product cells. The pages that show these numbers say in their captions
 that they are illustrative. The UEP batch search and its ZPE run in the
 scene's thread with seeded random starts, so every build finds the same minima.
@@ -307,8 +308,8 @@ the call site or binds them once with ``functools.partial``.
   ``MainWindow``; ``select_route`` selects a project-tree route;
   ``patch_continuation_cluster_dialog``, ``patch_continuation_cluster_runner``
   and ``add_cluster_input_job`` stand in for the cluster submission dialog and
-  SSH runner; ``stage_quantum_row_with_singlepoint`` stages a Quantum
-  Corrections row whose stage-1 singlepoint has finished.
+  SSH runner; ``stage_quantum_row`` stages an eligible Quantum Corrections
+  row, optionally with the legacy singlepoint job an older project holds.
 - ``tests/support/controllers.py``: ``RecordingBackend`` and ``make_context``
   stand in for the submit backends and the ``WorkflowControllerContext`` a
   workflow controller is built from; ``FakeRowState``, ``no_artifacts``,

@@ -74,8 +74,8 @@ Mode Ion                X                                   Y                   
 
 
 #: The same phonon file as ``PHONON_TEXT`` but with the CASTEP default hydrogen
-#: mass on the muon — what a stage-2 continuation produces when the stage-1
-#: singlepoint was written without a ``SPECIES_MASS`` block.
+#: mass on the muon — what a phonon run produces when it continues from a
+#: checkpoint written without the muon's ``SPECIES_MASS`` block.
 HYDROGEN_MASS_PHONON_TEXT = PHONON_TEXT.replace("H:mu      0.113429", "H:mu      1.007940")
 
 

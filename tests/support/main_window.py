@@ -178,19 +178,19 @@ def patch_continuation_cluster_runner(
     return recorded
 
 
-def stage_quantum_row_with_singlepoint(
+def stage_quantum_row(
     window: MainWindow,
     service: ProjectService,
     doc,
     *,
-    singlepoint_status: JobStatus,
+    singlepoint_status: JobStatus | None = None,
 ):
-    """Stage one Quantum Corrections row whose stage-1 singlepoint has finished.
+    """Stage one eligible Quantum Corrections row on ``window``'s active definition.
 
-    Mirrors the scaffold
-    ``test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_state``
-    builds, but leaves the singlepoint status configurable so the reset gate can
-    be exercised for a completed *and* a failed stage 1.
+    With ``singlepoint_status``, the row also holds the singlepoint job an older
+    MuFinder version ran before the phonon job, bound through
+    ``singlepoint_job_ids_by_label`` in that status; the third return value is
+    that job, else ``None``.
     """
 
     relaxed_structure = Structure(
@@ -226,14 +226,16 @@ def stage_quantum_row_with_singlepoint(
     definition = window._quantum_corrections_controller.ensure_definition([str(site.id)])
     assert definition is not None
 
-    singlepoint_job = service.add_job(
-        doc,
-        label="quantum_singlepoint_siteA",
-        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
-    )
-    singlepoint_job.status = singlepoint_status
-    definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
+    singlepoint_job = None
+    if singlepoint_status is not None:
+        singlepoint_job = service.add_job(
+            doc,
+            label="quantum_singlepoint_siteA",
+            workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+            calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+        )
+        singlepoint_job.status = singlepoint_status
+        definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
 
     candidate = window._quantum_corrections_controller.candidate_by_key(str(site.id))
     assert candidate is not None

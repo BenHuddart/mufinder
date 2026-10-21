@@ -3,19 +3,16 @@
 Submitting a batch of jobs to a cluster interleaves decisions about remote
 directories with questions only the user can answer. This module holds the
 decisions; the window keeps the dialog, the prompts and the message boxes.
-Before connecting, :func:`split_stranded_quantum_jobs` drops quantum phonon
-jobs whose stage-1 checkpoint is not on the chosen cluster
-(:func:`stranded_quantum_jobs_message` explains them) and
-:func:`can_reuse_cluster_connection` decides whether the open connection
-serves. :func:`plan_cluster_submission` then runs the planning stages in
+Before connecting, :func:`can_reuse_cluster_connection` decides whether the
+open connection serves. :func:`plan_cluster_submission` then runs the planning stages in
 order, calling back into the window for the remote existence check, the
 prompts and the local clean-up:
 
 1. :func:`plan_remote_targets` resolves each job's remote directory: a
    start-again job's own directory (deleted and re-uploaded), a continuation's
-   preserved ``remote_directory`` or a quantum phonon job's stage-1 directory
-   (submitted into as-is), a resubmitted job's previous directory (its files
-   reused), or a fresh directory under the working directory.
+   preserved ``remote_directory`` (submitted into as-is), a resubmitted job's
+   previous directory (its files reused), or a fresh directory under the
+   working directory.
    :meth:`ClusterTargetPlan.targets_to_check` lists the fresh directories whose
    existence the worker checks. A job whose check raises is not submitted:
    :func:`remote_check_failures` reports it and
@@ -35,8 +32,8 @@ prompts and the local clean-up:
 :meth:`ClusterSubmissionPlan.prepare_batch` then prepares each submission and
 returns the worker batch.
 
-A directory any job in the batch submits into as-is (a continuation or a
-quantum stage-1 directory) is *protected*: it is never deleted, whatever the
+A directory any job in the batch submits into as-is (a continuation) is
+*protected*: it is never deleted, whatever the
 overwrite decision of another job whose target collides with it.
 
 Layering: this lives in ``mufinder.services`` and imports ``domain``,
@@ -97,47 +94,6 @@ def can_reuse_cluster_connection(
     )
 
 
-def split_stranded_quantum_jobs(
-    jobs: Sequence[Job],
-    *,
-    cluster_name: str,
-    stage_one_target: Callable[[Job], str | None],
-    continuation_target: Callable[..., str],
-) -> tuple[list[Job], list[tuple[Job, str]]]:
-    """Separate quantum phonon jobs that cannot continue on ``cluster_name``.
-
-    A quantum phonon job continues in the remote directory holding its
-    stage-1 checkpoint. ``stage_one_target(job)`` returns where stage 1 ran
-    (``None`` for any other job) and ``continuation_target(job,
-    cluster_name=...)`` the stage-1 directory on ``cluster_name`` (``""`` when
-    there is none). Returns the jobs to keep and the stranded ``(job,
-    stage_one_target)`` pairs, both in input order.
-    """
-
-    kept: list[Job] = []
-    stranded: list[tuple[Job, str]] = []
-    for job in jobs:
-        stage_one = stage_one_target(job)
-        if stage_one is not None and not continuation_target(job, cluster_name=cluster_name):
-            stranded.append((job, stage_one))
-        else:
-            kept.append(job)
-    return kept, stranded
-
-
-def stranded_quantum_jobs_message(cluster_name: str, stranded: Iterable[tuple[Job, str]]) -> str:
-    """Return the message naming the phonon jobs not submitted to ``cluster_name``."""
-
-    return (
-        f"These phonon jobs were not submitted to {cluster_name} because "
-        "their stage-1 checkpoint (.check) is not in a directory there:\n\n"
-        + "\n".join(
-            f"  - {job.label} (stage 1 ran {'on this computer' if stage_one.casefold() == 'local' else 'on ' + stage_one})"
-            for job, stage_one in stranded
-        )
-    )
-
-
 def unsafe_job_labels_message(invalid_labels: Iterable[str]) -> str:
     """Return the message asking the user to rename jobs with unsafe remote labels."""
 
@@ -156,8 +112,7 @@ class RemoteTarget:
     remote_target: str
     #: Submit without uploading inputs: a resubmission into its previous directory.
     reuse_existing_files: bool = False
-    #: Submit into a directory that already exists, as-is: a continuation or a
-    #: quantum phonon job's stage-1 directory.
+    #: Submit into a directory that already exists, as-is: a continuation.
     allow_existing_remote_directory: bool = False
     #: Start again: delete the job's own directory and upload its inputs afresh.
     fresh_delete: bool = False
@@ -250,7 +205,6 @@ def plan_remote_targets(
     working_directory: str,
     seed_name_by_job: dict[UUID, str],
     remote_job_directory: Callable[..., str],
-    quantum_continuation_target: Callable[..., str],
     fresh_start_job_ids: Collection[UUID] = (),
     reuse_existing_remote_files: bool = False,
 ) -> ClusterTargetPlan:
@@ -267,9 +221,6 @@ def plan_remote_targets(
       through to the rules below;
     - with ``reuse_existing_remote_files`` a job resubmits into its previous
       ``remote_directory`` without uploading inputs;
-    - a quantum phonon job whose stage 1 ran on ``cluster_name``
-      (``quantum_continuation_target(job, cluster_name=...)``) is submitted
-      into the stage-1 directory as-is;
     - otherwise ``remote_job_directory(working_directory=...,
       seed_name=...)`` gives a fresh directory, checked for existence before
       submission.
@@ -299,12 +250,6 @@ def plan_remote_targets(
             continue
         if reuse_existing_remote_files and job.id not in fresh_ids and own_directory:
             targets.append(RemoteTarget(job=job, remote_target=own_directory, reuse_existing_files=True))
-            continue
-        continuation_target = quantum_continuation_target(job, cluster_name=cluster_name)
-        if continuation_target:
-            targets.append(
-                RemoteTarget(job=job, remote_target=continuation_target, allow_existing_remote_directory=True)
-            )
             continue
         targets.append(
             RemoteTarget(
@@ -512,7 +457,6 @@ def plan_cluster_submission(
     submission: ClusterSubmissionSettings,
     seed_name_by_job: dict[UUID, str],
     remote_job_directory: Callable[..., str],
-    quantum_continuation_target: Callable[..., str],
     output_directory: Callable[[Job], Path | None],
     retrieval_flags: Callable[[Job], RetrievalFlags],
     check_remote_directories: Callable[[list[tuple[UUID, str]]], Mapping[str, object]],
@@ -543,7 +487,6 @@ def plan_cluster_submission(
         working_directory=submission.working_directory,
         seed_name_by_job=seed_name_by_job,
         remote_job_directory=remote_job_directory,
-        quantum_continuation_target=quantum_continuation_target,
         fresh_start_job_ids=fresh_start_job_ids,
         reuse_existing_remote_files=reuse_existing_remote_files,
     )

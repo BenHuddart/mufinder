@@ -25,11 +25,22 @@ from mufinder.workflow.naming import job_name
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
 
-#: Resolves the seed name a quantum-corrections job uses from its definition
-#: and source key.
+#: Resolves the seed name a quantum-corrections row's phonon job uses from its
+#: definition and source key.
 QuantumSeedName = Callable[[CalculationDefinition, str], str]
 
-_QUANTUM_JOB_MAPPINGS = ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_ids_by_label")
+#: Definition mapping binding a row to the singlepoint job older projects ran
+#: before the phonon job. MuFinder no longer writes it; it is read so that job
+#: keeps its directory.
+QUANTUM_SINGLEPOINT_JOB_MAPPING = "singlepoint_job_ids_by_label"
+
+#: Definition mapping recording the seed a row's legacy singlepoint ran under,
+#: written when the row's phonon job is given a fresh seed of its own. A legacy
+#: singlepoint without an entry shares the row's seed from
+#: ``job_seed_names_by_label``.
+QUANTUM_SINGLEPOINT_SEED_MAPPING = "singlepoint_seed_names_by_label"
+
+_QUANTUM_JOB_MAPPINGS = (QUANTUM_SINGLEPOINT_JOB_MAPPING, "phonon_job_ids_by_label", "job_ids_by_label")
 
 #: Standard output file suffixes, in the order :func:`job_output_files` lists them.
 #: Task farming writes the band to ``<seed>_farm001.ts``; there is no unfarmed
@@ -113,7 +124,9 @@ def job_output_directory(
 
     The definitions are searched in project order. A definition claims the job
     through ``job_ids_by_cutoff`` (``<output>/<label>``), a quantum-corrections
-    job mapping (``<output>/<seed>``, the seed from ``quantum_seed_name``),
+    job mapping (``<output>/<seed>``, the seed from ``quantum_seed_name``; a
+    legacy singlepoint job uses its own seed from
+    ``singlepoint_seed_names_by_label`` when the row records one),
     ``job_ids_by_label`` (``<output>/<label>``, or
     ``<output>/<positivemuon|muonium>/<seed>`` for a muon relaxation) or
     ``job_labels`` when ``<output>/<label>`` exists. A job no definition claims
@@ -144,8 +157,14 @@ def job_output_directory(
                 if not isinstance(mapping, dict):
                     continue
                 matching_key = _key_for_job(mapping, job)
-                if matching_key:
-                    return base / quantum_seed_name(definition, matching_key)
+                if not matching_key:
+                    continue
+                if mapping_name == QUANTUM_SINGLEPOINT_JOB_MAPPING:
+                    legacy_seeds = params.get(QUANTUM_SINGLEPOINT_SEED_MAPPING, {})
+                    legacy_seed = legacy_seeds.get(matching_key) if isinstance(legacy_seeds, dict) else None
+                    if isinstance(legacy_seed, str) and legacy_seed.strip():
+                        return base / legacy_seed.strip()
+                return base / quantum_seed_name(definition, matching_key)
 
         job_ids_by_label = params.get("job_ids_by_label", {})
         if isinstance(job_ids_by_label, dict) and str(job.id) in {

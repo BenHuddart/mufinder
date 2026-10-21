@@ -250,6 +250,7 @@ from mufinder.app.workflow_controllers import (
     WorkflowJobController,
     dedupe_jobs,
     merge_controller_result,
+    owning_controller,
     validate_controller_artifacts,
 )
 from mufinder.castep_io.geometry_progress import GeometryProgress
@@ -262,8 +263,6 @@ from mufinder.services.cluster_submission_planner import (
     ClusterSubmissionPlan,
     can_reuse_cluster_connection,
     plan_cluster_submission,
-    split_stranded_quantum_jobs,
-    stranded_quantum_jobs_message,
     unsafe_job_labels_message,
 )
 from mufinder.services.job_execution_controller import (
@@ -824,11 +823,11 @@ class MainWindow(QMainWindow):
         self._quantum_corrections_view.source_label_renamed.connect(
             self._on_quantum_corrections_source_label_renamed
         )
-        # Quantum-corrections controller: the two-stage (singlepoint → phonon)
-        # workflow. Built here (after its view exists) and appended to the
-        # registry so completed castep_quantum_singlepoint / castep_quantum_phonon
-        # jobs route through its validate_artifacts and build_result; task
-        # farming stays in the shared submit backend.
+        # Quantum-corrections controller: one phonon job per relaxed site. Built
+        # here (after its view exists) and appended to the registry so completed
+        # castep_quantum_phonon jobs (and an older project's
+        # castep_quantum_singlepoint jobs) route through its validate_artifacts
+        # and build_result; task farming stays in the shared submit backend.
         self._quantum_corrections_controller = QuantumCorrectionsController(
             self._build_workflow_controller_context(),
             self._build_quantum_corrections_deps(),
@@ -845,21 +844,14 @@ class MainWindow(QMainWindow):
                 values, target="cluster"
             )
         )
-        self._quantum_corrections_view.reset_stage_requested.connect(
-            self._quantum_corrections_controller.reset_to_stage_one
-        )
-        self._quantum_corrections_view.reset_stage_two_requested.connect(
-            self._quantum_corrections_controller.reset_to_stage_two
-        )
         self._quantum_corrections_view.show_every_site_toggled.connect(
             self._quantum_corrections_controller.set_show_every_site
         )
         self._quantum_corrections_view.open_muon_sites_requested.connect(
             lambda: self._set_active_route("muon_sites")
         )
-        # Quantum rows reset through the stage resets instead of a failed-job reset.
         self._connect_workflow_row_actions(
-            self._quantum_corrections_view, self._quantum_corrections_controller, reset=False
+            self._quantum_corrections_view, self._quantum_corrections_controller
         )
         self._quantum_corrections_view.analysis_requested.connect(
             self._on_launch_quantum_phonon_analysis
@@ -4419,28 +4411,6 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # A quantum phonon job continues from its stage-1 checkpoint, which never
-        # leaves the cluster that ran the singlepoint. The Quantum Corrections page
-        # refuses these up front; this catches every other route (the dashboard).
-        stranded = [
-            (job, stage_one)
-            for job in eligible_jobs
-            if (stage_one := self._quantum_corrections_controller.stage_one_target(job)) is not None
-            and stage_one.casefold() != "local"
-        ]
-        if stranded:
-            stranded_ids = {job.id for job, _stage_one in stranded}
-            eligible_jobs = [job for job in eligible_jobs if job.id not in stranded_ids]
-            QMessageBox.information(
-                self,
-                "Phonon stage must run where stage 1 ran",
-                "These phonon jobs were not run on this computer because their stage-1 "
-                "checkpoint (.check) is only on the cluster that ran the singlepoint:\n\n"
-                + "\n".join(f"  - {job.label} (stage 1 ran on {stage_one})" for job, stage_one in stranded),
-            )
-            if not eligible_jobs:
-                return
-
         setup = load_castep_setup(self._settings)
         if not setup.executable_path:
             QMessageBox.warning(
@@ -4574,7 +4544,6 @@ class MainWindow(QMainWindow):
             submission=submission,
             seed_name_by_job=seed_name_by_job,
             remote_job_directory=self._cluster_runner.remote_job_directory,
-            quantum_continuation_target=self._quantum_corrections_controller.continuation_remote_target,
             output_directory=self._job_output_directory,
             retrieval_flags=self._retrieval_flags_for_job,
             check_remote_directories=self._await_remote_dir_check,
@@ -4665,30 +4634,12 @@ class MainWindow(QMainWindow):
     def _screen_cluster_submission_jobs(
         self, eligible_jobs: list[Job], cluster: ClusterConfig
     ) -> tuple[list[Job], dict[UUID, str]] | None:
-        """Drop the jobs that cannot go to ``cluster`` and map the rest to seeds.
+        """Map the jobs going to ``cluster`` to their seed names.
 
-        Quantum phonon jobs stranded away from their stage-1 cluster are
-        reported and dropped. Returns the remaining jobs with their seed names,
-        or ``None`` when none remain or a seed name is unsafe for remote paths
-        (which is reported and aborts the whole submission).
+        Returns the jobs with their seed names, or ``None`` when a seed name is
+        unsafe for remote paths (which is reported and aborts the whole
+        submission).
         """
-
-        # Checked after the dialog, where a different cluster may have been picked
-        # than the one the Quantum Corrections page preselected.
-        eligible_jobs, stranded = split_stranded_quantum_jobs(
-            eligible_jobs,
-            cluster_name=cluster.name,
-            stage_one_target=self._quantum_corrections_controller.stage_one_target,
-            continuation_target=self._quantum_corrections_controller.continuation_remote_target,
-        )
-        if stranded:
-            QMessageBox.information(
-                self,
-                "Phonon stage must run where stage 1 ran",
-                stranded_quantum_jobs_message(cluster.name, stranded),
-            )
-            if not eligible_jobs:
-                return None
 
         seed_name_by_job = {job.id: self._job_seed_name(job) for job in eligible_jobs}
         invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))
@@ -5294,16 +5245,24 @@ class MainWindow(QMainWindow):
 
         cleanup_errors: list[str] = []
         reset_count = 0
-        # Never clean a directory another job still depends on: a Quantum
-        # Corrections phonon job shares its seed directory, and the stage-1
-        # checkpoint in it, with the completed singlepoint. Jobs reset together
-        # may share one; anything else keeps its directory and is reported.
+        # Never clean a directory another job still depends on. Jobs reset
+        # together may share one, and so may a job's directory companions (a
+        # Quantum Corrections phonon job with the legacy singlepoint an older
+        # project ran in its directory); anything else keeps its directory and
+        # is reported.
+        cleanable_jobs = [job for job in jobs if not job_is_imported(job)]
         cleanup_refusals = (
             self._job_file_cleanup.directory_ownership_refusals(
-                [job for job in jobs if not job_is_imported(job)],
+                cleanable_jobs,
                 # Imported jobs are skipped below, never cleaned, so a folder
                 # shared with one must not count as cleaned together.
-                shared_with={job.id for job in jobs if not job_is_imported(job)},
+                shared_with={job.id for job in cleanable_jobs}
+                | {
+                    companion.id
+                    for job in cleanable_jobs
+                    if (controller := owning_controller(self._workflow_controllers, job)) is not None
+                    for companion in controller.directory_companions(job)
+                },
                 check_remote=False,
             )
             if cleanup_choice
@@ -5790,7 +5749,7 @@ class MainWindow(QMainWindow):
         )
 
     def _build_quantum_corrections_deps(self) -> QuantumCorrectionsDeps:
-        """Build the quantum-corrections controller's deps: its window dialogs and stage-2 reset."""
+        """Build the quantum-corrections controller's deps: its window dialogs."""
 
         return QuantumCorrectionsDeps(
             handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
@@ -5805,11 +5764,6 @@ class MainWindow(QMainWindow):
                 )
                 == QMessageBox.StandardButton.Yes
             ),
-            warn=lambda title, text: QMessageBox.warning(self, title, text),
-            reset_jobs_keeping_files=lambda jobs: self._apply_failed_job_reset(
-                jobs, cleanup_choice=False, detach_convergence=False
-            ),
-            refresh_after_reset=lambda: self._refresh_views_after_job_reset(),
         )
 
     def _build_energy_barriers_deps(self) -> EnergyBarriersDeps:
@@ -6010,7 +5964,7 @@ class MainWindow(QMainWindow):
         Thin wrapper (delegates to
         :meth:`QuantumCorrectionsController.refresh_view`) kept on ``MainWindow``
         because it has many callers across document/route changes, submission,
-        configuration, rename, and stage reset.
+        configuration, rename, and reset.
         """
 
         self._quantum_corrections_controller.refresh_view()
@@ -8434,20 +8388,16 @@ class MainWindow(QMainWindow):
             values = [payload]
         return {str(value).strip() for value in values if str(value).strip()}
 
-    def _connect_workflow_row_actions(
-        self, view, controller: WorkflowJobController, *, reset: bool = True
-    ) -> None:
+    def _connect_workflow_row_actions(self, view, controller: WorkflowJobController) -> None:
         """Route a workflow table's row-menu Cancel / Inspect Failure / Reset signals.
 
         Each signal carries the selected row keys; the generic handlers below
-        resolve them to jobs through ``controller.jobs_for_keys``. ``reset`` is
-        ``False`` for a view without a ``reset_failed_requested`` signal.
+        resolve them to jobs through ``controller.jobs_for_keys``.
         """
 
         view.cancel_requested.connect(partial(self._cancel_workflow_rows, controller))
         view.inspect_failed_requested.connect(partial(self._inspect_workflow_rows, controller))
-        if reset:
-            view.reset_failed_requested.connect(partial(self._reset_workflow_rows, controller))
+        view.reset_failed_requested.connect(partial(self._reset_workflow_rows, controller))
 
     def _cancel_workflow_rows(self, controller, keys: object) -> None:
         """Cancel the jobs behind a workflow table's rows (row menu "Cancel")."""
@@ -9815,9 +9765,6 @@ class MainWindow(QMainWindow):
             num_farms=request.num_farms,
             intro_text=request.intro_text,
             read_only=request.read_only,
-            editable_param_names=() if request.farms_only else None,
-            pseudopotential_editable=request.fully_editable,
-            num_farms_editable=request.fully_editable or request.farms_only,
             species_options=request.species_options,
             parent=self,
         )

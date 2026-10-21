@@ -1149,7 +1149,7 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
     window.close()
 
 
-def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_directory(
+def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_own_directory(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
@@ -1189,7 +1189,6 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
 
     definition = window._quantum_corrections_controller.ensure_definition([str(site.id)])
     assert definition is not None
-    definition.parameters["singlepoint_job_ids_by_label"] = {}
     definition.parameters["phonon_job_ids_by_label"] = {}
     definition.parameters["job_seed_names_by_label"] = {str(site.id): "quantum_siteA"}
     config = definition.parameters.setdefault("configuration", {})
@@ -1202,17 +1201,6 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
         "pseudopotential_family": "norm_conserving",
         "num_farms": 4,
     }
-
-    singlepoint_job = service.add_job(
-        doc,
-        label="quantum_singlepoint_siteA",
-        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
-    )
-    singlepoint_job.status = JobStatus.COMPLETED
-    singlepoint_job.execution_target = "alpha"
-    singlepoint_job.remote_directory = "/remote/work/quantum_siteA"
-    definition.parameters["singlepoint_job_ids_by_label"][str(site.id)] = str(singlepoint_job.id)
 
     phonon_job = service.add_job(
         doc,
@@ -1285,13 +1273,14 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
-        lambda *_args: pytest.fail("continuation submissions should not prompt to delete the remote directory"),
+        lambda *_args: pytest.fail("a fresh remote directory needs no overwrite prompt"),
     )
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
 
     window._submit_jobs_on_cluster([phonon_job])
 
-    assert checked_paths == []
+    # One fresh job: its own directory is checked before upload, and task farming applies.
+    assert checked_paths == ["/remote/work/quantum_siteA"]
     assert deleted == []
     assert len(submit_calls) == 1
     assert submit_calls[0]["remote_directory"] == "/remote/work/quantum_siteA"
@@ -2283,11 +2272,11 @@ def test_main_window_loads_absent_or_invalid_mem_per_cpu_as_unset(
     window.close()
 
 
-def _quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp_path: Path) -> Job:
-    """Seed a ready quantum phonon job whose stage-1 singlepoint ran on ``alpha``."""
+def _legacy_quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp_path: Path) -> Job:
+    """Seed a defined phonon job whose row's legacy singlepoint ran on ``alpha``."""
 
     service = ProjectService()
-    doc = service.create_project(tmp_path / "quantum_stage_two_target.mufinder", "QuantumStageTwoTarget")
+    doc = service.create_project(tmp_path / "quantum_legacy_target.mufinder", "QuantumLegacyTarget")
     window._document = doc
     relaxed_structure = Structure(
         label="site relaxed",
@@ -2339,21 +2328,17 @@ def _quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp_path: 
     )
     definition.parameters["phonon_job_ids_by_label"] = {str(site.id): str(phonon_job.id)}
     definition.parameters["job_ids_by_label"] = definition.parameters["phonon_job_ids_by_label"]
+    (doc.project_root / "files" / "quantum_corrections" / "quantum_siteA").mkdir(parents=True, exist_ok=True)
     return phonon_job
 
 
-def test_main_window_cluster_submission_refuses_phonon_job_on_a_different_cluster(
+def test_main_window_cluster_submission_sends_a_legacy_phonon_job_to_any_cluster(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Picking another cluster in the dialog must not cold-start a continuation.
-
-    The stage-1 checkpoint lives in ``alpha``'s directory, so a phonon job sent to
-    ``beta`` would start without it and CASTEP would fail; it is refused before
-    MuFinder connects, and the message names the cluster that holds it.
-    """
+    """A phonon job is one fresh CASTEP run, so where a legacy singlepoint ran does not matter."""
 
     window = main_window
-    phonon_job = _quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
+    phonon_job = _legacy_quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
     beta = dataclasses.replace(CONTINUATION_CLUSTER, name="beta", hostname="beta.example")
 
     class _FakeDialog:
@@ -2382,42 +2367,40 @@ def test_main_window_cluster_submission_refuses_phonon_job_on_a_different_cluste
     monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [beta])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: beta)
-    monkeypatch.setattr(
-        window._cluster_runner._runner,
-        "connect_to_cluster",
-        lambda *_args, **_kwargs: pytest.fail("a refused submission must not connect"),
-    )
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda _parent, _title, text: infos.append(text))
 
     window._submit_jobs_on_cluster([phonon_job])
 
-    assert phonon_job.status == JobStatus.DEFINED
-    assert len(infos) == 1
-    assert "not submitted to beta" in infos[0]
-    assert "quantum_phonon_siteA (stage 1 ran on alpha)" in infos[0]
+    assert not any("stage" in text.lower() for text in infos)
+    assert recorded["checked"] == ["/remote/work/quantum_siteA"]
+    assert [call["remote_directory"] for call in recorded["submitted"]] == ["/remote/work/quantum_siteA"]
+    assert phonon_job.execution_target == "beta"
     window.close()
 
 
-def test_main_window_local_submission_refuses_phonon_job_after_a_cluster_singlepoint(
+def test_main_window_local_submission_runs_a_legacy_phonon_job_after_a_cluster_singlepoint(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The dashboard route bypasses the Quantum Corrections page, so the backend guards too."""
+    """The local backend refuses no phonon job by target: it goes straight on to CASTEP setup."""
 
     window = main_window
-    phonon_job = _quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
+    phonon_job = _legacy_quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
+    setups: list[object] = []
     infos: list[str] = []
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda _parent, _title, text: infos.append(text))
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         main_window_module,
         "load_castep_setup",
-        lambda _settings: pytest.fail("a refused local submission must stop before CASTEP setup"),
+        lambda settings: setups.append(settings) or SimpleNamespace(executable_path="", mpirun_path=""),
     )
 
     window._submit_jobs_locally([phonon_job])
 
-    assert phonon_job.status == JobStatus.DEFINED
-    assert len(infos) == 1
-    assert "quantum_phonon_siteA (stage 1 ran on alpha)" in infos[0]
+    assert len(setups) == 1
+    assert infos == []
     window.close()
 
 

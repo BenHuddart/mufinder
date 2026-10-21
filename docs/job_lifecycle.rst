@@ -147,15 +147,11 @@ a separate entry point with its own guard, and it also clears ``dismissed_at``,
 so continuing a dismissed job makes its dashboard row visible again on the same
 terms as a reset.
 
-This is a deliberate divergence from the quantum-corrections precedent, where a
-``completed`` stage-1 job is rewound by *deleting* the job records and clearing
-the directory (the quantum-corrections stage-1 reset, which accepts any
-inactive job).
-Deleting is right there because the row genuinely starts over. A relaxation
-continuation must instead keep the job's identity: the job id is what binds the
-workflow-table row to the calculation, and the job record is what carries the
-output/remote directory holding the checkpoint the continuation depends on.
-Deleting and re-creating would sever the row binding and abandon the directory.
+A continuation keeps the job's identity rather than deleting and re-creating
+the job: the job id is what binds the workflow-table row to the calculation,
+and the job record is what carries the output/remote directory holding the
+checkpoint the continuation depends on. Deleting and re-creating would sever
+the row binding and abandon the directory.
 
 ``record_job_continuation`` appends the matching ``job_continuation`` provenance
 milestone, recording the job label and whether a remote directory was preserved.
@@ -498,8 +494,8 @@ or SFTP error, or the check not completing within three minutes) is not
 submitted and keeps its state: it is listed in the "Cluster submission failed"
 message, and no overwrite prompt is shown for it, because its directory may
 hold a previous run the user was never asked to overwrite. A directory a job
-in the batch submits into as-is (a continuation's preserved ``remote_directory`` or a quantum
-phonon job's stage-1 directory) is never deleted, whatever another job's
+in the batch submits into as-is (a continuation's preserved ``remote_directory``)
+is never deleted, whatever another job's
 overwrite answer was, and a start-again job whose own directory is such a
 directory fails instead of resuming from the checkpoint it was meant to
 discard. The worker uploads and submits each job,
@@ -816,8 +812,8 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
   entry (``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``
   above it; ``Configure...``, ``Remove`` below), passed to the bind call as
   ``leading_actions`` / ``additional_actions``. A table leaves out an action by
-  not supplying its callback, and a table with no failed-job reset (Quantum
-  Corrections) passes ``emit_reset=None``.
+  not supplying its callback, and a table with no failed-job reset passes
+  ``emit_reset=None``.
 - ``RESET_FAILED_TABLE_TOOLTIP`` — the fallback discoverability stamp, set by
   ``bind_reset_failed_context_menu`` on a table that has no tooltip of its own.
   The workflow tables set their own tooltip naming the whole menu. Per-item
@@ -837,24 +833,23 @@ refresh covers the convergence, pristine, muon and UEP tables, and energy
 barriers and quantum corrections are refreshed through their controllers'
 ``refresh_view``, which no-ops until their lazily-created view exists.
 
-Quantum corrections is the exception to the shape above. Its row stages a
-singlepoint job and then a phonon job into one shared output directory, so its
-recovery is a pair of *stage* resets owned by ``QuantumCorrectionsController``
-rather than a job reset:
-
-- ``Reset to Stage 1`` deletes both job records and clears the directory. A row
-  qualifies once it has staged a singlepoint job and its current job (the
-  phonon job when there is one, else the singlepoint) is not in
-  ``ACTIVE_JOB_STATUSES``. That includes a ``defined`` job, so a row the Job
-  Dashboard's ``Reset`` returned to ``defined`` can still be rewound, and every
-  finished status: no inactive row is left without a way back to editable
-  parameters.
-- ``Reset to Stage 2`` returns a ``failed``, ``stopped`` or ``cancelled`` phonon
-  job to ``defined`` through the same core as the failed-job reset, without
-  cleaning its directory, so the completed singlepoint and its checkpoint stay.
-  It requires the stage-1 singlepoint to be ``completed``.
-
-Both are confirmed first, with ``No`` as the default.
+Quantum corrections follows the same shape: each row is bound to one phonon
+job, and its table also offers ``Reset Failed Jobs...`` as a button beside the
+run buttons, emitting the same signal for the selected resettable rows. The
+reset's directory clean-up refuses a directory another job uses unless that job
+is reset in the same batch or is a *directory companion*
+(``WorkflowJobController.directory_companions``). The Quantum Corrections
+controller names one: the ``castep_quantum_singlepoint`` job an older project
+ran in a row's seed directory before its phonon job, unless that singlepoint
+is still active. Cleaning the phonon job's directory therefore also removes
+the singlepoint's outputs, so the rerun is a fresh phonon job, while the
+singlepoint's record stays in the Job Dashboard. Without clean-up the
+directory, and any ``.check`` file in it, is kept, and the job's
+``CONTINUATION : DEFAULT`` resumes from that checkpoint on a local rerun. The
+reset clears ``remote_directory`` as for every job, so a cluster resubmission
+recomputes its target; a full continuation into the preserved remote
+directory (:ref:`job-continuation-primitive`) is not offered for Quantum
+Corrections.
 
 .. _dismissed-rows-stay-resubmittable:
 

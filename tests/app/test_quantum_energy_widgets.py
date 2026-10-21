@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from functools import partial
 
 import pytest
@@ -44,7 +43,6 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
                 relative_energy="0.0 eV",
                 displacements="9",
                 source_job="relax_a",
-                stage="singlepoint",
                 num_farms_display="",
                 status="ready",
             )
@@ -54,7 +52,7 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
     configured: list[str] = []
     widget.configure_requested.connect(configured.append)
 
-    button = widget._sources_table.cellWidget(0, 8)
+    button = widget._sources_table.cellWidget(0, 7)
     assert isinstance(button, QPushButton)
     assert button.text() == "Configure..."
 
@@ -74,7 +72,6 @@ def test_quantum_widget_batch_configure_emits_selected_source_keys(qapp) -> None
                 relative_energy="0.0 eV",
                 displacements="9",
                 source_job="relax_a",
-                stage="singlepoint",
                 num_farms_display="",
                 status="ready",
             ),
@@ -85,7 +82,6 @@ def test_quantum_widget_batch_configure_emits_selected_source_keys(qapp) -> None
                 relative_energy="0.1 eV",
                 displacements="12",
                 source_job="relax_b",
-                stage="singlepoint",
                 num_farms_display="",
                 status="ready",
             ),
@@ -112,20 +108,19 @@ def test_quantum_widget_uses_shared_status_text_colors(qapp) -> None:
                 relative_energy="0.0 eV",
                 displacements="9",
                 source_job="relax_a",
-                stage="phonon",
                 num_farms_display="4",
                 status="running",
             )
         ]
     )
 
-    status_item = widget._sources_table.item(0, 7)
+    status_item = widget._sources_table.item(0, 6)
 
     assert status_item is not None
     assert status_item.foreground().color().name() == status_brush("running").color().name()
 
 
-def test_quantum_widget_emits_reset_to_stage_one_for_selected_rows(qapp) -> None:
+def test_quantum_widget_shows_the_farm_count_without_a_stage_column(qapp) -> None:
     widget = QuantumCorrectionsWidget()
     widget.set_sources(
         [
@@ -136,21 +131,18 @@ def test_quantum_widget_emits_reset_to_stage_one_for_selected_rows(qapp) -> None
                 relative_energy="0.0 eV",
                 displacements="9",
                 source_job="relax_a",
-                stage="phonon",
                 num_farms_display="4",
                 status="ready",
-                resettable=True,
             )
         ]
     )
-    widget._sources_table.selectRow(0)
 
-    reset: list[list[str]] = []
-    widget.reset_stage_requested.connect(reset.append)
-
-    widget._reset_stage_button.click()
-
-    assert reset == [["site-a"]]
+    headers = [
+        widget._sources_table.horizontalHeaderItem(column).text()
+        for column in range(widget._sources_table.columnCount())
+    ]
+    assert headers == ["Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Farms", "Status", "Parameters"]
+    assert widget._sources_table.item(0, 5).text() == "4"
 
 
 def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
@@ -710,15 +702,15 @@ def test_quantum_source_configure_applies_to_snapshot_rows(
     widget = QuantumCorrectionsWidget()
     widget.set_sources(
         [
-            QuantumSourceRow(key="site-a", label="A", charge_state="M", relative_energy="0 eV", displacements="9", source_job="j", stage="sp", num_farms_display="", status="ready"),
-            QuantumSourceRow(key="site-b", label="B", charge_state="M", relative_energy="0.1 eV", displacements="9", source_job="j", stage="sp", num_farms_display="", status="ready"),
+            QuantumSourceRow(key="site-a", label="A", charge_state="M", relative_energy="0 eV", displacements="9", source_job="j", num_farms_display="", status="ready"),
+            QuantumSourceRow(key="site-b", label="B", charge_state="M", relative_energy="0.1 eV", displacements="9", source_job="j", num_farms_display="", status="ready"),
         ]
     )
     configured: list[object] = []
     widget.configure_requested.connect(configured.append)
     monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
-    btn = widget._sources_table.cellWidget(0, 8)
+    btn = widget._sources_table.cellWidget(0, 7)
     assert isinstance(btn, SelectionSnapshotPushButton)
     btn.selection_snapshot_rows = (0, 1)
     btn.clicked.emit()
@@ -850,9 +842,7 @@ def test_energy_barriers_remove_selected_confirms_with_path_wording(
     )
 
 
-def _quantum_rows(
-    *statuses: str, resettable: bool = False, stage_two_resettable: bool = False
-) -> list[QuantumSourceRow]:
+def _quantum_rows(*statuses: str) -> list[QuantumSourceRow]:
     return [
         QuantumSourceRow(
             key=f"site-{index}",
@@ -861,11 +851,8 @@ def _quantum_rows(
             relative_energy="0.0 eV",
             displacements="9",
             source_job=f"relax_{index}",
-            stage="singlepoint",
             num_farms_display="",
             status=status,
-            resettable=resettable,
-            stage_two_resettable=stage_two_resettable,
         )
         for index, status in enumerate(statuses)
     ]
@@ -893,63 +880,59 @@ def test_quantum_run_buttons_run_all_rows_when_nothing_is_selected(qapp) -> None
     assert local[-1] == ["site-1"]
 
 
-def test_quantum_row_menu_has_no_remove_or_failed_reset_and_offers_stage_reset(
+def test_quantum_row_menu_offers_the_shared_failed_job_reset_and_no_remove(
     qapp, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
 ) -> None:
     from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
     widget = QuantumCorrectionsWidget()
-    widget.set_sources(_quantum_rows("running", "running", resettable=True, stage_two_resettable=True))
+    widget.set_sources(_quantum_rows("failed", "running", "cancelled"))
     cancelled: list[object] = []
     reset: list[object] = []
-    reset_stage_two: list[object] = []
     widget.cancel_requested.connect(cancelled.append)
-    widget.reset_stage_requested.connect(reset.append)
-    widget.reset_stage_two_requested.connect(reset_stage_two.append)
+    widget.reset_failed_requested.connect(reset.append)
     install_fake_menu(monkeypatch)
     widget._sources_table.selectAll()
 
     menu = open_reset_menu(widget._sources_table)
 
-    assert [action.text for action in menu.actions] == [
+    texts = [action.text for action in menu.actions]
+    assert [text.split(" (")[0] for text in texts] == [
         "Run Local",
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
+        "Reset Failed Jobs...",
         "Configure...",
-        "Reset to Stage 1",
-        "Reset to Stage 2",
     ]
-    assert menu.separators_before == [5]
-    menu.action("Cancel").triggered.emit()
-    menu.action("Reset to Stage 1").triggered.emit()
-    menu.action("Reset to Stage 2").triggered.emit()
-    assert cancelled == [["site-0", "site-1"]]
-    assert reset == [["site-0", "site-1"]]
-    assert reset_stage_two == [["site-0", "site-1"]]
+    assert "Reset Failed Jobs... (2 of 3)" in texts
+    menu.action("Cancel (1 of 3)").triggered.emit()
+    assert cancelled == [["site-1"]]
+    # Opening the menu fired the enabled reset: only the failed and cancelled rows go.
+    assert reset == [["site-0", "site-2"]]
 
 
-def test_quantum_widget_enables_reset_to_stage_two_only_for_reopenable_rows(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_quantum_reset_failed_button_follows_the_selection(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
     widget = QuantumCorrectionsWidget()
-    rows = _quantum_rows("failed", "completed", resettable=True)
-    widget.set_sources([replace(rows[0], stage_two_resettable=True), rows[1]])
+    widget.set_sources(_quantum_rows("failed", "completed", "stopped"))
     emitted: list[object] = []
-    widget.reset_stage_two_requested.connect(emitted.append)
+    widget.reset_failed_requested.connect(emitted.append)
     install_fake_menu(monkeypatch)
 
-    widget._sources_table.selectRow(1)
-    assert widget._reset_stage_two_button.isEnabled() is False
-    menu = open_reset_menu(widget._sources_table, row=1)
-    assert menu is not None and menu.action("Reset to Stage 2").enabled is False
+    assert widget._reset_failed_button.text() == "Reset Failed Jobs..."
+    assert widget._reset_failed_button.isEnabled() is False
 
-    widget._sources_table.selectRow(0)
-    assert widget._reset_stage_two_button.isEnabled() is True
-    widget._reset_stage_two_button.click()
-    assert emitted == [["site-0"]]
+    widget._sources_table.selectRow(1)
+    assert widget._reset_failed_button.isEnabled() is False
+    menu = open_reset_menu(widget._sources_table, row=1)
+    assert menu is not None and menu.action("Reset Failed Jobs...").enabled is False
+
+    widget._sources_table.selectAll()
+    assert widget._reset_failed_button.isEnabled() is True
+    widget._reset_failed_button.click()
+    assert emitted == [["site-0", "site-2"]]
 
 
 def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
@@ -993,7 +976,7 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     assert inspected == [["path-a", "path-b"]]
 
 
-def _quantum_source(key: str, *, resettable: bool = False) -> QuantumSourceRow:
+def _quantum_source(key: str) -> QuantumSourceRow:
     return QuantumSourceRow(
         key=key,
         label=key,
@@ -1001,10 +984,8 @@ def _quantum_source(key: str, *, resettable: bool = False) -> QuantumSourceRow:
         relative_energy="0.0 eV",
         displacements="9",
         source_job=f"relax_{key}",
-        stage="singlepoint",
         num_farms_display="",
         status="ready",
-        resettable=resettable,
     )
 
 
@@ -1058,14 +1039,3 @@ def test_source_table_widgets_share_targeting_and_action_state(
 
     assert run == [["first", "second"]]
     assert configured == [["second"]]
-
-
-def test_quantum_reset_stage_button_follows_resettable_selection(qapp) -> None:
-    widget = QuantumCorrectionsWidget()
-    widget.set_sources([_quantum_source("site-a"), _quantum_source("site-b", resettable=True)])
-
-    widget._sources_table.selectRow(0)
-    assert widget._reset_stage_button.isEnabled() is False
-
-    widget._sources_table.selectRow(1)
-    assert widget._reset_stage_button.isEnabled() is True

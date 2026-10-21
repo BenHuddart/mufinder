@@ -26,8 +26,6 @@ from mufinder.domain.models import (
 )
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.source_candidates import (
-    QUANTUM_STAGE_PHONON,
-    QUANTUM_STAGE_SINGLEPOINT,
     CompletedRelaxationAnalysisSource,
     charge_state_for_job,
     charge_state_label_for_job,
@@ -53,7 +51,6 @@ from mufinder.services.source_candidates import (
     quantum_source_label,
     quantum_source_labels_by_key,
     quantum_source_relative_energies,
-    quantum_stage_state,
     relaxation_sources_for_labels,
     selected_energy_barrier_endpoint_keys,
     serialize_energy_barrier_neb_sources,
@@ -236,38 +233,6 @@ def test_quantum_source_labels_deduplicate_in_candidate_order(document: ProjectD
     labels = quantum_source_labels_by_key(eligible_quantum_source_candidates(document))
 
     assert labels == {str(first.id): "site", str(second.id): "site_2", str(unlabelled.id): "site_3"}
-
-
-def test_quantum_stage_state_resolves_each_stage() -> None:
-    def row_status(job: Job) -> str:
-        return f"row:{job.status.value}"
-
-    ready =quantum_stage_state(singlepoint_job=None, phonon_job=None, row_status=row_status)
-    assert (ready.stage, ready.status, ready.current_job) == (QUANTUM_STAGE_SINGLEPOINT, "ready", None)
-
-    running = Job(status=JobStatus.RUNNING)
-    stage_one = quantum_stage_state(singlepoint_job=running, phonon_job=None, row_status=row_status)
-    assert (stage_one.stage, stage_one.status, stage_one.current_job) == (
-        QUANTUM_STAGE_SINGLEPOINT,
-        "row:running",
-        running,
-    )
-
-    completed = Job(status=JobStatus.COMPLETED)
-    stage_two_ready = quantum_stage_state(singlepoint_job=completed, phonon_job=None, row_status=row_status)
-    assert (stage_two_ready.stage, stage_two_ready.status, stage_two_ready.current_job) == (
-        QUANTUM_STAGE_PHONON,
-        "ready",
-        None,
-    )
-
-    phonon = Job(status=JobStatus.FAILED)
-    stage_two = quantum_stage_state(singlepoint_job=completed, phonon_job=phonon, row_status=row_status)
-    assert (stage_two.stage, stage_two.status, stage_two.current_job) == (
-        QUANTUM_STAGE_PHONON,
-        "row:failed",
-        phonon,
-    )
 
 
 def test_charge_state_label_for_job_names_muon_relaxations_only() -> None:

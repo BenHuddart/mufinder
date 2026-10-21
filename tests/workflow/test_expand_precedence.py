@@ -41,7 +41,6 @@ from mufinder.workflow.quantum import (
     QuantumPhononJobConfig,
     QuantumPhononSource,
     expand_quantum_phonon_jobs,
-    expand_quantum_singlepoint_jobs,
 )
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 from mufinder.workflow.types import (
@@ -130,16 +129,6 @@ def _quantum_source() -> QuantumPhononSource:
     )
 
 
-def _run_quantum_singlepoint(**layers) -> object:
-    overrides = layers.pop("param_overrides", None)
-    jobs = expand_quantum_singlepoint_jobs(
-        jobs=[QuantumPhononJobConfig(source=_quantum_source(), param_overrides=overrides)],
-        name_prefix="q",
-        **layers,
-    )
-    return jobs[0]
-
-
 def _run_quantum_phonon(**layers) -> object:
     overrides = layers.pop("param_overrides", None)
     jobs = expand_quantum_phonon_jobs(
@@ -154,7 +143,6 @@ def _run_quantum_phonon(**layers) -> object:
 _WORKFLOWS: list[tuple[str, Callable[..., object], str, object]] = [
     ("relaxation", _run_relaxation, "task", "GEOMETRYOPTIMIZATION"),
     ("neb", _run_neb, "task", "TRANSITIONSTATESEARCH"),
-    ("quantum_singlepoint", _run_quantum_singlepoint, "task", "SINGLEPOINT"),
     ("quantum_phonon", _run_quantum_phonon, "task", "PHONON"),
 ]
 

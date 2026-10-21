@@ -33,17 +33,15 @@ The same actions are in a row's right-click menu, which opens the same menu in
 every workflow table, in this order: ``Run Local``, ``Run on Cluster``,
 ``Cancel``, ``Inspect Failure``, ``Reset Failed Jobs...``, ``Configure...``,
 ``Remove``, then any table-specific entries below a separator (``Continue
-relaxation…`` in the relaxation tables; ``Reset to Stage 1`` and ``Reset to
-Stage 2`` in Quantum Corrections, which has no ``Reset Failed Jobs...`` or
-``Remove``). Right-clicking a row outside the selection selects it first.
+relaxation…`` in the relaxation tables). Quantum Corrections has no
+``Remove``. Right-clicking a row outside the selection selects it first.
 ``Reset Failed Jobs...`` acts on the selected rows that are ``failed``,
-``stopped`` or ``cancelled`` (see :ref:`per-row-reset-affordance`); Quantum
-Corrections uses its stage resets instead.
+``stopped`` or ``cancelled`` (see :ref:`per-row-reset-affordance`).
 
 The button row below each table also offers ``Configure Selected
 Parameters...`` and ``Remove Selected``. Quantum Corrections has no ``Remove
-Selected`` because its rows are derived from completed relaxations, and adds
-``Reset to Stage 1`` and ``Reset to Stage 2`` buttons.
+Selected`` because its rows are derived from completed relaxations, and adds a
+``Reset Failed Jobs...`` button that acts like the menu entry.
 
 Local submission
 ~~~~~~~~~~~~~~~~
@@ -340,11 +338,10 @@ except its ``.cell``/``.param`` inputs, and applies the same ownership check as
 to the local folder (Reset never touches the cluster). The folder is kept, and
 the job reset without cleaning, when it is outside ``<project>/files/<stage>/``,
 is not named after the job, or is used by another job that is not being reset
-in the same action. This is what protects a Quantum Corrections row: its phonon
-job shares a seed directory, and the stage-1 checkpoint in it, with the
-singlepoint, so resetting a failed phonon job keeps that directory while
-resetting both stages together cleans it. The kept folders are listed in the
-"Directory cleanup issues" message.
+in the same action. A Quantum Corrections phonon job is the one exception: the
+singlepoint an older project ran in the same seed directory does not keep the
+folder, so cleaning it lets the row rerun as a fresh phonon job. The kept
+folders are listed in the "Directory cleanup issues" message.
 
 The pristine- and muon-relaxation tables additionally offer a per-row
 ``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``, or

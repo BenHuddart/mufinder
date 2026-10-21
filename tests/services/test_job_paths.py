@@ -127,6 +127,49 @@ def test_quantum_job_seed_comes_from_the_callback(document: ProjectDocument) -> 
     assert calls == [(definition, "key_1")]
 
 
+def test_legacy_quantum_singlepoint_keeps_its_own_recorded_seed(document: ProjectDocument) -> None:
+    """A row given a fresh phonon seed records the seed its legacy singlepoint ran under."""
+
+    singlepoint = make_job("singlepoint", workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS)
+    phonon = make_job("phonon", workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS)
+    _add_definition(
+        document,
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        parameters={
+            "output_directory": "files/quantum",
+            "singlepoint_job_ids_by_label": {"key_1": str(singlepoint.id)},
+            "phonon_job_ids_by_label": {"key_1": str(phonon.id)},
+            "singlepoint_seed_names_by_label": {"key_1": "quantum_site"},
+        },
+    )
+    base = document.project_root / "files" / "quantum"
+
+    def seed(_owner: CalculationDefinition, _key: str) -> str:
+        return "quantum_site_phonon"
+
+    assert job_output_directory(document, singlepoint, quantum_seed_name=seed) == base / "quantum_site"
+    assert job_output_directory(document, phonon, quantum_seed_name=seed) == base / "quantum_site_phonon"
+
+
+def test_legacy_quantum_singlepoint_without_a_recorded_seed_shares_the_rows_seed(
+    document: ProjectDocument,
+) -> None:
+    singlepoint = make_job("singlepoint", workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS)
+    _add_definition(
+        document,
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        parameters={
+            "output_directory": "files/quantum",
+            "singlepoint_job_ids_by_label": {"key_1": str(singlepoint.id)},
+            "singlepoint_seed_names_by_label": {"other": "quantum_other", "key_1": "  "},
+        },
+    )
+
+    assert job_output_directory(document, singlepoint, quantum_seed_name=lambda _owner, _key: "quantum_site") == (
+        document.project_root / "files" / "quantum" / "quantum_site"
+    )
+
+
 def test_job_labels_and_fallbacks_require_an_existing_directory(document: ProjectDocument) -> None:
     listed = make_job("listed", workflow_stage=WorkflowStage.UEP)
     _add_definition(

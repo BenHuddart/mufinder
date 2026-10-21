@@ -1,9 +1,9 @@
 """Plan and run the clean-up of jobs' files and records.
 
-Removing a workflow row, removing a convergence cutoff, resetting a Quantum
-Corrections row to stage 1 and deleting finished jobs from the dashboard all run
-one sequence: check that a job directory belongs only to the jobs being
-removed, delete or archive it, then delete the job records.
+Removing a workflow row, removing a convergence cutoff and deleting finished
+jobs from the dashboard all run one sequence: check that a job directory
+belongs only to the jobs being removed, delete or archive it, then delete the
+job records.
 :class:`JobFileCleanup` owns that sequence.
 
 - :meth:`JobFileCleanup.plan_item` turns a group of jobs into a
@@ -193,8 +193,9 @@ class JobFileCleanup:
         ``check_remote``, when its remote directory is not named after the seed
         or another job on the same cluster uses it or a directory inside it.
         Jobs in ``shared_with`` may share a directory without causing a
-        refusal: they are being cleaned together (a Quantum Corrections
-        singlepoint and phonon pair share one seed directory by design).
+        refusal: they are being cleaned together, or the caller knows they
+        share it by design (a Quantum Corrections phonon job with the legacy
+        singlepoint an older project ran in its directory).
         """
 
         document = self._document_getter()

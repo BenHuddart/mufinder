@@ -204,6 +204,15 @@ class WorkflowJobController:
             document, definition, key, mapping_name=mapping_name, calc_type=calc_type
         )
 
+    def directory_companions(self, job: Job) -> list[Job]:
+        """Return the jobs that share ``job``'s output directory by design.
+
+        The shared failed-job reset may clean ``job``'s directory although
+        these jobs also use it, instead of refusing to. Default: none.
+        """
+
+        return []
+
     # --- definition maintenance ---
 
     def sync_mappings(self, definition: CalculationDefinition) -> None:

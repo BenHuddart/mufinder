@@ -1877,8 +1877,8 @@ def test_register_definitions_persist_their_parameters_and_provenance_unchanged(
         input_structure_ids=[host.id],
         input_site_ids=[site.id],
         parameters={
-            "singlepoint_job_ids_by_label": {"S1": str(job.id)},
             "phonon_job_ids_by_label": ["not", "a", "mapping"],
+            "job_seed_names_by_label": {"S1": "quantum_S1"},
         },
         output_directory=doc.project_root / "quantum",
         job_ids_by_label={"S1": str(job.id)},
@@ -2067,14 +2067,13 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "calc_type": "castep_quantum_phonon_set",
             "parameters": {
                 "configuration": {
-                    "singlepoint_job_ids_by_label": {"S1": "<job>"},
                     "phonon_job_ids_by_label": ["not", "a", "mapping"],
+                    "job_seed_names_by_label": {"S1": "quantum_S1"},
                 },
                 "output_directory": "quantum",
                 "job_ids_by_label": {"S1": "<job>"},
-                "singlepoint_job_ids_by_label": {"S1": "<job>"},
                 "phonon_job_ids_by_label": {},
-                "job_seed_names_by_label": {},
+                "job_seed_names_by_label": {"S1": "quantum_S1"},
             },
             "input_structure_ids": ["<host>"],
             "input_site_ids": ["<site>"],
@@ -2088,8 +2087,8 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {
-                    "singlepoint_job_ids_by_label": {"S1": "<job>"},
                     "phonon_job_ids_by_label": ["not", "a", "mapping"],
+                    "job_seed_names_by_label": {"S1": "quantum_S1"},
                 },
                 "output_directory": "quantum",
                 "job_ids_by_label": {"S1": "<job>"},
@@ -2312,7 +2311,6 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
             "method": "finite_displacement",
             "pseudopotential_family": "unknown",
             "sources": [{"site_id": str(site.id), "label": "siteA"}],
-            "singlepoint_job_ids_by_label": {str(site.id): "sp-job"},
             "phonon_job_ids_by_label": {str(site.id): "ph-job"},
             "job_seed_names_by_label": {str(site.id): "quantum_siteA"},
         },
@@ -2324,7 +2322,8 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     assert doc.calculations[definition.id].input_site_ids == [site.id]
     assert doc.calculations[definition.id].parameters["configuration"]["method"] == "finite_displacement"
     assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
-    assert doc.calculations[definition.id].parameters["singlepoint_job_ids_by_label"] == {str(site.id): "sp-job"}
+    # A new definition binds each row to its phonon job only.
+    assert "singlepoint_job_ids_by_label" not in doc.calculations[definition.id].parameters
     assert doc.calculations[definition.id].parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
     assert doc.calculations[definition.id].parameters["job_seed_names_by_label"] == {str(site.id): "quantum_siteA"}
     assert doc.provenance[-1].action == "configure_quantum_corrections"

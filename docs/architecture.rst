@@ -228,8 +228,8 @@ Every CASTEP job MuFinder runs is generated the same way:
 - ``mufinder.workflow`` has one keyword-only ``expand_*`` function per
   workflow: convergence sweeps over ``CUT_OFF_ENERGY`` and
   ``KPOINT_MP_GRID``, muon-site sweeps over initial fractional muon positions,
-  pristine and muon relaxation jobs, quantum-correction singlepoint and phonon
-  jobs, and nudged-elastic-band energy-barrier jobs.
+  pristine and muon relaxation jobs, quantum-correction phonon jobs, and
+  nudged-elastic-band energy-barrier jobs.
 - Job names are deterministic and filesystem-safe, and each resolved job has
   its own output directory.
 - Local output writing (``mufinder.workflow.output``) writes each job's
@@ -415,9 +415,9 @@ no two workflow widgets may define the same private method.
        from the Energy Barriers form state (``remove_generated_sources``; see
        Definition mappings and row removal).
    * - ``mufinder.services.cluster_submission_planner``
-     - The decisions of a cluster submission: stranded quantum phonon jobs,
-       connection reuse, each job's remote target (start again, continuation,
-       resubmission, quantum stage-1 directory or a fresh directory), the
+     - The decisions of a cluster submission: connection reuse, each job's
+       remote target (start again, continuation, resubmission or a fresh
+       directory), the
        overwrite prompts to ask as data and their *Yes/No to All* resolution,
        the protected-directory rule, and the ``ClusterJobSubmission`` items
        with the failed, skipped and missing jobs
@@ -452,7 +452,7 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
-       labels, seed names, stored ``sources`` entries and two-stage state, and
+       labels, seed names and stored ``sources`` entries, and
        the settings a follow-on row inherits from its source relaxation's
        input files (``source_relaxation_parameter_values``); the generated
        diffusion paths, their labels, stored form and preview supercell, the
@@ -693,10 +693,9 @@ the Configure button and the names of its configure and run signals as class
 attributes, so each widget keeps its own signal names. It implements three
 public hooks: ``source_row_values`` (the text of the leading columns),
 ``create_source_row_cells`` (its own cells) and ``refresh_source_actions``
-(its own actions for the selected rows). Quantum corrections adds the stage
-and farm columns, the editable site label and "Reset to Stage 1" / "Reset to
-Stage 2"; energy
-barriers adds the endpoint pair that generates paths, the View column, path
+(its own actions for the selected rows). Quantum corrections adds the farm
+column, the editable site label and a "Reset Failed Jobs..." button beside the
+run buttons; energy barriers adds the endpoint pair that generates paths, the View column, path
 removal and the NEB inspector, and its view is created lazily (see
 Construction).
 
@@ -1021,22 +1020,24 @@ Controller summary
        priority order. ``build_result`` contributes the
        ``density_available`` flag only.
    * - ``QuantumCorrectionsController``
-     - Two stages per source: singlepoint, then phonon. ``materialize``
-       dispatches each source to its current stage (``stage_state``) and
-       writes ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label``
-       plus ``job_seed_names_by_label``; ``pre_submit_check`` checks the active
-       definition against the active host (``confirm_active_host``) and a
-       stage-2 row's stage-1 muon mass; ``build_result`` derives the muon ZPE,
+     - One phonon job per source, bound through ``phonon_job_ids_by_label``
+       (aliased as ``job_ids_by_label``) plus ``job_seed_names_by_label``;
+       row state is the shared projection of that job. ``materialize`` gives a
+       new job whose seed directory already exists a fresh seed and records
+       the legacy singlepoint's seed in ``singlepoint_seed_names_by_label``;
+       ``pre_submit_check`` checks the active definition against the active
+       host (``confirm_active_host``), refuses a row whose legacy singlepoint
+       is still active and checks the phonon method against the
+       pseudopotential family; ``build_result`` derives the muon ZPE,
        gamma-point eigenvalues, mode participations and zero-point widths and
        the ``w1`` witness with its ``w1_definition`` from the carrier's parsed
-       phonon calculation, and a singlepoint job
+       phonon calculation, and a legacy ``castep_quantum_singlepoint`` job
        contributes an empty result. Both calc types are ``handles_job``-owned.
        Its source rows come from :mod:`mufinder.services.source_candidates`.
-       It also answers, for the cluster submission, where a phonon job's
-       stage 1 ran and which remote directory it continues in
-       (``stage_one_target``, ``continuation_remote_target``), and owns the
-       two stage resets (``reset_to_stage_one``, ``reset_to_stage_two``) and
-       the Configure dialog's lock explanation (``configure_request``).
+       Recovery is the shared failed-job reset; ``directory_companions`` names
+       a row's legacy singlepoint so the reset may clean the directory it
+       shares with the phonon job. It also owns the Configure dialog's lock
+       explanation (``configure_request``).
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
