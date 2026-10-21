@@ -45,7 +45,7 @@ Running the workflow
 The comparison table
 --------------------
 
-.. figure:: ../_generated/screenshots/comparison_table.png
+.. figure:: ../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the silicon host against one relaxed cell, grouped into
          lattice, displacement, bonding and symmetry metrics.
 

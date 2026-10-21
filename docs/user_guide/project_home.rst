@@ -39,7 +39,7 @@ Using the project home
 Workflow chart
 --------------
 
-.. figure:: ../_generated/screenshots/project_home.png
+.. figure:: ../_generated/screenshots/project_home.webp
    :alt: The project home of a rutile TiO2 project: the workflow chart, the
          field notes and the cell survey.
 

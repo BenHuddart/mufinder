@@ -371,7 +371,7 @@ so :math:`p(|B|)` runs between the two semi-axes and peaks at both ends. At
 distribution a single line at 0.2816 T. At ``(1/2, 0, 0)`` it spans 0.3616 T to
 1.1634 T, close to the two fields of the ``q = 1/4`` helix above.
 
-.. figure:: ../_generated/screenshots/magnetic_field_distribution.png
+.. figure:: ../_generated/screenshots/magnetic_field_distribution.webp
    :alt: The field-distribution plot of the incommensurate helix at the edge
          centre, peaking at both ends of its range.
 

@@ -43,7 +43,7 @@ To undo an import, see `Removing an import`_.
 The import dialog
 -----------------
 
-.. figure:: ../_generated/screenshots/legacy_import_dialog.png
+.. figure:: ../_generated/screenshots/legacy_import_dialog.webp
    :alt: The Import Legacy Relaxations dialog listing three silicon muon runs, two
          converged and ticked and one completed but unconverged.
 

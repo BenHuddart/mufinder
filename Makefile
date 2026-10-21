@@ -57,11 +57,23 @@ harness:
 	$(PYTHON) -m pytest --no-cov tests/test_agent_harness.py
 
 # The documentation screenshots are rendered from the application, not committed:
-# scripts/docs_screenshots.py writes them to docs/_generated/screenshots.
-screenshots:
-	$(PYTHON) scripts/docs_screenshots.py
+# scripts/render_docs_screenshots.py (the scripts/docs_screenshots package)
+# writes them to docs/_generated/screenshots and touches its .stamp once every
+# screenshot is written. `make screenshots` always renders; `make docs` renders
+# only when the renderer, the application or the fixtures it reads are newer
+# than the stamp.
+SCREENSHOT_STAMP = docs/_generated/screenshots/.stamp
+SCREENSHOT_SOURCES = $(shell find scripts/docs_screenshots scripts/render_docs_screenshots.py \
+	src/mufinder tests/fixtures/geometry tests/fixtures/uep -type f \
+	-not -path '*/__pycache__/*' -not -name '*.pyc')
 
-docs: screenshots
+screenshots:
+	$(PYTHON) scripts/render_docs_screenshots.py
+
+$(SCREENSHOT_STAMP): $(SCREENSHOT_SOURCES)
+	$(PYTHON) scripts/render_docs_screenshots.py
+
+docs: $(SCREENSHOT_STAMP)
 	$(PYTHON) -m sphinx -W -b html docs docs/_build/html
 
 # ruff is installed by the dev extra (added alongside the ruff configuration).

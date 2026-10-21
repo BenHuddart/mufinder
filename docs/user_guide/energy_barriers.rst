@@ -71,7 +71,7 @@ Running the workflow
 The Energy Barriers page
 ------------------------
 
-.. figure:: ../_generated/screenshots/energy_barriers_page.png
+.. figure:: ../_generated/screenshots/energy_barriers_page.webp
    :alt: The Paths tab with a bond-centre and a tetrahedral endpoint selected and one
          generated diffusion path, completed.
 
@@ -253,7 +253,7 @@ parses the farmed file for the job's real outcome.
 Outputs and interpretation
 --------------------------
 
-.. figure:: ../_generated/screenshots/energy_barrier_inspection.png
+.. figure:: ../_generated/screenshots/energy_barrier_inspection.webp
    :alt: The NEB Analysis tab with one completed band, its energy profile and the
          transition-state image in the viewer.
 

@@ -25,7 +25,7 @@ Before you start
 Installing a keyword catalog
 ----------------------------
 
-.. figure:: ../_generated/screenshots/castep_setup_dialog.png
+.. figure:: ../_generated/screenshots/castep_setup_dialog.webp
    :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
          generate one or use an existing file.
 

@@ -135,7 +135,7 @@ when they finish, and can be dismissed or deleted there.
 The workflow page
 -----------------
 
-.. figure:: ../_generated/screenshots/quantum_corrections_page.png
+.. figure:: ../_generated/screenshots/quantum_corrections_page.webp
    :alt: The Quantum Corrections page with two pinned sites, one with a completed phonon
          job and one ready to submit, and one completed result row showing the muon
          ZPE, three muon-mode frequencies, their widths and the w1 witness.

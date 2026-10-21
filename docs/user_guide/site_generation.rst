@@ -58,7 +58,7 @@ Running the workflow
 The Generation page
 -------------------
 
-.. figure:: ../_generated/screenshots/site_generation_page.png
+.. figure:: ../_generated/screenshots/site_generation_page.webp
    :alt: The Generation page with element-attached and random candidate sites
          selected and marked in the preview.
 
@@ -315,7 +315,7 @@ gets an unambiguous runtime-configuration dialog and remote working directory.
 Structural relaxations
 ----------------------
 
-.. figure:: ../_generated/screenshots/muon_relaxations_page.png
+.. figure:: ../_generated/screenshots/muon_relaxations_page.webp
    :alt: The Structural Relaxations tab with five completed positive-muon relaxations
          in a 2x2x2 silicon supercell, their initial and final positions and energies.
 

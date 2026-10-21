@@ -98,7 +98,7 @@ functional (see `Stale defaults`_).
 The overview page
 -----------------
 
-.. figure:: ../_generated/screenshots/convergence_overview.png
+.. figure:: ../_generated/screenshots/convergence_overview.webp
    :alt: The Convergence Testing overview with a 600 eV cutoff and a 3 x 3 x 4
          grid adopted and their plots pinned.
 
@@ -125,7 +125,7 @@ hand, or when the active host structure has changed.
 The sweep pages
 ---------------
 
-.. figure:: ../_generated/screenshots/cutoff_convergence_page.png
+.. figure:: ../_generated/screenshots/cutoff_convergence_page.webp
    :alt: The Cutoff Convergence page with six cutoff rows from 300 to 800 eV
          ready to run.
 
@@ -203,7 +203,7 @@ remembers its last values.
 Generating k-point grids
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/kpoint_convergence_page.png
+.. figure:: ../_generated/screenshots/kpoint_convergence_page.webp
    :alt: The K-Point Convergence page with the grids generated for rutile TiO2
          down to 0.07 1/Ang.
 
@@ -229,7 +229,7 @@ the grids again with ``Replace existing grid list`` ticked.
 Parameter dialogs
 ~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/parameter_dialog.png
+.. figure:: ../_generated/screenshots/parameter_dialog.webp
    :alt: The parameter dialog of the 500 eV cutoff row, with the swept cutoff
          shown as set by the sweep.
 

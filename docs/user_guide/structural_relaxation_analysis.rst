@@ -62,7 +62,7 @@ Running the workflow
 The Pristine Relaxation page
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/pristine_relaxation_page.png
+.. figure:: ../_generated/screenshots/pristine_relaxation_page.webp
    :alt: The Pristine Relaxation page with one completed variable-cell relaxation and
          its relaxed lattice lengths.
 
@@ -153,7 +153,7 @@ set is available; delete it and make a new one (see `Deleting a workspace`_).
 The workspace page
 ~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/relaxation_analysis_workspace.png
+.. figure:: ../_generated/screenshots/relaxation_analysis_workspace.webp
    :alt: An analysis workspace with five silicon muon relaxations clustered into two
          sites, beside a 3D preview of the host cell.
 
@@ -290,7 +290,7 @@ project immediately and cannot be undone.
 The Muon Sites summary
 ----------------------
 
-.. figure:: ../_generated/screenshots/muon_sites_summary.png
+.. figure:: ../_generated/screenshots/muon_sites_summary.webp
    :alt: The Muon Sites page with two distinct positive-muon sites pinned and an
          empty Muonium card.
 

@@ -30,7 +30,7 @@ Reading and exporting the Journal
 The Journal page
 ----------------
 
-.. figure:: ../_generated/screenshots/journal_page.png
+.. figure:: ../_generated/screenshots/journal_page.webp
    :alt: The Journal with milestone entries for the convergence setup and the
          generated muon sites.
 

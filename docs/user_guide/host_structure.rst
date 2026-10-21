@@ -40,7 +40,7 @@ explicit error.
 The host-structure panel
 ------------------------
 
-.. figure:: ../_generated/screenshots/host_structure_page.png
+.. figure:: ../_generated/screenshots/host_structure_page.webp
    :alt: The Host Structure panel with rutile TiO2 loaded, its atom table and
          its 3D view.
 
