@@ -477,12 +477,6 @@ Limitations
   not expose it.
 - ``Cluster Positions...`` only changes which symmetry-equivalent coordinate a
   row uses; it does not merge rows or judge which final sites are distinct.
-- A generated site records one relaxation: the last of its relaxations to
-  finish. Quantum Corrections and Energy Barriers list relaxed sites through
-  that record, so when one start is relaxed in both charge states only the
-  charge state that finished last reaches them, and pinned sites of the other
-  charge state are reported as no longer eligible. Generate separate starts
-  for each charge state when both should reach those stages.
 
 For developers
 --------------

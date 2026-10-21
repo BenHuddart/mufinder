@@ -87,12 +87,10 @@ on every build; the Generation page does not expose the seed.
 
    The ten positive-muon starts.
 
-``Create Jobs from Selected`` asks for the charge state of the relaxations.
-The muonium relaxations in this project start from six random positions of
-their own, drawn with another seed. A generated site records one relaxation,
-so starts shared by both charge states would reach Quantum Corrections and
-Energy Barriers in one charge state only (see
-:doc:`/user_guide/site_generation`, *Limitations*).
+``Create Jobs from Selected`` asks for the charge state of the relaxations;
+``Both charge states`` stages every start in both tabs. The muonium
+relaxations in this project start from six random positions of their own,
+drawn with another seed, so that the two campaigns show different starts.
 
 The pristine host
 -----------------
