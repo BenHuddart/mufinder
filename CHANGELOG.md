@@ -2,6 +2,81 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-10-21)
+
+### Bug Fixes
+
+- Convert .ts geometry from Bohr to Å ([#223](https://github.com/BenHuddart/mufinder/pull/223),
+  [`cb649bf`](https://github.com/BenHuddart/mufinder/commit/cb649bfa86908f695c219e60aed15b5c64a427f7))
+
+- Describe the quantum analysis solver tab as harmonic mode wells
+  ([#227](https://github.com/BenHuddart/mufinder/pull/227),
+  [`26b638a`](https://github.com/BenHuddart/mufinder/commit/26b638a68d0e4f91743ba5d34013ec4437191972))
+
+- Explain the purpose of the Quantum Corrections page and its source columns
+  ([#230](https://github.com/BenHuddart/mufinder/pull/230),
+  [`9fcb832`](https://github.com/BenHuddart/mufinder/commit/9fcb832eb1cb391f8fd2e3fcdd472616ffc5a8ce))
+
+- Keep expand_quantum_singlepoint_jobs as a deprecated public shim
+  ([#229](https://github.com/BenHuddart/mufinder/pull/229),
+  [`03eb879`](https://github.com/BenHuddart/mufinder/commit/03eb879b6dc554e9768d46181759185675539b3e))
+
+- Qualify the mode-well tab's weakly-bound claim and its numerical convergence
+  ([#227](https://github.com/BenHuddart/mufinder/pull/227),
+  [`26b638a`](https://github.com/BenHuddart/mufinder/commit/26b638a68d0e4f91743ba5d34013ec4437191972))
+
+- Report the w1 witness as P - 3 and store per-mode muon widths
+  ([#226](https://github.com/BenHuddart/mufinder/pull/226),
+  [`746b2b3`](https://github.com/BenHuddart/mufinder/commit/746b2b3402de6b8a0da4673b76cc4531a41a9e54))
+
+- Scope the Displacements tooltip to finite-displacement runs
+  ([#230](https://github.com/BenHuddart/mufinder/pull/230),
+  [`9fcb832`](https://github.com/BenHuddart/mufinder/commit/9fcb832eb1cb391f8fd2e3fcdd472616ffc5a8ce))
+
+### Documentation
+
+- Add Quantum Corrections theory page with a solid-nitrogen worked example
+  ([#225](https://github.com/BenHuddart/mufinder/pull/225),
+  [`c9c7fca`](https://github.com/BenHuddart/mufinder/commit/c9c7fcabab177a4b38f0b07cca9125fa35ad074e))
+
+- Add the first-project tutorial, library examples and a Help menu
+  ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+- Keep the old URLs of moved pages working ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+- Render screenshots for every job-free page
+  ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+- Render screenshots for the results and analysis pages
+  ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+- Restructure the Sphinx site around GUI users with screenshots of every page
+  ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+- Rewrite the user guide as task-first GUI pages
+  ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+- Split the Sphinx site into audience sections
+  ([#224](https://github.com/BenHuddart/mufinder/pull/224),
+  [`0e8b4b9`](https://github.com/BenHuddart/mufinder/commit/0e8b4b939c554ff2325799085d9dab464bc643f5))
+
+### Features
+
+- Run Quantum Corrections as one CASTEP phonon job per site
+  ([#229](https://github.com/BenHuddart/mufinder/pull/229),
+  [`03eb879`](https://github.com/BenHuddart/mufinder/commit/03eb879b6dc554e9768d46181759185675539b3e))
+
+- Show muon modes and widths in the quantum Completed Results table
+  ([#228](https://github.com/BenHuddart/mufinder/pull/228),
+  [`e6cc137`](https://github.com/BenHuddart/mufinder/commit/e6cc137fc6d539104f158af629da78c6e7994fd3))
+
+
 ## v0.7.0 (2026-10-20)
 
 ### Bug Fixes
