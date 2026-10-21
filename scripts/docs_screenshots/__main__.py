@@ -1,6 +1,7 @@
 """The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [NAME ...]``.
 
-With no names and no ``--example`` every screenshot is rendered.
+With no names and no ``--example`` every screenshot is rendered, and the
+output directory's ``.stamp`` is touched once they all are.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from .render import DEFAULT_OUTPUT, IMAGE_SUFFIX, install_offscreen_viewers, rem
 from .registry import EXAMPLES, SCREENSHOTS
 
 from PySide6.QtWidgets import QApplication
+
+STAMP_NAME = ".stamp"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -62,6 +65,10 @@ def _run(argv: list[str] | None) -> int:
     output.mkdir(parents=True, exist_ok=True)
     for name in names:
         render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
+    if not args.example and not args.names:
+        # A full render marks the output complete; ``make docs`` renders again
+        # only once a source is newer than this stamp.
+        (output / STAMP_NAME).touch()
     return 0
 
 
