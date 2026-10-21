@@ -135,14 +135,25 @@ def quantum_source_eligibility(
     run: CalculationRun | None,
     job: Job | None,
     relaxed_structure: Structure | None,
+    site_link: bool = True,
 ) -> QuantumSourceEligibility:
-    """Validate that a site came from a completed structural muon relaxation."""
+    """Validate that a site came from a completed structural muon relaxation.
 
-    if site.status != "relaxed":
-        return QuantumSourceEligibility(False, "Muon site has not been structurally relaxed.")
-    if site.relaxation_run_id is None:
-        return QuantumSourceEligibility(False, "Muon site has no structural-relaxation run provenance.")
-    if run is None or run.id != site.relaxation_run_id:
+    With ``site_link`` (the default) ``run`` must be the relaxation the site's
+    own link records and the site must be marked relaxed. Without it ``run`` is
+    a relaxation of the site in another charge state, found through the
+    muon-relaxation row bound to the site, so the site's link and status are not
+    checked; ``run`` must still belong to ``job``.
+    """
+
+    if site_link:
+        if site.status != "relaxed":
+            return QuantumSourceEligibility(False, "Muon site has not been structurally relaxed.")
+        if site.relaxation_run_id is None:
+            return QuantumSourceEligibility(False, "Muon site has no structural-relaxation run provenance.")
+        if run is None or run.id != site.relaxation_run_id:
+            return QuantumSourceEligibility(False, "The recorded relaxation run is missing.")
+    elif run is None or job is None or run.job_id != job.id:
         return QuantumSourceEligibility(False, "The recorded relaxation run is missing.")
     if run.status != JobStatus.COMPLETED:
         return QuantumSourceEligibility(False, "The structural-relaxation run is not complete.")

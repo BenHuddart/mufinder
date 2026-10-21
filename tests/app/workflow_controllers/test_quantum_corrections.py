@@ -645,6 +645,82 @@ def test_quantum_controller_materialize_writes_one_phonon_job_per_row(tmp_path: 
     assert "NUM_FARMS : 3" in farmed
 
 
+def test_quantum_controller_materialize_runs_one_site_in_both_charge_states(tmp_path: Path) -> None:
+    from mufinder.services.source_candidates import eligible_quantum_source_candidates
+
+    from tests.support.muon_sites import (
+        MUONIUM_RELAXATION_CALC_TYPE,
+        add_relaxed_muon_site,
+        bind_muon_relaxation_row,
+        relaxation_job_id,
+    )
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    site_a = next(candidate.site for candidate in candidates.values() if candidate.site.label == "siteA")
+    scratch = add_relaxed_muon_site(
+        document, label="siteA", charge_calc_type=MUONIUM_RELAXATION_CALC_TYPE, total_energy=-2.0
+    )
+    muonium_job = document.jobs[relaxation_job_id(document, scratch)]
+    del document.sites[scratch.id]
+    bind_muon_relaxation_row(document, site_a, muonium_job, "muonium")
+    keys = [str(site_a.id), f"{site_a.id}:muonium"]
+    assert set(keys) <= {candidate.key for candidate in eligible_quantum_source_candidates(document)}
+    controller = _quantum_document_controller(service, document, output_root)
+
+    jobs = controller.materialize(keys)
+
+    assert [job.label for job in jobs] == ["quantum_phonon_siteA", "quantum_phonon_siteA_muonium"]
+    assert definition.parameters["phonon_job_ids_by_label"] == {
+        keys[0]: str(jobs[0].id),
+        keys[1]: str(jobs[1].id),
+    }
+    assert definition.parameters["job_seed_names_by_label"] == {
+        keys[0]: "quantum_siteA",
+        keys[1]: "quantum_siteA_muonium",
+    }
+    muonium_param = (output_root / "quantum_siteA_muonium" / "quantum_siteA_muonium.param").read_text(
+        encoding="utf-8"
+    )
+    assert "CHARGE : 0" in muonium_param
+    stored = definition.parameters["configuration"]["sources"]
+    assert [(entry["key"], entry["charge_state"]) for entry in stored if entry["site_id"] == str(site_a.id)] == [
+        (keys[0], "positive_muon"),
+        (keys[1], "muonium"),
+    ]
+
+
+def test_quantum_controller_keeps_an_unselected_charge_state_out_of_the_sources(tmp_path: Path) -> None:
+    from tests.support.muon_sites import (
+        MUONIUM_RELAXATION_CALC_TYPE,
+        add_relaxed_muon_site,
+        bind_muon_relaxation_row,
+        relaxation_job_id,
+    )
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    site_a = next(candidate.site for candidate in candidates.values() if candidate.site.label == "siteA")
+    scratch = add_relaxed_muon_site(
+        document, label="siteA", charge_calc_type=MUONIUM_RELAXATION_CALC_TYPE, total_energy=-2.0
+    )
+    muonium_job = document.jobs[relaxation_job_id(document, scratch)]
+    del document.sites[scratch.id]
+    bind_muon_relaxation_row(document, site_a, muonium_job, "muonium")
+    # The definition so far holds only siteB; select siteA's muonium relaxation alone.
+    site_b = next(candidate.site for candidate in candidates.values() if candidate.site.label == "siteB")
+    definition.input_site_ids = [site_b.id]
+    definition.parameters["configuration"] = {"sources": [{"site_id": str(site_b.id)}]}
+    controller = _quantum_document_controller(service, document, output_root)
+    muonium_key = f"{site_a.id}:muonium"
+
+    controller.ensure_definition([muonium_key])
+    controller.ensure_definition([muonium_key])
+
+    stored = definition.parameters["configuration"]["sources"]
+    assert [entry["key"] for entry in stored] == [str(site_b.id), muonium_key]
+
+
 def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> None:
     """A defined job is rewritten from the row's configuration; a finished one is left alone."""
 

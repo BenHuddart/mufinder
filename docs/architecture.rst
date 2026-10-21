@@ -451,7 +451,9 @@ no two workflow widgets may define the same private method.
        templates stay plain shell, checked with ``bash -n`` by the tests.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
-       sites eligible for quantum corrections, their relative energies,
+       sites eligible for quantum corrections, one per charge state a site was
+       relaxed in (``site_charge_state_relaxation_jobs``,
+       ``quantum_source_key``), their relative energies,
        labels, seed names and stored ``sources`` entries, and
        the settings a follow-on row inherits from its source relaxation's
        input files (``source_relaxation_parameter_values``); the generated
@@ -459,6 +461,12 @@ no two workflow widgets may define the same private method.
        Energy Barriers form state they live in and the NEB results for energy
        barriers; and the completed pristine and muon relaxations offered to
        comparison and relaxation analysis.
+   * - ``mufinder.services.site_relaxations``
+     - Recording a completed muon relaxation on its source site
+       (``record_site_relaxation``): the charge state a site is first relaxed in
+       is recorded on the site and owns its link and its bare site-id source
+       key, and only a relaxation in that charge state links the site, even
+       after that relaxation is reset.
    * - ``mufinder.services.muon_sites_summary``
      - The pinned Muon Sites summary: building, storing and validating the
        per-charge-state snapshots (``build_muon_sites_summary_snapshot``,

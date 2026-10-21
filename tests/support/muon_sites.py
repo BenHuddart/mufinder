@@ -6,10 +6,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE
+from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE, muon_charge_state_prefix
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
 from mufinder.services.project_document import ProjectDocument
+from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import RELAXATION_ANALYSIS_WORKSPACES_KEY
 
 POSITIVE_RELAXATION_CALC_TYPE = "castep_positivemuon_relaxation"
@@ -64,6 +65,33 @@ def relaxation_job_id(doc: ProjectDocument, site: MuonSite) -> UUID:
     run = doc.runs[site.relaxation_run_id]
     assert run.job_id is not None
     return run.job_id
+
+
+def bind_muon_relaxation_row(doc: ProjectDocument, site: MuonSite, job: Job, charge_state: str) -> None:
+    """Bind ``job`` to ``site`` by a muon-relaxation row in ``charge_state``.
+
+    Models a start relaxed in a second charge state: the site's own link stays
+    on its first relaxation and the row records this one.
+    """
+
+    host_id = doc.project.host_structure_id
+    assert host_id is not None
+    ProjectService().register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host_id,
+        parameters={
+            "rows": [
+                {
+                    "site_id": str(site.id),
+                    "label": site.label,
+                    "initial_fractional_position": list(site.initial_fractional_position),
+                    "charge_state": charge_state,
+                }
+            ]
+        },
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+        job_ids_by_label={f"{muon_charge_state_prefix(charge_state)}:{site.label}": str(job.id)},
+    )
 
 
 @dataclass(frozen=True)

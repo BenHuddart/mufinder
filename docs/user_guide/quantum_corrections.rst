@@ -272,7 +272,10 @@ What MuFinder writes
 --------------------
 
 Each row's phonon job is written to its own seed directory under
-``files/quantum_corrections/<seed>/`` in the project:
+``files/quantum_corrections/<seed>/`` in the project. The seed is
+``quantum_<site label>``; for a site relaxed in both charge states, the charge
+state the site was not first relaxed in adds its prefix, as in
+``quantum_O1_muonium``:
 
 - ``TASK : PHONON``, ``PHONON_METHOD`` and ``CONTINUATION : DEFAULT`` (a new
   run when the directory holds no ``.check`` file, a continuation of it
@@ -294,7 +297,10 @@ A relaxed site is listed only when all of these hold (a pinned site is listed
 when the relaxation that represents its cluster passes the same checks, in the
 pin's charge state):
 
-- the site has been relaxed and records its relaxation run;
+- the relaxation is the one the site records, or a relaxation of the site in
+  the other charge state from its row in ``Muon Sites -> Relaxations``, so a
+  site relaxed as both a positive muon and muonium is listed once per charge
+  state;
 - that run, and the job that produced it, completed successfully;
 - the job is a muon relaxation from ``Muon Sites -> Relaxations``, or a
   relaxation brought in through :doc:`/user_guide/legacy_import`;

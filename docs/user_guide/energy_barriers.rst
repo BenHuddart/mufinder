@@ -99,7 +99,9 @@ offer every eligible relaxed site instead; the choice is saved with the
 project. When no charge state has a pin the selectors are empty and a notice
 with ``Go to Muon Sites →`` explains how to pin sites; the notice also names a
 charge state with no pin and counts pinned sites that no longer resolve to an
-eligible relaxed site. A stored endpoint the selectors no longer list is
+eligible relaxed site. A site relaxed in both charge states is offered once in
+each, and its paths in one charge state are kept apart from those in the
+other. A stored endpoint the selectors no longer list is
 replaced by the first listed site (the final endpoint by the first other one),
 so widening the list keeps the pair the selectors showed. Paths already
 generated stay in the ``Diffusion Paths``
