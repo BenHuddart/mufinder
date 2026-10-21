@@ -160,8 +160,9 @@ def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
             QuantumResultRow(
                 key="result-a",
                 label="phonon_a",
-                zpe="0.1 eV",
-                eigenvalues="1:100.0, 2:400.0",
+                zpe="0.100",
+                muon_modes="1600.0, 2500.0, 3600.0",
+                widths="0.18, 0.15, 0.12",
                 witness="-0.1",
                 status="completed",
             )
@@ -171,12 +172,11 @@ def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
     launched: list[str] = []
     widget.analysis_requested.connect(launched.append)
 
-    assert widget._results_table.horizontalHeaderItem(2).text() == "Eigenvalues (cm⁻¹)"
-    assert widget._results_table.horizontalHeaderItem(4).text() == "Status"
-    assert widget._results_table.columnWidth(2) >= widget._results_table.columnWidth(3)
+    assert widget._results_table.horizontalHeaderItem(2).text() == "Muon modes (cm⁻¹)"
+    assert widget._results_table.horizontalHeaderItem(5).text() == "Status"
 
-    # Status is column 4; it uses the shared per-status palette.
-    status_item = widget._results_table.item(0, 4)
+    # Status is column 5; it uses the shared per-status palette.
+    status_item = widget._results_table.item(0, 5)
     assert status_item is not None
     assert status_item.text() == "completed"
     assert (
@@ -184,7 +184,7 @@ def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
         == status_brush("completed").color().name()
     )
 
-    button = widget._results_table.cellWidget(0, 5)
+    button = widget._results_table.cellWidget(0, 6)
     assert isinstance(button, QPushButton)
     assert button.text() == "Launch Analysis"
 
