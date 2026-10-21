@@ -57,6 +57,12 @@ counts, whether the starter catalog is active, and any such reason.
 Installing a catalog
 --------------------
 
+.. figure:: _generated/screenshots/castep_setup_dialog.png
+   :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
+         generate one or use an existing file.
+
+   ``Setup > CASTEP`` before a keyword catalog is installed.
+
 ``Setup > CASTEP`` offers two routes, and both end the same way:
 
 - **Generate Keyword Catalog** asks CASTEP to describe its keywords, either

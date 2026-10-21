@@ -166,7 +166,7 @@ class HostStructureWidget(QWidget):
         self._viewer.setMinimumWidth(380)
 
         layout.addWidget(info)
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, 1)
 
     def _lock_table_width(self) -> None:
         header = self._atom_table.horizontalHeader()

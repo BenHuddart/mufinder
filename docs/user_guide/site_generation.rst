@@ -1,6 +1,12 @@
 Generation
 ==========
 
+.. figure:: ../_generated/screenshots/site_generation_page.png
+   :alt: The Generation page with element-attached and random candidate sites
+         selected and marked in the preview.
+
+   O-attached and random candidate sites in rutile TiO2, selected in the table.
+
 The ``Generation`` workflow (``Muon Sites -> Generation`` in the project
 navigator) is the place where initial muon positions are committed as project
 ``MuonSite`` entries for later structural relaxation setup.  Generated rows

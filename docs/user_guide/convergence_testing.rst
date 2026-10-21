@@ -98,6 +98,12 @@ functional (see `Stale defaults`_).
 The overview page
 -----------------
 
+.. figure:: ../_generated/screenshots/convergence_overview.png
+   :alt: The Convergence Testing overview with a 600 eV cutoff and a 3 x 3 x 4
+         grid adopted and their plots pinned.
+
+   The overview after adopting a cutoff and a grid; the pinned sweeps are illustrative data.
+
 The ``Convergence Testing`` page has two cards, ``Cutoff Convergence`` and
 ``K-Point Convergence``. Each card has an ``Open ...`` button that jumps to its
 sweep page and lists:
@@ -118,6 +124,12 @@ hand, or when the active host structure has changed.
 
 The sweep pages
 ---------------
+
+.. figure:: ../_generated/screenshots/cutoff_convergence_page.png
+   :alt: The Cutoff Convergence page with six cutoff rows from 300 to 800 eV
+         ready to run.
+
+   The ``Cutoff Convergence`` page with six configured cutoffs ready to run.
 
 ``Cutoff Convergence`` and ``K-Point Convergence`` share one layout.
 
@@ -192,6 +204,12 @@ remembers its last values.
 Generating k-point grids
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. figure:: ../_generated/screenshots/kpoint_convergence_page.png
+   :alt: The K-Point Convergence page with the grids generated for rutile TiO2
+         down to 0.07 1/Ang.
+
+   Grids generated for rutile TiO2 with a minimum spacing of 0.07 1/Ang.
+
 ``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
 
 ``Generate From Spacing...`` opens ``Generate K-Point Grids``. MuFinder walks
@@ -211,6 +229,12 @@ the grids again with ``Replace existing grid list`` ticked.
 
 Parameter dialogs
 ~~~~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/parameter_dialog.png
+   :alt: The parameter dialog of the 500 eV cutoff row, with the swept cutoff
+         shown as set by the sweep.
+
+   The ``Configure...`` dialog of the 500 eV row.
 
 The row dialog follows the shared workflow layout, with the swept keyword
 shown as ``Variable (set by sweep)``. ``+ Add Parameter`` adds any other

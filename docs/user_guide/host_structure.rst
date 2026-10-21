@@ -57,6 +57,12 @@ unit-cell moment at each labelled site to reproduce the imported moment. See
 The host-structure panel
 ------------------------
 
+.. figure:: ../_generated/screenshots/host_structure_page.png
+   :alt: The Host Structure panel with rutile TiO2 loaded, its atom table and
+         its 3D view.
+
+   The ``Host Structure`` panel with rutile TiO2 loaded.
+
 - ``Active host structure:`` switches between imported host structures.
 - The atom table and the 3D viewer sit side by side in a resizable splitter.
   A compact two-row summary (label, source, atom count, species) above them

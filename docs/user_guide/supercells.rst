@@ -9,6 +9,12 @@ you to recreate the same matrix in several places.
 Opening the editor
 ------------------
 
+.. figure:: ../_generated/screenshots/supercell_editor.png
+   :alt: The Supercell Editor with a saved 2x2x2 rutile supercell selected and
+         previewed.
+
+   The editor with a saved 2x2x2 supercell selected and its 48-atom preview.
+
 Load a host structure first: the editor builds supercells from the active
 host. Then open the editor in one of three ways:
 
@@ -29,6 +35,12 @@ calculations and active workflow selections that refer to it).
 
 Creating and saving supercells
 ------------------------------
+
+.. figure:: ../_generated/screenshots/supercell_suggestions.png
+   :alt: The supercell suggestions for rutile TiO2: three diagonal cells, the
+         2x2x4 cell highlighted.
+
+   ``Suggest…`` for rutile TiO2, where no cell under 200 atoms reaches 10 Å.
 
 Click ``New`` to start from the unit-cell matrix. The editor provides two
 matrix entry modes:

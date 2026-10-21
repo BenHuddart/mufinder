@@ -11,6 +11,12 @@ active, and ``Open Journal`` opens the :doc:`/user_guide/journal`.
 Workflow chart
 --------------
 
+.. figure:: ../_generated/screenshots/project_home.png
+   :alt: The project home of a rutile TiO2 project: the workflow chart, the
+         field notes and the cell survey.
+
+   The project home of a rutile TiO2 project with three stages complete.
+
 The chart draws every workflow stage as a waypoint, laid out in the order the
 work usually goes, with the navigator's Convergence Testing and Muon Sites
 sections drawn as named regions. Lines between waypoints show how the stages

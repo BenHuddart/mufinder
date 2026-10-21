@@ -36,7 +36,7 @@ README, the pull-request template and CI refer to its targets. Pass
   runs the targeted execution checks listed below; ``make test-fast
   FILES="tests/science/test_supercell.py"`` runs the files you name.
 - ``make harness`` runs the agent-harness structural tests.
-- ``make screenshots`` renders the user-guide screenshots into
+- ``make screenshots`` renders the documentation screenshots into
   ``docs/_generated/screenshots`` (see `Documentation screenshots`_).
 - ``make docs`` renders the screenshots, then builds this Sphinx site with
   warnings treated as errors.
@@ -148,26 +148,81 @@ fails the ``-W`` build.
 Documentation screenshots
 -------------------------
 
-The user-guide screenshots are build outputs: no image under ``docs/`` is
+The documentation screenshots are build outputs: no image under ``docs/`` is
 committed for them. ``scripts/docs_screenshots.py`` writes each one to
 ``docs/_generated/screenshots`` (ignored by git), and a page shows it with a
 ``figure`` directive whose path is relative to the page, for example
 ``../_generated/screenshots/<name>.png`` from a page in ``docs/user_guide/``.
 
-Each screenshot saves a small project, opens it in a real ``MainWindow``,
-drives the page through its buttons (a real ``muesr`` calculation included) and
-grabs the window or the dialog it opens. The script needs no display: Qt draws
-on its ``offscreen`` platform at twice the logical size, and VTK renders
-through EGL. pyvistaqt's ``QtInteractor`` needs a native window, so the script
-gives the 3D viewers an off-screen PyVista plotter that paints its frame
-instead. Settings and app data go to a temporary directory, so a local run
-leaves the developer's own MuFinder configuration alone.
+The script needs no display: Qt draws on its ``offscreen`` platform at twice
+the logical size, and VTK renders through EGL. pyvistaqt's ``QtInteractor``
+needs a native window, so the script gives the 3D viewers an off-screen
+PyVista plotter that paints its frame instead. Settings and app data go to a
+temporary directory, so a local run leaves the developer's own MuFinder
+configuration alone.
 
-To add a screenshot, add a function to the script's ``SCREENSHOTS`` table and
-reference its file from a page. ``tests/docs/test_docs_screenshots.py`` runs the
-script and fails if a page references an image the script does not write, or
-the script writes one no page uses. To render only some of them, name them:
-``python scripts/docs_screenshots.py magnetic_fields_page``.
+Scenes
+~~~~~~
+
+Each entry of the script's ``SCREENSHOTS`` table maps a file name to a
+``Scene``:
+
+- a project builder, a function that writes a saved project into a scratch
+  directory and returns its root;
+- the navigator route to open (``None`` leaves the Project Home showing);
+- an optional ``setup`` step that drives the window, such as clicking
+  ``Calculate Dipolar Field``;
+- the grab target: ``Window`` (the whole main window, optionally with the Job
+  Dashboard shown), ``Page`` (one page widget, named by its ``MainWindow``
+  attribute and laid out at a given logical size), ``Dock`` (a dock widget, by
+  title) or ``Dialog`` (the modal dialog an opener callable shows, matched by
+  class name, so a dialog opened from another dialog can be grabbed). Each
+  target takes an optional ``prepare`` step that receives the grabbed widget
+  before the grab.
+
+The script opens the project in a real ``MainWindow`` with the status bar
+hidden, since its keyword-catalog and cluster-connection warnings describe the
+scratch settings rather than the page. A dialog is dismissed after its grab,
+and a scene whose dialog never opens fails rather than hanging.
+
+Prefer ``Page`` grabs about 1000 to 1200 logical pixels wide: the theme scales
+a figure to the content column, so a full-window grab at 1440 pixels makes its
+text small. Keep ``Window`` for views about the window as a whole, such as the
+Project Home and the Job Dashboard.
+
+The fixture project
+~~~~~~~~~~~~~~~~~~~
+
+Most scenes open ``fixture_project``: rutile TiO2 built in code, with ``PBE``
+as the project functional, a saved 2x2x2 supercell, a configured cutoff sweep
+(300 to 800 eV) and k-point sweep (the grids ``Generate From Spacing...``
+gives down to 0.07 1/Ang), none submitted, and eight candidate muon sites
+generated through ``ProjectService.generate_candidate_sites``. The builders
+make the calls the application makes, including the sweep widgets' own form
+logic, so the saved project is one the application could have written. Two
+variants extend it: ``converged_project`` adopts a cutoff and a k-point grid
+with illustrative sweep data pinned on the Convergence Testing overview, and
+``dashboard_project`` binds failed, stopped and cancelled jobs to three cutoff
+rows. The Magnetic Fields scenes use ``magnetic_project``, the one-ion cubic
+cell of the worked examples. No scene runs CASTEP; the Magnetic Fields scenes
+run the real ``muesr`` calculation.
+
+Adding a screenshot
+~~~~~~~~~~~~~~~~~~~
+
+1. Add an entry to ``SCREENSHOTS``, reusing a project builder and the
+   ``setup`` and ``prepare`` steps where they fit.
+2. Render it alone, ``python scripts/docs_screenshots.py <name>`` (``--list``
+   prints the names), and look at the image: it must not show an error, an
+   empty table or a clipped control.
+3. Reference it from a page with a ``figure`` directive, an ``:alt:`` text and
+   a one-line caption.
+
+``tests/docs/test_docs_screenshots.py`` reads the ``SCREENSHOTS`` keys from the
+script's source and fails if a page references an image the script does not
+render, or the script renders one no page uses. It then renders each
+referenced screenshot in its own process, with its own timeout, so
+``pytest-xdist`` spreads the renders across workers.
 
 Shared test helpers
 -------------------

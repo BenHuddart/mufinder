@@ -8,6 +8,12 @@ project navigator, or with ``Open Journal`` on the :doc:`/user_guide/project_hom
 What the Journal includes
 -------------------------
 
+.. figure:: ../_generated/screenshots/journal_page.png
+   :alt: The Journal with milestone entries for the convergence setup and the
+         generated muon sites.
+
+   The Journal of a project with configured sweeps and generated sites.
+
 The Journal currently highlights the major workflow milestones that are most
 useful for reconstructing what happened during a project, including:
 

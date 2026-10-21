@@ -9,6 +9,12 @@ contract behind these behaviours is described in :doc:`/job_lifecycle`.
 Job states and the Job Dashboard
 --------------------------------
 
+.. figure:: ../_generated/screenshots/job_dashboard.png
+   :alt: The main window with the Job Dashboard docked below the Cutoff
+         Convergence page, listing a failed, a stopped and a cancelled job.
+
+   Failed, stopped and cancelled cutoff jobs on the ``Job Dashboard``.
+
 MuFinder jobs move through the ``Job Dashboard`` (the dock panel at the bottom
 of the main window) as calculations are submitted, monitored, and finished:
 
@@ -414,6 +420,12 @@ configuration snapshot and then submits the rows.
 Local execution
 ~~~~~~~~~~~~~~~
 
+.. figure:: ../_generated/screenshots/local_submission_dialog.png
+   :alt: The local submission dialog for six cutoff-convergence jobs, set to
+         run one after another.
+
+   The local submission dialog for a six-row cutoff sweep.
+
 ``Setup > CASTEP`` stores the local CASTEP executable path and the ``mpirun``
 launcher path; ``mpirun`` is also discovered on ``PATH`` and in common install
 prefixes. Multi-core local runs need a configured or discovered ``mpirun``;
@@ -437,6 +449,12 @@ Status text in the dashboard and the workflow tables is colour-coded.
 
 Cluster profiles and connections
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/cluster_setup_dialog.png
+   :alt: The Remote Cluster Connections dialog with the built-in SCARF profile
+         selected on the Connection tab.
+
+   ``Setup > HPC Clusters`` with the built-in SCARF profile selected.
 
 ``Setup > HPC Clusters`` stores cluster profiles globally, including built-in
 SCARF and Redwood presets. The dialog lists the saved clusters on the left,
