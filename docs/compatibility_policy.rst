@@ -103,6 +103,15 @@ Compatibility ledger
      - Project-file shim. The calc type names what CASTEP ran, so a stored
        job or result keeps it; drop its readers only when projects holding
        such records are no longer supported.
+   * - ``expand_quantum_singlepoint_jobs``
+     - ``mufinder.workflow.quantum``
+     - Public expansion helper for the singlepoint job Quantum Corrections ran
+       before each phonon job. The workflow runs one phonon job per row and
+       calls ``expand_quantum_phonon_jobs`` only; the helper still renders the
+       former ``TASK : SINGLEPOINT`` inputs for external callers and raises a
+       ``DeprecationWarning``. One test checks it still resolves and renders.
+     - Public helper, deprecated. Keep for one minor release (through 0.7.x)
+       or until the next major release, whichever comes first; then drop it.
    * - ``singlepoint_job_ids_by_label`` /
        ``singlepoint_seed_names_by_label`` definition keys
      - Quantum Corrections ``castep_quantum_phonon_set`` definitions;
