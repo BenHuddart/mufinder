@@ -76,12 +76,19 @@ class PhononCalculation:
 
 @dataclass(frozen=True, slots=True)
 class MuonModeContribution:
-    """Muon participation and ZPE for one selected phonon mode."""
+    """Muon participation, ZPE and zero-point width for one selected phonon mode.
+
+    ``width_A`` is the muon's zero-point position spread along the mode,
+    :func:`mode_width_angstrom` of ``frequency_cm``. It is last and defaults to
+    ``0.0`` so construction without it keeps working;
+    :func:`select_muon_modes` always fills it in.
+    """
 
     mode_index: int
     frequency_cm: float
     participation: float
     zpe_eV: float
+    width_A: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +268,7 @@ def select_muon_modes(
             frequency_cm=float(gamma.frequencies_cm[mode]),
             participation=float(participation[mode]),
             zpe_eV=zpe_from_frequency_cm(float(gamma.frequencies_cm[mode])),
+            width_A=mode_width_angstrom(float(gamma.frequencies_cm[mode])),
         )
         for mode in selected
     )
@@ -335,6 +343,23 @@ def zpe_from_frequency_cm(frequency_cm: float) -> float:
     return float(CM_INV_ZPE_TO_EV * frequency_cm)
 
 
+def mode_width_angstrom(frequency_cm: float, mass_amu: float = MUON_MASS_AMU) -> float:
+    """Return the zero-point width ``sqrt(hbar / (2 m omega))`` of one mode in Å.
+
+    This is the root-mean-square ground-state displacement of a harmonic
+    oscillator of mass ``mass_amu`` (the muon by default) and angular frequency
+    ``omega = 2 pi c nu`` for a CASTEP frequency ``nu`` in cm^-1. A mode with a
+    muon ZPE of 0.17 eV (about 2742 cm^-1) gives about 0.23 Å for the muon.
+    A non-positive frequency has no zero-point width and returns ``0.0``.
+    """
+
+    if frequency_cm <= 0.0 or mass_amu <= 0.0:
+        return 0.0
+    angular = 2.0 * pi * LIGHT_SPEED_M_S * 100.0 * float(frequency_cm)
+    width_m = sqrt(HBAR_J_S / (2.0 * ATOMIC_MASS_KG * float(mass_amu) * angular))
+    return float(width_m * 1e10)
+
+
 def covariance_matrix(
     calculation: PhononCalculation,
     atom_a_index: int,
@@ -371,13 +396,19 @@ def correlation_matrix(
 
 
 def w1_entanglement_witness(calculation: PhononCalculation, *, muon_species: str = "H:mu") -> float:
-    """Return the legacy ``w1`` witness based on Gamma muon-mode localization."""
+    """Return the ``w1`` muon-host entanglement witness, ``P - 3``.
 
-    gamma = calculation.gamma_point()
-    muon_index = calculation.atom_index_for_species(muon_species) - 1
-    participation = np.sum(np.abs(gamma.eigenvectors[:, muon_index, :]) ** 2, axis=1).real
-    top_three = float(np.sort(participation)[-3:].sum())
-    return -sqrt(max(0.0, 3.0 - top_three))
+    Follows M. Gomilšek et al., Commun. Phys. 6, 142 (2023),
+    doi:10.1038/s42005-023-01260-7: the three Gamma modes with the largest muon
+    participation (the modes :func:`select_muon_modes` picks) are projected onto
+    pure muon motion, and ``P`` is the sum of the squared norms of the projected
+    (normalised) eigenvectors, each the mode's muon participation. ``w1`` is
+    ``0`` when the muon's motion is fully contained in those three modes and
+    becomes more negative as it mixes with host modes, down to ``-3``.
+    """
+
+    modes = select_muon_modes(calculation, muon_species=muon_species, count=3)
+    return float(sum(mode.participation for mode in modes) - 3.0)
 
 
 def w2_entanglement_witness(calculation: PhononCalculation, atom_a_index: int, atom_b_index: int) -> float:

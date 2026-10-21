@@ -398,6 +398,12 @@ no two workflow widgets may define the same private method.
      - Scalar readings from the result of a job's latest run
        (``total_energy_for_job``, ``max_force_for_job``,
        ``max_stress_for_job``) and the payload extractors behind them.
+   * - ``mufinder.services.quantum_results``
+     - Readings from a stored quantum-phonon result payload: the ``w1``
+       witness as ``P - 3``, recomputed from the stored mode participations
+       for a payload without ``w1_definition`` (``w1_from_result_data``), and
+       each selected mode's zero-point width (``mode_widths_from_result_data``;
+       see :doc:`/user_guide/quantum_corrections`).
    * - ``mufinder.services.job_artifacts``
      - Job output paths and parsed secondary outputs.
    * - ``mufinder.services.definition_mappings``
@@ -1021,8 +1027,9 @@ Controller summary
        plus ``job_seed_names_by_label``; ``pre_submit_check`` checks the active
        definition against the active host (``confirm_active_host``) and a
        stage-2 row's stage-1 muon mass; ``build_result`` derives the muon ZPE,
-       gamma-point eigenvalues, mode participations and the ``w1`` witness from
-       the carrier's parsed phonon calculation, and a singlepoint job
+       gamma-point eigenvalues, mode participations and zero-point widths and
+       the ``w1`` witness with its ``w1_definition`` from the carrier's parsed
+       phonon calculation, and a singlepoint job
        contributes an empty result. Both calc types are ``handles_job``-owned.
        Its source rows come from :mod:`mufinder.services.source_candidates`.
        It also answers, for the cluster submission, where a phonon job's
