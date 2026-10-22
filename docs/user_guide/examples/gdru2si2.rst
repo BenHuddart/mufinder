@@ -29,13 +29,14 @@ GdRu₂Si₂ has the ThCr₂Si₂ structure, space group I4/mmm, with a = 4.1634
 and c = 9.6102 Å (Hiebl *et al.* 1983): Gd at 2a (0, 0, 0), Ru at 4d
 (0, ½, ¼) and Si at 4e (0, 0, z). The project takes z = 0.3682 from the Si of
 the relaxed cells farthest from the muon, and enters the conventional cell, ten
-atoms, with a spin of 7 ħ/2 on each Gd: the calculations treated the Gd moments
-as ferromagnetic, which is not the magnetic order of the material but gives a
+atoms, with a spin of 7 ħ/2 on each Gd (see
+:doc:`/user_guide/host_structure`): the calculations treated the Gd moments as
+ferromagnetic, which is not the magnetic order of the material but gives a
 spin-polarised ground state to relax in.
 
 The paper's calculations used PBE, a 1000 eV cut-off, spin polarisation,
 charge +1 for the positive muon, and a 2 × 2 × 1 supercell of the conventional
-cell, 40 host atoms and the muon. The relaxations used a 5 × 5 × 5
+cell, 40 host atoms and the muon (see :doc:`/user_guide/supercells`). The relaxations used a 5 × 5 × 5
 Monkhorst–Pack grid and a force tolerance of 0.05 eV/Å; the NEB band and the
 phonons used 3 × 3 × 3. No convergence sweep ran in this project, so the cut-off
 and the 5 × 5 × 5 grid of the supercell are set by hand as the project defaults

@@ -66,7 +66,8 @@ The Pristine Relaxation page
    :alt: The Pristine Relaxation page with one completed variable-cell relaxation and
          its relaxed lattice lengths.
 
-   A pristine relaxation of CoF₂, from a synthetic CASTEP output.
+   A pristine relaxation of CoF₂, from a synthetic CASTEP output
+   (:doc:`/user_guide/examples/cof2`).
 
 The ``Relaxation Jobs`` table has one row per job:
 

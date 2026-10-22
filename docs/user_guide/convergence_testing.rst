@@ -99,10 +99,11 @@ The overview page
 -----------------
 
 .. figure:: ../_generated/screenshots/convergence_overview.webp
-   :alt: The Convergence Testing overview with a 600 eV cutoff and a 3 x 3 x 4
+   :alt: The Convergence Testing overview with a 600 eV cutoff and a 4 x 4 x 6
          grid adopted and their plots pinned.
 
-   The overview after adopting a cutoff and a grid; the pinned sweeps are illustrative data.
+   The overview of the CoF₂ example (:doc:`/user_guide/examples/cof2`) after adopting a
+   cutoff and a grid; the pinned sweeps are illustrative data.
 
 The ``Convergence Testing`` page has two cards, ``Cutoff Convergence`` and
 ``K-Point Convergence``. Each card has an ``Open ...`` button that jumps to its
@@ -129,7 +130,8 @@ The sweep pages
    :alt: The Cutoff Convergence page with six cutoff rows from 300 to 800 eV
          ready to run.
 
-   The ``Cutoff Convergence`` page with six configured cutoffs ready to run.
+   The ``Cutoff Convergence`` page of the CoF₂ example with six configured
+   cutoffs ready to run.
 
 ``Cutoff Convergence`` and ``K-Point Convergence`` share one layout.
 

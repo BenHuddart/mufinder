@@ -29,7 +29,8 @@ The host
 ambient pressure. It is a molecular crystal in space group Pa-3 (No. 205) with
 a = 5.660 Å (Venables and English 1974): the molecule centres sit on the fcc
 4a sites, and the nitrogens at the 8c sites (x, x, x) with x = 0.056, so each
-N≡N bond is 1.098 Å long and points along one of the four ⟨111⟩ directions.
+N≡N bond is 1.098 Å long and points along one of the four ⟨111⟩ directions (the
+cell is loaded as described in :doc:`/user_guide/host_structure`).
 
 .. figure:: ../../_generated/screenshots/n2_host_structure.webp
    :alt: The Host Structure page with alpha-N2 loaded: eight N in the atom
@@ -53,10 +54,11 @@ muon captures an electron from its ionisation track, and a diamagnetic state,
 ascribed to an N₂μ⁺ molecular ion (Storchak *et al.* 1999). This example
 follows the diamagnetic state, a positive muon with a charge of +1 per cell.
 
-The project uses a 2 × 2 × 2 supercell (64 nitrogens and the muon), the PBE
-functional, a 1200 eV cutoff and a 2 × 2 × 2 Monkhorst–Pack grid, the settings
-of Gomilšek *et al.* Six random starts, generated with a fixed seed at least
-1 Å from every atom, are relaxed as positive muons. Every one ends at the same
+The project uses a 2 × 2 × 2 supercell (64 nitrogens and the muon; see
+:doc:`/user_guide/supercells`), the PBE functional, a 1200 eV cutoff and a
+2 × 2 × 2 Monkhorst–Pack grid, the settings of Gomilšek *et al.* Six random
+starts, generated with a fixed seed at least 1 Å from every atom (see
+:doc:`/user_guide/site_generation`), are relaxed as positive muons. Every one ends at the same
 kind of site: midway between two neighbouring molecules, whose centres are
 4.00 Å apart. In the conventional cell that is the (0, ¼, ¼) site and its 23
 images.
@@ -69,7 +71,8 @@ images.
    The six relaxations clustered: one cluster, every member at an image of
    (0, ¼, ¼). The energy spread of 2.5 meV is synthetic.
 
-Clustering the six with the default ``Connected Components`` method, whose
+Clustering the six (see :doc:`/user_guide/structural_relaxation_analysis`)
+with the default ``Connected Components`` method, whose
 0.25 Å tolerance applies to the symmetry-aware distance between sites, gives a
 single cluster, as Gomilšek *et al.* found for more than twenty starts with a
 0.7 Å threshold. The site has no special

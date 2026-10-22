@@ -47,7 +47,8 @@ The import dialog
    :alt: The Import Legacy Relaxations dialog listing three CoF2 muon runs, two
          converged and ticked and one completed but unconverged.
 
-   A hand-authored legacy folder of three CoF₂ positive-muon relaxations.
+   A hand-authored legacy folder of three CoF₂ positive-muon relaxations, for
+   the host of :doc:`/user_guide/examples/cof2`.
 
 The dialog lists each detected run with the columns ``Import``, ``Site``,
 ``Charge``, ``Status``, ``Supercell``, ``Energy (eV)``, and ``Notes``. Converged

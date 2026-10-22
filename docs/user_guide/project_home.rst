@@ -43,7 +43,8 @@ Workflow chart
    :alt: The project home of a CoF2 project: the workflow chart, the
          field notes and the cell survey.
 
-   The project home of the CoF₂ example with five stages complete.
+   The project home of the CoF₂ example (:doc:`/user_guide/examples/cof2`) with five stages
+   complete.
 
 The chart draws every workflow stage as a waypoint, laid out in the order the
 work usually goes, with the navigator's Convergence Testing and Muon Sites

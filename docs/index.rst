@@ -14,15 +14,16 @@ analysis, magnetic fields, quantum corrections, and energy barriers. Jobs run
 locally or on an HPC cluster and are tracked in the job dashboard.
 
 New users should start with :doc:`/getting_started/installation`, follow the
-:doc:`/getting_started/first_project` tutorial from an empty project to a
-relaxed muon site, then read :doc:`/getting_started/running_jobs` and the
-:doc:`/user_guide/overview` of every workflow stage. The user guide follows
-the order of the stages in the application, and the worked example follows
-the positive muon and muonium in CoF₂ through every stage, the project the
-screenshots come from. The reference section covers the
-CASTEP input MuFinder writes, the Python API documents the library packages
-for scripting, and the developer guide describes internal contracts and
-quality standards.
+:doc:`/getting_started/first_project` tutorial from an empty project to pinned
+muon sites and the local field, then read :doc:`/getting_started/running_jobs`
+and the :doc:`/user_guide/overview` of every workflow stage. The user guide
+follows the order of the stages in the application, and five worked examples
+show the stages on projects from the literature: CoF₂ through every stage, bcc
+iron and MnSi for the magnetic fields, solid nitrogen for the quantum
+corrections and GdRu₂Si₂ for the energy barriers. The reference section covers
+the CASTEP input MuFinder writes, the Python API documents the library
+packages for scripting, and the developer guide describes internal contracts
+and quality standards.
 
 .. toctree::
    :maxdepth: 2

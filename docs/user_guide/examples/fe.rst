@@ -27,7 +27,8 @@ The host
 Iron is bcc, space group Im-3m, with a = 2.868 Å and one Fe at (0, 0, 0) and one
 at (½, ½, ½) of the conventional cubic cell. It is a ferromagnet with a moment of
 2.2 μB per Fe, here along c. The magnetisation is
-:math:`\mu_0 M = 2.17` T.
+:math:`\mu_0 M = 2.17` T. The spin of 2.2 ħ/2 on each atom is entered in the
+``Host Structure`` panel (see :doc:`/user_guide/host_structure`).
 
 .. figure:: ../../_generated/screenshots/fe_host_structure.webp
    :alt: The Host Structure page with bcc Fe loaded: two Fe in the atom table

@@ -62,7 +62,8 @@ The Generation page
    :alt: The Generation page with element-attached and random candidate sites
          selected and marked in the preview.
 
-   F-attached and random candidate sites in CoF₂, selected in the table.
+   F-attached and random candidate sites in CoF₂ (:doc:`/user_guide/examples/cof2`),
+   selected in the table.
 
 The page has the ``Generation Setup`` group on the left, with the ``Method``
 drop-down and the fields for the chosen method, the buttons ``Generate Sites``,

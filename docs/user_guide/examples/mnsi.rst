@@ -10,7 +10,8 @@ even a handful of them, but a continuous distribution. This page follows the
 muon site, the helix built with the structure builder, the distribution of
 fields it gives, how the numerical settings are checked, the commensurate
 approximant that turns the distribution into a finite list, and the contact
-term that fixes where the distribution sits.
+term that fixes where the distribution sits. The physics of the incommensurate
+field distribution is in :doc:`/user_guide/magnetic_fields_theory`.
 
 .. note::
 
@@ -28,8 +29,9 @@ The host and the muon site
 MnSi has the cubic B20 structure, space group P2\ :sub:`1`\ 3, with
 a = 4.558 Å. Mn and Si both sit at the 4a positions (x, x, x),
 (-x+½, -x, x+½), (-x, x+½, -x+½) and (x+½, -x+½, -x), with x = 0.138 for Mn and
-x = 0.845 for Si, so the cell holds four Mn and four Si. The structure is
-chiral, and that chirality fixes the sense of the helix.
+x = 0.845 for Si, so the cell holds four Mn and four Si (see
+:doc:`/user_guide/host_structure`). The structure is chiral, and that
+chirality fixes the sense of the helix.
 
 .. figure:: ../../_generated/screenshots/mnsi_host_structure.webp
    :alt: The Host Structure page with MnSi loaded: four Mn and four Si in the
