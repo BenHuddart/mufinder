@@ -117,10 +117,12 @@ At the octahedral sites the field along the moment is +1.85 T where the Fe-Fe
 axis lies along c, two of the six sites, and -0.93 T where it lies along a or
 b, the other four. At the tetrahedral sites it is -0.53 T for four of the twelve
 and +0.26 T for the other eight. In both cases the weighted mean is zero, as
-the traceless tensor requires. The published values of these fields are
-+1.86 T and -0.93 T at the octahedral site and +0.27 T and -0.53 T at the
-tetrahedral site; the computed values differ by under 0.01 T, which a slightly different
-moment or lattice parameter accounts for.
+the traceless tensor requires. These are point-dipole sums, not measured
+values: the ``muesr`` documentation's bcc iron example gives +0.265 T and
+-0.530 T at the tetrahedral sites for the same model, and the octahedral
+values follow from the same sum. A muon that is static at low temperature
+sees one of these fields; a muon that hops between equivalent sites sees
+their average.
 
 .. figure:: ../../_generated/screenshots/fe_tetrahedral_sites.webp
    :alt: The Magnetic Fields page for bcc iron at the tetrahedral site, listing
@@ -212,14 +214,16 @@ the measured -1.11 T.
 The site question
 -----------------
 
-Which interstitial site the muon occupies in iron has been argued both ways. The
-classic assignment is the octahedral site. Density functional theory prefers the
-tetrahedral site by 0.18 eV and finds the octahedral site harmonically unstable
-(Onuorah *et al.* 2019). The calculations on this page give both sites the same averaged field, so they
+Which interstitial site the muon occupies in iron has been argued both ways,
+between the octahedral and the tetrahedral site. The low-temperature
+measurements of Schmolz *et al.* (1986) are read with the muon at tetrahedral
+sites, hopping between them. Density functional theory prefers the tetrahedral
+site by 0.18 eV and finds the octahedral site harmonically unstable, though
+the muon's zero-point energy stabilises it (Onuorah *et al.* 2019). The
+calculations on this page give both sites the same averaged field, so they
 cannot settle the question: it takes the unaveraged dipolar fields of a muon
-that is static at low temperature, which differ between the two sites
-(Schmolz *et al.* 1986 studied those at the tetrahedral site), or the contact
-field and the energies of the two sites.
+that is static at low temperature, which differ between the two sites, or the
+contact field and the energies of the two sites.
 
 Saving the two calculations
 ---------------------------
