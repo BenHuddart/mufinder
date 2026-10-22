@@ -69,9 +69,10 @@ images.
    The six relaxations clustered: one cluster, every member at an image of
    (0, ¼, ¼). The energy spread of 2.5 meV is synthetic.
 
-Clustering the six with the default connected-components method and its
-symmetry-aware distance gives a single cluster, as Gomilšek *et al.* found for
-more than twenty starts with a 0.7 Å threshold. The site has no special
+Clustering the six with the default ``Connected Components`` method, whose
+0.25 Å tolerance applies to the symmetry-aware distance between sites, gives a
+single cluster, as Gomilšek *et al.* found for more than twenty starts with a
+0.7 Å threshold. The site has no special
 Wyckoff position: (0, ¼, ¼) is a general position of Pa-3 (24d, site symmetry
 1), so the ``Wyckoff`` column shows no label.
 
