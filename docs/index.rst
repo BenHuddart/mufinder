@@ -60,6 +60,7 @@ quality standards.
    user_guide/examples/cof2
    user_guide/examples/fe
    user_guide/examples/mnsi
+   user_guide/examples/alpha_n2
 
 .. toctree::
    :maxdepth: 2

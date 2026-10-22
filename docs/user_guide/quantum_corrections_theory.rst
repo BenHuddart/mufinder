@@ -287,15 +287,20 @@ Worked example: solid nitrogen
 ------------------------------
 
 Gomilšek *et al.* study the positive muon in α-N₂, where every rung of the
-ladder is visible. The harmonic numbers below are pinned by
-``tests/science/test_quantum_phonons.py`` against a reduced five-atom
-[N₂–μ–N₂]⁺ chain whose force constants reproduce the paper's harmonic row; the
-other rows are the paper's results and are not computed by MuFinder.
+ladder is visible. :doc:`/user_guide/examples/alpha_n2` follows the example
+through MuFinder step by step; the figures below show where each harmonic
+number appears. They come from a synthetic phonon run that embeds, in the
+relaxed 65-atom supercell, a five-atom [N₂–μ–N₂]⁺ spring model whose force
+constants reproduce the paper's harmonic row. The harmonic numbers are pinned
+by ``tests/docs/test_docs_synthetic.py`` for the supercell and by
+``tests/science/test_quantum_phonons.py`` for the five-atom model; the other
+rows are the paper's results and are not computed by MuFinder.
 
 Setup
 ~~~~~
 
-- **Host.** α-N₂ in space group Pa-3 (No. 205), in a 2 × 2 × 2 supercell.
+- **Host.** α-N₂ in space group Pa-3 (No. 205), a = 5.660 Å (Venables and
+  English 1974), in a 2 × 2 × 2 supercell of 64 nitrogens.
 - **Calculation.** CASTEP with the PBE functional, the Tkatchenko–Scheffler
   dispersion correction, ultrasoft pseudopotentials, a 1200 eV cutoff, a
   2 × 2 × 2 Monkhorst–Pack grid, a charge of +1 per muonated supercell, an SCF
@@ -313,41 +318,87 @@ ultrasoft pseudopotentials call for the default ``FINITEDISPLACEMENT`` phonon
 method, and the tighter SCF tolerance is set as ``SCF Energy Tolerance``
 (``1e-10`` eV per atom) in the row's configuration dialog.
 
-What the page shows
-~~~~~~~~~~~~~~~~~~~
+.. figure:: ../_generated/screenshots/n2_quantum_configuration_dialog.webp
+   :alt: The Quantum Corrections configuration dialog for the alpha-N2 row:
+         Ultrasoft pseudopotentials, task PHONON, cutoff 1200 eV, SCF energy
+         tolerance 1e-10 eV, a 2 x 2 x 2 k-point grid, PBE, and the
+         FINITEDISPLACEMENT phonon method.
+
+   The α-N₂ row configured as Gomilšek *et al.* ran it.
+
+Where the numbers appear
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 The three muon modes are one longitudinal mode L along the complex and two
 transverse modes T1 and T2 across it.
 
+.. figure:: ../_generated/screenshots/n2_quantum_corrections_page.webp
+   :alt: The Quantum Corrections page with the pinned alpha-N2 site completed,
+         and a result row: ZPE 0.580 eV, muon modes 2807.1, 3274.3 and
+         3274.3 cm-1, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.1401.
+
+   ``Completed Results`` for the α-N₂ site: the ZPE, the three muon modes,
+   their widths and ``w1``.
+
 ``Completed Results``
-   ``ZPE`` reads 0.58 eV, the sum of 0.17 (L), 0.20 (T1) and 0.20 eV (T2). In
-   ``Muon modes (cm⁻¹)`` the three muon modes sit at
-   :math:`\hbar\omega_j = 2\,\mathrm{ZPE}_j`: about 2740 cm⁻¹ for L and about
-   3230 cm⁻¹ for the degenerate T pair (1 eV is 8065.5 cm⁻¹; the rounding of
-   the ZPEs allows a few tens of cm⁻¹ either way). They are the highest modes,
-   so the participation and highest-frequency rules agree. ``w1`` is
+   ``ZPE`` reads 0.580 eV, the sum of 0.174 (L), 0.203 (T1) and 0.203 eV (T2),
+   the paper's 0.17, 0.20 and 0.20 eV. ``Muon modes (cm⁻¹)`` lists the modes
+   at :math:`\hbar\omega_j = 2\,\mathrm{ZPE}_j`: 2807.1 cm⁻¹ for L and
+   3274.3 cm⁻¹ for the degenerate T pair (1 eV is 8065.5 cm⁻¹). ``w1`` is
    :math:`P - 3 = -0.14`: the three modes carry 2.86 of the muon's total
    participation of 3. ``Width (Å)`` lists the zero-point widths 0.23, 0.21
    and 0.21 Å derived below.
 
+.. figure:: ../_generated/screenshots/n2_phonon_modes.webp
+   :alt: The Phonon Modes tab scrolled to the highest modes: the N2 stretch
+         band up to 2350 cm-1, mode 191 at 2616.4 cm-1 with muon participation
+         0.130, and the muon modes 193 at 2807.1 (0.868), 194 and 195 at
+         3274.3 cm-1 (0.996).
+
+   The highest Γ-point modes: the three muon modes, highlighted, above the
+   N₂ stretches.
+
 ``Phonon Modes``
-   The three highlighted modes are the muon modes. The L mode is hybridised
-   with the intramolecular stretch of the two N₂ molecules of the complex, so
-   part of the muon's participation sits in the N₂ stretch modes, while T1 and T2 stay nearly pure. In the five-atom test model L keeps a
-   participation of 0.87 and each T mode 0.996.
+   The three highlighted modes are the muon modes, and the stiffest modes of
+   the supercell, so the participation and highest-frequency rules agree. The
+   L mode is hybridised with the intramolecular stretch of the complex: L
+   keeps a participation of 0.868, and an N₂ stretch of the complex, mode 191,
+   takes 0.130, while T1 and T2 stay nearly pure at 0.996. (In the spring model
+   the complex's stretches lie above the band of the other molecules; in the
+   paper's DFT phonons the hybridised stretch lies near 2350 cm⁻¹.)
+
+.. figure:: ../_generated/screenshots/n2_mode_wells.webp
+   :alt: The Mode wells and widths tab with the three muon modes, ZPE 0.174169
+         and 0.203192 eV and widths 0.230083 and 0.213032 Angstrom, and the
+         plot of the L well.
+
+   The harmonic L well, its ground-state level and the muon's density.
 
 ``Mode wells and widths``
    For each selected mode the solver reproduces the ZPE above and the
    harmonic widths
-   :math:`\Delta x = \sqrt{0.01842 / 0.34} \approx 0.23` Å for L and
-   :math:`\sqrt{0.01842 / 0.40} \approx 0.21` Å for T1 and T2. The width is a
-   sizeable fraction of the 1.29 Å muon–nitrogen distance.
+   :math:`\Delta x = \sqrt{0.01842 / 0.348} \approx 0.230` Å for L and
+   :math:`\sqrt{0.01842 / 0.406} \approx 0.213` Å for T1 and T2. The width is
+   a sizeable fraction of the 1.29 Å muon–nitrogen distance.
+
+.. figure:: ../_generated/screenshots/n2_muon_coupling.webp
+   :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 3: N, w2 =
+         -0.259975, and the covariance and correlation tensors.
+
+   The muon and its nearest nitrogen.
 
 ``Muon Coupling``
    With ``Atom A`` the muon and ``Atom B`` one of the two nearest nitrogens,
-   ``w2`` is about −0.26: the harmonic correlation :math:`|c| \approx 26\,\%`.
+   ``w2`` is −0.26: the harmonic correlation :math:`|c| \approx 26\,\%`.
    The paper's PIMD correlation decays with distance from the muon, so expect
-   smaller values for nitrogens further away.
+   smaller values for nitrogens further away. The ``?`` button gives the
+   equations:
+
+   .. figure:: ../_generated/screenshots/n2_coupling_help.webp
+      :alt: The Muon coupling tensors help dialog with the covariance,
+            correlation and w2 equations.
+
+      The help of the ``Muon Coupling`` tab.
 
 The paper's results
 ~~~~~~~~~~~~~~~~~~~
@@ -423,3 +474,5 @@ References
 - M. Gomilšek, F. L. Pratt, S. P. Cottrell, S. J. Clark, and T. Lancaster,
   *Many-body quantum muon effects and quadrupolar coupling in solids*,
   Commun. Phys. **6**, 142 (2023), DOI: ``10.1038/s42005-023-01260-7``.
+- J. A. Venables and C. A. English, *Electron diffraction and the structure of
+  α-N₂*, Acta Cryst. B **30**, 929 (1974), DOI: ``10.1107/S0567740874004067``.

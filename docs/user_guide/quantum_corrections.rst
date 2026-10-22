@@ -79,6 +79,15 @@ row is submitted once.
    (:doc:`/user_guide/quantum_corrections_theory` explains what they mean).
    Check the jobs dashboard for warnings, in particular the muon-mass warning
    (see `Muon mass`_).
+
+   .. figure:: ../_generated/screenshots/n2_quantum_corrections_page.webp
+      :alt: The Quantum Corrections page with one pinned alpha-N2 site, its
+            phonon job completed, and a result row: ZPE 0.580 eV, muon modes
+            2807.1, 3274.3 and 3274.3 cm-1, widths 0.23, 0.21 and 0.21
+            Angstrom, and w1 -0.1401.
+
+      The pinned site of :doc:`/user_guide/examples/alpha_n2` with its
+      completed phonon job and its result under ``Completed Results``.
 5. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
    inspect the modes, the mode wells and widths, and atom-pair coupling (see
    `Phonon analysis window`_).
@@ -135,15 +144,8 @@ when they finish, and can be dismissed or deleted there.
 The workflow page
 -----------------
 
-.. figure:: ../_generated/screenshots/quantum_corrections_page.webp
-   :alt: The Quantum Corrections page with the pinned CoF2 sites, the 4c site's
-         phonon job completed and the others ready to submit, and one completed
-         result row showing the muon ZPE, three muon-mode frequencies, their
-         widths and the w1 witness.
-
-   The pinned CoF₂ sites, the 4c site with a completed phonon job and its
-   result under ``Completed Results``; the phonon output is synthetic, built
-   from the F–μ–F modes of :doc:`/user_guide/examples/cof2`.
+The figure under `Running the workflow`_ shows the page with one pinned site
+and its completed result.
 
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
@@ -216,12 +218,15 @@ The row configuration dialog follows the shared workflow layout: the common
 rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
 ``K-Point MP Grid`` come first, followed by the Quantum Corrections rows:
 
-.. figure:: ../_generated/screenshots/quantum_configuration_dialog.webp
-   :alt: The Quantum Corrections configuration dialog for one CoF2 site: the
-         pseudopotential family, farms, the locked PHONON task, the inherited
-         cutoff, k-point grid and spin polarisation, and the phonon method.
+.. figure:: ../_generated/screenshots/n2_quantum_configuration_dialog.webp
+   :alt: The Quantum Corrections configuration dialog for an alpha-N2 row:
+         Ultrasoft pseudopotentials, one farm, the locked PHONON task, the
+         inherited 1200 eV cutoff, 2 x 2 x 2 k-point grid and PBE functional,
+         an SCF energy tolerance of 1e-10 eV, and the FINITEDISPLACEMENT phonon
+         method.
 
-   The configuration of a CoF₂ row, inheriting its relaxation's settings.
+   The configuration of the α-N₂ row, inheriting its relaxation's settings,
+   with the SCF tolerance tightened to ``1e-10`` eV.
 
 - ``Phonon Method`` — ``FINITEDISPLACEMENT`` (default), ``DFPT``, or
   ``LINEARRESPONSE`` (see `CASTEP phonon methods`_);
@@ -430,11 +435,15 @@ stored ``.phonon`` file, so the analysis is tied to the archived CASTEP output
 rather than to table state. If CASTEP used the wrong muon mass, a warning banner
 appears above the tabs.
 
-.. figure:: ../_generated/screenshots/phonon_analysis_window.webp
-   :alt: The Phonon Modes tab of the phonon analysis window for the CoF2 4c
-         site, listing host modes below 600 cm-1 and three muon modes.
+.. figure:: ../_generated/screenshots/n2_phonon_modes.webp
+   :alt: The Phonon Modes tab of the phonon analysis window for the alpha-N2
+         site, scrolled to the highest modes: the N2 stretch band up to
+         2350 cm-1, and the three muon modes at 2807.1 and 3274.3 cm-1 with
+         their participation highlighted, beside the supercell with the
+         muon's mode vector.
 
-   The ``Phonon Modes`` tab for the synthetic F–μ–F phonon of CoF₂.
+   The ``Phonon Modes`` tab for the α-N₂ site, with the longitudinal muon mode
+   selected.
 
 ``Phonon Modes``
    Lists every Gamma-point mode with its frequency, muon participation, and the
@@ -467,6 +476,14 @@ appears above the tabs.
    ``Energy scale`` switches the plot between ``Energy`` and ``Sqrt energy``,
    which keeps shallow wells legible.
 
+   .. figure:: ../_generated/screenshots/n2_mode_wells.webp
+      :alt: The Mode wells and widths tab for the alpha-N2 site with the three
+            muon modes, ZPE 0.174169 and 0.203192 eV and widths 0.230083 and
+            0.213032 Angstrom, and the plot of the selected L well.
+
+      The three muon wells of the α-N₂ site, with the longitudinal one
+      plotted.
+
 ``Muon Coupling``
    Pick ``Atom A`` and ``Atom B`` by their one-based CASTEP index (Atom A
    defaults to the muon) and click ``Calculate``. MuFinder shows the zero-point
@@ -479,6 +496,13 @@ appears above the tabs.
    of the positional entanglement witness ``w2 = -|c|`` of Gomilšek *et al.*,
    where ``c`` is the Pearson correlation of the muon and nuclear
    displacements.
+
+   .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
+      :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 3: N, w2 =
+            -0.259975, and the covariance tensor in square angstrom and the
+            correlation tensor.
+
+      The muon of the α-N₂ site and its nearest nitrogen.
 
 The ``?`` buttons in the ``Mode wells and widths`` and ``Muon Coupling`` tabs show
 the equations used.

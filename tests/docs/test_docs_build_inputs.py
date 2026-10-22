@@ -47,6 +47,12 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1103/PhysRevB.93.144419",
         "10.1016/0038-1098(76)90057-0",
     ),
+    "user_guide/examples/alpha_n2.rst": (
+        "10.1038/s42005-023-01260-7",
+        "10.1016/0370-1573(76)90032-6",
+        "10.1103/PhysRevB.59.10559",
+        "10.1107/S0567740874004067",
+    ),
     "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/magnetic_fields.rst": (
         "10.1063/1.1703091",
@@ -54,7 +60,7 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1080/001075199181521",
     ),
     "user_guide/quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
-    "user_guide/quantum_corrections_theory.rst": ("10.1038/s42005-023-01260-7",),
+    "user_guide/quantum_corrections_theory.rst": ("10.1038/s42005-023-01260-7", "10.1107/S0567740874004067"),
     "user_guide/site_generation.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/structural_relaxation_analysis.rst": (
         "10.1016/j.cpc.2022.108488",
