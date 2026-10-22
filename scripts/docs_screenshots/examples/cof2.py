@@ -1037,24 +1037,6 @@ def _show_batch_tab(analysis: QWidget) -> None:
                 return
 
 
-def open_quantum_configuration(window: MainWindow) -> None:
-    """Click ``Configure...`` on the Quantum Corrections row still ready to submit."""
-
-    from mufinder.services.source_candidates import charge_state_for_job
-
-    positive = sorted(
-        (
-            candidate
-            for candidate in window._quantum_corrections_controller.candidates()
-            if charge_state_for_job(candidate.job) == POSITIVE_MUON_CHARGE_STATE
-        ),
-        key=lambda candidate: candidate.total_energy_eV,
-    )
-    # The lowest site's row ran; the cluster 2 representative is the next above it.
-    cluster_2 = next(candidate for candidate in positive if candidate.total_energy_eV > positive[0].total_energy_eV + 0.1)
-    window._on_configure_quantum_corrections_source([cluster_2.key])
-
-
 def open_phonon_analysis(window: MainWindow) -> QWidget:
     """Click ``Analyse...`` on the completed phonon result."""
 
@@ -1194,11 +1176,6 @@ SCENES: dict[str, Scene] = {
     # Quantum corrections.
     "quantum_corrections_page": Scene(
         results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 680))
-    ),
-    "quantum_configuration_dialog": Scene(
-        results_project,
-        "quantum_corrections",
-        Dialog(open_quantum_configuration, kind="QuantumCorrectionsConfigDialog", size=(900, 640), prepare=hide_catalog_notice),
     ),
     "phonon_analysis_window": Scene(
         results_project, "quantum_corrections", Floating(open_phonon_analysis, size=(1180, 780), prepare=frame_viewers)

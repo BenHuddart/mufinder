@@ -187,6 +187,9 @@ The package
   single-point output the UEP analysis reads beside it (``uep_castep_text``),
   a Gamma-point ``.phonon`` file for a linear X–μ–X complex embedded in a
   supercell (``triatomic_phonon_text``) and legacy-run outputs. It imports no Qt, so tests import it directly.
+  ``bridged_diatomic_cell`` turns the two molecules nearest a muon to point at
+  it, and ``bridged_diatomic_phonon_text`` writes a Gamma-point ``.phonon``
+  file for that [X₂–μ–X₂] complex in a supercell of diatomic molecules.
 - ``examples/`` holds one module per example project. Each defines its
   project builders, the scene steps only its scenes use, and ``SCENES``, a
   dictionary from screenshot name to ``Scene``.
@@ -264,7 +267,8 @@ content column. Other images are left alone.
 The CoF₂ example
 ~~~~~~~~~~~~~~~~
 
-``examples/cof2.py`` holds every scene but those of the iron and manganese silicide magnetic models and of the GdRu₂Si₂ example. Its
+``examples/cof2.py`` holds every scene but those of the iron and manganese silicide magnetic models,
+of the α-N₂ quantum corrections and of the GdRu₂Si₂ example. Its
 host is rutile CoF₂ with antiparallel spins on the two Co, ``PBE`` as the
 project functional and a saved 2x2x2 supercell; :doc:`/user_guide/examples/cof2`
 tells the story its scenes illustrate and cites the values its outputs are
@@ -354,6 +358,36 @@ the results page and the distribution plot of the four sites, the
 fields of the approximant at site II. The distribution is sampled on a grid of
 phases, which is deterministic, so every render gives the same pixels. The
 approximant scene lists 64 fields and takes about a quarter of a minute.
+
+The α-N₂ example
+~~~~~~~~~~~~~~~~
+
+``examples/alpha_n2.py`` holds the scenes of the solid nitrogen worked example
+(:doc:`/user_guide/examples/alpha_n2`), which the Quantum Corrections pages
+show. ``host_project`` saves the eight-atom Pa-3 cell, built from the
+molecule centres and bond directions, with a saved 2x2x2 supercell, an adopted
+1200 eV cutoff and 4x4x4 grid, and six random starts with a fixed seed.
+``results_project`` drives that project in a ``MainWindow`` as the CoF₂
+results project does: the starts staged as positive-muon relaxations in the
+supercell, one analysis workspace, clustered and pinned, and the pinned site's
+phonon row configured through its dialog (ultrasoft pseudopotentials, a
+``1e-10`` eV SCF tolerance) and run. ``configured_project`` stops before the
+phonon job is submitted, for the editable configuration dialog.
+
+Each start relaxes to the nearest image of the (0, 1/4, 1/4) site, where
+``bridged_diatomic_cell`` turns the two molecules either side to point at the
+muon, 1.29 Å from their near nitrogens. The phonon run is
+``bridged_diatomic_phonon_text``: the complex vibrates as the five-atom chain
+spring model of ``tests/support/phonon_fixtures.py``, whose constants were
+tuned to the harmonic numbers of Gomilšek *et al.*, so the window's analysis
+gives their zero-point energy, widths, ``w1`` and ``w2``; every other molecule
+vibrates on its own, its stretch in a band at 2330 to 2350 cm⁻¹ and its
+librations and translations below 100 cm⁻¹. ``synthetic.py`` copies the chain
+constants, and ``tests/docs/test_docs_synthetic.py`` keeps the copy equal to
+the fixture's and pins the geometry and the harmonic numbers. The scenes show
+the host, the clustered relaxations, the displacements of the complex, the
+Muon Sites summary, the configuration dialog, the completed result, and the
+three tabs of the analysis window with the help of ``Muon Coupling``.
 
 The GdRu₂Si₂ example
 ~~~~~~~~~~~~~~~~~~~~
