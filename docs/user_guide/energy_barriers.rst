@@ -181,8 +181,11 @@ emphasizes:
 - precision and cutoff controls;
 - electronic energy tolerance;
 - Monkhorst-Pack grid;
-- the NEB image count (``TSSEARCH_MAX_PATH_POINTS``, default 11; an even
-  value is rounded up to the next odd number);
+- the NEB image count (``TSSEARCH_MAX_PATH_POINTS``, default 11). It counts
+  the intermediate images only, so the finished band holds two more: the
+  reactant and the product. An even value is rounded up to the next odd
+  number, because climbing image is locked on and CASTEP would otherwise add
+  the image itself;
 - NEB spring constant, tangent mode, method, maximum iterations, and
   normalization controls;
 - the transition-state force tolerance (``TSSEARCH_FORCE_TOL``), shown in
@@ -203,7 +206,7 @@ CASTEP controls without overwhelming the default view.
          climbing image, and 4 task farms.
 
    The NEB settings of the GdRu₂Si₂ band. The 40 images entered are rounded up
-   to 41.
+   to 41, the count CASTEP runs with climbing image on.
 
 Default values are layered. The project's convergence defaults
 (``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID``) apply first; when the selected

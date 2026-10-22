@@ -148,10 +148,12 @@ The NEB band
 The paper's band from site 1 to site 2 had 40 images, 4 task farms, a
 transition-state force tolerance of 0.08 eV/Å and a 3 × 3 × 3 grid. The NEB
 dialog of the 1 → 2 row inherits the cut-off, functional and spin treatment of
-the site 1 relaxation and takes those four settings. MuFinder rounds an even
-image count up to the next odd one, since climbing-image NEB needs an odd
-``TSSEARCH_MAX_PATH_POINTS``, so the row's 40 becomes 41; the paper's run kept
-40 intermediate images.
+the site 1 relaxation and takes those four settings. ``TSSEARCH_MAX_PATH_POINTS``
+counts the intermediate images, not the endpoints. MuFinder always runs
+climbing-image NEB, and with climbing on CASTEP adds one image to an even
+count, so MuFinder rounds the row's 40 up to the 41 that CASTEP would run. The
+paper's run had climbing off (its ``.castep`` reports the central bead as
+sliding down), so CASTEP kept 40.
 
 .. figure:: ../../_generated/screenshots/gdru2si2_neb_configuration.webp
    :alt: The Configure NEB Parameters dialog for the site 1 to site 2 path
@@ -227,10 +229,8 @@ lattice's and the sum of the three half-quanta is a fair ZPE (see
 :doc:`/user_guide/quantum_corrections_theory`). The runs set the muon mass to
 0.1138 amu, 0.33 % above the muon mass of 0.113429 amu that MuFinder writes, so
 their frequencies are 0.16 % low, a change below the precision quoted here.
-MuFinder's mass check allows 0.1 %, so it flags both results with the muon-mass
-warning (see :doc:`/user_guide/quantum_corrections`, *Muon mass*); for these
-runs the warning describes a 0.16 % shift, not the factor of three it guards
-against.
+MuFinder's mass check allows 1 %, so it accepts both results without the
+muon-mass warning (see :doc:`/user_guide/quantum_corrections`, *Muon mass*).
 
 Only the part of the ZPE along the path competes with the barrier. The paper
 projects the muon's dynamical matrix onto the direction of the path, a step

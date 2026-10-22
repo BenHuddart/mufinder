@@ -1050,12 +1050,12 @@ def open_phonon_analysis(window: MainWindow) -> QWidget:
 
 
 def calculate_corner_tensor(dialog: QWidget) -> None:
-    """Take the corner Co sublattice (atom index 0) and click ``Calculate``."""
+    """Take the corner Co sublattice (atom 1) and click ``Calculate``."""
 
     from PySide6.QtCore import QEvent
 
     dialog._indices_radio.setChecked(True)
-    dialog._indices_edit.setText("0")
+    dialog._indices_edit.setText("1")
     dialog._calculate_button.click()
     # The previous result's placeholder goes through deleteLater, which an
     # event loop would run before the next paint.

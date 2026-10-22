@@ -2519,6 +2519,43 @@ def test_dipolar_tensor_dialog_requires_explicit_ions_without_assigned_atoms(qap
     dialog.close()
 
 
+def test_dipolar_tensor_dialog_atom_indices_count_from_one(qapp) -> None:
+    dialog = DipolarTensorDialog(
+        _host_structure(),
+        MagneticStructureModel(),
+        _custom_muon_site((0.25, 0.25, 0.25)),
+        include_equivalent_sites=False,
+    )
+
+    dialog._indices_radio.setChecked(True)
+    dialog._indices_edit.setText("2")
+
+    # The box counts from 1; the stored selector keeps zero-based indices.
+    assert dialog.selected_ion_indices() == (1,)
+    assert dialog.selector_state()["selector"] == AtomSelector.indices([1]).to_json()
+    assert dialog._calculate_button.isEnabled()
+
+    dialog._indices_edit.setText("0")
+    assert not dialog._calculate_button.isEnabled()
+    # Closing on invalid input keeps the selection the dialog opened with.
+    assert dialog.selector_state()["selector"] == AtomSelector.indices([]).to_json()
+    dialog.close()
+
+    restored = DipolarTensorDialog(
+        _host_structure(),
+        MagneticStructureModel(),
+        _custom_muon_site((0.25, 0.25, 0.25)),
+        include_equivalent_sites=False,
+        selector_state={"mode": "selector", "selector": AtomSelector.indices([0]).to_json()},
+    )
+    assert restored._indices_radio.isChecked()
+    assert restored._indices_edit.text() == "1"
+    assert restored.selected_ion_indices() == (0,)
+    restored._indices_edit.setText("x")
+    assert restored.selector_state()["selector"] == AtomSelector.indices([0]).to_json()
+    restored.close()
+
+
 def test_dipolar_tensor_dialog_shows_and_updates_recent_results(qapp) -> None:
     class _Result:
         site_label = "site 2"

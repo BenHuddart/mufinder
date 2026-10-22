@@ -291,6 +291,18 @@ def test_muon_mass_warning_is_silent_for_a_correct_muon_mass() -> None:
     assert muon_mass_warning(parse_phonon_text(PHONON_TEXT)) is None
 
 
+def test_muon_mass_warning_accepts_a_rounded_muon_mass_within_one_percent() -> None:
+    # 0.1138 AMU is a common rounded muon mass, 0.33 % above MuFinder's; 0.1150 AMU
+    # is 1.4 % above it and is still flagged.
+    rounded = PHONON_TEXT.replace("H:mu      0.113429", "H:mu      0.113800")
+    too_heavy = PHONON_TEXT.replace("H:mu      0.113429", "H:mu      0.115000")
+
+    assert muon_mass_warning(parse_phonon_text(rounded)) is None
+    warning = muon_mass_warning(parse_phonon_text(too_heavy))
+    assert warning is not None
+    assert "0.115" in warning
+
+
 def test_muon_mass_warning_reports_a_hydrogen_mass_muon() -> None:
     warning = muon_mass_warning(parse_phonon_text(HYDROGEN_MASS_PHONON_TEXT))
 
