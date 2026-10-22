@@ -264,15 +264,38 @@ loads and fetches only the screenshots near the viewport; the theme's
 ``max-width: 100%`` and ``height: auto`` still scale an image down to the
 content column. Other images are left alone.
 
-The CoF₂ example
-~~~~~~~~~~~~~~~~
+The examples
+~~~~~~~~~~~~
 
-``examples/cof2.py`` holds every scene but those of the iron and manganese silicide magnetic models,
-of the α-N₂ quantum corrections and of the GdRu₂Si₂ example. Its
-host is rutile CoF₂ with antiparallel spins on the two Co, ``PBE`` as the
-project functional and a saved 2x2x2 supercell; :doc:`/user_guide/examples/cof2`
-tells the story its scenes illustrate and cites the values its outputs are
-tuned to.
+Five examples supply the screenshots, one module each, listed in render order.
+Each page of :doc:`/user_guide/examples/cof2`, :doc:`/user_guide/examples/fe`,
+:doc:`/user_guide/examples/mnsi`, :doc:`/user_guide/examples/alpha_n2` and
+:doc:`/user_guide/examples/gdru2si2` tells the story its scenes illustrate and
+cites the values they reproduce, and the workflow pages and the
+:doc:`/getting_started/first_project` tutorial reuse the same scenes.
+
+- ``cof2.py``: rutile CoF₂ through every stage from the host structure to the
+  local field. Its CASTEP outputs are synthetic, tuned to published values. It
+  holds every scene of the tutorial and of the generic workflow pages.
+- ``fe.py``: bcc iron, the Magnetic Fields scenes of a ferromagnet.
+- ``mnsi.py``: the MnSi helix, the Magnetic Fields scenes of an incommensurate
+  structure.
+- ``alpha_n2.py``: solid nitrogen, the Quantum Corrections scenes.
+- ``gdru2si2.py``: GdRu₂Si₂, the Energy Barriers scenes, from real CASTEP
+  outputs.
+
+The iron and MnSi projects run no CASTEP job: a host structure and a magnetic
+model are enough for the real ``muesr`` field calculation the scenes make. The
+CoF₂, α-N₂ and GdRu₂Si₂ ``results_project`` builders drive a ``MainWindow``
+through the stages as its buttons do, with a local runner that writes each job's
+outputs instead of starting CASTEP.
+
+The CoF₂ example
+^^^^^^^^^^^^^^^^
+
+``examples/cof2.py`` holds every scene the other four do not. Its host is rutile CoF₂ with
+antiparallel spins on the two Co, ``PBE`` as the project functional and a saved
+2x2x2 supercell.
 
 ``fixture_project`` is the configured-but-unsubmitted project of the setup
 scenes: a cutoff sweep (300 to 800 eV) and a k-point sweep (the grids
@@ -324,15 +347,14 @@ legacy folder of three CoF₂ runs in the documented layout (see
 that no keyword catalog is installed, as the other scenes hide it.
 
 The iron example
-~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^
 
 ``examples/fe.py`` holds the Magnetic Fields scenes of the bcc iron worked
 example (:doc:`/user_guide/examples/fe`). Each builder from ``fe_project`` saves
 the two-atom conventional cell with 2.2 μB per Fe along c, a Magnetic Fields
 form with the contact coupling that gives -1.11 T, every equivalent site and a
-spherical sample, and the octahedral or tetrahedral site as a custom position;
-no CASTEP job is involved. The scenes run the real ``muesr`` calculation with an
-80 x 80 x 80 lattice sum, which keeps the cubic symmetry of the Lorentz sphere
+spherical sample, and the octahedral or tetrahedral site as a custom position.
+The scenes run the ``muesr`` calculation with an 80 x 80 x 80 lattice sum, which keeps the cubic symmetry of the Lorentz sphere
 exactly, so components that vanish by symmetry print as ``0``. The results
 tables are made tall enough to list every equivalent site, the
 demagnetizing-shape, measured-magnetisation and equivalent-site scenes grab the
@@ -340,14 +362,14 @@ page's ``Calculation`` card alone, and the workspaces scene saves one workspace
 per site and shows the octahedral one beside the navigator.
 
 The manganese silicide example
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``examples/mnsi.py`` holds the Magnetic Fields scenes of the incommensurate
 helix worked example (:doc:`/user_guide/examples/mnsi`). Each builder from
 ``mnsi_project`` saves the eight-atom B20 cell, the helix, and a Magnetic Fields
 form with the muon at the 4a site with every equivalent site, no demagnetizing
 field and the contact coupling that reproduces the edges of the published
-prediction; no CASTEP job is involved. The helix is built by the ``Add Magnetic
+prediction. The helix is built by the ``Add Magnetic
 Preset`` dialog itself, driven through the choices the page describes: a
 left-handed helix of 0.385 μB Mn moments along the first q-basis row, which
 holds q = (0.0147, 0.0147, 0.0147). The scenes show the builder with its
@@ -360,7 +382,7 @@ phases, which is deterministic, so every render gives the same pixels. The
 approximant scene lists 64 fields and takes about a quarter of a minute.
 
 The α-N₂ example
-~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^
 
 ``examples/alpha_n2.py`` holds the scenes of the solid nitrogen worked example
 (:doc:`/user_guide/examples/alpha_n2`), which the Quantum Corrections pages
@@ -390,7 +412,7 @@ Muon Sites summary, the configuration dialog, the completed result, and the
 three tabs of the analysis window with the help of ``Muon Coupling``.
 
 The GdRu₂Si₂ example
-~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^
 
 ``examples/gdru2si2.py`` holds the Energy Barriers worked example
 (:doc:`/user_guide/examples/gdru2si2`), and unlike the other examples its
@@ -430,8 +452,16 @@ or of one example does not, and neither does a render that fails. ``make
 docs`` depends on the stamp, and the stamp on every file of
 ``scripts/docs_screenshots``, ``scripts/render_docs_screenshots.py`` and
 ``src/mufinder``, so ``make docs`` renders only when one of them is newer
-than the stamp, and a fresh checkout, such as a CI runner, renders once. Delete the stamp to force a
+than the stamp, and a fresh checkout renders once. Delete the stamp to force a
 render from ``make docs``.
+
+The ``docs`` job of ``.github/workflows/ci.yml`` and the build job of
+``.github/workflows/pages.yml`` restore ``docs/_generated/screenshots`` from the
+GitHub Actions cache, keyed on a hash of ``scripts/docs_screenshots``,
+``scripts/render_docs_screenshots.py``, ``src/mufinder``, ``tests/fixtures`` and
+``uv.lock``. On a hit they touch ``.stamp``, since a restored archive keeps the
+stamp's old modification time, and ``make docs`` skips the render; on a miss
+``make docs`` renders every screenshot and the job saves them under that key.
 
 Adding a screenshot
 ~~~~~~~~~~~~~~~~~~~

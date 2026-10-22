@@ -164,6 +164,22 @@ jobs:
           uv sync --frozen --extra dev --extra scientific-backends
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
+      # The screenshots are a pure function of the renderer, the application and
+      # the real-output fixtures, so an unchanged tree reuses the images. A
+      # restored archive keeps the .stamp mtime of the run that saved it, which
+      # is older than this checkout, so a hit touches it: make then sees the
+      # stamp as newer than the sources and skips the render.
+      - name: Restore documentation screenshots
+        id: screenshots-cache
+        uses: actions/cache@v4
+        with:
+          path: docs/_generated/screenshots
+          key: docs-screenshots-${{ runner.os }}-${{ hashFiles('scripts/docs_screenshots/**', 'scripts/render_docs_screenshots.py', 'src/mufinder/**', 'tests/fixtures/**', 'uv.lock') }}
+
+      - name: Mark the restored screenshots current
+        if: steps.screenshots-cache.outputs.cache-hit == 'true'
+        run: touch docs/_generated/screenshots/.stamp
+
       # make docs renders the user-guide screenshots first; they are build
       # outputs and are not uploaded from this job.
       - name: Build Sphinx documentation
