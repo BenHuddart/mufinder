@@ -278,17 +278,17 @@ so the saved project is one the application could have written.
 data pinned on the Convergence Testing overview, and ``dashboard_project``
 binds failed, stopped and cancelled jobs to three cutoff rows.
 
-``results_project`` starts from the converged project, adds six random
-muonium starts of their own and the antiferromagnetic model, opens the project
-in a ``MainWindow`` and drives each workflow as its buttons do: a
-spin-polarised pristine relaxation and its comparison table, a UEP source row
-with a seeded batch search and its clustering, positive-muon and muonium
-relaxations in the 2x2x2 supercell, one analysis workspace per charge state,
-clustered and pinned, the phonon job of the lowest positive-muon site, the
-distortion-corrected 4c site on the Magnetic Fields page, and the 4c to 4c
-paths on the Energy Barriers page with an NEB band along the first. Jobs are
-submitted through ``JobExecutionController.submit_local_jobs`` with a local
-runner whose ``submit`` writes the job's CASTEP outputs into its directory
+``results_project`` starts from the converged project, adds the
+antiferromagnetic model, opens the project in a ``MainWindow`` and drives each
+workflow as its buttons do: a spin-polarised pristine relaxation and its
+comparison table, a UEP source row with a seeded batch search and its
+clustering, the ten starts staged with ``Both charge states`` as positive-muon
+and muonium relaxations in the 2x2x2 supercell, one analysis workspace per
+charge state, clustered and pinned, the phonon job of the lowest positive-muon
+site, the distortion-corrected 4c site on the Magnetic Fields page, and the 4c
+to 4c paths on the Energy Barriers page with an NEB band along the first.
+Jobs are submitted through ``JobExecutionController.submit_local_jobs`` with a
+local runner whose ``submit`` writes the job's CASTEP outputs into its directory
 instead of starting CASTEP; each job is then finished through the window's
 local-runner completion handler, so result dispatch, stored results, derived
 structures and relaxed sites are those a real run produces. A message box
@@ -298,11 +298,11 @@ rescaling notice the build's supercell rows are known to raise.
 The outputs are synthetic and tuned so that the application's analysis of
 them reproduces the cited values. The pristine relaxation ends on the host
 cell with sub-percent changes. The UEP source job is a model density of Co²⁺
-and F⁻ Gaussian shells, not a CASTEP density. Each positive-muon start relaxes
-to one of three clusters (``POSITIVE_SITES``) with the energies and neighbour
-displacements of the MuFinder paper, and each muonium start to one of two
-(``MUONIUM_SITES``). The phonon run embeds the F–μ–F modes of Möller *et
-al.* in the relaxed supercell. The NEB band is illustrative, and its caption
+and F⁻ Gaussian shells, not a CASTEP density. Each start relaxes as a
+positive muon to one of three clusters (``POSITIVE_SITES``) with the energies
+and neighbour displacements of the MuFinder paper, and as muonium to the
+nearer of two (``MUONIUM_SITES``). The phonon run embeds the F–μ–F modes of
+Möller *et al.* in the relaxed supercell. The NEB band is illustrative, and its caption
 says so. ``tests/science/test_magnetic_fields.py`` pins the CoF₂ field values
 and ``tests/docs/test_docs_synthetic.py`` pins the phonon, density and
 single-point outputs. The UEP batch search and its ZPE run in the scene's

@@ -312,7 +312,8 @@ read from its row in the ``Relaxations`` page.
    :alt: The Choose Charge State dialog for ten selected initial positions,
          with Both charge states chosen.
 
-   ``Choose Charge State`` for the ten CoF₂ starts.
+   ``Choose Charge State`` for the ten CoF₂ starts, which the example stages
+   in both charge states.
 
 MuFinder writes CASTEP ``charge`` as ``+1`` for positive muon and ``0`` for
 muonium, and keeps ``fix_all_cell`` enabled for these jobs. Job names and
@@ -343,10 +344,11 @@ tabs; selecting a positive-muon row does not also submit the matching muonium
 row.
 
 .. figure:: ../_generated/screenshots/muonium_relaxations_page.webp
-   :alt: The Structural Relaxations page, Muonium tab, with six completed
-         muonium relaxations in the CoF2 supercell.
+   :alt: The Structural Relaxations page, Muonium tab, with the same ten
+         CoF2 starts relaxed as muonium in the supercell.
 
-   The ``Muonium`` tab of the same project.
+   The ``Muonium`` tab of the same project, the same starts staged with
+   ``Both charge states``.
 
 Running the relaxations
 ~~~~~~~~~~~~~~~~~~~~~~~

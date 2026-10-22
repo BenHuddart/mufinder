@@ -74,23 +74,22 @@ illustrative.
 Candidate muon positions
 ------------------------
 
-Ten starting positions seed the positive-muon relaxations. ``Element-attached
-positions`` places one muon 1.0 Å from each of the four fluorines, the F–μ
-starts. ``Random generation`` adds six more by the MuFinder paper's rules,
-each at least 1.0 Å from every atom and at least 0.5 Å from the starts before
-it. The example project fixes the generator's seed, so its starts are the same
+Ten starting positions seed both the positive-muon and the muonium
+relaxations. ``Element-attached positions`` places one muon 1.0 Å from each
+of the four fluorines, the F–μ starts. ``Random generation`` adds six more by
+the MuFinder paper's rules, each at least 1.0 Å from every atom and at least
+0.5 Å from the starts before it. The example project fixes the generator's seed, so its starts are the same
 on every build; the Generation page does not expose the seed.
 
 .. figure:: ../../_generated/screenshots/site_generation_page.webp
    :alt: The Generation page listing four Attached-F sites and six random
          sites, all selected and marked in the CoF2 cell.
 
-   The ten positive-muon starts.
+   The ten starts.
 
 ``Create Jobs from Selected`` asks for the charge state of the relaxations;
-``Both charge states`` stages every start in both tabs. The muonium
-relaxations in this project start from six random positions of their own,
-drawn with another seed, so that the two campaigns show different starts.
+``Both charge states`` stages every start in both tabs, so each start is
+relaxed once as a positive muon and once as muonium.
 
 The pristine host
 -----------------
@@ -189,20 +188,29 @@ moves.
 Muonium relaxations
 -------------------
 
-Six random starts relax as neutral muonium. Five end at Möller *et al.*'s
-interstitial site, near (0.56, 0.84, 0.50), which MuFinder lists by the
-symmetry-equivalent 8i representative (0.34, 0.94, 0); one ends at T_A,
-0.27 eV higher. Muonium only nudges its neighbours outwards by a few
-hundredths of an ångström. The second site and its energy are illustrative.
+The same ten starts relax as neutral muonium, each to the nearer of two
+sites. Seven end at Möller *et al.*'s interstitial site, near
+(0.56, 0.84, 0.50), which MuFinder lists by the symmetry-equivalent 8i
+representative (0.44, 0.16, 0.50); three end at T_A, 0.27 eV higher, listed
+as the 4d representative (0, ½, ¾). Muonium only nudges its neighbours
+outwards by a few hundredths of an ångström. The second site and its energy
+are illustrative.
+
+A start can reach different sites in the two charge states: ``Attached-F
+Site 1`` ends at 4c as a positive muon and at T_A as muonium, while
+``Random Site 2`` ends at T_A in both.
 
 .. figure:: ../../_generated/screenshots/muonium_analysis_workspace.webp
-   :alt: The Muonium sites workspace with six relaxations clustered into an 8i
-         site and a 4d site 0.27 eV higher.
+   :alt: The Muonium sites workspace with ten relaxations clustered into an 8i
+         site of seven and a 4d site of three, 0.27 eV higher.
 
    The muonium workspace, clustered.
 
 Pinning both workspaces fills the two cards of the ``Muon Sites`` summary,
-the sites the later stages work from.
+the sites the later stages work from. Each charge state's relaxation of a
+start reaches those stages on its own, so Quantum Corrections, Energy
+Barriers and Magnetic Fields list the three positive-muon sites and the two
+muonium sites.
 
 .. figure:: ../../_generated/screenshots/muon_sites_summary.webp
    :alt: The Muon Sites summary with three positive-muon sites (4c, 4d, 8i)
