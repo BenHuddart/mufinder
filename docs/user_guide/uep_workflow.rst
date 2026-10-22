@@ -112,7 +112,8 @@ Completed UEP source jobs open ``UEP Analysis - <job label>`` with three tabs:
          starts, with the sampling and optimizer controls, the search log and
          the clustered minima.
 
-   A finished batch search in the CoF₂ model density.
+   A finished batch search in the CoF₂ model density of
+   :doc:`/user_guide/examples/cof2`.
 
 The window offers:
 

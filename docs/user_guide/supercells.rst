@@ -43,7 +43,9 @@ The editor
    :alt: The Supercell Editor with a saved 2x2x2 CoF2 supercell selected and
          previewed.
 
-   The editor with a saved 2x2x2 supercell selected and its 48-atom preview.
+   The editor with the saved 2x2x2 supercell of the CoF₂ example
+   (:doc:`/user_guide/examples/cof2`) selected and its
+   48-atom preview.
 
 The ``Saved Supercells`` table on the left lists each saved cell with its
 ``Name``, ``Matrix``, ``Atoms`` count, and ``Usage`` (the configured

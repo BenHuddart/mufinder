@@ -1,13 +1,14 @@
 The muon in CoF₂
 ================
 
-Cobalt difluoride is the worked example behind the screenshots in this
-documentation. It is a well-studied host for muon-site work: the positive muon
+Cobalt difluoride is the first of the documentation's worked examples and the
+one behind most of its screenshots. It is a well-studied host for muon-site work: the positive muon
 stops between two fluorines and pulls them into a linear F–μ–F complex, the
 local field at that site has been measured, and the MuFinder paper uses it to
 show how a muon-induced distortion changes the calculated dipolar field. This
 page follows one project through every stage, from the host structure to the
-field the muon feels.
+field the muon feels. The :doc:`/getting_started/first_project` tutorial is the
+short route through the same stages, with the clicks to make at each.
 
 .. note::
 
@@ -37,7 +38,8 @@ are antiparallel, and the ordered moment is 2.64 μB per Co (Lines 1965).
    The CoF₂ unit cell, with spins of +3 and −3 ħ/2 on the corner and
    body-centre Co marking the two antiparallel sublattices.
 
-The spins in the ``Spin (hbar/2)`` column mark the two sublattices. A
+The spins in the ``Spin (hbar/2)`` column mark the two sublattices (see
+:doc:`/user_guide/host_structure`). A
 calculation with ``Spin Polarized`` ticked in its parameters starts from that
 antiferromagnetic order; the example ticks it for the pristine relaxation, the
 UEP source job and the positive-muon relaxations, and muonium rows are
@@ -61,7 +63,8 @@ keeps the muon's periodic images 10 Å apart (see :doc:`/user_guide/supercells`)
 
 The cutoff sweep runs from 300 to 800 eV and the k-point sweep over the grids
 ``Generate From Spacing...`` gives for this cell down to 0.05 1/Å; the project
-adopts 600 eV and a 4 × 4 × 6 grid. The sweep data on the overview are
+adopts 600 eV and a 4 × 4 × 6 grid (see
+:doc:`/user_guide/convergence_testing`). The sweep data on the overview are
 illustrative.
 
 .. figure:: ../../_generated/screenshots/convergence_overview.webp
@@ -75,7 +78,7 @@ Candidate muon positions
 ------------------------
 
 Ten starting positions seed both the positive-muon and the muonium
-relaxations. ``Element-attached positions`` places one muon 1.0 Å from each
+relaxations (see :doc:`/user_guide/site_generation`). ``Element-attached positions`` places one muon 1.0 Å from each
 of the four fluorines, the F–μ starts. ``Random generation`` adds six more by
 the MuFinder paper's rules, each at least 1.0 Å from every atom and at least
 0.5 Å from the starts before it. The example project fixes the generator's seed, so its starts are the same

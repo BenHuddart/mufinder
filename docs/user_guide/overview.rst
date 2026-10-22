@@ -4,7 +4,31 @@ Overview
 This page is an index of what MuFinder can do. It describes the application
 shell, then each stage of the project navigator in the order the navigator
 lists them, then the behaviour every workflow shares. Each section gives a few
-sentences and links the page that explains the stage as a task.
+sentences and links the page that explains the stage as a task, and the worked
+example that shows it on real or literature-tuned data.
+
+Worked examples
+---------------
+
+Five worked examples show the stages on a project. Their screenshots are the
+figures of the pages that follow. :doc:`/getting_started/first_project` is a
+short tutorial on the first of them.
+
+- :doc:`/user_guide/examples/cof2`: rutile CoF₂, from the host structure
+  through convergence, the UEP, positive-muon and muonium relaxations,
+  clustering and zero-point motion to the local field. Its outputs are
+  synthetic, tuned to published values.
+- :doc:`/user_guide/examples/fe`: bcc iron, a ferromagnet for the Magnetic
+  Fields page, with its octahedral and tetrahedral sites, demagnetizing shapes
+  and a measured magnetisation.
+- :doc:`/user_guide/examples/mnsi`: the MnSi helimagnet, an incommensurate
+  structure whose field distribution and commensurate approximant are
+  calculated.
+- :doc:`/user_guide/examples/alpha_n2`: solid nitrogen, the Quantum
+  Corrections numbers and analysis window for a muon bound to a molecular
+  crystal.
+- :doc:`/user_guide/examples/gdru2si2`: GdRu₂Si₂, energy barriers between two
+  muon sites from the real CASTEP outputs of a published study.
 
 Application shell
 -----------------
@@ -55,7 +79,8 @@ between imported hosts, edits per-atom spins in units of ``hbar/2`` and the
 propagation vector in reciprocal-lattice units, and shows the structure in an
 orthographic 3D viewer with optional spin arrows, bonds and unit cell.
 
-See :doc:`/user_guide/host_structure`.
+See :doc:`/user_guide/host_structure`. :doc:`/user_guide/examples/cof2` starts
+from a CoF₂ host with antiparallel Co spins.
 
 Supercell Editor
 ~~~~~~~~~~~~~~~~
@@ -70,7 +95,9 @@ is never rewritten: editing its matrix saves a new copy.
 Each workflow chooses its own simulation cell, the host unit cell or a saved
 supercell, and a configured calculation keeps the cell it was configured with.
 
-See :doc:`/user_guide/supercells`.
+See :doc:`/user_guide/supercells`. :doc:`/user_guide/examples/cof2` saves a
+2x2x2 CoF₂ supercell, and its ``Suggest…`` shows why production cells are
+larger.
 
 Convergence Testing
 ~~~~~~~~~~~~~~~~~~~
@@ -101,7 +128,8 @@ recorded in the Journal.
 See :doc:`/user_guide/convergence_testing` (Adopting a result as a project
 default), :doc:`/user_guide/quantum_corrections` and
 :doc:`/user_guide/energy_barriers`. For the grid and spacing round trip, see
-:doc:`/castep/kpoint_spacing_convention`.
+:doc:`/castep/kpoint_spacing_convention`. :doc:`/user_guide/examples/cof2`
+sweeps and adopts a cutoff and a grid for CoF₂.
 
 Pristine Relaxation
 ~~~~~~~~~~~~~~~~~~~
@@ -120,7 +148,8 @@ score, the parameter differences between the selected jobs, and CSV export.
 Each table is saved as a renamable child of ``Pristine Relaxation``.
 
 See :doc:`/user_guide/structural_relaxation_analysis` (Pristine Relaxation) and
-:doc:`/user_guide/comparison_table`.
+:doc:`/user_guide/comparison_table`. :doc:`/user_guide/examples/cof2` compares a
+relaxed CoF₂ cell with the host.
 
 UEP
 ~~~
@@ -132,7 +161,8 @@ searches for potential minima, an optional harmonic zero-point estimate, and a
 clustering window with hierarchical and k-means views. Cluster
 representatives are offered to muon-site generation.
 
-See :doc:`/user_guide/uep_workflow`.
+See :doc:`/user_guide/uep_workflow`. :doc:`/user_guide/examples/cof2` runs a
+batch search and clustering in a model CoF₂ density.
 
 Muon Sites: Generation
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -150,7 +180,10 @@ Huddart *et al.*, ``MuFinder: A program to determine and analyse muon stopping
 sites``, *Computer Physics Communications* **280**, 108488 (2022), DOI:
 ``10.1016/j.cpc.2022.108488``.
 
-See :doc:`/user_guide/site_generation`.
+See :doc:`/user_guide/site_generation`. :doc:`/user_guide/examples/cof2` stages
+four F-attached and six random starts, and :doc:`/user_guide/examples/gdru2si2`
+generates random starts under the paper's rules and enters the paper's two sites
+as custom coordinates.
 
 Muon Sites: Relaxations
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -167,6 +200,8 @@ the row's parameters in place and resumes the same job in the same directory.
 
 See :doc:`/user_guide/site_generation` (Creating Relaxation Jobs),
 :ref:`continue-relaxation` and :doc:`/user_guide/legacy_import`.
+:doc:`/user_guide/examples/cof2` relaxes ten starts as positive muons and as
+muonium.
 
 Muon Sites: Analysis
 ~~~~~~~~~~~~~~~~~~~~
@@ -183,6 +218,10 @@ Barriers and the Magnetic Fields muon-site dialog list the pinned sites by
 default, with a ``Show every relaxed site`` option for the full list.
 
 See :doc:`/user_guide/structural_relaxation_analysis`.
+:doc:`/user_guide/examples/cof2` clusters its relaxations into three sites,
+:doc:`/user_guide/examples/alpha_n2` finds one site and its displacements in
+solid nitrogen, and :doc:`/user_guide/examples/gdru2si2` pins two sites for
+its energy barriers.
 
 Magnetic Fields
 ~~~~~~~~~~~~~~~
@@ -220,7 +259,11 @@ UEP site are labelled as estimates. Settings are saved as named workspaces, and
 the latest results of the page and of each workspace are saved as project
 results.
 
-See :doc:`/user_guide/magnetic_fields`.
+See :doc:`/user_guide/magnetic_fields`. :doc:`/user_guide/examples/cof2`
+calculates the distortion-corrected field of an antiferromagnet and its nuclear
+width, :doc:`/user_guide/examples/fe` the field of a ferromagnet at two
+interstitial sites, and :doc:`/user_guide/examples/mnsi` the field distribution
+of an incommensurate helix.
 
 Quantum Corrections
 ~~~~~~~~~~~~~~~~~~~
@@ -236,7 +279,11 @@ site carries, how far the muon spreads, and whether its motion is entangled
 with the host, which decides how far a harmonic estimate can be trusted.
 
 See :doc:`/user_guide/quantum_corrections` and
-:doc:`/user_guide/quantum_corrections_theory`.
+:doc:`/user_guide/quantum_corrections_theory`. :doc:`/user_guide/examples/alpha_n2`
+reads the zero-point energy, widths and witnesses of a muon in solid nitrogen
+from its analysis window; :doc:`/user_guide/examples/cof2` does the same for the
+F–μ–F complex, and :doc:`/user_guide/examples/gdru2si2` compares the zero-point
+energies of two sites with a barrier.
 
 Energy Barriers
 ~~~~~~~~~~~~~~~
@@ -250,7 +297,10 @@ once complete: a results table lists forward and reverse barriers and ``ΔE``,
 and an inspector scrubs the reaction-coordinate profile with a linked
 structure viewer.
 
-See :doc:`/user_guide/energy_barriers`.
+See :doc:`/user_guide/energy_barriers`. :doc:`/user_guide/examples/gdru2si2`
+follows a real nudged elastic band between two muon sites and compares its
+barrier with the zero-point energy; :doc:`/user_guide/examples/cof2` lists the
+hops between 4c sites.
 
 Journal
 ~~~~~~~

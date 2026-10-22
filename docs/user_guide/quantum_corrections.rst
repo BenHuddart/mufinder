@@ -225,8 +225,9 @@ rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
          an SCF energy tolerance of 1e-10 eV, and the FINITEDISPLACEMENT phonon
          method.
 
-   The configuration of the α-N₂ row, inheriting its relaxation's settings,
-   with the SCF tolerance tightened to ``1e-10`` eV.
+   The configuration of the α-N₂ row of :doc:`/user_guide/examples/alpha_n2`,
+   inheriting its relaxation's settings, with the SCF tolerance tightened to
+   ``1e-10`` eV.
 
 - ``Phonon Method`` — ``FINITEDISPLACEMENT`` (default), ``DFPT``, or
   ``LINEARRESPONSE`` (see `CASTEP phonon methods`_);
@@ -444,8 +445,8 @@ appears above the tabs.
          their participation highlighted, beside the supercell with the
          muon's mode vector.
 
-   The ``Phonon Modes`` tab for the α-N₂ site, with the longitudinal muon mode
-   selected.
+   The ``Phonon Modes`` tab for the α-N₂ site of :doc:`/user_guide/examples/alpha_n2`,
+   with the longitudinal muon mode selected.
 
 ``Phonon Modes``
    Lists every Gamma-point mode with its frequency, muon participation, and the

@@ -34,7 +34,8 @@ The Journal page
    :alt: The Journal with milestone entries for the convergence setup and the
          generated muon sites.
 
-   The Journal of a project with configured sweeps and generated sites.
+   The Journal of the CoF₂ project (:doc:`/user_guide/examples/cof2`) with configured
+   sweeps and generated sites.
 
 Entries are grouped by local calendar day under human-readable date headers
 such as ``Tuesday 21 April 2026``. The Journal intentionally does not show

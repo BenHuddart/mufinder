@@ -50,7 +50,8 @@ Local submission
    :alt: The local submission dialog for six cutoff-convergence jobs, set to
          run one after another.
 
-   The local submission dialog for a six-row cutoff sweep.
+   The local submission dialog for the six-row cutoff sweep of the CoF₂
+   example (:doc:`/user_guide/examples/cof2`).
 
 ``Run All Locally`` and ``Run Selected Locally`` open ``Run Calculations
 Locally``. Before the first local run, choose the CASTEP executable and the
@@ -210,7 +211,8 @@ The Job Dashboard
    :alt: The main window with the Job Dashboard docked below the Cutoff
          Convergence page, listing a failed, a stopped and a cancelled job.
 
-   Failed, stopped and cancelled cutoff jobs on the ``Job Dashboard``.
+   Failed, stopped and cancelled cutoff jobs of the CoF₂ example on the ``Job
+   Dashboard``.
 
 The ``Job Dashboard`` lists the jobs that still need attention: active jobs,
 failed jobs, stopped jobs and cancelled jobs. Completed jobs leave it after
@@ -363,7 +365,8 @@ Geometry-optimisation progress
    :alt: The geometry progress window of a running BFGS relaxation at iteration 3,
          with its three criteria tabulated and plotted against their tolerances.
 
-   A running pristine relaxation of CoF₂, read from a synthetic CASTEP output.
+   A running pristine relaxation of CoF₂ (:doc:`/user_guide/examples/cof2`), read from a
+   synthetic CASTEP output.
 
 A running pristine or muon relaxation shows how far its geometry optimisation
 has got in the narrow ``Progress`` column, as ``iteration · criteria met``: for
