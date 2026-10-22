@@ -177,7 +177,9 @@ The package
   imported, before anything imports Qt, so every module of the package that
   touches Qt imports it first. It holds what every scene shares: the
   off-screen viewer, the grab targets, ``render`` and its project cache,
-  ``synthetic_runs`` and the scene steps more than one example uses.
+  ``synthetic_runs``, ``magnetic_project`` and ``custom_site`` (the saved
+  project of a host with a magnetic model and a Magnetic Fields form, and a
+  custom muon site) and the scene steps more than one example uses.
 - ``synthetic.py`` writes the CASTEP outputs the projects need: ``-out.cell``
   files, ``.castep`` results, a BFGS geometry-optimisation log
   (``bfgs_log_text``) with falling energies and forces, a model charge density
@@ -216,7 +218,8 @@ Each entry of an example's ``SCENES`` maps a file name to a ``Scene``:
   attribute, or returned by a callable for a page kept per saved item, and
   laid out at a given logical size), ``Dock`` (a dock widget, by title),
   ``Dialog`` (the modal dialog an opener callable shows, matched by class
-  name, so a dialog opened from another dialog can be grabbed) or
+  name, so a dialog opened from another dialog can be grabbed, optionally
+  grabbing only a ``region`` of it, such as one panel) or
   ``Floating`` (a non-modal window, such as the geometry progress or UEP
   clustering window, that an opener callable shows and returns). Each target
   takes an optional ``prepare`` step that receives the grabbed widget before
@@ -261,7 +264,7 @@ content column. Other images are left alone.
 The CoF₂ example
 ~~~~~~~~~~~~~~~~
 
-``examples/cof2.py`` holds every scene but those of the iron and simple cubic magnetic models. Its
+``examples/cof2.py`` holds every scene but those of the iron and manganese silicide magnetic models. Its
 host is rutile CoF₂ with antiparallel spins on the two Co, ``PBE`` as the
 project functional and a saved 2x2x2 supercell; :doc:`/user_guide/examples/cof2`
 tells the story its scenes illustrate and cites the values its outputs are
@@ -333,13 +336,25 @@ demagnetizing-shape, measured-magnetisation and equivalent-site scenes grab the
 page's ``Calculation`` card alone, and the workspaces scene saves one workspace
 per site and shows the octahedral one beside the navigator.
 
-The simple cubic helices
-~~~~~~~~~~~~~~~~~~~~~~~~
+The manganese silicide example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``examples/magnetic.py`` holds the Magnetic Fields scenes of the theory page's
-helix examples. Each builder from ``magnetic_project`` saves the one-ion cubic
-cell of :doc:`/user_guide/magnetic_fields_theory` with a magnetic model and a
-Magnetic Fields form; the scenes run the real ``muesr`` calculation.
+``examples/mnsi.py`` holds the Magnetic Fields scenes of the incommensurate
+helix worked example (:doc:`/user_guide/examples/mnsi`). Each builder from
+``mnsi_project`` saves the eight-atom B20 cell, the helix, and a Magnetic Fields
+form with the muon at the 4a site with every equivalent site, no demagnetizing
+field and the contact coupling that reproduces the edges of the published
+prediction; no CASTEP job is involved. The helix is built by the ``Add Magnetic
+Preset`` dialog itself, driven through the choices the page describes: a
+left-handed helix of 0.385 μB Mn moments along the first q-basis row, which
+holds q = (0.0147, 0.0147, 0.0147). The scenes show the builder with its
+checklist, the ``Propagation-Vector Basis`` panel alone, the component dialog's
+``q from`` choice, the preset helper opened over a q basis with no component yet,
+the results page and the distribution plot of the four sites, the
+``Calculation Settings`` dialog with the approximant option on, and the finite
+fields of the approximant at site II. The distribution is sampled on a grid of
+phases, which is deterministic, so every render gives the same pixels. The
+approximant scene lists 64 fields and takes about a quarter of a minute.
 
 When the renderer runs
 ~~~~~~~~~~~~~~~~~~~~~~

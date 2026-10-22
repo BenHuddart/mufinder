@@ -123,12 +123,14 @@ boundary: MuFinder does not import or simulate spectra from MCIF files.
 Build components in the builder
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. figure:: ../_generated/screenshots/magnetic_structure_builder.webp
-   :alt: The Magnetic Structure Builder showing a helix component, its
-         checklist, q-basis table and a four-cell spin preview.
+.. figure:: ../_generated/screenshots/mnsi_magnetic_structure_builder.webp
+   :alt: The Magnetic Structure Builder showing a left-handed helix component on
+         the Mn atoms of MnSi, a checklist with every step ticked, the q-basis
+         table and a 2 x 2 x 2 spin preview.
 
-   The ``q = (0, 0, 1/4)`` helix of :doc:`/user_guide/magnetic_fields_theory`,
-   previewed over one whole magnetic cell (``1 x 1 x 4``).
+   The helix of :doc:`/user_guide/examples/mnsi`, a 0.385 μB Mn moment turning
+   about q = (0.0147, 0.0147, 0.0147), previewed over ``2 x 2 x 2`` cells. Its
+   checklist is complete, and the structure type is ``incommensurate``.
 
 The ``Magnetic Structure Builder`` owns the component table, ``Preview
 Supercell`` controls, atom selection, a checklist and the live structure
@@ -241,6 +243,13 @@ Selecting components in the component table shows the rows they use in bold,
 with the row name in the accent colour, so a grouped texture's mapping onto the
 stored basis can be read directly.
 
+.. figure:: ../_generated/screenshots/mnsi_q_basis.webp
+   :alt: The Propagation-Vector Basis panel with row q1 holding 0.0147, 0.0147,
+         0.0147 in bold and used by Helix along q1, and q2 and q3 unused.
+
+   The panel with the helix of :doc:`/user_guide/examples/mnsi` selected: it
+   uses ``q1`` only, and ``q2`` and ``q3`` are unused.
+
 To choose a component's q, use ``Add Component`` (or ``Edit...``). The
 add-component dialog shows the same rows, read-only, in its own
 ``Propagation-Vector Basis`` group, and its ``q from`` choice sets how the
@@ -256,6 +265,14 @@ component's q is stored:
 - ``Combination of basis rows`` shows ``Basis coefficients`` for ``q1``,
   ``q2`` and ``q3`` (rows without a vector stay disabled) and stores the
   component as that combination, for example ``q1 − q2``.
+
+.. figure:: ../_generated/screenshots/mnsi_q_picker.webp
+   :alt: The component dialog for a left-handed helix, with q from set to q1 =
+         (0.0147, 0.0147, 0.0147) and the q fields shown read-only.
+
+   ``Edit...`` on the helix reopens it on the row it is stored as: ``q from``
+   reads ``q1 = (0.0147, 0.0147, 0.0147)``, and the component follows the row if
+   the row is edited.
 
 While a row or combination is chosen, the ``q (r.l.u.)`` fields show the
 resulting vector read-only and a line beneath them gives the expression, such
@@ -312,6 +329,15 @@ any other afterwards. In the dialog, set:
 5. ``Moment`` in ``μB``, ``Apply to`` (all atoms, an element, a
    symmetry-equivalent site or the preview selection) and a ``Label`` that
    follows the choices, such as ``Helix along c*``, until it is typed over.
+
+.. figure:: ../_generated/screenshots/mnsi_preset_helper.webp
+   :alt: The Add Magnetic Preset dialog set to a left-handed helix along basis
+         row q1 = (0.0147, 0.0147, 0.0147), with the moment at zero phase along
+         crystal axis a, 0.385 μB, applied to the species Mn.
+
+   The helix of :doc:`/user_guide/examples/mnsi`. Its q has no crystal-axis
+   choice, so it is typed into row ``q1`` of the basis first and the preset
+   propagates along that row.
 
 A summary line describes the structure the choices give. Only a conical
 structure reads the cone angle, so a hidden, invalid cone angle never blocks
@@ -541,6 +567,31 @@ A note under these settings explains the convergence checks (see
 
 The settings summary on the ``Calculation`` card names the approximant
 tolerance and period when the option is on.
+
+.. figure:: ../_generated/screenshots/mnsi_calculation_settings.webp
+   :alt: The Calculation Settings dialog with 100 x 100 x 100 cells, 32768 lookup
+         angles per q, 200000 distribution samples, Auto sampling, 512 histogram
+         bins, and the approximant option ticked with tolerance 0.001 r.l.u. and
+         longest period 64.
+
+   The settings of the helix in :doc:`/user_guide/examples/mnsi`, whose q lies
+   0.0009 r.l.u. from 1/64, so a period of 64 is needed for its approximant.
+
+With the option on and an approximant found, ``Calculate Dipolar Field`` lists
+the finite fields of the approximant, one row per translation of its magnetic
+supercell with a distinct phase and labelled with that translation, each with
+the full term breakdown of a commensurate result.
+
+.. figure:: ../_generated/screenshots/mnsi_approximant_fields.webp
+   :alt: The Magnetic Fields page listing 64 fields of the commensurate
+         approximant q = (1/64, 1/64, 1/64) of the MnSi helix at site II, the
+         first row's field of 0.118082 T and its dipolar, Lorentz, contact,
+         demagnetizing and applied terms.
+
+   The 64 fields of the approximant of the helix in
+   :doc:`/user_guide/examples/mnsi` at site II, labelled ``site 1 + (n, 0, 0)``
+   by the translation along ``a``. The table scrolls; the first row is
+   selected and its terms are listed below it.
 
 The sampling method affects only incommensurate field distributions. It does not
 simulate muon spectra or time-dependent polarisation functions.
