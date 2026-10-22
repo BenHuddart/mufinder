@@ -276,13 +276,23 @@ cites the values they reproduce, and the workflow pages and the
 
 - ``cof2.py``: rutile CoF₂ through every stage from the host structure to the
   local field. Its CASTEP outputs are synthetic, tuned to published values. It
-  holds every scene of the tutorial and of the generic workflow pages.
-- ``fe.py``: bcc iron, the Magnetic Fields scenes of a ferromagnet.
-- ``mnsi.py``: the MnSi helix, the Magnetic Fields scenes of an incommensurate
-  structure.
-- ``alpha_n2.py``: solid nitrogen, the Quantum Corrections scenes.
-- ``gdru2si2.py``: GdRu₂Si₂, the Energy Barriers scenes, from real CASTEP
-  outputs.
+  holds every scene of the tutorial and of the project home, host structure,
+  supercell, convergence, pristine relaxation, UEP, site generation,
+  relaxation analysis, comparison table, legacy import, journal and
+  job-running pages, plus the CoF₂ scenes of the Magnetic Fields page (the
+  antiferromagnet, its dipolar tensor and its nuclear relaxation).
+- ``fe.py``: bcc iron, the ferromagnet scenes of the Magnetic Fields page and
+  its theory page.
+- ``mnsi.py``: the MnSi helix, the incommensurate scenes of the Magnetic Fields
+  page and its theory page.
+- ``alpha_n2.py``: solid nitrogen, every scene of the Quantum Corrections page
+  and its theory page.
+- ``gdru2si2.py``: GdRu₂Si₂, every scene of the Energy Barriers page, from
+  real CASTEP outputs.
+
+A scene belongs to exactly one module; to find the one behind a figure, look
+the figure's name up in that module's ``SCENES`` table, or run
+``python scripts/render_docs_screenshots.py --list --example <name>``.
 
 The iron and MnSi projects run no CASTEP job: a host structure and a magnetic
 model are enough for the real ``muesr`` field calculation the scenes make. The
