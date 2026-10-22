@@ -2537,6 +2537,8 @@ def test_dipolar_tensor_dialog_atom_indices_count_from_one(qapp) -> None:
 
     dialog._indices_edit.setText("0")
     assert not dialog._calculate_button.isEnabled()
+    # Closing on invalid input keeps the selection the dialog opened with.
+    assert dialog.selector_state()["selector"] == AtomSelector.indices([]).to_json()
     dialog.close()
 
     restored = DipolarTensorDialog(
@@ -2549,6 +2551,8 @@ def test_dipolar_tensor_dialog_atom_indices_count_from_one(qapp) -> None:
     assert restored._indices_radio.isChecked()
     assert restored._indices_edit.text() == "1"
     assert restored.selected_ion_indices() == (0,)
+    restored._indices_edit.setText("x")
+    assert restored.selector_state()["selector"] == AtomSelector.indices([0]).to_json()
     restored.close()
 
 

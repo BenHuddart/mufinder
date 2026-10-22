@@ -5113,6 +5113,10 @@ class DipolarTensorDialog(QDialog):
 
         self._build_layout()
         self._restore_selector_state(selector_state)
+        # What the dialog opened with, kept so closing it on invalid input
+        # (an atom number below 1 or a non-number) does not lose the last
+        # valid selection.
+        self._opening_selector_state = self.selector_state()
         self._populate_results(self._results_state)
         self._refresh_enabled_state()
 
@@ -5178,8 +5182,13 @@ class DipolarTensorDialog(QDialog):
         if self._assigned_radio.isChecked():
             state["mode"] = "assigned"
             return state
+        try:
+            selector = self.selector()
+        except ValueError:
+            opening = getattr(self, "_opening_selector_state", {"mode": "assigned"})
+            return {**opening, **state}
         state["mode"] = "selector"
-        state["selector"] = self.selector().to_json()
+        state["selector"] = selector.to_json()
         return state
 
     def results_state(self) -> list[dict[str, object]]:
