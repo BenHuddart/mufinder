@@ -68,14 +68,16 @@ Running the workflow
 9. **Inspect the results.** When jobs complete, open the ``NEB Analysis`` tab
    (see `Outputs and interpretation`_).
 
+.. figure:: ../_generated/screenshots/gdru2si2_energy_barrier_paths.webp
+   :alt: The Paths tab with GdRu2Si2 site 1 as the initial endpoint and site 2
+         as the final one, two site 1 to site 1 paths ready and the site 1 to
+         site 2 path completed with 4 task farms.
+
+   The paths of the GdRu₂Si₂ worked example (:doc:`/user_guide/examples/gdru2si2`):
+   two hops between copies of site 1 and the hop from site 1 to site 2.
+
 The Energy Barriers page
 ------------------------
-
-.. figure:: ../_generated/screenshots/energy_barriers_page.webp
-   :alt: The Paths tab with the CoF2 4c site selected as both endpoints and one
-         generated 4c to 4c path, completed.
-
-   The hop between neighbouring 4c sites in CoF₂, from synthetic relaxations.
 
 The page is divided into two tabs so the workflow remains usable on smaller
 laptop screens while still separating path generation from NEB analysis:
@@ -151,6 +153,12 @@ clear without showing relaxed host distortions. ``View...`` always opens the
 viewer for the row whose button was clicked, regardless of the current table
 selection.
 
+.. figure:: ../_generated/screenshots/gdru2si2_path_preview.webp
+   :alt: The path viewer with the GdRu2Si2 pristine 2x2x1 supercell viewed
+         down a and the path arrow from site 1 to site 2.
+
+   The GdRu₂Si₂ site 1 to site 2 hop in the pristine supercell.
+
 What MuFinder writes
 --------------------
 
@@ -187,6 +195,15 @@ locked by the workflow and cannot be edited.
 The dialog also exposes the workflow-supported advanced parameter surface via
 the searchable ``Add Parameter`` flow so expert users can opt into additional
 CASTEP controls without overwhelming the default view.
+
+.. figure:: ../_generated/screenshots/gdru2si2_neb_configuration.webp
+   :alt: The Configure NEB Parameters dialog for the GdRu2Si2 site 1 to site 2
+         path: 1000 eV, a 3 x 3 x 3 grid, 41 path points, a force tolerance of
+         0.08 eV/A, PBE, spin polarised, the locked TS search method and
+         climbing image, and 4 task farms.
+
+   The NEB settings of the GdRu₂Si₂ band. The 40 images entered are rounded up
+   to 41.
 
 Default values are layered. The project's convergence defaults
 (``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID``) apply first; when the selected
@@ -236,6 +253,13 @@ configuration dialog shows the resulting split and balance live, so a poor
 pairing is visible before submission. The image count itself is left entirely to
 the user — it is a physical resolution choice, not a scheduling one.
 
+.. figure:: ../_generated/screenshots/gdru2si2_neb_task_farms.webp
+   :alt: The Task farms row of the NEB dialog set to 4, reading 41 images over
+         4 farms, 11/10/10/10 per farm, 93% balance, and that the job needs at
+         least 4 MPI ranks, ideally a multiple of 4.
+
+   The farm split of the GdRu₂Si₂ band: 41 images over 4 farms.
+
 The farm count can only be changed while a path has no NEB job yet, or while
 its job is still in the ``defined`` state — the same rule that governs every
 other NEB parameter. This matters more for farming than for the rest: the
@@ -255,11 +279,14 @@ parses the farmed file for the job's real outcome.
 Outputs and interpretation
 --------------------------
 
-.. figure:: ../_generated/screenshots/energy_barrier_inspection.webp
-   :alt: The NEB Analysis tab with one completed band, its energy profile and the
-         transition-state image in the viewer.
+.. figure:: ../_generated/screenshots/gdru2si2_neb_analysis.webp
+   :alt: The NEB Analysis tab with the GdRu2Si2 site 1 to site 2 band: a
+         forward barrier of 0.495 eV, a reverse barrier of 0.213 eV, 42 images,
+         and the profile with the transition-state image 23 of 42 in the
+         viewer.
 
-   An NEB band through that path; its energies are illustrative, not calculated.
+   The real CASTEP band from GdRu₂Si₂ site 1 to site 2 (Huddart *et al.*
+   2025), with its transition state in the viewer.
 
 MuFinder keeps the generated CASTEP files of completed NEB jobs and the
 parsed transition-state path data needed for later review. In the ``NEB Analysis``

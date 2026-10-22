@@ -186,8 +186,7 @@ The package
   of superposed Gaussian atomic shells (``den_fmt_text``) with the
   single-point output the UEP analysis reads beside it (``uep_castep_text``),
   a Gamma-point ``.phonon`` file for a linear X–μ–X complex embedded in a
-  supercell (``triatomic_phonon_text``), NEB ``.ts`` bands and legacy-run
-  outputs. It imports no Qt, so tests import it directly.
+  supercell (``triatomic_phonon_text``) and legacy-run outputs. It imports no Qt, so tests import it directly.
   ``bridged_diatomic_cell`` turns the two molecules nearest a muon to point at
   it, and ``bridged_diatomic_phonon_text`` writes a Gamma-point ``.phonon``
   file for that [X₂–μ–X₂] complex in a supercell of diatomic molecules.
@@ -222,7 +221,8 @@ Each entry of an example's ``SCENES`` maps a file name to a ``Scene``:
   laid out at a given logical size), ``Dock`` (a dock widget, by title),
   ``Dialog`` (the modal dialog an opener callable shows, matched by class
   name, so a dialog opened from another dialog can be grabbed, optionally
-  grabbing only a ``region`` of it, such as one panel) or
+  grabbing only a ``region`` of it, such as one panel or a rectangle around
+  one row) or
   ``Floating`` (a non-modal window, such as the geometry progress or UEP
   clustering window, that an opener callable shows and returns). Each target
   takes an optional ``prepare`` step that receives the grabbed widget before
@@ -267,8 +267,8 @@ content column. Other images are left alone.
 The CoF₂ example
 ~~~~~~~~~~~~~~~~
 
-``examples/cof2.py`` holds every scene but those of the iron and manganese silicide magnetic models
-and of the α-N₂ quantum corrections. Its
+``examples/cof2.py`` holds every scene but those of the iron and manganese silicide magnetic models,
+of the α-N₂ quantum corrections and of the GdRu₂Si₂ example. Its
 host is rutile CoF₂ with antiparallel spins on the two Co, ``PBE`` as the
 project functional and a saved 2x2x2 supercell; :doc:`/user_guide/examples/cof2`
 tells the story its scenes illustrate and cites the values its outputs are
@@ -293,7 +293,7 @@ clustering, the ten starts staged with ``Both charge states`` as positive-muon
 and muonium relaxations in the 2x2x2 supercell, one analysis workspace per
 charge state, clustered and pinned, the phonon job of the lowest positive-muon
 site, the distortion-corrected 4c site on the Magnetic Fields page, and the 4c
-to 4c paths on the Energy Barriers page with an NEB band along the first.
+to 4c paths on the Energy Barriers page.
 Jobs are submitted through ``JobExecutionController.submit_local_jobs`` with a
 local runner whose ``submit`` writes the job's CASTEP outputs into its directory
 instead of starting CASTEP; each job is then finished through the window's
@@ -309,8 +309,7 @@ and F⁻ Gaussian shells, not a CASTEP density. Each start relaxes as a
 positive muon to one of three clusters (``POSITIVE_SITES``) with the energies
 and neighbour displacements of the MuFinder paper, and as muonium to the
 nearer of two (``MUONIUM_SITES``). The phonon run embeds the F–μ–F modes of
-Möller *et al.* in the relaxed supercell. The NEB band is illustrative, and its caption
-says so. ``tests/science/test_magnetic_fields.py`` pins the CoF₂ field values
+Möller *et al.* in the relaxed supercell. ``tests/science/test_magnetic_fields.py`` pins the CoF₂ field values
 and ``tests/docs/test_docs_synthetic.py`` pins the phonon, density and
 single-point outputs. The UEP batch search and its ZPE run in the scene's
 thread with seeded random starts, so every build finds the same minima.
@@ -389,6 +388,38 @@ the fixture's and pins the geometry and the harmonic numbers. The scenes show
 the host, the clustered relaxations, the displacements of the complex, the
 Muon Sites summary, the configuration dialog, the completed result, and the
 three tabs of the analysis window with the help of ``Muon Coupling``.
+
+The GdRu₂Si₂ example
+~~~~~~~~~~~~~~~~~~~~
+
+``examples/gdru2si2.py`` holds the Energy Barriers worked example
+(:doc:`/user_guide/examples/gdru2si2`), and unlike the other examples its
+outputs are real: the relaxed supercells, the NEB band and the Γ-point phonons
+of Huddart *et al.* (2025), kept under ``tests/fixtures/gdru2si2`` with a
+``README.md`` naming their source. The NEB band is the data set's
+``_farm001.ts`` trimmed to its header, its endpoints and the images of its last
+iteration, the only images the ``.ts`` parser reads. Only the ``.castep`` logs
+are synthesised, with ``castep_text`` around the real final energies.
+
+``generation_project`` saves the ten-atom conventional cell with a
+ferromagnetic spin on each Gd, a 2x2x1 supercell, 1000 eV and a 5x5x5 grid of
+the supercell set by hand as the project defaults, and the random starts of the
+paper's generation rules (0.5 Å between starts and their symmetry equivalents,
+1.0 Å from atoms) with a fixed seed. ``results_project`` adds the two Table SI
+sites as custom positions and drives the window as the CoF₂ results project
+does: two spin-polarised positive-muon relaxations in the supercell whose
+local runner writes the real relaxed cell of the nearer site, one analysis
+workspace clustered and pinned, the phonon jobs of both sites with 4 farms and
+the real ``.phonon`` files, and on the Energy Barriers page the paths from site
+1 to itself up to 3 Å and from site 1 to site 2, the shortest of which is
+configured in its NEB dialog (40 images, 4 farms, 0.08 eV/Å, 3x3x3) and run with
+the trimmed band written as ``<seed>_farm001.ts``. ``configured_project``
+stops before that NEB job is submitted, for the configuration dialog and its
+``Task farms`` row, which a ``region`` rectangle grabs alone. The 3D viewers of
+the path preview and the transition state look down a, where the muon stands
+clear of the atom columns. ``tests/docs/test_docs_gdru2si2.py`` pins the
+barrier, the image count, the zero-point energies, the witnesses and the site
+positions that the page reports.
 
 When the renderer runs
 ~~~~~~~~~~~~~~~~~~~~~~

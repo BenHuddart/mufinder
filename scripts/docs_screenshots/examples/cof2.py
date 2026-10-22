@@ -1,4 +1,4 @@
-"""Cobalt difluoride: the worked example behind every screenshot but the iron and simple cubic magnetic models.
+"""Cobalt difluoride: the worked example behind every screenshot but those of the iron, MnSi and GdRu2Si2 examples.
 
 CoF2 is a rutile antiferromagnet (P4_2/mnm, a = 4.695 Å, c = 3.180 Å, Co at 2a,
 F at 4f with x = 0.306; Baur and Khan 1971). The ordered Co moments, 2.64 μB
@@ -34,8 +34,7 @@ analysis reproduces the published numbers:
   0.82 eV higher; the same starts also relax as muonium, each to the nearer
   of Möller's interstitial site and T_A (``MUONIUM_SITES``);
 - the phonon run of the 4c site is a linear F-mu-F complex embedded in the
-  supercell with Möller's mode frequencies (``FMUF_MODES_CM``);
-- the NEB band of one 4c to 4c hop is illustrative (``NEB_BARRIER_EV``).
+  supercell with Möller's mode frequencies (``FMUF_MODES_CM``).
 
 The Magnetic Fields scenes run the real ``muesr`` calculation on that project.
 """
@@ -52,6 +51,7 @@ from ..render import (
     Scene,
     Window,
     calculate_field,
+    cluster_and_pin,
     current_page,
     focus_default_button,
     frame_viewers,
@@ -63,6 +63,7 @@ from ..render import (
     run_uep_analysis,
     save_magnetic_workspace,
     scratch_directory,
+    select_all_sites,
     settle,
     show_host_with_spins,
     synthetic_runs,
@@ -76,7 +77,6 @@ from ..synthetic import (
     den_fmt_text,
     legacy_castep_text,
     triatomic_phonon_text,
-    ts_text,
     uep_castep_text,
 )
 
@@ -458,8 +458,6 @@ MUONIUM_ENERGY_EV = -44989.4537
 # the two bends and the antisymmetric stretch, below a host band.
 FMUF_MODES_CM = {"stretch": 585.0, "bends": (3076.0, 3473.0), "antisymmetric": 4570.0}
 HOST_BAND_TOP_CM = 600.0
-NEB_BARRIER_EV = 0.62  # illustrative height of the 4c to 4c hop above its endpoints
-NEB_IMAGES = 5
 
 
 @cache
@@ -679,58 +677,6 @@ def _phonon_outputs(job: Any, job_dir: Path, seed: str) -> bool:
     return True
 
 
-def source_energies(window: MainWindow, job: Any) -> tuple[float, float]:
-    """The relaxed energies of the NEB job's reactant and product sites."""
-
-    controller = window._energy_barriers_controller
-    _definition, key = controller.definition_and_key_for_job(job)
-    path = next(candidate for candidate in controller.candidates() if candidate.key == key)
-    return path.reactant.total_energy_eV, path.product.total_energy_eV
-
-
-def _neb_outputs(window: MainWindow) -> Outputs:
-    """An illustrative NEB band through the job's reactant, intermediate and product cells.
-
-    The images follow the input band, reactant to intermediate to product; the
-    energy profile rises NEB_BARRIER_EV above the straight line between the
-    two relaxed endpoint energies.
-    """
-
-    def write(job: Any, job_dir: Path, seed: str) -> bool:
-        cell = _job_cell(job_dir, seed)
-        lattice = np.asarray(cell.lattice_vectors, dtype=float)
-        reactant = np.asarray(cell.fractional_positions, dtype=float)
-
-        def block(name: str) -> np.ndarray:
-            rows = next(item for item in cell.cell_file.blocks if item.name.lower() == name).rows
-            positions = np.asarray([[float(value) for value in row[1:4]] for row in rows], dtype=float)
-            return reactant + (positions - reactant + 0.5) % 1.0 - 0.5
-
-        intermediate = block("positions_frac_intermediate")
-        product = intermediate + (block("positions_frac_product") - intermediate + 0.5) % 1.0 - 0.5
-        reactant_energy, product_energy = source_energies(window, job)
-        images = []
-        for image in range(NEB_IMAGES + 2):
-            coordinate = image / (NEB_IMAGES + 1)
-            tag = "REA" if image == 0 else "PRO" if image == NEB_IMAGES + 1 else "TST"
-            energy = (
-                reactant_energy
-                + (product_energy - reactant_energy) * coordinate
-                + NEB_BARRIER_EV * np.sin(np.pi * coordinate) ** 2
-            )
-            if coordinate <= 0.5:
-                fractional = reactant + (intermediate - reactant) * 2.0 * coordinate
-            else:
-                fractional = intermediate + (product - intermediate) * (2.0 * coordinate - 1.0)
-            images.append((tag, coordinate, energy, fractional @ lattice))
-        (job_dir / f"{seed}.ts").write_text(ts_text(lattice, list(cell.species), images), encoding="utf-8")
-        text = castep_text(energy=images[-1][2], species=list(cell.species), geometry=False, wall_time=152214.8)
-        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
-        return True
-
-    return write
-
-
 def _spin_polarise(view: Any, table: Any = None) -> None:
     """Tick ``Spin Polarized`` for every row (of ``table``) in ``Configure Selected Parameters...``.
 
@@ -741,21 +687,6 @@ def _spin_polarise(view: Any, table: Any = None) -> None:
     row_ids = tuple(entry.row_id for entry in view._row_entries() if table is None or entry.table is table)
     when_modal("ParameterDialog", lambda dialog: (dialog.set_values({"spin_polarized": True}), dialog._accept_if_valid()))
     view._open_parameter_dialog(row_ids)
-
-
-def _cluster_and_pin(window: MainWindow, charge_state: str, name: str) -> None:
-    """Select every row of a charge state's tab, create a workspace, cluster it and pin it."""
-
-    relaxations = window._muon_relaxation_view
-    window._set_active_route("muon_relaxations")
-    relaxations._charge_tabs.setCurrentWidget(relaxations._table_for_charge_state(charge_state))
-    relaxations._active_table().selectAll()
-    when_modal("QInputDialog", lambda dialog: (dialog.setTextValue(name), dialog.accept()))
-    relaxations._create_analysis_button.click()
-    workspace_id = str(window._relaxation_analysis_workspaces()[-1]["id"])
-    when_modal("RelaxationClusteringDialog", lambda dialog: dialog._apply_button.click())
-    window._relaxation_analysis_view._open_clustering(workspace_id)
-    window._on_muon_sites_pin_requested(workspace_id)
 
 
 def _choose_relaxed_4c_site(dialog: QWidget) -> None:
@@ -829,8 +760,8 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
                 relaxations._run_local_selected_rows()
 
         # An analysis workspace per charge state, clustered and pinned.
-        _cluster_and_pin(window, POSITIVE_MUON_CHARGE_STATE, "Positive muon sites")
-        _cluster_and_pin(window, MUONIUM_CHARGE_STATE, "Muonium sites")
+        cluster_and_pin(window, POSITIVE_MUON_CHARGE_STATE, "Positive muon sites")
+        cluster_and_pin(window, MUONIUM_CHARGE_STATE, "Muonium sites")
 
         # Quantum corrections: the phonon job of the positive-muon 4c site.
         from mufinder.services.source_candidates import charge_state_for_job
@@ -851,13 +782,11 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
         when_modal("MuonSiteSelectionDialog", _choose_relaxed_4c_site)
         window._magnetic_field_view._select_site_button.click()
 
-        # Energy barriers: the 4c site to itself, and an NEB band along the first hop.
+        # Energy barriers: the paths from the 4c site to its neighbours.
         window._set_active_route("energy_barriers")
         barriers = window._energy_barriers_controller
         barriers.select_endpoints(lowest.key, lowest.key)
         barriers.generate_paths(lowest.key, lowest.key)
-        with synthetic_runs(window, _neb_outputs(window)):
-            barriers.submit([barriers.candidates()[0].key], target="local")
         window._save_project()
         return document.project_root
 
@@ -985,17 +914,6 @@ def open_local_submission(window: MainWindow) -> None:
 def show_saved_supercell_along_a(dialog: QWidget) -> None:
     show_saved_supercell(dialog)
     view_along_a(dialog)
-
-
-def select_all_sites(page: QWidget) -> None:
-    """Widen the preview and select every generated site, which marks them in it."""
-
-    from PySide6.QtWidgets import QSplitter
-
-    page.findChild(QSplitter).setSizes([520, 640])
-    page._site_table.selectAll()
-    settle(QApplication.instance())
-    frame_viewers(page)
 
 
 def open_charge_state_dialog(window: MainWindow) -> None:
@@ -1129,16 +1047,6 @@ def open_phonon_analysis(window: MainWindow) -> QWidget:
     )
     window._on_launch_quantum_phonon_analysis(str(result.id))
     return window._quantum_analysis_dialogs[result.id]
-
-
-def show_neb_analysis(page: QWidget) -> None:
-    """Show the NEB Analysis tab with the transition-state image in the inspector."""
-
-    page._tabs.setCurrentIndex(1)
-    settle(QApplication.instance())
-    page._apply_preview_index((NEB_IMAGES + 1) // 2)
-    settle(QApplication.instance())
-    frame_viewers(page)
 
 
 def calculate_corner_tensor(dialog: QWidget) -> None:
@@ -1319,9 +1227,6 @@ SCENES: dict[str, Scene] = {
     ),
     # Energy barriers.
     "energy_barriers_page": Scene(results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))),
-    "energy_barrier_inspection": Scene(
-        results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 820), prepare=show_neb_analysis)
-    ),
     # The legacy importer.
     "legacy_import_dialog": Scene(
         fixture_project, None, Dialog(open_legacy_import, kind="LegacyImportDialog", prepare=focus_default_button)
