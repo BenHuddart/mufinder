@@ -20,20 +20,22 @@ from ..render import (
     ProjectBuilder,
     Scene,
     Window,
-    calculate_field,
+    calculate_and_list,
+    calculation_card,
     current_page,
+    custom_site,
     focus_default_button,
-    new_project,
+    magnetic_project,
     save_magnetic_workspace,
     settle,
+    show_every_result_row,
     show_host_with_spins,
     when_modal,
 )
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QApplication, QGroupBox, QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 from mufinder.domain.models import Structure
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
@@ -86,15 +88,6 @@ def fe_magnetic_model() -> MagneticStructureModel:
     )
 
 
-def custom_site(fractional: tuple[float, float, float]) -> dict[str, object]:
-    return {
-        "source": "custom",
-        "label": "Custom site",
-        "fractional_position": list(fractional),
-        "cartesian_position": [FE_A * value for value in fractional],
-    }
-
-
 def fe_project(name: str, form: dict[str, object]) -> ProjectBuilder:
     """A builder for the Fe host, its ferromagnetic model and a Magnetic Fields ``form``.
 
@@ -110,43 +103,10 @@ def fe_project(name: str, form: dict[str, object]) -> ProjectBuilder:
         "hyperfine_coupling_unit": "T_per_muB",
         **form,
     }
-
-    def build(directory: Path) -> Path:
-        service, document = new_project(directory, name, fe_host())
-        document.project.magnetic_structure = fe_magnetic_model().to_json()
-        document.ui_state["magnetic_field_form"] = settings
-        service.save_project(document)
-        return document.project_root
-
-    return build
+    return magnetic_project(name, fe_host(), fe_magnetic_model(), settings)
 
 
 # --- Scene steps --------------------------------------------------------------
-
-
-def calculation_card(window: MainWindow) -> QWidget:
-    """The Magnetic Fields page's ``Calculation`` card."""
-
-    for group in window._magnetic_field_view.findChildren(QGroupBox):
-        if group.title() == "Calculation":
-            return group
-    raise RuntimeError("The Magnetic Fields page has no Calculation card")
-
-
-def show_every_result_row(page: QWidget) -> None:
-    """Make the results table tall enough to list every row, so the grab does not scroll it."""
-
-    table = page._result_table
-    rows = sum(table.rowHeight(row) for row in range(table.rowCount()))
-    table.setMinimumHeight(table.horizontalHeader().height() + rows + 2 * table.frameWidth() + 2)
-
-
-def calculate_and_list(window: MainWindow) -> None:
-    """Calculate the field and show every result row."""
-
-    page = window._magnetic_field_view
-    calculate_field(page)
-    show_every_result_row(page)
 
 
 def select_parallel_site(page: QWidget) -> None:
@@ -191,8 +151,8 @@ def save_both_workspaces(window: MainWindow) -> None:
 
 # --- Scenes -------------------------------------------------------------------
 
-_OCTAHEDRAL = {"selected_muon_site": custom_site(OCTAHEDRAL_SITE)}
-_TETRAHEDRAL = {"selected_muon_site": custom_site(TETRAHEDRAL_SITE)}
+_OCTAHEDRAL = {"selected_muon_site": custom_site(fe_host(), OCTAHEDRAL_SITE)}
+_TETRAHEDRAL = {"selected_muon_site": custom_site(fe_host(), TETRAHEDRAL_SITE)}
 octahedral_project = fe_project("Iron", _OCTAHEDRAL)
 
 SCENES: dict[str, Scene] = {
