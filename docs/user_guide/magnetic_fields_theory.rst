@@ -288,11 +288,11 @@ and no cell shows ``-0``. For a distribution row the magnitude is the mean
 Worked Examples
 ---------------
 
-The ferromagnet is bcc iron. The other examples use one magnetic ion of 1 μB in
-a simple cubic cell with ``a = 3 Å``. All use the default ``Calculation
-Settings`` (``100 x 100 x 100`` cells, Lorentz sphere chosen by ``muesr``)
-except iron, which uses ``80 x 80 x 80`` cells. Positions are fractional. Each
-number comes from the calculation and is pinned by
+The ferromagnet is bcc iron and the helix is MnSi. The antiferromagnet uses one
+magnetic ion of 1 μB in a simple cubic cell with ``a = 3 Å``. All use the
+default ``Calculation Settings`` (``100 x 100 x 100`` cells, Lorentz sphere
+chosen by ``muesr``) except iron, which uses ``80 x 80 x 80`` cells. Positions
+are fractional. Each number comes from the calculation and is pinned by
 ``tests/science/test_magnetic_fields.py``.
 
 Ferromagnet
@@ -356,35 +356,47 @@ Lorentz field vanishes. At the body centre the two neighbouring layers cancel,
 so the field is zero. The face centre ``(1/2, 1/2, 0)`` sees -0.5493 T and the
 edge centre ``(1/2, 0, 0)`` -0.8003 T along ``c``.
 
-Commensurate helix
-~~~~~~~~~~~~~~~~~~
-
-A helix with ``q = (0, 0, 1/4)`` and coefficient
-:math:`\mathbf{F} = \hat{\mathbf{a}} + i\,\hat{\mathbf{b}}` turns the moment by
-90° in the ``ab`` plane from one cell to the next along ``c``. Its magnetic
-cell is four host cells long, so a muon site and its translations ``r + T``
-can see different fields. ``Report finite fields for near-commensurate q``
-lists them:
-
-- on the fourfold axis at ``(1/2, 1/2, 0)`` every copy sees 0.2836 T, turning
-  by 90° from one copy to the next;
-- at the edge centre ``(1/2, 0, 0)`` the copies alternate between 1.1660 T
-  along ``±a`` and 0.3637 T along ``±b``. Half of the muons see each magnitude.
-
 Incommensurate helix
 ~~~~~~~~~~~~~~~~~~~~
 
-Changing the wavevector to ``q = (0, 0, 0.2861)`` makes the helix
-incommensurate, and ``Calculate Dipolar Field`` samples a distribution. For one
-wavevector the sampled field traces an ellipse,
+B20 MnSi (space group P2\ :sub:`1`\ 3, ``a = 4.558 Å``) has Mn and Si at the 4a
+positions with ``x = 0.138`` and ``x = 0.845``. Below about 29 K the Mn moments
+of 0.385 μB turn in the plane perpendicular to ``q = (0.0147, 0.0147, 0.0147)``
+r.l.u., a left-handed helix of period about 18 nm that is incommensurate with the
+lattice. The muon site is 4a with ``x = 0.532``, whose four positions in one
+magnetic domain are site I on the propagation axis and sites II to IV, which are
+equivalent to one another (Amato *et al.*, 2014; the worked example below gives the reference). The worked example
+:doc:`/user_guide/examples/mnsi` builds the model step by step.
+
+For one wavevector the sampled field traces an ellipse,
 :math:`\mathbf{B}(\theta) = \cos\theta\,\mathbf{B}_0 + \sin\theta\,\mathbf{B}_{90}`,
-so :math:`p(|B|)` runs between the two semi-axes and peaks at both ends. At
-``(1/2, 1/2, 0)`` the fourfold axis makes the ellipse a circle and the
-distribution a single line at 0.2816 T. At ``(1/2, 0, 0)`` it spans 0.3616 T to
-1.1634 T, close to the two fields of the ``q = 1/4`` helix above.
+so :math:`p(|B|)` runs between the two semi-axes and peaks at both ends. On the
+axis the ellipse is a circle and the distribution a single line: site I gives
+88 mT. Sites II to IV span 90 mT to 207 mT. These include a contact term, the
+``Hyperfine coupling`` of -0.505 T/μB times the moments of the muon's nearest
+Mn; the sampled distribution applies it at every phase just as a commensurate
+field does. The dipolar field alone gives 107 mT at site I and 48 mT to 104 mT
+at sites II to IV. The helix's sense matters at sites II to IV, which are not
+on the axis: the right-handed helix of the same moment spans 86 mT to 209 mT,
+while site I is unchanged.
 
-.. figure:: ../_generated/screenshots/magnetic_field_distribution.webp
-   :alt: The field-distribution plot of the incommensurate helix at the edge
-         centre, peaking at both ends of its range.
+.. figure:: ../_generated/screenshots/mnsi_field_distribution.webp
+   :alt: The field-distribution plot of the four MnSi muon sites: a single line
+         at 0.088 T and three equal continua from 0.090 T to 0.207 T, peaking at
+         both ends, with their sum.
 
-   ``Open Distribution Plot`` for the incommensurate helix at ``(1/2, 0, 0)``.
+   ``Open Distribution Plot`` for the four 4a sites of the MnSi helix. The
+   singleton is site I; the other three curves coincide.
+
+Commensurate approximant
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The helix's ``q = 0.0147`` lies 0.0009 r.l.u. from 1/64, so with ``Longest
+period`` 64 its approximant is ``q = (1/64, 1/64, 1/64)`` with a
+``64 x 64 x 64`` magnetic supercell. ``Report finite fields for
+near-commensurate q`` then lists 64 fields for each site, one per translation
+``r + T`` with a distinct phase. At site II their magnitudes run from 90.0 mT
+to 207.3 mT, the edges of the sampled distribution, and the 64 phases sample the
+same two-horned lineshape. At the default period of 12 no fraction is within
+0.001 r.l.u., so the page samples the distribution.
+

@@ -44,7 +44,7 @@ for _variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONF
 import numpy as np  # noqa: E402
 from PySide6.QtCore import QEvent, QTimer  # noqa: E402
 from PySide6.QtGui import QImage, QPainter  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialog, QDockWidget, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QDockWidget, QGroupBox, QWidget  # noqa: E402
 
 from mufinder.domain.models import Structure  # noqa: E402
 from mufinder.services.project_service import ProjectDocument, ProjectService  # noqa: E402
@@ -191,6 +191,35 @@ def new_project(directory: Path, name: str, host: Structure) -> tuple[ProjectSer
     service.add_structure(document, host)
     document.project.host_structure_id = host.id
     return service, document
+
+
+def custom_site(host: Structure, fractional: tuple[float, float, float]) -> dict[str, object]:
+    """The saved form of a custom muon site at ``fractional`` in ``host``, as ``Select Muon Site`` stores it."""
+
+    lattice = np.asarray(host.lattice_vectors, dtype=float)
+    return {
+        "source": "custom",
+        "label": "Custom site",
+        "fractional_position": list(fractional),
+        "cartesian_position": (np.asarray(fractional, dtype=float) @ lattice).tolist(),
+    }
+
+
+def magnetic_project(name: str, host: Structure, model: Any, form: dict[str, object]) -> ProjectBuilder:
+    """A builder for ``host`` with the magnetic ``model`` and a Magnetic Fields ``form``.
+
+    The project is a host structure and a Magnetic Fields form: no CASTEP job
+    is involved.
+    """
+
+    def build(directory: Path) -> Path:
+        service, document = new_project(directory, name, host)
+        document.project.magnetic_structure = model.to_json()
+        document.ui_state["magnetic_field_form"] = form
+        service.save_project(document)
+        return document.project_root
+
+    return build
 
 
 @contextmanager
@@ -379,6 +408,8 @@ class Dialog:
     kind: str = "QDialog"
     size: tuple[int, int] | None = None
     prepare: WidgetStep | None = None
+    # Grab this part of the dialog (a panel, a card) instead of all of it.
+    region: Callable[[QDialog], QWidget] | None = None
 
 
 @dataclass(frozen=True)
@@ -507,7 +538,7 @@ def capture_modal(app: QApplication, window: MainWindow, target: Dialog, path: P
                 dialog.resize(*target.size)
             if target.prepare is not None:
                 target.prepare(dialog)
-            save(dialog, path)
+            save(dialog if target.region is None else target.region(dialog), path)
             captured.append(str(path))
         finally:
             dialog.reject()
@@ -656,6 +687,31 @@ def calculate_field(page: Any) -> None:
         # A screenshot of a failed calculation must not reach the docs.
         raise RuntimeError(f"The field calculation gave no result: {page._calculation_status.text()}")
     page._result_table.selectRow(0)
+
+
+def calculation_card(window: MainWindow) -> QWidget:
+    """The Magnetic Fields page's ``Calculation`` card."""
+
+    for group in window._magnetic_field_view.findChildren(QGroupBox):
+        if group.title() == "Calculation":
+            return group
+    raise RuntimeError("The Magnetic Fields page has no Calculation card")
+
+
+def show_every_result_row(page: QWidget) -> None:
+    """Make the results table tall enough to list every row, so the grab does not scroll it."""
+
+    table = page._result_table
+    rows = sum(table.rowHeight(row) for row in range(table.rowCount()))
+    table.setMinimumHeight(table.horizontalHeader().height() + rows + 2 * table.frameWidth() + 2)
+
+
+def calculate_and_list(window: MainWindow) -> None:
+    """Calculate the field and show every result row."""
+
+    page = window._magnetic_field_view
+    calculate_field(page)
+    show_every_result_row(page)
 
 
 def save_magnetic_workspace(name: str) -> Callable[[MainWindow], None]:

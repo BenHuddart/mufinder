@@ -42,6 +42,11 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1103/PhysRevMaterials.3.073804",
         "10.1016/0038-1098(79)91025-1",
     ),
+    "user_guide/examples/mnsi.rst": (
+        "10.1103/PhysRevB.89.184425",
+        "10.1103/PhysRevB.93.144419",
+        "10.1016/0038-1098(76)90057-0",
+    ),
     "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/magnetic_fields.rst": (
         "10.1063/1.1703091",

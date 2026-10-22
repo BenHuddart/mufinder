@@ -52,6 +52,7 @@ from mufinder.science.magnetic_structure import (
     FourierTerm,
     MagneticComponent,
     MagneticStructureModel,
+    build_magnetic_preset_component,
     moments_at_atoms,
 )
 from mufinder.science.muon_distortion import map_muon_distortion
@@ -2141,10 +2142,6 @@ _EDGE_CENTRE = (0.5, 0.0, 0.0)
 _DOC_PRECISION = 5e-5
 
 
-def _documented_helix(q_c: float) -> MagneticStructureModel:
-    return _single_q_model((0.0, 0.0, q_c), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
-
-
 # --- bcc Fe, the ferromagnet worked example ---------------------------------------
 #
 # a = 2.868 Å with 2.2 mu_B per Fe along c, so mu0 M = 2.17 T. The Lorentz field
@@ -2259,24 +2256,131 @@ def test_worked_example_a_type_antiferromagnet(real_muesr) -> None:
         assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
 
 
-def test_worked_example_commensurate_helix(real_muesr) -> None:
-    axis = calculate_commensurate_approximant_fields(_structure(), _documented_helix(0.25), [_FACE_CENTRE])
-    edge = calculate_commensurate_approximant_fields(_structure(), _documented_helix(0.25), [_EDGE_CENTRE])
+# --- MnSi, the incommensurate helix worked example --------------------------------
+#
+# B20 MnSi (P2_1 3, a = 4.558 Å; Mn and Si at 4a with x = 0.138 and 0.845) is a
+# left-handed helix along [111]: |k| = 0.035 Å^-1, 0.385 mu_B per Mn. The muon
+# stops at 4a with x = 0.532 (Amato et al. 2014), where the four positions of
+# one k domain split into site I, on the k axis, and the equivalent sites II-IV.
+# The contact coupling -0.505 T/mu_B reproduces the edges Amato et al. predict:
+# an isolated line at 88.0 mT and a continuum from 90.0 to 206.5 mT.
 
-    assert [result.magnitude for result in axis] == pytest.approx([0.2836] * 4, abs=_DOC_PRECISION)
-    assert [result.magnitude for result in edge] == pytest.approx([1.1660, 0.3637] * 2, abs=_DOC_PRECISION)
-    assert edge[0].total == pytest.approx((1.1660, 0.0, 0.0), abs=_DOC_PRECISION)
-    assert edge[1].total == pytest.approx((0.0, -0.3637, 0.0), abs=_DOC_PRECISION)
+_MNSI_A = 4.558
+_MNSI_Q = (0.0147, 0.0147, 0.0147)
+_MNSI_MOMENT = 0.385
+_MNSI_MUON = (0.532, 0.532, 0.532)
+_MNSI_SITE_II = (0.968, 0.468, 0.032)
+_MNSI_CONTACT_T_PER_MUB = -0.505
 
 
-def test_worked_example_incommensurate_helix(real_muesr) -> None:
-    axis, edge = calculate_incommensurate_field_distributions(
-        _structure(), _documented_helix(0.2861), [_FACE_CENTRE, _EDGE_CENTRE]
+def _4a(x: float) -> tuple[tuple[float, ...], ...]:
+    positions = ((x, x, x), (-x + 0.5, -x, x + 0.5), (-x, x + 0.5, -x + 0.5), (x + 0.5, -x + 0.5, -x))
+    return tuple(tuple(value % 1.0 for value in position) for position in positions)
+
+
+def _mnsi() -> Structure:
+    return host_structure(
+        label="MnSi",
+        lattice=_MNSI_A,
+        species=("Mn",) * 4 + ("Si",) * 4,
+        positions=_4a(0.138) + _4a(0.845),
     )
 
-    np.testing.assert_allclose(axis.magnitudes_T, 0.2816, atol=_DOC_PRECISION)
-    assert edge.magnitudes_T.min() == pytest.approx(0.3616, abs=_DOC_PRECISION)
-    assert edge.magnitudes_T.max() == pytest.approx(1.1634, abs=_DOC_PRECISION)
+
+def _mnsi_helix(handedness: int = -1) -> MagneticStructureModel:
+    component = build_magnetic_preset_component(
+        "helix",
+        lattice_vectors=_mnsi().lattice_vectors,
+        q_rlu=_MNSI_Q,
+        q_coeff=(1.0, 0.0, 0.0),
+        moment=_MNSI_MOMENT,
+        reference_axis="a",
+        selector=AtomSelector.species("Mn"),
+        handedness=handedness,
+    )
+    return MagneticStructureModel(q_basis_rlu=(_MNSI_Q, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(component,))
+
+
+def _mnsi_options(**changes) -> MagneticFieldOptions:
+    contact = contact_coupling_to_angstrom_minus3(_MNSI_CONTACT_T_PER_MUB, "T_per_muB")
+    return MagneticFieldOptions(**{"find_equivalent_sites": True, "contact_coupling": contact, **changes})
+
+
+def test_worked_example_mnsi_helix_is_left_handed(real_muesr) -> None:
+    for handedness in (-1, 1):
+        moments = moments_at_atoms(_mnsi(), _mnsi_helix(handedness), [0] * 4, [(n, n, n) for n in range(4)])
+        axis = np.ones(3) / np.sqrt(3.0)
+
+        assert np.linalg.norm(moments, axis=1) == pytest.approx(_MNSI_MOMENT)
+        assert moments @ axis == pytest.approx(0.0, abs=1e-12)
+        # Left-handed: the moment turns against the screw sense along +q.
+        turns = [float(np.cross(first, second) @ axis) for first, second in zip(moments, moments[1:])]
+        assert all(turn * handedness > 0.0 for turn in turns)
+
+
+def test_worked_example_mnsi_distribution_edges_match_the_amato_prediction(real_muesr) -> None:
+    site_one, *others = calculate_incommensurate_field_distributions(
+        _mnsi(), _mnsi_helix(), [_MNSI_MUON], options=_mnsi_options()
+    )
+
+    # The grid of phases is deterministic. Site I, on the k axis, is one line at 88 mT.
+    np.testing.assert_allclose(site_one.magnitudes_T, 0.0879, atol=5e-4)
+    # Sites II-IV are equivalent and span 90 mT to 207 mT, the two horns of the lineshape.
+    assert len(others) == 3
+    for site in others:
+        assert site.magnitudes_T.min() == pytest.approx(0.0903, abs=5e-4)
+        assert site.magnitudes_T.max() == pytest.approx(0.2068, abs=5e-4)
+    # The singleton lies below the continuum's lower edge, as measured (91 mT and 96 mT).
+    assert site_one.magnitudes_T.max() < others[0].magnitudes_T.min()
+    assert all(check.converged for check in site_one.convergence)
+
+
+def test_worked_example_mnsi_contact_term_is_applied_to_the_sampled_distribution(real_muesr) -> None:
+    dipolar_only = calculate_incommensurate_field_distributions(
+        _mnsi(), _mnsi_helix(), [_MNSI_MUON], options=MagneticFieldOptions(find_equivalent_sites=True)
+    )
+
+    # Without the contact coupling the dipolar field alone gives 106.5 mT at site I and 47.8 mT to 104.4 mT at II-IV.
+    np.testing.assert_allclose(dipolar_only[0].magnitudes_T, 0.1065, atol=5e-4)
+    assert dipolar_only[1].magnitudes_T.min() == pytest.approx(0.0478, abs=5e-4)
+    assert dipolar_only[1].magnitudes_T.max() == pytest.approx(0.1044, abs=5e-4)
+
+
+def test_worked_example_mnsi_the_helix_sense_matters_for_sites_two_to_four(real_muesr) -> None:
+    right = calculate_incommensurate_field_distributions(
+        _mnsi(), _mnsi_helix(1), [_MNSI_MUON], options=_mnsi_options()
+    )
+
+    # Site I is on the k axis and does not tell the senses apart; sites II-IV do.
+    np.testing.assert_allclose(right[0].magnitudes_T, 0.0879, atol=5e-4)
+    assert right[1].magnitudes_T.min() == pytest.approx(0.0857, abs=5e-4)
+    assert right[1].magnitudes_T.max() == pytest.approx(0.2087, abs=5e-4)
+
+
+def test_worked_example_mnsi_has_a_commensurate_approximant_of_period_64(real_muesr) -> None:
+    approximant = find_commensurate_approximant(_mnsi(), _mnsi_helix(), tolerance=1e-3, max_period=64)
+    nothing_shorter = find_commensurate_approximant(_mnsi(), _mnsi_helix(), tolerance=1e-3, max_period=12)
+
+    assert nothing_shorter is None
+    assert approximant is not None
+    assert approximant.approximant_rlu == ((1 / 64,) * 3,)
+    assert approximant.periods == (64, 64, 64)
+    assert approximant.max_deviation_rlu == pytest.approx(0.000925)
+
+
+def test_worked_example_mnsi_approximant_fields_span_the_continuum(real_muesr) -> None:
+    results = calculate_commensurate_approximant_fields(
+        _mnsi(), _mnsi_helix(), [_MNSI_SITE_II], options=_mnsi_options(find_equivalent_sites=False, approximant_max_period=64)
+    )
+
+    magnitudes = np.array([result.magnitude for result in results])
+    # One field per translation of the 64 x 64 x 64 supercell with a distinct phase.
+    assert len(results) == 64
+    assert results[1].site_label == "site 1 + (1, 0, 0)"
+    assert results[1].muon_position == pytest.approx((1.968, 0.468, 0.032))
+    # The 64 sampled phases come within 0.7 mT of the analytic edges of the sampled distribution.
+    assert magnitudes.min() == pytest.approx(0.0900, abs=1e-3)
+    assert magnitudes.max() == pytest.approx(0.2073, abs=1e-3)
 
 
 # --- CoF2, the user guide's worked example ----------------------------------------
