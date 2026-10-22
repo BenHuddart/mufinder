@@ -1010,7 +1010,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: TSSEARCH_MAX_PATH_POINTS : 11
-    notes: Number of images (beads) along the transition-state path. Climbing-image NEB requires an odd value.
+    notes: Number of intermediate images (beads) along the transition-state path, excluding the reactant and product. Climbing-image NEB requires an odd value; CASTEP adds one image to an even value when TSSEARCH_NEB_CLIMBING is TRUE.
 
   - name: TSSEARCH_NEB_SPRING_CONSTANT
     canonical_name: tssearch_neb_spring_constant

@@ -106,10 +106,11 @@ ELEMENTARY_CHARGE_C = 1.602176634e-19
 HBAR_J_S = PLANCK_CONSTANT_J_S / (2.0 * pi)
 ATOMIC_MASS_KG = 1.66053906660e-27
 #: Relative tolerance for accepting the CASTEP-reported muon mass. CASTEP echoes
-#: the ``SPECIES_MASS`` value with limited precision, so an exact match is not
-#: expected; the failure this guards against is the ~8.9x hydrogen-mass default,
-#: which no rounding tolerance can hide.
-MUON_MASS_RELATIVE_TOLERANCE = 1e-3
+#: the ``SPECIES_MASS`` value with limited precision, and runs prepared outside
+#: MuFinder commonly use a rounded muon mass such as 0.1138 AMU (0.33 % high,
+#: shifting frequencies by 0.16 %). One per cent accepts those while still
+#: flagging the failure this guards against, the ~8.9x hydrogen-mass default.
+MUON_MASS_RELATIVE_TOLERANCE = 1e-2
 BOLTZMANN_J_K = 1.380649e-23
 CM_INV_TO_EV = PLANCK_CONSTANT_J_S * LIGHT_SPEED_M_S * 100.0 / ELEMENTARY_CHARGE_C
 CM_INV_ZPE_TO_EV = 0.5 * CM_INV_TO_EV

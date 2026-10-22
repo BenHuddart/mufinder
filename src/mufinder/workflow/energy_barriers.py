@@ -273,8 +273,8 @@ def _nudged_elastic_band_param_template(
         keywords.append(KeywordAssignment("spin_polarized", True))
     keywords += [
         KeywordAssignment("tssearch_neb_climbing", True),
-        # Odd default so the climbing image sits on the saddle without CASTEP silently
-        # bumping the count; 11 gives a smoother, better-resolved band than the minimum.
+        # Odd default so the climbing image sits on the saddle without CASTEP adding
+        # one image to an even count; 11 gives a smoother, better-resolved band than the minimum.
         # User/UI config may override this.
         KeywordAssignment("tssearch_max_path_points", 11),
     ]

@@ -154,8 +154,8 @@ _KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_neb_normed",
     "tssearch_force_tol",
 )
-# Default NEB image count (TSSEARCH_MAX_PATH_POINTS). Odd, as climbing-image NEB
-# requires. 11 gives a finer band than the CASTEP minimum: a smoother barrier
+# Default NEB image count (TSSEARCH_MAX_PATH_POINTS, intermediate images only).
+# Odd, as climbing-image NEB requires. 11 gives a finer band than the CASTEP minimum: a smoother barrier
 # path and a lower residual force at the climbing image (7 images left a
 # ~0.08 eV/Ang plateau just above the force tol).
 _DEFAULT_IMAGES = 11
@@ -584,9 +584,14 @@ class EnergyBarriersController(WorkflowJobController):
         < the row's stored configuration. Inheriting the endpoint's k-point grid
         and cut-off keeps the band on the same numerical footing as the relaxed
         structures it connects; when the relaxation's input files are missing,
-        the project defaults stand in. The image count defaults to an odd value,
-        and an even count is rounded up: climbing-image NEB needs an odd
-        ``TSSEARCH_MAX_PATH_POINTS`` (CASTEP otherwise silently adds one).
+        the project defaults stand in. The image count
+        (``TSSEARCH_MAX_PATH_POINTS``) counts the intermediate images only, so
+        the finished band holds that many plus the two endpoints. It defaults
+        to an odd value, and an even count is rounded up: the workflow locks
+        ``TSSEARCH_NEB_CLIMBING`` on, and with climbing on CASTEP itself adds
+        one image to an even count (with a warning in the ``.castep``), so the
+        stored count is the one CASTEP runs. With climbing off CASTEP keeps an
+        even count as it is.
 
         A caller looping over many paths may pass the resolved
         ``source_candidate`` and a shared ``source_defaults_cache`` to avoid

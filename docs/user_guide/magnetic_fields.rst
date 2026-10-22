@@ -830,7 +830,8 @@ host atoms should be treated as magnetic ions.
 2. Click ``Dipolar Tensor...``.
 3. In the ``Magnetic Ions`` group choose the magnetic ions: ``Atoms with
    assigned moments``, ``All atoms``, ``Element``, ``Equivalent site`` or
-   ``Atom indices`` (counted from 0 in the host's atom order). When the
+   ``Atom indices`` (counted from 1 in the host's atom order, like the
+   magnetic-structure builder and the ``Equivalent site`` labels). When the
    magnetic-structure builder already contains
    enabled components with non-zero moments, the dialog defaults to the atoms
    targeted by those components. If no atoms currently have assigned moments,
@@ -842,7 +843,7 @@ host atoms should be treated as magnetic ions.
    ``MHz/μB``, or ``Å⁻³``, matching the hyperfine-coupling unit choices.
 
 .. figure:: ../_generated/screenshots/dipolar_tensor_dialog.webp
-   :alt: The Dipolar Tensor dialog with atom index 0, the corner Co of CoF2,
+   :alt: The Dipolar Tensor dialog with atom 1, the corner Co of CoF2,
          and its diagonal dipolar tensor at the 4c site in T per muB.
 
    The corner-sublattice tensor at the CoF₂ 4c site.
