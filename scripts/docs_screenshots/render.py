@@ -627,6 +627,49 @@ def hide_catalog_notice(dialog: QWidget) -> None:
         notice.hide()
 
 
+def view_along_a(widget: QWidget) -> None:
+    """Frame every 3D viewer in ``widget`` looking down a, where a cell's sublattices stand apart."""
+
+    from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+
+    frame_viewers(widget)
+    for viewer in widget.findChildren(AtomicStructureViewer):
+        if viewer.isVisible():
+            viewer._set_named_view("a")
+
+
+def show_host_with_spins(page: QWidget) -> None:
+    """Widen the atom table to show the ``Spin (hbar/2)`` column, then view the cell down a."""
+
+    from PySide6.QtWidgets import QSplitter
+
+    page.findChild(QSplitter).setSizes([470, 630])
+    settle(QApplication.instance())
+    view_along_a(page)
+
+
+def calculate_field(page: Any) -> None:
+    """Click ``Calculate Dipolar Field`` on a Magnetic Fields page and select the first result row."""
+
+    page._calculate_button.click()
+    if page._result_table.rowCount() == 0:
+        # A screenshot of a failed calculation must not reach the docs.
+        raise RuntimeError(f"The field calculation gave no result: {page._calculation_status.text()}")
+    page._result_table.selectRow(0)
+
+
+def save_magnetic_workspace(name: str) -> Callable[[MainWindow], None]:
+    """A scene step: calculate the field, then click ``Save Workspace`` and name it ``name``."""
+
+    def save(window: MainWindow) -> None:
+        page = window._magnetic_field_view
+        calculate_field(page)
+        when_modal("QInputDialog", lambda dialog: (dialog.setTextValue(name), dialog.accept()))
+        page._pin_button.click()
+
+    return save
+
+
 def current_page(window: MainWindow) -> QWidget:
     """The page the navigator shows, for pages kept per saved item."""
 
