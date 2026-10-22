@@ -19,7 +19,7 @@ from types import ModuleType
 import numpy as np
 import pytest
 
-from mufinder.domain.models import MuonSite
+from mufinder.domain.models import MuonSite, Structure
 from mufinder.science import magnetic_fields as module
 from mufinder.science._muesr_compat import muesr_imports, patch_numpy_aliases_for_muesr
 from mufinder.science.demagnetization import DemagnetizingSample
@@ -2145,28 +2145,108 @@ def _documented_helix(q_c: float) -> MagneticStructureModel:
     return _single_q_model((0.0, 0.0, q_c), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
 
 
-def test_worked_example_ferromagnet(real_muesr) -> None:
-    sites = [(0.5, 0.5, 0.5), _FACE_CENTRE, _EDGE_CENTRE]
-    coupling = contact_coupling_to_angstrom_minus3(0.5, "T_per_muB")
+# --- bcc Fe, the ferromagnet worked example ---------------------------------------
+#
+# a = 2.868 Å with 2.2 mu_B per Fe along c, so mu0 M = 2.17 T. The Lorentz field
+# mu0 M / 3 = 0.72 T and the demagnetizing field of a sphere cancel. The
+# dipolar field at the interstitial sites is a traceless tensor that averages
+# to zero over the equivalent sites (Schmolz et al. 1986; Onuorah et al. 2018).
+# An 80 x 80 x 80 lattice sum keeps the cubic symmetry of the Lorentz sphere
+# exactly, so the components that vanish by symmetry are zero.
 
-    results = calculate_commensurate_fields(_structure(), _model(), sites)
-    (with_contact,) = calculate_commensurate_fields(
-        _structure(), _model(), sites[:1], options=MagneticFieldOptions(contact_coupling=coupling)
+_FE_A = 2.868
+_FE_CELLS = (80, 80, 80)
+_FE_OCTAHEDRAL = (0.5, 0.0, 0.0)  # 6b, Fe-Fe axis along a
+_FE_OCTAHEDRAL_ALONG_C = (0.0, 0.0, 0.5)  # 6b, Fe-Fe axis along the moment
+_FE_TETRAHEDRAL = (0.5, 0.25, 0.0)  # 12d
+_FE_TETRAHEDRAL_ALONG_C = (0.5, 0.0, 0.25)
+# The contact field measured at low temperature, -1.11 T (Nishida et al. 1977),
+# is the coupling times the 2.2 mu_B of the two nearest Fe.
+_FE_CONTACT_T_PER_MUB = -1.11 / 2.2
+
+
+def _iron() -> Structure:
+    return host_structure(
+        label="Fe",
+        lattice=_FE_A,
+        species=("Fe", "Fe"),
+        positions=((0.0, 0.0, 0.0), (0.5, 0.5, 0.5)),
     )
 
-    expected = [(0.0, 0.1437, 0.1437), (-0.2977, 0.1438, -0.1538), (-0.5166, 0.1438, -0.3728)]
-    for result, (dipolar, lorentz, total) in zip(results, expected, strict=True):
-        assert result.dipolar[2] == pytest.approx(dipolar, abs=_DOC_PRECISION)
-        assert result.lorentz[2] == pytest.approx(lorentz, abs=_DOC_PRECISION)
-        assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
-    assert with_contact.total == pytest.approx((0.0, 0.0, 0.6437), abs=_DOC_PRECISION)
+
+def _iron_model() -> MagneticStructureModel:
+    return _single_q_model((0.0, 0.0, 0.0), (0.0, 0.0, 2.2))
 
 
-def test_worked_example_dipolar_tensors(real_muesr) -> None:
-    face, edge = calculate_dipolar_tensors_for_atoms(_structure(), [_FACE_CENTRE, _EDGE_CENTRE], magnetic_ion_indices=[0])
+def _iron_options(**changes) -> MagneticFieldOptions:
+    return MagneticFieldOptions(
+        supercell=_FE_CELLS, contact_coupling=contact_coupling_to_angstrom_minus3(_FE_CONTACT_T_PER_MUB, "T_per_muB"), **changes
+    )
 
-    np.testing.assert_allclose(face.tensor_T_per_muB, np.diag([0.1488, 0.1488, -0.2977]), atol=_DOC_PRECISION)
-    np.testing.assert_allclose(edge.tensor_T_per_muB, np.diag([1.0332, -0.5166, -0.5166]), atol=_DOC_PRECISION)
+
+def test_worked_example_iron_dipolar_fields(real_muesr) -> None:
+    sites = [_FE_OCTAHEDRAL, _FE_OCTAHEDRAL_ALONG_C, _FE_TETRAHEDRAL, _FE_TETRAHEDRAL_ALONG_C]
+
+    results = calculate_commensurate_fields(
+        _iron(), _iron_model(), sites, options=MagneticFieldOptions(supercell=_FE_CELLS)
+    )
+
+    # Octahedral: +1.85 T where the Fe-Fe axis lies along M, -0.93 T for the other two sublattices.
+    assert [result.dipolar[2] for result in results[:2]] == pytest.approx([-0.93, 1.85], abs=5e-3)
+    # Tetrahedral: +0.26 T and -0.53 T.
+    assert [result.dipolar[2] for result in results[2:]] == pytest.approx([0.26, -0.53], abs=5e-3)
+    for result in results:
+        assert result.dipolar[:2] == pytest.approx((0.0, 0.0), abs=1e-9)
+        assert result.lorentz[2] == pytest.approx(0.72, abs=5e-3)
+
+
+@pytest.mark.parametrize(
+    ("site", "multiplicity"), [(_FE_OCTAHEDRAL, 6), (_FE_TETRAHEDRAL, 12)], ids=["octahedral", "tetrahedral"]
+)
+def test_worked_example_iron_dipolar_field_averages_to_zero_over_the_equivalent_sites(real_muesr, site, multiplicity) -> None:
+    results = calculate_commensurate_fields(
+        _iron(), _iron_model(), [site], options=MagneticFieldOptions(supercell=_FE_CELLS, find_equivalent_sites=True)
+    )
+
+    assert len(results) == multiplicity
+    assert np.mean([result.dipolar for result in results], axis=0) == pytest.approx((0.0, 0.0, 0.0), abs=5e-3)
+
+
+def test_worked_example_iron_lorentz_and_demagnetizing_fields_cancel_for_a_sphere(real_muesr) -> None:
+    sphere = calculate_commensurate_fields(_iron(), _iron_model(), [_FE_OCTAHEDRAL], options=_iron_options(demag_shape="sphere"))[0]
+    bare = calculate_commensurate_fields(_iron(), _iron_model(), [_FE_OCTAHEDRAL], options=_iron_options())[0]
+    plate = calculate_commensurate_fields(
+        _iron(), _iron_model(), [_FE_OCTAHEDRAL], options=_iron_options(demag_shape="infinite_plate")
+    )[0]
+
+    assert bare.contact == pytest.approx((0.0, 0.0, -1.11), abs=1e-6)
+    assert sphere.lorentz[2] == pytest.approx(0.7243, abs=5e-4)
+    assert sphere.demag[2] == pytest.approx(-0.7246, abs=5e-4)
+    # Total at the 6b site (axis along a) with the measured contact field: the sphere and a bare lattice differ by -0.72 T.
+    assert bare.total[2] == pytest.approx(-1.3118, abs=5e-4)
+    assert sphere.total[2] == pytest.approx(-2.0364, abs=5e-4)
+    assert plate.demag[2] == pytest.approx(-2.1737, abs=5e-4)
+
+
+def test_worked_example_iron_measured_magnetisation_replaces_the_model_value(real_muesr) -> None:
+    options = _iron_options(demag_shape="sphere", measured_magnetization=(0.0, 0.0, 2.0))
+
+    (result,) = calculate_commensurate_fields(_iron(), _iron_model(), [_FE_OCTAHEDRAL], options=options)
+
+    assert result.demag[2] == pytest.approx(-0.6587, abs=5e-4)
+    assert result.total[2] == pytest.approx(-1.9705, abs=5e-4)
+
+
+def test_worked_example_iron_dipolar_tensors(real_muesr) -> None:
+    octahedral, tetrahedral = calculate_dipolar_tensors_for_atoms(
+        _iron(),
+        [_FE_OCTAHEDRAL, _FE_TETRAHEDRAL],
+        magnetic_ion_indices=[0, 1],
+        options=MagneticFieldOptions(supercell=_FE_CELLS),
+    )
+
+    np.testing.assert_allclose(octahedral.tensor_T_per_muB, np.diag([0.8419, -0.4210, -0.4210]), atol=_DOC_PRECISION * 4)
+    np.testing.assert_allclose(tetrahedral.tensor_T_per_muB, np.diag([0.1194, -0.2387, 0.1194]), atol=_DOC_PRECISION * 4)
 
 
 def test_worked_example_a_type_antiferromagnet(real_muesr) -> None:

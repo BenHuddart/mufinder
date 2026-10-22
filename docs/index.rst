@@ -58,6 +58,7 @@ quality standards.
    :caption: Worked examples
 
    user_guide/examples/cof2
+   user_guide/examples/fe
 
 .. toctree::
    :maxdepth: 2

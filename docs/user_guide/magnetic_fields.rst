@@ -23,13 +23,15 @@ Before you start
 Calculate a field
 -----------------
 
-.. figure:: ../_generated/screenshots/magnetic_fields_page.webp
-   :alt: The Magnetic Fields page with a ferromagnet's calculated field and its
-         term breakdown.
+.. figure:: ../_generated/screenshots/fe_magnetic_fields_page.webp
+   :alt: The Magnetic Fields page for bcc iron at the octahedral site, with the
+         six equivalent sites' fields and the dipolar, Lorentz, contact and
+         demagnetizing terms of the selected one.
 
-   The ferromagnet of :doc:`/user_guide/magnetic_fields_theory` with a
-   ``Sphere`` demagnetizing field. The selected result at the face centre
-   ``(1/2, 1/2, 0)`` is broken down into its field terms.
+   bcc iron (:doc:`/user_guide/examples/fe`) at the octahedral site
+   ``(1/2, 0, 0)`` with every equivalent site, a contact field of -1.11 T and a
+   ``Sphere`` demagnetizing field. The selected result is broken down into its
+   field terms.
 
 A typical pass through the page is:
 
@@ -451,6 +453,16 @@ distorted-structure reference. The available sources are:
    Pinned CoF₂ sites in ``Select Muon Site``, with the distortion correction
    available for the selected representative.
 
+For a host with no relaxation or UEP results, as in a literature example,
+choose ``Custom fractional position`` and type the site's ``fx``, ``fy`` and
+``fz``.
+
+.. figure:: ../_generated/screenshots/fe_select_muon_site.webp
+   :alt: The Select Muon Site dialog with the custom fractional position source
+         and the octahedral site of bcc iron, fx 0.5, fy 0, fz 0.
+
+   The octahedral interstitial site of bcc iron as a custom position.
+
 Until a site is chosen, the page uses the lowest-energy pinned site (positive
 muon first), else the first structural-relaxation cluster, else the first UEP
 cluster, else a custom site at the origin. With no site chosen, the dialog
@@ -560,6 +572,15 @@ configured through the ``Advanced...`` button, for shape-specific tensors:
    tensor used by the calculation and renders the selected sample with a
    PyVista preview, including crystal-axis and magnetisation-direction arrows.
 
+.. figure:: ../_generated/screenshots/fe_demagnetizing_shapes.webp
+   :alt: The Calculation card for bcc iron with the Infinite plate shape chosen,
+         a demagnetizing field of -2.17 T and a total of -3.49 T at the first
+         site.
+
+   An ``Infinite plate`` for bcc iron at the octahedral site: the plate normal
+   is the ``c`` axis, along the moment, so the demagnetizing term is
+   :math:`-\mu_0 M = -2.1737` T instead of the sphere's -0.7246 T.
+
 The advanced ellipsoid mode ports the analytical mag2spectra demagnetising
 factor workflow. Spheres and infinite plates use exact limits, spheroids use
 closed-form factors, and fully triaxial ellipsoids use the standard ellipsoid
@@ -588,6 +609,15 @@ for example from magnetometry on the same sample under the same conditions:
    formula unit is the reduced formula of the host's non-muon atoms, which the
    row names, for example ``μB per Fe2O3``; the cell holds :math:`Z` of them,
    the greatest common divisor of its element counts.
+
+.. figure:: ../_generated/screenshots/fe_measured_magnetisation.webp
+   :alt: The Calculation card for bcc iron with a measured bulk magnetisation of
+         2 muB per Fe along z ticked, a sphere, and a demagnetizing field of
+         -0.659 T.
+
+   A measured magnetisation of 2.0 μB per Fe along ``z`` (an illustrative
+   value for a sample short of saturation) replaces the model's 2.2 μB, so the
+   sphere's demagnetizing term is -0.6587 T.
 
 MuFinder then uses
 
@@ -651,7 +681,7 @@ For a sphere, :math:`N = \tfrac{1}{3}`, so a single-domain sample's Lorentz and
 demagnetizing fields cancel up to the difference between
 :math:`\mathbf{M}_\mathrm{Lor}` and :math:`\mathbf{M}_\mathrm{meas}`. That
 difference comes from counting the ions inside a finite sphere and shrinks as the
-sphere grows; it is about 0.1 % of the Lorentz field in the
+sphere grows; it is under 0.1 % of the Lorentz field in the
 :doc:`worked examples </user_guide/magnetic_fields_theory>`. For an infinite
 plate magnetised along its normal, :math:`N = 1` and the two terms sum to about
 :math:`-2\mu_0 \mathbf{M}_\mathrm{meas} / 3`.
@@ -865,12 +895,14 @@ quadrupolar linewidth models are not part of this workflow.
 Save results and workspaces
 ---------------------------
 
-.. figure:: ../_generated/screenshots/magnetic_field_workspace.webp
-   :alt: A saved Magnetic Fields workspace showing the ferromagnet's restored field
-         result and term breakdown.
+.. figure:: ../_generated/screenshots/fe_magnetic_workspaces.webp
+   :alt: The project navigator listing two saved Magnetic Fields workspaces,
+         Octahedral site and Tetrahedral site, with the octahedral workspace's
+         restored field results.
 
-   The ferromagnet of :doc:`/user_guide/magnetic_fields_theory` saved as a
-   workspace, with its field result.
+   Two workspaces of bcc iron (:doc:`/user_guide/examples/fe`), one per
+   candidate site, under ``Magnetic Fields`` in the navigator. The page shows
+   the octahedral workspace with its restored results.
 
 To keep a magnetic structure and its settings for later:
 

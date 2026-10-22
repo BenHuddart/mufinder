@@ -261,7 +261,7 @@ content column. Other images are left alone.
 The CoF₂ example
 ~~~~~~~~~~~~~~~~
 
-``examples/cof2.py`` holds every scene but the cubic magnetic models. Its
+``examples/cof2.py`` holds every scene but those of the iron and simple cubic magnetic models. Its
 host is rutile CoF₂ with antiparallel spins on the two Co, ``PBE`` as the
 project functional and a saved 2x2x2 supercell; :doc:`/user_guide/examples/cof2`
 tells the story its scenes illustrate and cites the values its outputs are
@@ -317,12 +317,28 @@ legacy folder of three CoF₂ runs in the documented layout (see
 :doc:`/legacy_import`, "Research data boundary") and drops the scan's notice
 that no keyword catalog is installed, as the other scenes hide it.
 
-The magnetic example
-~~~~~~~~~~~~~~~~~~~~
+The iron example
+~~~~~~~~~~~~~~~~
 
-``examples/magnetic.py`` holds the Magnetic Fields scenes of the cubic worked
-examples. Each builder from ``magnetic_project`` saves the one-ion cubic cell
-of :doc:`/user_guide/magnetic_fields_theory` with a magnetic model and a
+``examples/fe.py`` holds the Magnetic Fields scenes of the bcc iron worked
+example (:doc:`/user_guide/examples/fe`). Each builder from ``fe_project`` saves
+the two-atom conventional cell with 2.2 μB per Fe along c, a Magnetic Fields
+form with the contact coupling that gives -1.11 T, every equivalent site and a
+spherical sample, and the octahedral or tetrahedral site as a custom position;
+no CASTEP job is involved. The scenes run the real ``muesr`` calculation with an
+80 x 80 x 80 lattice sum, which keeps the cubic symmetry of the Lorentz sphere
+exactly, so components that vanish by symmetry print as ``0``. The results
+tables are made tall enough to list every equivalent site, the
+demagnetizing-shape, measured-magnetisation and equivalent-site scenes grab the
+page's ``Calculation`` card alone, and the workspaces scene saves one workspace
+per site and shows the octahedral one beside the navigator.
+
+The simple cubic helices
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+``examples/magnetic.py`` holds the Magnetic Fields scenes of the theory page's
+helix examples. Each builder from ``magnetic_project`` saves the one-ion cubic
+cell of :doc:`/user_guide/magnetic_fields_theory` with a magnetic model and a
 Magnetic Fields form; the scenes run the real ``muesr`` calculation.
 
 When the renderer runs

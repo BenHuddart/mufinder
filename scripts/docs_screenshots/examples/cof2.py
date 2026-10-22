@@ -1,4 +1,4 @@
-"""Cobalt difluoride: the worked example behind every screenshot but the cubic magnetic models.
+"""Cobalt difluoride: the worked example behind every screenshot but the iron and simple cubic magnetic models.
 
 CoF2 is a rutile antiferromagnet (P4_2/mnm, a = 4.695 Å, c = 3.180 Å, Co at 2a,
 F at 4f with x = 0.306; Baur and Khan 1971). The ordered Co moments, 2.64 μB
@@ -51,6 +51,7 @@ from ..render import (
     Page,
     Scene,
     Window,
+    calculate_field,
     current_page,
     focus_default_button,
     frame_viewers,
@@ -60,9 +61,12 @@ from ..render import (
     opened,
     refuse_message_boxes,
     run_uep_analysis,
+    save_magnetic_workspace,
     scratch_directory,
     settle,
+    show_host_with_spins,
     synthetic_runs,
+    view_along_a,
     when_modal,
 )
 from ..synthetic import (
@@ -978,27 +982,6 @@ def open_local_submission(window: MainWindow) -> None:
     dialog.exec()
 
 
-def view_along_a(widget: QWidget) -> None:
-    """Frame every 3D viewer looking down a, where the corner and body-centre Co stand apart."""
-
-    from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
-
-    frame_viewers(widget)
-    for viewer in widget.findChildren(AtomicStructureViewer):
-        if viewer.isVisible():
-            viewer._set_named_view("a")
-
-
-def show_host_with_spins(page: QWidget) -> None:
-    """Widen the atom table to show the ``Spin (hbar/2)`` column, then view the cell down a."""
-
-    from PySide6.QtWidgets import QSplitter
-
-    page.findChild(QSplitter).setSizes([470, 630])
-    settle(QApplication.instance())
-    view_along_a(page)
-
-
 def show_saved_supercell_along_a(dialog: QWidget) -> None:
     show_saved_supercell(dialog)
     view_along_a(dialog)
@@ -1176,16 +1159,6 @@ def show_neb_analysis(page: QWidget) -> None:
     frame_viewers(page)
 
 
-def calculate_field(page: Any) -> None:
-    """Click ``Calculate Dipolar Field`` and select the first result row."""
-
-    page._calculate_button.click()
-    if page._result_table.rowCount() == 0:
-        # A screenshot of a failed calculation must not reach the docs.
-        raise RuntimeError(f"The field calculation gave no result: {page._calculation_status.text()}")
-    page._result_table.selectRow(0)
-
-
 def calculate_corner_tensor(dialog: QWidget) -> None:
     """Take the corner Co sublattice (atom index 0) and click ``Calculate``."""
 
@@ -1206,15 +1179,6 @@ def calculate_fluorine_second_moment(dialog: QWidget) -> None:
     dialog._sample_combo.setCurrentIndex(dialog._sample_combo.findData("polycrystal"))
     dialog._distortion.setChecked(True)
     dialog._calculate_button.click()
-
-
-def save_magnetic_workspace(window: MainWindow) -> None:
-    """Calculate the field, then click ``Save Workspace`` and name it."""
-
-    page = window._magnetic_field_view
-    calculate_field(page)
-    when_modal("QInputDialog", lambda dialog: (dialog.setTextValue("CoF2 4c site"), dialog.accept()))
-    page._pin_button.click()
 
 
 def open_legacy_import(window: MainWindow) -> None:
@@ -1374,7 +1338,7 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "cof2_magnetic_field_workspace": Scene(
-        results_project, "magnetic_fields", Page(current_page, (1100, 1140)), setup=save_magnetic_workspace
+        results_project, "magnetic_fields", Page(current_page, (1100, 1140)), setup=save_magnetic_workspace("CoF2 4c site")
     ),
     # Energy barriers.
     "energy_barriers_page": Scene(results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))),
