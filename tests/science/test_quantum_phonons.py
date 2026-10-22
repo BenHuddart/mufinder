@@ -608,3 +608,19 @@ def test_n2_mu_n2_muon_correlates_with_its_nearest_nitrogens() -> None:
     assert abs(w2_entanglement_witness(calculation, MUON_ATOM_INDEX, 1)) < abs(nearest)
     # The muon and its nearest nitrogen move together, not against each other.
     assert np.trace(covariance_matrix(calculation, MUON_ATOM_INDEX, NEAREST_NITROGEN_INDEX)) > 0.0
+
+
+def test_the_muon_self_covariance_is_in_square_angstrom() -> None:
+    # Each mode adds its muon participation times its zero-point width
+    # squared, so the trace is the muon's mean-square displacement in Å².
+    calculation = _n2_mu_n2()
+    gamma = calculation.gamma_point()
+    participation = muon_mode_participations(calculation)
+
+    expected = sum(
+        share * mode_width_angstrom(frequency) ** 2
+        for share, frequency in zip(participation, gamma.frequencies_cm, strict=True)
+    )
+    trace = np.trace(covariance_matrix(calculation, MUON_ATOM_INDEX, MUON_ATOM_INDEX))
+    assert trace == pytest.approx(expected, rel=1e-6)
+    assert 0.1 < trace < 0.2
