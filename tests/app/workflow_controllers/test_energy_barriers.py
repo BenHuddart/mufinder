@@ -671,6 +671,28 @@ def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) 
     assert controller.configure_request(["missing"]) is None
 
 
+@pytest.mark.parametrize(("entered", "effective"), [(40, 41), (41, 41), (7, 7)])
+def test_energy_barriers_row_configuration_stores_the_image_count_castep_runs(
+    tmp_path: Path, entered: int, effective: int
+) -> None:
+    """``TSSEARCH_MAX_PATH_POINTS`` counts intermediate images; climbing is locked on.
+
+    With climbing on, CASTEP adds one image to an even count, so the effective
+    count is the next odd number and an odd count is kept as entered.
+    """
+
+    service = ProjectService()
+    document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    controller = _neb_controller(service, document, output_root)
+    request = controller.configure_request(["source-key"])
+    assert request is not None
+
+    controller.apply_configuration(request.keys, configure_result({"tssearch_max_path_points": entered}), {})
+
+    values = controller.row_configuration(definition, "source-key")[0]
+    assert values["tssearch_max_path_points"] == effective
+
+
 def test_energy_barriers_controller_path_preview(tmp_path: Path) -> None:
     service = ProjectService()
     document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)

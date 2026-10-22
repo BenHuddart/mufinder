@@ -88,11 +88,11 @@ def test_the_phonons_of_each_site(number: int, modes_cm: tuple[float, ...], zpe_
     assert w1_entanglement_witness(calculation) == pytest.approx(w1, abs=5e-5)
 
 
-def test_the_phonon_runs_used_a_muon_mass_the_mass_check_flags() -> None:
+def test_the_phonon_runs_used_a_muon_mass_the_mass_check_accepts() -> None:
     calculation = parse_phonon_path(FIXTURES / "GdRu2Si2_site1.phonon")
     muon = calculation.atoms[calculation.atom_index_for_species("H:mu") - 1]
 
     # The runs set SPECIES_MASS to 0.1138 amu, 0.33 % above the muon mass, so
-    # their frequencies are 0.16 % low; MuFinder's check allows 0.1 %.
+    # their frequencies are 0.16 % low; MuFinder's check allows 1 %.
     assert muon.mass_amu == pytest.approx(0.1138)
-    assert muon_mass_warning(calculation) is not None
+    assert muon_mass_warning(calculation) is None

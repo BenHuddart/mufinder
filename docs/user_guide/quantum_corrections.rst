@@ -363,8 +363,10 @@ A run can still end up with another mass: when the row's settings override
 muon mass (CASTEP restores species masses from the checkpoint on a
 continuation). CASTEP records the mass it actually used in the ``.phonon``
 header, so MuFinder compares it against the muon mass on every parsed phonon
-run. A mismatch is raised as a job warning, stored with the result, and shown
-as a banner in the analysis window. It cannot be repaired after the fact:
+run. A mass within 1 % of the muon mass is accepted: rounded values such as
+0.1138 amu, common in runs prepared by hand, shift the frequencies by less than
+0.2 %. A larger mismatch is raised as a job warning, stored with the result,
+and shown as a banner in the analysis window. It cannot be repaired after the fact:
 delete the job and its files from the Job Dashboard and run the row again.
 
 Task farming and execution targets

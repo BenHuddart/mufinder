@@ -5073,7 +5073,8 @@ class DipolarTensorDialog(QDialog):
         self._equivalent_combo.currentIndexChanged.connect(self._refresh_enabled_state)
 
         self._indices_edit = QLineEdit()
-        self._indices_edit.setPlaceholderText("0, 2, 5")
+        self._indices_edit.setPlaceholderText("1, 3, 6")
+        self._indices_edit.setToolTip("Atom numbers counted from 1 in the host's atom order")
         self._indices_edit.textChanged.connect(self._refresh_enabled_state)
 
         self._include_equivalent_sites = QCheckBox("Include equivalent muon sites")
@@ -5261,7 +5262,7 @@ class DipolarTensorDialog(QDialog):
                     self._equivalent_radio.setChecked(True)
                     return True
         if selector.kind == "indices":
-            self._indices_edit.setText(", ".join(str(value) for value in selector.values))
+            self._indices_edit.setText(", ".join(str(int(value) + 1) for value in selector.values))
             self._indices_radio.setChecked(True)
             return True
         if selector.kind == "all":
@@ -5293,8 +5294,17 @@ class DipolarTensorDialog(QDialog):
         return f"Muon site: {self._muon_site.label} at ({x:.4f}, {y:.4f}, {z:.4f})."
 
     def _parse_indices(self) -> tuple[int, ...]:
+        """Return the zero-based atom indices for the one-based numbers typed in the box.
+
+        The box counts from 1, like the magnetic-structure builder and the
+        ``Equivalent site`` labels; the selector stores zero-based indices.
+        """
+
         raw = self._indices_edit.text().replace(",", " ").split()
-        return tuple(int(value) for value in raw)
+        numbers = tuple(int(value) for value in raw)
+        if any(number < 1 for number in numbers):
+            raise ValueError("Atom indices count from 1.")
+        return tuple(number - 1 for number in numbers)
 
     def _populate_results(self, results: Sequence[Mapping[str, object]]) -> None:
         while self._result_content_layout.count():
