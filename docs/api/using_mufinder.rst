@@ -91,8 +91,8 @@ This example needs the ``scientific-backends`` extra, which installs
    python -m pip install ".[scientific-backends]"
    # or: uv sync --extra scientific-backends
 
-The script builds a simple cubic cell with ``a = 3 Å`` and one magnetic ion, a
-1 μB ferromagnet along ``c`` built with
+The script builds the conventional bcc cell of iron, ``a = 2.868 Å`` with two
+magnetic ions, as a 2.2 μB ferromagnet along ``c`` built with
 :func:`~mufinder.science.magnetic_structure.build_collinear_component` and
 :class:`~mufinder.science.magnetic_structure.AtomSelector`, and passes both to
 :func:`~mufinder.science.magnetic_fields.calculate_commensurate_fields`, the
@@ -104,17 +104,18 @@ call the Magnetic Fields page makes for a commensurate structure.
 The function returns one
 :class:`~mufinder.science.magnetic_fields.MagneticFieldResult` per muon site,
 with the dipolar, Lorentz, contact, demagnetizing and applied terms as
-Cartesian vectors in tesla, and their sum as ``total``. At the default
-:class:`~mufinder.science.magnetic_fields.MagneticFieldOptions` (no contact
-coupling, no demagnetizing field) the face-centre site reproduces the
-ferromagnet in :ref:`magnetic-fields-worked-examples`:
+Cartesian vectors in tesla, and their sum as ``total``. With no contact
+coupling and no demagnetizing field, the defaults of
+:class:`~mufinder.science.magnetic_fields.MagneticFieldOptions`, the
+octahedral site reproduces the ferromagnet in :ref:`magnetic-fields-worked-examples`:
 
 .. code-block:: text
 
-   Dipolar Bz: -0.2977 T
-   Lorentz Bz: 0.1438 T
-   Total Bz: -0.1538 T
-   |B|: 0.1538 T
+   Muon site: (0.5, 0.0, 0.0)
+   Dipolar Bz: -0.9261 T
+   Lorentz Bz: 0.7243 T
+   Total Bz: -0.2018 T
+   |B|: 0.2018 T
 
 Without ``muesr`` installed the call raises
 :class:`~mufinder.science.magnetic_fields.MagneticFieldDependencyError`.

@@ -50,12 +50,13 @@ def test_generate_muon_sites_example_is_reproducible_from_its_seed() -> None:
     assert "Random Site 1  0.6394 0.0250 0.2750" in lines
 
 
-def test_dipolar_field_example_matches_the_documented_ferromagnet() -> None:
+def test_dipolar_field_example_matches_the_documented_iron_ferromagnet() -> None:
     pytest.importorskip("muesr")
     pytest.importorskip("mulfc")
 
     lines = _run_example("dipolar_field.py")
 
-    # docs/user_guide/magnetic_fields_theory.rst, "Ferromagnet", face centre.
-    assert "Dipolar Bz: -0.2977 T" in lines
-    assert "Total Bz: -0.1538 T" in lines
+    # docs/user_guide/magnetic_fields_theory.rst, "Ferromagnet", octahedral site.
+    assert "Dipolar Bz: -0.9261 T" in lines
+    assert "Lorentz Bz: 0.7243 T" in lines
+    assert "Total Bz: -0.2018 T" in lines

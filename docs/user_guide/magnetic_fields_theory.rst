@@ -288,53 +288,65 @@ and no cell shows ``-0``. For a distribution row the magnitude is the mean
 Worked Examples
 ---------------
 
-The examples below use one magnetic ion of 1 μB in a simple cubic cell with
-``a = 3 Å`` and the default ``Calculation Settings`` (``100 x 100 x 100``
-cells, Lorentz sphere chosen by ``muesr``). Positions are fractional. Each
+The ferromagnet is bcc iron. The other examples use one magnetic ion of 1 μB in
+a simple cubic cell with ``a = 3 Å``. All use the default ``Calculation
+Settings`` (``100 x 100 x 100`` cells, Lorentz sphere chosen by ``muesr``)
+except iron, which uses ``80 x 80 x 80`` cells. Positions are fractional. Each
 number comes from the calculation and is pinned by
 ``tests/science/test_magnetic_fields.py``.
 
 Ferromagnet
 ~~~~~~~~~~~
 
-With the moment along ``c`` and ``q = 0``, the magnetisation is
-:math:`M = \mu_B / a^3`, and the Lorentz field
-:math:`\mu_0 M / 3 = \mu_0 \mu_B / (3a^3)` is 0.1439 T along ``c``. MuFinder
-reports 0.1437 T because ``muesr`` counts the ions inside a finite Lorentz
-sphere. The bulk magnetisation gives :math:`\mu_0 M = 0.4316` T. With
-``Demagnetizing field`` set to ``Sphere``, the demagnetizing term is -0.1439 T,
-and the Lorentz and demagnetizing terms sum to -0.0002 T, the finite-sphere
-difference. With ``Infinite plate`` it is -0.4316 T, and the two sum to
--0.2879 T.
+bcc iron has ``a = 2.868 Å`` with Fe at ``(0, 0, 0)`` and ``(1/2, 1/2, 1/2)``
+and 2.2 μB per Fe along ``c``. The bulk magnetisation is
+:math:`\mu_0 M = 2.174` T, so the Lorentz field :math:`\mu_0 M / 3` is 0.7246 T
+along ``c``; MuFinder reports 0.7243 T because ``muesr`` counts the ions inside
+a finite Lorentz sphere. With ``Demagnetizing field`` set to ``Sphere`` the
+demagnetizing term is -0.7246 T, and the Lorentz and demagnetizing terms sum
+to -0.0003 T, the finite-sphere difference. With ``Infinite plate`` it is
+-2.1737 T, and the two sum to -1.4494 T. The ``80 x 80 x 80`` sum keeps the
+cubic symmetry of the Lorentz sphere exactly, so field components that vanish by
+symmetry print as ``0``; at ``100 x 100 x 100`` they carry about 10\ :sup:`-7` T
+of numerical noise.
+
+The two interstitial sites of the bcc lattice have a dipolar field that depends
+on how the site's symmetry axis lies relative to the moment. Each site's field
+along ``c`` is:
 
 .. list-table::
    :header-rows: 1
 
    * - Site
-     - Dipolar ``Bz`` (T)
-     - Lorentz ``Bz`` (T)
-     - Total ``Bz`` (T)
-   * - ``(1/2, 1/2, 1/2)``
-     - 0.0000
-     - 0.1437
-     - 0.1437
-   * - ``(1/2, 1/2, 0)``
-     - -0.2977
-     - 0.1438
-     - -0.1538
-   * - ``(1/2, 0, 0)``
-     - -0.5166
-     - 0.1438
-     - -0.3728
+     - Axis along ``c`` (T)
+     - Axis along ``a`` or ``b`` (T)
+     - Mean of the equivalent sites (T)
+   * - Octahedral ``(1/2, 0, 0)`` (6b)
+     - +1.85 (2 of 6 sites)
+     - -0.93 (4 of 6)
+     - 0
+   * - Tetrahedral ``(1/2, 1/4, 0)`` (12d)
+     - -0.53 (4 of 12)
+     - +0.26 (8 of 12)
+     - 0
 
-Cubic symmetry cancels the dipolar sum at the body centre. A ``Hyperfine
-coupling`` of 0.5 T/μB adds a contact field of 0.5 T along the moment there, for
-a total of 0.6437 T.
+The dipolar tensor of each site is traceless and uniaxial. At the octahedral
+site ``(1/2, 0, 0)`` it is ``diag(0.8419, -0.4210, -0.4210)`` T/μB, with its axis
+along ``a``, and at the tetrahedral site ``(1/2, 1/4, 0)`` it is
+``diag(0.1194, -0.2387, 0.1194)`` T/μB, with its axis along ``b``. Multiplied by
+the 2.2 μB moment and the ``c`` component of the moment direction, the ``zz``
+element gives the field in the table. A muon that visits every equivalent site
+of a sublattice sees none of it on average: the mean of the dipolar field over
+the equivalent sites is zero.
 
-The dipolar tensor at the face centre ``(1/2, 1/2, 0)`` is
-``diag(0.1488, 0.1488, -0.2977)`` T/μB and at the edge centre ``(1/2, 0, 0)``
-is ``diag(1.0332, -0.5166, -0.5166)`` T/μB. Each is traceless, and its ``zz``
-element times 1 μB is the ferromagnet's dipolar field at that site.
+A ``Hyperfine coupling`` of -0.5045455 T/μB gives a contact field of -1.11 T,
+the value measured at low temperature, because ``muesr`` takes the contact field
+from the moments of the muon's two nearest Fe. It points against the moment. At
+the octahedral site with its axis along ``a``, the dipolar (-0.9261 T), Lorentz
+(+0.7243 T) and contact (-1.1100 T) terms sum to -1.3118 T with no demagnetizing
+field, and to -2.0364 T with ``Sphere``. A ``Measured bulk magnetisation`` of
+2.0 μB per Fe changes the demagnetizing term of a sphere to -0.6587 T and that
+total to -1.9705 T.
 
 A-type antiferromagnet
 ~~~~~~~~~~~~~~~~~~~~~~
