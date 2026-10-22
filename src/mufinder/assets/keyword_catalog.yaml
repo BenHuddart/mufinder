@@ -5,6 +5,7 @@ notes:
   - Do not vendor or commit `castep_keywords.json` or generated copies of it into this repository.
   - If support is unclear, extend this catalog conservatively and avoid inventing syntax.
   - Optional `gui` metadata is used to drive workflow-aware parameter presentation in the PySide UI.
+  - The electronic minimiser keyword `ELEC_METHOD` is not implemented; the GdRu2Si2 worked example's real inputs set it to `EDFT`.
 
 keywords:
   - name: LATTICE_CART

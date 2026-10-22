@@ -326,8 +326,9 @@ Hopping between 4c sites
 
 ``Generate Paths`` with the 4c site as both endpoints lists the
 symmetry-distinct hops between neighbouring 4c sites (see
-:doc:`/user_guide/energy_barriers`). The NEB band shown for the first hop,
-along c, is illustrative: its 0.62 eV barrier is not a calculated value.
+:doc:`/user_guide/energy_barriers`). The NEB band of a hop, and how its barrier
+compares with the muon's zero-point energy, are followed through with real
+CASTEP outputs in :doc:`/user_guide/examples/gdru2si2`.
 
 .. figure:: ../../_generated/screenshots/energy_barriers_page.webp
    :alt: The Energy Barriers page with the 4c site chosen as both endpoints
