@@ -31,8 +31,8 @@ analysis reproduces the published numbers:
 - each positive-muon start relaxes to one of the three clusters of the
   MuFinder paper (``POSITIVE_SITES``): the 4c F-mu-F site with the paper's
   displacements, and De Renzi's rejected T_A and T_F candidates 0.34 and
-  0.82 eV higher; the muonium campaign has random starts of its own, each of
-  which relaxes to Möller's interstitial site or to T_A (``MUONIUM_SITES``);
+  0.82 eV higher; the same starts also relax as muonium, each to the nearer
+  of Möller's interstitial site and T_A (``MUONIUM_SITES``);
 - the phonon run of the 4c site is a linear F-mu-F complex embedded in the
   supercell with Möller's mode frequencies (``FMUF_MODES_CM``);
 - the NEB band of one 4c to 4c hop is illustrative (``NEB_BARRIER_EV``).
@@ -80,7 +80,6 @@ from collections.abc import Callable
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 import numpy as np
 from PySide6.QtWidgets import QApplication, QWidget
@@ -449,14 +448,6 @@ MUONIUM_SITES: dict[str, tuple[tuple[float, float, float], float, float]] = {
     "T_A": ((0.5, 0.0, 0.25), 0.27, 0.03),
 }
 MUONIUM_NEIGHBOUR_RADIUS = 2.4
-MUONIUM_RANDOM_STARTS = {
-    "selection_mode": "count",
-    "count": RANDOM_STARTS,
-    "min_muon_atom": 1.0,
-    "max_attempts": 50000,
-    "seed": "11",
-    "include_symmetry_equivalents": False,
-}
 MUONIUM_ENERGY_EV = -44989.4537
 
 # The F-mu-F phonon of the 4c site (Möller et al. 2013): the symmetric stretch,
@@ -689,9 +680,8 @@ def source_energies(window: MainWindow, job: Any) -> tuple[float, float]:
 
     controller = window._energy_barriers_controller
     _definition, key = controller.definition_and_key_for_job(job)
-    reactant, product = str(key).split(":")[:2]
-    sites = window._document.sites
-    return sites[UUID(reactant)].total_energy_eV, sites[UUID(product)].total_energy_eV
+    path = next(candidate for candidate in controller.candidates() if candidate.key == key)
+    return path.reactant.total_energy_eV, path.product.total_energy_eV
 
 
 def _neb_outputs(window: MainWindow) -> Outputs:
@@ -789,13 +779,6 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
 
     app = QApplication.instance()
     service, document = _converged_fixture(directory)
-    positive_starts = [site.id for site in document.sites.values()]
-    # The muonium campaign starts from random positions of its own. A
-    # generated site records one relaxation, the last to finish, and Quantum
-    # Corrections, Energy Barriers and Magnetic Fields follow the site, so a
-    # start relaxed in both charge states would reach them in one only.
-    service.generate_candidate_sites(document, method="random", parameters=MUONIUM_RANDOM_STARTS)
-    muonium_starts = [site.id for site in document.sites.values() if site.id not in positive_starts]
     document.project.magnetic_structure = cof2_magnetic_model().to_json()
     document.ui_state["magnetic_field_form"] = {"demag_shape": "none"}
     service.save_project(document)
@@ -826,14 +809,11 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
             window._uep_view._run_local_selected_rows()
         run_uep_analysis(window, UEP_ROW)
 
-        # The positive-muon and the muonium starts, each in the Generation
-        # table's order, as relaxations in the 2x2x2 supercell.
+        # Every start, in the Generation table's order, staged in both charge
+        # states as relaxations in the 2x2x2 supercell.
         relaxations = window._muon_relaxation_view
-        for charge_state, starts in ((POSITIVE_MUON_CHARGE_STATE, positive_starts), (MUONIUM_CHARGE_STATE, muonium_starts)):
-            choice = "_positive" if charge_state == POSITIVE_MUON_CHARGE_STATE else "_muonium"
-            sites = sorted((document.sites[site_id] for site_id in starts), key=lambda site: window._natural_label_sort_key(site.label))
-            when_modal("MuonChargeStateDialog", lambda dialog, choice=choice: (getattr(dialog, choice).setChecked(True), dialog.accept()))
-            window._on_create_muon_relaxation_jobs_requested([str(site.id) for site in sites])
+        when_modal("MuonChargeStateDialog", lambda dialog: (dialog._both.setChecked(True), dialog.accept()))
+        open_charge_state_dialog(window)
         for entry in list(relaxations._row_entries()):
             relaxations.set_row_supercell(entry.row_id, [list(row) for row in SUPERCELL_2X2X2])
         # Muonium rows are spin-polarised by default; the positive muon's are ticked here.
@@ -858,7 +838,7 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
             for candidate in quantum.candidates()
             if charge_state_for_job(candidate.job) == POSITIVE_MUON_CHARGE_STATE
         ]
-        lowest = min(positive, key=lambda candidate: candidate.site.total_energy_eV)
+        lowest = min(positive, key=lambda candidate: candidate.total_energy_eV)
         with synthetic_runs(window, _phonon_outputs):
             quantum.submit([lowest.key], target="local")
 
@@ -870,11 +850,8 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
         # Energy barriers: the 4c site to itself, and an NEB band along the first hop.
         window._set_active_route("energy_barriers")
         barriers = window._energy_barriers_controller
-        endpoint = next(
-            row.key for row in barriers.endpoint_rows() if UUID(row.key) == lowest.site.id
-        )
-        barriers.select_endpoints(endpoint, endpoint)
-        barriers.generate_paths(endpoint, endpoint)
+        barriers.select_endpoints(lowest.key, lowest.key)
+        barriers.generate_paths(lowest.key, lowest.key)
         with synthetic_runs(window, _neb_outputs(window)):
             barriers.submit([barriers.candidates()[0].key], target="local")
         window._save_project()
@@ -1170,10 +1147,10 @@ def open_quantum_configuration(window: MainWindow) -> None:
             for candidate in window._quantum_corrections_controller.candidates()
             if charge_state_for_job(candidate.job) == POSITIVE_MUON_CHARGE_STATE
         ),
-        key=lambda candidate: candidate.site.total_energy_eV,
+        key=lambda candidate: candidate.total_energy_eV,
     )
     # The lowest site's row ran; the cluster 2 representative is the next above it.
-    cluster_2 = next(candidate for candidate in positive if candidate.site.total_energy_eV > positive[0].site.total_energy_eV + 0.1)
+    cluster_2 = next(candidate for candidate in positive if candidate.total_energy_eV > positive[0].total_energy_eV + 0.1)
     window._on_configure_quantum_corrections_source([cluster_2.key])
 
 
