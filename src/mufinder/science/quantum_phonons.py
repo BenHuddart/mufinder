@@ -368,7 +368,7 @@ def covariance_matrix(
     *,
     temperature_K: float = 0.0,
 ) -> np.ndarray:
-    """Return the 3x3 displacement covariance tensor for two one-based atoms."""
+    """Return the 3x3 displacement covariance tensor, in Å², for two one-based atoms."""
 
     atom_a = _atom_by_index(calculation, atom_a_index)
     atom_b = _atom_by_index(calculation, atom_b_index)
@@ -571,7 +571,8 @@ def _weighted_displacement_vectors(
         return np.zeros_like(vectors)
     angular = 2.0 * pi * LIGHT_SPEED_M_S * 100.0 * frequencies
     factor = np.zeros_like(frequencies, dtype=complex)
-    factor[positive] = np.sqrt(HBAR_J_S / (2.0 * ATOMIC_MASS_KG * atom.mass_amu * angular[positive]))
+    # The zero-point amplitude sqrt(hbar / (2 m omega)) of each mode, in Å.
+    factor[positive] = 1e10 * np.sqrt(HBAR_J_S / (2.0 * ATOMIC_MASS_KG * atom.mass_amu * angular[positive]))
     if temperature_K > 0.0:
         thermal = np.ones_like(frequencies, dtype=float)
         argument = HBAR_J_S * angular[positive] / (2.0 * BOLTZMANN_J_K * temperature_K)

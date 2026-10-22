@@ -263,7 +263,7 @@ def bfgs_log_text(
 
 
 # Atomic masses in AMU, as CASTEP writes them into a ``.phonon`` header.
-_MASSES_AMU = {"Co": 58.933194, "F": 18.998403163, "Si": 28.0855}
+_MASSES_AMU = {"Co": 58.933194, "F": 18.998403163, "N": 14.0067, "Si": 28.0855}
 
 
 def _phonon_header(cell: Any, modes: Sequence[tuple[float, np.ndarray]]) -> list[str]:
@@ -377,6 +377,222 @@ def triatomic_phonon_text(
             vector[atom] = direction
             host_vectors.append(vector)
     modes += list(zip(_host_band(len(host_vectors), host_top_cm), host_vectors, strict=True))
+    modes.sort(key=lambda entry: entry[0])
+    return "\n".join(_phonon_header(cell, modes)) + "\n"
+
+
+def _muon_frame(cell: Any) -> tuple[np.ndarray, np.ndarray, list[str], int, np.ndarray]:
+    """The lattice, fractional positions, species, muon index and minimum-image vectors (Å) from the muon."""
+
+    lattice = np.asarray(cell.lattice_vectors, dtype=float)
+    fractional = np.asarray(cell.fractional_positions, dtype=float)
+    species = list(cell.species)
+    muon = species.index("H:mu")
+    vectors = ((fractional - fractional[muon] + 0.5) % 1.0 - 0.5) @ lattice
+    return lattice, fractional, species, muon, vectors
+
+
+def _diatomic_molecules(lattice: np.ndarray, fractional: np.ndarray, atoms: Sequence[int]) -> list[tuple[int, int]]:
+    """``atoms`` paired with their nearest neighbours into molecules; a ``ValueError`` if they do not pair."""
+
+    pairs: set[tuple[int, int]] = set()
+    for atom in atoms:
+        others = [other for other in atoms if other != atom]
+        separation = (fractional[others] - fractional[atom] + 0.5) % 1.0 - 0.5
+        partner = others[int(np.argmin(np.linalg.norm(separation @ lattice, axis=1)))]
+        pairs.add((min(atom, partner), max(atom, partner)))
+    if 2 * len(pairs) != len(atoms):
+        raise ValueError("The atoms other than the muon do not pair into diatomic molecules")
+    return sorted(pairs)
+
+
+def _molecule_atoms(lattice: np.ndarray, fractional: np.ndarray, vectors: np.ndarray, molecule: tuple[int, int]) -> np.ndarray:
+    """The two atoms of ``molecule`` as vectors (Å) from the muon, the second its own nearest image of the first."""
+
+    first, second = molecule
+    bond = ((fractional[second] - fractional[first] + 0.5) % 1.0 - 0.5) @ lattice
+    return np.array([vectors[first], vectors[first] + bond])
+
+
+def _bridged_pair(cell: Any) -> tuple[np.ndarray, np.ndarray, list[str], int, np.ndarray, list[tuple[int, int]], list[tuple[int, int]]]:
+    """The muon frame, every molecule, and the two molecules whose centres are nearest the muon.
+
+    Each of the two is ordered (near atom, far atom) from the muon.
+    """
+
+    lattice, fractional, species, muon, vectors = _muon_frame(cell)
+    molecules = _diatomic_molecules(lattice, fractional, [atom for atom in range(len(species)) if atom != muon])
+    centres = [np.linalg.norm(_molecule_atoms(lattice, fractional, vectors, molecule).mean(axis=0)) for molecule in molecules]
+    nearest = [molecules[index] for index in np.argsort(centres, kind="stable")[:2]]
+    ordered = []
+    for first, second in nearest:
+        near_first = np.linalg.norm(vectors[first]) <= np.linalg.norm(vectors[second])
+        ordered.append((first, second) if near_first else (second, first))
+    return lattice, fractional, species, muon, vectors, molecules, ordered
+
+
+def bridged_diatomic_cell(
+    cell: Any,
+    *,
+    muon_bond: float,
+    molecule_bond: float,
+    neighbour_shift: float,
+    neighbour_radius: float,
+) -> list[list[float]]:
+    """The fractional positions of ``cell`` with its muon bridging the two molecules nearest it.
+
+    Every atom but the muon (``H:mu``) belongs to a diatomic molecule, its
+    nearest neighbour. The two molecules whose centres are nearest the muon
+    turn to point at it, along the line from the muon to their centres: the
+    near atom ``muon_bond`` Å from the muon and the far atom ``molecule_bond``
+    Å beyond it. Every other molecule whose centre lies within
+    ``neighbour_radius`` Å of the muon moves rigidly ``neighbour_shift`` Å
+    towards it. The muon and every other atom stay where they are.
+    """
+
+    lattice, fractional, _species, muon, vectors, molecules, bridged = _bridged_pair(cell)
+    moved = np.array(fractional)
+
+    def place(atom: int, vector: np.ndarray) -> None:
+        moved[atom] = (fractional[muon] + np.linalg.solve(lattice.T, vector)) % 1.0
+
+    bridged_atoms = {atom for pair in bridged for atom in pair}
+    for near, far in bridged:
+        centre = _molecule_atoms(lattice, fractional, vectors, (near, far)).mean(axis=0)
+        direction = centre / np.linalg.norm(centre)
+        place(near, direction * muon_bond)
+        place(far, direction * (muon_bond + molecule_bond))
+    for molecule in molecules:
+        if bridged_atoms.intersection(molecule):
+            continue
+        atoms = _molecule_atoms(lattice, fractional, vectors, molecule)
+        centre = atoms.mean(axis=0)
+        distance = float(np.linalg.norm(centre))
+        if distance < neighbour_radius:
+            for atom, vector in zip(molecule, atoms - neighbour_shift * centre / distance, strict=True):
+                place(atom, vector)
+    return moved.tolist()
+
+
+# The spring constants, in eV/Å², of the five-atom [N2-mu-N2]+ chain model in
+# tests/support/phonon_fixtures.py (N2_MU_N2_FORCE_CONSTANTS), tuned there to
+# the harmonic numbers of Gomilšek et al., Commun. Phys. 6, 142 (2023).
+# tests/docs/test_docs_synthetic.py keeps the two equal.
+N2_MU_N2_SPRINGS: dict[str, float] = {
+    "muon_nitrogen_stretch": 1.612,
+    "muon_nitrogen_bend": 2.227,
+    "nitrogen_stretch": 179.2,
+    "nitrogen_bend": 0.167,
+    "nitrogen_lattice": 0.33,
+}
+
+
+def _chain_block_modes(masses: np.ndarray, muon_spring: float, molecule_spring: float, tether: float) -> tuple[np.ndarray, np.ndarray]:
+    """Frequencies (cm^-1) and mass-weighted eigenvectors (columns) of one Cartesian block of the chain.
+
+    The chain is far atom, near atom, muon, near atom, far atom: a muon spring
+    to each near atom, a molecule spring in each molecule, and a tether of
+    every non-muon atom to the lattice. Each eigenvector's muon component (or
+    its largest one, where the muon is at rest) is made positive.
+    """
+
+    from mufinder.science.quantum_phonons import ATOMIC_MASS_KG, ELEMENTARY_CHARGE_C, LIGHT_SPEED_M_S
+
+    hessian = np.zeros((5, 5))
+    for i, j, spring in ((0, 1, molecule_spring), (1, 2, muon_spring), (2, 3, muon_spring), (3, 4, molecule_spring)):
+        hessian[[i, j], [i, j]] += spring
+        hessian[i, j] -= spring
+        hessian[j, i] -= spring
+    for atom in (0, 1, 3, 4):
+        hessian[atom, atom] += tether
+    inverse_root = 1.0 / np.sqrt(masses)
+    eigenvalues, eigenvectors = np.linalg.eigh(hessian * np.outer(inverse_root, inverse_root))
+    angular = np.sqrt(np.clip(eigenvalues, 0.0, None)) * np.sqrt(ELEMENTARY_CHARGE_C / (1e-20 * ATOMIC_MASS_KG))
+    for column in range(5):
+        vector = eigenvectors[:, column]
+        pivot = 2 if abs(vector[2]) > 1e-9 else int(np.argmax(np.abs(vector)))
+        if vector[pivot] < 0.0:
+            eigenvectors[:, column] = -vector
+    return angular / (2.0 * np.pi * LIGHT_SPEED_M_S * 100.0), eigenvectors
+
+
+def _perpendicular_pair(axis: np.ndarray, lattice: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Two unit vectors normal to ``axis`` and each other: the first the lattice vector most normal to it, made normal."""
+
+    references = lattice / np.linalg.norm(lattice, axis=1)[:, None]
+    reference = references[int(np.argmin(np.abs(references @ axis)))]
+    first = reference - np.dot(reference, axis) * axis
+    first /= np.linalg.norm(first)
+    return first, np.cross(axis, first)
+
+
+def bridged_diatomic_phonon_text(
+    cell: Any,
+    *,
+    stretch_band_cm: tuple[float, float],
+    libration_band_cm: tuple[float, float],
+    translation_band_cm: tuple[float, float],
+    springs: dict[str, float] = N2_MU_N2_SPRINGS,
+) -> str:
+    """A Gamma-only CASTEP ``.phonon`` file for a muon bridging two diatomic molecules in ``cell``.
+
+    The complex is the muon and the two molecules whose centres are nearest
+    it, which must share a species: a five-atom chain along the line through
+    their near atoms. Its fifteen modes are the chain spring model of
+    ``springs``, the constants of ``N2_MU_N2_SPRINGS`` by default, solved in
+    three Cartesian blocks: along the chain with the stretch springs, and
+    across it, along the two normals of :func:`_perpendicular_pair`, with the
+    bend springs. Every other molecule vibrates on its own: its bond
+    stretch in ``stretch_band_cm``, its two librations in
+    ``libration_band_cm`` and its three translations in
+    ``translation_band_cm``, each band spread evenly over the molecules in
+    atom order. The eigenvectors are orthonormal by construction.
+    """
+
+    from mufinder.domain.constants import MUON_MASS_AMU
+
+    lattice, fractional, species, muon, vectors, molecules, bridged = _bridged_pair(cell)
+    count = len(species)
+    (near_a, far_a), (near_b, far_b) = bridged
+    if len({species[atom] for atom in (near_a, far_a, near_b, far_b)}) != 1:
+        raise ValueError("The two molecules the muon bridges must share a species")
+    mass = _MASSES_AMU[species[near_a]]
+    chain = (far_a, near_a, muon, near_b, far_b)
+    masses = np.array([mass, mass, MUON_MASS_AMU, mass, mass])
+    axis = vectors[near_b] - vectors[near_a]
+    axis /= np.linalg.norm(axis)
+    across = _perpendicular_pair(axis, lattice)
+
+    def vector_of(components: dict[int, np.ndarray]) -> np.ndarray:
+        vector = np.zeros((count, 3))
+        for atom, value in components.items():
+            vector[atom] = value
+        return vector
+
+    modes: list[tuple[float, np.ndarray]] = []
+    blocks = (
+        (axis, springs["muon_nitrogen_stretch"], springs["nitrogen_stretch"]),
+        (across[0], springs["muon_nitrogen_bend"], springs["nitrogen_bend"]),
+        (across[1], springs["muon_nitrogen_bend"], springs["nitrogen_bend"]),
+    )
+    for direction, muon_spring, molecule_spring in blocks:
+        frequencies, eigenvectors = _chain_block_modes(masses, muon_spring, molecule_spring, springs["nitrogen_lattice"])
+        for frequency, column in zip(frequencies, eigenvectors.T, strict=True):
+            modes.append((float(frequency), vector_of({atom: value * direction for atom, value in zip(chain, column, strict=True)})))
+
+    others = [molecule for molecule in molecules if not set(molecule) & set(chain)]
+    stretch = np.linspace(*stretch_band_cm, len(others))
+    libration = np.linspace(*libration_band_cm, 2 * len(others))
+    translation = np.linspace(*translation_band_cm, 3 * len(others))
+    half = 1.0 / np.sqrt(2.0)
+    for index, (first, second) in enumerate(others):
+        bond = np.diff(_molecule_atoms(lattice, fractional, vectors, (first, second)), axis=0)[0]
+        bond /= np.linalg.norm(bond)
+        modes.append((float(stretch[index]), vector_of({first: -half * bond, second: half * bond})))
+        for turn, normal in enumerate(_perpendicular_pair(bond, lattice)):
+            modes.append((float(libration[2 * index + turn]), vector_of({first: -half * normal, second: half * normal})))
+        for shift, direction in enumerate(np.eye(3)):
+            modes.append((float(translation[3 * index + shift]), vector_of({first: half * direction, second: half * direction})))
     modes.sort(key=lambda entry: entry[0])
     return "\n".join(_phonon_header(cell, modes)) + "\n"
 
