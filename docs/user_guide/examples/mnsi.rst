@@ -110,12 +110,12 @@ and lists one row per site, showing the mean ``|B|`` of the distribution.
          0.154303 T, and the three convergence checks of the selected row.
 
    The four 4a sites of one magnetic domain, computed by MuFinder from the model
-   above. Site I has a mean |B| of 0.0879 T. The other three have a mean of
+   above. Site I has a mean field magnitude of 0.0879 T. The other three have a mean of
    0.1543 T. The selected row's convergence checks are listed under the table.
 
 Site I, on the axis, sees a circle: its field has the same magnitude at every
 phase, 87.9 mT, an isolated line. Sites II to IV see an ellipse, so their
-|B| runs between two limits, 90.3 mT and 206.8 mT, and spends most of its time
+field magnitude runs between two limits, 90.3 mT and 206.8 mT, and spends most of its time
 near them.
 
 .. figure:: ../../_generated/screenshots/mnsi_field_distribution.webp
@@ -244,9 +244,15 @@ summing any number from one to six changes the edges by 0.3 mT at most.
 References
 ----------
 
-- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014),
+- A. Amato, P. Dalmas de Réotier, D. Andreica, A. Yaouanc, A. Suter, G.
+  Lapertot, I. M. Pop, E. Morenzoni, P. Bonfà, F. Bernardini and R. De Renzi,
+  Understanding the μSR spectra of MnSi without magnetic polarons, Phys. Rev.
+  B **89**, 184425 (2014),
   https://doi.org/10.1103/PhysRevB.89.184425.
-- P. Dalmas de Réotier *et al.*, Phys. Rev. B **93**, 144419 (2016),
+- P. Dalmas de Réotier, A. Maisuradze, A. Yaouanc, B. Roessli, A. Amato, D.
+  Andreica and G. Lapertot, Determination of the zero-field magnetic structure
+  of the helimagnet MnSi at low temperature, Phys. Rev. B **93**, 144419 (2016),
   https://doi.org/10.1103/PhysRevB.93.144419.
-- Y. Ishikawa *et al.*, Solid State Commun. **19** (1976),
+- Y. Ishikawa, K. Tajima, D. Bloch and M. Roth, Helical spin structure in
+  manganese silicide MnSi, Solid State Commun. **19**, 525 (1976),
   https://doi.org/10.1016/0038-1098(76)90057-0.
