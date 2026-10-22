@@ -234,9 +234,14 @@ transverse-field measurements, -0.9276 mol/emu, is -0.518 T/μB for a moment of
 to IV, about 5 mT above the predicted edges. The calculation above uses
 -0.505 T/μB, 2.5 % smaller, which puts all three edges within 0.3 mT of the
 predicted ones. This is one parameter fitted to three numbers, so the
-agreement of the edges is partly by construction. What is not tuned is the
-shape: the continuum edges depend on the dipolar sum, the helix sense and the
-geometry, which the coupling shifts but does not change. The calculation
+agreement of the edges is partly by construction. The coupling does more than
+move the continuum: the contact field at the muon rotates with the helix
+phase like the dipolar field, so it changes the semi-axes of the ellipse, and
+with it the width. Without the contact term the continuum runs from 47.8 to
+104.4 mT, 56.6 mT wide; with it, from 90.3 to 206.8 mT, 116.5 mT wide. What
+the coupling does not change is the topology, which the dipolar sum, the
+helix sense and the geometry fix: a circle at site I, so an isolated line, and
+an ellipse at sites II to IV, so a two-horned continuum. The calculation
 sums MuFinder's default of two nearest moments, which is not a setting on the
 page, while the literature sums three; the three nearest Mn lie in one shell, and
 summing any number from one to six changes the edges by 0.3 mT at most.
