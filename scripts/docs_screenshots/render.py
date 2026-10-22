@@ -42,7 +42,7 @@ for _variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONF
     os.environ[_variable] = str(_SCRATCH / _variable.lower())
 
 import numpy as np  # noqa: E402
-from PySide6.QtCore import QEvent, QTimer  # noqa: E402
+from PySide6.QtCore import QEvent, QRect, QTimer  # noqa: E402
 from PySide6.QtGui import QImage, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog, QDockWidget, QGroupBox, QWidget  # noqa: E402
 
@@ -163,11 +163,12 @@ _IMAGE_FORMAT = "WEBP"
 _LOSSLESS_QUALITY = 100
 
 
-def save(widget: QWidget, path: Path) -> None:
-    """Grab ``widget`` once everything has settled and write it to ``path`` as lossless WebP."""
+def save(widget: QWidget, path: Path, rect: QRect | None = None) -> None:
+    """Grab ``widget`` (or its ``rect``) once everything has settled and write it to ``path`` as lossless WebP."""
 
     settle(QApplication.instance())
-    if not widget.grab().save(str(path), _IMAGE_FORMAT, _LOSSLESS_QUALITY):
+    pixmap = widget.grab() if rect is None else widget.grab(rect)
+    if not pixmap.save(str(path), _IMAGE_FORMAT, _LOSSLESS_QUALITY):
         raise RuntimeError(f"Could not write {path}")
     print(f"wrote {path}")
 
@@ -408,8 +409,9 @@ class Dialog:
     kind: str = "QDialog"
     size: tuple[int, int] | None = None
     prepare: WidgetStep | None = None
-    # Grab this part of the dialog (a panel, a card) instead of all of it.
-    region: Callable[[QDialog], QWidget] | None = None
+    # Grab this part of the dialog instead of all of it: a child widget (a
+    # panel, a card) or a rectangle of the dialog (a row of a layout).
+    region: Callable[[QDialog], QWidget | QRect] | None = None
 
 
 @dataclass(frozen=True)
@@ -538,7 +540,11 @@ def capture_modal(app: QApplication, window: MainWindow, target: Dialog, path: P
                 dialog.resize(*target.size)
             if target.prepare is not None:
                 target.prepare(dialog)
-            save(dialog if target.region is None else target.region(dialog), path)
+            region = None if target.region is None else target.region(dialog)
+            if isinstance(region, QRect):
+                save(dialog, path, region)
+            else:
+                save(dialog if region is None else region, path)
             captured.append(str(path))
         finally:
             dialog.reject()
@@ -627,6 +633,32 @@ def render(app: QApplication, scene: Scene, path: Path) -> None:
 #
 # Steps more than one example uses. A step only one example needs lives in
 # that example's module.
+
+
+def select_all_sites(page: QWidget) -> None:
+    """Widen the preview and select every generated site, which marks them in it."""
+
+    from PySide6.QtWidgets import QSplitter
+
+    page.findChild(QSplitter).setSizes([520, 640])
+    page._site_table.selectAll()
+    settle(QApplication.instance())
+    frame_viewers(page)
+
+
+def cluster_and_pin(window: MainWindow, charge_state: str, name: str) -> None:
+    """Select every row of a charge state's tab, create a workspace, cluster it and pin it."""
+
+    relaxations = window._muon_relaxation_view
+    window._set_active_route("muon_relaxations")
+    relaxations._charge_tabs.setCurrentWidget(relaxations._table_for_charge_state(charge_state))
+    relaxations._active_table().selectAll()
+    when_modal("QInputDialog", lambda dialog: (dialog.setTextValue(name), dialog.accept()))
+    relaxations._create_analysis_button.click()
+    workspace_id = str(window._relaxation_analysis_workspaces()[-1]["id"])
+    when_modal("RelaxationClusteringDialog", lambda dialog: dialog._apply_button.click())
+    window._relaxation_analysis_view._open_clustering(workspace_id)
+    window._on_muon_sites_pin_requested(workspace_id)
 
 
 def frame_viewers(widget: QWidget) -> None:

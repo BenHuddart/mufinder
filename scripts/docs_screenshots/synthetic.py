@@ -18,8 +18,6 @@ from typing import Any
 
 import numpy as np
 
-BOHR_ANG = 0.529177210903
-HARTREE_EV = 27.211386245988
 
 _RUN_STARTED = " Run started: Mon, 12 Oct 2026 09:14:02 +0100\n"
 
@@ -528,31 +526,6 @@ def uep_castep_text(
         "Finalisation time   =      0.04 s",
         f"Total time          = {wall_time:9.2f} s",
     ]
-    return "\n".join(lines) + "\n"
-
-
-def ts_text(lattice: np.ndarray, species: list[str], images: list[tuple[str, float, float, np.ndarray]]) -> str:
-    """A CASTEP ``.ts`` file in atomic units: one REA, the TST images and one PRO block."""
-
-    def number(value: float) -> str:
-        mantissa, exponent = f"{value:.8E}".split("E")
-        return f"{mantissa}E{int(exponent):+04d}".rjust(18)
-
-    def row(values: Any) -> str:
-        return "".join(f"   {number(float(value))}" for value in values)
-
-    lines = [" TSTYPE TSConfirmation"]
-    for tag, coordinate, energy_ev, cartesian in images:
-        lines.append(f" {tag:<3} {1:4d}   {number(coordinate)}")
-        energy = energy_ev / HARTREE_EV
-        lines.append(" " * 9 + row((energy, energy)) + " " * 21 + "  <-- E")
-        lines.extend(" " * 9 + row(vector / BOHR_ANG) + "  <-- h" for vector in lattice)
-        lines.extend(
-            f" {symbol:<8} {1:4d}" + row(position / BOHR_ANG) + "  <-- R"
-            for symbol, position in zip(species, cartesian, strict=True)
-        )
-        lines.extend(f" {symbol:<8} {1:4d}" + row((0.0, 0.0, 0.0)) + "  <-- F" for symbol in species)
-        lines.append("  ")
     return "\n".join(lines) + "\n"
 
 

@@ -11,10 +11,10 @@ from types import ModuleType
 
 # The render module configures Qt and VTK, so it is imported before them.
 from .render import Scene
-from .examples import cof2, fe, mnsi
+from .examples import cof2, fe, gdru2si2, mnsi
 
 EXAMPLES: dict[str, ModuleType] = {
-    module.__name__.rsplit(".", 1)[-1]: module for module in (cof2, fe, mnsi)
+    module.__name__.rsplit(".", 1)[-1]: module for module in (cof2, fe, mnsi, gdru2si2)
 }
 
 
