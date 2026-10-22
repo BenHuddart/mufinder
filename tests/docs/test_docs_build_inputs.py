@@ -28,6 +28,13 @@ _DOI = re.compile(r"10\.\d{4,9}/[^\s`<>]+")
 # Dropping one of these from its page loses the attribution for a method
 # MuFinder implements; adding a new citation to a page means adding it here.
 CITED_DOIS: dict[str, tuple[str, ...]] = {
+    "user_guide/examples/cof2.rst": (
+        "10.1107/S0567740871005466",
+        "10.1103/PhysRev.137.A982",
+        "10.1103/PhysRevB.30.186",
+        "10.1103/PhysRevB.87.121108",
+        "10.1016/j.cpc.2022.108488",
+    ),
     "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/magnetic_fields.rst": (
         "10.1063/1.1703091",

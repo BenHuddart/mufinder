@@ -41,10 +41,11 @@ The host-structure panel
 ------------------------
 
 .. figure:: ../_generated/screenshots/host_structure_page.webp
-   :alt: The Host Structure panel with rutile TiO2 loaded, its atom table and
-         its 3D view.
+   :alt: The Host Structure panel with CoF2 loaded, its atom table with
+         antiparallel Co spins and its 3D view down a.
 
-   The ``Host Structure`` panel with rutile TiO2 loaded.
+   The ``Host Structure`` panel with CoF₂ loaded, its two Co carrying spins of
+   +3 and −3 ħ/2.
 
 - ``Active host structure:`` switches between imported host structures.
 - The atom table and the 3D viewer sit side by side in a resizable splitter.

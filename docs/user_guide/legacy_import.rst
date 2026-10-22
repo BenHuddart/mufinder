@@ -44,10 +44,10 @@ The import dialog
 -----------------
 
 .. figure:: ../_generated/screenshots/legacy_import_dialog.webp
-   :alt: The Import Legacy Relaxations dialog listing three silicon muon runs, two
+   :alt: The Import Legacy Relaxations dialog listing three CoF2 muon runs, two
          converged and ticked and one completed but unconverged.
 
-   A hand-authored legacy folder of three silicon muon relaxations.
+   A hand-authored legacy folder of three CoF₂ positive-muon relaxations.
 
 The dialog lists each detected run with the columns ``Import``, ``Site``,
 ``Charge``, ``Status``, ``Supercell``, ``Energy (eV)``, and ``Notes``. Converged

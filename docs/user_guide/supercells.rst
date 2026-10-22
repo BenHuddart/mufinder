@@ -40,7 +40,7 @@ The editor
 ----------
 
 .. figure:: ../_generated/screenshots/supercell_editor.webp
-   :alt: The Supercell Editor with a saved 2x2x2 rutile supercell selected and
+   :alt: The Supercell Editor with a saved 2x2x2 CoF2 supercell selected and
          previewed.
 
    The editor with a saved 2x2x2 supercell selected and its 48-atom preview.
@@ -60,10 +60,10 @@ Suggesting a supercell
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. figure:: ../_generated/screenshots/supercell_suggestions.webp
-   :alt: The supercell suggestions for rutile TiO2: three diagonal cells, the
-         2x2x4 cell highlighted.
+   :alt: The supercell suggestions for CoF2: three diagonal cells, the
+         3x3x3 cell highlighted.
 
-   ``Suggest…`` for rutile TiO2, where no cell under 200 atoms reaches 10 Å.
+   ``Suggest…`` for CoF₂, where no cell under 200 atoms reaches 10 Å.
 
 ``Suggest…`` proposes diagonal supercells ``(n₁, n₂, n₃)`` for the active
 host. It lists cells whose minimum periodic-image distance is at least 8 Å,

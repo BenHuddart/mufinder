@@ -136,12 +136,14 @@ The workflow page
 -----------------
 
 .. figure:: ../_generated/screenshots/quantum_corrections_page.webp
-   :alt: The Quantum Corrections page with two pinned sites, one with a completed phonon
-         job and one ready to submit, and one completed result row showing the muon
-         ZPE, three muon-mode frequencies, their widths and the w1 witness.
+   :alt: The Quantum Corrections page with the pinned CoF2 sites, the 4c site's
+         phonon job completed and the others ready to submit, and one completed
+         result row showing the muon ZPE, three muon-mode frequencies, their
+         widths and the w1 witness.
 
-   Two pinned silicon sites, the first with a completed phonon job and its result
-   under ``Completed Results``; the outputs are illustrative.
+   The pinned CoF₂ sites, the 4c site with a completed phonon job and its
+   result under ``Completed Results``; the phonon output is synthetic, built
+   from the F–μ–F modes of :doc:`/user_guide/examples/cof2`.
 
 ``Quantum Phonon Jobs`` lists one of two sets of rows:
 
@@ -213,6 +215,13 @@ Configuration dialog
 The row configuration dialog follows the shared workflow layout: the common
 rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
 ``K-Point MP Grid`` come first, followed by the Quantum Corrections rows:
+
+.. figure:: ../_generated/screenshots/quantum_configuration_dialog.webp
+   :alt: The Quantum Corrections configuration dialog for one CoF2 site: the
+         pseudopotential family, farms, the locked PHONON task, the inherited
+         cutoff, k-point grid and spin polarisation, and the phonon method.
+
+   The configuration of a CoF₂ row, inheriting its relaxation's settings.
 
 - ``Phonon Method`` — ``FINITEDISPLACEMENT`` (default), ``DFPT``, or
   ``LINEARRESPONSE`` (see `CASTEP phonon methods`_);
@@ -420,6 +429,12 @@ Phonon analysis window
 stored ``.phonon`` file, so the analysis is tied to the archived CASTEP output
 rather than to table state. If CASTEP used the wrong muon mass, a warning banner
 appears above the tabs.
+
+.. figure:: ../_generated/screenshots/phonon_analysis_window.webp
+   :alt: The Phonon Modes tab of the phonon analysis window for the CoF2 4c
+         site, listing host modes below 600 cm-1 and three muon modes.
+
+   The ``Phonon Modes`` tab for the synthetic F–μ–F phonon of CoF₂.
 
 ``Phonon Modes``
    Lists every Gamma-point mode with its frequency, muon participation, and the

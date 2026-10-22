@@ -2197,3 +2197,88 @@ def test_worked_example_incommensurate_helix(real_muesr) -> None:
     np.testing.assert_allclose(axis.magnitudes_T, 0.2816, atol=_DOC_PRECISION)
     assert edge.magnitudes_T.min() == pytest.approx(0.3616, abs=_DOC_PRECISION)
     assert edge.magnitudes_T.max() == pytest.approx(1.1634, abs=_DOC_PRECISION)
+
+
+# --- CoF2, the user guide's worked example ----------------------------------------
+#
+# Rutile CoF2 (a = 4.695 Å, c = 3.180 Å, F at 4f with x = 0.306; Baur and Khan
+# 1971) with antiparallel 2.64 μB moments along c on the corner and body-centre
+# Co (Lines 1965). The positive muon sits at the 4c site (0, 1/2, 0); the
+# published rigid-lattice dipolar field there is 0.265 T (De Renzi et al. 1984;
+# Huddart et al. 2022), and De Renzi et al. tabulate the sublattice dipolar
+# tensors at the equivalent site (1/2, 0, 0) in Å⁻³ per μB.
+
+_COF2_X = 0.306
+_COF2_A = 4.695
+_cof2 = partial(
+    host_structure,
+    label="CoF2",
+    lattice=[[_COF2_A, 0.0, 0.0], [0.0, _COF2_A, 0.0], [0.0, 0.0, 3.180]],
+    species=("Co", "Co", "F", "F", "F", "F"),
+    positions=(
+        (0.0, 0.0, 0.0),
+        (0.5, 0.5, 0.5),
+        (_COF2_X, _COF2_X, 0.0),
+        (1.0 - _COF2_X, 1.0 - _COF2_X, 0.0),
+        (0.5 + _COF2_X, 0.5 - _COF2_X, 0.5),
+        (0.5 - _COF2_X, 0.5 + _COF2_X, 0.5),
+    ),
+)
+_COF2_4C = (0.0, 0.5, 0.0)
+
+
+def _cof2_antiferromagnet() -> MagneticStructureModel:
+    def sublattice(index: int, moment: float) -> MagneticComponent:
+        return MagneticComponent(
+            component_id=f"co-{index}",
+            label=f"Co {index}",
+            kind="collinear",
+            selector=AtomSelector.indices([index]),
+            terms=(FourierTerm((0.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, moment])),),
+        )
+
+    return MagneticStructureModel(components=(sublattice(0, 2.64), sublattice(1, -2.64)))
+
+
+def test_cof2_rigid_lattice_dipolar_field_at_the_4c_site(real_muesr) -> None:
+    (result,) = calculate_commensurate_fields(_cof2(), _cof2_antiferromagnet(), [_COF2_4C])
+
+    assert result.dipolar[2] == pytest.approx(-0.2655, abs=5e-4)
+    assert abs(result.dipolar[0]) < 1e-9 and abs(result.dipolar[1]) < 1e-9
+    assert result.magnitude == pytest.approx(0.265, abs=1e-3)
+
+
+def test_cof2_sublattice_dipolar_tensors_match_de_renzi(real_muesr) -> None:
+    corner, body = (
+        calculate_dipolar_tensors_for_atoms(_cof2(), [(0.5, 0.0, 0.0)], magnetic_ion_indices=[index])[0]
+        for index in (0, 1)
+    )
+
+    per_angstrom3 = 1.0 / DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
+    np.testing.assert_allclose(np.diag(corner.tensor_T_per_muB) * per_angstrom3, (0.292, -0.177, -0.115), atol=0.004)
+    np.testing.assert_allclose(np.diag(body.tensor_T_per_muB) * per_angstrom3, (-0.152, 0.159, -0.006), atol=0.004)
+
+
+def test_cof2_distortion_correction_from_the_mufinder_paper_displacements(real_muesr) -> None:
+    # The two nearest F move in by 0.50 and 0.57 Å and the two nearest Co out by
+    # 0.14 and 0.17 Å (Huddart et al. 2022), in a 2x2x2 supercell.
+    lattice = np.diag([_COF2_A, _COF2_A, 3.180])
+    muon = np.asarray(_COF2_4C) @ lattice
+
+    def radial(site: tuple[float, float, float], change: float) -> tuple[float, ...]:
+        vector = np.asarray(site) @ lattice - muon
+        return tuple(change * vector / np.linalg.norm(vector))
+
+    moves = {
+        (_COF2_X, _COF2_X, 0.0): radial((_COF2_X, _COF2_X, 0.0), -0.50),
+        (-_COF2_X, 1.0 - _COF2_X, 0.0): radial((-_COF2_X, 1.0 - _COF2_X, 0.0), -0.57),
+        (0.0, 0.0, 0.0): radial((0.0, 0.0, 0.0), 0.14),
+        (0.0, 1.0, 0.0): radial((0.0, 1.0, 0.0), 0.17),
+    }
+    relaxed = relaxed_muon_supercell(_cof2(), (2, 2, 2), _COF2_4C, moves)
+
+    (result,) = calculate_commensurate_fields(_cof2(), _cof2_antiferromagnet(), [_COF2_4C], distorted_structures=[relaxed])
+
+    assert result.distortion is not None
+    assert result.distortion[2] == pytest.approx(0.0660, abs=5e-4)
+    assert result.magnitude == pytest.approx(0.1996, abs=5e-4)

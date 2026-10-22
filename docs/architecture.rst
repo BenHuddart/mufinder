@@ -814,7 +814,10 @@ read-only queries in :mod:`mufinder.services.project_document`, so no workflow
 repeats them:
 
 - ``definitions()`` returns the matching definitions, newest first
-  (``definitions_for_stage``);
+  (``definitions_for_stage``). Registration gives each definition a
+  ``created_at`` strictly later than every existing one
+  (``next_definition_created_at``), so the order is creation order before and
+  after a reload; definitions that share a timestamp are ordered by id;
 - ``active_definition()`` returns the definition named by ``active_key`` when
   it still matches, and otherwise the newest match (``active_definition``);
 - ``job_for_key(definition, key, *, mapping_name="job_ids_by_label",

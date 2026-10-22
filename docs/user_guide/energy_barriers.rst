@@ -72,10 +72,10 @@ The Energy Barriers page
 ------------------------
 
 .. figure:: ../_generated/screenshots/energy_barriers_page.webp
-   :alt: The Paths tab with a bond-centre and a tetrahedral endpoint selected and one
-         generated diffusion path, completed.
+   :alt: The Paths tab with the CoF2 4c site selected as both endpoints and one
+         generated 4c to 4c path, completed.
 
-   A bond-centre to tetrahedral path in silicon; the relaxed endpoints are illustrative.
+   The hop between neighbouring 4c sites in CoF₂, from synthetic relaxations.
 
 The page is divided into two tabs so the workflow remains usable on smaller
 laptop screens while still separating path generation from NEB analysis:
@@ -259,7 +259,7 @@ Outputs and interpretation
    :alt: The NEB Analysis tab with one completed band, its energy profile and the
          transition-state image in the viewer.
 
-   An NEB band through that path; the energies are illustrative.
+   An NEB band through that path; its energies are illustrative, not calculated.
 
 MuFinder keeps the generated CASTEP files of completed NEB jobs and the
 parsed transition-state path data needed for later review. In the ``NEB Analysis``

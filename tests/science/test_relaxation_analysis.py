@@ -5,11 +5,17 @@ from __future__ import annotations
 from functools import partial
 from uuid import uuid4
 
+import numpy as np
 import pytest
 
 from mufinder.domain.models import Structure
 from mufinder.science import relaxation_analysis
-from mufinder.science.lattice import minimum_image_distance
+from mufinder.science.lattice import (
+    minimum_image_distance,
+    nearest_image_cartesian_delta,
+    nearest_image_delta,
+    nearest_image_distance,
+)
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
     RelaxationClusterSummary,
@@ -253,6 +259,78 @@ def test_displacement_analysis_converts_host_frame_muon_position_for_supercells(
     assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(supercell_host_result.points[0].distance_from_muon_ang)
     assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(10.0 * (3.0 ** 0.5) * 0.1)
     assert primitive_host_result.points[0].comparison_index == supercell_host_result.points[0].comparison_index
+
+
+def test_displacement_analysis_measures_from_the_supercell_image_the_muon_relaxed_to() -> None:
+    comparison = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["K"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    pristine = [[x, y, z] for x in (0.0, 0.5) for y in (0.0, 0.5) for z in (0.0, 0.5)]
+    relaxed_positions = [list(position) for position in pristine]
+    # The muon relaxed in the second host cell along a, at host (1.2, 0.2, 0.2),
+    # and pushed the K at supercell (0.5, 0, 0) away from it.
+    relaxed_positions[pristine.index([0.5, 0.0, 0.0])] = [0.48, -0.02, -0.02]
+    relaxed = Structure(
+        label="Relaxed supercell",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["K"] * 8 + ["H:mu"],
+        fractional_positions=[*relaxed_positions, [0.6, 0.1, 0.1]],
+    )
+
+    result = analyze_displacements(
+        relaxed_structure=relaxed,
+        comparison_structure=comparison,
+        muon_fractional_position=(0.2, 0.2, 0.2),
+    )
+
+    nearest = result.points[0]
+    assert nearest.distance_from_muon_ang == pytest.approx(3.0**0.5)
+    assert nearest.radial_displacement_ang == pytest.approx(0.2 * 3.0**0.5)
+
+
+def test_displacement_analysis_picks_the_nearest_image_with_the_lattice_metric() -> None:
+    # A skewed host cell: b leans almost along a, so the copy of the site that
+    # is nearest the muon marker is not the one the per-component fold of the
+    # fractional displacement names.
+    host_lattice = np.array([[5.0, 0.0, 0.0], [4.0, 1.0, 0.0], [0.0, 0.0, 5.0]])
+    comparison = Structure(label="Host", lattice_vectors=host_lattice.tolist(), species=["K"], fractional_positions=[[0.0, 0.0, 0.0]])
+    supercell_lattice = 2.0 * host_lattice
+    pristine = [[x, y, z] for x in (0.0, 0.5) for y in (0.0, 0.5) for z in (0.0, 0.5)]
+    site = np.array([0.2, 0.2, 0.2])
+    marker = np.array([0.875, 0.875, 0.1])
+    marker_host = 2.0 * marker
+    folded_image = site - np.round(site - marker_host)
+    nearest_image = marker_host + np.asarray(nearest_image_delta(site, marker_host, host_lattice.tolist()))
+    assert not np.allclose(folded_image, nearest_image)
+    # Push the K nearest that image 0.3 A straight away from it.
+    distances = [nearest_image_distance(position, nearest_image / 2.0, supercell_lattice.tolist()) for position in pristine]
+    neighbour = int(np.argmin(distances))
+    pristine_cart = np.asarray(pristine[neighbour]) @ supercell_lattice
+    radial = nearest_image_cartesian_delta(pristine[neighbour], nearest_image / 2.0, supercell_lattice.tolist())
+    radial = np.asarray(radial)
+    pushed = pristine_cart + 0.3 * radial / np.linalg.norm(radial)
+    relaxed_positions = [list(position) for position in pristine]
+    relaxed_positions[neighbour] = (pushed @ np.linalg.inv(supercell_lattice)).tolist()
+    relaxed = Structure(
+        label="Relaxed supercell",
+        lattice_vectors=supercell_lattice.tolist(),
+        species=["K"] * 8 + ["H:mu"],
+        fractional_positions=[*relaxed_positions, marker.tolist()],
+    )
+
+    result = analyze_displacements(
+        relaxed_structure=relaxed,
+        comparison_structure=comparison,
+        muon_fractional_position=tuple(site),
+    )
+
+    moved = [point for point in result.points if abs(point.radial_displacement_ang) > 1e-6]
+    assert len(moved) == 1
+    assert moved[0].distance_from_muon_ang == pytest.approx(distances[neighbour])
+    assert moved[0].radial_displacement_ang == pytest.approx(0.3)
 
 
 def test_wyckoff_assignment_finds_high_symmetry_site_for_cluster() -> None:

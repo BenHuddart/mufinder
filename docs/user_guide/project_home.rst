@@ -40,10 +40,10 @@ Workflow chart
 --------------
 
 .. figure:: ../_generated/screenshots/project_home.webp
-   :alt: The project home of a rutile TiO2 project: the workflow chart, the
+   :alt: The project home of a CoF2 project: the workflow chart, the
          field notes and the cell survey.
 
-   The project home of a rutile TiO2 project with three stages complete.
+   The project home of the CoF₂ example with five stages complete.
 
 The chart draws every workflow stage as a waypoint, laid out in the order the
 work usually goes, with the navigator's Convergence Testing and Muon Sites

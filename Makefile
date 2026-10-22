@@ -60,12 +60,10 @@ harness:
 # scripts/render_docs_screenshots.py (the scripts/docs_screenshots package)
 # writes them to docs/_generated/screenshots and touches its .stamp once every
 # screenshot is written. `make screenshots` always renders; `make docs` renders
-# only when the renderer, the application or the fixtures it reads are newer
-# than the stamp.
+# only when the renderer or the application is newer than the stamp.
 SCREENSHOT_STAMP = docs/_generated/screenshots/.stamp
 SCREENSHOT_SOURCES = $(shell find scripts/docs_screenshots scripts/render_docs_screenshots.py \
-	src/mufinder tests/fixtures/geometry tests/fixtures/uep -type f \
-	-not -path '*/__pycache__/*' -not -name '*.pyc')
+	src/mufinder -type f -not -path '*/__pycache__/*' -not -name '*.pyc')
 
 screenshots:
 	$(PYTHON) scripts/render_docs_screenshots.py

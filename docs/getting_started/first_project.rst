@@ -2,8 +2,9 @@ Your first project
 ==================
 
 This tutorial takes a new project from an empty folder to a relaxed muon
-stopping site in silicon, with an estimate of the local field the muon feels
-there. Each stage below is a short route through one page of the application;
+stopping site in CoF₂, with an estimate of the local field the muon feels
+there. :doc:`/user_guide/examples/cof2` follows the same project further and
+compares its numbers with the literature. Each stage below is a short route through one page of the application;
 the linked user-guide page explains every control and option on it.
 
 The route is:
@@ -23,14 +24,13 @@ Before you start
 - **MuFinder installed.** See :doc:`/getting_started/installation`.
 - **CASTEP.** A CASTEP executable on this computer, or an HPC cluster that can
   run it. MuFinder does not include CASTEP.
-- **A structure file for silicon.** A CIF of diamond silicon from a structure
-  database will do. The screenshots on this page use silicon's two-atom
-  primitive cell; a file holding the eight-atom conventional cell gives larger
-  atom counts but the same steps.
+- **A structure file for CoF₂.** A CIF of rutile CoF₂ from a structure
+  database will do. The screenshots on this page use its six-atom unit cell,
+  two Co and four F.
 
-The screenshots from the pristine relaxation onwards come from a silicon
-project whose CASTEP outputs are synthetic, so every number in them is
-illustrative. Your own calculations will give different values.
+The screenshots from the pristine relaxation onwards come from a CoF₂
+project whose CASTEP outputs are synthetic, tuned to reproduce published
+values. Your own calculations will give values of their own.
 
 Create a project and set up CASTEP
 ----------------------------------
@@ -62,12 +62,16 @@ Import the host structure
 -------------------------
 
 1. Select ``Host Structure`` in the project navigator.
-2. Click ``Load Structure (.cif/.mcif/.cell)`` and choose your silicon file.
-3. Check the summary, the atom table and the 3D viewer: two ``Si`` atoms for
-   the primitive cell.
+2. Click ``Load Structure (.cif/.mcif/.cell)`` and choose your CoF₂ file.
+3. Check the summary, the atom table and the 3D viewer: two ``Co`` and four
+   ``F`` atoms in the unit cell.
+4. CoF₂ is an antiferromagnet, with the corner and body-centre Co moments
+   antiparallel. Enter ``3`` and ``-3`` in the ``Spin (hbar/2)`` column for
+   the Co at (0, 0, 0) and the Co at (½, ½, ½), and leave the F at zero.
 
 The imported structure becomes the active host, which every later stage works
-on. Silicon is not magnetic, so leave the ``Spin (hbar/2)`` column at zero.
+on. The spins are the starting order of every calculation that runs
+spin-polarised: tick ``Spin Polarized`` in a row's parameters for CoF₂.
 See :doc:`/user_guide/host_structure`; its figure, under *The host-structure
 panel*, shows the panel with a different material loaded.
 
@@ -86,9 +90,9 @@ with its own periodic images.
    status line show the result.
 4. Name it and click ``Save``. It appears in ``Saved Supercells``.
 
-The relaxations in the screenshots below ran in a 2x2x2 supercell of the
-primitive cell (16 atoms) named ``Si 2x2x2``, which keeps the example cheap;
-follow the ``(Recommended)`` cell for production work. See
+The relaxations in the screenshots below ran in a 2x2x2 supercell (48 atoms)
+named ``CoF2 2x2x2``, the cell of the MuFinder paper, which keeps the example
+cheap; follow the ``(Recommended)`` cell for production work. See
 :doc:`/user_guide/supercells` (*Suggesting a supercell*).
 
 Converge the cutoff and k-point grid
@@ -125,7 +129,7 @@ figures of both pages are in :doc:`/user_guide/convergence_testing`.
 Optional: relax the pristine host
 ---------------------------------
 
-Relaxing silicon without a muon shows how well the functional reproduces the
+Relaxing CoF₂ without a muon shows how well the functional reproduces the
 experimental lattice.
 
 1. Select ``Pristine Relaxation`` and click ``Add Job``.
@@ -137,20 +141,18 @@ experimental lattice.
 
 .. figure:: ../_generated/screenshots/pristine_relaxation_page.webp
    :alt: The Pristine Relaxation page with one completed variable-cell
-         relaxation of silicon and its relaxed lattice lengths.
+         relaxation of CoF2 and its relaxed lattice lengths.
 
-   A pristine relaxation of silicon, from a synthetic CASTEP output; the
-   numbers are illustrative.
+   A pristine relaxation of CoF₂, from a synthetic CASTEP output.
 
 5. Click ``Generate Comparison Table...``, tick ``Include`` for the completed
    job, keep or edit the ``Comparison table label`` and click ``OK``.
 
 .. figure:: ../_generated/screenshots/comparison_table.webp
-   :alt: A comparison table of the silicon host against one relaxed cell,
+   :alt: A comparison table of the CoF2 host against one relaxed cell,
          grouped into lattice, displacement, bonding and symmetry metrics.
 
-   The silicon host compared with that synthetic relaxation; the numbers are
-   illustrative.
+   The CoF₂ host compared with that synthetic relaxation.
 
 The table is saved under ``Pristine Relaxation`` in the navigator. This
 tutorial keeps the imported structure as the active host. See
@@ -182,12 +184,11 @@ per relaxation.
    the ``Total Energy (eV)``.
 
 .. figure:: ../_generated/screenshots/muon_relaxations_page.webp
-   :alt: The Structural Relaxations tab with five completed positive-muon
-         relaxations in a 2x2x2 silicon supercell, their initial and final
+   :alt: The Structural Relaxations tab with ten completed positive-muon
+         relaxations in a 2x2x2 CoF2 supercell, their initial and final
          positions and energies.
 
-   Five positive-muon relaxations in silicon; the relaxation outputs are
-   illustrative.
+   Ten positive-muon relaxations in CoF₂, from synthetic outputs.
 
 Staged rows and their configuration are written to disk when you choose
 ``File > Save Project``, so save the project now. The other generation methods
@@ -216,11 +217,10 @@ the relaxed positions into distinct sites.
    with its fitted Wyckoff label.
 
 .. figure:: ../_generated/screenshots/relaxation_analysis_workspace.webp
-   :alt: An analysis workspace with five silicon muon relaxations clustered
-         into two sites, beside a 3D preview of the host cell.
+   :alt: An analysis workspace with ten CoF2 muon relaxations clustered
+         into three sites, beside a 3D preview of the host cell.
 
-   Illustrative silicon relaxations clustered into bond-centre and tetrahedral
-   sites.
+   The CoF₂ relaxations clustered into the 4c site and two higher sites.
 
 4. Click ``Pin to Summary``, then select ``Muon Sites`` in the navigator. The
    ``Positive muon`` card ranks the distinct sites by relative energy.
@@ -228,10 +228,11 @@ the relaxed positions into distinct sites.
    saved.
 
 .. figure:: ../_generated/screenshots/muon_sites_summary.webp
-   :alt: The Muon Sites page with two distinct positive-muon sites pinned and
-         an empty Muonium card.
+   :alt: The Muon Sites page with three positive-muon sites and two muonium
+         sites pinned.
 
-   The two sites pinned from that workspace; the energies are illustrative.
+   The sites pinned from the positive-muon workspace and, in the example
+   project, from a muonium workspace too.
 
 The pinned sites are what Magnetic Fields, Quantum Corrections and Energy
 Barriers list by default. ``Open in Analysis →`` returns to the workspace.
@@ -241,28 +242,33 @@ Clustering methods, Wyckoff assignment and displacement analysis are in
 Estimate the local field
 ------------------------
 
-Silicon has no ordered electronic moments, so the field a muon feels there
-comes from the nuclear dipole moments of the host. MuFinder estimates its
-width directly from the pinned site.
+Below its Néel temperature of 37.85 K, CoF₂'s ordered Co moments give the
+muon a static dipolar field. Define the order, then calculate the field at the
+pinned site.
 
-1. Select ``Magnetic Fields``. In the ``Muon Site`` card click ``Select Muon
-   Site...``.
-2. With ``Structural relaxation clustering`` as the ``Source``, the table lists
-   the pinned sites. Choose the lowest-energy one and click ``OK``.
-3. In the ``Calculation`` card click ``Nuclear Relaxation...``. In the ``Mode``
-   group choose ``Zero field`` and ``Polycrystal``. Optionally tick ``Apply
-   muon-induced distortion correction`` to account for the displaced silicon
-   neighbours.
-4. Click ``Calculate``. The ``Results`` group gives the width ``σ (μs⁻¹)`` and
-   the equivalent field width ``Δ field (T)``.
+1. Select ``Magnetic Fields`` and click ``Edit Magnetic Structure...`` in the
+   ``Magnetic Structure`` card.
+2. In the ``Magnetic Structure Builder``, add one collinear component with
+   q = (0, 0, 0) on the corner Co with moment ``(0, 0, 2.64)`` μB, and one on
+   the body-centre Co with ``(0, 0, -2.64)``, then click ``Use Structure``.
+3. In the ``Muon Site`` card click ``Select Muon Site...``. With ``Structural
+   relaxation clustering`` as the ``Source``, the table lists the pinned
+   sites. Choose the lowest-energy one, tick ``Correct the dipolar field for
+   muon-induced displacements`` and click ``OK``.
+4. Leave the ``Demagnetizing field`` at ``None``: the antiferromagnet has no
+   net moment. Click ``Calculate Dipolar Field``.
 
-For a magnetic host, define the magnetic order instead: click ``Edit Magnetic
-Structure...`` in the ``Magnetic Structure`` card, build or import the
-structure and click ``Use Structure``, then click ``Calculate Dipolar Field``.
-The results table lists the field at the site and, for a commensurate
-structure, its dipolar, Lorentz, contact and demagnetizing terms. These
-calculations use the optional ``muesr`` and ``muLFC`` backends. See
-:doc:`/user_guide/magnetic_fields`, and
+The results table lists the field at the site, and selecting its row shows
+the dipolar, Lorentz, contact, demagnetizing and distortion-correction terms.
+In the example project the field is 0.27 T from the rigid lattice and 0.20 T
+with the distortion correction; :doc:`/user_guide/examples/cof2` compares
+both with experiment. These calculations use the optional ``muesr`` and
+``muLFC`` backends.
+
+For a host without ordered moments, or CoF₂ above T_N, the field comes from
+the nuclear dipoles instead: click ``Nuclear Relaxation...``, choose ``Zero
+field`` and ``Polycrystal`` and click ``Calculate`` for the width
+``σ (μs⁻¹)``. See :doc:`/user_guide/magnetic_fields`, and
 :doc:`/user_guide/magnetic_fields_theory` for the physics.
 
 Where to go next
@@ -271,7 +277,6 @@ Where to go next
 - :doc:`/user_guide/quantum_corrections` estimates the muon's zero-point
   energy at each relaxed site from Gamma-point phonon calculations.
 - :doc:`/user_guide/energy_barriers` builds climbing-image NEB calculations
-  between two relaxed sites, for example from the bond-centre to the
-  tetrahedral site.
+  between two relaxed sites, for example between neighbouring 4c sites.
 - :doc:`/user_guide/journal` records what you did in this project, day by day.
 - :doc:`/user_guide/overview` lists everything else each stage can do.

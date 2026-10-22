@@ -80,6 +80,13 @@ as a basis combination and r.l.u. vector, and its ``Moment``, using the same
 descriptions as the builder table. The list shows up to eight rows and scrolls
 beyond that.
 
+.. figure:: ../_generated/screenshots/cof2_magnetic_structure_builder.webp
+   :alt: The Magnetic Structure Builder with two collinear q = 0 components on
+         the two Co of CoF2, with moments of +2.64 and -2.64 muB along c.
+
+   The collinear antiferromagnet of :doc:`/user_guide/examples/cof2` as one
+   component per Co sublattice.
+
 Import a structure from an MCIF file
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -436,6 +443,14 @@ distorted-structure reference. The available sources are:
 - ``Custom fractional position``, a fractional coordinate (``fx``, ``fy``,
   ``fz``) in the active host cell.
 
+.. figure:: ../_generated/screenshots/magnetic_muon_site_dialog.webp
+   :alt: The Select Muon Site dialog listing pinned structural-relaxation
+         clusters of CoF2, the 4c positive-muon cluster selected and the
+         displacement correction ticked.
+
+   Pinned CoF₂ sites in ``Select Muon Site``, with the distortion correction
+   available for the selected representative.
+
 Until a site is chosen, the page uses the lowest-energy pinned site (positive
 muon first), else the first structural-relaxation cluster, else the first UEP
 cluster, else a custom site at the origin. With no site chosen, the dialog
@@ -666,6 +681,14 @@ site differs from the field computed for the pristine host. To correct for it:
    includes the correction. The ``Distortion correction`` term appears in the
    breakdown beside the other field terms.
 
+.. figure:: ../_generated/screenshots/cof2_magnetic_fields_page.webp
+   :alt: The Magnetic Fields page for the CoF2 antiferromagnet at the relaxed 4c
+         site: a distortion-corrected field along c, with dipolar and distortion
+         correction terms in the breakdown.
+
+   A distortion-corrected field at the CoF₂ 4c site; the relaxed structure is
+   synthetic (see :doc:`/user_guide/examples/cof2`).
+
 The correction applies to commensurate structures only: an incommensurate field
 distribution or a commensurate approximant with the option ticked stops with an
 error, and dipolar tensors always use the pristine host. The Lorentz, contact
@@ -726,7 +749,8 @@ host atoms should be treated as magnetic ions.
 2. Click ``Dipolar Tensor...``.
 3. In the ``Magnetic Ions`` group choose the magnetic ions: ``Atoms with
    assigned moments``, ``All atoms``, ``Element``, ``Equivalent site`` or
-   ``Atom indices``. When the magnetic-structure builder already contains
+   ``Atom indices`` (counted from 0 in the host's atom order). When the
+   magnetic-structure builder already contains
    enabled components with non-zero moments, the dialog defaults to the atoms
    targeted by those components. If no atoms currently have assigned moments,
    MuFinder does not guess: the ``Calculate`` button stays disabled until you
@@ -735,6 +759,12 @@ host atoms should be treated as magnetic ions.
 5. Click ``Calculate``.
 6. Read the ``Most Recent Result`` group and choose the ``Units``: ``T/μB``,
    ``MHz/μB``, or ``Å⁻³``, matching the hyperfine-coupling unit choices.
+
+.. figure:: ../_generated/screenshots/dipolar_tensor_dialog.webp
+   :alt: The Dipolar Tensor dialog with atom index 0, the corner Co of CoF2,
+         and its diagonal dipolar tensor at the 4c site in T per muB.
+
+   The corner-sublattice tensor at the CoF₂ 4c site.
 
 The result is shown inside the tensor dialog rather than the field results
 table. Each selected or symmetry-equivalent muon site receives one ``3 x 3``
@@ -786,6 +816,13 @@ second-moment workflow with bundled natural-abundance isotope data.
    ``Apply muon-induced distortion correction``. It is available when the
    selected relaxation-cluster site has a derived distorted structure.
 7. Click ``Calculate``.
+
+.. figure:: ../_generated/screenshots/nuclear_relaxation_dialog.webp
+   :alt: The Nuclear Relaxation dialog with a zero-field polycrystal result at
+         the CoF2 4c site, the distortion correction applied, and its Co and F
+         contributions.
+
+   A zero-field polycrystal width at the distortion-corrected CoF₂ 4c site.
 
 The ``Results`` group reports :math:`\sigma` in :math:`\mu\mathrm{s}^{-1}`,
 :math:`\sigma^2` and :math:`M_2` in :math:`\mu\mathrm{s}^{-2}`, equivalent

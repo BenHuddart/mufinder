@@ -28,6 +28,7 @@ from mufinder.science.lattice import (
     minimum_image_distance,
     minimum_image_distance_matrix,
     near_minimum_indexes,
+    nearest_image_delta,
     nearest_image_distance,
     reciprocal_to_cartesian,
     vector_length,
@@ -221,6 +222,17 @@ def test_nearest_image_distance_can_beat_the_per_component_fold_in_a_skewed_cell
     a, b = [0.0, 0.0, 0.0], [0.45, 0.45, 0.0]
 
     assert nearest_image_distance(a, b, _SKEWED) < minimum_image_distance(a, b, _SKEWED)
+
+
+def test_nearest_image_delta_names_the_image_the_distance_is_measured_to() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.45, 0.45, 0.0]
+
+    delta = nearest_image_delta(a, b, _SKEWED)
+
+    assert delta != pytest.approx(minimum_image_delta(a, b))
+    assert np.linalg.norm(np.asarray(delta) @ np.asarray(_SKEWED)) == pytest.approx(nearest_image_distance(a, b, _SKEWED))
+    shift = np.asarray(delta) - (np.asarray(a) - np.asarray(b))
+    assert shift == pytest.approx(np.round(shift))
 
 
 def test_distance_matrix_matches_the_scalar_helper() -> None:

@@ -17,7 +17,9 @@ New users should start with :doc:`/getting_started/installation`, follow the
 :doc:`/getting_started/first_project` tutorial from an empty project to a
 relaxed muon site, then read :doc:`/getting_started/running_jobs` and the
 :doc:`/user_guide/overview` of every workflow stage. The user guide follows
-the order of the stages in the application. The reference section covers the
+the order of the stages in the application, and the worked example follows
+the positive muon and muonium in CoF₂ through every stage, the project the
+screenshots come from. The reference section covers the
 CASTEP input MuFinder writes, the Python API documents the library packages
 for scripting, and the developer guide describes internal contracts and
 quality standards.
@@ -50,6 +52,12 @@ quality standards.
    user_guide/quantum_corrections_theory
    user_guide/energy_barriers
    user_guide/journal
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Worked examples
+
+   user_guide/examples/cof2
 
 .. toctree::
    :maxdepth: 2

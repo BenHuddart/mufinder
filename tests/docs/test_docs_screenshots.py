@@ -6,8 +6,8 @@ runs in subprocesses: importing ``docs_screenshots.render`` configures Qt, VTK
 and the settings directories before importing them, which must not leak into
 the test session. ``--list`` gives the registry's screenshot names, and each
 example module is rendered in one process with ``--example``, so its projects
-are built once and shared by its scenes, and ``pytest-xdist`` spreads the
-examples across workers.
+are built once per render worker and shared by that worker's scenes, and
+``pytest-xdist`` spreads the examples across test workers.
 """
 
 from __future__ import annotations

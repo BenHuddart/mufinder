@@ -204,10 +204,10 @@ Generating k-point grids
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. figure:: ../_generated/screenshots/kpoint_convergence_page.webp
-   :alt: The K-Point Convergence page with the grids generated for rutile TiO2
-         down to 0.07 1/Ang.
+   :alt: The K-Point Convergence page with the grids generated for CoF2
+         down to 0.05 1/Ang.
 
-   Grids generated for rutile TiO2 with a minimum spacing of 0.07 1/Ang.
+   Grids generated for CoF₂ with a minimum spacing of 0.05 1/Ang.
 
 ``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
 

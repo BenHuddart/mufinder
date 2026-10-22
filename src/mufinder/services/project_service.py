@@ -23,6 +23,7 @@ from mufinder.domain.models import (
     ProvenanceRecord,
     Result,
     Structure,
+    next_definition_created_at,
     next_job_created_at,
     utc_now,
 )
@@ -1125,6 +1126,7 @@ class ProjectService:
             },
             input_structure_ids=list(input_structure_ids),
             input_site_ids=list(input_site_ids),
+            created_at=next_definition_created_at(document.calculations.values()),
         )
         document.calculations[definition.id] = definition
 

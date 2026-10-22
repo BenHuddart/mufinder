@@ -54,7 +54,6 @@ if TYPE_CHECKING:
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = PROJECT_ROOT / "docs" / "_generated" / "screenshots"
-FIXTURES = PROJECT_ROOT / "tests" / "fixtures"
 
 # Logical window size; the saved pixels are SCALE_FACTOR times larger.
 WINDOW_SIZE = (1440, 1120)
@@ -195,8 +194,12 @@ def new_project(directory: Path, name: str, host: Structure) -> tuple[ProjectSer
 
 
 @contextmanager
-def refuse_message_boxes(app: QApplication) -> Iterator[None]:
-    """Fail the build, rather than hang it, if the application shows a message box."""
+def refuse_message_boxes(app: QApplication, *, expected: tuple[str, ...] = ()) -> Iterator[None]:
+    """Fail the build, rather than hang it, if the application shows a message box.
+
+    A message box whose title is in ``expected``, a notice the build's own
+    steps are known to raise, is acknowledged instead.
+    """
 
     from PySide6.QtWidgets import QMessageBox
 
@@ -205,6 +208,9 @@ def refuse_message_boxes(app: QApplication) -> Iterator[None]:
     def check() -> None:
         dialog = app.activeModalWidget()
         if isinstance(dialog, QMessageBox):
+            if dialog.windowTitle() in expected:
+                dialog.accept()
+                return
             shown.append(f"{dialog.windowTitle()}: {dialog.text()}")
             dialog.reject()
 

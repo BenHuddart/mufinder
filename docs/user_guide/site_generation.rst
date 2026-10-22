@@ -62,7 +62,7 @@ The Generation page
    :alt: The Generation page with element-attached and random candidate sites
          selected and marked in the preview.
 
-   O-attached and random candidate sites in rutile TiO2, selected in the table.
+   F-attached and random candidate sites in CoF₂, selected in the table.
 
 The page has the ``Generation Setup`` group on the left, with the ``Method``
 drop-down and the fields for the chosen method, the buttons ``Generate Sites``,
@@ -308,6 +308,12 @@ the site records the relaxation of the charge state it was first relaxed in,
 even after that relaxation is reset, and the other charge state's relaxation is
 read from its row in the ``Relaxations`` page.
 
+.. figure:: ../_generated/screenshots/charge_state_dialog.webp
+   :alt: The Choose Charge State dialog for ten selected initial positions,
+         with Both charge states chosen.
+
+   ``Choose Charge State`` for the ten CoF₂ starts.
+
 MuFinder writes CASTEP ``charge`` as ``+1`` for positive muon and ``0`` for
 muonium, and keeps ``fix_all_cell`` enabled for these jobs. Job names and
 output directories are separated by charge state, for example
@@ -320,10 +326,12 @@ Structural relaxations
 ----------------------
 
 .. figure:: ../_generated/screenshots/muon_relaxations_page.webp
-   :alt: The Structural Relaxations tab with five completed positive-muon relaxations
-         in a 2x2x2 silicon supercell, their initial and final positions and energies.
+   :alt: The Structural Relaxations page, Positive muon tab, with ten completed
+         relaxations in a 2x2x2 CoF2 supercell, their initial and final positions
+         and energies.
 
-   Positive-muon relaxations in silicon; the relaxation outputs are illustrative.
+   Positive-muon relaxations in CoF₂, from synthetic outputs (see
+   :doc:`/user_guide/examples/cof2`).
 
 The ``Muon Sites -> Relaxations`` page (titled ``Structural Relaxations``) is
 where you configure and run the full CASTEP geometry optimizations, one muon or
@@ -333,6 +341,12 @@ edited in the table, leaving more table width for labels and supercell names.
 Rows can share a displayed site label when they live in different charge-state
 tabs; selecting a positive-muon row does not also submit the matching muonium
 row.
+
+.. figure:: ../_generated/screenshots/muonium_relaxations_page.webp
+   :alt: The Structural Relaxations page, Muonium tab, with six completed
+         muonium relaxations in the CoF2 supercell.
+
+   The ``Muonium`` tab of the same project.
 
 Running the relaxations
 ~~~~~~~~~~~~~~~~~~~~~~~

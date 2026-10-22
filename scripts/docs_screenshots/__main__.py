@@ -1,13 +1,18 @@
-"""The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [NAME ...]``.
+"""The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [--jobs N] [NAME ...]``.
 
 With no names and no ``--example`` every screenshot is rendered, and the
-output directory's ``.stamp`` is touched once they all are.
+output directory's ``.stamp`` is touched once they all are. Several
+screenshots are shared out, in registry order, between ``--jobs`` worker
+processes, each rendering its share as a run with names does; one job renders
+them in this process.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+import subprocess
 import sys
 
 # The render module configures Qt and VTK, so it is imported before them.
@@ -17,6 +22,8 @@ from .registry import EXAMPLES, SCREENSHOTS
 from PySide6.QtWidgets import QApplication
 
 STAMP_NAME = ".stamp"
+SCRIPT = Path(__file__).resolve().parents[1] / "render_docs_screenshots.py"
+DEFAULT_JOBS = min(4, os.cpu_count() or 1)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -27,6 +34,12 @@ def _parser() -> argparse.ArgumentParser:
         "--example",
         choices=sorted(EXAMPLES),
         help="render (or, with --list, list) every screenshot of one example",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=DEFAULT_JOBS,
+        help=f"worker processes to share the screenshots between (default: {DEFAULT_JOBS})",
     )
     parser.add_argument(
         "names",
@@ -53,6 +66,39 @@ def _run(argv: list[str] | None) -> int:
         print("\n".join(names))
         return 0
 
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
+    output: Path = args.output
+    output.mkdir(parents=True, exist_ok=True)
+    jobs = min(args.jobs, len(names))
+    if jobs > 1:
+        if not _render_in_workers(names, output, jobs):
+            return 1
+    else:
+        _render_here(names, output)
+    if not args.example and not args.names:
+        # A full render marks the output complete; ``make docs`` renders again
+        # only once a source is newer than this stamp.
+        (output / STAMP_NAME).touch()
+    return 0
+
+
+def _render_in_workers(names: list[str], output: Path, jobs: int) -> bool:
+    """Render ``names`` in ``jobs`` worker processes, dealing them out in turn; ``True`` if all succeed.
+
+    Each worker builds the projects its scenes need, so a project several
+    workers share is built in each of them.
+    """
+
+    workers = [
+        subprocess.Popen([sys.executable, str(SCRIPT), "--jobs", "1", "--output", str(output), *names[index::jobs]])
+        for index in range(jobs)
+    ]
+    codes = [worker.wait() for worker in workers]
+    return all(code == 0 for code in codes)
+
+
+def _render_here(names: list[str], output: Path) -> None:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")
@@ -60,16 +106,8 @@ def _run(argv: list[str] | None) -> int:
 
     apply_theme(app, THEME_LIGHT)
     install_offscreen_viewers()
-
-    output: Path = args.output
-    output.mkdir(parents=True, exist_ok=True)
     for name in names:
         render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
-    if not args.example and not args.names:
-        # A full render marks the output complete; ``make docs`` renders again
-        # only once a source is newer than this stamp.
-        (output / STAMP_NAME).touch()
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
