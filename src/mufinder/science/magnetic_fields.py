@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
@@ -34,7 +35,7 @@ MU0_OVER_4PI = 1e-7
 MU0 = 4.0 * np.pi * 1e-7
 MU_B = 9.274_010_078_3e-24
 ANGSTROM_TO_M = 1e-10
-MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538_96
+MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = MUON_GAMMA_OVER_2PI_MHZ_T
 CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (2.0 * MU0 / 3.0) * MU_B / (ANGSTROM_TO_M**3)
 # muesr returns dipolar tensors as the lattice sum of (3 r̂ r̂ - 1) / r^3 in Å^-3;
 # this factor, mu0 mu_B / (4 pi Å^3), turns that sum into T per mu_B.

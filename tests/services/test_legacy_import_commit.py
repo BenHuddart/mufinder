@@ -294,6 +294,20 @@ class TestFiles:
         # The fixture's muon starts at 0.1/0.2/0.3 and relaxes to 0.11/0.21/0.31.
         assert rendered.fractional_positions[-1] == pytest.approx((0.1, 0.2, 0.3))
 
+    def test_the_rendered_cell_writes_the_codata_muon_gamma(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        _scan, outcome = _commit(document, folder, host_structure)
+        item = outcome.imported[0]
+
+        cell_text = (item.job_directory / f"{item.seed_name}.cell").read_text()
+        gamma_block = cell_text.split("%BLOCK SPECIES_GAMMA")[1].split("%ENDBLOCK SPECIES_GAMMA")[0]
+        unit, species, gamma = gamma_block.split()
+        assert (unit, species) == ("radsectesla", "H:mu")
+        # CODATA gamma_mu = 2 |mu_mu| / hbar (2 pi x 135.538 81 MHz/T), not the old 851586494.1.
+        assert float(gamma) == pytest.approx(851_615_456.6, rel=1e-8)
+
     def test_the_originals_are_archived_byte_exact_with_digests(
         self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
     ) -> None:
