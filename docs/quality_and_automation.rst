@@ -201,9 +201,11 @@ The package
   directly. ``durations.json`` beside it records each screenshot's seconds.
 - ``watchdog.py`` gives each scene a time limit (``scene_deadline``). A scene
   that runs past it ends the renderer with exit status 3: stderr names the
-  scene and holds the stack of every thread. A hang that holds the GIL is
-  caught 30 seconds later by ``faulthandler``, which dumps the same stacks
-  under a ``Timeout`` heading. It imports no Qt, so tests import it directly.
+  scene and holds the stack of every thread, and the renderer's scratch
+  directory is removed first. A hang that holds the GIL is caught 30 seconds
+  later by ``faulthandler``, which dumps the same stacks under a ``Timeout``
+  heading and leaves the scratch directory behind. It imports no Qt, so tests
+  import it directly.
 - ``registry.py`` lists the example modules in render order as ``EXAMPLES``
   and merges their scenes into ``SCREENSHOTS``. A screenshot name belongs to
   exactly one example.

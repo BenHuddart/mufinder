@@ -15,13 +15,14 @@ RENDERER = SCRIPTS / "render_docs_screenshots.py"
 SUBPROCESS_TIMEOUT_S = 60
 
 
-def _run_scene(body: str, *, seconds: float) -> subprocess.CompletedProcess[str]:
+def _run_scene(body: str, *, seconds: float, cleanup: str = "None") -> subprocess.CompletedProcess[str]:
     program = "\n".join(
         [
-            "import sys, time",
+            "import pathlib, sys, time",
             f"sys.path.insert(0, {str(SCRIPTS)!r})",
             "from docs_screenshots.watchdog import scene_deadline",
-            f"with scene_deadline('slow_scene', {seconds}):",
+            f"cleanup = {cleanup}",
+            f"with scene_deadline('slow_scene', {seconds}, cleanup=cleanup):",
             f"    {body}",
             "print('finished')",
         ]
@@ -43,8 +44,24 @@ def test_a_scene_past_its_limit_is_named_and_every_stack_is_dumped() -> None:
     # The timer's own stack, then the stuck scene's, at the line it is stuck on.
     assert "Current thread 0x" in completed.stderr
     assert "\nThread 0x" in completed.stderr
-    assert 'File "<string>", line 5 in <module>' in completed.stderr
+    assert 'File "<string>", line 6 in <module>' in completed.stderr
     assert completed.stdout == ""
+
+
+def test_a_scene_past_its_limit_runs_the_cleanup_before_exiting(tmp_path: Path) -> None:
+    marker = tmp_path / "cleaned"
+
+    completed = _run_scene("time.sleep(30)", seconds=0.5, cleanup=f"lambda: pathlib.Path({str(marker)!r}).touch()")
+
+    assert completed.returncode == 3
+    assert marker.exists()
+
+
+def test_a_failing_cleanup_is_reported_and_the_exit_goes_ahead() -> None:
+    completed = _run_scene("time.sleep(30)", seconds=0.5, cleanup="lambda: 1 / 0")
+
+    assert completed.returncode == 3
+    assert "Cleaning up after 'slow_scene' failed: division by zero" in completed.stderr
 
 
 def test_a_scene_within_its_limit_finishes_quietly() -> None:
@@ -96,3 +113,51 @@ def test_a_scene_timeout_of_zero_is_refused() -> None:
 
     assert completed.returncode == 2
     assert "--scene-timeout: must be more than 0 seconds, not 0" in completed.stderr
+
+
+_REMOVE_WHILE_WRITING = """
+import sys, threading, time
+sys.path.insert(0, {scripts!r})
+from docs_screenshots import render
+{patch}
+project = render.scratch_directory("project-")
+stop = threading.Event()
+
+def write():
+    count = 0
+    while not stop.is_set():
+        try:
+            (project / f"file{{count}}.json").write_text("{{}}")
+        except OSError:
+            pass
+        count += 1
+
+writer = threading.Thread(target=write)
+writer.start()
+time.sleep(0.2)
+render.remove_scratch()
+stop.set()
+writer.join()
+left = sorted(path.name for path in render._SCRATCH.parent.glob(render._SCRATCH.name + "*"))
+print(left)
+"""
+
+
+def _remove_scratch_while_writing(patch: str = "") -> subprocess.CompletedProcess[str]:
+    # The render module configures Qt as it is imported, so it runs in a subprocess.
+    return subprocess.run(
+        [sys.executable, "-c", _REMOVE_WHILE_WRITING.format(scripts=str(SCRIPTS), patch=patch)],
+        capture_output=True,
+        text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
+        check=False,
+    )
+
+
+def test_the_scratch_directory_is_removed_while_a_scene_still_writes_into_it() -> None:
+    # A timed-out scene goes on writing its project while the time limit's
+    # thread removes the scratch directory.
+    completed = _remove_scratch_while_writing()
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "[]"

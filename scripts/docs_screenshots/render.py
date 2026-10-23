@@ -774,5 +774,26 @@ def scratch_directory(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix, dir=_SCRATCH))
 
 
+# A writer that recreates the scratch directory (Qt makes the settings path
+# with its parents) is outlasted by this many attempts.
+_REMOVE_ATTEMPTS = 5
+
+
 def remove_scratch() -> None:
-    shutil.rmtree(_SCRATCH, ignore_errors=True)
+    """Delete the scratch directory, even while another thread still writes into it.
+
+    A scene that runs out of time is cleaned up from the time limit's thread
+    while the scene goes on writing its project. Each attempt renames the
+    directory first, so the scene's later paths under it fail instead of
+    refilling the tree being deleted.
+    """
+
+    for attempt in range(_REMOVE_ATTEMPTS):
+        if not _SCRATCH.exists():
+            return
+        doomed = _SCRATCH.with_name(f"{_SCRATCH.name}-removing-{attempt}")
+        try:
+            _SCRATCH.rename(doomed)
+        except OSError:
+            doomed = _SCRATCH
+        shutil.rmtree(doomed, ignore_errors=True)

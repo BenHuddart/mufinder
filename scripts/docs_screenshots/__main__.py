@@ -163,7 +163,7 @@ def _render_here(names: list[str], output: Path, scene_timeout: float) -> dict[s
     seconds: dict[str, float] = {}
     for name in names:
         start = time.perf_counter()
-        with scene_deadline(name, scene_timeout):
+        with scene_deadline(name, scene_timeout, cleanup=remove_scratch):
             render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
         seconds[name] = time.perf_counter() - start
     return seconds
