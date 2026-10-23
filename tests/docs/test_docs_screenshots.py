@@ -13,17 +13,21 @@ are built once per render worker and shared by that worker's scenes, and
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 import subprocess
 import sys
 
 import pytest
+import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = PROJECT_ROOT / "docs"
 SCRIPT = PROJECT_ROOT / "scripts" / "render_docs_screenshots.py"
 EXAMPLES_ROOT = PROJECT_ROOT / "scripts" / "docs_screenshots" / "examples"
+DURATIONS = PROJECT_ROOT / "scripts" / "docs_screenshots" / "durations.json"
+CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 IMAGE_SUFFIX = ".webp"
 
 # Listing imports Qt and the application but opens no window.
@@ -76,7 +80,49 @@ def test_every_example_module_is_registered() -> None:
     assert sorted(per_example) == sorted(_listed()), "an example module is missing from the registry"
 
 
+def test_the_recorded_durations_cover_exactly_the_registry() -> None:
+    recorded = json.loads(DURATIONS.read_text(encoding="utf-8"))
+
+    assert list(recorded) == _listed(), (
+        "durations.json is out of step with the registry; record the new screenshots with "
+        "python scripts/render_docs_screenshots.py --store-durations NAME ..."
+    )
+
+
+def _ci_screenshot_shards() -> int:
+    """The ``docs-screenshots`` matrix size, checked against the ``SHARDS`` its render step passes."""
+
+    job = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]["docs-screenshots"]
+    shards = job["strategy"]["matrix"]["shard"]
+    assert shards == list(range(1, len(shards) + 1)), "the docs-screenshots matrix must number its shards 1..N"
+    render = next(step["run"] for step in job["steps"] if "screenshots-shard" in step.get("run", ""))
+    assert f"SHARDS={len(shards)}" in render, "the render step's SHARDS differs from the matrix size"
+    return len(shards)
+
+
+def test_the_ci_shards_render_every_screenshot_exactly_once() -> None:
+    count = _ci_screenshot_shards()
+    shards = [_listed("--shard", f"{shard}/{count}") for shard in range(1, count + 1)]
+
+    assert all(shards), "a CI shard renders no screenshot"
+    assert sorted(name for shard in shards for name in shard) == sorted(_listed())
+
+
+def test_a_shard_out_of_range_is_refused() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--list", "--shard", "5/4"],
+        capture_output=True,
+        text=True,
+        timeout=LIST_TIMEOUT_S,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "--shard: shard 5 is not between 1 and 4" in completed.stderr
+
+
 @pytest.mark.gui
+@pytest.mark.screenshots
 @pytest.mark.timeout(0)  # The subprocess timeout below scales with the scene count.
 @pytest.mark.parametrize("example", _examples())
 def test_the_renderer_renders_every_scene_of_an_example(example: str, tmp_path: Path) -> None:

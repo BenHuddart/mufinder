@@ -32,7 +32,7 @@ FILES ?= \
 	tests/app/test_convergence_widget.py \
 	tests/app/main_window
 
-.PHONY: install test test-shard coverage test-fast harness screenshots docs lint quality
+.PHONY: install test test-shard coverage test-fast harness screenshots screenshots-shard docs lint quality
 
 # Equivalent: uv sync --extra dev --extra scientific-backends
 install:
@@ -41,10 +41,12 @@ install:
 test:
 	$(PYTHON) -m pytest $(PYTEST_XDIST) $(PYTEST_ARGS)
 
+# The shards skip the tests that render the documentation screenshots: CI's
+# docs-screenshots jobs render every one of them (see screenshots-shard).
 test-shard:
 	COVERAGE_FILE=.coverage.shard-$(SHARD) $(PYTHON) -m pytest $(PYTEST_XDIST) \
 		--splits $(SHARDS) --group $(SHARD) --splitting-algorithm least_duration \
-		--cov-report= --cov-fail-under=0 $(PYTEST_ARGS)
+		-m "not screenshots" --cov-report= --cov-fail-under=0 $(PYTEST_ARGS)
 
 coverage:
 	$(PYTHON) -m coverage combine --keep
@@ -67,6 +69,11 @@ SCREENSHOT_SOURCES = $(shell find scripts/docs_screenshots scripts/render_docs_s
 
 screenshots:
 	$(PYTHON) scripts/render_docs_screenshots.py
+
+# CI renders the screenshots as SHARDS shares on separate runners; this renders
+# share SHARD and does not touch the stamp.
+screenshots-shard:
+	$(PYTHON) scripts/render_docs_screenshots.py --shard $(SHARD)/$(SHARDS)
 
 $(SCREENSHOT_STAMP): $(SCREENSHOT_SOURCES)
 	$(PYTHON) scripts/render_docs_screenshots.py

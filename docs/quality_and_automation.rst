@@ -31,13 +31,16 @@ README, the pull-request template and CI refer to its targets. Pass
   suite (``pytest-split``) and writes that group's coverage data to
   ``.coverage.shard-n`` with no report and no gate. ``make coverage`` combines
   every ``.coverage.shard-*`` file and enforces the gate. CI runs the suite this
-  way, as four shards.
+  way, as four shards. The shards deselect the tests marked ``screenshots``,
+  which render the documentation screenshots, since CI renders those in its
+  own jobs.
 - ``make test-fast`` runs focused tests without coverage. With no arguments it
   runs the targeted execution checks listed below; ``make test-fast
   FILES="tests/science/test_supercell.py"`` runs the files you name.
 - ``make harness`` runs the agent-harness structural tests.
 - ``make screenshots`` renders the documentation screenshots into
-  ``docs/_generated/screenshots`` (see `Documentation screenshots`_).
+  ``docs/_generated/screenshots`` (see `Documentation screenshots`_), and
+  ``make screenshots-shard SHARD=n SHARDS=m`` renders share ``n`` of ``m``.
 - ``make docs`` renders the screenshots when they are out of date (see `When
   the renderer runs`_), then builds this Sphinx site with warnings treated as
   errors.
@@ -193,6 +196,9 @@ The package
 - ``examples/`` holds one module per example project. Each defines its
   project builders, the scene steps only its scenes use, and ``SCENES``, a
   dictionary from screenshot name to ``Scene``.
+- ``shards.py`` shares the screenshots out between render workers and CI
+  shards (see `Sharing the render`_). It imports no Qt, so tests import it
+  directly. ``durations.json`` beside it records each screenshot's seconds.
 - ``registry.py`` lists the example modules in render order as ``EXAMPLES``
   and merges their scenes into ``SCREENSHOTS``. A screenshot name belongs to
   exactly one example.
@@ -200,10 +206,12 @@ The package
   screenshot; ``--example NAME`` renders one example's scenes, names render
   those screenshots, ``--list`` prints the names it would render, and
   ``--output`` writes somewhere other than ``docs/_generated/screenshots``.
-  ``--jobs N`` (default: four, or fewer CPUs) deals the screenshots out in
-  registry order to ``N`` worker processes, each a run with names of its own
-  share, so a project several workers need is built in each of them; ``--jobs
-  1`` renders in one process.
+  ``--shard K/N`` narrows the selection to the ``K``-th of ``N`` shares.
+  ``--jobs N`` (default: four, or fewer CPUs) splits the selection into ``N``
+  shares the same way and renders each in a worker process, a run with names
+  of its own share; ``--jobs 1`` renders in one process.
+  ``--store-durations`` renders in one process and records each screenshot's
+  seconds in ``durations.json``.
 
 Scenes
 ~~~~~~
@@ -453,6 +461,23 @@ clear of the atom columns. ``tests/docs/test_docs_gdru2si2.py`` pins the
 barrier, the image count, the zero-point energies, the witnesses and the site
 positions that the page reports.
 
+Sharing the render
+~~~~~~~~~~~~~~~~~~
+
+A screenshot's cost is its window, its drive and its grab, about three
+seconds on a developer machine; the first screenshot of a project in a process
+also builds that project. ``shards.partition`` weighs each screenshot by its
+seconds in ``durations.json``, or by the median of the recorded ones when it
+has none, and at least 0.1 s. It keeps the screenshots of one project
+together, so each share builds a project once, and splits a project's
+screenshots into consecutive pieces only when they alone weigh more than an
+even share. The pieces go,
+heaviest first, to the lightest share, and each share renders in registry
+order. Only the ratios between the durations matter, so they are recorded
+from a single-process run on any machine:
+``python scripts/render_docs_screenshots.py --store-durations`` rewrites
+every entry, and naming screenshots records only those and keeps the rest.
+
 When the renderer runs
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -465,13 +490,24 @@ docs`` depends on the stamp, and the stamp on every file of
 than the stamp, and a fresh checkout renders once. Delete the stamp to force a
 render from ``make docs``.
 
-The ``docs`` job of ``.github/workflows/ci.yml`` and the build job of
-``.github/workflows/pages.yml`` restore ``docs/_generated/screenshots`` from the
-GitHub Actions cache, keyed on a hash of ``scripts/docs_screenshots``,
+In ``.github/workflows/ci.yml`` the screenshots render in four
+``docs-screenshots`` jobs on separate runners, one per share, since a single
+runner's four CPUs limit how fast its workers can render. Each job restores its
+share of ``docs/_generated/screenshots`` from the GitHub Actions cache, keyed
+on the share and on a hash of ``scripts/docs_screenshots``,
 ``scripts/render_docs_screenshots.py``, ``src/mufinder``, ``tests/fixtures`` and
-``uv.lock``. On a hit they touch ``.stamp``, since a restored archive keeps the
-stamp's old modification time, and ``make docs`` skips the render; on a miss
-``make docs`` renders every screenshot and the job saves them under that key.
+``uv.lock``. On a miss it runs ``make screenshots-shard`` and saves the images
+under that key; on a hit it installs nothing. Either way it uploads its share
+as an artifact. The ``docs`` job waits for all four, downloads the shares into
+``docs/_generated/screenshots`` and touches ``.stamp``, so ``make docs`` runs
+Sphinx alone. A pull request that changes only pages therefore renders
+nothing. ``tests/docs/test_docs_screenshots.py`` checks that the four shares
+together render every screenshot exactly once.
+
+The build job of ``.github/workflows/pages.yml`` restores the whole of
+``docs/_generated/screenshots`` from one cache entry under the same hash. On a
+hit it touches ``.stamp`` and ``make docs`` skips the render; on a miss ``make
+docs`` renders every screenshot and the job saves them under that key.
 
 Adding a screenshot
 ~~~~~~~~~~~~~~~~~~~
@@ -481,9 +517,11 @@ Adding a screenshot
    where they fit. A screenshot that needs a new project adds a builder to
    that example; one that needs a new kind of host adds an example module and
    lists it in ``registry.py``.
-2. Render it alone, ``python scripts/render_docs_screenshots.py <name>``
+2. Render it alone and record its duration,
+   ``python scripts/render_docs_screenshots.py --store-durations <name>``
    (``--list`` prints the names), and look at the image: it must not show an
-   error, an empty table or a clipped control.
+   error, an empty table or a clipped control. Commit the updated
+   ``durations.json``.
 3. Reference it from a page with a ``figure`` directive, an ``:alt:`` text and
    a one-line caption.
 
@@ -491,11 +529,17 @@ Adding a screenshot
 since importing ``render.py`` configures Qt and VTK for the whole process. It
 reads the registry's names with ``--list`` and fails if a page references an
 image the registry does not render, the registry renders one no page uses, or
-an example module under ``examples/`` is missing from the registry. It then
-renders each example with ``--example`` in its own process, with a timeout
-proportional to its scene count; that process shares the example's scenes
-between its ``--jobs`` workers, and ``pytest-xdist`` spreads the examples
-across test workers.
+an example module under ``examples/`` is missing from the registry. It also
+fails if ``durations.json`` does not list exactly the registry's screenshots,
+in registry order, or if a CI share is empty. It then renders each example
+with ``--example`` in its own process, with a timeout proportional to its
+scene count; that process shares the example's scenes between its ``--jobs``
+workers, and ``pytest-xdist`` spreads the examples across test workers. These
+render tests carry the ``screenshots`` marker, which ``make test`` runs and
+``make test-shard`` deselects. The renderer refuses a grab of 10 kB or less as
+blank, so CI's render jobs catch one too.
+``tests/docs/test_docs_screenshot_shards.py`` checks how ``shards.py`` splits
+and balances the screenshots and merges recorded durations.
 ``tests/docs/test_docs_synthetic.py`` reads the ``synthetic.py`` outputs back
 through the application's CASTEP and geometry-progress parsers, and
 ``tests/docs/test_docs_images.py`` builds a one-page Sphinx project with the
@@ -644,8 +688,11 @@ continuous integration and tag-driven publishing:
     ``make coverage`` in the required ``tests`` job, which combines the shards'
     coverage data and enforces the threshold. ``tests`` fails if any shard
     fails.
-  - ``make docs``: the screenshots, rendered once on the fresh runner, then
-    the ``sphinx`` HTML build with ``-W`` enabled. The job uploads nothing.
+  - ``make screenshots-shard SHARD=n SHARDS=4`` in four ``docs-screenshots``
+    jobs, each skipped when its share is cached (see `When the renderer
+    runs`_), then ``make docs`` in the required ``docs`` job: the ``sphinx``
+    HTML build with ``-W`` enabled, over the shares the four jobs uploaded.
+    ``docs`` fails if any share fails.
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
   and macOS artifacts from any branch, tag, or SHA without publishing a release
