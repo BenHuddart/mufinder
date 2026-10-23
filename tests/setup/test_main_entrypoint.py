@@ -87,6 +87,11 @@ def test_run_bootstraps_qt_and_returns_exit_code(monkeypatch):
     monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
     monkeypatch.setattr(
         main_module,
+        "_install_gui_garbage_collector",
+        lambda app: created.setdefault("collected_by", app),
+    )
+    monkeypatch.setattr(
+        main_module,
         "_theme_helpers",
         lambda: (
             lambda *_args, **_kwargs: "light",
@@ -103,6 +108,7 @@ def test_run_bootstraps_qt_and_returns_exit_code(monkeypatch):
     assert created["app"].window_icon == "icon-object"
     assert created["window"].shown is True
     assert created["app"].events_processed is True
+    assert created["collected_by"] is created["app"]
 
 
 class _ProjectWindow(_FakeWindow):
@@ -127,6 +133,7 @@ def _run_with_arguments(monkeypatch, arguments, window):
 
     monkeypatch.setattr(_FakeApp, "cli_arguments", list(arguments))
     monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
+    monkeypatch.setattr(main_module, "_install_gui_garbage_collector", lambda _app: None)
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: lambda: window)
     monkeypatch.setattr(
         main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None
@@ -219,6 +226,7 @@ def test_run_applies_saved_castep_environment(monkeypatch):
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: _FakeWindow)
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
     monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
+    monkeypatch.setattr(main_module, "_install_gui_garbage_collector", lambda _app: None)
     monkeypatch.setattr(
         main_module,
         "_theme_helpers",
@@ -250,6 +258,7 @@ def test_run_sets_windows_app_id_before_qt_startup(monkeypatch):
     )
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
     monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
+    monkeypatch.setattr(main_module, "_install_gui_garbage_collector", lambda _app: None)
     monkeypatch.setattr(
         main_module,
         "_theme_helpers",
@@ -362,6 +371,10 @@ def test_helper_import_wrappers(monkeypatch):
     fake_branding_module.app_icon = lambda: "wrapped-icon"
     recorded = {}
     fake_castep_setup_module = ModuleType("mufinder.castep_setup")
+    fake_collector_module = ModuleType("mufinder.app.gui_garbage_collector")
+    fake_collector_module.install_gui_garbage_collector = lambda app: recorded.setdefault(
+        "collector_app", app
+    )
 
     def fake_apply_saved(settings):
         recorded["settings"] = settings
@@ -373,6 +386,7 @@ def test_helper_import_wrappers(monkeypatch):
     monkeypatch.setitem(sys.modules, "mufinder.app.theme", fake_theme_module)
     monkeypatch.setitem(sys.modules, "mufinder.branding", fake_branding_module)
     monkeypatch.setitem(sys.modules, "mufinder.castep_setup", fake_castep_setup_module)
+    monkeypatch.setitem(sys.modules, "mufinder.app.gui_garbage_collector", fake_collector_module)
 
     assert main_module._main_window_ctor() is fake_main_window_module.MainWindow
     assert main_module._splash_screen_ctor() is fake_splash_module.MuFinderSplashScreen
@@ -381,6 +395,9 @@ def test_helper_import_wrappers(monkeypatch):
         fake_theme_module.load_theme_mode,
     )
     assert main_module._app_icon() == "wrapped-icon"
+    app = object()
+    main_module._install_gui_garbage_collector(app)
+    assert recorded["collector_app"] is app
 
     settings = object()
     main_module._apply_saved_castep_environment(settings)

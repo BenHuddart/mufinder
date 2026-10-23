@@ -16,8 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # One runner renders every screenshot here; a whole run takes under ten
+  # minutes. The limit stops a hang outside a scene, which the renderer's
+  # --scene-timeout does not cover.
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5

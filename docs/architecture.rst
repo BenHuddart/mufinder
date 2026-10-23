@@ -287,6 +287,16 @@ no two workflow widgets may define the same private method.
        a busy dialog appears once the call takes noticeably long, and a
        cancellable call raises ``BlockingCallCancelled``. Filesystem retries
        and keyring password lookups use it.
+   * - ``mufinder.app.gui_garbage_collector``
+     - Freeing reference cycles on the GUI thread only
+       (``GuiGarbageCollector``, ``install_gui_garbage_collector``). Automatic
+       collection is off; a GUI-thread timer collects once a generation's
+       threshold is passed. A cycle freed on a worker thread can run
+       ``QObject::~QObject`` there and deadlock against the GUI thread over
+       the GIL and Qt's object locks. ``mufinder.main`` starts it with the
+       application, the screenshot renderer with its own and the test
+       session's ``qapp`` fixture with the shared one; worker threads never
+       call ``gc.collect()`` or hold the only reference to a Qt object.
    * - ``mufinder.app.pinned_sites_scope``
      - The "Show every relaxed site" check box, pinned-sites notice and
        ``Go to Muon Sites →`` link above a downstream site list

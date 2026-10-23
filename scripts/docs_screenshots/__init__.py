@@ -18,6 +18,9 @@ The package:
 - :mod:`docs_screenshots.examples` holds one module per example project:
   its builders, the steps only its scenes use, and its ``SCENES``.
 - :mod:`docs_screenshots.registry` merges every example's scenes.
+- :mod:`docs_screenshots.watchdog` gives each scene a time limit, after which
+  the renderer names the scene, dumps every thread's stack and fails. It
+  imports no Qt.
 
 Importing this package imports nothing; :mod:`docs_screenshots.render` sets
 the environment when it is first imported. Run the renderer through the

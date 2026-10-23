@@ -36,6 +36,12 @@ def _install_text_editing_shortcuts(app: QApplication) -> None:
     install_text_editing_shortcuts(app)
 
 
+def _install_gui_garbage_collector(app: QApplication) -> None:
+    from mufinder.app.gui_garbage_collector import install_gui_garbage_collector
+
+    install_gui_garbage_collector(app)
+
+
 def _app_icon():
     from mufinder.branding import app_icon
 
@@ -213,6 +219,8 @@ def run() -> int:
     app = QApplication(sys.argv)
     # QApplication strips Qt's own options (``-platform xcb`` ...) from arguments().
     options = _parse_arguments(app.arguments()[1:])
+    # Reference cycles are freed on this thread only; see gui_garbage_collector.
+    _install_gui_garbage_collector(app)
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")
     app.setWindowIcon(_app_icon())
