@@ -252,6 +252,13 @@ The package
 - ``shards.py`` shares the screenshots out between render workers and CI
   shards (see `Sharing the render`_). It imports no Qt, so tests import it
   directly. ``durations.json`` beside it records each screenshot's seconds.
+- ``watchdog.py`` gives each scene a time limit (``scene_deadline``). A scene
+  that runs past it ends the renderer with exit status 3: stderr names the
+  scene and holds the stack of every thread, and the renderer's scratch
+  directory is removed first. A hang that holds the GIL is caught 30 seconds
+  later by ``faulthandler``, which dumps the same stacks under a ``Timeout``
+  heading and leaves the scratch directory behind. It imports no Qt, so tests
+  import it directly.
 - ``registry.py`` lists the example modules in render order as ``EXAMPLES``
   and merges their scenes into ``SCREENSHOTS``. A screenshot name belongs to
   exactly one example.
@@ -265,6 +272,10 @@ The package
   of its own share; ``--jobs 1`` renders in one process.
   ``--store-durations`` renders in one process and records each screenshot's
   seconds in ``durations.json``.
+  ``--scene-timeout SECONDS`` (default: 300, at most 86400) is each scene's
+  time limit, its project's build included; worker processes inherit it. Like the
+  application, the renderer starts ``mufinder.app.gui_garbage_collector``, so
+  Qt objects are freed on the GUI thread only.
 
 Scenes
 ~~~~~~
@@ -556,6 +567,10 @@ as an artifact. The ``docs`` job waits for all four, downloads the shares into
 Sphinx alone. A pull request that changes only pages therefore renders
 nothing. ``tests/docs/test_docs_screenshots.py`` checks that the four shares
 together render every screenshot exactly once.
+
+A ``docs-screenshots`` job stops after 20 minutes and the Pages build after 30,
+so a hang outside a scene, which ``--scene-timeout`` does not cover, fails the
+run instead of holding a runner for hours.
 
 The build job of ``.github/workflows/pages.yml`` restores the whole of
 ``docs/_generated/screenshots`` from one cache entry under the same hash. On a

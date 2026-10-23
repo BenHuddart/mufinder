@@ -134,9 +134,13 @@ jobs:
   # a hash of everything a screenshot depends on, so a pull request that
   # changes only pages reuses the images. Keep `--shard` (SHARDS), this matrix
   # in step; tests/docs/test_docs_screenshots.py reads the shard count from here.
+  # A share renders in about two minutes. The renderer fails a scene that runs
+  # past --scene-timeout and dumps every thread's stack; the job's own limit
+  # catches anything that hangs outside a scene.
   docs-screenshots:
     name: docs screenshots (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

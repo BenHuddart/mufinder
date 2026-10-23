@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+import time
 from typing import TYPE_CHECKING, Any
 import weakref
 
@@ -789,5 +790,36 @@ def scratch_directory(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix, dir=_SCRATCH))
 
 
+# A writer that recreates the scratch directory (Qt makes the settings path
+# with its parents), or a file still open in it, is outlasted by this many
+# attempts, this far apart.
+_REMOVE_ATTEMPTS = 5
+_REMOVE_RETRY_S = 0.1
+
+
 def remove_scratch() -> None:
-    shutil.rmtree(_SCRATCH, ignore_errors=True)
+    """Delete the scratch directory, even while another thread still writes into it.
+
+    A scene that runs out of time is cleaned up from the time limit's thread
+    while the scene goes on writing its project. Each attempt renames the
+    directory first, so the scene's later paths under it fail instead of
+    refilling the tree being deleted. A renamed tree that could not be deleted
+    (a file in it still open, as Windows refuses) is tried again too.
+    """
+
+    doomed: list[Path] = []
+    for attempt in range(_REMOVE_ATTEMPTS):
+        if _SCRATCH.exists():
+            renamed = _SCRATCH.with_name(f"{_SCRATCH.name}-removing-{attempt}")
+            try:
+                _SCRATCH.rename(renamed)
+            except OSError:
+                renamed = _SCRATCH
+            if renamed not in doomed:
+                doomed.append(renamed)
+        for tree in doomed:
+            shutil.rmtree(tree, ignore_errors=True)
+        doomed = [tree for tree in doomed if tree.exists()]
+        if not doomed and not _SCRATCH.exists():
+            return
+        time.sleep(_REMOVE_RETRY_S)
