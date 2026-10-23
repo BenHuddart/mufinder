@@ -733,6 +733,12 @@ The harness tests currently verify:
   ``MU_N``, ``HBAR``, ``ANGSTROM_TO_M``, ...). This catches a redefinition the
   value check cannot see, such as ``MU0_OVER_4PI = 1e-7``.
 - Only ``mufinder.domain.constants`` imports ``scipy.constants`` or ``ase.units``.
+- The ``*_coverage.py`` test files match a pinned list that may only shrink;
+  coverage gaps are closed in the module's own test file.
+- ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
+  ``AGENTS.md`` still points to it.
+- Source, test, and docs trees do not track Python bytecode artifacts that can
+  confuse packaging and review.
 
 A SciPy release that adopts a newer CODATA set changes the constants, the muon
 mass and gyromagnetic ratio written to CASTEP inputs, and every result built
@@ -741,12 +747,6 @@ from them. Moving to it is a change of its own: raise the ``scipy`` floor in
 new recommended values, regenerate the golden inputs with
 ``python -m tests.support.golden_inputs``, and state in the pull request that
 rendered inputs change. Loosening the tests instead would hide the change.
-- The ``*_coverage.py`` test files match a pinned list that may only shrink;
-  coverage gaps are closed in the module's own test file.
-- ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
-  ``AGENTS.md`` still points to it.
-- Source, test, and docs trees do not track Python bytecode artifacts that can
-  confuse packaging and review.
 
 Automation policy
 -----------------
