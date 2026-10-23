@@ -206,3 +206,26 @@ def test_the_scratch_directory_is_removed_while_a_scene_still_writes_into_it() -
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "[]"
+
+
+def test_a_renamed_scratch_tree_that_resists_deletion_is_tried_again() -> None:
+    # The first deletion leaves everything in place, as an open file on
+    # Windows makes it; the renamed tree must not be forgotten.
+    patch = "\n".join(
+        [
+            "import shutil",
+            "_real_rmtree = shutil.rmtree",
+            "_failures = [1]",
+            "def _rmtree(path, ignore_errors=False):",
+            "    if _failures:",
+            "        _failures.pop()",
+            "        return",
+            "    _real_rmtree(path, ignore_errors=ignore_errors)",
+            "render.shutil.rmtree = _rmtree",
+        ]
+    )
+
+    completed = _remove_scratch_while_writing(patch)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "[]"
