@@ -55,6 +55,7 @@ from mufinder.services.magnetic_field_results import (
     store_magnetic_field_results,
 )
 from mufinder.services.project_service import ProjectService
+from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A
 from tests.support.structures import host_structure, relaxed_muon_supercell
 
 
@@ -1778,7 +1779,9 @@ def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(
     widget._calculate_fields()
 
     # Only the moved Fe (z moment of 1 μB, 1.5 Å -> 1.6 Å along x from the muon) changes the field.
-    expected_bz = -1e-7 * 9.274_010_078_3e-24 / 1e-30 * (1.0 / 1.6**3 - 1.0 / 1.5**3)
+    expected_bz = (
+        -MU0_OVER_4PI_T_M_PER_A * BOHR_MAGNETON_J_PER_T / 1e-30 * (1.0 / 1.6**3 - 1.0 / 1.5**3)
+    )
     assert "with muon-induced distortion corrections" in widget._calculation_status.text()
     assert widget._result_table.item(0, 5).text() == "field (distortion-corrected)"
     state = widget.collect_state()

@@ -190,7 +190,7 @@ def test_expand_quantum_phonon_jobs_writes_gamma_phonon_inputs() -> None:
     param_text = write_param(job.param_file)
     assert "PHONON_KPOINT_MP_GRID 1 1 1" in cell_text
     assert "%BLOCK SPECIES_MASS" in cell_text
-    assert "H:mu 0.11342892566" in cell_text
+    assert "H:mu 0.1134289257" in cell_text
     assert "%BLOCK SPECIES_GAMMA" in cell_text
     assert "TASK : PHONON" in param_text
     assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text

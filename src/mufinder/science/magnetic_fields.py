@@ -10,7 +10,13 @@ from typing import Any
 
 import numpy as np
 
-from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
+from mufinder.domain.constants import (
+    BOHR_MAGNETON_J_PER_T,
+    METRES_PER_ANGSTROM,
+    MU0_OVER_4PI_T_M_PER_A,
+    MU0_T_M_PER_A,
+    MUON_GAMMA_OVER_2PI_MHZ_T,
+)
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
@@ -31,17 +37,19 @@ from mufinder.science.muon_distortion import (
     map_muon_distortion,
 )
 
-MU0_OVER_4PI = 1e-7
-MU0 = 4.0 * np.pi * 1e-7
-MU_B = 9.274_010_078_3e-24
-ANGSTROM_TO_M = 1e-10
 MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = MUON_GAMMA_OVER_2PI_MHZ_T
-CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (2.0 * MU0 / 3.0) * MU_B / (ANGSTROM_TO_M**3)
+CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (
+    (2.0 * MU0_T_M_PER_A / 3.0) * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
+)
 # muesr returns dipolar tensors as the lattice sum of (3 r̂ r̂ - 1) / r^3 in Å^-3;
 # this factor, mu0 mu_B / (4 pi Å^3), turns that sum into T per mu_B.
-DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0_OVER_4PI * MU_B / (ANGSTROM_TO_M**3)
+DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = (
+    MU0_OVER_4PI_T_M_PER_A * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
+)
 # mu0 M, in T, of a magnetisation of 1 mu_B per Å^3.
-MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0 * MU_B / (ANGSTROM_TO_M**3)
+MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 = (
+    MU0_T_M_PER_A * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
+)
 CONTACT_COUPLING_UNIT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("angstrom^-3", "Å⁻³"),
     ("T_per_muB", "T/μB"),
@@ -424,13 +432,13 @@ def calculate_finite_dipolar_field(
         return (0.0, 0.0, 0.0)
     r_cart = r_cart[mask]
     moments = moments[mask]
-    r_norm_m = r_norm_ang[mask] * ANGSTROM_TO_M
+    r_norm_m = r_norm_ang[mask] * METRES_PER_ANGSTROM
     r_hat = r_cart / r_norm_ang[mask, np.newaxis]
-    m_si = moments * MU_B
+    m_si = moments * BOHR_MAGNETON_J_PER_T
     inv_r3 = 1.0 / (r_norm_m**3)
     mdotr = np.sum(m_si * r_hat, axis=1)
     terms = (3.0 * mdotr[:, np.newaxis] * r_hat - m_si) * inv_r3[:, np.newaxis]
-    return _tuple3(MU0_OVER_4PI * np.sum(terms, axis=0))
+    return _tuple3(MU0_OVER_4PI_T_M_PER_A * np.sum(terms, axis=0))
 
 
 def calculate_distortion_field_correction(

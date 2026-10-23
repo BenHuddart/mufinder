@@ -541,7 +541,7 @@ def _chain_block_modes(
     its largest one, where the muon is at rest) is made positive.
     """
 
-    from mufinder.science.quantum_phonons import (
+    from mufinder.domain.constants import (
         ATOMIC_MASS_KG,
         ELEMENTARY_CHARGE_C,
         LIGHT_SPEED_M_S,

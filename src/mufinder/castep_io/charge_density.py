@@ -15,7 +15,8 @@ from pathlib import Path
 import re
 
 import numpy as np
-from scipy import constants as cnst
+
+from mufinder.domain.constants import BOHR_RADIUS_ANGSTROM
 
 
 _FLOAT_RE = r"[-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?"
@@ -25,7 +26,6 @@ _ELEMENT_RE = re.compile(r"Element:\s+([A-Za-z]{1,2})\s+Ionic charge:\s+([0-9.]+
 _CORE_RADIUS_RE = re.compile(r"(?:[0-9]+|loc)\s+[0-9]\s+[\-0-9.]+\s+([0-9.]+)")
 _NEUTRALITY_RE = re.compile(r"unit\s+cell\s+is\s+neutral", re.IGNORECASE)
 _TOTAL_CHARGE_RE = re.compile(rf"total\s+charge[^\n=]*=\s*({_FLOAT_RE})", re.IGNORECASE)
-_BOHR_TO_ANG = cnst.physical_constants["Bohr radius"][0] * 1e10
 
 
 class ChargeDensityInputError(ValueError):
@@ -178,7 +178,7 @@ def parse_castep_pseudopotentials(path: str | Path) -> dict[str, IonicPseudopote
                 ionic_charge = float(match.group(2))
                 continue
             if (match := _CORE_RADIUS_RE.search(line)) is not None:
-                core_radius_ang = min(core_radius_ang, float(match.group(1)) * _BOHR_TO_ANG)
+                core_radius_ang = min(core_radius_ang, float(match.group(1)) * BOHR_RADIUS_ANGSTROM)
         if element and ionic_charge is not None and np.isfinite(core_radius_ang):
             parsed[element] = IonicPseudopotential(
                 species=element,

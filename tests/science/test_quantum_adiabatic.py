@@ -11,13 +11,13 @@ from mufinder.science.quantum_adiabatic import (
     effective_mass_from_relaxed_scan,
     solve_single_particle_ground_state,
 )
-from mufinder.science.quantum_phonons import (
+from mufinder.domain.constants import (
     ATOMIC_MASS_KG,
-    CM_INV_ZPE_TO_EV,
     ELEMENTARY_CHARGE_C,
     LIGHT_SPEED_M_S,
     MUON_MASS_AMU,
 )
+from mufinder.science.quantum_phonons import CM_INV_ZPE_TO_EV
 
 
 def _potential(

@@ -57,6 +57,7 @@ from mufinder.science.magnetic_structure import (
     moments_at_atoms,
 )
 from mufinder.science.muon_distortion import map_muon_distortion
+from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A, MU0_T_M_PER_A
 from tests.support.structures import BODY_CENTRE, host_structure, relaxed_muon_supercell
 
 _structure = partial(
@@ -387,7 +388,7 @@ def test_finite_dipolar_field_matches_axial_formula() -> None:
         muon_cart_ang=[0.0, 0.0, 1.0],
     )
 
-    expected = 1e-7 * 2.0 * 9.274_010_078_3e-24 / ((1e-10) ** 3)
+    expected = MU0_OVER_4PI_T_M_PER_A * 2.0 * BOHR_MAGNETON_J_PER_T / ((1e-10) ** 3)
     assert field[0] == pytest.approx(0.0)
     assert field[1] == pytest.approx(0.0)
     assert field[2] == pytest.approx(expected)
@@ -645,7 +646,7 @@ _MU_X = (0.5, 0.0, 0.0)
 def _axial_dipole_change(moment: float, before: float, after: float) -> float:
     """B_z change at a muon on the x axis when a z moment moves from ``before`` to ``after`` Å away."""
 
-    prefactor = -1e-7 * 9.274_010_078_3e-24 / ((1e-10) ** 3)
+    prefactor = -MU0_OVER_4PI_T_M_PER_A * BOHR_MAGNETON_J_PER_T / ((1e-10) ** 3)
     return prefactor * moment * (1.0 / abs(after) ** 3 - 1.0 / abs(before) ** 3)
 
 
@@ -2156,7 +2157,7 @@ def test_real_muesr_ferromagnet_body_centre_sees_only_the_lorentz_field(real_mue
     # Lorentz field mu0 M / 3 of 1 mu_B per (3 Å)^3, 0.1439 T.
     (result,) = calculate_commensurate_fields(_structure(), _model(), [(0.5, 0.5, 0.5)])
 
-    lorentz = 4.0e-7 * np.pi * 9.274_010_078_3e-24 / (3.0e-10) ** 3 / 3.0
+    lorentz = MU0_T_M_PER_A * BOHR_MAGNETON_J_PER_T / (3.0e-10) ** 3 / 3.0
     assert result.dipolar == pytest.approx((0.0, 0.0, 0.0), abs=1e-9)
     assert result.lorentz == pytest.approx((0.0, 0.0, lorentz), rel=5e-3)
     assert lorentz == pytest.approx(0.1439, abs=1e-4)
@@ -2178,7 +2179,7 @@ def test_real_muesr_ferromagnet_demagnetizing_field_follows_the_muesr_convention
         _structure(), _model(), [(0.5, 0.5, 0.5)], options=options
     )
 
-    bulk = 4.0e-7 * np.pi * 9.274_010_078_3e-24 / (3.0e-10) ** 3
+    bulk = MU0_T_M_PER_A * BOHR_MAGNETON_J_PER_T / (3.0e-10) ** 3
     assert bulk == pytest.approx(0.4316, abs=1e-4)
     assert result.demag == pytest.approx((0.0, 0.0, -factor * bulk), rel=1e-12)
     assert result.lorentz[2] + result.demag[2] == pytest.approx((1 / 3 - factor) * bulk, abs=5e-4)

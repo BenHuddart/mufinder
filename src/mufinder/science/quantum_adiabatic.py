@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from mufinder.science.quantum_phonons import (
+from mufinder.domain.constants import (
     ATOMIC_MASS_KG,
     ELEMENTARY_CHARGE_C,
     HBAR_J_S,

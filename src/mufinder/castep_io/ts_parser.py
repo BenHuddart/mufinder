@@ -11,13 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ase.units import Bohr, Hartree
+from mufinder.domain.constants import BOHR_RADIUS_ANGSTROM, HARTREE_EV
 
-# Reuse ase's CODATA conversions (ase is a hard project dependency) rather than
-# keeping a second hard-coded copy of the constants.
-HARTREE_TO_EV = Hartree
-BOHR_TO_ANGSTROM = Bohr
-HARTREE_PER_BOHR_TO_EV_PER_ANGSTROM = Hartree / Bohr
+HARTREE_TO_EV = HARTREE_EV
+BOHR_TO_ANGSTROM = BOHR_RADIUS_ANGSTROM
+HARTREE_PER_BOHR_TO_EV_PER_ANGSTROM = HARTREE_EV / BOHR_RADIUS_ANGSTROM
 
 
 class TransitionStateParseError(ValueError):
