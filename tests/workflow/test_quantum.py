@@ -134,8 +134,8 @@ def test_expand_quantum_phonon_jobs_writes_muon_species_mass_in_its_own_cell() -
     gamma_block = cell_text.split("%BLOCK SPECIES_GAMMA")[1].split("%ENDBLOCK SPECIES_GAMMA")[0]
     unit, species, gamma = gamma_block.split()
     assert (unit, species) == ("radsectesla", "H:mu")
-    # CODATA 2018: gamma_mu = 2 pi x 135.538 8094 MHz/T.
-    assert float(gamma) == pytest.approx(851_615_456.6, rel=1e-9)
+    # CODATA gamma_mu = 2 |mu_mu| / hbar (2 pi x 135.538 81 MHz/T), not the old 851586494.1.
+    assert float(gamma) == pytest.approx(851_615_456.6, rel=1e-8)
     assert jobs[0].provenance["muon_mass_amu"] == MUON_MASS_AMU
 
 
