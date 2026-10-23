@@ -1173,3 +1173,28 @@ def test_row_menu_action_with_a_submenu_adds_its_children_with_the_same_keys(qap
     assert disabled.isEnabled() is False
     assert disabled.toolTip() == "Select one row."
     assert disabled_menu.toolTipsVisible() is True
+
+
+def test_row_menu_submenu_children_get_keys_even_under_an_on_rows_parent(qapp) -> None:
+    from PySide6.QtWidgets import QMenu
+
+    seen: list[list[object]] = []
+    action = workflow_table_utils.RowMenuAction(
+        text="Export",
+        is_enabled=bool,
+        trigger=lambda _rows: None,
+        on_rows=True,
+        submenu=(
+            workflow_table_utils.RowMenuAction(
+                text="CIF", is_enabled=bool, trigger=lambda keys: seen.append(list(keys))
+            ),
+        ),
+    )
+
+    menu = QMenu()
+    entry = workflow_table_utils.add_row_menu_action(
+        menu, keys=["positivemuon:Site 1"], action=action, rows=[3]
+    )
+    entry.menu().actions()[0].trigger()
+
+    assert seen == [["positivemuon:Site 1"]]

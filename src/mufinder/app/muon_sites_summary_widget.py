@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.export_dialogs import (
     CIF_FORMAT,
+    MUON_HOST_OVERLAP_TITLE,
     ask_save_path,
     report_export_failed,
     report_export_saved,
@@ -444,7 +445,12 @@ class _ChargeStatePanel(QFrame):
         except OSError as exc:
             report_export_failed(self, exc)
             return
-        report_export_saved(self, file_path, proximity_warnings)
+        report_export_saved(
+            self,
+            file_path,
+            proximity_warnings,
+            warning_title=MUON_HOST_OVERLAP_TITLE,
+        )
 
     def _on_open_clicked(self) -> None:
         if self._workspace_id:

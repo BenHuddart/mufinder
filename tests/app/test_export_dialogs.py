@@ -243,3 +243,45 @@ def test_folder_export_with_nothing_available_says_so(qapp, monkeypatch) -> None
     unavailable = [RelaxedStructureExport(None, NO_STRUCTURE_REASON)]
     assert export_relaxed_structures_to_folder(None, unavailable, CIF_FORMAT) == []
     assert [title for title, _text in messages.information] == ["Nothing to export"]
+
+
+def test_ask_save_path_replaces_another_export_suffix_instead_of_doubling(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    _patch_save_dialog(monkeypatch, str(tmp_path / "site.cif"), CASTEP_CELL_FORMAT.filter)
+
+    assert ask_save_path(None, "Export", "x.cell", (CASTEP_CELL_FORMAT,)) == tmp_path / "site.cell"
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_ask_save_path_confirms_replacing_a_file_its_added_suffix_points_at(
+    qapp, monkeypatch, tmp_path: Path, accept: bool
+) -> None:
+    existing = tmp_path / "mu1.cif"
+    existing.write_text("keep", encoding="utf-8")
+    _patch_save_dialog(monkeypatch, str(tmp_path / "mu1"), CIF_FORMAT.filter)
+    asked: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, title, text, *_args: asked.append((title, text)) or accept,
+    )
+
+    path = ask_save_path(None, "Export", "x.cif", (CIF_FORMAT,))
+
+    assert asked == [("Replace file", "Replace mu1.cif?")]
+    assert path == (existing if accept else None)
+
+
+def test_ask_save_path_leaves_overwrite_to_the_dialog_when_the_name_is_complete(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "mu1.cif").write_text("keep", encoding="utf-8")
+    _patch_save_dialog(monkeypatch, str(tmp_path / "mu1.cif"), CIF_FORMAT.filter)
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda *_args: pytest.fail("the native dialog already asked"),
+    )
+
+    assert ask_save_path(None, "Export", "x.cif", (CIF_FORMAT,)) == tmp_path / "mu1.cif"

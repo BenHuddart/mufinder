@@ -636,13 +636,14 @@ def test_relaxation_analysis_export_cif_warns_when_site_coincides_with_host_atom
         warned: list[str] = []
         monkeypatch.setattr(
             "mufinder.app.export_dialogs.QMessageBox.warning",
-            lambda _parent, title, message: warned.append(message),
+            lambda _parent, title, message: warned.append(f"{title}: {message}"),
         )
 
         widget._export_workspace_cif(str(workspace["id"]))
 
         assert output_path.exists()
         assert len(warned) == 1
+        assert warned[0].startswith("Muon sites coincide with host atoms: ")
         assert "Mu1" in warned[0]
     finally:
         widget.close()

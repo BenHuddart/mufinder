@@ -524,6 +524,8 @@ def add_row_menu_action(
     """Append one :class:`RowMenuAction` to ``menu``, gated on ``keys`` (or ``rows``)."""
 
     text = action.text
+    # Submenu entries resolve their own keys or rows from the originals.
+    child_keys = keys
     if action.on_rows:
         keys = list(rows)
         if action.applies_to_row is not None:
@@ -535,7 +537,7 @@ def add_row_menu_action(
         submenu = menu.addMenu(text)
         qt_action = submenu.menuAction()
         for child in action.submenu:
-            add_row_menu_action(submenu, keys=keys, action=child, rows=rows)
+            add_row_menu_action(submenu, keys=child_keys, action=child, rows=rows)
     else:
         qt_action = menu.addAction(text)
         qt_action.triggered.connect(

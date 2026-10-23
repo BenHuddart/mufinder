@@ -46,6 +46,9 @@ CIF_FORMAT = ExportFormat("CIF", "CIF Files", ".cif")
 CASTEP_CELL_FORMAT = ExportFormat("CASTEP cell", "CASTEP Cell Files", ".cell")
 #: The formats a relaxed structure exports to, in menu order.
 STRUCTURE_FORMATS = (CIF_FORMAT, CASTEP_CELL_FORMAT)
+_KNOWN_SUFFIXES = frozenset(fmt.suffix for fmt in STRUCTURE_FORMATS)
+#: Warning title when an exported muon site sits on or very near a host atom.
+MUON_HOST_OVERLAP_TITLE = "Muon sites coincide with host atoms"
 
 
 def add_format_actions(
@@ -72,7 +75,11 @@ def ask_save_path(
 
     ``default_name`` is suggested inside ``directory`` when one is given. A
     chosen name without one of the formats' suffixes gets the suffix of the
-    filter selected in the dialog (the first format when none matches).
+    filter selected in the dialog (the first format when none matches); a name
+    ending in another known export suffix (``site.cif`` while saving CASTEP
+    cell) has that suffix replaced rather than doubled. When the suffix is
+    changed after the dialog closed, the dialog's own overwrite question was
+    about a different file, so replacing an existing file is confirmed here.
     """
 
     suggested = str(directory / default_name) if directory is not None else default_name
@@ -85,16 +92,34 @@ def ask_save_path(
     if path.suffix.lower() in {fmt.suffix for fmt in formats}:
         return path
     chosen = next((fmt for fmt in formats if fmt.filter == selected_filter), formats[0])
-    return path.with_name(path.name + chosen.suffix)
+    if path.suffix.lower() in _KNOWN_SUFFIXES:
+        path = path.with_suffix(chosen.suffix)
+    else:
+        path = path.with_name(path.name + chosen.suffix)
+    if path.exists() and not workflow_table_utils.confirm_destructive(
+        parent,
+        "Replace file",
+        f"Replace {path.name}?",
+        f"A file with this name already exists in {path.parent}.",
+        "Replace",
+    ):
+        return None
+    return path
 
 
-def report_export_saved(parent: QWidget, path: Path, warnings: Sequence[str] = ()) -> None:
-    """Tell the user where the export was saved, with any warnings it raised."""
+def report_export_saved(
+    parent: QWidget,
+    path: Path,
+    warnings: Sequence[str] = (),
+    *,
+    warning_title: str = "Export saved with warnings",
+) -> None:
+    """Tell the user where the export was saved, with any warnings it raised under ``warning_title``."""
 
     if warnings:
         QMessageBox.warning(
             parent,
-            "Export saved with warnings",
+            warning_title,
             f"Saved to:\n{path}\n\n" + "\n".join(warnings),
         )
     else:
@@ -220,6 +245,7 @@ def _unique_targets(
 __all__ = [
     "CASTEP_CELL_FORMAT",
     "CIF_FORMAT",
+    "MUON_HOST_OVERLAP_TITLE",
     "STRUCTURE_FORMATS",
     "ExportFormat",
     "add_format_actions",

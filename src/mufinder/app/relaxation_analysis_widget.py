@@ -51,6 +51,7 @@ from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.export_dialogs import (
     CIF_FORMAT,
+    MUON_HOST_OVERLAP_TITLE,
     ExportFormat,
     add_format_actions,
     ask_save_path,
@@ -1836,7 +1837,12 @@ class RelaxationAnalysisWidget(QWidget):
         except OSError as exc:
             report_export_failed(self, exc)
             return
-        report_export_saved(self, file_path, proximity_warnings)
+        report_export_saved(
+            self,
+            file_path,
+            proximity_warnings,
+            warning_title=MUON_HOST_OVERLAP_TITLE,
+        )
 
     def _export_relaxed_structures(self, workspace_id: str, fmt: ExportFormat) -> None:
         """Export the selected site's relaxed structure in ``fmt``, or several sites to a folder.

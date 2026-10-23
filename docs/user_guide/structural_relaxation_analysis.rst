@@ -425,9 +425,12 @@ typed without that extension gets it added.
    by element and count (``Fe1``, ``Fe2``, ...). The muon is a hydrogen atom
    labelled ``Mu1``, so it stays distinct from any hydrogen in the host.
 ``CASTEP cell (.cell)``
-   ``LATTICE_CART`` in Å and ``POSITIONS_FRAC``, with ``SPIN=`` values when the
-   structure carries non-zero spins. The muon keeps its ``H:mu`` species
-   label, so the file reopens in MuFinder and can seed a new CASTEP run.
+   ``LATTICE_CART`` in Å and ``POSITIONS_FRAC``. The muon keeps its ``H:mu``
+   species label, so the file reopens in MuFinder. A relaxation imported from
+   a legacy project also gets ``SPIN=`` values, from its converged Mulliken
+   spins. A relaxation run in MuFinder keeps no spins with its relaxed
+   structure, so its file has no ``SPIN=`` values; add them before using the
+   file to start a spin-polarised CASTEP run.
 
 Both formats start with comment lines that record the project, the structure,
 the source job and its workflow, the charge state, the final energy in eV and
