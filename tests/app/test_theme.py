@@ -536,3 +536,16 @@ def test_checkboxes_and_radio_buttons_take_their_parent_background() -> None:
     stylesheet = theme_module._build_stylesheet(theme_module.light_palette())
 
     assert "QLabel, QCheckBox, QRadioButton {\n        background: transparent;" in stylesheet
+
+
+@pytest.mark.parametrize("palette_factory", ["light_palette", "dark_palette"])
+def test_disabled_menu_items_are_muted_and_never_highlighted(palette_factory: str) -> None:
+    palette = getattr(theme_module, palette_factory)()
+    stylesheet = theme_module._build_stylesheet(palette)
+
+    rule = stylesheet[stylesheet.index("QMenu::item:disabled, QMenu::item:disabled:selected") :]
+    block = rule[: rule.index("}")]
+    assert f"color: {palette.text_muted};" in block
+    assert "background: transparent;" in block
+    # Declared after the hover highlight, so it wins for a hovered disabled item.
+    assert stylesheet.index("QMenu::item:selected {") < stylesheet.index("QMenu::item:disabled")

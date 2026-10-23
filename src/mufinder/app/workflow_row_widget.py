@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.export_dialogs import STRUCTURE_FORMATS, export_relaxed_structure
 from mufinder.app.adapter_common import coerce_supercell_matrix
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.relaxation_types import SupercellMatrix
@@ -82,6 +83,7 @@ from mufinder.app.workflow_parameters import (
     workflow_default_params,
 )
 from mufinder.app.workflow_table_utils import (
+    EXPORT_RELAXED_STRUCTURE_ACTION_TEXT,
     REMOVE_SELECTED_TEXT,
     RowMenuAction,
     SelectionFeedback,
@@ -100,6 +102,7 @@ from mufinder.app.workflow_table_utils import (
 from mufinder.castep_io.gui_metadata import infer_task, validate_gui_values
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.services.structure_export import NOT_COMPLETED_REASON, RelaxedStructureExport
 
 _LOCKED_LABEL_TOOLTIP = "Job label is locked once this row has been queued for execution."
 
@@ -1162,6 +1165,11 @@ class RelaxationRowTableWidget(RowTableWidget):
         # "never continuable" so an unwired widget (e.g. in a test) never
         # offers an action it cannot fulfil.
         self._continuable_predicate: Callable[[object], bool] = lambda _key: False
+        # Injected like the predicate above, with the controller's
+        # ``relaxed_structure_export``. Unwired, no row has a structure to export.
+        self._relaxed_structure_export: Callable[[object], RelaxedStructureExport] = lambda _key: (
+            RelaxedStructureExport(None, NOT_COMPLETED_REASON)
+        )
 
     def _build_parameter_specs(self) -> list[KeywordSpec]:
         return geometry_relaxation_parameter_specs(
@@ -1226,6 +1234,26 @@ class RelaxationRowTableWidget(RowTableWidget):
 
         self._continuable_predicate = predicate
 
+    def set_relaxed_structure_export_provider(
+        self, provider: Callable[[object], RelaxedStructureExport]
+    ) -> None:
+        """Inject how a row key resolves to its exportable relaxed structure.
+
+        Asked fresh each time a row menu opens, like
+        :meth:`set_continuable_predicate`, to enable "Export Relaxed Structure…"
+        and to say why it is disabled.
+        """
+
+        self._relaxed_structure_export = provider
+
+    def _export_tooltip(self, keys: Sequence[object]) -> str:
+        if len(keys) != 1:
+            return "Select one completed relaxation to export its relaxed structure."
+        export = self._relaxed_structure_export(keys[0])
+        if export.structure is None:
+            return export.unavailable_reason or ""
+        return "Save the relaxed supercell as CIF or as a CASTEP .cell file."
+
     def continue_relaxation_dialog_seed(self, key: object) -> dict[str, object] | None:
         """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
 
@@ -1261,6 +1289,24 @@ class RelaxationRowTableWidget(RowTableWidget):
                 is_enabled=lambda keys: len(keys) == 1 and self._continuable_predicate(keys[0]),
                 trigger=lambda keys: self.continue_relaxation_requested.emit(keys[0]),
                 separator_before=True,
+            ),
+            RowMenuAction(
+                text=EXPORT_RELAXED_STRUCTURE_ACTION_TEXT,
+                is_enabled=lambda keys: (
+                    len(keys) == 1 and self._relaxed_structure_export(keys[0]).structure is not None
+                ),
+                trigger=lambda _keys: None,
+                tooltip_for=self._export_tooltip,
+                submenu=tuple(
+                    RowMenuAction(
+                        text=fmt.menu_text,
+                        is_enabled=lambda keys: len(keys) == 1,
+                        trigger=lambda keys, chosen=fmt: export_relaxed_structure(
+                            self, self._relaxed_structure_export(keys[0]), chosen
+                        ),
+                    )
+                    for fmt in STRUCTURE_FORMATS
+                ),
             ),
         )
 

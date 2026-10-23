@@ -369,7 +369,7 @@ def test_find_job_derived_structure_falls_back_to_earlier_run_results(
     is still found — through the ``derived_structure_ids`` of a Result reachable
     from one of the job's own runs — so it is refreshed rather than duplicated."""
 
-    from mufinder.app.workflow_controllers.base import find_job_derived_structure
+    from mufinder.services.job_results import find_job_derived_structure
     from mufinder.domain.models import Result, Structure
 
     service = ProjectService()
@@ -407,7 +407,7 @@ def test_find_job_derived_structure_prefers_the_first_of_a_duplicate_pair(
     pair. The lookup resolves to the FIRST in document order — the one any
     comparison table built in the meantime already references."""
 
-    from mufinder.app.workflow_controllers.base import find_job_derived_structure
+    from mufinder.services.job_results import find_job_derived_structure
     from mufinder.domain.models import Structure
 
     service = ProjectService()
@@ -878,6 +878,42 @@ def test_pristine_controller_row_is_continuable_reflects_raw_job_status(
     # row2 has no bound job; an unknown key resolves to no job either.
     assert controller.row_is_continuable("row2") is False
     assert controller.row_is_continuable("unknown") is False
+
+
+def test_pristine_controller_relaxed_structure_export_follows_the_rows_job(
+    tmp_path: Path,
+) -> None:
+    """The row menu's export resolves the row's job and its derived structure."""
+
+    from mufinder.domain.models import Structure
+    from mufinder.services.structure_export import NO_STRUCTURE_REASON, NOT_COMPLETED_REASON
+
+    service = ProjectService()
+    document, _definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    controller = _pristine_edit_controller(service, document, deps, view, output_root, [])
+
+    job.status = JobStatus.RUNNING
+    assert controller.relaxed_structure_export("row1").unavailable_reason == NOT_COMPLETED_REASON
+
+    job.status = JobStatus.COMPLETED
+    assert controller.relaxed_structure_export("row1").unavailable_reason == NO_STRUCTURE_REASON
+
+    relaxed = Structure(
+        label="row1 relaxed",
+        origin="pristine_relaxation",
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+        properties={"source_job_id": str(job.id)},
+    )
+    service.add_structure(document, relaxed)
+    export = controller.relaxed_structure_export("row1")
+    assert export.structure is relaxed
+    assert export.default_stem == f"{job.label}_relaxed".lower()
+
+    # A row with no bound job has nothing to export.
+    assert controller.relaxed_structure_export("row2").structure is None
 
 
 def test_pristine_controller_render_row_param_text_previews_without_persisting(

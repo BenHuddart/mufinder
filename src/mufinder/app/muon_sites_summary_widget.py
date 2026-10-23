@@ -19,17 +19,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from html import escape
 
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -39,6 +36,13 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+from mufinder.app.export_dialogs import (
+    CIF_FORMAT,
+    MUON_HOST_OVERLAP_TITLE,
+    ask_save_path,
+    report_export_failed,
+    report_export_saved,
+)
 from mufinder.app.theme import (
     make_empty_state_label,
     style_hint_text,
@@ -430,28 +434,23 @@ class _ChargeStatePanel(QFrame):
         default_name = (
             f"{_charge_state_title(self._charge_state).lower().replace(' ', '_')}_muon_sites.cif"
         )
-        file_path, _selected_filter = QFileDialog.getSaveFileName(
-            self, "Export Muon Sites CIF", default_name, "CIF Files (*.cif)"
-        )
-        if not file_path:
+        file_path = ask_save_path(self, "Export Muon Sites CIF", default_name, (CIF_FORMAT,))
+        if file_path is None:
             return
 
         try:
             proximity_warnings = export_structure_with_muon_sites(
-                host_structure, muon_sites, Path(file_path)
+                host_structure, muon_sites, file_path
             )
         except OSError as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            report_export_failed(self, exc)
             return
-
-        if proximity_warnings:
-            QMessageBox.warning(
-                self,
-                "Muon sites coincide with host atoms",
-                f"Saved CIF to:\n{file_path}\n\n" + "\n".join(proximity_warnings),
-            )
-        else:
-            QMessageBox.information(self, "Export complete", f"Saved CIF to:\n{file_path}")
+        report_export_saved(
+            self,
+            file_path,
+            proximity_warnings,
+            warning_title=MUON_HOST_OVERLAP_TITLE,
+        )
 
     def _on_open_clicked(self) -> None:
         if self._workspace_id:

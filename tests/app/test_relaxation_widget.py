@@ -7,15 +7,24 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QHeaderView, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import workflow_row_widget as workflow_row_widget_module
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint
 from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, SelectionSnapshotToolButton
+from mufinder.app.workflow_table_utils import EXPORT_RELAXED_STRUCTURE_ACTION_TEXT
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.models import Structure
+from mufinder.services.structure_export import (
+    NO_STRUCTURE_REASON,
+    NOT_COMPLETED_REASON,
+    RelaxedStructureExport,
+)
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
@@ -1388,7 +1397,7 @@ def test_relaxation_remove_button_multi_row_prompt_is_the_only_confirmation(
     assert confirmed_destructive_actions == []
 
 
-def test_relaxation_row_menu_has_shared_core_then_continue(qapp, monkeypatch) -> None:
+def test_relaxation_row_menu_has_shared_core_then_continue_and_export(qapp, monkeypatch) -> None:
     widget = PristineRelaxationWidget()
     widget._add_row()
     install_fake_menu(monkeypatch)
@@ -1404,6 +1413,7 @@ def test_relaxation_row_menu_has_shared_core_then_continue(qapp, monkeypatch) ->
         "Configure...",
         "Remove",
         "Continue relaxation…",
+        "Export Relaxed Structure",
     ]
     assert menu.separators_before == [7]
 
@@ -1535,3 +1545,102 @@ def test_relaxation_row_explicit_value_wins_over_an_exclusive_default(qapp) -> N
     assert effective["basis_precision"] == "FINE"
     assert "cut_off_energy" not in effective
     assert widget._build_config_or_warn() is not None
+
+
+def _available_export() -> RelaxedStructureExport:
+    return RelaxedStructureExport(
+        structure=Structure(
+            label="row relaxed",
+            lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+            species=["Si"],
+            fractional_positions=[[0.0, 0.0, 0.0]],
+        ),
+        default_stem="row_relaxed",
+    )
+
+
+def test_relaxation_widget_export_action_disabled_with_reason_when_unwired(
+    qapp, monkeypatch
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+    assert action is not None
+    assert action.enabled is False
+    assert action.tooltip == NOT_COMPLETED_REASON
+
+
+def test_relaxation_widget_export_action_shows_why_a_completed_row_cannot_export(
+    qapp, monkeypatch
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget.set_relaxed_structure_export_provider(
+        lambda _key: RelaxedStructureExport(None, NO_STRUCTURE_REASON)
+    )
+
+    install_fake_menu(monkeypatch)
+    action = open_reset_menu(widget._table, row=0).action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+
+    assert action.enabled is False
+    assert action.tooltip == NO_STRUCTURE_REASON
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected_format"),
+    [("CIF (.cif)…", CIF_FORMAT), ("CASTEP cell (.cell)…", CASTEP_CELL_FORMAT)],
+)
+def test_relaxation_widget_export_submenu_exports_the_rows_structure_in_the_chosen_format(
+    qapp, monkeypatch, entry, expected_format
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    export = _available_export()
+    seen_keys: list[object] = []
+
+    def provider(key: object) -> RelaxedStructureExport:
+        seen_keys.append(key)
+        return export
+
+    widget.set_relaxed_structure_export_provider(provider)
+    exported: list[tuple[RelaxedStructureExport, object]] = []
+    monkeypatch.setattr(
+        workflow_row_widget_module,
+        "export_relaxed_structure",
+        lambda _parent, payload, fmt: exported.append((payload, fmt)),
+    )
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(widget._table, row=0)
+    entry_action = menu.action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+    assert entry_action.enabled is True
+    assert entry_action.tooltip == "Save the relaxed supercell as CIF or as a CASTEP .cell file."
+    submenu = menu.submenus[EXPORT_RELAXED_STRUCTURE_ACTION_TEXT]
+    assert [action.text for action in submenu.actions] == [
+        "CIF (.cif)…",
+        "CASTEP cell (.cell)…",
+    ]
+    submenu.action(entry).triggered.emit()
+
+    assert exported == [(export, expected_format)]
+    assert set(seen_keys) == {label}
+
+
+def test_relaxation_widget_export_action_needs_a_single_row(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    widget.set_relaxed_structure_export_provider(lambda _key: _available_export())
+
+    install_fake_menu(monkeypatch)
+    widget._table.selectAll()
+    action = open_reset_menu(widget._table, row=0).action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+
+    assert action.enabled is False
+    assert action.tooltip == "Select one completed relaxation to export its relaxed structure."

@@ -1136,3 +1136,65 @@ def test_format_vector_components_judges_each_component_against_the_row_scale() 
     assert format_vector_components((-0.0, -0.0, 0.0)) == ("0", "0", "0")
     assert format_vector_components((3e-11, 0.0, 0.0)) == ("3e-11", "0", "0")
     assert format_vector_components((3e-11, 0.0, 0.0), scale=0.4) == ("0", "0", "0")
+
+
+def test_row_menu_action_with_a_submenu_adds_its_children_with_the_same_keys(qapp) -> None:
+    from PySide6.QtWidgets import QMenu
+
+    triggered: list[tuple[str, list[object]]] = []
+    action = workflow_table_utils.RowMenuAction(
+        text="Export",
+        is_enabled=lambda keys: len(keys) == 1,
+        trigger=lambda _keys: triggered.append(("parent", [])),
+        tooltip_for=lambda keys: "" if len(keys) == 1 else "Select one row.",
+        submenu=tuple(
+            workflow_table_utils.RowMenuAction(
+                text=name,
+                is_enabled=bool,
+                trigger=lambda keys, chosen=name: triggered.append((chosen, list(keys))),
+            )
+            for name in ("CIF", "Cell")
+        ),
+    )
+
+    menu = QMenu()
+    entry = workflow_table_utils.add_row_menu_action(menu, keys=["row1"], action=action)
+    submenu = entry.menu()
+    assert entry.text() == "Export"
+    assert entry.isEnabled() is True
+    assert [child.text() for child in submenu.actions()] == ["CIF", "Cell"]
+    submenu.actions()[1].trigger()
+    assert triggered == [("Cell", ["row1"])]
+
+    disabled_menu = QMenu()
+    disabled = workflow_table_utils.add_row_menu_action(
+        disabled_menu, keys=["row1", "row2"], action=action
+    )
+    assert disabled.isEnabled() is False
+    assert disabled.toolTip() == "Select one row."
+    assert disabled_menu.toolTipsVisible() is True
+
+
+def test_row_menu_submenu_children_get_keys_even_under_an_on_rows_parent(qapp) -> None:
+    from PySide6.QtWidgets import QMenu
+
+    seen: list[list[object]] = []
+    action = workflow_table_utils.RowMenuAction(
+        text="Export",
+        is_enabled=bool,
+        trigger=lambda _rows: None,
+        on_rows=True,
+        submenu=(
+            workflow_table_utils.RowMenuAction(
+                text="CIF", is_enabled=bool, trigger=lambda keys: seen.append(list(keys))
+            ),
+        ),
+    )
+
+    menu = QMenu()
+    entry = workflow_table_utils.add_row_menu_action(
+        menu, keys=["positivemuon:Site 1"], action=action, rows=[3]
+    )
+    entry.menu().actions()[0].trigger()
+
+    assert seen == [["positivemuon:Site 1"]]

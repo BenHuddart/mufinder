@@ -34,10 +34,14 @@ class FakeAction:
     def __init__(self, text: str) -> None:
         self.text = text
         self.enabled = True
+        self.tooltip = ""
         self.triggered = FakeSignal()
 
     def setEnabled(self, enabled: bool) -> None:
         self.enabled = enabled
+
+    def setToolTip(self, tooltip: str) -> None:
+        self.tooltip = tooltip
 
 
 class FakeMenu:
@@ -54,6 +58,9 @@ class FakeMenu:
         self.actions: list[FakeAction] = []
         #: Index of the action each separator was added just before.
         self.separators_before: list[int] = []
+        #: Submenus by title, each with the entry it adds to this menu.
+        self.submenus: dict[str, FakeMenu] = {}
+        self._menu_action: FakeAction | None = None
         FakeMenu.instances.append(self)
 
     def addAction(self, text: str) -> FakeAction:
@@ -64,6 +71,21 @@ class FakeMenu:
     def addSeparator(self) -> None:
         self.separators_before.append(len(self.actions))
         return None
+
+    def setToolTipsVisible(self, _visible: bool) -> None:
+        return None
+
+    def addMenu(self, title: str) -> FakeMenu:
+        submenu = FakeMenu.__new__(FakeMenu)
+        submenu.actions = []
+        submenu.separators_before = []
+        submenu.submenus = {}
+        submenu._menu_action = self.addAction(title)
+        self.submenus[title] = submenu
+        return submenu
+
+    def menuAction(self) -> FakeAction | None:
+        return self._menu_action
 
     def exec(self, *_args, **_kwargs) -> None:
         for action in self.actions:

@@ -1847,6 +1847,12 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         background: {p.accent};
         color: #FFFFFF;
     }}
+    /* A disabled action is drawn muted and takes no hover highlight, so it
+       never looks clickable; its tooltip says why it is unavailable. */
+    QMenu::item:disabled, QMenu::item:disabled:selected {{
+        background: transparent;
+        color: {p.text_muted};
+    }}
     """
 
 
