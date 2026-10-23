@@ -428,9 +428,9 @@ def test_contact_coupling_unit_conversion_to_muesr_acont() -> None:
     assert contact_coupling_to_angstrom_minus3(1.0, "T_per_muB") == pytest.approx(
         1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
     )
-    assert contact_coupling_to_angstrom_minus3(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T, "MHz_per_muB") == pytest.approx(
-        contact_coupling_to_angstrom_minus3(1.0, "T_per_muB")
-    )
+    assert contact_coupling_to_angstrom_minus3(
+        MUON_GYROMAGNETIC_RATIO_MHZ_PER_T, "MHz_per_muB"
+    ) == pytest.approx(contact_coupling_to_angstrom_minus3(1.0, "T_per_muB"))
 
 
 def test_contact_coupling_rejects_unknown_units() -> None:

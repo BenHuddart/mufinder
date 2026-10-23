@@ -16,13 +16,17 @@ CODATA_MUON_GAMMA_OVER_2PI_MHZ_T = 135.538_8094
 
 def test_muon_gamma_matches_codata() -> None:
     assert MUON_GAMMA_OVER_2PI_MHZ_T == pytest.approx(CODATA_MUON_GAMMA_OVER_2PI_MHZ_T, rel=1e-8)
-    assert MUON_GAMMA_RAD_S_T == pytest.approx(2.0 * math.pi * CODATA_MUON_GAMMA_OVER_2PI_MHZ_T * 1e6, rel=1e-8)
+    assert MUON_GAMMA_RAD_S_T == pytest.approx(
+        2.0 * math.pi * CODATA_MUON_GAMMA_OVER_2PI_MHZ_T * 1e6, rel=1e-8
+    )
 
 
 def test_muon_gamma_is_derived_from_scipy_magnetic_moment() -> None:
     moment_j_per_t = scipy.constants.physical_constants["muon mag. mom."][0]
     assert MUON_GAMMA_RAD_S_T == abs(2.0 * moment_j_per_t / scipy.constants.hbar)
-    assert MUON_GAMMA_OVER_2PI_MHZ_T == pytest.approx(MUON_GAMMA_RAD_S_T / (2.0 * math.pi) / 1e6, rel=1e-15)
+    assert MUON_GAMMA_OVER_2PI_MHZ_T == pytest.approx(
+        MUON_GAMMA_RAD_S_T / (2.0 * math.pi) / 1e6, rel=1e-15
+    )
 
 
 def test_science_modules_use_the_domain_muon_gamma() -> None:
