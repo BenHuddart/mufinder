@@ -5776,18 +5776,18 @@ class UepAnalysisDialog(QDialog):
             "line_start": list(self._line_start.values()),
             "line_end": list(self._line_end.values()),
             "line_points": int(self._line_points.value()),
-            "line_sample": None
-            if self._latest_line_sample is None
-            else asdict(self._latest_line_sample),
+            "line_sample": (
+                None if self._latest_line_sample is None else asdict(self._latest_line_sample)
+            ),
             "line_data": self._line_data.toPlainText(),
             "plane_origin": list(self._plane_origin.values()),
             "plane_x": list(self._plane_x.values()),
             "plane_y": list(self._plane_y.values()),
             "plane_points_x": int(self._plane_points_x.value()),
             "plane_points_y": int(self._plane_points_y.value()),
-            "plane_sample": None
-            if self._latest_plane_sample is None
-            else asdict(self._latest_plane_sample),
+            "plane_sample": (
+                None if self._latest_plane_sample is None else asdict(self._latest_plane_sample)
+            ),
             "plane_data": self._plane_data.toPlainText(),
             "isosurface_active_index": int(self._active_isosurface_index),
             "isosurface_layers": [
@@ -5891,9 +5891,9 @@ class UepAnalysisDialog(QDialog):
             "batch_optimization_tolerance_ev": float(self._batch_optimization_tolerance.value()),
             "batch_max_steps": int(self._batch_max_steps.value()),
             "batch_results": [asdict(result) for result in self._latest_batch_results],
-            "batch_summary_data": None
-            if self._latest_batch_summary is None
-            else asdict(self._latest_batch_summary),
+            "batch_summary_data": (
+                None if self._latest_batch_summary is None else asdict(self._latest_batch_summary)
+            ),
             "batch_summary_text": self._batch_summary.toPlainText(),
             "batch_zpe_completed": self._batch_zpe_progress.format() == "ZPE calculation complete",
             "batch_selected_keys": selected_keys,

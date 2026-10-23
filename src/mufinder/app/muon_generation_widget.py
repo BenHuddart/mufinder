@@ -716,9 +716,9 @@ class MuonGenerationWidget(QWidget):
         return {
             "method": self._current_method(),
             "random": {
-                "selection_mode": "separation"
-                if self._random_by_separation.isChecked()
-                else "count",
+                "selection_mode": (
+                    "separation" if self._random_by_separation.isChecked() else "count"
+                ),
                 "count": self._random_count.value(),
                 "min_muon_muon": self._random_min_muon_muon.value(),
                 "min_muon_atom": self._random_min_muon_atom.value(),

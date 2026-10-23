@@ -20,9 +20,8 @@ from typing import Any
 
 import pytest
 
-if (
-    __name__ == "__main__"
-):  # pragma: no cover - lets the regeneration script import ``tests.support``.
+# Lets the regeneration script import ``tests.support``.
+if __name__ == "__main__":  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mufinder.science.site_generation import (

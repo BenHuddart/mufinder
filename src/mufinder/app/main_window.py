@@ -8664,9 +8664,9 @@ class MainWindow(QMainWindow):
                         "source_key": f"{job_id}:cluster:{cluster_index}:cluster:{result_index}",
                         "source_job_id": str(job_id),
                         "source_job_label": source_job_label,
-                        "source_structure_id": ""
-                        if source_structure_id is None
-                        else str(source_structure_id),
+                        "source_structure_id": (
+                            "" if source_structure_id is None else str(source_structure_id)
+                        ),
                         "cluster_index": cluster_index,
                         "cluster_size": cluster_size,
                         "selection_kind": "cluster",
@@ -10553,9 +10553,9 @@ class MainWindow(QMainWindow):
                 "status": site.status,
                 "fractional": site.initial_fractional_position,
                 "cartesian": site.initial_cartesian_position,
-                "source_structure_id": str(site.source_structure_id)
-                if site.source_structure_id
-                else "",
+                "source_structure_id": (
+                    str(site.source_structure_id) if site.source_structure_id else ""
+                ),
             }
             for site in candidates
         ]
@@ -10902,9 +10902,9 @@ class MainWindow(QMainWindow):
         workspace = {
             "id": workspace_id,
             "title": normalized,
-            "magnetic_structure": magnetic_structure
-            if isinstance(magnetic_structure, dict)
-            else None,
+            "magnetic_structure": (
+                magnetic_structure if isinstance(magnetic_structure, dict) else None
+            ),
             "form": store_magnetic_field_results(
                 self._document, workspace_id, form_state if isinstance(form_state, dict) else {}
             ),

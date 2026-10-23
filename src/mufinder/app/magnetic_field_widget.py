@@ -6168,9 +6168,11 @@ class MagneticFieldWidget(QWidget):
             "hyperfine_coupling": self._hyperfine_coupling.text().strip(),
             "hyperfine_coupling_unit": self._current_hyperfine_unit(),
             "selected_muon_site": self._muon_site_to_state(self._selected_muon_site),
-            "magnetic_field_results": dict(self._field_results_state)
-            if isinstance(self._field_results_state, dict)
-            else None,
+            "magnetic_field_results": (
+                dict(self._field_results_state)
+                if isinstance(self._field_results_state, dict)
+                else None
+            ),
             "dipolar_tensor_selector": dict(self._dipolar_tensor_selector_state),
             "dipolar_tensor_results": [
                 dict(result) for result in self._dipolar_tensor_results_state

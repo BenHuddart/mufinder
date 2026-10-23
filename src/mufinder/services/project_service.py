@@ -502,9 +502,9 @@ class ProjectService:
                             "remote_job_id": job.remote_job_id,
                             "remote_directory": job.remote_directory,
                             "num_processes": job.num_processes,
-                            "submitted_at": job.submitted_at.isoformat()
-                            if job.submitted_at
-                            else None,
+                            "submitted_at": (
+                                job.submitted_at.isoformat() if job.submitted_at else None
+                            ),
                         }
                         for job in submitted_jobs
                     ],

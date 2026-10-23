@@ -1152,9 +1152,9 @@ class UepClusteringDialog(QDialog):
             "splitter_sizes": list(self._main_splitter.sizes()),
             "right_splitter_sizes": list(self._right_splitter.sizes()),
             "viewer_state": self._viewer_state_snapshot(),
-            "current_result_summary": None
-            if self._current_result is None
-            else asdict(self._current_result.summary),
+            "current_result_summary": (
+                None if self._current_result is None else asdict(self._current_result.summary)
+            ),
         }
 
     def _restore_initial_state(self, state: Mapping[str, object] | None) -> None:

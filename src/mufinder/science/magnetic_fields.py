@@ -51,8 +51,9 @@ _CONTACT_COUPLING_FACTORS_TO_ANGSTROM_MINUS3 = {
     "a^-3": 1.0,
     "ang^-3": 1.0,
     "T_per_muB": 1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
-    "MHz_per_muB": (1.0 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T)
-    / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
+    "MHz_per_muB": (
+        (1.0 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T) / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
+    ),
 }
 
 
@@ -1341,9 +1342,9 @@ def _distribution_calculation_parameters(
         ),
         "nnn": int(options.nnn),
         "rcont": float(options.rcont),
-        "contact_coupling": None
-        if options.contact_coupling is None
-        else float(options.contact_coupling),
+        "contact_coupling": (
+            None if options.contact_coupling is None else float(options.contact_coupling)
+        ),
         "applied_field": list(options.applied_field),
         "find_equivalent_sites": bool(options.find_equivalent_sites),
         "equivalent_tolerance": float(options.equivalent_tolerance),
