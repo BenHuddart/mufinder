@@ -1,4 +1,4 @@
-"""The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [--shard K/N] [--jobs N] [NAME ...]``.
+"""The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [--shard K/N] [--jobs N] [--scene-timeout S] [NAME ...]``.
 
 With no names, no ``--example`` and no ``--shard`` every screenshot is
 rendered, and the output directory's ``.stamp`` is touched once they all are.
@@ -6,7 +6,10 @@ rendered, and the output directory's ``.stamp`` is touched once they all are.
 screenshot jobs use. Several screenshots are shared out between ``--jobs``
 worker processes the same way, each rendering its share as a run with names
 does; one job renders them in this process. The shares come from
-:func:`docs_screenshots.shards.partition`.
+:func:`docs_screenshots.shards.partition`. Each scene, its project's build
+included, must finish within ``--scene-timeout`` seconds, or the renderer
+names it, dumps every thread's stack and fails (see
+:mod:`docs_screenshots.watchdog`).
 """
 
 from __future__ import annotations
@@ -22,12 +25,26 @@ import time
 from .render import DEFAULT_OUTPUT, IMAGE_SUFFIX, install_offscreen_viewers, remove_scratch, render
 from .registry import EXAMPLES, SCREENSHOTS
 from .shards import load_durations, parse_shard, partition, store_durations
+from .watchdog import scene_deadline
 
 from PySide6.QtWidgets import QApplication
 
 STAMP_NAME = ".stamp"
 SCRIPT = Path(__file__).resolve().parents[1] / "render_docs_screenshots.py"
 DEFAULT_JOBS = min(4, os.cpu_count() or 1)
+# The slowest scene takes about 15 s and a worker's first scene of a project
+# also builds it; a slow CI runner takes a few times longer.
+DEFAULT_SCENE_TIMEOUT_S = 300.0
+
+
+def _positive_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number of seconds: {value!r}") from None
+    if not seconds > 0:
+        raise argparse.ArgumentTypeError(f"must be more than 0 seconds, not {value}")
+    return seconds
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -49,6 +66,13 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_JOBS,
         help=f"worker processes to share the screenshots between (default: {DEFAULT_JOBS})",
+    )
+    parser.add_argument(
+        "--scene-timeout",
+        type=_positive_seconds,
+        default=DEFAULT_SCENE_TIMEOUT_S,
+        metavar="SECONDS",
+        help=f"fail a scene that takes longer than this (default: {DEFAULT_SCENE_TIMEOUT_S:g})",
     )
     parser.add_argument(
         "--store-durations",
@@ -92,10 +116,10 @@ def _run(argv: list[str] | None) -> int:
     output.mkdir(parents=True, exist_ok=True)
     jobs = 1 if args.store_durations else min(args.jobs, len(names))
     if jobs > 1:
-        if not _render_in_workers(names, output, jobs):
+        if not _render_in_workers(names, output, jobs, args.scene_timeout):
             return 1
     else:
-        seconds = _render_here(names, output)
+        seconds = _render_here(names, output, args.scene_timeout)
         if args.store_durations:
             store_durations(seconds, list(SCREENSHOTS))
     if not (args.example or args.names or args.shard):
@@ -112,22 +136,24 @@ def _shares(names: list[str], count: int) -> list[list[str]]:
     return partition(names, projects, load_durations(), count)
 
 
-def _render_in_workers(names: list[str], output: Path, jobs: int) -> bool:
+def _render_in_workers(names: list[str], output: Path, jobs: int, scene_timeout: float) -> bool:
     """Render ``names`` in ``jobs`` worker processes, one share each; ``True`` if all succeed."""
 
-    workers = [
-        subprocess.Popen([sys.executable, str(SCRIPT), "--jobs", "1", "--output", str(output), *share])
-        for share in _shares(names, jobs)
-        if share
-    ]
+    command = [sys.executable, str(SCRIPT), "--jobs", "1", "--scene-timeout", str(scene_timeout), "--output", str(output)]
+    workers = [subprocess.Popen([*command, *share]) for share in _shares(names, jobs) if share]
     codes = [worker.wait() for worker in workers]
     return all(code == 0 for code in codes)
 
 
-def _render_here(names: list[str], output: Path) -> dict[str, float]:
+def _render_here(names: list[str], output: Path, scene_timeout: float) -> dict[str, float]:
     """Render ``names`` in this process; the seconds each took, its project's build included."""
 
     app = QApplication(sys.argv[:1])
+    from mufinder.app.gui_garbage_collector import install_gui_garbage_collector
+
+    # As in the application, reference cycles of Qt objects are freed on this
+    # thread only, never on a worker thread the window starts.
+    install_gui_garbage_collector(app)
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")
     from mufinder.app.theme import THEME_LIGHT, apply_theme
@@ -137,7 +163,8 @@ def _render_here(names: list[str], output: Path) -> dict[str, float]:
     seconds: dict[str, float] = {}
     for name in names:
         start = time.perf_counter()
-        render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
+        with scene_deadline(name, scene_timeout):
+            render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
         seconds[name] = time.perf_counter() - start
     return seconds
 
