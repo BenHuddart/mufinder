@@ -101,6 +101,26 @@ def _prompt_for_keyword_catalog(window: object) -> None:
         QTimer.singleShot(0, prompt)
 
 
+# The --page values: the fixed routes of the project navigator.
+PAGE_ROUTES = (
+    "host_structure",
+    "supercell_editor",
+    "convergence",
+    "convergence_cutoff",
+    "convergence_kpoint",
+    "pristine_relaxation",
+    "uep",
+    "muon_sites",
+    "muon_candidates",
+    "muon_relaxations",
+    "muon_analysis",
+    "magnetic_fields",
+    "quantum_corrections",
+    "energy_barriers",
+    "provenance_log",
+)
+
+
 def _parse_arguments(arguments: list[str]) -> argparse.Namespace:
     """Parse the command line left over once Qt has taken its own options."""
 
@@ -117,13 +137,8 @@ def _parse_arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--page",
         metavar="PAGE",
-        help=(
-            "workflow page to show once the project is open, by route key: "
-            "host_structure, supercell_editor, convergence, convergence_cutoff, "
-            "convergence_kpoint, pristine_relaxation, uep, muon_sites, muon_candidates, "
-            "muon_relaxations, muon_analysis, magnetic_fields, quantum_corrections, "
-            "energy_barriers or provenance_log"
-        ),
+        help="workflow page to show once the project is open, by route key: "
+        + ", ".join(PAGE_ROUTES),
     )
     options = parser.parse_args(arguments)
     if options.page is not None and options.project is None:

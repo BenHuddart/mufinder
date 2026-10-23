@@ -1563,7 +1563,9 @@ class MainWindow(QMainWindow):
         the window such as the command-line entry point.
         """
 
-        project_root = Path(project_path).expanduser()
+        # Resolved so a path relative to the shell's directory is recorded in
+        # Open Recent as a path that still works from anywhere.
+        project_root = Path(project_path).expanduser().resolve()
         if project_root.name == "project.json" and project_root.is_file():
             project_root = project_root.parent
         return self._open_project_from_path(project_root)
@@ -1576,7 +1578,10 @@ class MainWindow(QMainWindow):
         the current page in place.
         """
 
-        if self._document is None or self._find_tree_item_by_route(route) is None:
+        if self._document is None:
+            QMessageBox.warning(self, "No project open", f"Open a project to show '{route}'.")
+            return False
+        if self._find_tree_item_by_route(route) is None:
             QMessageBox.warning(
                 self,
                 "Unknown page",
