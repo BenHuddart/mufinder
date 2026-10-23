@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import ctypes
 import os
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QElapsedTimer, QSettings, QThread, QTimer
 from PySide6.QtWidgets import QApplication
@@ -99,6 +101,53 @@ def _prompt_for_keyword_catalog(window: object) -> None:
         QTimer.singleShot(0, prompt)
 
 
+def _parse_arguments(arguments: list[str]) -> argparse.Namespace:
+    """Parse the command line left over once Qt has taken its own options."""
+
+    parser = argparse.ArgumentParser(
+        prog="mufinder",
+        description="MuFinder: muon stopping-site workflows with CASTEP.",
+    )
+    parser.add_argument(
+        "project",
+        nargs="?",
+        type=Path,
+        help="a .mufinder project folder (or its project.json) to open at startup",
+    )
+    parser.add_argument(
+        "--page",
+        metavar="PAGE",
+        help=(
+            "workflow page to show once the project is open, by route key: "
+            "host_structure, supercell_editor, convergence, convergence_cutoff, "
+            "convergence_kpoint, pristine_relaxation, uep, muon_sites, muon_candidates, "
+            "muon_relaxations, muon_analysis, magnetic_fields, quantum_corrections, "
+            "energy_barriers or provenance_log"
+        ),
+    )
+    options = parser.parse_args(arguments)
+    if options.page is not None and options.project is None:
+        parser.error("--page needs a project to open")
+    return options
+
+
+def _open_project_on_start(window: object, project: Path | None, page: str | None) -> None:
+    """Open the command-line project once the event loop is running.
+
+    Deferred like the keyword-catalog prompt, so the project loads (and any
+    error dialog appears) over the shown main window rather than during startup.
+    """
+
+    if project is None:
+        return
+
+    def open_requested() -> None:
+        if window.open_project(project) and page is not None:
+            window.show_page(page)
+
+    QTimer.singleShot(0, open_requested)
+
+
 def _process_events(app: QApplication, *, max_ms: int | None = None) -> None:
     if not hasattr(app, "processEvents"):
         return
@@ -147,6 +196,8 @@ def run() -> int:
     _set_windows_app_id()
     _force_x11_platform_on_wayland()
     app = QApplication(sys.argv)
+    # QApplication strips Qt's own options (``-platform xcb`` ...) from arguments().
+    options = _parse_arguments(app.arguments()[1:])
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")
     app.setWindowIcon(_app_icon())
@@ -189,6 +240,7 @@ def run() -> int:
     splash.set_progress(100, "Ready")
     _process_events(app, max_ms=10)
     splash.finish(window)
+    _open_project_on_start(window, options.project, options.page)
     _prompt_for_keyword_catalog(window)
     return app.exec()
 
