@@ -17,7 +17,6 @@ from typing import Any
 from ase import io
 from ase.data import atomic_numbers
 import numpy as np
-from scipy import constants as cnst
 from scipy.optimize import minimize
 
 from mufinder.castep_io import charge_density as _charge_density
@@ -29,12 +28,17 @@ from mufinder.castep_io.charge_density import (
     castep_total_charge,
 )
 from mufinder.castep_io.output_parser import parse_castep_mulliken_atomic_spins
+from mufinder.domain.constants import (
+    ATOMIC_MASS_KG,
+    ELEMENTARY_CHARGE_C,
+    HBAR_J_S,
+    MUON_MASS_KG,
+    VACUUM_PERMITTIVITY_F_PER_M,
+)
 from mufinder.science.lattice import cartesian_to_fractional, fractional_to_cartesian
 
 
-_COULOMB_PREFactor = 1.0 / (4.0 * np.pi * cnst.epsilon_0)
-_MUON_MASS_KG = cnst.physical_constants["muon mass"][0]
-_AMU_TO_KG = cnst.physical_constants["atomic mass constant"][0]
+_COULOMB_PREFactor = 1.0 / (4.0 * np.pi * VACUUM_PERMITTIVITY_F_PER_M)
 _ISOSURFACE_PREVIEW_MAX_GRID_POINTS = 28
 
 
@@ -587,7 +591,7 @@ class UepField:
         potential_ionic = np.real(
             np.sum(self._ionic_potential_g[:, :, :, None] * kernel, axis=(0, 1, 2))
         )
-        scale = _COULOMB_PREFactor * cnst.e * 1e10
+        scale = _COULOMB_PREFactor * ELEMENTARY_CHARGE_C * 1e10
         potential_electronic *= scale
         potential_ionic *= scale
         return (potential_electronic + potential_ionic, potential_electronic, potential_ionic)
@@ -609,7 +613,7 @@ class UepField:
         # Match the Cartesian derivative of ``potential()`` with respect to
         # Angstrom coordinates, as exposed by pymuon-suite after its optimizer
         # length-unit conversion.
-        scale = _COULOMB_PREFactor * cnst.e * 1e10
+        scale = _COULOMB_PREFactor * ELEMENTARY_CHARGE_C * 1e10
         gradient_electronic *= scale
         gradient_ionic *= scale
         return (gradient_electronic + gradient_ionic, gradient_electronic, gradient_ionic)
@@ -635,7 +639,7 @@ class UepField:
         # Match the Cartesian second derivative of ``potential()`` with respect
         # to Angstrom coordinates, as exposed by pymuon-suite after its
         # optimizer length-unit conversion.
-        scale = _COULOMB_PREFactor * cnst.e * 1e10
+        scale = _COULOMB_PREFactor * ELEMENTARY_CHARGE_C * 1e10
         hessian_electronic *= scale
         hessian_ionic *= scale
         return (hessian_electronic + hessian_ionic, hessian_electronic, hessian_ionic)
@@ -665,7 +669,7 @@ def potential_grid(field: UepField) -> UepPotentialGrid:
 
     grid = tuple(int(value) for value in field.source.density.grid)
     point_count = int(np.prod(grid))
-    scale = _COULOMB_PREFactor * cnst.e * 1e10
+    scale = _COULOMB_PREFactor * ELEMENTARY_CHARGE_C * 1e10
     total = (
         np.real(np.fft.ifftn(field._electron_potential_g + field._ionic_potential_g))
         * point_count
@@ -1386,18 +1390,18 @@ def zero_point_energy_ev(
     hessian_ev_per_ang2: np.ndarray
     | tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
     *,
-    particle_mass_kg: float = _MUON_MASS_KG,
+    particle_mass_kg: float = MUON_MASS_KG,
 ) -> float | None:
     """Return the zero-point energy for a stable minimum, or `None` for an unstable extremum."""
 
     if particle_mass_kg <= 0.0:
         raise UepError("particle_mass_kg must be positive.")
 
-    hessian = np.asarray(hessian_ev_per_ang2, dtype=float) * 1e20 * cnst.e
+    hessian = np.asarray(hessian_ev_per_ang2, dtype=float) * 1e20 * ELEMENTARY_CHARGE_C
     eigenvalues = np.linalg.eigvalsh(hessian)
     if np.any(eigenvalues < 0.0):
         return None
-    value = np.sum(0.5 * cnst.hbar * np.sqrt(eigenvalues / particle_mass_kg)) / cnst.e
+    value = np.sum(0.5 * HBAR_J_S * np.sqrt(eigenvalues / particle_mass_kg)) / ELEMENTARY_CHARGE_C
     return float(value)
 
 
@@ -1405,7 +1409,7 @@ def probe_point(
     field: UepField,
     position_ang: tuple[float, float, float] | np.ndarray,
     *,
-    particle_mass_kg: float = _MUON_MASS_KG,
+    particle_mass_kg: float = MUON_MASS_KG,
     include_zero_point_energy: bool = True,
 ) -> UepProbeResult:
     """Evaluate the local UEP, derivatives, and Hessian classification."""
@@ -1451,7 +1455,7 @@ def optimize_muon_position(
     field: UepField,
     *,
     start_position_ang: tuple[float, float, float] | np.ndarray,
-    particle_mass_kg: float = _MUON_MASS_KG,
+    particle_mass_kg: float = MUON_MASS_KG,
     tolerance_ev: float = 1e-5,
     max_steps: int = 300,
     method: str = "trust-exact",
@@ -1507,7 +1511,7 @@ def calculate_optimization_zero_point_energy(
     field: UepField,
     optimization: UepOptimizationResult,
     *,
-    particle_mass_kg: float = _MUON_MASS_KG,
+    particle_mass_kg: float = MUON_MASS_KG,
 ) -> UepOptimizationResult:
     """Re-evaluate the optimized site and attach harmonic ZPE data."""
 
@@ -1618,7 +1622,7 @@ def sample_plane(
 def particle_mass_kg_from_amu(mass_amu: float) -> float:
     """Convert a particle mass from amu to kg."""
 
-    return float(mass_amu) * _AMU_TO_KG
+    return float(mass_amu) * ATOMIC_MASS_KG
 
 
 # Clustering of optimized positions lives in ``mufinder.science.uep_clustering``,

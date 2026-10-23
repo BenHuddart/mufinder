@@ -48,16 +48,18 @@ from mufinder.app.theme import (
 )
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
+from mufinder.domain.constants import (
+    ATOMIC_MASS_KG,
+    ELEMENTARY_CHARGE_C,
+    LIGHT_SPEED_M_S,
+    MUON_MASS_AMU,
+)
 from mufinder.science.quantum_adiabatic import (
     DirectionalPotential,
     SingleParticleResult,
     solve_single_particle_ground_state,
 )
 from mufinder.science.quantum_phonons import (
-    ATOMIC_MASS_KG,
-    ELEMENTARY_CHARGE_C,
-    LIGHT_SPEED_M_S,
-    MUON_MASS_AMU,
     PhononCalculation,
     correlation_matrix,
     covariance_matrix,

@@ -7,12 +7,9 @@ import math
 import numpy as np
 import pytest
 
+from mufinder.domain.constants import ATOMIC_MASS_KG, HBAR_J_S, LIGHT_SPEED_M_S, MUON_MASS_AMU
 from mufinder.science.quantum_phonons import (
-    ATOMIC_MASS_KG,
     CM_INV_ZPE_TO_EV,
-    HBAR_J_S,
-    LIGHT_SPEED_M_S,
-    MUON_MASS_AMU,
     PhononParseError,
     correlation_matrix,
     covariance_matrix,

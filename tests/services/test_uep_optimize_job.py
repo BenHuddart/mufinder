@@ -7,6 +7,7 @@ import shutil
 
 import pytest
 
+from mufinder.domain.constants import ATOMIC_MASS_KG, MUON_MASS_KG
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult, UepStructure
 from mufinder.science.uep_clustering import UepClusteringConfig
 from mufinder.services.uep_optimize_job import (
@@ -45,6 +46,45 @@ def test_run_manifest_file_writes_roundtrippable_result(tmp_path: Path) -> None:
     assert parsed.optimization is not None
     assert parsed.probe is not None
     assert parsed.probe.classification.label in {"minimum", "maximum", "saddle", "flat"}
+
+
+@pytest.mark.parametrize(
+    ("mass_fields", "expected_kg"),
+    [
+        ({}, MUON_MASS_KG),
+        ({"particle_mass_amu": None}, MUON_MASS_KG),
+        ({"particle_mass_amu": 1.0}, ATOMIC_MASS_KG),
+        ({"particle_mass_kg": 2.0e-28, "particle_mass_amu": 1.0}, 2.0e-28),
+    ],
+    ids=["default", "null-amu", "amu", "kg-wins"],
+)
+def test_run_manifest_file_resolves_the_particle_mass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mass_fields: dict, expected_kg: float
+) -> None:
+    for fixture in ("Si2.den_fmt", "Si2.castep", "Si2.cell"):
+        shutil.copy(Path("tests/fixtures/uep") / fixture, tmp_path / fixture)
+    seen: list[float] = []
+
+    def record_mass(field, **kwargs):
+        seen.append(kwargs["particle_mass_kg"])
+        raise RuntimeError("stop after the mass is resolved")
+
+    monkeypatch.setattr("mufinder.services.uep_optimize_job.optimize_muon_position", record_mass)
+    manifest = write_manifest(
+        tmp_path,
+        "si2_mass",
+        {
+            "seed_name": "si2_mass",
+            "density_file": "Si2.den_fmt",
+            "castep_file": "Si2.castep",
+            "cell_file": "Si2.cell",
+            **mass_fields,
+        },
+    )
+
+    run_manifest_file(manifest)
+
+    assert seen == [expected_kg]
 
 
 def _host() -> UepStructure:

@@ -430,7 +430,7 @@ def test_expand_muon_relaxation_jobs_writes_species_mass_block() -> None:
     )
 
     rendered_cell = write_cell(expansion.jobs[0].cell_file)
-    assert "H:mu 0.11342892566" in rendered_cell
+    assert "H:mu 0.1134289257" in rendered_cell
 
 
 def test_expand_muon_relaxation_jobs_rejects_sanitized_seed_name_collisions() -> None:

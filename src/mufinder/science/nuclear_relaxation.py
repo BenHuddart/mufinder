@@ -13,15 +13,18 @@ from typing import Literal
 from ase import Atoms
 import numpy as np
 
-from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T, MUON_GAMMA_RAD_S_T
+from mufinder.domain.constants import (
+    HBAR_J_S,
+    METRES_PER_ANGSTROM,
+    MU0_OVER_4PI_T_M_PER_A,
+    MUON_GAMMA_OVER_2PI_MHZ_T,
+    MUON_GAMMA_RAD_S_T,
+    NUCLEAR_MAGNETON_J_PER_T,
+)
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, structure_to_ase_atoms
 from mufinder.science.muon_distortion import MuonDistortion, map_muon_distortion
 
-MU0_OVER_4PI = 1e-7
-HBAR = 1.054_571_817e-34
-MU_N = 5.050_783_699e-27
-ANGSTROM_TO_M = 1e-10
 GAMMA_MU_OVER_2PI_MHZ_T = MUON_GAMMA_OVER_2PI_MHZ_T
 GAMMA_MU_RAD_S_T = MUON_GAMMA_RAD_S_T
 SEC2_TO_US2 = 1e-12
@@ -170,7 +173,7 @@ def gyromagnetic_ratio_from_moment(moment_mu_n: float, spin: float) -> float:
 
     if spin <= 0.0:
         return 0.0
-    return (float(moment_mu_n) * MU_N) / (HBAR * float(spin))
+    return (float(moment_mu_n) * NUCLEAR_MAGNETON_J_PER_T) / (HBAR_J_S * float(spin))
 
 
 @lru_cache(maxsize=1)
@@ -467,8 +470,8 @@ def _calculate_second_moment(
             continue
         sigma2, sigma2_parallel, per_element = _evaluate_mode(
             mode,
-            vecs_a * ANGSTROM_TO_M,
-            dists_a * ANGSTROM_TO_M,
+            vecs_a * METRES_PER_ANGSTROM,
+            dists_a * METRES_PER_ANGSTROM,
             symbols,
             field_dir,
             pol_dir,
@@ -530,8 +533,8 @@ def _calculate_second_moment_finite_cell(
         raise NuclearRelaxationError("No nuclei found in the selected finite cell.")
     sigma2, sigma2_parallel, per_element = _evaluate_mode(
         mode,
-        vecs_a * ANGSTROM_TO_M,
-        dists_a * ANGSTROM_TO_M,
+        vecs_a * METRES_PER_ANGSTROM,
+        dists_a * METRES_PER_ANGSTROM,
         symbols,
         field_dir,
         pol_dir,
@@ -594,7 +597,7 @@ def _compute_tf_single(
 def _compute_tf_poly(
     distances_m: np.ndarray, symbols: np.ndarray
 ) -> tuple[float, dict[str, float]]:
-    pref = ((MU0_OVER_4PI**2) * (HBAR**2) * (GAMMA_MU_RAD_S_T**2)) * (4.0 / 15.0)
+    pref = ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2)) * (4.0 / 15.0)
     return _sum_elements(symbols, pref / (distances_m**6), include_quadrupolar=False)
 
 
@@ -630,7 +633,7 @@ def _compute_zf_poly(
     symbols: np.ndarray,
     include_quadrupolar: bool,
 ) -> tuple[float, dict[str, float]]:
-    pref = ((MU0_OVER_4PI**2) * (HBAR**2) * (GAMMA_MU_RAD_S_T**2)) * (2.0 / 3.0)
+    pref = ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2)) * (2.0 / 3.0)
     return _sum_elements(symbols, pref / (distances_m**6), include_quadrupolar=include_quadrupolar)
 
 
@@ -685,7 +688,7 @@ def _result_from_sigma(
 
 
 def _prefactor_sigma_squared() -> float:
-    return ((MU0_OVER_4PI**2) * (HBAR**2) * (GAMMA_MU_RAD_S_T**2)) / 3.0
+    return ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2)) / 3.0
 
 
 def _iter_nuclear_vectors(

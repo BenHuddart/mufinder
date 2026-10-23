@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 from ase.geometry import cellpar_to_cell
 
+from mufinder.domain.constants import BOHR_RADIUS_ANGSTROM
+
 from .schema import canonical_keyword_name, get_keyword_spec
 from .types import (
     AtomicPosition,
@@ -27,7 +29,7 @@ from .validators import validate_cell_file
 
 
 _CELL_UNITS = {
-    "bohr": 0.529177210903,
+    "bohr": BOHR_RADIUS_ANGSTROM,
     "ang": 1.0,
     "m": 1e10,
     "cm": 1e8,

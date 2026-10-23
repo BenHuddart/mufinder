@@ -170,7 +170,7 @@ keywords:
       AMU
       H:mu 0.1134
       %ENDBLOCK SPECIES_MASS
-    notes: Optional first line stores the mass unit (AMU). Each row assigns a mass to a species label; muon relaxation and quantum-correction workflows set the H:mu pseudo-species mass.
+    notes: Optional first line stores the mass unit (AMU). Each row assigns a mass to a species label; muon relaxation and quantum-correction workflows set the H:mu pseudo-species mass to the CODATA muon mass from scipy.constants (mufinder.domain.constants.MUON_MASS_AMU).
 
   - name: HUBBARD_U
     canonical_name: hubbard_u

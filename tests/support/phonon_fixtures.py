@@ -36,11 +36,11 @@ from math import pi, sqrt
 
 import numpy as np
 
-from mufinder.domain.constants import MUON_MASS_AMU
-from mufinder.science.quantum_phonons import (
+from mufinder.domain.constants import (
     ATOMIC_MASS_KG,
     ELEMENTARY_CHARGE_C,
     LIGHT_SPEED_M_S,
+    MUON_MASS_AMU,
 )
 
 #: Nitrogen mass written in the fixture header (AMU).
