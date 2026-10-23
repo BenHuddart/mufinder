@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from mufinder.domain.constants import MUON_MASS_AMU
+from mufinder.domain.constants import MUON_MASS_KG
 from mufinder.science.uep import (
     UepError,
     UepField,
@@ -185,11 +185,12 @@ def run_manifest_file(path: str | Path) -> Path:
             gw_factor=float(payload.get("gw_factor", 5.0)),
         )
         field = UepField(source_data)
-        particle_mass_kg = (
-            float(payload["particle_mass_kg"])
-            if payload.get("particle_mass_kg") is not None
-            else particle_mass_kg_from_amu(float(payload.get("particle_mass_amu", MUON_MASS_AMU)))
-        )
+        if payload.get("particle_mass_kg") is not None:
+            particle_mass_kg = float(payload["particle_mass_kg"])
+        elif payload.get("particle_mass_amu") is not None:
+            particle_mass_kg = particle_mass_kg_from_amu(float(payload["particle_mass_amu"]))
+        else:
+            particle_mass_kg = MUON_MASS_KG
         optimization = optimize_muon_position(
             field,
             start_position_ang=tuple(

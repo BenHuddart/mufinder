@@ -719,15 +719,28 @@ The harness tests currently verify:
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
   may appear (see :doc:`/architecture`, Shared workflow infrastructure).
-- No module in ``src/mufinder`` other than ``mufinder.domain.constants`` types
-  out a physical constant: a number within 1e-4 (relative) of a CODATA constant
-  or a conversion built from them fails the check, which names the constant to
-  import. Powers of ten are skipped, because they double as tolerances and SI
-  prefixes, and ``mufinder.persistence.migrations`` is allowed, because a
-  migration must reproduce the value older projects were written with. Tests
-  keep their own reference values, typed independently in
-  ``tests/support/codata.py``.
+- No module in ``src/mufinder`` or ``scripts`` other than
+  ``mufinder.domain.constants`` types out a physical constant: a number within
+  1e-4 (relative) of a CODATA constant or a conversion built from them fails the
+  check, which names the constant to import. Powers of ten are skipped, because
+  they double as tolerances and SI prefixes, and
+  ``mufinder.persistence.migrations`` is allowed, because a migration must
+  reproduce the value older projects were written with. Tests keep their own
+  reference values, typed independently in ``tests/support/codata.py``.
+- No module in ``src/mufinder`` or ``scripts`` defines, at module level, a name
+  that ``mufinder.domain.constants`` defines or one of the names that held a
+  constant before the home existed (``MU0``, ``MU0_OVER_4PI``, ``MU_B``,
+  ``MU_N``, ``HBAR``, ``ANGSTROM_TO_M``, ...). This catches a redefinition the
+  value check cannot see, such as ``MU0_OVER_4PI = 1e-7``.
 - Only ``mufinder.domain.constants`` imports ``scipy.constants`` or ``ase.units``.
+
+A SciPy release that adopts a newer CODATA set changes the constants, the muon
+mass and gyromagnetic ratio written to CASTEP inputs, and every result built
+from them. Moving to it is a change of its own: raise the ``scipy`` floor in
+``pyproject.toml`` to that release, update ``tests/support/codata.py`` to the
+new recommended values, regenerate the golden inputs with
+``python -m tests.support.golden_inputs``, and state in the pull request that
+rendered inputs change. Loosening the tests instead would hide the change.
 - The ``*_coverage.py`` test files match a pinned list that may only shrink;
   coverage gaps are closed in the module's own test file.
 - ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and

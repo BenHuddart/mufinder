@@ -140,6 +140,12 @@ CONSTANT_LITERAL_ALLOWLIST = {
 
 CONSTANT_SOURCE_MODULES = ("scipy.constants", "ase.units")
 
+# Names that held a typed-out constant before the home existed. A module that
+# assigns one of these, or a name the home defines, is redefining a constant.
+RETIRED_CONSTANT_NAMES = frozenset(
+    {"ANGSTROM_TO_M", "AMU_TO_KG", "BOHR_TO_ANG", "HBAR", "MU0", "MU0_OVER_4PI", "MU_B", "MU_N"}
+)
+
 
 def _python_files(package: str) -> list[Path]:
     return sorted((SOURCE_ROOT / package).rglob("*.py"))
@@ -517,7 +523,7 @@ def _physical_constant_references() -> list[tuple[float, str]]:
         (codata("Bohr magneton"), "BOHR_MAGNETON_J_PER_T"),
         (codata("nuclear magneton"), "NUCLEAR_MAGNETON_J_PER_T"),
         (codata("atomic mass constant"), "ATOMIC_MASS_KG"),
-        (codata("Bohr radius"), "BOHR_RADIUS_ANGSTROM"),
+        (codata("Bohr radius"), "BOHR_RADIUS_ANGSTROM * METRES_PER_ANGSTROM"),
         (codata("Bohr radius") / angstrom, "BOHR_RADIUS_ANGSTROM"),
         (angstrom / codata("Bohr radius"), "1 / BOHR_RADIUS_ANGSTROM"),
         (codata("Hartree energy in eV"), "HARTREE_EV"),
@@ -552,12 +558,18 @@ def _typed_out_constants(path: Path, references: list[tuple[float, str]]) -> lis
     return found
 
 
+def _constant_scan_files() -> list[Path]:
+    """The application source and the scripts that build its documentation data."""
+
+    return sorted(SOURCE_ROOT.rglob("*.py")) + sorted((PROJECT_ROOT / "scripts").rglob("*.py"))
+
+
 def test_physical_constants_are_not_typed_out_outside_their_home() -> None:
     """No module but ``mufinder.domain.constants`` types out a physical constant."""
 
     references = _physical_constant_references()
     violations: list[str] = []
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+    for path in _constant_scan_files():
         if path == CONSTANTS_HOME or path in CONSTANT_LITERAL_ALLOWLIST:
             continue
         rel_path = path.relative_to(PROJECT_ROOT)
@@ -592,11 +604,45 @@ def test_constant_libraries_are_only_imported_by_the_constants_home() -> None:
 
     violations = [
         f"{path.relative_to(PROJECT_ROOT)} {finding}"
-        for path in sorted(SOURCE_ROOT.rglob("*.py"))
+        for path in _constant_scan_files()
         if path != CONSTANTS_HOME
         for finding in _constant_source_imports(path)
     ]
     assert not violations, (
         "scipy.constants or ase.units imported outside mufinder.domain.constants. Add "
         "the constant there and import it from the home instead:\n" + "\n".join(violations)
+    )
+
+
+def _module_level_names(path: Path) -> list[tuple[str, int]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names: list[tuple[str, int]] = []
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        names.extend((target.id, node.lineno) for target in targets if isinstance(target, ast.Name))
+    return names
+
+
+def test_constant_names_are_only_defined_in_their_home() -> None:
+    """No module redefines a constant the home holds, whatever value it writes.
+
+    The value scan skips powers of ten and expressions, so ``MU0_OVER_4PI = 1e-7``
+    or ``MU0 = 4 * pi * 1e-7`` would pass it; this check catches them by name.
+    """
+
+    home_names = {name for name, _ in _module_level_names(CONSTANTS_HOME) if name.isupper()}
+    forbidden = home_names | RETIRED_CONSTANT_NAMES
+    violations = [
+        f"{path.relative_to(PROJECT_ROOT)} line {lineno}: {name}"
+        for path in _constant_scan_files()
+        if path != CONSTANTS_HOME and path not in CONSTANT_LITERAL_ALLOWLIST
+        for name, lineno in _module_level_names(path)
+        if name.lstrip("_") in forbidden
+    ]
+    assert not violations, (
+        "Module-level names that redefine a physical constant outside "
+        "mufinder.domain.constants. Import the constant from the home instead:\n"
+        + "\n".join(violations)
     )
