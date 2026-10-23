@@ -1,10 +1,12 @@
-"""The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [--jobs N] [NAME ...]``.
+"""The command line: ``python scripts/render_docs_screenshots.py [--example NAME] [--shard K/N] [--jobs N] [NAME ...]``.
 
-With no names and no ``--example`` every screenshot is rendered, and the
-output directory's ``.stamp`` is touched once they all are. Several
-screenshots are shared out, in registry order, between ``--jobs`` worker
-processes, each rendering its share as a run with names does; one job renders
-them in this process.
+With no names, no ``--example`` and no ``--shard`` every screenshot is
+rendered, and the output directory's ``.stamp`` is touched once they all are.
+``--shard K/N`` renders the K-th of N shares of the selection, the split CI's
+screenshot jobs use. Several screenshots are shared out between ``--jobs``
+worker processes the same way, each rendering its share as a run with names
+does; one job renders them in this process. The shares come from
+:func:`docs_screenshots.shards.partition`.
 """
 
 from __future__ import annotations
@@ -14,10 +16,12 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 # The render module configures Qt and VTK, so it is imported before them.
 from .render import DEFAULT_OUTPUT, IMAGE_SUFFIX, install_offscreen_viewers, remove_scratch, render
 from .registry import EXAMPLES, SCREENSHOTS
+from .shards import load_durations, parse_shard, partition, store_durations
 
 from PySide6.QtWidgets import QApplication
 
@@ -36,10 +40,20 @@ def _parser() -> argparse.ArgumentParser:
         help="render (or, with --list, list) every screenshot of one example",
     )
     parser.add_argument(
+        "--shard",
+        metavar="K/N",
+        help="render (or, with --list, list) the K-th of N shares of equal measured duration",
+    )
+    parser.add_argument(
         "--jobs",
         type=int,
         default=DEFAULT_JOBS,
         help=f"worker processes to share the screenshots between (default: {DEFAULT_JOBS})",
+    )
+    parser.add_argument(
+        "--store-durations",
+        action="store_true",
+        help="render in this process and record each screenshot's seconds in durations.json",
     )
     parser.add_argument(
         "names",
@@ -62,6 +76,12 @@ def _run(argv: list[str] | None) -> int:
         names = list(EXAMPLES[args.example].SCENES)
     else:
         names = args.names or list(SCREENSHOTS)
+    if args.shard:
+        try:
+            shard, shards = parse_shard(args.shard)
+        except ValueError as exc:
+            parser.error(f"--shard: {exc}")
+        names = _shares(names, shards)[shard - 1]
     if args.list:
         print("\n".join(names))
         return 0
@@ -70,35 +90,43 @@ def _run(argv: list[str] | None) -> int:
         parser.error("--jobs must be at least 1")
     output: Path = args.output
     output.mkdir(parents=True, exist_ok=True)
-    jobs = min(args.jobs, len(names))
+    jobs = 1 if args.store_durations else min(args.jobs, len(names))
     if jobs > 1:
         if not _render_in_workers(names, output, jobs):
             return 1
     else:
-        _render_here(names, output)
-    if not args.example and not args.names:
+        seconds = _render_here(names, output)
+        if args.store_durations:
+            store_durations(seconds, list(SCREENSHOTS))
+    if not (args.example or args.names or args.shard):
         # A full render marks the output complete; ``make docs`` renders again
         # only once a source is newer than this stamp.
         (output / STAMP_NAME).touch()
     return 0
 
 
-def _render_in_workers(names: list[str], output: Path, jobs: int) -> bool:
-    """Render ``names`` in ``jobs`` worker processes, dealing them out in turn; ``True`` if all succeed.
+def _shares(names: list[str], count: int) -> list[list[str]]:
+    """``names`` in ``count`` shares, each project's scenes kept together where they fit."""
 
-    Each worker builds the projects its scenes need, so a project several
-    workers share is built in each of them.
-    """
+    projects = {name: id(SCREENSHOTS[name].project) for name in names}
+    return partition(names, projects, load_durations(), count)
+
+
+def _render_in_workers(names: list[str], output: Path, jobs: int) -> bool:
+    """Render ``names`` in ``jobs`` worker processes, one share each; ``True`` if all succeed."""
 
     workers = [
-        subprocess.Popen([sys.executable, str(SCRIPT), "--jobs", "1", "--output", str(output), *names[index::jobs]])
-        for index in range(jobs)
+        subprocess.Popen([sys.executable, str(SCRIPT), "--jobs", "1", "--output", str(output), *share])
+        for share in _shares(names, jobs)
+        if share
     ]
     codes = [worker.wait() for worker in workers]
     return all(code == 0 for code in codes)
 
 
-def _render_here(names: list[str], output: Path) -> None:
+def _render_here(names: list[str], output: Path) -> dict[str, float]:
+    """Render ``names`` in this process; the seconds each took, its project's build included."""
+
     app = QApplication(sys.argv[:1])
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")
@@ -106,8 +134,12 @@ def _render_here(names: list[str], output: Path) -> None:
 
     apply_theme(app, THEME_LIGHT)
     install_offscreen_viewers()
+    seconds: dict[str, float] = {}
     for name in names:
+        start = time.perf_counter()
         render(app, SCREENSHOTS[name], output / f"{name}{IMAGE_SUFFIX}")
+        seconds[name] = time.perf_counter() - start
+    return seconds
 
 
 def main(argv: list[str] | None = None) -> int:

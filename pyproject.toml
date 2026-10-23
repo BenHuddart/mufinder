@@ -75,6 +75,7 @@ addopts = "--strict-markers --cov=mufinder --cov-report=term-missing --timeout=1
 markers = [
   "unit: pure-Python or isolated tests that do not require a QApplication",
   "gui: requires PySide6 / Qt widgets",
+  "screenshots: renders documentation screenshots; CI's docs-screenshots jobs render them instead of the test shards",
 ]
 
 [tool.coverage.run]

@@ -161,6 +161,8 @@ def settle(app: QApplication) -> None:
 IMAGE_SUFFIX = ".webp"
 _IMAGE_FORMAT = "WEBP"
 _LOSSLESS_QUALITY = 100
+# A grab smaller than this is a blank or collapsed widget, not a screenshot.
+MIN_IMAGE_BYTES = 10_000
 
 
 def save(widget: QWidget, path: Path, rect: QRect | None = None) -> None:
@@ -170,6 +172,8 @@ def save(widget: QWidget, path: Path, rect: QRect | None = None) -> None:
     pixmap = widget.grab() if rect is None else widget.grab(rect)
     if not pixmap.save(str(path), _IMAGE_FORMAT, _LOSSLESS_QUALITY):
         raise RuntimeError(f"Could not write {path}")
+    if path.stat().st_size <= MIN_IMAGE_BYTES:
+        raise RuntimeError(f"{path} is suspiciously small: the grab may be blank")
     print(f"wrote {path}")
 
 

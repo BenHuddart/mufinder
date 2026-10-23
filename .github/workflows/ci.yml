@@ -128,9 +128,89 @@ jobs:
       - name: Combine coverage and enforce the gate
         run: make coverage
 
+  # The documentation screenshots are rendered in four shares of about equal
+  # measured duration (scripts/docs_screenshots/durations.json) on separate
+  # runners, since one runner's CPUs are the limit. Each share is cached under
+  # a hash of everything a screenshot depends on, so a pull request that
+  # changes only pages reuses the images. Keep `--shard` (SHARDS), this matrix
+  # in step; tests/docs/test_docs_screenshots.py reads the shard count from here.
+  docs-screenshots:
+    name: docs screenshots (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Restore this share of the screenshots
+        id: screenshots-cache
+        uses: actions/cache@v4
+        with:
+          path: docs/_generated/screenshots
+          key: docs-screenshots-${{ runner.os }}-shard-${{ matrix.shard }}-of-4-${{ hashFiles('scripts/docs_screenshots/**', 'scripts/render_docs_screenshots.py', 'src/mufinder/**', 'tests/fixtures/**', 'uv.lock') }}
+
+      - name: Set up uv
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Prepare runtime directories
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "PYVISTA_OFF_SCREEN=true"
+            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
+            echo "LIBGL_ALWAYS_SOFTWARE=1"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Install system libraries
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+
+      # The screenshots run real field calculations, so they need the
+      # scientific backends as well.
+      - name: Install Python dependencies
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: |
+          uv sync --frozen --extra dev --extra scientific-backends
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Render this share of the screenshots
+        if: steps.screenshots-cache.outputs.cache-hit != 'true'
+        run: make screenshots-shard SHARD=${{ matrix.shard }} SHARDS=4
+
+      - name: Upload this share of the screenshots
+        uses: actions/upload-artifact@v6
+        with:
+          name: docs-screenshots-${{ matrix.shard }}
+          path: docs/_generated/screenshots
+          if-no-files-found: error
+          retention-days: 1
+
+  # Branch protection requires the `docs` check, so this job keeps that name.
+  # Like `tests`, it runs even when a screenshot share fails, and then fails.
   docs:
     runs-on: ubuntu-latest
+    needs: docs-screenshots
+    if: always()
     steps:
+      - name: Require every screenshot share to render
+        if: needs.docs-screenshots.result != 'success'
+        run: |
+          echo "A screenshot share finished with '${{ needs.docs-screenshots.result }}'."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v5
 
@@ -145,42 +225,33 @@ jobs:
           mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
           {
             echo "QT_QPA_PLATFORM=offscreen"
-            echo "PYVISTA_OFF_SCREEN=true"
-            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
-            echo "LIBGL_ALWAYS_SOFTWARE=1"
             echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
             echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
           } >> "$GITHUB_ENV"
 
+      # autodoc imports the application, Qt widgets included.
       - name: Install system libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
 
-      # The screenshots run real field calculations, so the docs need the
-      # scientific backends as well.
+      # Sphinx renders nothing, so the scientific backends are not needed.
       - name: Install Python dependencies
         run: |
-          uv sync --frozen --extra dev --extra scientific-backends
+          uv sync --frozen --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
-      # The screenshots are a pure function of the renderer, the application and
-      # the real-output fixtures, so an unchanged tree reuses the images. A
-      # restored archive keeps the .stamp mtime of the run that saved it, which
-      # is older than this checkout, so a hit touches it: make then sees the
-      # stamp as newer than the sources and skips the render.
-      - name: Restore documentation screenshots
-        id: screenshots-cache
-        uses: actions/cache@v4
+      - name: Download the screenshots
+        uses: actions/download-artifact@v7
         with:
+          pattern: docs-screenshots-*
           path: docs/_generated/screenshots
-          key: docs-screenshots-${{ runner.os }}-${{ hashFiles('scripts/docs_screenshots/**', 'scripts/render_docs_screenshots.py', 'src/mufinder/**', 'tests/fixtures/**', 'uv.lock') }}
+          merge-multiple: true
 
-      - name: Mark the restored screenshots current
-        if: steps.screenshots-cache.outputs.cache-hit == 'true'
+      # The downloaded images are complete, but older than this checkout's
+      # sources; touching the stamp tells make to skip the render.
+      - name: Mark the screenshots current
         run: touch docs/_generated/screenshots/.stamp
 
-      # make docs renders the user-guide screenshots first; they are build
-      # outputs and are not uploaded from this job.
       - name: Build Sphinx documentation
         run: make docs
