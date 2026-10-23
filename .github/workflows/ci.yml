@@ -31,7 +31,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --frozen --extra dev
+          uv sync --locked --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run ruff
@@ -76,7 +76,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --frozen --extra dev --extra scientific-backends
+          uv sync --locked --extra dev --extra scientific-backends
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run test shard
@@ -116,7 +116,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --frozen --extra dev
+          uv sync --locked --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Download coverage data
@@ -187,7 +187,7 @@ jobs:
       - name: Install Python dependencies
         if: steps.screenshots-cache.outputs.cache-hit != 'true'
         run: |
-          uv sync --frozen --extra dev --extra scientific-backends
+          uv sync --locked --extra dev --extra scientific-backends
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Render this share of the screenshots
@@ -242,7 +242,7 @@ jobs:
       # Sphinx renders nothing, so the scientific backends are not needed.
       - name: Install Python dependencies
         run: |
-          uv sync --frozen --extra dev
+          uv sync --locked --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Download the screenshots
