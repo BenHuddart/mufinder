@@ -9,7 +9,7 @@ import pytest
 
 from mufinder.castep_io import write_cell, write_param
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
-from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
+from mufinder.domain.constants import MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.workflow.bridge import structure_to_spec
@@ -131,7 +131,11 @@ def test_expand_quantum_phonon_jobs_writes_muon_species_mass_in_its_own_cell() -
     assert "%BLOCK SPECIES_MASS" in cell_text
     assert f"H:mu {MUON_MASS_AMU}" in cell_text
     assert "%BLOCK SPECIES_GAMMA" in cell_text
-    assert f"H:mu {MUON_GAMMA_RAD_S_T}" in cell_text
+    gamma_block = cell_text.split("%BLOCK SPECIES_GAMMA")[1].split("%ENDBLOCK SPECIES_GAMMA")[0]
+    unit, species, gamma = gamma_block.split()
+    assert (unit, species) == ("radsectesla", "H:mu")
+    # CODATA 2018: gamma_mu = 2 pi x 135.538 8094 MHz/T.
+    assert float(gamma) == pytest.approx(851_615_456.6, rel=1e-9)
     assert jobs[0].provenance["muon_mass_amu"] == MUON_MASS_AMU
 
 

@@ -26,6 +26,7 @@ from mufinder.science.demagnetization import DemagnetizingSample
 from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     DipolarTensorResult,
     MagneticFieldDependencyError,
     MagneticFieldDistributionResult,
@@ -413,7 +414,7 @@ def test_contact_coupling_unit_conversion_to_muesr_acont() -> None:
     assert contact_coupling_to_angstrom_minus3(1.0, "T_per_muB") == pytest.approx(
         1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
     )
-    assert contact_coupling_to_angstrom_minus3(135.538_96, "MHz_per_muB") == pytest.approx(
+    assert contact_coupling_to_angstrom_minus3(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T, "MHz_per_muB") == pytest.approx(
         contact_coupling_to_angstrom_minus3(1.0, "T_per_muB")
     )
 
