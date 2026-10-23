@@ -25,7 +25,11 @@ def test_w1_definition_names_participation_minus_three() -> None:
 
 
 def test_w1_from_result_data_returns_a_current_witness_as_stored() -> None:
-    data = {"muon_zpe_modes": _MODES, "w1_entanglement_witness": -0.25, "w1_definition": W1_DEFINITION}
+    data = {
+        "muon_zpe_modes": _MODES,
+        "w1_entanglement_witness": -0.25,
+        "w1_definition": W1_DEFINITION,
+    }
 
     assert w1_from_result_data(data) == -0.25
 
@@ -56,7 +60,10 @@ def test_w1_from_result_data_keeps_an_old_witness_it_cannot_recompute(data: dict
 
 def test_w1_from_result_data_is_none_without_a_witness() -> None:
     assert w1_from_result_data({}) is None
-    assert w1_from_result_data({"w1_entanglement_witness": "n/a", "w1_definition": W1_DEFINITION}) is None
+    assert (
+        w1_from_result_data({"w1_entanglement_witness": "n/a", "w1_definition": W1_DEFINITION})
+        is None
+    )
 
 
 def test_mode_widths_from_result_data_prefers_the_stored_width() -> None:

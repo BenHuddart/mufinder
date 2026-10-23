@@ -133,7 +133,9 @@ class UEPWidget(RowTableWidget):
             # kpoint_mp_spacing render as a mutually exclusive radio pair, so
             # both sit in the basic view, as in the relaxation workflows.
             if spec.name in ("write_formatted_density", "kpoint_mp_grid", "kpoint_mp_spacing"):
-                adjusted.append(clone_spec_for_workflow(spec, workflow_stage="uep", basic=True, advanced=True))
+                adjusted.append(
+                    clone_spec_for_workflow(spec, workflow_stage="uep", basic=True, advanced=True)
+                )
                 continue
             adjusted.append(spec)
         return reorder_workflow_parameter_specs(adjusted)

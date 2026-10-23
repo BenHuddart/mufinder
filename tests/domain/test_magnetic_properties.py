@@ -62,7 +62,10 @@ def test_moment_spins_skip_malformed_moments_and_honour_atom_index() -> None:
 def test_moment_spins_are_none_without_a_numeric_moment() -> None:
     assert atomic_spins_from_magnetic_moments({}, atom_count=2) is None
     assert atomic_spins_from_magnetic_moments({"moments": []}, atom_count=2) is None
-    assert atomic_spins_from_magnetic_moments({"moments": [{"vector": [0, 0, "x"]}]}, atom_count=2) is None
+    assert (
+        atomic_spins_from_magnetic_moments({"moments": [{"vector": [0, 0, "x"]}]}, atom_count=2)
+        is None
+    )
 
 
 def test_moment_spins_report_all_zero_moments_as_spins_not_none() -> None:
@@ -75,7 +78,11 @@ def test_moment_spins_place_by_atom_index_only_when_asked() -> None:
     magnetic = {"moments": [{"atom_index": 1, "vector": [0, 0, 3.0]}, {"vector": [0, 0, -1.0]}]}
 
     assert atomic_spins_from_magnetic_moments(magnetic, atom_count=3) == [0.0, -1.0, 0.0]
-    assert atomic_spins_from_magnetic_moments(magnetic, atom_count=3, honour_atom_index=False) == [3.0, -1.0, 0.0]
+    assert atomic_spins_from_magnetic_moments(magnetic, atom_count=3, honour_atom_index=False) == [
+        3.0,
+        -1.0,
+        0.0,
+    ]
 
 
 # atomic_spins_from_structure
@@ -96,7 +103,9 @@ def test_structure_spins_honour_an_explicit_atom_count() -> None:
 
 
 def test_structure_spins_place_moments_in_list_order_ignoring_atom_index() -> None:
-    structure = _structure(2, magnetic_structure={"moments": [{"atom_index": 1, "vector": [0, 0, 5.0]}]})
+    structure = _structure(
+        2, magnetic_structure={"moments": [{"atom_index": 1, "vector": [0, 0, 5.0]}]}
+    )
 
     assert atomic_spins_from_structure(structure) == [5.0, 0.0]
 
@@ -104,7 +113,10 @@ def test_structure_spins_place_moments_in_list_order_ignoring_atom_index() -> No
 def test_structure_spins_are_none_without_magnetic_structure_or_numeric_moments() -> None:
     assert atomic_spins_from_structure(_structure()) is None
     assert atomic_spins_from_structure(_structure(magnetic_structure="not-a-dict")) is None
-    assert atomic_spins_from_structure(_structure(magnetic_structure={"moments": [{"vector": None}]})) is None
+    assert (
+        atomic_spins_from_structure(_structure(magnetic_structure={"moments": [{"vector": None}]}))
+        is None
+    )
 
 
 # propagation_vector_from_structure
@@ -121,7 +133,9 @@ def test_propagation_vector_prefers_the_top_level_property() -> None:
 
 
 def test_propagation_vector_falls_back_to_magnetic_structure_then_zero() -> None:
-    assert propagation_vector_from_structure(_structure(magnetic_structure={"propagation_vector": [0, 0, 0.25]})) == (
+    assert propagation_vector_from_structure(
+        _structure(magnetic_structure={"propagation_vector": [0, 0, 0.25]})
+    ) == (
         0.0,
         0.0,
         0.25,
@@ -141,7 +155,15 @@ def test_propagation_vector_falls_back_to_magnetic_structure_then_zero() -> None
         ({"x": 1}, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         (7, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
     ],
-    ids=["short", "non-numeric-component", "long", "numeric-strings", "string", "mapping", "scalar"],
+    ids=[
+        "short",
+        "non-numeric-component",
+        "long",
+        "numeric-strings",
+        "string",
+        "mapping",
+        "scalar",
+    ],
 )
 def test_propagation_vector_lenient_and_strict_readings(
     stored: object,

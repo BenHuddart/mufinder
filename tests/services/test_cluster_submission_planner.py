@@ -128,7 +128,9 @@ def test_continuation_on_another_cluster_falls_through_to_a_fresh_target() -> No
 
 
 def test_resubmission_reuses_its_previous_directory_without_uploading() -> None:
-    job = make_job("a", status=JobStatus.FAILED, execution_target="alpha", remote_directory="/remote/old/a")
+    job = make_job(
+        "a", status=JobStatus.FAILED, execution_target="alpha", remote_directory="/remote/old/a"
+    )
 
     plan = _plan([job], reuse_existing_remote_files=True)
 
@@ -165,7 +167,9 @@ def test_start_again_job_deletes_its_own_directory_without_a_prompt() -> None:
 
 
 def test_start_again_job_on_another_cluster_is_a_fresh_job_still_cleared_locally() -> None:
-    job = make_job("a", status=JobStatus.STOPPED, execution_target="beta", remote_directory="/remote/old/a")
+    job = make_job(
+        "a", status=JobStatus.STOPPED, execution_target="beta", remote_directory="/remote/old/a"
+    )
 
     plan = _plan([job], fresh_start_job_ids=(job.id,), reuse_existing_remote_files=True)
 
@@ -185,7 +189,9 @@ def test_start_again_job_on_another_cluster_is_a_fresh_job_still_cleared_locally
         ("no_to_all", None, "skip"),
     ],
 )
-def test_existing_target_follows_each_overwrite_choice(choice: str, confirmed: bool | None, expected: str) -> None:
+def test_existing_target_follows_each_overwrite_choice(
+    choice: str, confirmed: bool | None, expected: str
+) -> None:
     job = make_job("a")
     plan = _plan([job])
     bulk_calls: list[list[str]] = []
@@ -251,10 +257,14 @@ def test_protected_directory_is_never_deleted_for_a_colliding_job() -> None:
 
 def test_start_again_job_in_a_protected_directory_fails() -> None:
     continuing = make_job("a", execution_target="alpha", remote_directory="/remote/shared")
-    restarting = make_job("b", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/shared")
+    restarting = make_job(
+        "b", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/shared"
+    )
 
     plan = _plan([continuing, restarting], fresh_start_job_ids=(restarting.id,))
-    decisions = resolve_overwrite_decisions(plan, [], ask=_never_asked, confirm_bulk_delete=_never_asked)
+    decisions = resolve_overwrite_decisions(
+        plan, [], ask=_never_asked, confirm_bulk_delete=_never_asked
+    )
     submissions = _submissions(plan, decisions)
 
     assert [item.submission.job for item in submissions.items] == [continuing]
@@ -279,9 +289,13 @@ def test_job_without_an_output_directory_is_missing() -> None:
 
 
 def test_uncleaned_start_again_job_is_left_out() -> None:
-    job = make_job("a", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/old/a")
+    job = make_job(
+        "a", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/old/a"
+    )
     plan = _plan([job], fresh_start_job_ids=(job.id,))
-    decisions = resolve_overwrite_decisions(plan, [], ask=_never_asked, confirm_bulk_delete=_never_asked)
+    decisions = resolve_overwrite_decisions(
+        plan, [], ask=_never_asked, confirm_bulk_delete=_never_asked
+    )
 
     submissions = _submissions(plan, decisions, not_cleaned_job_ids={job.id})
 
@@ -304,12 +318,21 @@ def test_submission_carries_the_cluster_and_dialog_settings() -> None:
         "02:00:00",
         "/remote/work",
     )
-    assert (submission.template_script_path, submission.cores_per_node, submission.castep_executable) == (
+    assert (
+        submission.template_script_path,
+        submission.cores_per_node,
+        submission.castep_executable,
+    ) == (
         "/templates/run.sh",
         32,
         "castep.mpi",
     )
-    assert (submission.memory_gb, submission.mem_per_cpu_gb, submission.queue_name, submission.comment) == (
+    assert (
+        submission.memory_gb,
+        submission.mem_per_cpu_gb,
+        submission.queue_name,
+        submission.comment,
+    ) == (
         64.0,
         None,
         "short",
@@ -326,7 +349,9 @@ def test_prepare_batch_skips_declined_jobs() -> None:
     def prepare(request):
         if request.job is declined:
             return None
-        return PreparedClusterSubmission(job=request.job, run=None, submit_kwargs={"seed_name": request.seed_name})
+        return PreparedClusterSubmission(
+            job=request.job, run=None, submit_kwargs={"seed_name": request.seed_name}
+        )
 
     submit_items, prepared_by_job = submissions.prepare_batch(prepare)
 
@@ -380,7 +405,10 @@ def test_connection_reuse_requires_the_same_cluster_and_user(
     assert (
         bool(
             can_reuse_cluster_connection(
-                CLUSTER, is_connected=is_connected, connected_cluster_name=name, connected_username=user
+                CLUSTER,
+                is_connected=is_connected,
+                connected_cluster_name=name,
+                connected_username=user,
             )
         )
         is expected
@@ -396,7 +424,9 @@ def _drive(jobs: list[Job], **overrides):
         remote_job_directory=_remote_job_directory,
         output_directory=lambda job: Path("/local") / job.label,
         retrieval_flags=lambda _job: RetrievalFlags(),
-        check_remote_directories=lambda targets: calls["check"].append(targets) or {"existing": [], "errors": {}},
+        check_remote_directories=lambda targets: (
+            calls["check"].append(targets) or {"existing": [], "errors": {}}
+        ),
         ask_overwrite=lambda label, path: calls["ask"].append((label, path)) or "no",
         confirm_bulk_delete=_never_asked,
         clear_fresh_outputs=lambda fresh: calls["clear"].append(fresh) or (list(fresh), []),
@@ -417,8 +447,15 @@ def test_driver_skips_the_callbacks_it_does_not_need() -> None:
 def test_driver_reports_failures_in_stage_order_and_skips() -> None:
     errored = make_job("errored")
     existing = make_job("existing")
-    uncleared = make_job("uncleared", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/x")
-    blocked = make_job("blocked", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/c")
+    uncleared = make_job(
+        "uncleared",
+        status=JobStatus.STOPPED,
+        execution_target="alpha",
+        remote_directory="/remote/x",
+    )
+    blocked = make_job(
+        "blocked", status=JobStatus.STOPPED, execution_target="alpha", remote_directory="/remote/c"
+    )
     continuing = make_job("continuing", execution_target="alpha", remote_directory="/remote/c")
     jobs = [errored, existing, uncleared, blocked, continuing]
 
@@ -499,7 +536,11 @@ def test_submission_applies_the_chosen_queue_overrides() -> None:
 
     submission = item.submission
     assert submission.queue_name == "short"
-    assert (submission.template_script_path, submission.cores_per_node, submission.castep_executable) == (
+    assert (
+        submission.template_script_path,
+        submission.cores_per_node,
+        submission.castep_executable,
+    ) == (
         "/templates/short.sh",
         64,
         "/opt/castep-short/castep.mpi",

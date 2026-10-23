@@ -86,7 +86,9 @@ def format_partition_directive(queue_name: str) -> str:
     return f"#SBATCH -p {name}" if name else ""
 
 
-def template_sets_partition(template_script_path: str, *, cluster_name: str, queue_system: str) -> bool:
+def template_sets_partition(
+    template_script_path: str, *, cluster_name: str, queue_system: str
+) -> bool:
     """Return whether the cluster's job template hard-codes a partition.
 
     Such a template wins over the queue chosen for a submission, so the dialogs
@@ -107,7 +109,9 @@ def template_sets_partition(template_script_path: str, *, cluster_name: str, que
     return any(_SBATCH_PARTITION_LINE_RE.match(line) for line in template.template.splitlines())
 
 
-def insert_sbatch_directive(script: str, directive: str, *, unless: re.Pattern[str] | None = None) -> str:
+def insert_sbatch_directive(
+    script: str, directive: str, *, unless: re.Pattern[str] | None = None
+) -> str:
     """Insert one ``#SBATCH`` directive into a rendered batch script.
 
     The directive is placed after the last existing ``#SBATCH`` line so it stays
@@ -261,13 +265,11 @@ def render_job_script(
     is_slurm = queue_system.strip().lower() == "slurm"
     if is_slurm:
         command = (
-            f"srun -n {max(1, int(num_processes))} "
-            f"{shlex.quote(castep_executable)} {seed_name}"
+            f"srun -n {max(1, int(num_processes))} {shlex.quote(castep_executable)} {seed_name}"
         )
     else:
         command = (
-            f"mpirun -np {max(1, int(num_processes))} "
-            f"{shlex.quote(castep_executable)} {seed_name}"
+            f"mpirun -np {max(1, int(num_processes))} {shlex.quote(castep_executable)} {seed_name}"
         )
     script = populate_template(
         template,

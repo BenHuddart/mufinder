@@ -234,7 +234,9 @@ def validate_gui_values(
             errors.append(str(exc))
             continue
 
-        if spec.allowed_tasks and normalized_task not in {item.upper() for item in spec.allowed_tasks}:
+        if spec.allowed_tasks and normalized_task not in {
+            item.upper() for item in spec.allowed_tasks
+        }:
             joined = ", ".join(spec.allowed_tasks)
             errors.append(f"{spec.name} is only available for task(s): {joined}.")
 
@@ -246,7 +248,9 @@ def validate_gui_values(
         for required in spec.requires:
             if required not in active_names:
                 errors.append(f"{spec.name} requires {required}.")
-        if spec.requires_any_of and not any(required in active_names for required in spec.requires_any_of):
+        if spec.requires_any_of and not any(
+            required in active_names for required in spec.requires_any_of
+        ):
             joined = " or ".join(spec.requires_any_of)
             errors.append(f"{spec.name} requires {joined}.")
 

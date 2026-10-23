@@ -10,7 +10,16 @@ import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QTabWidget, QToolButton, QTreeWidget, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QScrollBar,
+    QTableWidget,
+    QTabWidget,
+    QToolButton,
+    QTreeWidget,
+    QWidget,
+)
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -348,6 +357,7 @@ class _TableCornerStyler(QObject):
         QEvent.Type.Resize,
     }
     _WATCH_EVENTS = _TABLE_WATCH_EVENTS | _BAR_WATCH_EVENTS
+
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
 
@@ -498,6 +508,7 @@ class _TableCornerStyler(QObject):
         if isinstance(table, QTreeWidget):
             return table.header()
         return None
+
 
 def _ensure_table_corner_styler(app: QApplication) -> None:
     global _TABLE_CORNER_STYLER
@@ -810,8 +821,7 @@ def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str =
         if include_scroll_area
         else ""
     )
-    return (
-        f"""
+    return f"""
         QDialog {{
             background: {palette.bg_primary};
         }}
@@ -870,7 +880,6 @@ def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str =
         {scroll_area}
         {extra}
         """
-    )
 
 
 def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) -> str:

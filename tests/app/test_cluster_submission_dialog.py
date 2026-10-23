@@ -107,7 +107,9 @@ def test_cluster_submission_dialog_switches_cluster_defaults(qapp) -> None:
 
 
 def test_cluster_submission_dialog_shows_jump_host_credentials(qapp) -> None:
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_jump_password_config()])
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_jump_password_config()]
+    )
 
     assert dialog._jump_secret_edit.isHidden() is False
     assert dialog._target_secret_label.text() == "Redwood password"
@@ -129,7 +131,9 @@ def test_cluster_submission_dialog_validates_jump_host_password_first(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_jump_password_config()])
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_jump_password_config()]
+    )
 
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -152,12 +156,16 @@ def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_keychain_password_config()]
+    )
 
     monkeypatch.setattr(
         dialog_module,
         "resolve_cluster_credentials",
-        lambda *_args, **_kwargs: SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret"),
+        lambda *_args, **_kwargs: SSHCredentials(
+            target_secret="glam-secret", jump_secret="physics-secret"
+        ),
     )
     accepted: list[bool] = []
     monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
@@ -169,7 +177,9 @@ def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
     dialog._accept_if_valid()
 
     assert accepted == [True]
-    assert dialog.credentials() == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+    assert dialog.credentials() == SSHCredentials(
+        target_secret="glam-secret", jump_secret="physics-secret"
+    )
     dialog.close()
 
 
@@ -178,7 +188,9 @@ def test_cluster_submission_dialog_keyring_mode_names_linux_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(keychain_module.sys, "platform", "linux")
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_keychain_password_config()]
+    )
 
     assert dialog._target_secret_edit.isHidden() is True
     assert dialog._jump_secret_edit.isHidden() is True
@@ -190,7 +202,9 @@ def test_cluster_submission_dialog_keyring_mode_names_linux_store(
 def test_cluster_submission_dialog_compacts_large_job_summary(qapp) -> None:
     job_labels = [f"cutoff_convergence_ecut_{index}" for index in range(12)]
 
-    dialog = ClusterSubmissionDialog(job_labels=job_labels, cluster_configs=[_jump_password_config()])
+    dialog = ClusterSubmissionDialog(
+        job_labels=job_labels, cluster_configs=[_jump_password_config()]
+    )
 
     summary = dialog._summary_label.text()
     assert "12 job(s)" in summary
@@ -218,7 +232,9 @@ def test_cluster_submission_dialog_auth_hint_reserves_wrapped_keychain_height(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_keychain_password_config()]
+    )
 
     dialog._auth_hint.setFixedWidth(320)
     dialog._set_auth_hint_text(dialog._auth_hint.text())
@@ -660,7 +676,9 @@ def test_slurm_submission_restores_the_last_used_queue(qapp) -> None:
         mem_per_cpu_gb=2.0,
     )
 
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()], initial_config=initial)
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=[_psi_config()], initial_config=initial
+    )
 
     config = dialog.config()
     assert config.queue_name == "hourly"
@@ -675,7 +693,9 @@ def test_submission_refuses_a_walltime_beyond_the_queue_maximum(
 ) -> None:
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
     warnings: list[tuple[str, str]] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, title, text: warnings.append((title, text)))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, title, text: warnings.append((title, text))
+    )
     accepted: list[bool] = []
     monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
 
@@ -684,12 +704,18 @@ def test_submission_refuses_a_walltime_beyond_the_queue_maximum(
 
     assert accepted == []
     assert warnings == [
-        ("Invalid walltime", "The walltime 2-00:00:00 is longer than the 1-00:00:00 maximum for queue 'daily'.")
+        (
+            "Invalid walltime",
+            "The walltime 2-00:00:00 is longer than the 1-00:00:00 maximum for queue 'daily'.",
+        )
     ]
     dialog.close()
 
 
-@pytest.mark.parametrize(("walltime", "queue", "title"), [("soon", "daily", "Invalid walltime"), ("01:00:00", "a b", "Invalid queue")])
+@pytest.mark.parametrize(
+    ("walltime", "queue", "title"),
+    [("soon", "daily", "Invalid walltime"), ("01:00:00", "a b", "Invalid queue")],
+)
 def test_submission_refuses_unreadable_walltime_or_queue(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
@@ -699,7 +725,9 @@ def test_submission_refuses_unreadable_walltime_or_queue(
 ) -> None:
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_psi_config()])
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, t, _text: warnings.append(t))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, t, _text: warnings.append(t)
+    )
     monkeypatch.setattr(dialog, "accept", lambda: pytest.fail("accepted"))
 
     dialog._queue_combo.setEditText(queue)
@@ -712,7 +740,9 @@ def test_submission_refuses_unreadable_walltime_or_queue(
 
 def test_submission_hint_says_when_the_template_sets_the_partition(qapp, tmp_path) -> None:  # noqa: ANN001
     template = tmp_path / "fixed.sh"
-    template.write_text("#!/bin/bash\n#SBATCH --partition=fixed\n$castep_command\n", encoding="utf-8")
+    template.write_text(
+        "#!/bin/bash\n#SBATCH --partition=fixed\n$castep_command\n", encoding="utf-8"
+    )
 
     dialog = ClusterSubmissionDialog(
         job_labels=["job_a"],
@@ -724,7 +754,9 @@ def test_submission_hint_says_when_the_template_sets_the_partition(qapp, tmp_pat
 
 
 def test_profile_without_queues_submits_no_slurm_partition(qapp) -> None:
-    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs(), default_cluster_name="alpha")
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"], cluster_configs=_configs(), default_cluster_name="alpha"
+    )
 
     assert _queue_items(dialog) == []
     assert dialog.config().queue_name == ""

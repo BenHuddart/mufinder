@@ -97,6 +97,7 @@ def get_crystal_symmetry(
         "equivalent_atoms": np.asarray(equivalent_atoms, dtype=int),
     }
 
+
 # Cell construction, cached symmetry operations and orbits.
 #
 # Every science module that asks spglib about a MuFinder structure builds its
@@ -139,9 +140,17 @@ def spglib_cell(
     position counts differ.
     """
 
-    lattice = lattice_vectors if lattice_vectors is not None else getattr(structure, "lattice_vectors", None)
+    lattice = (
+        lattice_vectors
+        if lattice_vectors is not None
+        else getattr(structure, "lattice_vectors", None)
+    )
     labels = species if species is not None else getattr(structure, "species", None)
-    positions = fractional_positions if fractional_positions is not None else getattr(structure, "fractional_positions", None)
+    positions = (
+        fractional_positions
+        if fractional_positions is not None
+        else getattr(structure, "fractional_positions", None)
+    )
     if lattice is None or labels is None or positions is None:
         raise ValueError("spglib_cell needs lattice_vectors, species and fractional_positions.")
     numbers = species_to_atomic_numbers(labels)
@@ -191,7 +200,10 @@ def symmetry_operations(cell: SpglibCell, *, symprec: float) -> SymmetryOperatio
     lattice, positions, numbers = cell
     return _cached_symmetry_operations(
         tuple(tuple(float(value) for value in row) for row in np.asarray(lattice, dtype=float)),
-        tuple(tuple(float(value) for value in row) for row in np.asarray(positions, dtype=float).reshape(-1, 3)),
+        tuple(
+            tuple(float(value) for value in row)
+            for row in np.asarray(positions, dtype=float).reshape(-1, 3)
+        ),
         tuple(int(value) for value in np.asarray(numbers)),
         float(symprec),
     )

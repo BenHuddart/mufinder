@@ -51,9 +51,7 @@ def test_write_cell_serializes_bool_scalars_explicitly() -> None:
             vectors=((5.43, 0.0, 0.0), (0.0, 5.43, 0.0), (0.0, 0.0, 5.43)),
             unit="ang",
         ),
-        positions_frac=PositionBlock(
-            positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)
-        ),
+        positions_frac=PositionBlock(positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)),
         scalars=(
             # FIX_ALL_CELL is a valued boolean keyword, unlike presence-only
             # flags such as SYMMETRY_GENERATE.
@@ -73,9 +71,7 @@ def test_write_cell_keeps_presence_flags_bare_when_extra_scalar() -> None:
             vectors=((5.43, 0.0, 0.0), (0.0, 5.43, 0.0), (0.0, 0.0, 5.43)),
             unit="ang",
         ),
-        positions_frac=PositionBlock(
-            positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)
-        ),
+        positions_frac=PositionBlock(positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)),
         scalars=(KeywordAssignment("symmetry_generate", True),),
     )
 

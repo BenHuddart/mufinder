@@ -92,13 +92,17 @@ def _continue_specs() -> list[KeywordSpec]:
         ),
     ]
 
+
 _LOCKED_VALUES = {"task": "GEOMETRYOPTIMIZATION"}
 
 
 def _render_param_text(values: Mapping[str, object], advanced: tuple[str, ...]) -> str:
     """Deterministic fake renderer: one ``KEY : value`` line per entry."""
 
-    lines = [f"{name.upper()} : {value}" for name, value in sorted(values.items(), key=lambda item: item[0])]
+    lines = [
+        f"{name.upper()} : {value}"
+        for name, value in sorted(values.items(), key=lambda item: item[0])
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -137,7 +141,9 @@ def _effective_param_text(
 
 
 def _make_dialog(**overrides: object) -> ContinueRelaxationDialog:
-    parameter_values = overrides.pop("parameter_values", {"basis_precision": "FINE", "cut_off_energy": 340.0})
+    parameter_values = overrides.pop(
+        "parameter_values", {"basis_precision": "FINE", "cut_off_energy": 340.0}
+    )
     added_advanced = overrides.pop("added_advanced", ())
     render = overrides.pop("render_param_text", _render_param_text)
 
@@ -178,7 +184,14 @@ def test_shared_params_come_first_in_the_stable_order(qapp) -> None:
     visible_basic_order = [
         name
         for name in dialog._rows
-        if name in {"basis_precision", "cut_off_energy", "elec_energy_tol", "kpoint_mp_grid", "geom_max_iter"}
+        if name
+        in {
+            "basis_precision",
+            "cut_off_energy",
+            "elec_energy_tol",
+            "kpoint_mp_grid",
+            "geom_max_iter",
+        }
     ]
 
     assert visible_basic_order == [
@@ -293,7 +306,9 @@ def test_checkpoint_status_line_absent(qapp) -> None:
 
 
 def test_checkpoint_status_line_unavailable(qapp) -> None:
-    dialog = _make_dialog(checkpoint_probe=CheckpointProbeResult.unavailable("SSH connection refused"))
+    dialog = _make_dialog(
+        checkpoint_probe=CheckpointProbeResult.unavailable("SSH connection refused")
+    )
 
     text = dialog._checkpoint_label.text()
     assert text == "Could not verify checkpoint: SSH connection refused."

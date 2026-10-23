@@ -309,7 +309,9 @@ def test_render_job_script_is_byte_for_byte_unchanged_without_a_request(
     cluster_name: str,
     mem_per_cpu_gb: float | None,
 ) -> None:
-    kwargs = _render_kwargs(template_script_path="", cluster_name=cluster_name, queue_system="slurm")
+    kwargs = _render_kwargs(
+        template_script_path="", cluster_name=cluster_name, queue_system="slurm"
+    )
 
     assert render_job_script(**kwargs, mem_per_cpu_gb=mem_per_cpu_gb) == render_job_script(**kwargs)
     assert "--mem" not in render_job_script(**kwargs, mem_per_cpu_gb=mem_per_cpu_gb)
@@ -360,24 +362,30 @@ def test_render_job_script_shell_quotes_executable_with_spaces(tmp_path: Path) -
 
 
 def test_render_job_script_emits_the_chosen_partition() -> None:
-    script = render_job_script(**_render_kwargs(queue_system="slurm"), queue_name="daily", mem_per_cpu_gb=6.0)
+    script = render_job_script(
+        **_render_kwargs(queue_system="slurm"), queue_name="daily", mem_per_cpu_gb=6.0
+    )
 
     lines = script.splitlines()
     assert "#SBATCH -p daily" in lines
     # Both directives stay inside the leading #SBATCH block, partition first.
-    assert lines.index("#SBATCH -t 01:00:00") < lines.index("#SBATCH -p daily") < lines.index(
-        "#SBATCH --mem-per-cpu=6G"
+    assert (
+        lines.index("#SBATCH -t 01:00:00")
+        < lines.index("#SBATCH -p daily")
+        < lines.index("#SBATCH --mem-per-cpu=6G")
     )
 
 
 def test_render_job_script_without_a_queue_emits_no_partition() -> None:
-    assert render_job_script(**_render_kwargs(queue_system="slurm"), queue_name="") == render_job_script(
-        **_render_kwargs(queue_system="slurm")
-    )
+    assert render_job_script(
+        **_render_kwargs(queue_system="slurm"), queue_name=""
+    ) == render_job_script(**_render_kwargs(queue_system="slurm"))
     assert "#SBATCH -p" not in render_job_script(**_render_kwargs(queue_system="slurm"))
 
 
-@pytest.mark.parametrize("partition_line", ["#SBATCH -p scarf", "#SBATCH --partition=scarf", "#SBATCH --partition scarf"])
+@pytest.mark.parametrize(
+    "partition_line", ["#SBATCH -p scarf", "#SBATCH --partition=scarf", "#SBATCH --partition scarf"]
+)
 def test_render_job_script_keeps_a_template_partition(tmp_path: Path, partition_line: str) -> None:
     template_path = tmp_path / "custom.sh"
     template_path.write_text(
@@ -423,21 +431,37 @@ def test_partition_directive_helpers() -> None:
         "#!/bin/bash\n#SBATCH -J x\n#SBATCH -p daily\nrun\n"
     )
     # --ntasks-per-node is not a partition option.
-    assert "#SBATCH -p daily" in insert_partition_directive("#SBATCH --ntasks-per-node=4\n", "daily")
+    assert "#SBATCH -p daily" in insert_partition_directive(
+        "#SBATCH --ntasks-per-node=4\n", "daily"
+    )
     # A partition request does not count as a memory request, and vice versa.
-    assert insert_sbatch_directive("#SBATCH -p a\n", "#SBATCH --mem-per-cpu=6G").endswith("--mem-per-cpu=6G\n")
+    assert insert_sbatch_directive("#SBATCH -p a\n", "#SBATCH --mem-per-cpu=6G").endswith(
+        "--mem-per-cpu=6G\n"
+    )
     assert insert_partition_directive("#SBATCH --mem=4G\n", "daily").endswith("#SBATCH -p daily\n")
 
 
 def test_template_sets_partition(tmp_path: Path) -> None:
     with_partition = tmp_path / "with.sh"
-    with_partition.write_text("#!/bin/bash\n#SBATCH --partition=gpu\n$castep_command\n", encoding="utf-8")
+    with_partition.write_text(
+        "#!/bin/bash\n#SBATCH --partition=gpu\n$castep_command\n", encoding="utf-8"
+    )
     without = tmp_path / "without.sh"
     without.write_text("#!/bin/bash\n#SBATCH -J $job_name\n$castep_command\n", encoding="utf-8")
 
-    assert template_sets_partition(str(with_partition), cluster_name="x", queue_system="slurm") is True
+    assert (
+        template_sets_partition(str(with_partition), cluster_name="x", queue_system="slurm") is True
+    )
     assert template_sets_partition(str(without), cluster_name="x", queue_system="slurm") is False
     assert template_sets_partition("", cluster_name="SCARF", queue_system="slurm") is True
     assert template_sets_partition("", cluster_name="x", queue_system="slurm") is False
-    assert template_sets_partition(str(tmp_path / "missing.sh"), cluster_name="x", queue_system="slurm") is False
-    assert template_sets_partition(str(with_partition), cluster_name="x", queue_system="addqueue") is False
+    assert (
+        template_sets_partition(
+            str(tmp_path / "missing.sh"), cluster_name="x", queue_system="slurm"
+        )
+        is False
+    )
+    assert (
+        template_sets_partition(str(with_partition), cluster_name="x", queue_system="addqueue")
+        is False
+    )

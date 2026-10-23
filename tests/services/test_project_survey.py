@@ -9,14 +9,20 @@ import pytest
 
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result
-from mufinder.services.magnetic_field_results import MAGNETIC_FIELD_PAGE_OWNER, store_magnetic_field_results
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_PAGE_OWNER,
+    store_magnetic_field_results,
+)
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_survey import (
     SurveyMarkerKind,
     discovered_sites_layer,
     survey_layers,
 )
-from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, NUDGED_ELASTIC_BAND_SET_CALC_TYPE
+from mufinder.workflow.energy_barriers import (
+    NUDGED_ELASTIC_BAND_CALC_TYPE,
+    NUDGED_ELASTIC_BAND_SET_CALC_TYPE,
+)
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_PHONON_SET_CALC_TYPE
 from tests.support.project_home import PEROVSKITE_POSITIONS, muon_project
 from tests.support.structures import host_structure
@@ -26,7 +32,9 @@ def _positions(layer) -> list[tuple[float, float, float]]:
     return [tuple(round(value, 6) for value in marker.position) for marker in layer.markers]
 
 
-def _analysis_workspace(host_id, *, workspace_id: str = "ws-1", name: str = "Mu+ 2x2x2") -> dict[str, object]:
+def _analysis_workspace(
+    host_id, *, workspace_id: str = "ws-1", name: str = "Mu+ 2x2x2"
+) -> dict[str, object]:
     return {
         "id": workspace_id,
         "name": name,
@@ -64,13 +72,20 @@ def test_nothing_is_surveyed_without_a_host(tmp_path: Path) -> None:
 def test_stages_without_positions_have_no_layers(tmp_path: Path) -> None:
     project = muon_project(tmp_path)
 
-    for stage in ("host_structure", "supercell_editor", "convergence_cutoff", "pristine_relaxation"):
+    for stage in (
+        "host_structure",
+        "supercell_editor",
+        "convergence_cutoff",
+        "pristine_relaxation",
+    ):
         assert survey_layers(project.document, stage) == ()
 
 
 def test_candidates_on_the_active_host_are_shown_and_others_counted(tmp_path: Path) -> None:
     project = muon_project(tmp_path)
-    stray = MuonSite(label="old", initial_fractional_position=[0.1, 0.1, 0.1], source_structure_id=uuid4())
+    stray = MuonSite(
+        label="old", initial_fractional_position=[0.1, 0.1, 0.1], source_structure_id=uuid4()
+    )
     project.document.sites[stray.id] = stray
 
     (layer,) = survey_layers(project.document, "muon_candidates")
@@ -98,8 +113,18 @@ def test_relaxations_show_where_each_muon_started_and_ended(tmp_path: Path) -> N
 def test_uep_minima_come_through_cartesian_into_the_host_cell(tmp_path: Path) -> None:
     project = muon_project(tmp_path)
     document, host = project.document, project.host
-    job = Job(label="uep-host", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source", status=JobStatus.COMPLETED)
-    other_job = Job(label="uep-other", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source", status=JobStatus.COMPLETED)
+    job = Job(
+        label="uep-host",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+        status=JobStatus.COMPLETED,
+    )
+    other_job = Job(
+        label="uep-other",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+        status=JobStatus.COMPLETED,
+    )
     unrelated = host_structure(label="Other", lattice=6.0)
     document.structures[unrelated.id] = unrelated
     for owner, source in ((job, host.id), (other_job, unrelated.id)):
@@ -111,7 +136,12 @@ def test_uep_minima_come_through_cartesian_into_the_host_cell(tmp_path: Path) ->
             parameters={"job_ids_by_label": {owner.label: str(owner.id)}},
         )
         document.calculations[definition.id] = definition
-    cluster = {"cluster_index": 1, "size": 4, "representative_position_ang": [6.0, 0.8, 0.8], "minimum_energy_ev": 0.5}
+    cluster = {
+        "cluster_index": 1,
+        "size": 4,
+        "representative_position_ang": [6.0, 0.8, 0.8],
+        "minimum_energy_ev": 0.5,
+    }
     document.ui_state["uep_analysis_states"] = {
         str(job.id): {"batch_summary_data": {"clusters": [cluster]}},
         str(other_job.id): {"batch_summary_data": {"clusters": [cluster]}},
@@ -133,7 +163,11 @@ def test_analysis_layers_label_sites_and_mark_the_pinned_workspace(tmp_path: Pat
         _analysis_workspace(uuid4(), workspace_id="ws-old", name="Old host"),
     ]
     document.ui_state["muon_sites_summary_snapshots"] = {
-        "positive_muon": {"workspace_id": "ws-1", "host_structure_id": str(project.host.id), "sites": []}
+        "positive_muon": {
+            "workspace_id": "ws-1",
+            "host_structure_id": str(project.host.id),
+            "sites": [],
+        }
     }
 
     (layer,) = survey_layers(document, "muon_analysis")
@@ -144,7 +178,9 @@ def test_analysis_layers_label_sites_and_mark_the_pinned_workspace(tmp_path: Pat
     assert layer.markers[0].weight == 3
 
 
-def test_discovered_sites_prefer_the_pinned_summary_then_the_most_refined_stage(tmp_path: Path) -> None:
+def test_discovered_sites_prefer_the_pinned_summary_then_the_most_refined_stage(
+    tmp_path: Path,
+) -> None:
     project = muon_project(tmp_path)
     document = project.document
 
@@ -157,7 +193,13 @@ def test_discovered_sites_prefer_the_pinned_summary_then_the_most_refined_stage(
         "positive_muon": {
             "workspace_id": "ws-1",
             "host_structure_id": str(project.host.id),
-            "sites": [{"cluster_index": 1, "fractional_position": [0.5, 0.25, 0.25], "wyckoff_label": "3c"}],
+            "sites": [
+                {
+                    "cluster_index": 1,
+                    "fractional_position": [0.5, 0.25, 0.25],
+                    "wyckoff_label": "3c",
+                }
+            ],
         }
     }
     pinned = discovered_sites_layer(document)
@@ -165,7 +207,9 @@ def test_discovered_sites_prefer_the_pinned_summary_then_the_most_refined_stage(
     assert [marker.label for marker in pinned.markers] == ["3c"]
 
 
-def test_barrier_paths_are_mapped_from_the_supercell_and_labelled_with_heights(tmp_path: Path) -> None:
+def test_barrier_paths_are_mapped_from_the_supercell_and_labelled_with_heights(
+    tmp_path: Path,
+) -> None:
     project = muon_project(tmp_path)
     document = project.document
     supercell = host_structure(
@@ -187,7 +231,11 @@ def test_barrier_paths_are_mapped_from_the_supercell_and_labelled_with_heights(t
             }
         ]
     }
-    job = Job(workflow_stage=WorkflowStage.ENERGY_BARRIERS, calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE, status=JobStatus.COMPLETED)
+    job = Job(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+        status=JobStatus.COMPLETED,
+    )
     document.jobs[job.id] = job
     result = Result(result_type=NUDGED_ELASTIC_BAND_CALC_TYPE, data={"barrier_height_eV": 0.42})
     run = CalculationRun(job_id=job.id, result_id=result.id, status=JobStatus.COMPLETED)
@@ -214,7 +262,11 @@ def test_barrier_paths_are_mapped_from_the_supercell_and_labelled_with_heights(t
 def test_quantum_layer_places_zero_point_energies_at_the_relaxed_position(tmp_path: Path) -> None:
     project = muon_project(tmp_path)
     document = project.document
-    job = Job(workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS, calc_type=QUANTUM_PHONON_CALC_TYPE, status=JobStatus.COMPLETED)
+    job = Job(
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+        status=JobStatus.COMPLETED,
+    )
     document.jobs[job.id] = job
     result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, data={"muon_zpe_total_eV": 0.712})
     run = CalculationRun(job_id=job.id, result_id=result.id, status=JobStatus.COMPLETED)
@@ -247,14 +299,21 @@ def test_magnetic_layer_shows_commensurate_field_magnitudes(tmp_path: Path) -> N
         {
             "magnetic_field_results": {
                 "kind": "commensurate",
-                "results": [{"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}],
+                "results": [
+                    {"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.2134}
+                ],
             }
         },
     )
     store_magnetic_field_results(
         project.document,
         "mag-2",
-        {"magnetic_field_results": {"kind": "distribution", "results": [{"site_label": "3c", "fields_T": []}]}},
+        {
+            "magnetic_field_results": {
+                "kind": "distribution",
+                "results": [{"site_label": "3c", "fields_T": []}],
+            }
+        },
     )
     # The page's own results are not a saved workspace and add no layer.
     store_magnetic_field_results(
@@ -263,7 +322,9 @@ def test_magnetic_layer_shows_commensurate_field_magnitudes(tmp_path: Path) -> N
         {
             "magnetic_field_results": {
                 "kind": "commensurate",
-                "results": [{"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.5}],
+                "results": [
+                    {"site_label": "3c", "muon_position": [0.5, 0.25, 0.25], "magnitude_T": 0.5}
+                ],
             }
         },
     )
@@ -281,15 +342,27 @@ def test_magnetic_layer_marks_fields_at_uep_sites_as_estimates(tmp_path: Path) -
     project.document.ui_state["magnetic_field_workspaces"] = [
         {"id": "uep", "title": "UEP", "form": {}},
         # Saved before results carried their site source: the workspace's selected site supplies it.
-        {"id": "legacy", "title": "Legacy", "form": {"selected_muon_site": {"source": "uep_clustering"}}},
+        {
+            "id": "legacy",
+            "title": "Legacy",
+            "form": {"selected_muon_site": {"source": "uep_clustering"}},
+        },
     ]
     store_magnetic_field_results(
         project.document,
         "uep",
-        {"magnetic_field_results": {"kind": "commensurate", "results": [entry], "site_source": "uep_clustering"}},
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [entry],
+                "site_source": "uep_clustering",
+            }
+        },
     )
     store_magnetic_field_results(
-        project.document, "legacy", {"magnetic_field_results": {"kind": "commensurate", "results": [entry]}}
+        project.document,
+        "legacy",
+        {"magnetic_field_results": {"kind": "commensurate", "results": [entry]}},
     )
 
     layers = survey_layers(project.document, "magnetic_fields")

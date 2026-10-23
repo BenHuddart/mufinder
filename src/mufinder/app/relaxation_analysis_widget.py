@@ -111,7 +111,11 @@ class _EqualInitialHorizontalSplitter(QSplitter):
         self._schedule_equal_initial_sizes()
 
     def _schedule_equal_initial_sizes(self) -> None:
-        if self._equal_initial_sizes_pending and self.isVisible() and not self._equal_initial_sizes_scheduled:
+        if (
+            self._equal_initial_sizes_pending
+            and self.isVisible()
+            and not self._equal_initial_sizes_scheduled
+        ):
             self._equal_initial_sizes_scheduled = True
             QTimer.singleShot(0, self._apply_equal_initial_sizes)
 
@@ -191,7 +195,9 @@ class RelaxationAnalysisJobDialog(QDialog):
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
-        intro = QLabel("Select completed structural relaxations to include in this analysis workspace.", self)
+        intro = QLabel(
+            "Select completed structural relaxations to include in this analysis workspace.", self
+        )
         intro.setWordWrap(True)
         style_hint_text(intro)
         layout.addWidget(intro)
@@ -210,7 +216,11 @@ class RelaxationAnalysisJobDialog(QDialog):
             row = self._table.rowCount()
             self._table.insertRow(row)
             check = QTableWidgetItem("")
-            check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable)
+            check.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsSelectable
+            )
             already_present = source.job_id in self._excluded_job_ids
             check.setCheckState(Qt.CheckState.Unchecked)
             check.setData(Qt.ItemDataRole.UserRole, str(source.job_id))
@@ -233,12 +243,16 @@ class RelaxationAnalysisJobDialog(QDialog):
                 strict=True,
             ):
                 self._table.setItem(row, column, QTableWidgetItem(f"{float(value):.4f}"))
-        self._table.horizontalHeader().setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(
+            self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch
+        )
         self._table.resizeColumnsToContents()
 
     def _accept_if_valid(self) -> None:
         if not self.selected_job_ids():
-            QMessageBox.warning(self, "No relaxations selected", "Select at least one completed relaxation.")
+            QMessageBox.warning(
+                self, "No relaxations selected", "Select at least one completed relaxation."
+            )
             return
         self.accept()
 
@@ -383,14 +397,20 @@ def _graph_component_layout(members: Sequence[int], points: np.ndarray) -> _Grap
     )
 
 
-def _shelf_rows(components: Sequence[_GraphComponentLayout], row_limit: float) -> list[list[_GraphComponentLayout]]:
+def _shelf_rows(
+    components: Sequence[_GraphComponentLayout], row_limit: float
+) -> list[list[_GraphComponentLayout]]:
     """Split ``components`` (in order) into rows no wider than ``row_limit``."""
 
     rows: list[list[_GraphComponentLayout]] = []
     current: list[_GraphComponentLayout] = []
     current_width = 0.0
     for component in components:
-        projected = component.width if not current else current_width + _GRAPH_COMPONENT_GAP + component.width
+        projected = (
+            component.width
+            if not current
+            else current_width + _GRAPH_COMPONENT_GAP + component.width
+        )
         if current and projected > row_limit + 1e-9:
             rows.append(current)
             current = [component]
@@ -451,7 +471,9 @@ def pack_graph_components(
     positions: dict[int, tuple[float, float]] = {}
     top = 0.5 * total_height
     for row in best_rows:
-        row_width = sum(component.width for component in row) + _GRAPH_COMPONENT_GAP * (len(row) - 1)
+        row_width = sum(component.width for component in row) + _GRAPH_COMPONENT_GAP * (
+            len(row) - 1
+        )
         row_height = max(component.height for component in row)
         x = -0.5 * row_width
         centre_y = top - 0.5 * row_height
@@ -464,7 +486,9 @@ def pack_graph_components(
     return positions
 
 
-def _graph_edge_strip(start: Sequence[float], end: Sequence[float], half_width: float) -> np.ndarray:
+def _graph_edge_strip(
+    start: Sequence[float], end: Sequence[float], half_width: float
+) -> np.ndarray:
     """Return the four corners of a straight edge ``2 * half_width`` wide, in data units."""
 
     start_point = np.asarray(start, dtype=float)
@@ -474,7 +498,9 @@ def _graph_edge_strip(start: Sequence[float], end: Sequence[float], half_width: 
     if length <= 1e-12:
         return np.repeat(start_point[np.newaxis, :], 4, axis=0)
     normal = np.array([-direction[1], direction[0]]) / length * half_width
-    return np.array([start_point + normal, end_point + normal, end_point - normal, start_point - normal])
+    return np.array(
+        [start_point + normal, end_point + normal, end_point - normal, start_point - normal]
+    )
 
 
 def _graph_node_radius(points: np.ndarray) -> float:
@@ -509,7 +535,9 @@ def _graph_node_label(text: str, centre: tuple[float, float], radius: float) -> 
         .scale(scale)
         .translate(*centre)
     )
-    return PathPatch(transform.transform_path(path), facecolor="#111111", edgecolor="none", zorder=4)
+    return PathPatch(
+        transform.transform_path(path), facecolor="#111111", edgecolor="none", zorder=4
+    )
 
 
 def _viewer_species_color(species: str) -> str:
@@ -626,8 +654,12 @@ class RelaxationClusteringDialog(QDialog):
             (self._clustering_state()).get("tolerance_scan", [])
         )
 
-        self._graph_figure, self._graph_canvas = create_plot_canvas(figsize=(5.6, 3.0), transparent=True)
-        self._graph_layouts: tuple[ConnectedComponentsResult, list[_GraphComponentLayout]] | None = None
+        self._graph_figure, self._graph_canvas = create_plot_canvas(
+            figsize=(5.6, 3.0), transparent=True
+        )
+        self._graph_layouts: (
+            tuple[ConnectedComponentsResult, list[_GraphComponentLayout]] | None
+        ) = None
         self._graph_canvas.mpl_connect("resize_event", self._on_graph_canvas_resized)
         self._scan_figure, self._scan_canvas = create_plot_canvas(
             figsize=(5.6, 2.4),
@@ -661,7 +693,9 @@ class RelaxationClusteringDialog(QDialog):
             if item is None:
                 continue
             width = self._summary_table.fontMetrics().horizontalAdvance(item.text()) + 28
-            self._summary_table.setColumnWidth(column, max(self._summary_table.columnWidth(column), width))
+            self._summary_table.setColumnWidth(
+                column, max(self._summary_table.columnWidth(column), width)
+            )
 
         self._method_combo = QComboBox(self)
         self._method_combo.addItem("Connected Components", _METHOD_CONNECTED)
@@ -697,7 +731,9 @@ class RelaxationClusteringDialog(QDialog):
         layout.setSpacing(10)
         title = QLabel("Clustering", self)
         style_section_title(title)
-        subtitle = QLabel("Explore relaxed muon endpoints with graph, hierarchical, or k-means clustering.", self)
+        subtitle = QLabel(
+            "Explore relaxed muon endpoints with graph, hierarchical, or k-means clustering.", self
+        )
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
         layout.addWidget(title)
@@ -745,7 +781,9 @@ class RelaxationClusteringDialog(QDialog):
         self._scan_frame = PlotFrame(self._scan_canvas, title="Tolerance scan", parent=scan_panel)
         self._scan_frame.add_overlay_widget(self._scan_button)
         scan_layout.addWidget(self._scan_frame, 0, 0)
-        self._graph_frame = PlotFrame(self._graph_canvas, title="Connected components", parent=self._connected_panel)
+        self._graph_frame = PlotFrame(
+            self._graph_canvas, title="Connected components", parent=self._connected_panel
+        )
         connected_layout.addWidget(self._graph_frame, 3)
         connected_layout.addWidget(scan_panel, 2)
         self._soprano_panel = QWidget(left)
@@ -757,7 +795,9 @@ class RelaxationClusteringDialog(QDialog):
         self._hier_toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
         self._hier_toolbar.setObjectName("uepClusteringDendrogramToolbar")
         soprano_layout.addWidget(self._hier_toolbar)
-        self._left_frame = PlotFrame(self._left_canvas, title="Clustering plot", parent=self._soprano_panel)
+        self._left_frame = PlotFrame(
+            self._left_canvas, title="Clustering plot", parent=self._soprano_panel
+        )
         soprano_layout.addWidget(self._left_frame, 1)
         left_layout.addWidget(self._connected_panel, 1)
         left_layout.addWidget(self._soprano_panel, 1)
@@ -846,11 +886,15 @@ class RelaxationClusteringDialog(QDialog):
         except (TypeError, ValueError):
             self._hierarchical_input.setValue(0.3)
         try:
-            self._kmeans_spin.setValue(min(max(int(state.get("kmeans_k", 4)), 1), max(len(self._sites), 1)))
+            self._kmeans_spin.setValue(
+                min(max(int(state.get("kmeans_k", 4)), 1), max(len(self._sites), 1))
+            )
         except (TypeError, ValueError):
             self._kmeans_spin.setValue(min(4, max(len(self._sites), 1)))
         try:
-            self._wyckoff_tolerance_input.setValue(float(state.get("wyckoff_match_tolerance_ang", 0.25)))
+            self._wyckoff_tolerance_input.setValue(
+                float(state.get("wyckoff_match_tolerance_ang", 0.25))
+            )
         except (TypeError, ValueError):
             self._wyckoff_tolerance_input.setValue(0.25)
 
@@ -925,7 +969,9 @@ class RelaxationClusteringDialog(QDialog):
                     kmeans_k=self._kmeans_spin.value(),
                 )
                 self._current_labels = result.cluster_labels
-                self._current_clusters = uep_summary_to_relaxation_clusters(self._sites, result.summary)
+                self._current_clusters = uep_summary_to_relaxation_clusters(
+                    self._sites, result.summary
+                )
                 self._render_soprano(result)
             self._current_wyckoff_assignments = assign_cluster_wyckoff_sites(
                 self._sites,
@@ -942,7 +988,9 @@ class RelaxationClusteringDialog(QDialog):
     def _append_scan_point(self, result: ConnectedComponentsResult) -> None:
         rows = dict(parse_tolerance_scan(self._tolerance_scan))
         rows[round(float(result.tolerance_ang), 10)] = len(result.clusters)
-        self._tolerance_scan = tuple((float(key), int(value)) for key, value in sorted(rows.items()))
+        self._tolerance_scan = tuple(
+            (float(key), int(value)) for key, value in sorted(rows.items())
+        )
 
     def _show_plot_error(self, text: str) -> None:
         figure = self._graph_figure if self._method() == _METHOD_CONNECTED else self._left_figure
@@ -961,7 +1009,9 @@ class RelaxationClusteringDialog(QDialog):
         if count == 1:
             return np.zeros((1, 2), dtype=float)
         if count == 2:
-            return np.asarray([[-0.5 * _GRAPH_NODE_SPACING, 0.0], [0.5 * _GRAPH_NODE_SPACING, 0.0]], dtype=float)
+            return np.asarray(
+                [[-0.5 * _GRAPH_NODE_SPACING, 0.0], [0.5 * _GRAPH_NODE_SPACING, 0.0]], dtype=float
+            )
 
         angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
         positions = np.column_stack((np.cos(angles), np.sin(angles))).astype(float)
@@ -1002,13 +1052,17 @@ class RelaxationClusteringDialog(QDialog):
         # so its nodes had to shrink to a few pixels. The median nearest-neighbour
         # gap is used because the spring layout spaces chain ends more tightly;
         # _graph_node_radius still keeps the closest pair from touching.
-        distances = np.linalg.norm(positions[:, np.newaxis, :] - positions[np.newaxis, :, :], axis=2)
+        distances = np.linalg.norm(
+            positions[:, np.newaxis, :] - positions[np.newaxis, :, :], axis=2
+        )
         np.fill_diagonal(distances, np.inf)
         typical_gap = max(float(np.median(np.min(distances, axis=1))), 1e-6)
         return positions * max(1.95 / largest_span, _GRAPH_NODE_SPACING / typical_gap)
 
     @classmethod
-    def _graph_component_layouts(cls, result: ConnectedComponentsResult) -> list[_GraphComponentLayout]:
+    def _graph_component_layouts(
+        cls, result: ConnectedComponentsResult
+    ) -> list[_GraphComponentLayout]:
         adjacency = np.asarray(result.adjacency_matrix, dtype=int)
         return [
             _graph_component_layout(
@@ -1054,7 +1108,9 @@ class RelaxationClusteringDialog(QDialog):
             return
         self._draw_connected_graph()
 
-    def _cap_graph_node_size(self, axis, centres: Sequence[tuple[float, float]], radius: float) -> None:
+    def _cap_graph_node_size(
+        self, axis, centres: Sequence[tuple[float, float]], radius: float
+    ) -> None:
         """Widen the view so nodes are drawn no larger than ``GRAPH_NODE_MAX_RADIUS_PT``.
 
         Below the cap the axes autoscale, so the graph fills the canvas.
@@ -1113,11 +1169,18 @@ class RelaxationClusteringDialog(QDialog):
             if not edges:
                 continue
             dense = len(edges) > _GRAPH_DENSE_EDGES_PER_NODE * len(members)
-            half_width = 0.5 * radius * (_GRAPH_DENSE_EDGE_WIDTH_FRACTION if dense else _GRAPH_EDGE_WIDTH_FRACTION)
+            half_width = (
+                0.5
+                * radius
+                * (_GRAPH_DENSE_EDGE_WIDTH_FRACTION if dense else _GRAPH_EDGE_WIDTH_FRACTION)
+            )
             color = colors.get(int(labels[members[0]]), current_palette().accent)
             axis.add_collection(
                 PolyCollection(
-                    [_graph_edge_strip(centres[left], centres[right], half_width) for left, right in edges],
+                    [
+                        _graph_edge_strip(centres[left], centres[right], half_width)
+                        for left, right in edges
+                    ],
                     facecolors=color,
                     edgecolors="none",
                     linewidths=0.0,
@@ -1130,7 +1193,9 @@ class RelaxationClusteringDialog(QDialog):
             color = colors.get(int(label), current_palette().accent)
             # add_patch grows the data limits by the whole circle, so autoscaling
             # keeps every node inside the axes at any canvas size.
-            border = Circle(centre, radius, facecolor=color, edgecolor="none", linewidth=0.0, zorder=2)
+            border = Circle(
+                centre, radius, facecolor=color, edgecolor="none", linewidth=0.0, zorder=2
+            )
             border.set_gid(GRAPH_NODE_GID)
             axis.add_patch(border)
             axis.add_patch(
@@ -1161,8 +1226,16 @@ class RelaxationClusteringDialog(QDialog):
         scan_rows = parse_tolerance_scan(self._tolerance_scan)
         if scan_rows:
             x_values, y_values = zip(*scan_rows, strict=False)
-            scan_axis.plot(x_values, y_values, marker="o", linestyle="-", color="#b91c1c", linewidth=1.5)
-            scan_axis.axvline(result.tolerance_ang, color=current_palette().text_muted, linestyle="-", linewidth=1.0, alpha=0.55)
+            scan_axis.plot(
+                x_values, y_values, marker="o", linestyle="-", color="#b91c1c", linewidth=1.5
+            )
+            scan_axis.axvline(
+                result.tolerance_ang,
+                color=current_palette().text_muted,
+                linestyle="-",
+                linewidth=1.0,
+                alpha=0.55,
+            )
         scan_axis.set_xlabel("Tolerance (Å)")
         scan_axis.set_ylabel("Clusters")
         self._scan_canvas.draw_idle()
@@ -1188,7 +1261,12 @@ class RelaxationClusteringDialog(QDialog):
                 above_threshold_color=current_palette().text_muted,
                 labels=[str(index + 1) for index in range(len(self._sites))],
             )
-            axis.axhline(self._hierarchical_input.value(), color=current_palette().accent, linestyle="--", linewidth=1.2)
+            axis.axhline(
+                self._hierarchical_input.value(),
+                color=current_palette().accent,
+                linestyle="--",
+                linewidth=1.2,
+            )
             axis.set_ylabel("Distance")
             axis.set_xlabel("Relaxed site")
         else:
@@ -1204,17 +1282,28 @@ class RelaxationClusteringDialog(QDialog):
                     _, _, vh = np.linalg.svd(centred, full_matrices=False)
                     components = vh[:2]
                     if components.shape[0] == 1:
-                        components = np.vstack([components, np.zeros((1, components.shape[1]), dtype=float)])
+                        components = np.vstack(
+                            [components, np.zeros((1, components.shape[1]), dtype=float)]
+                        )
                     points = centred @ components.T
                 axis.scatter(
                     points[:, 0],
                     points[:, 1],
-                    c=[colors.get(int(label), current_palette().accent) for label in result.cluster_labels],
+                    c=[
+                        colors.get(int(label), current_palette().accent)
+                        for label in result.cluster_labels
+                    ],
                     s=96,
                     edgecolors=current_palette().bg_surface,
                 )
                 for index, point in enumerate(points, start=1):
-                    axis.text(point[0], point[1], f" {index}", color=current_palette().text_primary, va="center")
+                    axis.text(
+                        point[0],
+                        point[1],
+                        f" {index}",
+                        color=current_palette().text_primary,
+                        va="center",
+                    )
                 axis.set_xlabel("PC1")
                 axis.set_ylabel("PC2")
         axis.spines["top"].set_visible(False)
@@ -1226,14 +1315,14 @@ class RelaxationClusteringDialog(QDialog):
 
     def _render_viewer(self) -> None:
         colors = _cluster_color_map(self._current_labels)
-        positions = [
-            site.cartesian_position_ang
-            for site in normalize_site_energies(self._sites)
-        ]
+        positions = [site.cartesian_position_ang for site in normalize_site_energies(self._sites)]
         overlays = [
             {
                 "positions": positions,
-                "colors": [colors.get(int(label), current_palette().accent) for label in self._current_labels],
+                "colors": [
+                    colors.get(int(label), current_palette().accent)
+                    for label in self._current_labels
+                ],
                 "radii": [MUON_VIEWER_RADIUS_ANG] * len(positions),
                 "alpha": 0.96,
             }
@@ -1264,18 +1353,21 @@ class RelaxationClusteringDialog(QDialog):
                 if column == 1:
                     item.setToolTip(_wyckoff_assignment_tooltip(wyckoff_match))
                 self._summary_table.setItem(row, column, item)
-        self._summary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._summary_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
 
     def _apply(self) -> None:
         if not self._current_labels:
-            QMessageBox.warning(self, "No clustering", "Run clustering before applying it to the workspace.")
+            QMessageBox.warning(
+                self, "No clustering", "Run clustering before applying it to the workspace."
+            )
             return
         result_payload = {
             "cluster_labels": list(self._current_labels),
             "clusters": [dataclass_to_plain(cluster) for cluster in self._current_clusters],
             "wyckoff_assignments": [
-                dataclass_to_plain(assignment)
-                for assignment in self._current_wyckoff_assignments
+                dataclass_to_plain(assignment) for assignment in self._current_wyckoff_assignments
             ],
         }
         clustering = {
@@ -1284,7 +1376,9 @@ class RelaxationClusteringDialog(QDialog):
             "hierarchical_t": float(self._hierarchical_input.value()),
             "kmeans_k": int(self._kmeans_spin.value()),
             "wyckoff_match_tolerance_ang": float(self._wyckoff_tolerance_input.value()),
-            "tolerance_scan": [[float(t), int(count)] for t, count in parse_tolerance_scan(self._tolerance_scan)],
+            "tolerance_scan": [
+                [float(t), int(count)] for t, count in parse_tolerance_scan(self._tolerance_scan)
+            ],
             "result": result_payload,
         }
         self.clustering_applied.emit(clustering)
@@ -1393,7 +1487,9 @@ class DisplacementAnalysisDialog(QDialog):
                 model_item = self._comparison_combo.model().item(item_index)
                 if model_item is not None:
                     model_item.setEnabled(False)
-                    model_item.setToolTip("Free-cell pristine relaxations cannot be used for displacement analysis.")
+                    model_item.setToolTip(
+                        "Free-cell pristine relaxations cannot be used for displacement analysis."
+                    )
 
     def _connect(self) -> None:
         self._site_combo.currentIndexChanged.connect(lambda *_: self._refresh())
@@ -1441,10 +1537,14 @@ class DisplacementAnalysisDialog(QDialog):
     def _structure_contains_muon(structure: Structure) -> bool:
         return any(str(species).strip().casefold().endswith(":mu") for species in structure.species)
 
-    def _render_viewer(self, relaxed: Structure, comparison: Structure, site: RelaxedMuonSite) -> None:
+    def _render_viewer(
+        self, relaxed: Structure, comparison: Structure, site: RelaxedMuonSite
+    ) -> None:
         self._viewer.set_structure(relaxed)
         comp_lattice = np.asarray(comparison.lattice_vectors, dtype=float)
-        comparison_positions = (np.asarray(comparison.fractional_positions, dtype=float) @ comp_lattice).tolist()
+        comparison_positions = (
+            np.asarray(comparison.fractional_positions, dtype=float) @ comp_lattice
+        ).tolist()
         comparison_colors, comparison_radii = viewer_atom_style_for_species(comparison.species)
         overlays = [
             {
@@ -1554,7 +1654,9 @@ class RelaxationAnalysisWidget(QWidget):
         self._workspace_tabs.setObjectName("analysisWorkspaceTabs")
         self._workspace_tabs.setTabsClosable(False)
         self._workspace_tabs.currentChanged.connect(self._on_current_tab_changed)
-        self._empty_label = QLabel("Create an analysis workspace from selected completed structural relaxations.", self)
+        self._empty_label = QLabel(
+            "Create an analysis workspace from selected completed structural relaxations.", self
+        )
         self._empty_label.setWordWrap(True)
         style_hint_text(self._empty_label)
         self._build_layout()
@@ -1565,7 +1667,9 @@ class RelaxationAnalysisWidget(QWidget):
         layout.setSpacing(8)
         title = QLabel("Structural Relaxation Analysis", self)
         style_section_title(title)
-        subtitle = QLabel("Cluster completed relaxation endpoints and inspect muon-induced distortions.", self)
+        subtitle = QLabel(
+            "Cluster completed relaxation endpoints and inspect muon-induced distortions.", self
+        )
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
         layout.addWidget(title)
@@ -1688,7 +1792,9 @@ class RelaxationAnalysisWidget(QWidget):
         muon_sites = [
             CifMuonSite(
                 label=f"Mu{index + 1}",
-                fractional_position=tuple(float(value) for value in site.folded_fractional_position),
+                fractional_position=tuple(
+                    float(value) for value in site.folded_fractional_position
+                ),
                 relative_energy_ev=site.relative_energy_ev,
             )
             for index, site in enumerate(sites)
@@ -1728,19 +1834,33 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.setContentsMargins(14, 12, 14, 12)
         header_layout.setHorizontalSpacing(10)
         name_edit = QLineEdit(_workspace_name(workspace), header)
-        name_edit.editingFinished.connect(lambda wid=_workspace_id(workspace), edit=name_edit: self._rename_workspace(wid, edit.text()))
+        name_edit.editingFinished.connect(
+            lambda wid=_workspace_id(workspace), edit=name_edit: self._rename_workspace(
+                wid, edit.text()
+            )
+        )
         charge = QLabel(_charge_state_label(_workspace_charge_state(workspace)), header)
         add_button = QPushButton("Add Structure to Analysis", header)
-        add_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid))
+        add_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid)
+        )
         cluster_button = QPushButton("Clustering...", header)
-        cluster_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid))
+        cluster_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid)
+        )
         displacement_button = QPushButton("Analyse Displacements", header)
-        displacement_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_displacements(wid))
+        displacement_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self._open_displacements(wid)
+        )
         pin_button = QPushButton("Pin to Summary", header)
         pin_button.setToolTip(
             "Pin this workspace's distinct muon sites to the Muon Sites summary page."
         )
-        pin_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self.pin_summary_requested.emit(wid))
+        pin_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self.pin_summary_requested.emit(
+                wid
+            )
+        )
         export_cif_button = QPushButton("Export CIF...", header)
         export_cif_button.setToolTip(
             "Export the host structure and every relaxed muon position in this "
@@ -1761,7 +1881,9 @@ class RelaxationAnalysisWidget(QWidget):
         show_shifted = QCheckBox("Show shifted positions", header)
         show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
-        show_shifted.toggled.connect(lambda checked, wid=_workspace_id(workspace): self._set_show_shifted(wid, checked))
+        show_shifted.toggled.connect(
+            lambda checked, wid=_workspace_id(workspace): self._set_show_shifted(wid, checked)
+        )
         header_layout.addWidget(QLabel("Workspace", header), 0, 0)
         header_layout.addWidget(name_edit, 0, 1)
         header_layout.addWidget(QLabel("Charge state", header), 0, 2)
@@ -1811,7 +1933,9 @@ class RelaxationAnalysisWidget(QWidget):
         result = raw.get("result")
         return result if isinstance(result, Mapping) else {}
 
-    def _cluster_labels(self, workspace: Mapping[str, object], sites: Sequence[RelaxedMuonSite]) -> tuple[int, ...]:
+    def _cluster_labels(
+        self, workspace: Mapping[str, object], sites: Sequence[RelaxedMuonSite]
+    ) -> tuple[int, ...]:
         result = self._clustering_result_state(workspace)
         raw = result.get("cluster_labels")
         if isinstance(raw, list) and len(raw) == len(sites):
@@ -1821,7 +1945,9 @@ class RelaxationAnalysisWidget(QWidget):
                 pass
         return tuple(0 for _ in sites)
 
-    def _anchored(self, workspace: Mapping[str, object], sites: Sequence[RelaxedMuonSite]) -> tuple[AnchoredRelaxedSite, ...]:
+    def _anchored(
+        self, workspace: Mapping[str, object], sites: Sequence[RelaxedMuonSite]
+    ) -> tuple[AnchoredRelaxedSite, ...]:
         host = self._host_structure
         labels = self._cluster_labels(workspace, sites)
         if host is None or not sites or not any(labels):
@@ -1840,14 +1966,20 @@ class RelaxationAnalysisWidget(QWidget):
         except RelaxationAnalysisError:
             return ()
 
-    def _populate_workspace_table(self, table: QTreeWidget, viewer: AtomicStructureViewer, workspace: Mapping[str, object]) -> None:
+    def _populate_workspace_table(
+        self, table: QTreeWidget, viewer: AtomicStructureViewer, workspace: Mapping[str, object]
+    ) -> None:
         sites = self._workspace_sites(workspace)
         anchored = self._anchored(workspace, sites)
         labels = self._cluster_labels(workspace, sites)
         show_shifted = bool(workspace.get("show_shifted_positions", False))
         colors = _cluster_color_map(labels)
         table.clear()
-        lattice = np.asarray(self._host_structure.lattice_vectors, dtype=float) if self._host_structure is not None else np.eye(3)
+        lattice = (
+            np.asarray(self._host_structure.lattice_vectors, dtype=float)
+            if self._host_structure is not None
+            else np.eye(3)
+        )
         viewer_positions: list[list[float]] = []
         viewer_colors: list[str] = []
         result = self._clustering_result_state(workspace)
@@ -1896,7 +2028,12 @@ class RelaxationAnalysisWidget(QWidget):
             ]
             row_item = QTreeWidgetItem(values)
             for column, value in enumerate(values):
-                if shifted is not None and shifted.shifted and show_shifted and column in (self._FX_COLUMN, self._FY_COLUMN, self._FZ_COLUMN):
+                if (
+                    shifted is not None
+                    and shifted.shifted
+                    and show_shifted
+                    and column in (self._FX_COLUMN, self._FY_COLUMN, self._FZ_COLUMN)
+                ):
                     row_item.setForeground(column, status_brush("submitting"))
                 if column == self._CLUSTER_COLUMN and label:
                     row_item.setForeground(column, status_brush("running"))
@@ -1966,7 +2103,9 @@ class RelaxationAnalysisWidget(QWidget):
             return
         sites = self._workspace_sites(workspace)
         if not sites:
-            QMessageBox.warning(self, "No sites", "This workspace does not contain any completed relaxations.")
+            QMessageBox.warning(
+                self, "No sites", "This workspace does not contain any completed relaxations."
+            )
             return
         dialog = RelaxationClusteringDialog(
             workspace=workspace,
@@ -1974,7 +2113,9 @@ class RelaxationAnalysisWidget(QWidget):
             sites=sites,
             parent=self,
         )
-        dialog.clustering_applied.connect(lambda clustering, wid=workspace_id: self._apply_clustering(wid, clustering))
+        dialog.clustering_applied.connect(
+            lambda clustering, wid=workspace_id: self._apply_clustering(wid, clustering)
+        )
         dialog.exec()
 
     def _apply_clustering(self, workspace_id: str, clustering: dict) -> None:

@@ -117,7 +117,9 @@ def validate_cluster_keyword_config(config: ClusterConfig) -> list[str]:
     return issues
 
 
-def _emit_progress(callback: ProgressCallback | None, message: str, percent: int | None = None) -> None:
+def _emit_progress(
+    callback: ProgressCallback | None, message: str, percent: int | None = None
+) -> None:
     if callback is not None:
         callback(message, percent)
 
@@ -238,7 +240,9 @@ class _HelpDump:
         }
 
 
-def _checked_payload(dump: _HelpDump, castep_version: str, config: ClusterConfig) -> dict[str, object]:
+def _checked_payload(
+    dump: _HelpDump, castep_version: str, config: ClusterConfig
+) -> dict[str, object]:
     """Return the catalog payload, refusing one that is visibly incomplete.
 
     Individual ``-help`` calls that fail are tolerated, but a run that lost most
@@ -362,7 +366,11 @@ def generate_cluster_castep_keywords_json(
         mode = _effective_keyword_mode(config)
         if mode == "scheduler":
             if config.queue_system.strip().lower() == "addqueue":
-                _emit_progress(progress, f"Using {config.queue_system.upper()} job submission for keyword generation.", 5)
+                _emit_progress(
+                    progress,
+                    f"Using {config.queue_system.upper()} job submission for keyword generation.",
+                    5,
+                )
             return _generate_scheduler_keywords_json(
                 ssh=ssh,
                 config=config,
@@ -416,7 +424,9 @@ def _generate_direct_keywords_json(
         )
         done = min(start + len(batch), len(keywords))
         percent = max(5, min(99, int((done / len(keywords)) * 100)))
-        _emit_progress(progress, f"Generating CASTEP keywords... {done} of {len(keywords)}", percent)
+        _emit_progress(
+            progress, f"Generating CASTEP keywords... {done} of {len(keywords)}", percent
+        )
 
     payload = _checked_payload(dump, castep_version, config)
     _check_cancel(cancel_check)
@@ -537,12 +547,18 @@ def _generate_scheduler_keywords_json(
 
         request = SchedulerSubmitRequest(
             working_dir=remote_directory,
-            seed_name=remote_runner_path if config.queue_system.strip().lower() == "addqueue" else "keywords",
+            seed_name=remote_runner_path
+            if config.queue_system.strip().lower() == "addqueue"
+            else "keywords",
             num_processes=1,
             cores_per_node=1,
             walltime=scheduler_walltime(config),
-            castep_executable="/bin/bash" if config.queue_system.strip().lower() == "addqueue" else "",
-            script_path=remote_runner_path if config.queue_system.strip().lower() == "slurm" else "",
+            castep_executable="/bin/bash"
+            if config.queue_system.strip().lower() == "addqueue"
+            else "",
+            script_path=remote_runner_path
+            if config.queue_system.strip().lower() == "slurm"
+            else "",
             memory_gb=config.default_memory_gb,
             queue_name=config.default_queue_name,
             comment="MuFinder CASTEP keywords",
@@ -563,7 +579,9 @@ def _generate_scheduler_keywords_json(
             cancel_check=cancel_check,
         )
 
-        _emit_progress(progress, f"Downloading CASTEP keyword descriptions from {config.name}...", 90)
+        _emit_progress(
+            progress, f"Downloading CASTEP keyword descriptions from {config.name}...", 90
+        )
         dump_text = ssh.read_text(remote_dump_path) if ssh.exists(remote_dump_path) else ""
         if DUMP_COMPLETE_MARKER not in dump_text:
             message = (
@@ -578,7 +596,9 @@ def _generate_scheduler_keywords_json(
         dump = _HelpDump(cell={}, param={})
         dump.add(dump_text)
         version_section = _VERSION_SECTION_RE.search(dump_text)
-        castep_version = _parse_castep_version(version_section.group("text")) if version_section else ""
+        castep_version = (
+            _parse_castep_version(version_section.group("text")) if version_section else ""
+        )
         payload = _checked_payload(dump, castep_version, config)
         written = write_keyword_catalog_file(payload, output_path)
         _emit_progress(progress, "CASTEP keyword generation complete.", 100)

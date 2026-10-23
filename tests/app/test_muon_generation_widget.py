@@ -436,7 +436,10 @@ def test_widget_collect_method_parameters_for_all_modes(qapp) -> None:
     assert not widget._random_min_muon_muon.isEnabled()
     assert widget._random_count.isEnabled()
 
-    assert widget._method_combo.itemText(widget._method_combo.findData("near_element")) == "Attach muon to element"
+    assert (
+        widget._method_combo.itemText(widget._method_combo.findData("near_element"))
+        == "Attach muon to element"
+    )
 
     widget._set_current_method("near_element")
     widget.set_host_structure(
@@ -456,7 +459,9 @@ def test_widget_collect_method_parameters_for_all_modes(qapp) -> None:
     assert near_params["muons_per_atom"] == widget._near_muons_per_atom.value()
     assert near_params["bond_distance"] > 0.0
 
-    assert [widget._near_element.itemText(index) for index in range(widget._near_element.count())] == ["O", "Si"]
+    assert [
+        widget._near_element.itemText(index) for index in range(widget._near_element.count())
+    ] == ["O", "Si"]
 
     widget._set_current_method("manual")
     widget._manual_coord_system.setCurrentText("fractional")
@@ -472,7 +477,11 @@ def test_widget_collect_method_parameters_for_all_modes(qapp) -> None:
 def test_widget_manual_coordinate_labels_follow_coordinate_system(qapp) -> None:
     widget = MuonGenerationWidget()
 
-    assert [widget._manual_x_label.text(), widget._manual_y_label.text(), widget._manual_z_label.text()] == [
+    assert [
+        widget._manual_x_label.text(),
+        widget._manual_y_label.text(),
+        widget._manual_z_label.text(),
+    ] == [
         "fX",
         "fY",
         "fZ",
@@ -480,7 +489,11 @@ def test_widget_manual_coordinate_labels_follow_coordinate_system(qapp) -> None:
 
     widget._manual_coord_system.setCurrentText("cartesian")
 
-    assert [widget._manual_x_label.text(), widget._manual_y_label.text(), widget._manual_z_label.text()] == [
+    assert [
+        widget._manual_x_label.text(),
+        widget._manual_y_label.text(),
+        widget._manual_z_label.text(),
+    ] == [
         "X (Å)",
         "Y (Å)",
         "Z (Å)",
@@ -488,7 +501,11 @@ def test_widget_manual_coordinate_labels_follow_coordinate_system(qapp) -> None:
 
     widget._manual_coord_system.setCurrentText("fractional")
 
-    assert [widget._manual_x_label.text(), widget._manual_y_label.text(), widget._manual_z_label.text()] == [
+    assert [
+        widget._manual_x_label.text(),
+        widget._manual_y_label.text(),
+        widget._manual_z_label.text(),
+    ] == [
         "fX",
         "fY",
         "fZ",
@@ -675,9 +692,14 @@ def test_widget_uep_cluster_rows_emit_all_selected_payloads(qapp) -> None:
 
     widget.set_uep_cluster_sources(rows)
     widget._set_current_method("uep_clusters")
-    assert widget._uep_cluster_table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
+    assert (
+        widget._uep_cluster_table.selectionMode()
+        == QAbstractItemView.SelectionMode.ExtendedSelection
+    )
     for row in (0, 1):
-        point = widget._uep_cluster_table.visualItemRect(widget._uep_cluster_table.item(row, 0)).center()
+        point = widget._uep_cluster_table.visualItemRect(
+            widget._uep_cluster_table.item(row, 0)
+        ).center()
         event = QMouseEvent(
             QEvent.Type.MouseButtonPress,
             QPointF(point),
@@ -826,8 +848,20 @@ def test_set_sites_skips_rebuild_when_rows_unchanged(qapp) -> None:
 def test_set_sites_preserves_selection_across_unchanged_reflush(qapp) -> None:
     widget = MuonGenerationWidget()
     rows = [
-        {"id": "site-a", "label": "A", "method": "random", "status": "generated", "fractional": [0.1, 0.2, 0.3]},
-        {"id": "site-b", "label": "B", "method": "random", "status": "generated", "fractional": [0.4, 0.5, 0.6]},
+        {
+            "id": "site-a",
+            "label": "A",
+            "method": "random",
+            "status": "generated",
+            "fractional": [0.1, 0.2, 0.3],
+        },
+        {
+            "id": "site-b",
+            "label": "B",
+            "method": "random",
+            "status": "generated",
+            "fractional": [0.4, 0.5, 0.6],
+        },
     ]
     widget.set_sites(rows)
     widget.select_site_ids(["site-b"])

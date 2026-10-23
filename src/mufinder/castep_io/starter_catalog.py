@@ -162,7 +162,10 @@ def _starter_default_value(spec_value_type: str, value: object) -> object | None
         return tuple(value)
     if spec_value_type in {"int", "positive_int", "non_negative_int"} and value != "":
         return int(value)
-    if spec_value_type in {"float", "number", "physical", "positive_float_with_optional_unit"} and value != "":
+    if (
+        spec_value_type in {"float", "number", "physical", "positive_float_with_optional_unit"}
+        and value != ""
+    ):
         return float(value)
     if spec_value_type == "bool":
         return bool(value)
@@ -205,7 +208,11 @@ def load_starter_catalog_entries(catalog_path: Path) -> dict[FileKind, list[dict
             normalized_lines.append(line)
             continue
         stripped = raw_value.strip()
-        if not stripped or stripped in {"|", ">", "[]", "{}"} or stripped.startswith(("'", '"', "[", "{")):
+        if (
+            not stripped
+            or stripped in {"|", ">", "[]", "{}"}
+            or stripped.startswith(("'", '"', "[", "{"))
+        ):
             normalized_lines.append(line)
             continue
         escaped = raw_value.replace("'", "''")
@@ -243,12 +250,8 @@ def load_starter_catalog_entries(catalog_path: Path) -> dict[FileKind, list[dict
 
 def _starter_alias_map(file: FileKind, entries: list[dict[str, Any]]) -> dict[str, str]:
     alias_map = dict(MANUAL_ALIAS_MAP.get(file, {}))
-    names = {
-        str(entry["source_name"]).strip().lower()
-        for entry in entries
-    } | {
-        str(entry["canonical_name"]).strip().lower()
-        for entry in entries
+    names = {str(entry["source_name"]).strip().lower() for entry in entries} | {
+        str(entry["canonical_name"]).strip().lower() for entry in entries
     }
     for entry in entries:
         source_name = str(entry["source_name"]).strip().lower()
@@ -290,7 +293,9 @@ def _starter_spec_from_catalog(
         alias_map=alias_map,
     )
     if not allowed_tasks:
-        allowed_tasks = tuple(str(item) for item in override.get("allowed_tasks", _infer_allowed_tasks(name)))
+        allowed_tasks = tuple(
+            str(item) for item in override.get("allowed_tasks", _infer_allowed_tasks(name))
+        )
 
     block_schema = None
     if kind == "block":
@@ -301,12 +306,21 @@ def _starter_spec_from_catalog(
             block_schema = _build_block_schema(BLOCK_SCHEMAS.get(file, {}).get(name))
 
     notes = str(payload.get("notes", "") or override.get("notes", "") or "").strip() or None
-    description = str(gui.get("label") or payload.get("description") or override.get("description") or _humanize(name))
+    description = str(
+        gui.get("label")
+        or payload.get("description")
+        or override.get("description")
+        or _humanize(name)
+    )
     help_text = str(notes or override.get("help_text") or description)
-    default_value = _starter_default_value(value_type, gui.get("default_value", override.get("default_value")))
+    default_value = _starter_default_value(
+        value_type, gui.get("default_value", override.get("default_value"))
+    )
 
     mutually_exclusive_with: list[str] = []
-    for item in payload.get("mutually_exclusive_with", ()) or override.get("mutually_exclusive_with", ()):
+    for item in payload.get("mutually_exclusive_with", ()) or override.get(
+        "mutually_exclusive_with", ()
+    ):
         raw_other = str(item).strip().lower()
         if not raw_other:
             continue
@@ -323,21 +337,40 @@ def _starter_spec_from_catalog(
         option_type=option_type,
         level="",
         docstring=help_text,
-        unit=str(payload["unit"]) if payload.get("unit") is not None else str(override["unit"]) if override.get("unit") is not None else None,
-        allowed_values=tuple(str(item) for item in payload.get("allowed_values", ()) or override.get("allowed_values", ())),
+        unit=str(payload["unit"])
+        if payload.get("unit") is not None
+        else str(override["unit"])
+        if override.get("unit") is not None
+        else None,
+        allowed_values=tuple(
+            str(item)
+            for item in payload.get("allowed_values", ()) or override.get("allowed_values", ())
+        ),
         mutually_exclusive_with=tuple(dict.fromkeys(mutually_exclusive_with)),
         requires=requires,
         requires_any_of=requires_any_of,
         repeatable=bool(payload.get("repeatable", override.get("repeatable", False))),
         aliases=aliases,
         allowed_tasks=allowed_tasks,
-        example=str(payload["example"]) if payload.get("example") is not None else str(override["example"]) if override.get("example") is not None else None,
+        example=str(payload["example"])
+        if payload.get("example") is not None
+        else str(override["example"])
+        if override.get("example") is not None
+        else None,
         notes=notes,
         label=str(gui.get("label") or override.get("label") or _humanize(name)),
-        description=str(payload.get("description") or override.get("description") or _first_sentence(help_text)),
+        description=str(
+            payload.get("description") or override.get("description") or _first_sentence(help_text)
+        ),
         help_text=help_text,
-        category=str(gui.get("category") or override.get("category") or _infer_category(file, name)),
-        widget_hint=str(gui["widget_hint"]) if gui.get("widget_hint") is not None else str(override["widget_hint"]) if override.get("widget_hint") is not None else None,
+        category=str(
+            gui.get("category") or override.get("category") or _infer_category(file, name)
+        ),
+        widget_hint=str(gui["widget_hint"])
+        if gui.get("widget_hint") is not None
+        else str(override["widget_hint"])
+        if override.get("widget_hint") is not None
+        else None,
         basic_workflows=tuple(
             str(item)
             for item in (
@@ -368,7 +401,13 @@ def _starter_spec_from_catalog(
         min_value=payload.get("min_value", gui.get("min_value", override.get("min_value"))),
         max_value=payload.get("max_value", gui.get("max_value", override.get("max_value"))),
         step=payload.get("step", gui.get("step", override.get("step"))),
-        exclusive_group=str(payload["exclusive_group"]) if payload.get("exclusive_group") is not None else str(gui["exclusive_group"]) if gui.get("exclusive_group") is not None else str(override["exclusive_group"]) if override.get("exclusive_group") is not None else None,
+        exclusive_group=str(payload["exclusive_group"])
+        if payload.get("exclusive_group") is not None
+        else str(gui["exclusive_group"])
+        if gui.get("exclusive_group") is not None
+        else str(override["exclusive_group"])
+        if override.get("exclusive_group") is not None
+        else None,
         block_schema=block_schema,
         source_order=source_order,
         vector_length=(
@@ -413,7 +452,9 @@ def build_starter_schema(
             if declared_canonical != resolved_canonical and declared_canonical != source_name:
                 alias_groups[resolved_canonical].append(declared_canonical)
             order = _starter_source_order(file, resolved_canonical, int(entry["source_order"]))
-            canonical_order[resolved_canonical] = min(order, canonical_order.get(resolved_canonical, order))
+            canonical_order[resolved_canonical] = min(
+                order, canonical_order.get(resolved_canonical, order)
+            )
 
         for alias, canonical in MANUAL_ALIAS_MAP.get(file, {}).items():
             resolved_canonical = _starter_resolve_name(file, canonical, alias_map)
@@ -426,7 +467,10 @@ def build_starter_schema(
                 base_entry = next(
                     entry
                     for entry in entries
-                    if _starter_resolve_name(file, str(entry["canonical_name"]).strip().lower(), alias_map) == canonical
+                    if _starter_resolve_name(
+                        file, str(entry["canonical_name"]).strip().lower(), alias_map
+                    )
+                    == canonical
                 )
             specs[canonical] = _starter_spec_from_catalog(
                 file=file,

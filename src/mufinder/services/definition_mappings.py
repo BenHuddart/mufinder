@@ -119,7 +119,8 @@ def definition_workflow_context_matches(
         source.workflow_stage == target.workflow_stage
         and source.calc_type == target.calc_type
         and source.input_structure_ids == target.input_structure_ids
-        and definition_output_directory(document, source) == definition_output_directory(document, target)
+        and definition_output_directory(document, source)
+        == definition_output_directory(document, target)
     )
 
 
@@ -151,7 +152,9 @@ def sweep_definition_context_matches(
     )
 
 
-def ensure_job_mapping(definition: CalculationDefinition, mapping_name: str = LABEL_MAPPING) -> dict[str, object]:
+def ensure_job_mapping(
+    definition: CalculationDefinition, mapping_name: str = LABEL_MAPPING
+) -> dict[str, object]:
     """Return ``definition``'s ``mapping_name`` mapping, creating it when absent.
 
     A value that is not a mapping is replaced by an empty one.
@@ -248,7 +251,9 @@ def sync_equivalent_mappings(
         if not isinstance(mapping, dict):
             continue
         seed_mapping = (
-            definition.parameters.get(seed_mapping_name, {}) if seed_mapping_name is not None else None
+            definition.parameters.get(seed_mapping_name, {})
+            if seed_mapping_name is not None
+            else None
         )
         for raw_key, raw_job_id in mapping.items():
             if not isinstance(raw_job_id, str):
@@ -276,7 +281,9 @@ def sync_equivalent_mappings(
     )
     for mapping_key, raw_job_id in candidates.items():
         existing = target_mapping.get(mapping_key)
-        if not isinstance(existing, str) or priority(document, raw_job_id) > priority(document, existing):
+        if not isinstance(existing, str) or priority(document, raw_job_id) > priority(
+            document, existing
+        ):
             target_mapping[mapping_key] = raw_job_id
             raw_seed = seed_candidates.get(mapping_key)
             if raw_seed and target_seed_mapping is not None:
@@ -348,7 +355,6 @@ def remove_labels_from_definition(
             mapping.pop(key, None)
 
     return remove_definition_if_no_rows(document, definition, active_key)
-
 
 
 def remove_grid_keys_from_definition(
@@ -535,6 +541,7 @@ def remove_generated_sources(document: ProjectDocument, keys: Collection[str]) -
             for source in raw_sources
             if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
         ]
+
 
 __all__ = [
     "LABEL_MAPPING",

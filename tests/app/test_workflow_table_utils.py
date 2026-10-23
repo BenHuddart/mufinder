@@ -16,7 +16,15 @@ import sys
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFrame,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+)
 
 from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
 from mufinder.app import workflow_table_utils
@@ -194,7 +202,7 @@ def _reset_menu_table(qapp, statuses: tuple[str, ...]):
     emitted: list[list[object]] = []
     bind_reset_failed_context_menu(
         table,
-        key_for_row=lambda row: (item.text() if (item := table.item(row, 0)) else None),
+        key_for_row=lambda row: item.text() if (item := table.item(row, 0)) else None,
         status_for_row=lambda row: workflow_row_status_text(table, row, 1),
         emit_reset=emitted.append,
     )
@@ -267,7 +275,9 @@ def test_resettable_keys_keeps_only_rows_a_reset_applies_to() -> None:
     ("eligible", "selected", "expected"),
     [(0, 3, ""), (3, 3, ""), (2, 5, " (2 of 5)"), (1, 2, " (1 of 2)"), (0, 0, "")],
 )
-def test_partial_count_suffix_appears_only_for_a_mixed_selection(eligible, selected, expected) -> None:
+def test_partial_count_suffix_appears_only_for_a_mixed_selection(
+    eligible, selected, expected
+) -> None:
     assert workflow_table_utils.partial_count_suffix(eligible, selected) == expected
 
 
@@ -284,7 +294,9 @@ def test_bind_reset_failed_context_menu_resets_keyed_rows_and_counts_the_keyless
     bind_reset_failed_context_menu(
         table,
         # Mirrors the real widgets: an empty label yields no submission key.
-        key_for_row=lambda row: ((table.item(row, 0).text().strip() or None) if table.item(row, 0) else None),
+        key_for_row=lambda row: (
+            (table.item(row, 0).text().strip() or None) if table.item(row, 0) else None
+        ),
         status_for_row=lambda row: workflow_row_status_text(table, row, 1),
         emit_reset=emitted.append,
     )
@@ -357,7 +369,9 @@ def test_bind_reset_failed_context_menu_keeps_multi_row_selection(qapp, monkeypa
     assert emitted == [["row_0", "row_1"]]
 
 
-def test_bind_reset_failed_context_menu_ignores_clicks_below_the_last_row(qapp, monkeypatch) -> None:
+def test_bind_reset_failed_context_menu_ignores_clicks_below_the_last_row(
+    qapp, monkeypatch
+) -> None:
     fake_menu = install_fake_menu(monkeypatch)
     table, emitted = _reset_menu_table(qapp, ("failed",))
 
@@ -428,7 +442,7 @@ def _reset_menu_table_with_continue_action(
     continue_emitted: list[list[object]] = []
     bind_reset_failed_context_menu(
         table,
-        key_for_row=lambda row: (item.text() if (item := table.item(row, 0)) else None),
+        key_for_row=lambda row: item.text() if (item := table.item(row, 0)) else None,
         status_for_row=lambda row: workflow_row_status_text(table, row, 1),
         emit_reset=reset_emitted.append,
         additional_actions=(
@@ -460,9 +474,7 @@ def test_open_reset_failed_context_menu_appends_additional_action_after_reset(
     ]
 
 
-def test_additional_action_enabled_state_is_driven_by_its_own_predicate(
-    qapp, monkeypatch
-) -> None:
+def test_additional_action_enabled_state_is_driven_by_its_own_predicate(qapp, monkeypatch) -> None:
     # A completed row is never reset-eligible, but "Continue relaxation…" can
     # still be enabled for it — the two actions gate independently.
     install_fake_menu(monkeypatch)
@@ -538,7 +550,12 @@ def test_confirm_destructive_maps_buttons_and_defaults_to_the_safe_choice(
 
     parent = QWidget()
     result = _real_confirm_destructive(
-        parent, "Cancel jobs", "Cancel 2 jobs?", "They are running.", "Cancel 2 jobs", "Keep running"
+        parent,
+        "Cancel jobs",
+        "Cancel 2 jobs?",
+        "They are running.",
+        "Cancel 2 jobs",
+        "Keep running",
     )
 
     assert result is expected
@@ -555,9 +572,12 @@ def test_confirm_row_removal_states_count_and_what_is_at_stake(
 
     parent = QWidget()
     assert workflow_table_utils.confirm_row_removal(parent, 1) is True
-    assert workflow_table_utils.confirm_row_removal(
-        parent, 4, noun=("path", "paths"), submitted_count=3, cancelling_count=1
-    ) is True
+    assert (
+        workflow_table_utils.confirm_row_removal(
+            parent, 4, noun=("path", "paths"), submitted_count=3, cancelling_count=1
+        )
+        is True
+    )
 
     assert confirmed_destructive_actions == [
         {
@@ -607,7 +627,10 @@ def _bind_standard_menu(table, calls, *, emit_reset=True, **omit):
     def record(name):
         return lambda rows: calls.append((name, list(rows)))
 
-    callbacks = {name: record(name) for name in ("run_local", "run_cluster", "cancel", "inspect", "configure", "remove")}
+    callbacks = {
+        name: record(name)
+        for name in ("run_local", "run_cluster", "cancel", "inspect", "configure", "remove")
+    }
     for name in omit:
         callbacks[name] = None
     leading, trailing = workflow_table_utils.standard_row_actions(
@@ -665,14 +688,19 @@ def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch
     [
         (["ready", "not generated"], {"Run Local", "Run on Cluster", "Configure...", "Remove"}),
         (["running", "queued"], {"Cancel", "Configure...", "Remove"}),
-        (["failed", "stopped"], {"Inspect Failure", "Reset Failed Jobs...", "Configure...", "Remove"}),
+        (
+            ["failed", "stopped"],
+            {"Inspect Failure", "Reset Failed Jobs...", "Configure...", "Remove"},
+        ),
         (["completed", "completed"], {"Configure...", "Remove"}),
         # Cancelled rows are editable but run again through Reset (or the
         # dashboard), so Run stays off, matching the submission filter.
         (["cancelled", "cancelled"], {"Reset Failed Jobs...", "Configure...", "Remove"}),
     ],
 )
-def test_standard_row_menu_enables_actions_from_row_status(qapp, monkeypatch, statuses, enabled) -> None:
+def test_standard_row_menu_enables_actions_from_row_status(
+    qapp, monkeypatch, statuses, enabled
+) -> None:
     table = _status_table(qapp, statuses)
     _bind_standard_menu(table, [])
     install_fake_menu(monkeypatch)
@@ -716,7 +744,9 @@ def test_standard_row_menu_offers_actions_for_the_eligible_rows_of_a_mixed_selec
         ("inspect", [2]),
         ("configure", [0, 1, 2, 3]),
     ]
-    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Cancel 2 calculations?"]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == [
+        "Cancel 2 calculations?"
+    ]
 
 
 def test_standard_row_menu_passes_selected_rows_and_confirms_cancel(
@@ -735,7 +765,9 @@ def test_standard_row_menu_passes_selected_rows_and_confirms_cancel(
     menu.action("Cancel").triggered.emit()
 
     assert calls == [("configure", [0, 1]), ("cancel", [0, 1])]
-    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Cancel 2 calculations?"]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == [
+        "Cancel 2 calculations?"
+    ]
 
 
 def test_row_menu_action_separator_is_drawn_above_it(qapp, monkeypatch) -> None:
@@ -958,7 +990,9 @@ def _combo_labels(combo) -> list[str]:
 
 
 def test_supercell_column_options_skip_malformed_entries(qapp) -> None:
-    column = SupercellColumn(QTableWidget(), column=0, manage_requested=print, refresh_rows=print, state_changed=print)
+    column = SupercellColumn(
+        QTableWidget(), column=0, manage_requested=print, refresh_rows=print, state_changed=print
+    )
     column.set_options(
         [
             {"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]},
@@ -1022,9 +1056,13 @@ def test_supercell_manage_entry_requests_the_manager_and_keeps_the_row(qapp) -> 
     assert combo.currentText() == "Unit cell"
 
 
-def test_supercell_choice_cancelled_from_the_selection_prompt_changes_nothing(qapp, monkeypatch) -> None:
+def test_supercell_choice_cancelled_from_the_selection_prompt_changes_nothing(
+    qapp, monkeypatch
+) -> None:
     table, column, calls = _supercell_table()
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL)
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL
+    )
     combo = table.cellWidget(0, 0)
     combo.selection_snapshot_rows = (0, 1)
 
@@ -1041,7 +1079,9 @@ def test_supercell_choice_applies_to_the_eligible_selected_rows(qapp, monkeypatc
     column.matrices[13] = None
     table.setCellWidget(2, 0, column.create_combo(table, 13))
     monkeypatch.setattr(
-        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
     )
     combo = table.cellWidget(0, 0)
     combo.selection_snapshot_rows = (0, 1, 2)
@@ -1065,7 +1105,9 @@ def test_supercell_column_suggests_grid_and_spacing_from_the_project_reference(q
     column.set_kpoint_reference((4, 4, 4), _CUBIC_4)
     assert column.suggested_grid(11) == (2, 2, 4)
     assert column.suggested_grid(12) == (4, 4, 4)
-    assert column.suggested_spacing() == ValueWithUnit(float(spacing_from_grid(_CUBIC_4, (4, 4, 4))), "1/ang")
+    assert column.suggested_spacing() == ValueWithUnit(
+        float(spacing_from_grid(_CUBIC_4, (4, 4, 4))), "1/ang"
+    )
     assert column.kpoint_adjustment_text(12) == ""
 
     column.set_kpoint_reference((1, 1, 1), _CUBIC_4)
@@ -1086,7 +1128,11 @@ def test_format_table_number_shows_numerical_noise_and_negative_zero_as_zero() -
 
 
 def test_format_vector_components_judges_each_component_against_the_row_scale() -> None:
-    assert format_vector_components((1.28162e-18, -5.32134e-18, -0.153881)) == ("0", "0", "-0.153881")
+    assert format_vector_components((1.28162e-18, -5.32134e-18, -0.153881)) == (
+        "0",
+        "0",
+        "-0.153881",
+    )
     assert format_vector_components((-0.0, -0.0, 0.0)) == ("0", "0", "0")
     assert format_vector_components((3e-11, 0.0, 0.0)) == ("3e-11", "0", "0")
     assert format_vector_components((3e-11, 0.0, 0.0), scale=0.4) == ("0", "0", "0")

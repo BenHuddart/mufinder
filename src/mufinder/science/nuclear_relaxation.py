@@ -229,7 +229,9 @@ def isotopes_for_element(element: str) -> list[Isotope]:
         raise NuclearRelaxationError(f"No isotope data available for element '{key}'") from exc
 
 
-def weighted_spin_factor(isotopes: Iterable[Isotope], *, include_quadrupolar: bool = False) -> float:
+def weighted_spin_factor(
+    isotopes: Iterable[Isotope], *, include_quadrupolar: bool = False
+) -> float:
     """Return abundance-weighted gamma^2 I(I+1) for one element."""
 
     total = 0.0
@@ -309,13 +311,17 @@ def calculate_nuclear_relaxation_with_distortion(
         muon_position=base.muon_position,
         sigma=correction.sigma_corrected,
         sigma_squared=correction.sigma_squared_corrected,
-        m2=correction.sigma_squared_corrected if opts.mode.startswith("tf") else 2.0 * correction.sigma_squared_corrected,
+        m2=correction.sigma_squared_corrected
+        if opts.mode.startswith("tf")
+        else 2.0 * correction.sigma_squared_corrected,
         delta_field_t=float((correction.sigma_corrected * 1e6) / GAMMA_MU_RAD_S_T),
         mode=opts.mode,
         convergence_radius_a=base.convergence_radius_a,
         n_nuclei_summed=base.n_nuclei_summed,
         per_element_sigma_squared=dict(base.per_element_sigma_squared),
-        sigma_perp_squared=correction.sigma_squared_corrected if opts.mode == "zf_single_crystal" else None,
+        sigma_perp_squared=correction.sigma_squared_corrected
+        if opts.mode == "zf_single_crystal"
+        else None,
         sigma_parallel_squared=corrected_parallel,
         distortion_correction=correction,
     )
@@ -378,7 +384,9 @@ def calculate_distortion_correction(
         options=finite_opts,
     )
 
-    correction_sigma2 = distorted_supercell_result.sigma_squared - pristine_supercell_result.sigma_squared
+    correction_sigma2 = (
+        distorted_supercell_result.sigma_squared - pristine_supercell_result.sigma_squared
+    )
     corrected_sigma2 = undistorted_result.sigma_squared + correction_sigma2
     corrected_sigma = float(np.sqrt(max(corrected_sigma2, 0.0)))
 
@@ -436,9 +444,15 @@ def _calculate_second_moment(
         raise NuclearRelaxationError("radius must be > 0")
 
     field_dir = _unit_vector(field_direction, "direction") if mode == "tf_single_crystal" else None
-    pol_dir = _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
+    pol_dir = (
+        _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
+    )
     muon_cart = _muon_position_cartesian(atoms, muon_position, muon_position_fractional)
-    selected = None if elements is None else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
+    selected = (
+        None
+        if elements is None
+        else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
+    )
     radii = [float(radius)] if radius is not None else list(_auto_radii_sequence())
 
     prev_sigma2: float | None = None
@@ -465,7 +479,11 @@ def _calculate_second_moment(
         final_per_element = per_element
         final_n = int(dists_a.size)
         final_radius = rad
-        if prev_sigma2 is not None and radius is None and np.isclose(sigma2, prev_sigma2, rtol=convergence_rtol, atol=0.0):
+        if (
+            prev_sigma2 is not None
+            and radius is None
+            and np.isclose(sigma2, prev_sigma2, rtol=convergence_rtol, atol=0.0)
+        ):
             break
         prev_sigma2 = sigma2
 
@@ -473,7 +491,9 @@ def _calculate_second_moment(
         raise NuclearRelaxationError("No nuclei found within the selected radius.")
     return _result_from_sigma(
         site_label=site_label,
-        muon_position=_canonical_fractional(muon_position) if muon_position_fractional else tuple(float(v) for v in muon_position),
+        muon_position=_canonical_fractional(muon_position)
+        if muon_position_fractional
+        else tuple(float(v) for v in muon_position),
         mode=mode,
         sigma_squared=final_sigma2,
         sigma_squared_parallel=final_sigma2_parallel,
@@ -496,9 +516,15 @@ def _calculate_second_moment_finite_cell(
 ) -> NuclearRelaxationResult:
     _validate_mode(mode, include_quadrupolar=include_quadrupolar)
     field_dir = _unit_vector(field_direction, "direction") if mode == "tf_single_crystal" else None
-    pol_dir = _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
+    pol_dir = (
+        _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
+    )
     muon_cart = _muon_position_cartesian(atoms, muon_position, True)
-    selected = None if elements is None else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
+    selected = (
+        None
+        if elements is None
+        else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
+    )
     vecs_a, dists_a, symbols = _iter_nuclear_vectors_finite_cell(atoms, muon_cart, selected)
     if dists_a.size == 0:
         raise NuclearRelaxationError("No nuclei found in the selected finite cell.")
@@ -565,7 +591,9 @@ def _compute_tf_single(
     return _sum_elements(symbols, pref * angular / (distances_m**6), include_quadrupolar=False)
 
 
-def _compute_tf_poly(distances_m: np.ndarray, symbols: np.ndarray) -> tuple[float, dict[str, float]]:
+def _compute_tf_poly(
+    distances_m: np.ndarray, symbols: np.ndarray
+) -> tuple[float, dict[str, float]]:
     pref = ((MU0_OVER_4PI**2) * (HBAR**2) * (GAMMA_MU_RAD_S_T**2)) * (4.0 / 15.0)
     return _sum_elements(symbols, pref / (distances_m**6), include_quadrupolar=False)
 
@@ -617,7 +645,9 @@ def _sum_elements(
     for sym in np.unique(symbols):
         element = str(sym)
         mask = symbols == element
-        weight = weighted_spin_factor(isotopes_for_element(element), include_quadrupolar=include_quadrupolar)
+        weight = weighted_spin_factor(
+            isotopes_for_element(element), include_quadrupolar=include_quadrupolar
+        )
         contrib = weight * float(np.sum(base_terms_s[mask]))
         sigma2_s += contrib
         per_element[element] = contrib * SEC2_TO_US2
@@ -648,7 +678,9 @@ def _result_from_sigma(
         n_nuclei_summed=int(n_nuclei_summed),
         per_element_sigma_squared={str(k): float(v) for k, v in per_element.items()},
         sigma_perp_squared=float(sigma_squared) if mode == "zf_single_crystal" else None,
-        sigma_parallel_squared=None if sigma_squared_parallel is None else float(sigma_squared_parallel),
+        sigma_parallel_squared=None
+        if sigma_squared_parallel is None
+        else float(sigma_squared_parallel),
     )
 
 
@@ -686,7 +718,11 @@ def _iter_nuclear_vectors(
                     syms.append(sym)
     if not vecs:
         return np.zeros((0, 3), dtype=float), np.zeros(0, dtype=float), np.array([], dtype=object)
-    return np.asarray(vecs, dtype=float), np.asarray(dists, dtype=float), np.asarray(syms, dtype=object)
+    return (
+        np.asarray(vecs, dtype=float),
+        np.asarray(dists, dtype=float),
+        np.asarray(syms, dtype=object),
+    )
 
 
 def _iter_nuclear_vectors_finite_cell(
@@ -709,7 +745,11 @@ def _iter_nuclear_vectors_finite_cell(
         syms.append(str(sym))
     if not vecs:
         return np.zeros((0, 3), dtype=float), np.zeros(0, dtype=float), np.array([], dtype=object)
-    return np.asarray(vecs, dtype=float), np.asarray(dists, dtype=float), np.asarray(syms, dtype=object)
+    return (
+        np.asarray(vecs, dtype=float),
+        np.asarray(dists, dtype=float),
+        np.asarray(syms, dtype=object),
+    )
 
 
 def _translation_limits(cell: np.ndarray, radius_a: float) -> np.ndarray:
@@ -729,7 +769,9 @@ def _finite_cell_atoms(distortion: MuonDistortion, vectors: np.ndarray) -> Atoms
     return Atoms(symbols=list(distortion.symbols), positions=centre + vectors, cell=cell, pbc=True)
 
 
-def _muon_position_cartesian(atoms: Atoms, muon_position: Sequence[float], fractional: bool) -> np.ndarray:
+def _muon_position_cartesian(
+    atoms: Atoms, muon_position: Sequence[float], fractional: bool
+) -> np.ndarray:
     pos = np.asarray(muon_position, dtype=float).reshape(3)
     if fractional:
         return np.asarray(atoms.cell.cartesian_positions(pos.reshape(1, 3))[0], dtype=float)
@@ -744,7 +786,9 @@ def _unit_vector(vec: Sequence[float], name: str) -> np.ndarray:
     return arr / norm
 
 
-def _canonical_fractional(frac: Sequence[float], *, atol: float = 1e-6) -> tuple[float, float, float]:
+def _canonical_fractional(
+    frac: Sequence[float], *, atol: float = 1e-6
+) -> tuple[float, float, float]:
     arr = np.mod(np.asarray(frac, dtype=float).reshape(3), 1.0)
     arr[np.isclose(arr, 1.0, atol=atol, rtol=0.0)] = 0.0
     return (float(arr[0]), float(arr[1]), float(arr[2]))

@@ -22,7 +22,16 @@ import math
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QKeyEvent, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -172,7 +181,9 @@ class ProjectHomeChartWidget(QWidget):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        key = self.stage_at(event.position()) if event.button() == Qt.MouseButton.LeftButton else None
+        key = (
+            self.stage_at(event.position()) if event.button() == Qt.MouseButton.LeftButton else None
+        )
         if key is not None:
             self.select_stage(key)
             self.route_requested.emit(key)
@@ -188,7 +199,11 @@ class ProjectHomeChartWidget(QWidget):
             self.update()
         stage = self._summary.stage(key) if self._summary is not None and key else None
         if stage is not None:
-            QToolTip.showText(event.globalPosition().toPoint(), f"{stage.title}: {_STATUS_TEXT[stage.status]}", self)
+            QToolTip.showText(
+                event.globalPosition().toPoint(),
+                f"{stage.title}: {_STATUS_TEXT[stage.status]}",
+                self,
+            )
         else:
             QToolTip.hideText()
         super().mouseMoveEvent(event)
@@ -245,7 +260,11 @@ class ProjectHomeChartWidget(QWidget):
         return font
 
     def _label_rect(self, key: str, center: QPointF) -> QRectF:
-        title = self._summary.stage(key).title if self._summary is not None and self._summary.stage(key) else key
+        title = (
+            self._summary.stage(key).title
+            if self._summary is not None and self._summary.stage(key)
+            else key
+        )
         metrics = QFontMetricsF(self._label_font(bold=True))
         width = metrics.horizontalAdvance(title) + 8.0
         top = center.y() + self._node_radius() + 4.0
@@ -267,7 +286,12 @@ class ProjectHomeChartWidget(QWidget):
             rect = rect.adjusted(-16.0, -26.0, 16.0, 10.0)
             title_width = QFontMetricsF(self._group_font()).horizontalAdvance(group.title) + 28.0
             if rect.width() < title_width:
-                rect.adjust(-(title_width - rect.width()) / 2.0, 0.0, (title_width - rect.width()) / 2.0, 0.0)
+                rect.adjust(
+                    -(title_width - rect.width()) / 2.0,
+                    0.0,
+                    (title_width - rect.width()) / 2.0,
+                    0.0,
+                )
             rects[group.key] = rect
         return rects
 
@@ -283,7 +307,9 @@ class ProjectHomeChartWidget(QWidget):
         font.setPixelSize(round(max(11.0, min(15.0, self.height() * 0.04))))
         return font
 
-    def _anchor(self, key: str, centers: dict[str, QPointF], groups: dict[str, QRectF], *, outgoing: bool) -> QPointF | None:
+    def _anchor(
+        self, key: str, centers: dict[str, QPointF], groups: dict[str, QRectF], *, outgoing: bool
+    ) -> QPointF | None:
         if key in centers:
             return centers[key]
         rect = groups.get(key)
@@ -330,7 +356,9 @@ class ProjectHomeChartWidget(QWidget):
                 group.title,
             )
 
-    def _paint_edges(self, painter: QPainter, palette, centers: dict[str, QPointF], groups: dict[str, QRectF]) -> None:
+    def _paint_edges(
+        self, painter: QPainter, palette, centers: dict[str, QPointF], groups: dict[str, QRectF]
+    ) -> None:
         assert self._summary is not None
         statuses = {stage.key: stage.status for stage in self._summary.stages}
         for dependency in STAGE_DEPENDENCIES:
@@ -338,7 +366,9 @@ class ProjectHomeChartWidget(QWidget):
             end = self._anchor(dependency.target, centers, groups, outgoing=False)
             if start is None or end is None:
                 continue
-            travelled = statuses.get(dependency.target, StageStatus.NOT_STARTED) != StageStatus.NOT_STARTED
+            travelled = (
+                statuses.get(dependency.target, StageStatus.NOT_STARTED) != StageStatus.NOT_STARTED
+            )
             colour = QColor(palette.text_muted if travelled else palette.border)
             width = 2.2 if dependency.kind == DependencyKind.REQUIRED else 1.6
             pen = QPen(colour, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
@@ -366,17 +396,30 @@ class ProjectHomeChartWidget(QWidget):
             painter.setPen(QPen(QColor(palette.border), 1.1))
             painter.setBrush(QColor(palette.seal_gold))
             painter.drawEllipse(center, radius, radius)
-            tick = QPen(QColor(palette.bg_surface), max(2.0, radius * 0.18), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            tick = QPen(
+                QColor(palette.bg_surface),
+                max(2.0, radius * 0.18),
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+            )
             painter.setPen(tick)
             scale = radius / 14.0
-            painter.drawLine(QPointF(center.x() - 6.0 * scale, center.y()), QPointF(center.x() - 2.0 * scale, center.y() + 5.0 * scale))
-            painter.drawLine(QPointF(center.x() - 2.0 * scale, center.y() + 5.0 * scale), QPointF(center.x() + 7.0 * scale, center.y() - 6.0 * scale))
+            painter.drawLine(
+                QPointF(center.x() - 6.0 * scale, center.y()),
+                QPointF(center.x() - 2.0 * scale, center.y() + 5.0 * scale),
+            )
+            painter.drawLine(
+                QPointF(center.x() - 2.0 * scale, center.y() + 5.0 * scale),
+                QPointF(center.x() + 7.0 * scale, center.y() - 6.0 * scale),
+            )
         elif stage.status == StageStatus.IN_PROGRESS:
             painter.setPen(QPen(QColor(palette.accent), 2.2))
             painter.setBrush(QColor(palette.bg_surface))
             painter.drawEllipse(center, radius, radius)
             half = QPainterPath(center)
-            inner = QRectF(center.x() - radius * 0.62, center.y() - radius * 0.62, radius * 1.24, radius * 1.24)
+            inner = QRectF(
+                center.x() - radius * 0.62, center.y() - radius * 0.62, radius * 1.24, radius * 1.24
+            )
             half.arcTo(inner, 90.0, -180.0)
             half.closeSubpath()
             painter.setPen(Qt.PenStyle.NoPen)
@@ -406,15 +449,23 @@ class ProjectHomeChartWidget(QWidget):
             painter.setBrush(self._group_fill(palette))
             painter.drawRoundedRect(label_rect, 4.0, 4.0)
         painter.setFont(self._label_font(bold=selected))
-        label_colour = QColor(palette.text_primary if stage.status != StageStatus.NOT_STARTED else palette.text_muted)
+        label_colour = QColor(
+            palette.text_primary if stage.status != StageStatus.NOT_STARTED else palette.text_muted
+        )
         painter.setPen(label_colour)
         painter.drawText(
             label_rect,
-            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextSingleLine),
+            int(
+                Qt.AlignmentFlag.AlignHCenter
+                | Qt.AlignmentFlag.AlignTop
+                | Qt.TextFlag.TextSingleLine
+            ),
             stage.title,
         )
 
-    def _paint_job_badge(self, painter: QPainter, palette, center: QPointF, radius: float, count: int) -> None:
+    def _paint_job_badge(
+        self, painter: QPainter, palette, center: QPointF, radius: float, count: int
+    ) -> None:
         badge_center = QPointF(center.x() + radius * 0.85, center.y() - radius * 0.85)
         badge_radius = max(6.5, radius * 0.5)
         painter.setPen(QPen(QColor(palette.bg_primary), 1.5))
@@ -426,7 +477,12 @@ class ProjectHomeChartWidget(QWidget):
         painter.setFont(font)
         painter.setPen(QColor("#FFFFFF"))
         painter.drawText(
-            QRectF(badge_center.x() - badge_radius, badge_center.y() - badge_radius, 2 * badge_radius, 2 * badge_radius),
+            QRectF(
+                badge_center.x() - badge_radius,
+                badge_center.y() - badge_radius,
+                2 * badge_radius,
+                2 * badge_radius,
+            ),
             int(Qt.AlignmentFlag.AlignCenter),
             str(count) if count < 100 else "99+",
         )
@@ -434,12 +490,20 @@ class ProjectHomeChartWidget(QWidget):
     def _paint_flag(self, painter: QPainter, palette, center: QPointF, radius: float) -> None:
         base = QPointF(center.x() - radius * 0.7, center.y() - radius * 0.7)
         top = QPointF(base.x(), base.y() - radius * 1.5)
-        painter.setPen(QPen(QColor(palette.text_primary), 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(
+            QPen(QColor(palette.text_primary), 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        )
         painter.drawLine(base, top)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(palette.accent))
         painter.drawPolygon(
-            QPolygonF([top, QPointF(top.x() - radius * 0.95, top.y() + radius * 0.32), QPointF(top.x(), top.y() + radius * 0.64)])
+            QPolygonF(
+                [
+                    top,
+                    QPointF(top.x() - radius * 0.95, top.y() + radius * 0.32),
+                    QPointF(top.x(), top.y() + radius * 0.64),
+                ]
+            )
         )
 
     def _paint_legend(self, painter: QPainter, palette) -> None:
@@ -467,11 +531,17 @@ class ProjectHomeChartWidget(QWidget):
             x += 30.0 + metrics.horizontalAdvance(text) + 18.0
 
     def _update_accessible_name(self) -> None:
-        stage = self._summary.stage(self._selected) if self._summary is not None and self._selected else None
+        stage = (
+            self._summary.stage(self._selected)
+            if self._summary is not None and self._selected
+            else None
+        )
         if stage is None:
             self.setAccessibleName("Project workflow chart")
             return
-        self.setAccessibleName(f"Project workflow chart: {stage.title}, {_STATUS_TEXT[stage.status].lower()}")
+        self.setAccessibleName(
+            f"Project workflow chart: {stage.title}, {_STATUS_TEXT[stage.status].lower()}"
+        )
 
 
 class FieldNotesPanel(QFrame):
@@ -530,7 +600,9 @@ class FieldNotesPanel(QFrame):
             status += f" · {stage.active_jobs} job{'s' if stage.active_jobs != 1 else ''} active"
         self._status.setText(status)
         self._facts.setText("\n".join(stage.facts))
-        self._needs.setText(f"Needs: {', '.join(stage.unmet_requirements)}" if stage.unmet_requirements else "")
+        self._needs.setText(
+            f"Needs: {', '.join(stage.unmet_requirements)}" if stage.unmet_requirements else ""
+        )
         self._needs.setVisible(bool(stage.unmet_requirements))
         self._guidance.setText(stage.guidance)
         self._open_button.setText(f"Open {stage.title}")
@@ -625,7 +697,9 @@ class ProjectHomeWidget(QWidget):
         else:
             text = f"{summary.completed_count} of {len(summary.stages)} stages complete"
             if summary.active_jobs:
-                text += f" · {summary.active_jobs} job{'s' if summary.active_jobs != 1 else ''} active"
+                text += (
+                    f" · {summary.active_jobs} job{'s' if summary.active_jobs != 1 else ''} active"
+                )
             self._progress.setText(text)
         self._show_stage(self.chart.selected_stage())
 
@@ -643,7 +717,9 @@ class ProjectHomeWidget(QWidget):
         if document is None or host is None or stage is None:
             self.survey.set_survey(host, (), None)
             return
-        self.survey.set_survey(host, survey_layers(document, stage.key), discovered_sites_layer(document))
+        self.survey.set_survey(
+            host, survey_layers(document, stage.key), discovered_sites_layer(document)
+        )
 
 
 class ConstructionSignWidget(QWidget):

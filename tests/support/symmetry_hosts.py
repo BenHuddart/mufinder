@@ -73,7 +73,9 @@ def diamond_si_host() -> Structure:
     # Conventional diamond Si: Fd-3m with 192 operations (48 point operations x 4 centring translations).
     a = 5.43
     fcc = [(0.0, 0.0, 0.0), (0.0, 0.5, 0.5), (0.5, 0.0, 0.5), (0.5, 0.5, 0.0)]
-    positions = [list(point) for corner in fcc for point in (corner, tuple(value + 0.25 for value in corner))]
+    positions = [
+        list(point) for corner in fcc for point in (corner, tuple(value + 0.25 for value in corner))
+    ]
     return Structure(
         label="Diamond Si",
         lattice_vectors=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]],

@@ -48,7 +48,9 @@ def structure_to_spec(structure: Structure) -> StructureSpec:
             species=species,
             coordinates=_as_vector3(position, label=f"Fractional position {index + 1}"),
         )
-        for index, (species, position) in enumerate(zip(structure.species, structure.fractional_positions))
+        for index, (species, position) in enumerate(
+            zip(structure.species, structure.fractional_positions)
+        )
     )
 
     raw_spins = structure.properties.get("atomic_spins")

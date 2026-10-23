@@ -38,8 +38,12 @@ def test_convergence_overview_widget_shows_placeholder_and_emits_navigation(qapp
     widget.open_kpoint_requested.connect(lambda: requested.append("kpoint"))
 
     assert isinstance(widget._scroll, QScrollArea)
-    assert widget._cutoff_card._plot._placeholder.text() == "Adopt a cutoff analysis to pin it here."
-    assert widget._kpoint_card._plot._placeholder.text() == "Adopt a k-point analysis to pin it here."
+    assert (
+        widget._cutoff_card._plot._placeholder.text() == "Adopt a cutoff analysis to pin it here."
+    )
+    assert (
+        widget._kpoint_card._plot._placeholder.text() == "Adopt a k-point analysis to pin it here."
+    )
     assert "Project default:" in widget._cutoff_card._summary_labels["Project default"].text()
     assert "Not set" in widget._cutoff_card._summary_labels["Project default"].text()
     assert "Cutoff default:" in widget._kpoint_card._summary_labels["Cutoff default"].text()
@@ -157,7 +161,9 @@ def test_convergence_overview_widget_pinned_kpoint_plot_falls_back_without_spaci
     widget.close()
 
 
-def test_convergence_overview_widget_pinned_kpoint_plot_omits_spacing_for_gamma_only_grid(qapp) -> None:
+def test_convergence_overview_widget_pinned_kpoint_plot_omits_spacing_for_gamma_only_grid(
+    qapp,
+) -> None:
     # Sweeps starting at (1,1,1) must not show a spacing sub-label for that
     # tick because no single spacing characterises Gamma-only sampling
     # (every spacing larger than the cell's coarsest reciprocal transition
@@ -283,7 +289,11 @@ def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> Non
 
     # stresses provided but stress_threshold missing → must be skipped.
     widget.set_cutoff_panel(
-        summary_rows=[("Project default", "550 eV"), ("Method", "Delta-Threshold"), ("Criteria", "...")],
+        summary_rows=[
+            ("Project default", "550 eV"),
+            ("Method", "Delta-Threshold"),
+            ("Criteria", "..."),
+        ],
         snapshot={
             "default_value": 550.0,
             "plot_data": {
@@ -302,7 +312,11 @@ def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> Non
 
     # stresses length mismatched with cutoffs → must be skipped.
     widget.set_cutoff_panel(
-        summary_rows=[("Project default", "550 eV"), ("Method", "Delta-Threshold"), ("Criteria", "...")],
+        summary_rows=[
+            ("Project default", "550 eV"),
+            ("Method", "Delta-Threshold"),
+            ("Criteria", "..."),
+        ],
         snapshot={
             "default_value": 550.0,
             "plot_data": {
@@ -347,7 +361,10 @@ def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> No
         )
 
         energy_ax, force_ax = widget._cutoff_card._plot._figure.axes
-        assert to_hex(widget._cutoff_card._plot._figure.get_facecolor()).lower() == palette.bg_surface_alt.lower()
+        assert (
+            to_hex(widget._cutoff_card._plot._figure.get_facecolor()).lower()
+            == palette.bg_surface_alt.lower()
+        )
         assert to_hex(energy_ax.get_facecolor()).lower() == palette.bg_surface.lower()
         assert energy_ax.yaxis.label.get_color().lower() == palette.text_primary.lower()
         assert force_ax.xaxis.label.get_color().lower() == palette.text_primary.lower()

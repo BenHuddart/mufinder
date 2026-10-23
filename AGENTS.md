@@ -133,7 +133,8 @@ The `Makefile` is the executable definition; run its targets, not the raw comman
 make install                          # dev + scientific-backends extras (or: uv sync --extra dev --extra scientific-backends)
 make test-fast FILES="tests/app/test_convergence_widget.py"   # focused tests, no coverage
 make test                             # full suite, coverage >= 85 %; foreground, at most 4 workers
-make lint                             # ruff
+make lint                             # ruff check and ruff format --check
+make format                           # ruff format; layout is the tool's, never hand-tuned
 make docs                             # sphinx -W
 make harness                          # tests/test_agent_harness.py
 ```

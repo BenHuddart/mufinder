@@ -162,7 +162,9 @@ def test_generate_castep_keywords_json_uses_ase_helper(
 ) -> None:
     calls: list[tuple[str, str, str, bool]] = []
 
-    def fake_create(command: str, filename: str, force_write: bool, path: str, fetch_only=None) -> None:
+    def fake_create(
+        command: str, filename: str, force_write: bool, path: str, fetch_only=None
+    ) -> None:
         calls.append((command, filename, path, force_write))
         (Path(path) / filename).write_text("{}", encoding="utf-8")
 
@@ -195,7 +197,9 @@ def test_generate_castep_keywords_json_wraps_command_with_mpi_launcher(
 ) -> None:
     commands: list[str] = []
 
-    def fake_create(command: str, filename: str, force_write: bool, path: str, fetch_only=None) -> None:
+    def fake_create(
+        command: str, filename: str, force_write: bool, path: str, fetch_only=None
+    ) -> None:
         commands.append(command)
         (Path(path) / filename).write_text("{}", encoding="utf-8")
 
@@ -240,7 +244,11 @@ def test_apply_castep_environment_clears_keywords_env_when_empty(
 def no_catalog_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start from a machine with no catalog configured or discoverable."""
 
-    for name in ("MUFINDER_CASTEP_KEYWORDS_JSON", "CASTEP_KEYWORDS_JSON", SETUP_KEYWORDS_JSON_ENV_VAR):
+    for name in (
+        "MUFINDER_CASTEP_KEYWORDS_JSON",
+        "CASTEP_KEYWORDS_JSON",
+        SETUP_KEYWORDS_JSON_ENV_VAR,
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(schema_module, "_ENV_ROOT_VARS", ())
     monkeypatch.setattr(
@@ -365,12 +373,18 @@ def test_install_keyword_catalog_rejects_truncated_catalog_and_missing_file(
     assert not managed_keywords_json_path().exists()
 
 
-def test_app_data_directory_falls_back_when_qt_reports_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_app_data_directory_falls_back_when_qt_reports_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.undo()  # drop the conftest redirection to exercise the real lookup
-    monkeypatch.setattr(castep_setup_module.QStandardPaths, "writableLocation", lambda _location: "")
+    monkeypatch.setattr(
+        castep_setup_module.QStandardPaths, "writableLocation", lambda _location: ""
+    )
     assert castep_setup_module._app_data_directory() == Path.home() / ".mufinder"
 
-    monkeypatch.setattr(castep_setup_module.QStandardPaths, "writableLocation", lambda _location: "/data/MuFinder")
+    monkeypatch.setattr(
+        castep_setup_module.QStandardPaths, "writableLocation", lambda _location: "/data/MuFinder"
+    )
     assert castep_setup_module._app_data_directory() == Path("/data/MuFinder")
 
 
@@ -406,7 +420,10 @@ def test_castep_setup_dialog_installs_generated_catalog_immediately(
     # pressing OK, and the scratch copy is gone.
     managed = managed_keywords_json_path()
     assert infos == [
-        ("Keyword catalog installed", "Keyword catalog generated: CASTEP 26.11: 48 cell and 163 param keywords.")
+        (
+            "Keyword catalog installed",
+            "Keyword catalog generated: CASTEP 26.11: 48 cell and 163 param keywords.",
+        )
     ]
     assert scratch_paths[0].parent != managed.parent
     assert not scratch_paths[0].parent.exists()
@@ -466,8 +483,14 @@ def test_castep_setup_dialog_imports_an_existing_catalog(
     dialog = CastepSetupDialog(settings=settings)
     source = write_complete_catalog(tmp_path / "from_colleague.json", "24.1")
     infos: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "information", lambda _parent, _title, message: infos.append(message))
-    monkeypatch.setattr(dialog_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(source), ""))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "information",
+        lambda _parent, _title, message: infos.append(message),
+    )
+    monkeypatch.setattr(
+        dialog_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(source), "")
+    )
 
     dialog._import_button.click()
 
@@ -476,7 +499,9 @@ def test_castep_setup_dialog_imports_an_existing_catalog(
     assert "CASTEP 24.1" in dialog._catalog_status_label.text()
 
     # Cancelling the file chooser changes nothing.
-    monkeypatch.setattr(dialog_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: ("", ""))
+    monkeypatch.setattr(
+        dialog_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: ("", "")
+    )
     dialog._import_button.click()
     assert len(infos) == 1
     dialog.close()
@@ -492,9 +517,18 @@ def test_castep_setup_dialog_import_says_when_an_env_override_wins(
     monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(override))
     dialog = CastepSetupDialog(settings=_FakeSettings())
     infos: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "information", lambda _parent, _title, message: infos.append(message))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "information",
+        lambda _parent, _title, message: infos.append(message),
+    )
 
-    assert dialog._install_catalog(write_complete_catalog(tmp_path / "new.json", "26.11"), action="imported") is True
+    assert (
+        dialog._install_catalog(
+            write_complete_catalog(tmp_path / "new.json", "26.11"), action="imported"
+        )
+        is True
+    )
 
     assert "It is not in use yet" in infos[0]
     assert "MUFINDER_CASTEP_KEYWORDS_JSON environment variable overrides CASTEP setup" in infos[0]
@@ -511,7 +545,11 @@ def test_castep_setup_dialog_reports_unwritable_data_directory(
 ) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _parent, title, _message: warnings.append(title))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _message: warnings.append(title),
+    )
 
     def refuse(*_args, **_kwargs):
         raise PermissionError("read-only file system")
@@ -574,9 +612,7 @@ def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
     dialog._executable_edit.setText(MPI_CASTEP_EXECUTABLE)
     dialog._mpirun_edit.setText(MPIRUN_LAUNCHER)
 
-    dialog._start_generation_process(
-        MPI_CASTEP_EXECUTABLE, tmp_path / "castep_keywords.json"
-    )
+    dialog._start_generation_process(MPI_CASTEP_EXECUTABLE, tmp_path / "castep_keywords.json")
 
     assert len(captured) == 1
     program, arguments = captured[0]
@@ -592,7 +628,9 @@ def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
     # Running the script hands ASE the MPI-wrapped command and the output path.
     ase_calls: list[tuple[str, str, str]] = []
 
-    def fake_create(command: str, filename: str, force_write: bool, path: str, fetch_only=None) -> None:
+    def fake_create(
+        command: str, filename: str, force_write: bool, path: str, fetch_only=None
+    ) -> None:
         ase_calls.append((command, filename, path))
         (Path(path) / filename).write_text("{}", encoding="utf-8")
 
@@ -617,7 +655,11 @@ def test_castep_setup_dialog_explains_a_missing_catalog(qapp, no_catalog_env) ->
     assert dialog.findChild(QLabel, "catalogStatusLabel").text() == (
         "No keyword catalog is loaded; MuFinder is using its limited built-in keyword set."
     )
-    intro = next(label.text() for label in dialog.findChildren(QLabel) if "castep_keywords.json" in label.text())
+    intro = next(
+        label.text()
+        for label in dialog.findChildren(QLabel)
+        if "castep_keywords.json" in label.text()
+    )
     assert "some results cannot be loaded" in intro
     assert "there is no location to choose" in intro
     dialog.close()
@@ -646,7 +688,10 @@ def test_castep_setup_dialog_reports_a_configured_catalog_that_went_missing(
 def test_castep_setup_dialog_lists_local_and_cluster_targets(qapp) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
 
-    targets = [dialog._generate_target_combo.itemText(index) for index in range(dialog._generate_target_combo.count())]
+    targets = [
+        dialog._generate_target_combo.itemText(index)
+        for index in range(dialog._generate_target_combo.count())
+    ]
 
     assert targets[:3] == ["This computer", "SCARF", "Redwood"]
     dialog.close()
@@ -660,7 +705,9 @@ def test_castep_setup_dialog_warns_on_incomplete_cluster_setup(
     dialog._generate_target_combo.setCurrentText("Redwood")
 
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: ["Missing shell init"])
+    monkeypatch.setattr(
+        dialog_module, "validate_cluster_keyword_config", lambda _config: ["Missing shell init"]
+    )
     monkeypatch.setattr(
         dialog_module.QMessageBox,
         "warning",
@@ -766,7 +813,11 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
 
     monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: [])
     monkeypatch.setattr(dialog_module, "SSHConnection", _UnknownHostConnection)
-    monkeypatch.setattr(dialog_module, "prompt_to_trust_host_key", lambda *_args, **_kwargs: prompts.append("yes") or True)
+    monkeypatch.setattr(
+        dialog_module,
+        "prompt_to_trust_host_key",
+        lambda *_args, **_kwargs: prompts.append("yes") or True,
+    )
     monkeypatch.setattr(
         dialog_module,
         "prompt_for_cluster_credentials",
@@ -788,9 +839,12 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
     # Generation writes to scratch, never over the installed catalog.
     assert captured[0][1].parent == dialog._generation_scratch_dir
     assert captured[0][1] != managed_keywords_json_path()
-    assert dialog._settings.value(
-        "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm", "", str
-    ) == "ssh-ed25519"
+    assert (
+        dialog._settings.value(
+            "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm", "", str
+        )
+        == "ssh-ed25519"
+    )
     dialog.close()
 
 
@@ -821,7 +875,8 @@ def test_castep_setup_dialog_prefers_a_set_up_cluster_without_a_local_executable
         dialog_module,
         "load_cluster_configs",
         lambda _settings: [
-            replace(config, username="alice") if config.name == "Redwood" else config for config in presets
+            replace(config, username="alice") if config.name == "Redwood" else config
+            for config in presets
         ],
     )
     configured = _FakeSettings()
@@ -857,11 +912,15 @@ def test_castep_setup_dialog_says_which_settings_each_target_uses(qapp) -> None:
     assert dialog._generate_method_combo.isVisible() is True
     assert dialog._generate_method_combo.isEnabled() is True
     assert dialog._generate_method_combo.currentData() == "scheduler"
-    assert hint.text().startswith("Runs CASTEP on SCARF as a short scheduler job, using that cluster's settings")
+    assert hint.text().startswith(
+        "Runs CASTEP on SCARF as a short scheduler job, using that cluster's settings"
+    )
     assert "The paths below are not used." in hint.text()
 
     dialog._generate_method_combo.setCurrentText("Login node")
-    assert hint.text().startswith("Runs CASTEP on SCARF on its login node, using that cluster's settings")
+    assert hint.text().startswith(
+        "Runs CASTEP on SCARF on its login node, using that cluster's settings"
+    )
     assert "Only use this where the site allows CASTEP on its login nodes." in hint.text()
 
     # addqueue clusters can only generate through the scheduler.
@@ -883,7 +942,9 @@ def test_castep_setup_dialog_login_node_choice_is_used_and_remembered(
 
     started: list[str] = []
     monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: [])
-    monkeypatch.setattr(dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda *_args, **_kwargs: None)
     real_validate = dialog_module.validate_cluster_keyword_config
 

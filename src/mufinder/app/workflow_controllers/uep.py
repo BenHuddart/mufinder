@@ -160,9 +160,7 @@ class UepController(WorkflowJobController):
         if definition is None:
             return states
         self.sync_mappings(definition)
-        config = self._deps.deserialize_uep_config(
-            definition.parameters.get("configuration", {})
-        )
+        config = self._deps.deserialize_uep_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states
 
@@ -182,9 +180,7 @@ class UepController(WorkflowJobController):
                 self._deps.uep_potential_grid_result_for_job(job.id) is not None
             )
             states[row.label] = UepRunState(
-                status=(
-                    "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
-                ),
+                status=("ready" if job.status == JobStatus.DEFINED else effective_row_status(job)),
                 total_energy=float(data["total_energy"])
                 if isinstance(data.get("total_energy"), (int, float))
                 else None,
@@ -224,9 +220,7 @@ class UepController(WorkflowJobController):
         if definition is None or not definition.input_structure_ids:
             return []
         self.sync_mappings(definition)
-        config = self._deps.deserialize_uep_config(
-            definition.parameters.get("configuration", {})
-        )
+        config = self._deps.deserialize_uep_config(definition.parameters.get("configuration", {}))
         if config is None:
             return []
         source_structure = document.structures.get(definition.input_structure_ids[0])
@@ -254,9 +248,7 @@ class UepController(WorkflowJobController):
             mapping = {}
             definition.parameters["job_ids_by_label"] = mapping
 
-        spec_by_label = {
-            str(spec.provenance.get("label", "")): spec for spec in expansion.jobs
-        }
+        spec_by_label = {str(spec.provenance.get("label", "")): spec for spec in expansion.jobs}
         created: list[Job] = []
         for label in keys:
             label = str(label)

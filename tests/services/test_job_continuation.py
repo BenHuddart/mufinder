@@ -60,9 +60,7 @@ def test_continuable_statuses_are_wider_than_the_reset_dismiss_set() -> None:
     # continuable, and the reset/dismiss pair stays untouched.
     assert CONTINUABLE_JOB_STATUSES == frozenset(_CONTINUABLE)
     assert TERMINAL_RECOVERABLE_JOB_STATUSES < CONTINUABLE_JOB_STATUSES
-    assert CONTINUABLE_JOB_STATUSES - TERMINAL_RECOVERABLE_JOB_STATUSES == {
-        JobStatus.COMPLETED
-    }
+    assert CONTINUABLE_JOB_STATUSES - TERMINAL_RECOVERABLE_JOB_STATUSES == {JobStatus.COMPLETED}
 
 
 @pytest.mark.parametrize("source", _CONTINUABLE)
@@ -170,9 +168,7 @@ def test_record_job_continuation_appends_provenance(tmp_path: Path) -> None:
     document.jobs[job.id] = job
 
     service.prepare_job_continuation(job)
-    service.record_job_continuation(
-        document, job=job, remote_directory=job.remote_directory
-    )
+    service.record_job_continuation(document, job=job, remote_directory=job.remote_directory)
 
     record = document.provenance[-1]
     assert record.action == "job_continuation"

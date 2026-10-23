@@ -225,7 +225,10 @@ class JobFileCleanup:
             remote = remote_directory(job)
             reason = ""
             if local is not None:
-                if not local.is_relative_to(files_root) or len(local.relative_to(files_root).parts) < 2:
+                if (
+                    not local.is_relative_to(files_root)
+                    or len(local.relative_to(files_root).parts) < 2
+                ):
                     reason = f"its output folder is outside the project's job folders ({local})"
                 elif local.name != seed:
                     reason = f"its output folder is not named after the job ({local})"
@@ -246,7 +249,10 @@ class JobFileCleanup:
                     and other_id not in shared_with
                     and other_remote is not None
                     and other_remote[0] == cluster
-                    and (other_remote[1] == path or other_remote[1].startswith(path.rstrip("/") + "/"))
+                    and (
+                        other_remote[1] == path
+                        or other_remote[1].startswith(path.rstrip("/") + "/")
+                    )
                     for other_id, _other_local, other_remote in others
                 ):
                     reason = f"another job uses the same cluster directory ({path})"
@@ -375,7 +381,9 @@ class JobFileCleanup:
         already taken there gets a numeric suffix.
         """
 
-        archive_folder = (archive_root if archive_root is not None else source.parent) / ARCHIVE_FOLDER_NAME
+        archive_folder = (
+            archive_root if archive_root is not None else source.parent
+        ) / ARCHIVE_FOLDER_NAME
         archive_folder.mkdir(parents=True, exist_ok=True)
         destination = _unique_destination(archive_folder / source.name)
         self._run_file_op(

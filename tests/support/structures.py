@@ -116,9 +116,13 @@ def relaxed_muon_supercell(
     """
 
     counts = [int(value) for value in repeats]
-    lattice = [[float(value) * counts[row] for value in host.lattice_vectors[row]] for row in range(3)]
+    lattice = [
+        [float(value) * counts[row] for value in host.lattice_vectors[row]] for row in range(3)
+    ]
     moves = {
-        tuple(round(float(value) % counts[axis], 6) for axis, value in enumerate(site)): displacement
+        tuple(
+            round(float(value) % counts[axis], 6) for axis, value in enumerate(site)
+        ): displacement
         for site, displacement in (displacements or {}).items()
     }
     species: list[str] = []
@@ -131,7 +135,11 @@ def relaxed_muon_supercell(
                     key = tuple(round(value % counts[axis], 6) for axis, value in enumerate(unit))
                     shift = moves.get(key, (0.0, 0.0, 0.0))
                     cartesian = [
-                        sum(unit[axis] * float(host.lattice_vectors[axis][column]) for axis in range(3)) + shift[column]
+                        sum(
+                            unit[axis] * float(host.lattice_vectors[axis][column])
+                            for axis in range(3)
+                        )
+                        + shift[column]
                         for column in range(3)
                     ]
                     species.append(str(symbol))
@@ -148,4 +156,7 @@ def relaxed_muon_supercell(
 
 
 def _fractional_in(lattice: Sequence[Vector], cartesian: Vector) -> list[float]:
-    return [float(value) % 1.0 for value in np.linalg.solve(np.asarray(lattice, dtype=float).T, cartesian)]
+    return [
+        float(value) % 1.0
+        for value in np.linalg.solve(np.asarray(lattice, dtype=float).T, cartesian)
+    ]

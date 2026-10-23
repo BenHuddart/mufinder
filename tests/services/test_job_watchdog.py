@@ -227,9 +227,7 @@ def test_two_tick_recovery_resets_the_strike() -> None:
     # Third tick: stuck again, but the strike was reset -> still not confirmed.
     assert _evaluate(watchdog, [job]) == []
     # Fourth tick: now two consecutive -> confirmed.
-    assert _evaluate(watchdog, [job]) == [
-        (job, _LOCAL_MESSAGE_TEMPLATE.format(status="running"))
-    ]
+    assert _evaluate(watchdog, [job]) == [(job, _LOCAL_MESSAGE_TEMPLATE.format(status="running"))]
 
 
 def test_forget_drops_pending_strike() -> None:
@@ -239,9 +237,7 @@ def test_forget_drops_pending_strike() -> None:
     watchdog.forget(job.id)
     # Strike forgotten: needs two fresh consecutive hits again.
     assert _evaluate(watchdog, [job]) == []
-    assert _evaluate(watchdog, [job]) == [
-        (job, _LOCAL_MESSAGE_TEMPLATE.format(status="running"))
-    ]
+    assert _evaluate(watchdog, [job]) == [(job, _LOCAL_MESSAGE_TEMPLATE.format(status="running"))]
 
 
 def test_reset_clears_all_pending_strikes() -> None:

@@ -16,7 +16,10 @@ from mufinder.app.workflow_dialogs import (
     run_row_parameter_dialog,
     run_source_configure_dialog,
 )
-from mufinder.app.workflow_parameters import build_workflow_parameter_surface, workflow_basic_parameter_names
+from mufinder.app.workflow_parameters import (
+    build_workflow_parameter_surface,
+    workflow_basic_parameter_names,
+)
 from mufinder.castep_io.schema import KeywordSpec
 from tests.support.structures import host_structure
 
@@ -75,8 +78,12 @@ def test_quantum_corrections_config_dialog_labels_the_farm_count(qapp) -> None:
 
 
 @pytest.mark.parametrize("read_only", [False, True])
-def test_quantum_corrections_config_dialog_locks_everything_or_nothing(qapp, read_only: bool) -> None:
-    dialog = QuantumCorrectionsConfigDialog(specs=_quantum_specs(), num_farms=5, read_only=read_only)
+def test_quantum_corrections_config_dialog_locks_everything_or_nothing(
+    qapp, read_only: bool
+) -> None:
+    dialog = QuantumCorrectionsConfigDialog(
+        specs=_quantum_specs(), num_farms=5, read_only=read_only
+    )
 
     assert dialog._rows["phonon_method"].editor is not None
     assert dialog._rows["phonon_method"].editor.isEnabled() is not read_only
@@ -196,7 +203,10 @@ def test_run_row_parameter_dialog_merges_batch_edit_into_each_row(qapp, monkeypa
     assert dialog.untouched_mixed_names() == {"max_scf_cycles"}
     assert len(sanitized) == 1 and result.values["sanitized"] is True
     # The differing parameter the user left alone stays per row; the edit applies to both.
-    assert {key: values["max_scf_cycles"] for key, values in result.row_values.items()} == {1: 80, 2: 120}
+    assert {key: values["max_scf_cycles"] for key, values in result.row_values.items()} == {
+        1: 80,
+        2: 120,
+    }
     assert {values["xc_functional"] for values in result.row_values.values()} == {"LDA"}
     assert result.row_values[1]["sanitized"] is True
     assert set(result.row_values) == set(result.row_advanced) == {1, 2}
@@ -251,7 +261,9 @@ def test_run_row_parameter_dialog_returns_none_when_cancelled(qapp, monkeypatch)
     sanitized: list[object] = []
     _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
 
-    request = _row_request({1: {"xc_functional": "PBE"}}, sanitize=lambda v: sanitized.append(v) or {})
+    request = _row_request(
+        {1: {"xc_functional": "PBE"}}, sanitize=lambda v: sanitized.append(v) or {}
+    )
 
     assert run_row_parameter_dialog(request) is None
     assert sanitized == []
@@ -277,7 +289,9 @@ def _source_request(*, read_only: bool = False) -> SourceConfigureRequest:
     )
 
 
-def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(qapp, monkeypatch) -> None:
+def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(
+    qapp, monkeypatch
+) -> None:
     opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
     dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections")
 
@@ -293,11 +307,15 @@ def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(qa
     assert result.values == dialog.collect_values()
 
 
-def test_run_source_configure_dialog_returns_nothing_when_cancelled_or_read_only(qapp, monkeypatch) -> None:
+def test_run_source_configure_dialog_returns_nothing_when_cancelled_or_read_only(
+    qapp, monkeypatch
+) -> None:
     _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
     dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections")
     assert run_source_configure_dialog(dialog, _source_request()) is None
 
     _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
-    dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections", read_only=True)
+    dialog = ParameterDialog(
+        specs=_quantum_specs(), workflow_stage="quantum_corrections", read_only=True
+    )
     assert run_source_configure_dialog(dialog, _source_request(read_only=True)) is None

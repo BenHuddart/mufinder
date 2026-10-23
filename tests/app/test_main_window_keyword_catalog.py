@@ -70,7 +70,9 @@ def test_closing_castep_setup_refreshes_the_indicator_even_when_cancelled(
 def test_startup_prompt_delegates_to_the_guard(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
     window = MainWindow()
     prompted: list[bool] = []
-    monkeypatch.setattr(window._keyword_catalog_guard, "prompt_at_startup_if_needed", lambda: prompted.append(True))
+    monkeypatch.setattr(
+        window._keyword_catalog_guard, "prompt_at_startup_if_needed", lambda: prompted.append(True)
+    )
 
     window.prompt_for_keyword_catalog_if_needed()
 

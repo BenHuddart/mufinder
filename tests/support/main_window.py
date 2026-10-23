@@ -118,10 +118,16 @@ def patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
             return ""
 
     monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
-    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [CONTINUATION_CLUSTER])
-    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: CONTINUATION_CLUSTER)
+    monkeypatch.setattr(
+        main_window_module, "load_cluster_configs", lambda _settings: [CONTINUATION_CLUSTER]
+    )
+    monkeypatch.setattr(
+        main_window_module, "load_cluster_config", lambda _settings, _name: CONTINUATION_CLUSTER
+    )
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
 
 def add_cluster_input_job(service: ProjectService, doc, label: str) -> Job:
@@ -140,7 +146,9 @@ def add_cluster_input_job(service: ProjectService, doc, label: str) -> Job:
     )
     job_dir = doc.project_root / "files" / "convergence_cutoff" / label
     job_dir.mkdir(parents=True, exist_ok=True)
-    (job_dir / f"{label}.cell").write_text("%BLOCK LATTICE_CART\n%ENDBLOCK LATTICE_CART\n", encoding="utf-8")
+    (job_dir / f"{label}.cell").write_text(
+        "%BLOCK LATTICE_CART\n%ENDBLOCK LATTICE_CART\n", encoding="utf-8"
+    )
     (job_dir / f"{label}.param").write_text("TASK : GEOMETRYOPTIMIZATION\n", encoding="utf-8")
     return job
 
@@ -154,7 +162,9 @@ def patch_continuation_cluster_runner(
     """Patch the SSH-facing runner calls and record what the flow asked for."""
 
     recorded: dict[str, list] = {"checked": [], "deleted": [], "submitted": []}
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -210,7 +220,9 @@ def stage_quantum_row(
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -235,7 +247,9 @@ def stage_quantum_row(
             calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
         )
         singlepoint_job.status = singlepoint_status
-        definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
+        definition.parameters["singlepoint_job_ids_by_label"] = {
+            str(site.id): str(singlepoint_job.id)
+        }
 
     candidate = window._quantum_corrections_controller.candidate_by_key(str(site.id))
     assert candidate is not None

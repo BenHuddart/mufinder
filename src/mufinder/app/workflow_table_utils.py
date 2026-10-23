@@ -264,7 +264,9 @@ def create_workflow_table(
     table.horizontalHeader().setSectionResizeMode(default_resize_mode)
     for column in resize_to_contents_columns:
         if 0 <= column < len(headers):
-            table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeMode.ResizeToContents
+            )
     table.horizontalHeader().setStretchLastSection(stretch_last_section)
     if corner_style == "tabbed":
         use_tabbed_table_corners(table)
@@ -352,9 +354,7 @@ def add_reset_failed_action(
         RESET_FAILED_ACTION_TEXT + partial_count_suffix(len(keys), selected_count)
     )
     action.setEnabled(bool(keys))
-    action.triggered.connect(
-        lambda _checked=False, selected=list(keys): emit_reset(list(selected))
-    )
+    action.triggered.connect(lambda _checked=False, selected=list(keys): emit_reset(list(selected)))
     return action
 
 
@@ -911,7 +911,9 @@ class SupercellColumn:
         self.options = parsed
 
     def set_host_lattice(self, lattice_vectors: Sequence[Sequence[float]] | None) -> None:
-        self.host_lattice = [list(row) for row in lattice_vectors] if lattice_vectors is not None else None
+        self.host_lattice = (
+            [list(row) for row in lattice_vectors] if lattice_vectors is not None else None
+        )
 
     def set_kpoint_reference(
         self,
@@ -930,7 +932,9 @@ class SupercellColumn:
         combo.selection_snapshot_key = row_id
         self.populate_combo(combo, row_id)
         combo.currentIndexChanged.connect(
-            lambda _index, table=table, combo=combo, row_id=row_id: self._on_combo_changed(table, combo, row_id)
+            lambda _index, table=table, combo=combo, row_id=row_id: self._on_combo_changed(
+                table, combo, row_id
+            )
         )
         return combo
 
@@ -986,7 +990,11 @@ class SupercellColumn:
     def kpoint_adjustment_text(self, row_id: int) -> str:
         """Describe how the row's supercell changes the project grid ("" when it does not)."""
 
-        if self.matrices.get(row_id) is None or self.reference_grid is None or self.host_lattice is None:
+        if (
+            self.matrices.get(row_id) is None
+            or self.reference_grid is None
+            or self.host_lattice is None
+        ):
             return ""
         suggested = self.suggested_grid(row_id)
         if suggested is None or suggested == self.reference_grid:
@@ -1011,7 +1019,9 @@ class SupercellColumn:
         key = getattr(table.cellWidget(row, self._column), "selection_snapshot_key", None)
         return key if isinstance(key, int) else None
 
-    def _on_combo_changed(self, table: QTableWidget, combo: SelectionSnapshotComboBox, row_id: int) -> None:
+    def _on_combo_changed(
+        self, table: QTableWidget, combo: SelectionSnapshotComboBox, row_id: int
+    ) -> None:
         if row_id not in self.matrices:
             return
         data = combo.currentData()

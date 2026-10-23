@@ -41,6 +41,7 @@ rather than padding them.
 - `make test` — <N> passed
 - Coverage <X>% (≥ 85%)
 - `make docs` — clean
+- `make lint` — clean (ruff check and ruff format --check)
 - Docs updated alongside behaviour (the change is incomplete otherwise)
 - No new `_on_submit_*` / `_materialize_*` handlers on `MainWindow` (harness ratchet)
 - `docs/compatibility_policy.rst` checked for any renamed/removed persisted name

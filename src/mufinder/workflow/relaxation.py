@@ -39,7 +39,11 @@ def _task_param_template() -> ParamTemplate:
 def _cell_base_template(config: RelaxationJobConfig) -> CellTemplate:
     scalars = [KeywordAssignment("fix_all_cell", bool(config.fix_all_cell))]
     return CellTemplate(
-        kpoint_mp_grid=(tuple(int(value) for value in config.kpoint_grid) if config.kpoint_grid is not None else None),
+        kpoint_mp_grid=(
+            tuple(int(value) for value in config.kpoint_grid)
+            if config.kpoint_grid is not None
+            else None
+        ),
         extra_scalars=tuple(scalars),
     )
 

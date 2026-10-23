@@ -118,10 +118,7 @@ NON_APP_LAYER_PACKAGES = ("domain", "castep_io", "persistence", "science", "work
 # Coverage-companion test files that exist today. Coverage gaps are closed by
 # behaviour tests in the module's own test file (AGENTS.md, Tests), so this
 # list may only shrink as the files are merged into their siblings.
-PINNED_COVERAGE_TEST_FILES = frozenset(
-    {
-    }
-)
+PINNED_COVERAGE_TEST_FILES = frozenset({})
 
 
 def _python_files(package: str) -> list[Path]:
@@ -134,9 +131,7 @@ def _main_window_submit_handler_methods() -> set[str]:
     path = SOURCE_ROOT / "app" / "main_window.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     main_window = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
     )
     return {
         member.name
@@ -154,6 +149,7 @@ def _imports_figure_canvas(path: Path) -> bool:
         and any(alias.name == "FigureCanvasQTAgg" for alias in node.names)
         for node in ast.walk(tree)
     )
+
 
 def _mufinder_import_layers(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -326,6 +322,7 @@ def test_direct_figure_canvas_modules_do_not_grow() -> None:
         "PINNED_DIRECT_FIGURE_CANVAS_MODULES."
     )
 
+
 def test_pull_request_template_is_discoverable_by_agents() -> None:
     """Guard the PR template and the pointers agents rely on to find it.
 
@@ -337,9 +334,7 @@ def test_pull_request_template_is_discoverable_by_agents() -> None:
     """
 
     template = (PROJECT_ROOT / PR_TEMPLATE_PATH).read_text(encoding="utf-8")
-    missing_sections = [
-        section for section in PR_TEMPLATE_SECTIONS if section not in template
-    ]
+    missing_sections = [section for section in PR_TEMPLATE_SECTIONS if section not in template]
     assert not missing_sections, (
         f"{PR_TEMPLATE_PATH} is missing section heading(s): {missing_sections}"
     )
@@ -369,7 +364,6 @@ def test_repository_does_not_track_python_bytecode_artifacts() -> None:
         if "/__pycache__/" in line or line.endswith((".pyc", ".pyo"))
     )
     assert not tracked_bytecode, "\n".join(tracked_bytecode)
-
 
 
 def _private_method_names(path: Path) -> set[str]:
@@ -462,9 +456,7 @@ def test_qt_widgets_are_only_imported_by_the_app_layer() -> None:
                 rel_path = path.relative_to(PROJECT_ROOT)
                 violations.append(f"{rel_path}: imports {', '.join(offending)}")
 
-    assert not violations, (
-        "Qt widget/GUI imports outside mufinder.app:\n" + "\n".join(violations)
-    )
+    assert not violations, "Qt widget/GUI imports outside mufinder.app:\n" + "\n".join(violations)
 
 
 def test_coverage_companion_test_files_do_not_grow() -> None:
@@ -480,6 +472,4 @@ def test_coverage_companion_test_files_do_not_grow() -> None:
         "behaviour tests in the module's own test file instead."
     )
     merged_files = sorted(PINNED_COVERAGE_TEST_FILES - actual)
-    assert not merged_files, (
-        f"{merged_files} no longer exist. Shrink PINNED_COVERAGE_TEST_FILES."
-    )
+    assert not merged_files, f"{merged_files} no longer exist. Shrink PINNED_COVERAGE_TEST_FILES."

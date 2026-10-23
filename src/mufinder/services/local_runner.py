@@ -264,7 +264,9 @@ class LocalJobRunner(QObject):
                 .decode("utf-8", errors="replace")
                 .strip()
             )
-            self._fail(job_id, stderr or active.process_error or f"Process exited with code {exit_code}.")
+            self._fail(
+                job_id, stderr or active.process_error or f"Process exited with code {exit_code}."
+            )
             return
 
         output_path = self._primary_output_path(request)
@@ -279,7 +281,9 @@ class LocalJobRunner(QObject):
             return
 
         if not result.completed:
-            self._fail(job_id, result.error_message or "CASTEP did not report successful completion.")
+            self._fail(
+                job_id, result.error_message or "CASTEP did not report successful completion."
+            )
             return
 
         # Parse the secondary outputs (relaxed cell / phonon / transition state)

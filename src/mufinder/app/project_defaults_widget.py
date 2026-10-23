@@ -155,9 +155,7 @@ def _convergence_detail(
                 stress_threshold=stress_threshold,
             )
         )
-    parts.append(
-        f"converged with {xc_functional}" if xc_functional else "functional not recorded"
-    )
+    parts.append(f"converged with {xc_functional}" if xc_functional else "functional not recorded")
     return " \N{MIDDLE DOT} ".join(parts)
 
 

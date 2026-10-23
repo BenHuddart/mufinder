@@ -41,7 +41,9 @@ def final_configuration(castep: Path) -> tuple[list[list[float]], list[str], lis
 
     lines = castep.read_text(encoding="utf-8").splitlines()
     start = max(index for index, line in enumerate(lines) if "Final Configuration" in line)
-    lattice_row = next(index for index in range(start, len(lines)) if "Real Lattice" in lines[index]) + 1
+    lattice_row = (
+        next(index for index in range(start, len(lines)) if "Real Lattice" in lines[index]) + 1
+    )
     lattice = [[float(value) for value in lines[lattice_row + row].split()[:3]] for row in range(3)]
     atom = re.compile(r"^\s*x\s+([A-Za-z][\w:]*)\s+\d+\s+(\S+)\s+(\S+)\s+(\S+)\s+x\s*$")
     species: list[str] = []
@@ -96,7 +98,9 @@ def _forces_block(species: Sequence[str], magnitude: float) -> list[str]:
         direction = np.array([np.sin(1.7 * index), np.cos(2.3 * index), -np.sin(0.9 * index)])
         weight = 1.0 if index == 1 else 0.4 + 0.5 * abs(np.sin(1.3 * index))
         force = magnitude * weight * direction / np.linalg.norm(direction)
-        rows.append(f" * {symbol:<15}{index:<d}{force[0]:13.5f}{force[1]:21.5f}{force[2]:21.5f}         *")
+        rows.append(
+            f" * {symbol:<15}{index:<d}{force[0]:13.5f}{force[1]:21.5f}{force[2]:21.5f}         *"
+        )
     border = " " + "*" * 84
     return [
         " ************************************** Forces **************************************",
@@ -129,7 +133,10 @@ def _energy_profile(initial: float, final: float, iterations: int, last_step: fl
         middle = 0.5 * (low + high)
         low, high = (middle, high) if last_drop(middle) < last_step else (low, middle)
     q = 0.5 * (low + high)
-    return [final + span * (q**step - q**iterations) / (1.0 - q**iterations) for step in range(iterations + 1)]
+    return [
+        final + span * (q**step - q**iterations) / (1.0 - q**iterations)
+        for step in range(iterations + 1)
+    ]
 
 
 def bfgs_log_text(
@@ -172,10 +179,17 @@ def bfgs_log_text(
     if iterations > max_iterations:
         raise ValueError(f"{iterations} iterations exceed max_iterations = {max_iterations}")
     if finished and final_force > force_tolerance:
-        raise ValueError(f"final_force {final_force} does not meet force_tolerance {force_tolerance}")
+        raise ValueError(
+            f"final_force {final_force} does not meet force_tolerance {force_tolerance}"
+        )
     count = len(species)
-    enthalpies = _energy_profile(initial_enthalpy, final_enthalpy, iterations, 0.5 * energy_tolerance * count)
-    forces = [initial_force * (final_force / initial_force) ** (step / iterations) for step in range(iterations + 1)]
+    enthalpies = _energy_profile(
+        initial_enthalpy, final_enthalpy, iterations, 0.5 * energy_tolerance * count
+    )
+    forces = [
+        initial_force * (final_force / initial_force) ** (step / iterations)
+        for step in range(iterations + 1)
+    ]
 
     def row(name: str, value: float, tolerance: float, unit: str, *, first: bool = False) -> str:
         # Iteration 0 has no previous step, so CASTEP reports its energy
@@ -278,18 +292,34 @@ def _phonon_header(cell: Any, modes: Sequence[tuple[float, np.ndarray]]) -> list
         " Number of wavevectors  1",
         " Frequencies in         cm-1",
         " Unit cell vectors (A)",
-        *(f" {row[0]:12.6f}{row[1]:12.6f}{row[2]:12.6f}" for row in np.asarray(cell.lattice_vectors, dtype=float)),
+        *(
+            f" {row[0]:12.6f}{row[1]:12.6f}{row[2]:12.6f}"
+            for row in np.asarray(cell.lattice_vectors, dtype=float)
+        ),
         " Fractional Co-ordinates",
     ]
-    for index, (symbol, position) in enumerate(zip(species, cell.fractional_positions, strict=True), start=1):
+    for index, (symbol, position) in enumerate(
+        zip(species, cell.fractional_positions, strict=True), start=1
+    ):
         mass = MUON_MASS_AMU if symbol == "H:mu" else _MASSES_AMU[symbol]
-        lines.append(f" {index:5d} {position[0]:12.6f}{position[1]:12.6f}{position[2]:12.6f}   {symbol:<8}{mass:12.6f}")
+        lines.append(
+            f" {index:5d} {position[0]:12.6f}{position[1]:12.6f}{position[2]:12.6f}   {symbol:<8}{mass:12.6f}"
+        )
     lines += [" END header", "     q-pt=    1    0.000000  0.000000  0.000000      1.0000000000"]
-    lines += [f" {number:7d} {frequency:14.6f}" for number, (frequency, _vector) in enumerate(modes, start=1)]
-    lines += ["                        Phonon Eigenvectors", "Mode Ion                X                                   Y                                   Z"]
+    lines += [
+        f" {number:7d} {frequency:14.6f}"
+        for number, (frequency, _vector) in enumerate(modes, start=1)
+    ]
+    lines += [
+        "                        Phonon Eigenvectors",
+        "Mode Ion                X                                   Y                                   Z",
+    ]
     for number, (_frequency, vector) in enumerate(modes, start=1):
         for atom in range(count):
-            lines.append(f" {number:3d} {atom + 1:3d}" + "".join(f" {value:15.12f} {0.0:15.12f}" for value in vector[atom]))
+            lines.append(
+                f" {number:3d} {atom + 1:3d}"
+                + "".join(f" {value:15.12f} {0.0:15.12f}" for value in vector[atom])
+            )
     return lines
 
 
@@ -390,7 +420,9 @@ def _muon_frame(cell: Any) -> tuple[np.ndarray, np.ndarray, list[str], int, np.n
     return lattice, fractional, species, muon, vectors
 
 
-def _diatomic_molecules(lattice: np.ndarray, fractional: np.ndarray, atoms: Sequence[int]) -> list[tuple[int, int]]:
+def _diatomic_molecules(
+    lattice: np.ndarray, fractional: np.ndarray, atoms: Sequence[int]
+) -> list[tuple[int, int]]:
     """``atoms`` paired with their nearest neighbours into molecules; a ``ValueError`` if they do not pair."""
 
     pairs: set[tuple[int, int]] = set()
@@ -404,7 +436,9 @@ def _diatomic_molecules(lattice: np.ndarray, fractional: np.ndarray, atoms: Sequ
     return sorted(pairs)
 
 
-def _molecule_atoms(lattice: np.ndarray, fractional: np.ndarray, vectors: np.ndarray, molecule: tuple[int, int]) -> np.ndarray:
+def _molecule_atoms(
+    lattice: np.ndarray, fractional: np.ndarray, vectors: np.ndarray, molecule: tuple[int, int]
+) -> np.ndarray:
     """The two atoms of ``molecule`` as vectors (Å) from the muon, the second its own nearest image of the first."""
 
     first, second = molecule
@@ -412,15 +446,24 @@ def _molecule_atoms(lattice: np.ndarray, fractional: np.ndarray, vectors: np.nda
     return np.array([vectors[first], vectors[first] + bond])
 
 
-def _bridged_pair(cell: Any) -> tuple[np.ndarray, np.ndarray, list[str], int, np.ndarray, list[tuple[int, int]], list[tuple[int, int]]]:
+def _bridged_pair(
+    cell: Any,
+) -> tuple[
+    np.ndarray, np.ndarray, list[str], int, np.ndarray, list[tuple[int, int]], list[tuple[int, int]]
+]:
     """The muon frame, every molecule, and the two molecules whose centres are nearest the muon.
 
     Each of the two is ordered (near atom, far atom) from the muon.
     """
 
     lattice, fractional, species, muon, vectors = _muon_frame(cell)
-    molecules = _diatomic_molecules(lattice, fractional, [atom for atom in range(len(species)) if atom != muon])
-    centres = [np.linalg.norm(_molecule_atoms(lattice, fractional, vectors, molecule).mean(axis=0)) for molecule in molecules]
+    molecules = _diatomic_molecules(
+        lattice, fractional, [atom for atom in range(len(species)) if atom != muon]
+    )
+    centres = [
+        np.linalg.norm(_molecule_atoms(lattice, fractional, vectors, molecule).mean(axis=0))
+        for molecule in molecules
+    ]
     nearest = [molecules[index] for index in np.argsort(centres, kind="stable")[:2]]
     ordered = []
     for first, second in nearest:
@@ -467,7 +510,9 @@ def bridged_diatomic_cell(
         centre = atoms.mean(axis=0)
         distance = float(np.linalg.norm(centre))
         if distance < neighbour_radius:
-            for atom, vector in zip(molecule, atoms - neighbour_shift * centre / distance, strict=True):
+            for atom, vector in zip(
+                molecule, atoms - neighbour_shift * centre / distance, strict=True
+            ):
                 place(atom, vector)
     return moved.tolist()
 
@@ -485,7 +530,9 @@ N2_MU_N2_SPRINGS: dict[str, float] = {
 }
 
 
-def _chain_block_modes(masses: np.ndarray, muon_spring: float, molecule_spring: float, tether: float) -> tuple[np.ndarray, np.ndarray]:
+def _chain_block_modes(
+    masses: np.ndarray, muon_spring: float, molecule_spring: float, tether: float
+) -> tuple[np.ndarray, np.ndarray]:
     """Frequencies (cm^-1) and mass-weighted eigenvectors (columns) of one Cartesian block of the chain.
 
     The chain is far atom, near atom, muon, near atom, far atom: a muon spring
@@ -494,10 +541,19 @@ def _chain_block_modes(masses: np.ndarray, muon_spring: float, molecule_spring: 
     its largest one, where the muon is at rest) is made positive.
     """
 
-    from mufinder.science.quantum_phonons import ATOMIC_MASS_KG, ELEMENTARY_CHARGE_C, LIGHT_SPEED_M_S
+    from mufinder.science.quantum_phonons import (
+        ATOMIC_MASS_KG,
+        ELEMENTARY_CHARGE_C,
+        LIGHT_SPEED_M_S,
+    )
 
     hessian = np.zeros((5, 5))
-    for i, j, spring in ((0, 1, molecule_spring), (1, 2, muon_spring), (2, 3, muon_spring), (3, 4, molecule_spring)):
+    for i, j, spring in (
+        (0, 1, molecule_spring),
+        (1, 2, muon_spring),
+        (2, 3, muon_spring),
+        (3, 4, molecule_spring),
+    ):
         hessian[[i, j], [i, j]] += spring
         hessian[i, j] -= spring
         hessian[j, i] -= spring
@@ -505,7 +561,9 @@ def _chain_block_modes(masses: np.ndarray, muon_spring: float, molecule_spring: 
         hessian[atom, atom] += tether
     inverse_root = 1.0 / np.sqrt(masses)
     eigenvalues, eigenvectors = np.linalg.eigh(hessian * np.outer(inverse_root, inverse_root))
-    angular = np.sqrt(np.clip(eigenvalues, 0.0, None)) * np.sqrt(ELEMENTARY_CHARGE_C / (1e-20 * ATOMIC_MASS_KG))
+    angular = np.sqrt(np.clip(eigenvalues, 0.0, None)) * np.sqrt(
+        ELEMENTARY_CHARGE_C / (1e-20 * ATOMIC_MASS_KG)
+    )
     for column in range(5):
         vector = eigenvectors[:, column]
         pivot = 2 if abs(vector[2]) > 1e-9 else int(np.argmax(np.abs(vector)))
@@ -574,9 +632,18 @@ def bridged_diatomic_phonon_text(
         (across[1], springs["muon_nitrogen_bend"], springs["nitrogen_bend"]),
     )
     for direction, muon_spring, molecule_spring in blocks:
-        frequencies, eigenvectors = _chain_block_modes(masses, muon_spring, molecule_spring, springs["nitrogen_lattice"])
+        frequencies, eigenvectors = _chain_block_modes(
+            masses, muon_spring, molecule_spring, springs["nitrogen_lattice"]
+        )
         for frequency, column in zip(frequencies, eigenvectors.T, strict=True):
-            modes.append((float(frequency), vector_of({atom: value * direction for atom, value in zip(chain, column, strict=True)})))
+            modes.append(
+                (
+                    float(frequency),
+                    vector_of(
+                        {atom: value * direction for atom, value in zip(chain, column, strict=True)}
+                    ),
+                )
+            )
 
     others = [molecule for molecule in molecules if not set(molecule) & set(chain)]
     stretch = np.linspace(*stretch_band_cm, len(others))
@@ -588,9 +655,19 @@ def bridged_diatomic_phonon_text(
         bond /= np.linalg.norm(bond)
         modes.append((float(stretch[index]), vector_of({first: -half * bond, second: half * bond})))
         for turn, normal in enumerate(_perpendicular_pair(bond, lattice)):
-            modes.append((float(libration[2 * index + turn]), vector_of({first: -half * normal, second: half * normal})))
+            modes.append(
+                (
+                    float(libration[2 * index + turn]),
+                    vector_of({first: -half * normal, second: half * normal}),
+                )
+            )
         for shift, direction in enumerate(np.eye(3)):
-            modes.append((float(translation[3 * index + shift]), vector_of({first: half * direction, second: half * direction})))
+            modes.append(
+                (
+                    float(translation[3 * index + shift]),
+                    vector_of({first: half * direction, second: half * direction}),
+                )
+            )
     modes.sort(key=lambda entry: entry[0])
     return "\n".join(_phonon_header(cell, modes)) + "\n"
 
@@ -626,7 +703,9 @@ def den_fmt_text(
             coefficients += electrons * phase * np.exp(-0.5 * width**2 * g_squared)
     density = np.real(np.fft.ifftn(coefficients)) * np.prod(grid)
     if density.min() <= 0.0:
-        raise ValueError("The Gaussian widths are too narrow for the grid: the density goes negative")
+        raise ValueError(
+            "The Gaussian widths are too narrow for the grid: the density goes negative"
+        )
 
     lines = [
         " BEGIN header",
@@ -745,7 +824,9 @@ def uep_castep_text(
     return "\n".join(lines) + "\n"
 
 
-def legacy_castep_text(*, energy: float, converged: bool, cut_off_ev: float, spin_polarized: bool) -> str:
+def legacy_castep_text(
+    *, energy: float, converged: bool, cut_off_ev: float, spin_polarized: bool
+) -> str:
     """A legacy run's CASTEP output: the header lines the importer reads and the result."""
 
     tail = " Geometry optimization completed successfully.\n\n" if converged else ""

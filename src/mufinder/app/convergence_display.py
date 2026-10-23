@@ -41,9 +41,7 @@ def format_convergence_criteria(
         else "dE <= n/a"
     )
     force_text = (
-        f"dF <= {float(force_threshold):.6g} eV/Ang"
-        if force_threshold is not None
-        else "dF <= n/a"
+        f"dF <= {float(force_threshold):.6g} eV/Ang" if force_threshold is not None else "dF <= n/a"
     )
     parts = [energy_text, force_text]
     if stress_threshold is not None:

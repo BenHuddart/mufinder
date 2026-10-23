@@ -162,11 +162,12 @@ def structure_from_phonon_calculation(
     return Structure(
         label=label,
         origin="phonon",
-        lattice_vectors=[[float(value) for value in vector] for vector in calculation.lattice_vectors],
+        lattice_vectors=[
+            [float(value) for value in vector] for vector in calculation.lattice_vectors
+        ],
         species=[str(atom.species) for atom in calculation.atoms],
         fractional_positions=[
-            [float(value) for value in atom.fractional_coordinates]
-            for atom in calculation.atoms
+            [float(value) for value in atom.fractional_coordinates] for atom in calculation.atoms
         ],
         properties={"pbc": [True, True, True]},
     )
@@ -197,7 +198,9 @@ def real_mode_displacements(
     gamma = calculation.gamma_point()
     zero_based_mode_index = int(mode_index) - 1
     if zero_based_mode_index < 0 or zero_based_mode_index >= len(gamma.frequencies_cm):
-        raise PhononParseError(f"Mode index {mode_index} is not present in the Gamma-point phonon data.")
+        raise PhononParseError(
+            f"Mode index {mode_index} is not present in the Gamma-point phonon data."
+        )
 
     mode_vectors = np.asarray(gamma.eigenvectors[zero_based_mode_index, :, :], dtype=complex)
     if mode_vectors.shape != (len(calculation.atoms), 3):
@@ -259,7 +262,9 @@ def select_muon_modes(
     if count <= 0:
         raise ValueError("At least one muon mode must be selected.")
     gamma = calculation.gamma_point()
-    participation = np.asarray(muon_mode_participations(calculation, muon_species=muon_species), dtype=float)
+    participation = np.asarray(
+        muon_mode_participations(calculation, muon_species=muon_species), dtype=float
+    )
     selected = np.argsort(participation)[-count:]
     frequencies = np.asarray(gamma.frequencies_cm, dtype=float)
     selected = selected[np.argsort(frequencies[selected])]
@@ -413,7 +418,9 @@ def w1_entanglement_witness(calculation: PhononCalculation, *, muon_species: str
     return float(sum(mode.participation for mode in modes) - 3.0)
 
 
-def w2_entanglement_witness(calculation: PhononCalculation, atom_a_index: int, atom_b_index: int) -> float:
+def w2_entanglement_witness(
+    calculation: PhononCalculation, atom_a_index: int, atom_b_index: int
+) -> float:
     """Return the legacy trace-normalized ``w2`` covariance witness."""
 
     cov_ab = np.trace(covariance_matrix(calculation, atom_a_index, atom_b_index))
@@ -517,7 +524,11 @@ def _parse_qpoints(lines: list[str], *, n_atoms: int) -> list[PhononQPoint]:
         rows_seen = 0
         while index < len(lines) and not lines[index].strip().startswith("q-pt="):
             parts = lines[index].split()
-            if len(parts) >= 8 and parts[0].lstrip("+-").isdigit() and parts[1].lstrip("+-").isdigit():
+            if (
+                len(parts) >= 8
+                and parts[0].lstrip("+-").isdigit()
+                and parts[1].lstrip("+-").isdigit()
+            ):
                 mode = int(parts[0]) - 1
                 atom = int(parts[1]) - 1
                 if 0 <= mode < len(frequencies) and 0 <= atom < n_atoms:
@@ -573,11 +584,15 @@ def _weighted_displacement_vectors(
     angular = 2.0 * pi * LIGHT_SPEED_M_S * 100.0 * frequencies
     factor = np.zeros_like(frequencies, dtype=complex)
     # The zero-point amplitude sqrt(hbar / (2 m omega)) of each mode, in Å.
-    factor[positive] = 1e10 * np.sqrt(HBAR_J_S / (2.0 * ATOMIC_MASS_KG * atom.mass_amu * angular[positive]))
+    factor[positive] = 1e10 * np.sqrt(
+        HBAR_J_S / (2.0 * ATOMIC_MASS_KG * atom.mass_amu * angular[positive])
+    )
     if temperature_K > 0.0:
         thermal = np.ones_like(frequencies, dtype=float)
         argument = HBAR_J_S * angular[positive] / (2.0 * BOLTZMANN_J_K * temperature_K)
         thermal[positive] = np.sqrt(1.0 / np.tanh(argument))
         factor *= thermal
-    phases = np.exp(1j * np.dot(np.asarray(qpoint.q_vector), np.asarray(atom.fractional_coordinates)))
+    phases = np.exp(
+        1j * np.dot(np.asarray(qpoint.q_vector), np.asarray(atom.fractional_coordinates))
+    )
     return vectors * (phases * factor)[:, None]

@@ -38,8 +38,12 @@ def build_background(output_path: Path) -> None:
 
     title_font = _load_font(28)
     subtitle_font = _load_font(18)
-    draw.rounded_rectangle((48, 96, 208, 256), radius=28, fill="#fff9f2", outline="#d7c6af", width=3)
-    draw.rounded_rectangle((432, 96, 592, 256), radius=28, fill="#fff9f2", outline="#d7c6af", width=3)
+    draw.rounded_rectangle(
+        (48, 96, 208, 256), radius=28, fill="#fff9f2", outline="#d7c6af", width=3
+    )
+    draw.rounded_rectangle(
+        (432, 96, 592, 256), radius=28, fill="#fff9f2", outline="#d7c6af", width=3
+    )
     draw.text((60, 36), "Install MuFinder", fill="#2c2418", font=title_font)
     draw.text((60, 72), "Drag the app into Applications", fill="#7a6b59", font=subtitle_font)
 

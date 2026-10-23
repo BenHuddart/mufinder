@@ -361,7 +361,9 @@ def remote_error_file_names(
             names.append(name)
     if safe_job_id:
         scheduler_outputs = sorted(
-            str(name) for name in entries if re.fullmatch(rf".*-{re.escape(job_id)}\.out", str(name))
+            str(name)
+            for name in entries
+            if re.fullmatch(rf".*-{re.escape(job_id)}\.out", str(name))
         )
         for name in scheduler_outputs:
             if name not in names:

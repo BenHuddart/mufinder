@@ -394,9 +394,13 @@ def test_cluster_setup_save_skips_duplicate_names_and_fills_defaults() -> None:
     save_cluster_configs(
         settings,
         [
-            ClusterConfig(name="alpha", hostname="alpha.example", default_walltime="", queue_system="SLURM"),
+            ClusterConfig(
+                name="alpha", hostname="alpha.example", default_walltime="", queue_system="SLURM"
+            ),
             ClusterConfig(name="alpha", hostname="duplicate.example"),
-            ClusterConfig(name="beta", hostname="beta.example", queue_system="ADDQUEUE", default_memory_gb=0),
+            ClusterConfig(
+                name="beta", hostname="beta.example", queue_system="ADDQUEUE", default_memory_gb=0
+            ),
         ],
     )
 

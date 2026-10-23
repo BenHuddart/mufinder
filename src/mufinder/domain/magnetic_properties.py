@@ -81,7 +81,9 @@ def atomic_spins_from_magnetic_moments(
     return spins if saw_numeric else None
 
 
-def atomic_spins_from_structure(structure: Structure, *, atom_count: int | None = None) -> list[float] | None:
+def atomic_spins_from_structure(
+    structure: Structure, *, atom_count: int | None = None
+) -> list[float] | None:
     """Return spins derived from ``structure.properties["magnetic_structure"]``.
 
     ``atom_count`` defaults to the number of species. Moments are placed in list
@@ -97,7 +99,9 @@ def atomic_spins_from_structure(structure: Structure, *, atom_count: int | None 
     return atomic_spins_from_magnetic_moments(magnetic, atom_count=count, honour_atom_index=False)
 
 
-def propagation_vector_from_structure(structure: Structure, *, strict: bool = False) -> tuple[float, float, float]:
+def propagation_vector_from_structure(
+    structure: Structure, *, strict: bool = False
+) -> tuple[float, float, float]:
     """Return the structure's propagation vector in reciprocal-lattice units.
 
     The top-level ``propagation_vector`` property wins; otherwise the one inside

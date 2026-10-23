@@ -31,7 +31,9 @@ from mufinder.domain.models import Structure
 from tests.support.structures import host_structure
 
 
-def _relaxed_site(host: Structure, fractional: tuple[float, float, float], energy: float) -> RelaxedMuonSite:
+def _relaxed_site(
+    host: Structure, fractional: tuple[float, float, float], energy: float
+) -> RelaxedMuonSite:
     return RelaxedMuonSite(
         job_id=uuid4(),
         job_label="Site A",
@@ -181,7 +183,10 @@ def test_relaxation_analysis_add_dialog_shows_relative_energies(qapp) -> None:
         reference_job_ids={included_id},
     )
 
-    assert dialog._table.horizontalHeaderItem(dialog._ENERGY_COLUMN).text() == "dE vs workspace min (eV)"
+    assert (
+        dialog._table.horizontalHeaderItem(dialog._ENERGY_COLUMN).text()
+        == "dE vs workspace min (eV)"
+    )
     assert dialog._table.item(0, dialog._ENERGY_COLUMN).text() == "0.00000"
     assert dialog._table.item(1, dialog._ENERGY_COLUMN).text() == "-0.25000"
 
@@ -233,7 +238,11 @@ def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> No
 
     axis = dialog._graph_figure.axes[0]
     nodes = [patch for patch in axis.patches if patch.get_gid() == GRAPH_NODE_GID]
-    fills = [patch for patch in axis.patches if isinstance(patch, Circle) and patch.get_gid() != GRAPH_NODE_GID]
+    fills = [
+        patch
+        for patch in axis.patches
+        if isinstance(patch, Circle) and patch.get_gid() != GRAPH_NODE_GID
+    ]
     node_labels = [patch for patch in axis.patches if isinstance(patch, PathPatch)]
 
     assert axis.get_title() == ""
@@ -249,7 +258,9 @@ def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> No
     # connected pair, and opaque for a sparse component like this one.
     result, _layouts = dialog._graph_layouts
     edge_count = int(np.triu(np.asarray(result.adjacency_matrix), k=1).sum())
-    edge_collections = [collection for collection in axis.collections if isinstance(collection, PolyCollection)]
+    edge_collections = [
+        collection for collection in axis.collections if isinstance(collection, PolyCollection)
+    ]
     assert edge_count > 0
     assert sum(len(collection.get_paths()) for collection in edge_collections) == edge_count
     assert all(collection.get_alpha() in (None, 1.0) for collection in edge_collections)
@@ -355,9 +366,7 @@ def test_displacement_plot_uses_transparent_surround_species_colours_and_boxed_l
     axis = dialog._figure.axes[0]
     legend = axis.get_legend()
     fe_collection = next(
-        collection
-        for collection in axis.collections
-        if collection.get_label() == "Fe"
+        collection for collection in axis.collections if collection.get_label() == "Fe"
     )
 
     assert dialog._figure.get_facecolor()[3] == 0.0
@@ -366,12 +375,16 @@ def test_displacement_plot_uses_transparent_surround_species_colours_and_boxed_l
     assert legend is not None
     assert legend.get_frame().get_visible()
     assert legend.get_bbox_to_anchor().x0 > axis.bbox.x1
-    assert mcolors.to_hex(fe_collection.get_facecolors()[0]) == mcolors.to_hex(jmol_colors[atomic_numbers["Fe"]])
+    assert mcolors.to_hex(fe_collection.get_facecolors()[0]) == mcolors.to_hex(
+        jmol_colors[atomic_numbers["Fe"]]
+    )
 
     dialog.close()
 
 
-def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_contains_one(qapp) -> None:
+def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_contains_one(
+    qapp,
+) -> None:
     comparison_id = uuid4()
     relaxed_id = uuid4()
     comparison = Structure(
@@ -417,7 +430,9 @@ def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_c
     dialog.close()
 
 
-def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp, monkeypatch) -> None:
+def test_relaxation_analysis_widget_opens_displacements_without_clustering(
+    qapp, monkeypatch
+) -> None:
     host = host_structure()
     relaxed_id = uuid4()
     source = CompletedRelaxationAnalysisSource(
@@ -446,7 +461,9 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp,
     opened: dict[str, object] = {}
 
     class _FakeDialog:
-        def __init__(self, *, workspace_name, sites, structures_by_id, comparison_options, parent=None):
+        def __init__(
+            self, *, workspace_name, sites, structures_by_id, comparison_options, parent=None
+        ):
             opened["workspace_name"] = workspace_name
             opened["site_count"] = len(sites)
             opened["comparison_options"] = list(comparison_options)
@@ -463,7 +480,9 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp,
         host_structure=host,
         comparison_options=[(host.id, "Host", False)],
     )
-    monkeypatch.setattr("mufinder.app.relaxation_analysis_widget.DisplacementAnalysisDialog", _FakeDialog)
+    monkeypatch.setattr(
+        "mufinder.app.relaxation_analysis_widget.DisplacementAnalysisDialog", _FakeDialog
+    )
 
     widget._open_displacements(str(workspace["id"]))
 
@@ -475,7 +494,9 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp,
     widget.close()
 
 
-def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_background(qapp) -> None:
+def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_background(
+    qapp,
+) -> None:
     host = host_structure()
     source = CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
@@ -513,7 +534,9 @@ def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_ba
     widget.close()
 
 
-def test_relaxation_analysis_export_cif_writes_all_relaxed_sites(qapp, tmp_path, monkeypatch) -> None:
+def test_relaxation_analysis_export_cif_writes_all_relaxed_sites(
+    qapp, tmp_path, monkeypatch
+) -> None:
     host = host_structure()
     source_a = CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
@@ -679,7 +702,8 @@ def test_relaxation_clustering_dialog_show_does_not_warn_about_collapsed_layout(
     collapsed_layout_warnings = [
         warning
         for warning in caught
-        if "constrained_layout not applied because axes sizes collapsed to zero" in str(warning.message)
+        if "constrained_layout not applied because axes sizes collapsed to zero"
+        in str(warning.message)
     ]
     assert collapsed_layout_warnings == []
 
@@ -716,7 +740,8 @@ def test_relaxation_clustering_dialog_switches_to_hierarchical_when_shown(qapp) 
     collapsed_layout_warnings = [
         warning
         for warning in caught
-        if "constrained_layout not applied because axes sizes collapsed to zero" in str(warning.message)
+        if "constrained_layout not applied because axes sizes collapsed to zero"
+        in str(warning.message)
     ]
     assert collapsed_layout_warnings == []
     assert not dialog._hier_toolbar.isHidden()
@@ -841,7 +866,9 @@ def test_pack_graph_components_never_overlaps_components() -> None:
                     or high_a[1] + _GRAPH_COMPONENT_GAP <= low_b[1] + 1e-9
                     or high_b[1] + _GRAPH_COMPONENT_GAP <= low_a[1] + 1e-9
                 )
-                assert separated, f"components {first} and {second} overlap at aspect {target_aspect}"
+                assert separated, (
+                    f"components {first} and {second} overlap at aspect {target_aspect}"
+                )
 
 
 def test_pack_graph_components_draws_larger_than_one_row_or_one_column() -> None:
@@ -872,7 +899,11 @@ def test_relaxation_connected_graph_makes_dense_component_edges_thin_and_translu
     host = host_structure()
     # Eight sites within 0.25 A of each other: every pair is connected (28 edges).
     sites = [
-        _relaxed_site(host, (0.100 + 0.008 * (index % 4), 0.100 + 0.008 * (index // 4), 0.100), -10.0 + 0.01 * index)
+        _relaxed_site(
+            host,
+            (0.100 + 0.008 * (index % 4), 0.100 + 0.008 * (index // 4), 0.100),
+            -10.0 + 0.01 * index,
+        )
         for index in range(8)
     ]
     # A separate connected pair, at a general position so no symmetry image of it

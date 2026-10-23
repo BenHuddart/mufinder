@@ -6,13 +6,22 @@ import pytest
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import QFrame, QTableWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QTableWidget,
+    QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QWidget,
+)
 
 from mufinder.app import theme as theme_module
 
 
 def test_theme_mode_roundtrip() -> None:
-    settings = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "MuFinder", "ThemeRoundtrip")
+    settings = QSettings(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, "MuFinder", "ThemeRoundtrip"
+    )
     settings.clear()
 
     theme_module.save_theme_mode(settings, theme_module.THEME_DARK)
@@ -49,10 +58,19 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QToolButton#mufinderCheckedToolButton" in stylesheet
     assert "QFrame#mufinderOptionCard" in stylesheet
     assert "QWidget#mufinderInlineGroup" in stylesheet
-    assert 'QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last' in stylesheet
-    assert 'QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first' in stylesheet
+    assert (
+        'QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last'
+        in stylesheet
+    )
+    assert (
+        'QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first'
+        in stylesheet
+    )
     assert 'QTreeWidget[squareTopCorners="true"]' in stylesheet
-    assert 'QTreeWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last' in stylesheet
+    assert (
+        'QTreeWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last'
+        in stylesheet
+    )
     assert "QComboBox::drop-down" in stylesheet
     assert "QComboBox::down-arrow" in stylesheet
     assert "QSpinBox::up-button" in stylesheet
@@ -152,7 +170,9 @@ def test_ensure_fonts_loaded_registers_bundled_files_even_when_family_present(
     monkeypatch.setattr(
         QFontDatabase,
         "families",
-        staticmethod(lambda *a, **k: pytest.fail("ensure_fonts_loaded must not enumerate families")),
+        staticmethod(
+            lambda *a, **k: pytest.fail("ensure_fonts_loaded must not enumerate families")
+        ),
     )
 
     theme_module.ensure_fonts_loaded()

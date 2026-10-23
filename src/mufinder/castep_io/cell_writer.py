@@ -52,19 +52,20 @@ def _render_known_section(cell_file: CellFile, name: str) -> str | None:
         rows = tuple((*row.coordinates, row.weight) for row in cell_file.kpoints_list)
         return _render_block("KPOINTS_LIST", rows)
     if name == "kpoint_mp_grid" and cell_file.kpoint_mp_grid is not None:
-        return _render_scalar(KeywordAssignment(name="kpoint_mp_grid", value=cell_file.kpoint_mp_grid))
+        return _render_scalar(
+            KeywordAssignment(name="kpoint_mp_grid", value=cell_file.kpoint_mp_grid)
+        )
     if name == "kpoint_mp_spacing" and cell_file.kpoint_mp_spacing is not None:
-        return _render_scalar(KeywordAssignment(name="kpoint_mp_spacing", value=cell_file.kpoint_mp_spacing))
+        return _render_scalar(
+            KeywordAssignment(name="kpoint_mp_spacing", value=cell_file.kpoint_mp_spacing)
+        )
     if name == "symmetry_generate" and cell_file.symmetry_generate:
         return "SYMMETRY_GENERATE"
     return None
 
 
 def _render_extra_blocks(blocks: tuple[BlockSection, ...]) -> list[str]:
-    return [
-        _render_block(block.name.upper(), block.rows, unit=block.unit)
-        for block in blocks
-    ]
+    return [_render_block(block.name.upper(), block.rows, unit=block.unit) for block in blocks]
 
 
 def _render_extra_scalars(assignments: tuple[KeywordAssignment, ...]) -> list[str]:

@@ -41,7 +41,9 @@ def _relaxed_muon_structure(species: tuple[str, ...] = ("Si", "H:mu")) -> Struct
     )
 
 
-def _source(label: str = "site1", charge_state: str | None = "positive_muon") -> QuantumPhononSource:
+def _source(
+    label: str = "site1", charge_state: str | None = "positive_muon"
+) -> QuantumPhononSource:
     return QuantumPhononSource(
         label=label,
         structure=structure_to_spec(_relaxed_muon_structure()),
@@ -108,7 +110,9 @@ def test_expand_quantum_phonon_jobs_muonium_spin_polarized_is_overridable() -> N
 
 
 def test_expand_quantum_phonon_jobs_merges_param_overrides_into_the_phonon_task() -> None:
-    overrides = ParamTemplate(keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(500.0, "eV")),))
+    overrides = ParamTemplate(
+        keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(500.0, "eV")),)
+    )
     jobs = expand_quantum_phonon_jobs(
         jobs=(QuantumPhononJobConfig(source=_source(), param_overrides=overrides),),
         name_prefix="quantum_phonon",
@@ -237,7 +241,9 @@ def test_expand_quantum_phonon_jobs_derives_nonscf_tolerance_from_elec_energy_to
         keywords.append(KeywordAssignment("elec_energy_tol", elec_energy_tol))
     jobs = expand_quantum_phonon_jobs(
         jobs=(
-            QuantumPhononJobConfig(source=_source(), param_overrides=ParamTemplate(keywords=tuple(keywords))),
+            QuantumPhononJobConfig(
+                source=_source(), param_overrides=ParamTemplate(keywords=tuple(keywords))
+            ),
         ),
         name_prefix="quantum_phonon",
     )
@@ -299,7 +305,10 @@ def test_quantum_phonon_method_compatibility_warns_for_unknown_pseudopotential_f
 
 
 def test_quantum_phonon_method_compatibility_allows_dfpt_with_norm_conserving() -> None:
-    assert phonon_method_compatibility("dfpt", pseudopotential_family="norm_conserving") == (True, None)
+    assert phonon_method_compatibility("dfpt", pseudopotential_family="norm_conserving") == (
+        True,
+        None,
+    )
 
 
 def test_expand_quantum_phonon_jobs_rejects_incompatible_method() -> None:
@@ -323,7 +332,9 @@ def test_quantum_expansion_requires_at_least_one_job() -> None:
 
 def test_quantum_expansion_rejects_blank_labels() -> None:
     with pytest.raises(ValueError, match="labels must not be empty"):
-        expand_quantum_phonon_jobs(jobs=(QuantumPhononJobConfig(source=_source(label="   ")),), name_prefix="q")
+        expand_quantum_phonon_jobs(
+            jobs=(QuantumPhononJobConfig(source=_source(label="   ")),), name_prefix="q"
+        )
 
 
 def _eligibility_inputs(**overrides: Any) -> dict[str, Any]:
@@ -384,7 +395,10 @@ def _structure_without_stage_provenance() -> Structure:
             "muon relaxation job is not complete",
         ),
         ({"relaxed_structure": None}, "no parsed relaxed structure"),
-        ({"relaxed_structure": _imported_structure()}, "not produced by muon structural relaxation"),
+        (
+            {"relaxed_structure": _imported_structure()},
+            "not produced by muon structural relaxation",
+        ),
         (
             {"relaxed_structure": _structure_without_stage_provenance()},
             "does not carry muon-relaxation provenance",
@@ -424,7 +438,9 @@ def test_quantum_source_eligibility_off_the_site_link_checks_the_run_belongs_to_
     run = CalculationRun(job_id=_JOB_ID, status=JobStatus.COMPLETED)
     site = MuonSite(status="staged", relaxation_run_id=None)
 
-    verdict = quantum_source_eligibility(**_eligibility_inputs(site=site, run=run, job=job), site_link=False)
+    verdict = quantum_source_eligibility(
+        **_eligibility_inputs(site=site, run=run, job=job), site_link=False
+    )
     assert verdict.eligible is True
 
     foreign_run = CalculationRun(job_id=uuid4(), status=JobStatus.COMPLETED)
@@ -433,11 +449,15 @@ def test_quantum_source_eligibility_off_the_site_link_checks_the_run_belongs_to_
     )
     assert verdict.eligible is False
     assert "recorded relaxation run is missing" in verdict.reason
-    verdict = quantum_source_eligibility(**_eligibility_inputs(site=site, run=None, job=job), site_link=False)
+    verdict = quantum_source_eligibility(
+        **_eligibility_inputs(site=site, run=None, job=job), site_link=False
+    )
     assert verdict.eligible is False
 
 
-def test_expand_quantum_singlepoint_jobs_is_a_deprecated_shim_rendering_the_former_stage_one() -> None:
+def test_expand_quantum_singlepoint_jobs_is_a_deprecated_shim_rendering_the_former_stage_one() -> (
+    None
+):
     # Public helper kept for external callers; see the compatibility ledger.
     with pytest.warns(DeprecationWarning, match="expand_quantum_phonon_jobs"):
         (job,) = expand_quantum_singlepoint_jobs(

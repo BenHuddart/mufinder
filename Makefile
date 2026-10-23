@@ -32,7 +32,7 @@ FILES ?= \
 	tests/app/test_convergence_widget.py \
 	tests/app/main_window
 
-.PHONY: install test test-shard coverage test-fast harness screenshots screenshots-shard docs lint quality
+.PHONY: install test test-shard coverage test-fast harness screenshots screenshots-shard docs lint format quality
 
 # Equivalent: uv sync --extra dev --extra scientific-backends
 install:
@@ -81,8 +81,16 @@ $(SCREENSHOT_STAMP): $(SCREENSHOT_SOURCES)
 docs: $(SCREENSHOT_STAMP)
 	$(PYTHON) -m sphinx -W -b html docs docs/_build/html
 
-# ruff is installed by the dev extra (added alongside the ruff configuration).
+# ruff is installed by the dev extra, pinned to one minor version so local
+# formatting matches CI. lint checks both the lint rules and the formatting;
+# format rewrites the files in place.
+RUFF_PATHS = src tests scripts docs/api/examples docs/conf.py packaging
+
 lint:
-	$(PYTHON) -m ruff check src tests scripts docs/api/examples
+	$(PYTHON) -m ruff check $(RUFF_PATHS)
+	$(PYTHON) -m ruff format --check $(RUFF_PATHS)
+
+format:
+	$(PYTHON) -m ruff format $(RUFF_PATHS)
 
 quality: lint test docs

@@ -105,7 +105,13 @@ def test_pop_out_window_can_be_used_while_its_dialog_runs_modally(qapp) -> None:
         dialog.frame.pop_out()
         window = dialog.frame.popped_out_window
         # Qt does not block a window whose (transient) parent is the modal dialog.
-        seen.append((window.isVisible(), window.windowType(), QApplication.modalWindow() is dialog.windowHandle()))
+        seen.append(
+            (
+                window.isVisible(),
+                window.windowType(),
+                QApplication.modalWindow() is dialog.windowHandle(),
+            )
+        )
         window.toolbar.zoom()
         seen.append(dialog.canvas.toolbar is window.toolbar)
         window.close()
@@ -206,7 +212,9 @@ def test_escape_closes_the_pop_out_window(qapp, host) -> None:
     host.frame.pop_out()
     _settle(qapp)
     window = host.frame.popped_out_window
-    shortcuts = [child for child in window.children() if child.metaObject().className() == "QShortcut"]
+    shortcuts = [
+        child for child in window.children() if child.metaObject().className() == "QShortcut"
+    ]
 
     assert any(shortcut.key().toString() == "Esc" for shortcut in shortcuts)
     next(shortcut for shortcut in shortcuts if shortcut.key().toString() == "Esc").activated.emit()
@@ -224,7 +232,10 @@ def test_overlay_widgets_sit_left_of_the_pop_out_button_in_the_top_right_corner(
     button_right = button.mapTo(host.frame, QPoint(button.width(), 0)).x()
     assert host.frame.width() - button_right <= 6
     assert button.mapTo(host.frame, QPoint(0, 0)).y() <= 6
-    assert extra.mapTo(host.frame, QPoint(extra.width(), 0)).x() <= button.mapTo(host.frame, QPoint(0, 0)).x()
+    assert (
+        extra.mapTo(host.frame, QPoint(extra.width(), 0)).x()
+        <= button.mapTo(host.frame, QPoint(0, 0)).x()
+    )
 
     # Hiding an overlay control shrinks the overlay; the button stays in the corner.
     extra.hide()

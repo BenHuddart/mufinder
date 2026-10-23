@@ -191,10 +191,7 @@ def test_host_structure_widget_renders_spin_column_and_viewer(qapp) -> None:
     assert widget._atom_table.item(1, 3).text() == "0.7500"
     assert widget._atom_table.item(1, 4).text() == "-1.5000"
     assert widget._atom_table.verticalHeaderItem(1).text() == "2"
-    assert (
-        widget._atom_table.horizontalScrollBarPolicy()
-        == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    )
+    assert widget._atom_table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     # The table is capped at its content width (so it cannot greedily expand)
     # but the minimum is deliberately left low, so the splitter can shrink it
     # below content width with a horizontal scrollbar on small screens.
@@ -304,7 +301,9 @@ def test_host_structure_widget_blank_click_in_viewer_clears_table_selection(
     widget.close()
 
 
-def test_atomic_structure_viewer_named_views_follow_lattice_vectors_for_hexagonal_cell(qapp) -> None:
+def test_atomic_structure_viewer_named_views_follow_lattice_vectors_for_hexagonal_cell(
+    qapp,
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_hexagonal_structure())
 
@@ -325,7 +324,9 @@ def test_atomic_structure_viewer_named_views_follow_lattice_vectors_for_hexagona
     widget.close()
 
 
-def test_host_structure_widget_emits_magnetic_configuration_on_spin_and_propagation_change(qapp) -> None:
+def test_host_structure_widget_emits_magnetic_configuration_on_spin_and_propagation_change(
+    qapp,
+) -> None:
     widget = HostStructureWidget()
     payloads: list[dict] = []
     widget.magnetic_configuration_changed.connect(payloads.append)
@@ -549,8 +550,12 @@ def test_atomic_structure_viewer_resyncs_camera_on_show(qapp, monkeypatch) -> No
     widget.close()
 
 
-def test_atomic_structure_viewer_requires_pyvista_modules(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (None, None))
+def test_atomic_structure_viewer_requires_pyvista_modules(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (None, None)
+    )
 
     with pytest.raises(RuntimeError, match="requires PyVista"):
         AtomicStructureViewer()
@@ -663,7 +668,9 @@ def test_host_structure_widget_prefers_moments_when_atomic_spins_are_zero(qapp) 
     widget.close()
 
 
-def test_atomic_structure_viewer_blank_click_clears_selection(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_blank_click_clears_selection(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
 
@@ -680,7 +687,9 @@ def test_atomic_structure_viewer_blank_click_clears_selection(qapp, monkeypatch:
     widget.close()
 
 
-def test_atomic_structure_viewer_shift_selection_adds_and_removes_atoms(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_shift_selection_adds_and_removes_atoms(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -698,7 +707,9 @@ def test_atomic_structure_viewer_shift_selection_adds_and_removes_atoms(qapp, mo
     widget.close()
 
 
-def test_atomic_structure_viewer_shift_selection_uses_latched_modifier_when_pick_event_loses_it(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_shift_selection_uses_latched_modifier_when_pick_event_loses_it(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -714,7 +725,9 @@ def test_atomic_structure_viewer_shift_selection_uses_latched_modifier_when_pick
     widget.close()
 
 
-def test_atomic_structure_viewer_shift_selection_uses_native_mouse_modifier_when_backend_event_loses_it(qapp) -> None:
+def test_atomic_structure_viewer_shift_selection_uses_native_mouse_modifier_when_backend_event_loses_it(
+    qapp,
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -782,7 +795,9 @@ def test_camera_state_from_vectors_round_trips_default_view() -> None:
     assert -90.0 <= state.elev <= 90.0
 
 
-def test_atomic_structure_viewer_pyvista_pick_selects_nearest_atom(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_pyvista_pick_selects_nearest_atom(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -1020,8 +1035,14 @@ def test_atomic_structure_viewer_updates_pyvista_isosurface_overlay_without_full
         "_build_pyvista_isosurface_mesh",
         lambda _pv, *, vertices, faces: "mesh",
     )
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
-    monkeypatch.setattr(viewer, "_render", lambda: pytest.fail("full render should not run for PyVista isosurface-only updates"))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_render",
+        lambda: pytest.fail("full render should not run for PyVista isosurface-only updates"),
+    )
 
     viewer.set_isosurface(
         vertices=[
@@ -1083,8 +1104,14 @@ def test_atomic_structure_viewer_updates_pyvista_slice_overlay_without_full_rere
     viewer._pyvista_slice_actors = ["slice-existing"]
 
     monkeypatch.setattr(viewer, "_store_view", lambda *_args: None)
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (_FakePv, None))
-    monkeypatch.setattr(viewer, "_render", lambda: pytest.fail("full render should not run for PyVista slice-only updates"))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (_FakePv, None)
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_render",
+        lambda: pytest.fail("full render should not run for PyVista slice-only updates"),
+    )
 
     viewer.set_slice_planes(
         [
@@ -1164,12 +1191,18 @@ def test_atomic_structure_viewer_updates_pyvista_point_overlay_without_full_rere
     viewer._pyvista_point_overlay_actors = ["point-existing"]
 
     monkeypatch.setattr(viewer, "_store_view", lambda *_args: None)
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
     monkeypatch.setattr(
         "mufinder.app.atomic_structure_viewer._build_pyvista_atom_glyph_mesh",
         lambda *_args, **_kwargs: "glyphs",
     )
-    monkeypatch.setattr(viewer, "_render", lambda: pytest.fail("full render should not run for PyVista point-overlay updates"))
+    monkeypatch.setattr(
+        viewer,
+        "_render",
+        lambda: pytest.fail("full render should not run for PyVista point-overlay updates"),
+    )
 
     viewer.set_point_overlays(
         [
@@ -1222,9 +1255,19 @@ def test_atomic_structure_viewer_updates_pyvista_selection_overlay_without_full_
     viewer._pyvista_selection_actor = "selection-existing"
 
     monkeypatch.setattr(viewer, "_store_view", lambda *_args: None)
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
-    monkeypatch.setattr(viewer, "_draw_pyvista_selection", lambda *_args: setattr(viewer, "_pyvista_selection_actor", "selection-new"))
-    monkeypatch.setattr(viewer, "_render", lambda: pytest.fail("full render should not run for PyVista selection-only updates"))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_draw_pyvista_selection",
+        lambda *_args: setattr(viewer, "_pyvista_selection_actor", "selection-new"),
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_render",
+        lambda: pytest.fail("full render should not run for PyVista selection-only updates"),
+    )
 
     viewer.select_atom(1)
 
@@ -1267,9 +1310,19 @@ def test_atomic_structure_viewer_updates_pyvista_multi_selection_overlay_without
     viewer._pyvista_selection_actor = "selection-existing"
 
     monkeypatch.setattr(viewer, "_store_view", lambda *_args: None)
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
-    monkeypatch.setattr(viewer, "_draw_pyvista_selection", lambda *_args: setattr(viewer, "_pyvista_selection_actor", "selection-new"))
-    monkeypatch.setattr(viewer, "_render", lambda: pytest.fail("full render should not run for PyVista selection-only updates"))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_draw_pyvista_selection",
+        lambda *_args: setattr(viewer, "_pyvista_selection_actor", "selection-new"),
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_render",
+        lambda: pytest.fail("full render should not run for PyVista selection-only updates"),
+    )
 
     viewer.select_atoms([0, 1])
 
@@ -1318,7 +1371,9 @@ def test_atomic_structure_viewer_updates_pyvista_bond_overlay_without_full_reren
     viewer._pyvista_atom_colors = np.array([[1.0, 0.0, 0.0], [0.2, 0.8, 0.1]], dtype=float)
     viewer._pyvista_bond_actors = ["bond-existing"]
 
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
     monkeypatch.setattr(viewer, "_draw_pyvista_bonds", lambda *_args, **_kwargs: ["bond-new"])
 
     viewer._show_bonds.setChecked(True)
@@ -1364,7 +1419,9 @@ def test_atomic_structure_viewer_pyvista_overlays_hide_slice_culled_bonds_and_sp
     viewer._pyvista_all_atom_colors = colors.copy()
     viewer._spins = np.array([1.0, -1.5], dtype=float)
 
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
 
     def _capture_bonds(_plotter, _pv, positions, colors, radii, *, visible_mask=None, alpha):
         del positions, colors, radii, alpha
@@ -1417,7 +1474,9 @@ def test_atomic_structure_viewer_updates_pyvista_spin_overlay_without_full_reren
     viewer._spins = np.array([1.0, -1.5], dtype=float)
     viewer._pyvista_spin_actors = ["spin-existing"]
 
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
     monkeypatch.setattr(viewer, "_draw_pyvista_spins", lambda *_args, **_kwargs: ["spin-new"])
 
     viewer._show_spins.setChecked(True)
@@ -1491,7 +1550,11 @@ def test_atomic_structure_viewer_pyvista_camera_poll_redraws_triad_canvas(
     )
     viewer._canvas = SimpleNamespace(plotter=SimpleNamespace(camera=camera))
     viewer._pyvista_last_camera_signature = None
-    monkeypatch.setattr(viewer, "_draw_crystallographic_axes", lambda: calls.__setitem__("triad", calls["triad"] + 1))
+    monkeypatch.setattr(
+        viewer,
+        "_draw_crystallographic_axes",
+        lambda: calls.__setitem__("triad", calls["triad"] + 1),
+    )
 
     viewer._poll_pyvista_camera()
 
@@ -1679,25 +1742,31 @@ def test_plot_cylinder_segment_handles_degenerate_and_vertical_segments() -> Non
             self.calls.append({"x": x, "y": y, "z": z, "kwargs": kwargs})
 
     axis = _FakeAxis()
-    assert _plot_cylinder_segment(
-        axis,
-        np.array([0.0, 0.0, 0.0], dtype=float),
-        np.array([0.0, 0.0, 0.0], dtype=float),
-        radius=0.15,
-        color=np.array([1.0, 0.0, 0.0], dtype=float),
-        alpha=0.3,
-        resolution=6,
-    ) is False
+    assert (
+        _plot_cylinder_segment(
+            axis,
+            np.array([0.0, 0.0, 0.0], dtype=float),
+            np.array([0.0, 0.0, 0.0], dtype=float),
+            radius=0.15,
+            color=np.array([1.0, 0.0, 0.0], dtype=float),
+            alpha=0.3,
+            resolution=6,
+        )
+        is False
+    )
 
-    assert _plot_cylinder_segment(
-        axis,
-        np.array([0.0, 0.0, 0.0], dtype=float),
-        np.array([0.0, 0.0, 2.0], dtype=float),
-        radius=0.2,
-        color=np.array([0.1, 0.4, 0.8], dtype=float),
-        alpha=0.55,
-        resolution=6,
-    ) is True
+    assert (
+        _plot_cylinder_segment(
+            axis,
+            np.array([0.0, 0.0, 0.0], dtype=float),
+            np.array([0.0, 0.0, 2.0], dtype=float),
+            radius=0.2,
+            color=np.array([0.1, 0.4, 0.8], dtype=float),
+            alpha=0.55,
+            resolution=6,
+        )
+        is True
+    )
     assert len(axis.calls) == 1
     assert axis.calls[0]["x"].shape == (6, 2)
     assert axis.calls[0]["kwargs"]["alpha"] == pytest.approx(0.55)
@@ -1718,7 +1787,11 @@ def test_atomic_structure_viewer_draws_pyvista_unit_cell_edges(qapp) -> None:
     class _FakePv:
         @staticmethod
         def Line(start, end):
-            return ("line", tuple(np.asarray(start, dtype=float)), tuple(np.asarray(end, dtype=float)))
+            return (
+                "line",
+                tuple(np.asarray(start, dtype=float)),
+                tuple(np.asarray(end, dtype=float)),
+            )
 
     viewer._draw_pyvista_unit_cell(_FakePlotter(), _FakePv)
 
@@ -1744,7 +1817,10 @@ def test_atomic_structure_viewer_draws_pyvista_isosurfaces_and_tracks_primary_ac
     monkeypatch.setattr(
         viewer,
         "_build_pyvista_isosurface_mesh",
-        lambda _pv, *, vertices, faces: {"vertices": np.asarray(vertices), "faces": np.asarray(faces)},
+        lambda _pv, *, vertices, faces: {
+            "vertices": np.asarray(vertices),
+            "faces": np.asarray(faces),
+        },
     )
     viewer._isosurface_specs = [
         _ViewerIsosurfaceSpec(
@@ -1883,8 +1959,16 @@ def test_atomic_structure_viewer_draws_selection_overlay_and_routes_visibility_u
 
     bond_calls = {"count": 0}
     spin_calls = {"count": 0}
-    monkeypatch.setattr(viewer, "_try_update_pyvista_bond_overlay", lambda: bond_calls.__setitem__("count", bond_calls["count"] + 1) or True)
-    monkeypatch.setattr(viewer, "_try_update_pyvista_spin_overlay", lambda: spin_calls.__setitem__("count", spin_calls["count"] + 1) or True)
+    monkeypatch.setattr(
+        viewer,
+        "_try_update_pyvista_bond_overlay",
+        lambda: bond_calls.__setitem__("count", bond_calls["count"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        viewer,
+        "_try_update_pyvista_spin_overlay",
+        lambda: spin_calls.__setitem__("count", spin_calls["count"] + 1) or True,
+    )
 
     viewer._backend_name = "pyvista"
     viewer._shutting_down = False
@@ -1900,7 +1984,9 @@ def test_atomic_structure_viewer_draws_selection_overlay_and_routes_visibility_u
     widget.close()
 
 
-def test_atomic_structure_viewer_updates_isosurface_overlay_branches(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_updates_isosurface_overlay_branches(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -1925,11 +2011,16 @@ def test_atomic_structure_viewer_updates_isosurface_overlay_branches(qapp, monke
     viewer._atoms = viewer._to_atoms(_sample_structure())
     viewer._pyvista_isosurface_actor = "iso-existing"
     viewer._pyvista_isosurface_actors = ["iso-existing"]
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (object(), None)
+    )
     monkeypatch.setattr(
         viewer,
         "_build_pyvista_isosurface_mesh",
-        lambda _pv, *, vertices, faces: {"vertices": np.asarray(vertices), "faces": np.asarray(faces)},
+        lambda _pv, *, vertices, faces: {
+            "vertices": np.asarray(vertices),
+            "faces": np.asarray(faces),
+        },
     )
 
     viewer._isosurface_specs = []
@@ -1959,7 +2050,9 @@ def test_atomic_structure_viewer_updates_isosurface_overlay_branches(qapp, monke
     widget.close()
 
 
-def test_atomic_structure_viewer_updates_slice_and_point_overlay_branches(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_updates_slice_and_point_overlay_branches(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -1997,7 +2090,9 @@ def test_atomic_structure_viewer_updates_slice_and_point_overlay_branches(qapp, 
     viewer._pyvista_slice_actors = ["slice-existing"]
     viewer._pyvista_point_overlay_actors = ["point-existing"]
 
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (_FakePv, None))
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (_FakePv, None)
+    )
     monkeypatch.setattr(
         "mufinder.app.atomic_structure_viewer._build_pyvista_atom_glyph_mesh",
         lambda *_args, **_kwargs: "glyphs",
@@ -2040,7 +2135,9 @@ def test_atomic_structure_viewer_updates_slice_and_point_overlay_branches(qapp, 
     widget.close()
 
 
-def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_tube_mesh(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_tube_mesh(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -2063,18 +2160,29 @@ def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_tube_mesh(qapp, mo
     colors = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float)
     radii = np.array([0.6, 0.45], dtype=float)
 
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_cylinders", lambda *_args: True)
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_lines", lambda *_args: False)
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_cylinders",
+        lambda *_args: True,
+    )
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_lines",
+        lambda *_args: False,
+    )
     monkeypatch.setattr(
         "mufinder.app.atomic_structure_viewer._trim_bond_segment_to_surfaces",
-        lambda start, end, **_kwargs: (np.asarray(start, dtype=float), np.asarray(end, dtype=float)),
+        lambda start, end, **_kwargs: (
+            np.asarray(start, dtype=float),
+            np.asarray(end, dtype=float),
+        ),
     )
     monkeypatch.setattr(
         "mufinder.app.atomic_structure_viewer._build_pyvista_bond_tube_mesh",
         lambda _pv, *, segments: {"segments": list(segments)},
     )
 
-    actors = viewer._draw_pyvista_bonds(_FakePlotter(), object(), positions, colors, radii, alpha=0.6)
+    actors = viewer._draw_pyvista_bonds(
+        _FakePlotter(), object(), positions, colors, radii, alpha=0.6
+    )
 
     assert actors == ["tube-actor"]
     assert len(add_calls[0]["mesh"]["segments"]) == 1
@@ -2082,7 +2190,9 @@ def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_tube_mesh(qapp, mo
     widget.close()
 
 
-def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_line_mesh(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_line_mesh(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -2105,14 +2215,22 @@ def test_atomic_structure_viewer_draw_pyvista_bonds_uses_fast_line_mesh(qapp, mo
     colors = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float)
     radii = np.array([0.6, 0.45], dtype=float)
 
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_cylinders", lambda *_args: False)
-    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_lines", lambda *_args: True)
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_cylinders",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        "mufinder.app.atomic_structure_viewer._should_use_fast_pyvista_bond_lines",
+        lambda *_args: True,
+    )
     monkeypatch.setattr(
         "mufinder.app.atomic_structure_viewer._build_pyvista_bond_line_mesh",
         lambda _pv, *, segments: {"segments": list(segments)},
     )
 
-    actors = viewer._draw_pyvista_bonds(_FakePlotter(), object(), positions, colors, radii, alpha=0.6)
+    actors = viewer._draw_pyvista_bonds(
+        _FakePlotter(), object(), positions, colors, radii, alpha=0.6
+    )
 
     assert actors == ["line-actor"]
     assert len(add_calls[0]["mesh"]["segments"]) == 2
@@ -2130,7 +2248,9 @@ def test_atomic_structure_viewer_normalizes_pyvista_light_direction(qapp) -> Non
     widget.close()
 
 
-def test_atomic_structure_viewer_reuses_pyvista_camera_snapshot_on_redraw(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_reuses_pyvista_camera_snapshot_on_redraw(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = HostStructureWidget()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
@@ -2163,7 +2283,9 @@ def test_atomic_structure_viewer_reuses_pyvista_camera_snapshot_on_redraw(qapp, 
     widget.close()
 
 
-def test_atomic_structure_viewer_set_structure_preserving_view_keeps_camera_limits_and_spin_toggle(qapp) -> None:
+def test_atomic_structure_viewer_set_structure_preserving_view_keeps_camera_limits_and_spin_toggle(
+    qapp,
+) -> None:
     viewer = AtomicStructureViewer()
     viewer.set_structure(_sample_structure())
     viewer._camera_state = _CameraState(17.0, 38.0, 9.0)
@@ -2191,7 +2313,9 @@ def test_atomic_structure_viewer_set_structure_preserving_view_keeps_camera_limi
     viewer.close()
 
 
-def test_atomic_structure_viewer_update_structure_geometry_preserving_view_keeps_camera_and_updates_positions(qapp) -> None:
+def test_atomic_structure_viewer_update_structure_geometry_preserving_view_keeps_camera_and_updates_positions(
+    qapp,
+) -> None:
     viewer = AtomicStructureViewer()
     viewer.set_structure(_sample_structure())
     viewer._camera_state = _CameraState(19.0, 44.0, 7.0)
@@ -2215,7 +2339,10 @@ def test_atomic_structure_viewer_update_structure_geometry_preserving_view_keeps
     assert viewer._limits == ((0.0, 4.0), (0.0, 5.0), (0.0, 6.0))
     assert viewer.selected_atom_indices() == (1,)
     assert viewer._atoms is not None
-    assert np.allclose(viewer._atoms.get_scaled_positions(wrap=True), np.asarray(updated.fractional_positions, dtype=float))
+    assert np.allclose(
+        viewer._atoms.get_scaled_positions(wrap=True),
+        np.asarray(updated.fractional_positions, dtype=float),
+    )
     viewer.close()
 
 
@@ -2278,7 +2405,9 @@ def test_viewer_style_signature_changes_with_active_theme(qapp) -> None:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
 
-def test_atomic_structure_viewer_theme_refresh_rerenders_scene(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_theme_refresh_rerenders_scene(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     viewer = AtomicStructureViewer()
     calls = {"store": 0, "render": 0, "canvas": 0, "triad": 0}
 
@@ -2292,7 +2421,9 @@ def test_atomic_structure_viewer_theme_refresh_rerenders_scene(qapp, monkeypatch
 
     viewer._canvas = _Canvas()
     viewer._triad_canvas = _Triad()
-    monkeypatch.setattr(viewer, "_store_view", lambda: calls.__setitem__("store", calls["store"] + 1))
+    monkeypatch.setattr(
+        viewer, "_store_view", lambda: calls.__setitem__("store", calls["store"] + 1)
+    )
     monkeypatch.setattr(viewer, "_render", lambda: calls.__setitem__("render", calls["render"] + 1))
 
     viewer.refresh_theme()
@@ -2301,10 +2432,14 @@ def test_atomic_structure_viewer_theme_refresh_rerenders_scene(qapp, monkeypatch
     viewer.close()
 
 
-def test_atomic_structure_viewer_coalesces_theme_change_events(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_structure_viewer_coalesces_theme_change_events(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     viewer = AtomicStructureViewer()
     calls = {"refresh": 0}
-    monkeypatch.setattr(viewer, "refresh_theme", lambda: calls.__setitem__("refresh", calls["refresh"] + 1))
+    monkeypatch.setattr(
+        viewer, "refresh_theme", lambda: calls.__setitem__("refresh", calls["refresh"] + 1)
+    )
 
     viewer._style_signature = ("stale",)
     event = QEvent(QEvent.Type.ApplicationPaletteChange)

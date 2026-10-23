@@ -172,7 +172,10 @@ def test_inspect_leads_with_the_cause_and_its_evidence(
     assert captured["text"] == (
         "timed_out: The scheduler stopped the job when it reached its walltime limit."
     )
-    assert "Cause: The scheduler stopped the job when it reached its walltime limit." in captured["details"]
+    assert (
+        "Cause: The scheduler stopped the job when it reached its walltime limit."
+        in captured["details"]
+    )
     assert f"Evidence (slurm-4242.out): {_SLURM_TIMEOUT}" in captured["details"]
     window.close()
 

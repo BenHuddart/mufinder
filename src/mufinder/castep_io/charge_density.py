@@ -36,7 +36,9 @@ class ChargeDensityInputError(ValueError):
 class FormattedDensity:
     """Parsed CASTEP formatted density grid."""
 
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     grid: tuple[int, int, int]
     nspins: int
     values: np.ndarray
@@ -55,7 +57,6 @@ class IonicPseudopotential:
         raise AttributeError("gaussian_width_ang depends on the chosen gw_factor.")
 
 
-
 def parse_formatted_density(path: str | Path) -> FormattedDensity:
     """Parse a CASTEP `.den_fmt` file into a dense FFT-ready grid."""
 
@@ -63,7 +64,9 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
     try:
         lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
-        raise ChargeDensityInputError(f"Failed to read formatted density '{source}': {exc}") from exc
+        raise ChargeDensityInputError(
+            f"Failed to read formatted density '{source}': {exc}"
+        ) from exc
 
     lattice_rows: list[tuple[float, float, float]] = []
     grid: tuple[int, int, int] | None = None
@@ -77,14 +80,18 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
                 row_line = lines[index + offset]
                 parts = row_line.split()[:3]
                 if len(parts) != 3:
-                    raise ChargeDensityInputError(f"Could not parse lattice vectors from '{source.name}'.")
+                    raise ChargeDensityInputError(
+                        f"Could not parse lattice vectors from '{source.name}'."
+                    )
                 lattice_rows.append(tuple(float(value) for value in parts))
             continue
         if "! nspins" in line:
             try:
                 nspins = int(line.split()[0])
             except (IndexError, ValueError) as exc:
-                raise ChargeDensityInputError(f"Could not parse nspins from '{source.name}'.") from exc
+                raise ChargeDensityInputError(
+                    f"Could not parse nspins from '{source.name}'."
+                ) from exc
             continue
         if "! fine FFT grid" in line:
             parts = line.split()[:3]
@@ -97,7 +104,9 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
             break
 
     if len(lattice_rows) != 3 or grid is None or nspins is None or data_start is None:
-        raise ChargeDensityInputError(f"Formatted density '{source.name}' does not contain a complete CASTEP header.")
+        raise ChargeDensityInputError(
+            f"Formatted density '{source.name}' does not contain a complete CASTEP header."
+        )
 
     values = np.zeros((grid[0], grid[1], grid[2], nspins), dtype=float)
     count = 0
@@ -114,9 +123,13 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
             ic = int(parts[2]) - 1
             charge = float(parts[3])
         except ValueError as exc:
-            raise ChargeDensityInputError(f"Invalid density row in '{source.name}': {line.strip()}") from exc
+            raise ChargeDensityInputError(
+                f"Invalid density row in '{source.name}': {line.strip()}"
+            ) from exc
         if not (0 <= ia < grid[0] and 0 <= ib < grid[1] and 0 <= ic < grid[2]):
-            raise ChargeDensityInputError(f"Density row index out of range in '{source.name}': {line.strip()}")
+            raise ChargeDensityInputError(
+                f"Density row index out of range in '{source.name}': {line.strip()}"
+            )
         values[ia, ib, ic, 0] = charge
         count += 1
 

@@ -86,7 +86,11 @@ def field_result_site_source(
 
 
 def _field_data(value: object) -> dict[str, Any] | None:
-    if not isinstance(value, Mapping) or not isinstance(value.get("results"), list) or not value["results"]:
+    if (
+        not isinstance(value, Mapping)
+        or not isinstance(value.get("results"), list)
+        or not value["results"]
+    ):
         return None
     data: dict[str, Any] = {"kind": str(value.get("kind", "")), "results": list(value["results"])}
     if value.get("site_source"):
@@ -117,13 +121,17 @@ def _tensor_value(data: Mapping[str, Any]) -> object:
     source = data.get("site_source")
     if not source:
         return rows
-    return [{**row, "site_source": str(source)} if isinstance(row, Mapping) else row for row in rows]
+    return [
+        {**row, "site_source": str(source)} if isinstance(row, Mapping) else row for row in rows
+    ]
 
 
 def _nuclear_data(value: object) -> dict[str, Any] | None:
     if not isinstance(value, Mapping) or not value:
         return None
-    data: dict[str, Any] = {"result": {key: item for key, item in value.items() if key != "site_source"}}
+    data: dict[str, Any] = {
+        "result": {key: item for key, item in value.items() if key != "site_source"}
+    }
     if value.get("site_source"):
         data["site_source"] = str(value["site_source"])
     return data
@@ -139,7 +147,10 @@ def _nuclear_value(data: Mapping[str, Any]) -> object:
 
 #: Form-state key, result type, form value to record data, record data to form value.
 _FORM_RESULTS: tuple[
-    tuple[str, str, Callable[[object], dict[str, Any] | None], Callable[[Mapping[str, Any]], object]], ...
+    tuple[
+        str, str, Callable[[object], dict[str, Any] | None], Callable[[Mapping[str, Any]], object]
+    ],
+    ...,
 ] = (
     ("magnetic_field_results", MAGNETIC_FIELD_RESULT_TYPE, _field_data, _field_value),
     ("dipolar_tensor_results", MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE, _tensor_data, _tensor_value),
@@ -173,7 +184,11 @@ def magnetic_field_result(document: ProjectDocument, owner: str, result_type: st
     """Return ``owner``'s record of ``result_type``, or ``None``."""
 
     return next(
-        (result for result in magnetic_field_results(document, owner) if result.result_type == result_type),
+        (
+            result
+            for result in magnetic_field_results(document, owner)
+            if result.result_type == result_type
+        ),
         None,
     )
 

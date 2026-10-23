@@ -59,11 +59,17 @@ def _pin(doc, workspace) -> None:
 
 
 def _scope_checkbox(widget) -> QCheckBox:
-    return next(box for box in widget.findChildren(QCheckBox) if box.text() == SHOW_EVERY_RELAXED_SITE_TEXT)
+    return next(
+        box for box in widget.findChildren(QCheckBox) if box.text() == SHOW_EVERY_RELAXED_SITE_TEXT
+    )
 
 
 def _muon_sites_link(widget) -> QPushButton:
-    return next(button for button in widget.findChildren(QPushButton) if button.text() == GO_TO_MUON_SITES_TEXT)
+    return next(
+        button
+        for button in widget.findChildren(QPushButton)
+        if button.text() == GO_TO_MUON_SITES_TEXT
+    )
 
 
 def _quantum_site_labels(window) -> list[str]:
@@ -130,7 +136,9 @@ def test_quantum_corrections_show_every_relaxed_site_toggle_persists(qapp, tmp_p
         window.close()
 
 
-def test_quantum_corrections_without_a_pin_links_to_the_muon_sites_page(qapp, tmp_path: Path) -> None:
+def test_quantum_corrections_without_a_pin_links_to_the_muon_sites_page(
+    qapp, tmp_path: Path
+) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
         _relaxed_copies(doc, host)
@@ -190,7 +198,10 @@ def test_energy_barrier_endpoints_default_to_the_pinned_sites(qapp, tmp_path: Pa
         window._refresh_energy_barriers_view()
 
         combo = view._reactant_combo
-        assert [combo.itemData(index) for index in range(combo.count())] == [str(low_a.id), str(high.id)]
+        assert [combo.itemData(index) for index in range(combo.count())] == [
+            str(low_a.id),
+            str(high.id),
+        ]
         assert combo.itemText(0).startswith("8c · cluster 1")
 
         _scope_checkbox(view).click()
@@ -246,7 +257,9 @@ def test_energy_barriers_without_a_pin_links_to_the_muon_sites_page(qapp, tmp_pa
 
 def _relaxation_rows(dialog) -> list[tuple[str, str]]:
     table = dialog._site_table
-    return [(table.item(row, 0).text(), table.item(row, 2).text()) for row in range(table.rowCount())]
+    return [
+        (table.item(row, 0).text(), table.item(row, 2).text()) for row in range(table.rowCount())
+    ]
 
 
 def test_magnetic_site_dialog_lists_pinned_clusters_by_default(qapp, tmp_path: Path) -> None:
@@ -260,7 +273,9 @@ def test_magnetic_site_dialog_lists_pinned_clusters_by_default(qapp, tmp_path: P
         _pin(doc, workspace)
         dialog = MuonSiteSelectionDialog(doc, host)
         try:
-            dialog._site_source_combo.setCurrentIndex(dialog._site_source_combo.findData("relaxation_clustering"))
+            dialog._site_source_combo.setCurrentIndex(
+                dialog._site_source_combo.findData("relaxation_clustering")
+            )
             assert _relaxation_rows(dialog) == [
                 ("Positive analysis cluster 1", "8c · cluster 1"),
                 ("Positive analysis cluster 2", "4b · cluster 2"),
@@ -296,7 +311,9 @@ def test_magnetic_site_dialog_matches_pins_by_representative_after_reclustering(
         store_workspaces(doc, reclustered)
         dialog = MuonSiteSelectionDialog(doc, host)
         try:
-            dialog._site_source_combo.setCurrentIndex(dialog._site_source_combo.findData("relaxation_clustering"))
+            dialog._site_source_combo.setCurrentIndex(
+                dialog._site_source_combo.findData("relaxation_clustering")
+            )
             options = dialog._site_options
             assert [(option.cluster_label, option.fractional_position) for option in options] == [
                 ("8c · cluster 1", (0.25, 0.25, 0.25)),
@@ -308,7 +325,9 @@ def test_magnetic_site_dialog_matches_pins_by_representative_after_reclustering(
         window.close()
 
 
-def test_magnetic_site_dialog_without_a_pin_links_to_the_muon_sites_page(qapp, tmp_path: Path) -> None:
+def test_magnetic_site_dialog_without_a_pin_links_to_the_muon_sites_page(
+    qapp, tmp_path: Path
+) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
         _relaxed_copies(doc, host)
@@ -316,7 +335,9 @@ def test_magnetic_site_dialog_without_a_pin_links_to_the_muon_sites_page(qapp, t
         requested: list[bool] = []
         dialog.open_muon_sites_requested.connect(lambda: requested.append(True))
         try:
-            dialog._site_source_combo.setCurrentIndex(dialog._site_source_combo.findData("relaxation_clustering"))
+            dialog._site_source_combo.setCurrentIndex(
+                dialog._site_source_combo.findData("relaxation_clustering")
+            )
             assert _relaxation_rows(dialog) == []
             assert dialog._site_scope.notice_text() == NO_PINNED_SITES_NOTICE
 

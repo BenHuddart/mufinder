@@ -20,7 +20,9 @@ from tests.support.structures import silicon_oxide_host
 
 def _document(tmp_path: Path) -> ProjectDocument:
     host = silicon_oxide_host()
-    document = ProjectDocument(project_root=tmp_path, project=Project(name="Sites", host_structure_id=host.id))
+    document = ProjectDocument(
+        project_root=tmp_path, project=Project(name="Sites", host_structure_id=host.id)
+    )
     document.structures[host.id] = host
     return document
 
@@ -42,9 +44,19 @@ def test_generation_adds_sites_and_returns_provenance_without_recording_it(tmp_p
 
 def test_generation_short_of_the_requested_count_adds_a_partial_record(tmp_path: Path) -> None:
     document = _document(tmp_path)
-    present = {"source_key": "job-1:cluster:0", "fractional_position": [0.1, 0.2, 0.3], "cartesian_position": [1, 2, 3]}
-    new = {"source_key": "job-1:cluster:1", "fractional_position": [0.6, 0.2, 0.3], "cartesian_position": [6, 2, 3]}
-    site_generation_service.generate_candidate_sites(document, method="uep_clusters", parameters={"selections": [present]})
+    present = {
+        "source_key": "job-1:cluster:0",
+        "fractional_position": [0.1, 0.2, 0.3],
+        "cartesian_position": [1, 2, 3],
+    }
+    new = {
+        "source_key": "job-1:cluster:1",
+        "fractional_position": [0.6, 0.2, 0.3],
+        "cartesian_position": [6, 2, 3],
+    }
+    site_generation_service.generate_candidate_sites(
+        document, method="uep_clusters", parameters={"selections": [present]}
+    )
 
     outcome = site_generation_service.generate_candidate_sites(
         document, method="uep_clusters", parameters={"selections": [present, new]}
@@ -52,10 +64,16 @@ def test_generation_short_of_the_requested_count_adds_a_partial_record(tmp_path:
 
     assert [site.properties["uep_source_key"] for site in outcome.sites] == ["job-1:cluster:1"]
     assert outcome.sites[0].label == "UEP Cluster Site 2"
-    assert [record.action for record in outcome.provenance] == ["generate_candidates", "generation_partial"]
+    assert [record.action for record in outcome.provenance] == [
+        "generate_candidates",
+        "generation_partial",
+    ]
     partial = outcome.provenance[1]
     assert partial.parameters == {"requested": 2, "generated": 1, "attempts": 1}
-    assert partial.description == "Requested 2 sites but generated 1. Some selected UEP rows were already present."
+    assert (
+        partial.description
+        == "Requested 2 sites but generated 1. Some selected UEP rows were already present."
+    )
 
 
 def test_random_count_generation_shrinks_the_separation_until_sites_fit(
@@ -104,7 +122,9 @@ def test_random_count_generation_raises_the_last_error_after_every_retry(
 
 def test_cluster_returns_moved_sites_and_one_record(tmp_path: Path) -> None:
     document = _document(tmp_path)
-    site = MuonSite(label="Random Site 1", status="generated", initial_fractional_position=[0.9, 0.1, 0.1])
+    site = MuonSite(
+        label="Random Site 1", status="generated", initial_fractional_position=[0.9, 0.1, 0.1]
+    )
     document.sites[site.id] = site
 
     outcome = site_generation_service.cluster_candidate_positions(

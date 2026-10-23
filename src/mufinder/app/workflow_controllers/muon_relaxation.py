@@ -180,9 +180,7 @@ class MuonRelaxationDeps:
     """
 
     deserialize_muon_relaxation_config: Callable[[object], MuonRelaxationConfig | None]
-    serialize_muon_relaxation_config: Callable[
-        [MuonRelaxationConfig], dict[str, object]
-    ]
+    serialize_muon_relaxation_config: Callable[[MuonRelaxationConfig], dict[str, object]]
     sync_active_muon_relaxation_dashboard_jobs: Callable[[CalculationDefinition], None]
     muon_relaxation_form_config: Callable[[], MuonRelaxationConfig | None]
     muon_relaxation_row_signature: Callable[[MuonRelaxationRow], tuple[object, ...]]
@@ -404,9 +402,7 @@ class MuonRelaxationController(WorkflowJobController):
         )
         return mismatch is None or self._deps.handle_site_host_mismatch(mismatch)
 
-    def submission_groups(
-        self, jobs: list[Job]
-    ) -> list[tuple[list[Job], dict[str, object]]]:
+    def submission_groups(self, jobs: list[Job]) -> list[tuple[list[Job], dict[str, object]]]:
         """Split jobs into per-charge-state groups, positive muon first.
 
         Behavior-preserving move of
@@ -441,9 +437,7 @@ class MuonRelaxationController(WorkflowJobController):
         form_config = self._deps.muon_relaxation_form_config()
         if form_config is not None:
             for row in form_config.rows:
-                states[self._deps.muon_relaxation_row_key(row)] = RelaxationRunState(
-                    status="ready"
-                )
+                states[self._deps.muon_relaxation_row_key(row)] = RelaxationRunState(status="ready")
 
         definition = self.active_definition()
         if definition is None:
@@ -483,9 +477,7 @@ class MuonRelaxationController(WorkflowJobController):
 
         for row in rows_for_status:
             state_key = self._deps.muon_relaxation_row_key(row)
-            job = self.job_for_label(
-                definition, row.label, row.charge_state
-            )
+            job = self.job_for_label(definition, row.label, row.charge_state)
             if job is None:
                 states[state_key] = RelaxationRunState(status="ready")
                 continue
@@ -541,13 +533,9 @@ class MuonRelaxationController(WorkflowJobController):
         seen: set[UUID] = set()
         wanted = {str(key) for key in keys}
         for row in config.rows:
-            if not any(
-                _muon_relaxation_selection_matches(row, selection) for selection in wanted
-            ):
+            if not any(_muon_relaxation_selection_matches(row, selection) for selection in wanted):
                 continue
-            job = self.job_for_label(
-                definition, row.label, row.charge_state
-            )
+            job = self.job_for_label(definition, row.label, row.charge_state)
             if job is None or job.id in seen:
                 continue
             selected.append(job)
@@ -600,17 +588,13 @@ class MuonRelaxationController(WorkflowJobController):
         rows_by_label = [
             row
             for row in config.rows
-            if any(
-                _muon_relaxation_selection_matches(row, selection) for selection in wanted
-            )
+            if any(_muon_relaxation_selection_matches(row, selection) for selection in wanted)
         ]
         created: list[Job] = []
         for row in rows_by_label:
             key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
             spec = spec_by_key.get(key)
-            existing_job = self.job_for_label(
-                definition, row.label, row.charge_state
-            )
+            existing_job = self.job_for_label(definition, row.label, row.charge_state)
             if existing_job is not None:
                 if existing_job.status == JobStatus.DEFINED and spec is not None:
                     seed_mapping[key] = spec.name
@@ -678,16 +662,12 @@ class MuonRelaxationController(WorkflowJobController):
         if config is None:
             return False
         row_key = str(key)
-        if not any(
-            self._deps.muon_relaxation_row_key(row) == row_key for row in config.rows
-        ):
+        if not any(self._deps.muon_relaxation_row_key(row) == row_key for row in config.rows):
             return False
 
         values = dict(parameter_values)
         advanced = (
-            tuple(str(name) for name in added_advanced)
-            if added_advanced is not None
-            else None
+            tuple(str(name) for name in added_advanced) if added_advanced is not None else None
         )
         mirrored = self._mirror_row_parameters_into_form(row_key, values, advanced)
         if mirrored is not None:
@@ -703,8 +683,8 @@ class MuonRelaxationController(WorkflowJobController):
             else row
             for row in config.rows
         )
-        definition.parameters["configuration"] = (
-            self._deps.serialize_muon_relaxation_config(replace(config, rows=rows))
+        definition.parameters["configuration"] = self._deps.serialize_muon_relaxation_config(
+            replace(config, rows=rows)
         )
 
         self._context.persist_ui_state(
@@ -755,9 +735,7 @@ class MuonRelaxationController(WorkflowJobController):
             raw_advanced = row.get("added_advanced", [])
             return (
                 dict(raw_params) if isinstance(raw_params, dict) else {},
-                tuple(str(name) for name in raw_advanced)
-                if isinstance(raw_advanced, list)
-                else (),
+                tuple(str(name) for name in raw_advanced) if isinstance(raw_advanced, list) else (),
             )
         return None
 
@@ -830,9 +808,7 @@ class MuonRelaxationController(WorkflowJobController):
         if host is None:
             return ""
         row_key = str(key)
-        if not any(
-            self._deps.muon_relaxation_row_key(row) == row_key for row in config.rows
-        ):
+        if not any(self._deps.muon_relaxation_row_key(row) == row_key for row in config.rows):
             return ""
 
         rows = tuple(
@@ -947,9 +923,7 @@ class MuonRelaxationController(WorkflowJobController):
         """
 
         seed_name = self._context.job_seed_name(job)
-        failure = relaxation_artifact_failure(
-            job, parsed, run, artifacts, seed_name=seed_name
-        )
+        failure = relaxation_artifact_failure(job, parsed, run, artifacts, seed_name=seed_name)
         if failure is not None:
             return failure
         relaxed = artifacts.relaxed_cell

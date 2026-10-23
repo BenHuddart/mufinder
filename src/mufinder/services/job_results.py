@@ -21,7 +21,14 @@ from mufinder.domain.models import Result
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
 
-_TOTAL_ENERGY_KEYS = ("total_energy", "total_energy_ev", "final_energy", "final_energy_ev", "energy", "energy_ev")
+_TOTAL_ENERGY_KEYS = (
+    "total_energy",
+    "total_energy_ev",
+    "final_energy",
+    "final_energy_ev",
+    "energy",
+    "energy_ev",
+)
 _TOTAL_ENERGY_GROUP = ("energies", ("total", "total_energy", "final", "final_energy", "energy"))
 _MAX_FORCE_KEYS = ("max_force", "maximum_force", "max_force_eva")
 _MAX_FORCE_GROUP = ("forces", ("max", "max_force", "maximum"))

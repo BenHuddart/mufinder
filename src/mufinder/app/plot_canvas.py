@@ -76,7 +76,9 @@ def create_plot_canvas(
     value for plots that need more room, never ``(0, 0)``.
     """
 
-    figure = Figure(figsize=figsize, facecolor="none" if transparent else facecolor, layout="constrained")
+    figure = Figure(
+        figsize=figsize, facecolor="none" if transparent else facecolor, layout="constrained"
+    )
     if transparent:
         figure.patch.set_alpha(0.0)
     canvas = FigureCanvasQTAgg(figure)
@@ -105,7 +107,9 @@ class _PlotWindowToolbar(NavigationToolbar2QT):
     layout that keeps the labels visible; editing axes is out of scope here.
     """
 
-    toolitems = [item for item in NavigationToolbar2QT.toolitems if item[0] not in ("Subplots", "Customize")]
+    toolitems = [
+        item for item in NavigationToolbar2QT.toolitems if item[0] not in ("Subplots", "Customize")
+    ]
 
 
 class _PlotWindow(QWidget):
@@ -127,7 +131,9 @@ class _PlotWindow(QWidget):
         # plot goes back.
         _leave_navigation_mode(self._previous_toolbar)
         self._previous_toolbar_was_enabled = (
-            self._previous_toolbar.isEnabled() if isinstance(self._previous_toolbar, QWidget) else None
+            self._previous_toolbar.isEnabled()
+            if isinstance(self._previous_toolbar, QWidget)
+            else None
         )
         if isinstance(self._previous_toolbar, QWidget):
             self._previous_toolbar.setEnabled(False)
@@ -156,7 +162,10 @@ class _PlotWindow(QWidget):
         for connection in (toolbar._id_press, toolbar._id_release, toolbar._id_drag):
             self._canvas.mpl_disconnect(connection)
         self._canvas.toolbar = self._previous_toolbar
-        if isinstance(self._previous_toolbar, QWidget) and self._previous_toolbar_was_enabled is not None:
+        if (
+            isinstance(self._previous_toolbar, QWidget)
+            and self._previous_toolbar_was_enabled is not None
+        ):
             self._previous_toolbar.setEnabled(self._previous_toolbar_was_enabled)
         self.layout().removeWidget(self._canvas)
         return self._canvas
@@ -182,7 +191,9 @@ class PlotFrame(QWidget):
 
     popped_out_changed = Signal(bool)
 
-    def __init__(self, canvas: FigureCanvasQTAgg, *, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, canvas: FigureCanvasQTAgg, *, title: str, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("plotFrame")
         self._canvas = canvas
@@ -317,7 +328,10 @@ class PlotFrame(QWidget):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
         # A separate window is a child of this frame, which Qt does not hide
         # with the dialog; bring the plot home when the dialog goes away.
-        if watched is self._watched_window and event.type() in (QEvent.Type.Hide, QEvent.Type.Close):
+        if watched is self._watched_window and event.type() in (
+            QEvent.Type.Hide,
+            QEvent.Type.Close,
+        ):
             self.show_here()
         elif watched is self._overlay and event.type() == QEvent.Type.Resize:
             self._position_overlay()

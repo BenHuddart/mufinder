@@ -39,7 +39,10 @@ from mufinder.services.project_document import (
     active_host_structure,
     job_for_mapping_key,
 )
-from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
+from mufinder.workflow.energy_barriers import (
+    NUDGED_ELASTIC_BAND_CALC_TYPE,
+    TRANSITION_STATE_SEARCH_CALC_TYPE,
+)
 from mufinder.workflow.muon_site import (
     ACTIVE_MUON_RELAXATION_DEFINITION_KEY,
     MUON_RELAXATION_DEFINITION_CALC_TYPE,
@@ -383,12 +386,16 @@ def magnetic_structure_has_components(magnetic_structure: object) -> bool:
 
 
 def quantum_corrections_complete(document: ProjectDocument) -> bool:
-    return any(result.result_type == QUANTUM_PHONON_CALC_TYPE for result in document.results.values())
+    return any(
+        result.result_type == QUANTUM_PHONON_CALC_TYPE for result in document.results.values()
+    )
 
 
 #: Result types that hold a barrier: NEB results, plus the search results an older
 #: project may still store (see ``docs/compatibility_policy.rst``).
-_BARRIER_RESULT_TYPES = frozenset({NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE})
+_BARRIER_RESULT_TYPES = frozenset(
+    {NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE}
+)
 
 
 def energy_barriers_complete(document: ProjectDocument) -> bool:
@@ -439,10 +446,14 @@ def muon_relaxation_job_for_row(
     older definitions, accepts any muon-relaxation calc type.
     """
 
-    keys = (f"{muon_charge_state_prefix(charge_state)}:{label}", label) if charge_state else (label,)
+    keys = (
+        (f"{muon_charge_state_prefix(charge_state)}:{label}", label) if charge_state else (label,)
+    )
     calc_type = muon_relaxation_calc_type(charge_state) if charge_state else None
     for key in keys:
-        job = job_for_mapping_key(document, definition, key, calc_type=calc_type if key != label else None)
+        job = job_for_mapping_key(
+            document, definition, key, calc_type=calc_type if key != label else None
+        )
         if job is not None and is_muon_relaxation_calc_type(job.calc_type):
             return job
     return None
@@ -465,10 +476,19 @@ def muon_relaxation_row_jobs(
         label = str(entry.get("label", "")).strip()
         if not label:
             continue
-        charge_state = canonical_charge_state(str(entry.get("charge_state") or POSITIVE_MUON_CHARGE_STATE))
+        charge_state = canonical_charge_state(
+            str(entry.get("charge_state") or POSITIVE_MUON_CHARGE_STATE)
+        )
         charge_state = charge_state or POSITIVE_MUON_CHARGE_STATE
         site_id = _uuid_or_none(entry.get("site_id"))
-        row_jobs.append((label, charge_state, site_id, muon_relaxation_job_for_row(document, definition, label, charge_state)))
+        row_jobs.append(
+            (
+                label,
+                charge_state,
+                site_id,
+                muon_relaxation_job_for_row(document, definition, label, charge_state),
+            )
+        )
     return row_jobs
 
 
@@ -510,7 +530,9 @@ def summarize_project(document: ProjectDocument) -> ProjectSummary:
     for info in WORKFLOW_STAGES:
         job_stages = _STAGE_JOB_STAGES.get(info.key, ())
         active_jobs[info.key] = sum(active_by_stage[stage] for stage in job_stages)
-        started = any(any_jobs_by_stage[stage] for stage in job_stages) or _has_partial_work(document, info.key)
+        started = any(any_jobs_by_stage[stage] for stage in job_stages) or _has_partial_work(
+            document, info.key
+        )
         if complete[info.key]:
             statuses[info.key] = StageStatus.COMPLETE
         elif started:
@@ -526,7 +548,9 @@ def summarize_project(document: ProjectDocument) -> ProjectSummary:
             guidance=info.guidance,
             active_jobs=active_jobs[info.key],
             unmet_requirements=(
-                _unmet_requirements(info.key, statuses) if statuses[info.key] == StageStatus.NOT_STARTED else ()
+                _unmet_requirements(info.key, statuses)
+                if statuses[info.key] == StageStatus.NOT_STARTED
+                else ()
             ),
         )
         for info in WORKFLOW_STAGES
@@ -543,7 +567,11 @@ def _unmet_requirements(key: str, statuses: Mapping[str, StageStatus]) -> tuple[
     if key != "host_structure" and statuses["host_structure"] != StageStatus.COMPLETE:
         unmet.append(stage_info("host_structure").title)
     for dependency in STAGE_DEPENDENCIES:
-        if dependency.target != key or dependency.kind != DependencyKind.REQUIRED or started(dependency.source):
+        if (
+            dependency.target != key
+            or dependency.kind != DependencyKind.REQUIRED
+            or started(dependency.source)
+        ):
             continue
         title = (_STAGES_BY_KEY.get(dependency.source) or _GROUPS_BY_KEY[dependency.source]).title
         if title not in unmet:
@@ -559,7 +587,11 @@ def _current_stage(document: ProjectDocument, stages: list[StageSummary]) -> str
     if in_progress:
         return in_progress[-1]
     for stage in stages:
-        if stage.status != StageStatus.COMPLETE and not stage.unmet_requirements and not stage_info(stage.key).optional:
+        if (
+            stage.status != StageStatus.COMPLETE
+            and not stage.unmet_requirements
+            and not stage_info(stage.key).optional
+        ):
             return stage.key
     return stages[-1].key
 
@@ -615,13 +647,21 @@ def _cutoff_facts(document: ProjectDocument) -> tuple[str, ...]:
 
 def _kpoint_facts(document: ProjectDocument) -> tuple[str, ...]:
     grid = document.project.recommended_kpoint_grid
-    facts = [f"Default grid {'×'.join(str(value) for value in grid)}" if grid is not None else "No default grid yet"]
+    facts = [
+        f"Default grid {'×'.join(str(value) for value in grid)}"
+        if grid is not None
+        else "No default grid yet"
+    ]
     facts.extend(_job_facts(document, WorkflowStage.CONVERGENCE_KPOINT, "test"))
     return tuple(facts)
 
 
 def _pristine_facts(document: ProjectDocument) -> tuple[str, ...]:
-    relaxed = [structure for structure in document.structures.values() if structure.origin == "pristine_relaxation"]
+    relaxed = [
+        structure
+        for structure in document.structures.values()
+        if structure.origin == "pristine_relaxation"
+    ]
     facts = list(_job_facts(document, WorkflowStage.PRISTINE_RELAXATION, "relaxation"))
     if relaxed:
         facts.append(_count(len(relaxed), "relaxed structure"))
@@ -647,7 +687,9 @@ def _uep_facts(document: ProjectDocument) -> tuple[str, ...]:
 
 def _candidate_facts(document: ProjectDocument) -> tuple[str, ...]:
     host_id = document.project.host_structure_id
-    sites = [site for site in document.sites.values() if site.source_structure_id in (None, host_id)]
+    sites = [
+        site for site in document.sites.values() if site.source_structure_id in (None, host_id)
+    ]
     if not sites:
         return ("No candidate sites yet",)
     from_uep = sum(site.generation_method.startswith("uep_cluster") for site in sites)
@@ -708,7 +750,9 @@ def _analysis_facts(document: ProjectDocument) -> tuple[str, ...]:
 def _magnetic_facts(document: ProjectDocument) -> tuple[str, ...]:
     facts: list[str] = []
     magnetic_structure = document.project.magnetic_structure
-    components = magnetic_structure.get("components") if isinstance(magnetic_structure, Mapping) else None
+    components = (
+        magnetic_structure.get("components") if isinstance(magnetic_structure, Mapping) else None
+    )
     if isinstance(components, list) and components:
         facts.append(_count(len(components), "magnetic component"))
     workspaces = magnetic_field_workspaces(document)
@@ -718,7 +762,11 @@ def _magnetic_facts(document: ProjectDocument) -> tuple[str, ...]:
 
 
 def _quantum_facts(document: ProjectDocument) -> tuple[str, ...]:
-    results = [result for result in document.results.values() if result.result_type == QUANTUM_PHONON_CALC_TYPE]
+    results = [
+        result
+        for result in document.results.values()
+        if result.result_type == QUANTUM_PHONON_CALC_TYPE
+    ]
     facts = [_count(len(results), "phonon result")] if results else []
     facts.extend(_job_facts(document, WorkflowStage.QUANTUM_CORRECTIONS, "job", completed=False))
     return tuple(facts) or ("No quantum calculations yet",)

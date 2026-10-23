@@ -189,7 +189,9 @@ class _ReactionCoordinateProfile(QWidget):
         self._dragging = False
         self.update()
 
-    def set_profile(self, rows: list[EnergyBarrierPreviewImageRow], *, selected_index: int = 0) -> None:
+    def set_profile(
+        self, rows: list[EnergyBarrierPreviewImageRow], *, selected_index: int = 0
+    ) -> None:
         self._rows = list(rows)
         self._selected_index = max(0, min(selected_index, len(self._rows) - 1)) if self._rows else 0
         if self._hover_index is not None and self._hover_index >= len(self._rows):
@@ -231,7 +233,9 @@ class _ReactionCoordinateProfile(QWidget):
                 self._hover_index = hover
                 self.update()
             self.setCursor(
-                Qt.CursorShape.PointingHandCursor if hover is not None else Qt.CursorShape.ArrowCursor
+                Qt.CursorShape.PointingHandCursor
+                if hover is not None
+                else Qt.CursorShape.ArrowCursor
             )
             if hover is not None:
                 row = self._rows[hover]
@@ -415,7 +419,9 @@ class _ReactionCoordinateProfile(QWidget):
         min_x, max_x, min_y, max_y = self._data_ranges()
         x_ticks = _nice_ticks(min_x, max_x, 5)
         y_ticks = _nice_ticks(min_y, max_y, 4)
-        y_tick_width = max((metrics.horizontalAdvance(_format_tick(tick)) for tick in y_ticks), default=0.0)
+        y_tick_width = max(
+            (metrics.horizontalAdvance(_format_tick(tick)) for tick in y_ticks), default=0.0
+        )
         left = metrics.height() + 8.0 + y_tick_width + 6.0
         bottom = 2.0 * metrics.height() + 12.0
         top = metrics.height() + 8.0
@@ -451,7 +457,9 @@ class _ReactionCoordinateProfile(QWidget):
         if horizontal_only:
             distances = [abs(point[0] - position.x()) for point in points]
         else:
-            distances = [math.hypot(point[0] - position.x(), point[1] - position.y()) for point in points]
+            distances = [
+                math.hypot(point[0] - position.x(), point[1] - position.y()) for point in points
+            ]
         nearest = min(range(len(points)), key=lambda index: distances[index])
         if max_distance is not None and distances[nearest] > max_distance:
             return None
@@ -676,7 +684,16 @@ class EnergyBarriersWidget(SourceTableWidget):
         style_hint_text(source_hint)
         sources_layout.addWidget(source_hint)
         self._sources_table = create_workflow_table(
-            ("Reactant", "Product", "Charge", "Path Length", "Farms", "Status", "Parameters", "View"),
+            (
+                "Reactant",
+                "Product",
+                "Charge",
+                "Path Length",
+                "Farms",
+                "Status",
+                "Parameters",
+                "View",
+            ),
             resize_to_contents_columns=(6, 7),
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -746,7 +763,9 @@ class EnergyBarriersWidget(SourceTableWidget):
         )
         self._neb_results_table.itemSelectionChanged.connect(self._emit_neb_result_selected)
         self._neb_results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._neb_results_table.customContextMenuRequested.connect(self._show_neb_results_context_menu)
+        self._neb_results_table.customContextMenuRequested.connect(
+            self._show_neb_results_context_menu
+        )
         neb_results_layout.addWidget(self._neb_results_table)
         neb_layout.addWidget(self._neb_results_group)
 
@@ -762,7 +781,9 @@ class EnergyBarriersWidget(SourceTableWidget):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(10)
 
-        self._preview_title = QLabel("Select a completed NEB result to inspect the minimum-energy path.")
+        self._preview_title = QLabel(
+            "Select a completed NEB result to inspect the minimum-energy path."
+        )
         self._preview_title.setWordWrap(True)
         controls_layout.addWidget(self._preview_title)
 
@@ -885,7 +906,9 @@ class EnergyBarriersWidget(SourceTableWidget):
     def create_source_row_cells(self, row_index: int, row: EnergyBarrierSourceRow) -> None:
         view_button = QPushButton("View...", self._sources_table)
         view_button.setToolTip("Open the path viewer for this diffusion path.")
-        view_button.clicked.connect(lambda _checked=False, key=row.key: self.view_source_requested.emit(key))
+        view_button.clicked.connect(
+            lambda _checked=False, key=row.key: self.view_source_requested.emit(key)
+        )
         self._sources_table.setCellWidget(row_index, self._VIEW_COLUMN, view_button)
 
     def refresh_source_actions(self, selected_rows: Sequence[EnergyBarrierSourceRow]) -> None:
@@ -910,7 +933,9 @@ class EnergyBarriersWidget(SourceTableWidget):
                 row.images,
                 row.status,
             )
-            tooltip = f"Trajectory file: {row.transition_state_file}" if row.transition_state_file else ""
+            tooltip = (
+                f"Trajectory file: {row.transition_state_file}" if row.transition_state_file else ""
+            )
             for column, value in enumerate(values):
                 set_workflow_table_item(table, row_index, column, value)
                 item = table.item(row_index, column)
@@ -937,9 +962,13 @@ class EnergyBarriersWidget(SourceTableWidget):
     def _cap_neb_results_table_height(self) -> None:
         table = self._neb_results_table
         header_height = table.horizontalHeader().sizeHint().height()
-        row_height = table.rowHeight(0) if table.rowCount() else table.verticalHeader().defaultSectionSize()
+        row_height = (
+            table.rowHeight(0) if table.rowCount() else table.verticalHeader().defaultSectionSize()
+        )
         visible_rows = max(2, min(table.rowCount(), _MAX_VISIBLE_NEB_RESULT_ROWS))
-        table.setMaximumHeight(header_height + visible_rows * row_height + 2 * table.frameWidth() + 6)
+        table.setMaximumHeight(
+            header_height + visible_rows * row_height + 2 * table.frameWidth() + 6
+        )
 
     def _show_neb_results_context_menu(self, position) -> None:
         row = self._neb_results_table.rowAt(position.y())
@@ -950,7 +979,9 @@ class EnergyBarriersWidget(SourceTableWidget):
             return
         menu = QMenu(self._neb_results_table)
         action = menu.addAction("Open Containing Folder")
-        action.triggered.connect(lambda _checked=False, path=trajectory: _open_containing_folder(path))
+        action.triggered.connect(
+            lambda _checked=False, path=trajectory: _open_containing_folder(path)
+        )
         menu.exec(self._neb_results_table.viewport().mapToGlobal(position))
 
     def set_neb_preview(
@@ -975,7 +1006,9 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._preview_structures = []
         self._preview_index = 0
         self._preview_reset_pending = True
-        self._preview_title.setText(title or "Select a completed NEB result to inspect the minimum-energy path.")
+        self._preview_title.setText(
+            title or "Select a completed NEB result to inspect the minimum-energy path."
+        )
         self._preview_summary.setText("")
         self._preview_position_label.setText("")
         self._preview_prev_button.setEnabled(False)
@@ -1001,7 +1034,9 @@ class EnergyBarriersWidget(SourceTableWidget):
 
     def _emit_generate_paths(self) -> None:
         reactant_key, product_key = self.selected_endpoint_keys()
-        self.generate_paths_requested.emit(reactant_key, product_key, self._max_path_length_input.text().strip())
+        self.generate_paths_requested.emit(
+            reactant_key, product_key, self._max_path_length_input.text().strip()
+        )
 
     def _delete_selected_sources(self) -> None:
         keys = self.selected_source_keys()
@@ -1153,6 +1188,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         if combo.count():
             combo.setCurrentIndex(max(0, min(fallback_index, combo.count() - 1)))
 
+
 # Column index of the "Status" header in the Completed NEB Calculations table (see
 # create_workflow_table call); the row tuple writes path, charge, length, barriers, ΔE,
 # images, then status.
@@ -1167,5 +1203,6 @@ def _muon_atom_indexes(structure: Structure) -> list[int]:
     return [
         index
         for index, species in enumerate(structure.species)
-        if str(species).strip().casefold() == "h:mu" or str(species).strip().casefold().endswith(":mu")
+        if str(species).strip().casefold() == "h:mu"
+        or str(species).strip().casefold().endswith(":mu")
     ]

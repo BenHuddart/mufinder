@@ -121,10 +121,16 @@ class SupercellSuggestionDialog(QDialog):
         for row, cand in enumerate(s.candidates):
             tag = "(Recommended)" if row == s.recommended_index else ""
             set_workflow_table_item(self._table, row, self._TAG_COLUMN, tag)
-            set_workflow_table_item(self._table, row, self._SCALING_COLUMN, _scaling_label(cand.scaling))
+            set_workflow_table_item(
+                self._table, row, self._SCALING_COLUMN, _scaling_label(cand.scaling)
+            )
             set_workflow_table_item(self._table, row, self._ATOMS_COLUMN, str(cand.atom_count))
-            set_workflow_table_item(self._table, row, self._DISTANCE_COLUMN, _distance_label(cand.min_image_distance))
-            set_workflow_table_item(self._table, row, self._CRITERION_COLUMN, _criterion_label(cand.satisfies_criterion))
+            set_workflow_table_item(
+                self._table, row, self._DISTANCE_COLUMN, _distance_label(cand.min_image_distance)
+            )
+            set_workflow_table_item(
+                self._table, row, self._CRITERION_COLUMN, _criterion_label(cand.satisfies_criterion)
+            )
 
         self._table.selectRow(s.recommended_index)
         layout.addWidget(self._table, 1)

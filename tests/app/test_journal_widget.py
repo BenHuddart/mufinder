@@ -55,7 +55,11 @@ def test_journal_widget_exports_selected_format(
                 timestamp=datetime(2026, 4, 21, 12, 0, tzinfo=UTC),
                 action="submit_jobs",
                 workflow_stage=WorkflowStage.UEP,
-                parameters={"execution_target": "local", "job_count": 1, "job_labels": ["uep_row_1"]},
+                parameters={
+                    "execution_target": "local",
+                    "job_count": 1,
+                    "job_labels": ["uep_row_1"],
+                },
             )
         ],
     )

@@ -10,9 +10,18 @@ from PySide6.QtTest import QTest
 
 from mufinder.app import theme as theme_module
 from mufinder.app.cell_survey_widget import FALLBACK_NOTE, CellSurveyWidget
-from mufinder.app.project_home_trail import FieldNotesPanel, ProjectHomeChartWidget, ProjectHomeWidget
+from mufinder.app.project_home_trail import (
+    FieldNotesPanel,
+    ProjectHomeChartWidget,
+    ProjectHomeWidget,
+)
 from mufinder.services.project_summary import WORKFLOW_STAGES, summarize_project
-from mufinder.services.project_survey import SurveyLayer, SurveyMarker, SurveyMarkerKind, survey_layers
+from mufinder.services.project_survey import (
+    SurveyLayer,
+    SurveyMarker,
+    SurveyMarkerKind,
+    survey_layers,
+)
 from tests.support.project_home import muon_project
 
 
@@ -171,7 +180,9 @@ def test_survey_projection_toggle_and_marker_tooltips(qapp, tmp_path: Path) -> N
     details = [text for _center, _radius, text in survey.canvas._hits]
     assert "mu1 · +0.000 eV" in details
     assert "Sr" in details
-    center = next(center for center, _radius, text in survey.canvas._hits if text == "mu1 · +0.000 eV")
+    center = next(
+        center for center, _radius, text in survey.canvas._hits if text == "mu1 · +0.000 eV"
+    )
     assert survey.canvas.hit_text_at(center) == "mu1 · +0.000 eV"
 
 

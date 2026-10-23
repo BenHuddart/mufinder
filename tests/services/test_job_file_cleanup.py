@@ -109,7 +109,9 @@ def test_execute_applies_an_apply_to_all_answer_to_later_items(tmp_path: Path) -
         asked.append(item.label)
         return next(answers)
 
-    outcome = cleanup.execute([cleanup.plan_item([job]) for job in jobs], choose_disposition=choose, stop_on_error=True)
+    outcome = cleanup.execute(
+        [cleanup.plan_item([job]) for job in jobs], choose_disposition=choose, stop_on_error=True
+    )
 
     assert outcome.completed
     assert asked == ["relax_a", "relax_b"]
@@ -141,7 +143,9 @@ def test_execute_does_not_ask_again_for_a_directory_an_earlier_item_removed(tmp_
     # Cancel would be the answer for a second prompt; there must not be one.
     answers = iter(["delete", None])
     outcome = cleanup.execute(
-        plan, choose_disposition=lambda item: asked.append(item.label) or next(answers), stop_on_error=True
+        plan,
+        choose_disposition=lambda item: asked.append(item.label) or next(answers),
+        stop_on_error=True,
     )
 
     assert asked == ["relax_a"]
@@ -193,7 +197,9 @@ def test_execute_reports_a_file_error_and_keeps_that_item(
         stop_on_error=stop_on_error,
     )
 
-    assert [(failure.item.label, str(failure.error)) for failure in outcome.failures] == [("relax_a", "busy")]
+    assert [(failure.item.label, str(failure.error)) for failure in outcome.failures] == [
+        ("relax_a", "busy")
+    ]
     assert first.id in document.jobs
     assert (second.id in document.jobs) is stop_on_error
     assert directories["relax_b"].exists() is stop_on_error
@@ -210,16 +216,23 @@ def test_plan_item_refuses_a_directory_another_job_uses(tmp_path: Path) -> None:
     outcome = cleanup.execute([refused], choose_disposition=pytest.fail, stop_on_error=False)
 
     assert refused.label == "Row A"
-    assert refused.refusal == f"- relax_a: another job uses the same output folder ({directory.resolve()})"
+    assert (
+        refused.refusal
+        == f"- relax_a: another job uses the same output folder ({directory.resolve()})"
+    )
     assert together.refusal is None
     assert outcome.failures[0].refusal == refused.refusal
     assert directory.exists()
     assert owner.id in document.jobs
 
 
-def test_directory_ownership_refusals_checks_the_folder_and_cluster_directory(tmp_path: Path) -> None:
+def test_directory_ownership_refusals_checks_the_folder_and_cluster_directory(
+    tmp_path: Path,
+) -> None:
     service, document = _project(tmp_path)
-    outside, misnamed, remote = (_job(service, document, label) for label in ("job_out", "job_name", "job_remote"))
+    outside, misnamed, remote = (
+        _job(service, document, label) for label in ("job_out", "job_name", "job_remote")
+    )
     remote.execution_target = "alpha"
     remote.remote_directory = "/work/other_name"
     directories = {
@@ -232,7 +245,10 @@ def test_directory_ownership_refusals_checks_the_folder_and_cluster_directory(tm
 
     assert "outside the project's job folders" in refusals[outside.id]
     assert "not named after the job" in refusals[misnamed.id]
-    assert refusals[remote.id] == "- job_remote: its cluster directory is not named after the job (/work/other_name)"
+    assert (
+        refusals[remote.id]
+        == "- job_remote: its cluster directory is not named after the job (/work/other_name)"
+    )
     assert cleanup.directory_ownership_refusals([remote], check_remote=False) == {}
 
 
@@ -260,7 +276,9 @@ def test_delete_job_records_removes_runs_results_mappings_and_relaxations(tmp_pa
     assert active_run_by_job == {}
 
 
-def test_delete_path_retries_a_transient_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_delete_path_retries_a_transient_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "transient_dir"
     target.mkdir()
     (target / "inner.txt").write_text("x", encoding="utf-8")
@@ -277,7 +295,9 @@ def test_delete_path_retries_a_transient_permission_error(tmp_path: Path, monkey
     monkeypatch.setattr(cleanup_module.time, "sleep", lambda _delay: None)
 
     JobFileCleanup(
-        document_getter=lambda: None, job_output_directory=lambda _job: None, job_seed_name=lambda job: job.label
+        document_getter=lambda: None,
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
     ).delete_path(target)
 
     assert calls["n"] >= 2

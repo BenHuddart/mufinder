@@ -50,7 +50,9 @@ def _write(path: Path, text: str) -> Path:
         ),
     ],
 )
-def test_scheduler_log_evidence_is_classified(tmp_path: Path, log_text: str, reason: FailureReason) -> None:
+def test_scheduler_log_evidence_is_classified(
+    tmp_path: Path, log_text: str, reason: FailureReason
+) -> None:
     log = _write(tmp_path / "slurm-4242.out", log_text)
 
     diagnosis = diagnose_failure("CASTEP did not report successful completion.", [log])

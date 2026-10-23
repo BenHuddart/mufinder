@@ -54,7 +54,9 @@ class UepError(ValueError):
 class UepStructure:
     """Host structure information loaded from CASTEP output."""
 
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     species: tuple[str, ...]
     positions_ang: tuple[tuple[float, float, float], ...]
     fractional_positions: tuple[tuple[float, float, float], ...]
@@ -98,9 +100,15 @@ class UepProbeResult:
     gradient_total_ev_per_ang: tuple[float, float, float]
     gradient_electronic_ev_per_ang: tuple[float, float, float]
     gradient_ionic_ev_per_ang: tuple[float, float, float]
-    hessian_total_ev_per_ang2: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
-    hessian_electronic_ev_per_ang2: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
-    hessian_ionic_ev_per_ang2: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    hessian_total_ev_per_ang2: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
+    hessian_electronic_ev_per_ang2: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
+    hessian_ionic_ev_per_ang2: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     classification: StationaryPointClassification
     zero_point_energy_ev: float | None
     total_quantum_energy_ev: float | None
@@ -153,7 +161,9 @@ class UepPlaneSample:
 class UepPotentialGrid:
     """Real-space total electrostatic potential sampled on the FFT grid."""
 
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     grid: tuple[int, int, int]
     potential_total_ev: np.ndarray
     gw_factor: float | None = None
@@ -410,10 +420,17 @@ def load_uep_source(
             f"UEP requires a neutral host cell, but '{output_path.name}' reports total charge {total_charge:.6g}."
         )
     if total_charge is None:
-        neutrality_warning = "CASTEP output did not report total cell charge explicitly; assuming a neutral host."
+        neutrality_warning = (
+            "CASTEP output did not report total cell charge explicitly; assuming a neutral host."
+        )
 
-    positions_ang = tuple(tuple(float(value) for value in row) for row in atoms.get_positions().tolist())
-    fractional_positions = tuple(tuple(float(value) for value in row) for row in atoms.get_scaled_positions(wrap=True).tolist())
+    positions_ang = tuple(
+        tuple(float(value) for value in row) for row in atoms.get_positions().tolist()
+    )
+    fractional_positions = tuple(
+        tuple(float(value) for value in row)
+        for row in atoms.get_scaled_positions(wrap=True).tolist()
+    )
     atomic_spins = parse_castep_mulliken_atomic_spins(output_path)
     structure = UepStructure(
         lattice_vectors=(
@@ -427,7 +444,9 @@ def load_uep_source(
         atomic_spins=atomic_spins,
     )
 
-    missing_species = sorted({symbol for symbol in structure.species if symbol not in pseudopotentials})
+    missing_species = sorted(
+        {symbol for symbol in structure.species if symbol not in pseudopotentials}
+    )
     if missing_species:
         joined = ", ".join(missing_species)
         raise UepError(
@@ -449,7 +468,9 @@ def load_uep_source(
         pseudopotentials=tuple(pseudopotentials[symbol] for symbol in structure.species),
         castep_path=output_path,
         den_fmt_path=density_path,
-        cell_path=optional_cell_path if optional_cell_path is not None and optional_cell_path.exists() else None,
+        cell_path=optional_cell_path
+        if optional_cell_path is not None and optional_cell_path.exists()
+        else None,
         gw_factor=float(gw_factor),
         neutrality_warning=neutrality_warning,
     )
@@ -515,10 +536,14 @@ class UepField:
         return self._source
 
     @property
-    def lattice_vectors(self) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    def lattice_vectors(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
         return self._source.structure.lattice_vectors
 
-    def fractional_position(self, position_ang: tuple[float, float, float] | np.ndarray) -> tuple[float, float, float]:
+    def fractional_position(
+        self, position_ang: tuple[float, float, float] | np.ndarray
+    ) -> tuple[float, float, float]:
         position = np.asarray(position_ang, dtype=float)
         fractional = np.mod(np.linalg.solve(self._lattice.T, position), 1.0)
         return tuple(float(value) for value in fractional)
@@ -541,8 +566,14 @@ class UepField:
 
         coords = self._validate_points(points)
         kernel = self._fourier_kernel(coords)
-        rho_electronic = np.real(np.sum(self._electron_density_g[:, :, :, None] * kernel, axis=(0, 1, 2))) / self._volume
-        rho_ionic = np.real(np.sum(self._ionic_density_g[:, :, :, None] * kernel, axis=(0, 1, 2))) / self._volume
+        rho_electronic = (
+            np.real(np.sum(self._electron_density_g[:, :, :, None] * kernel, axis=(0, 1, 2)))
+            / self._volume
+        )
+        rho_ionic = (
+            np.real(np.sum(self._ionic_density_g[:, :, :, None] * kernel, axis=(0, 1, 2)))
+            / self._volume
+        )
         return (rho_electronic + rho_ionic, rho_electronic, rho_ionic)
 
     def potential(self, points: object) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -550,8 +581,12 @@ class UepField:
 
         coords = self._validate_points(points)
         kernel = self._fourier_kernel(coords)
-        potential_electronic = np.real(np.sum(self._electron_potential_g[:, :, :, None] * kernel, axis=(0, 1, 2)))
-        potential_ionic = np.real(np.sum(self._ionic_potential_g[:, :, :, None] * kernel, axis=(0, 1, 2)))
+        potential_electronic = np.real(
+            np.sum(self._electron_potential_g[:, :, :, None] * kernel, axis=(0, 1, 2))
+        )
+        potential_ionic = np.real(
+            np.sum(self._ionic_potential_g[:, :, :, None] * kernel, axis=(0, 1, 2))
+        )
         scale = _COULOMB_PREFactor * cnst.e * 1e10
         potential_electronic *= scale
         potential_ionic *= scale
@@ -564,7 +599,9 @@ class UepField:
         kernel = self._fourier_kernel(coords)
         derivative_kernel = 1.0j * self._g_grid[:, :, :, :, None] * kernel[None, :, :, :, :]
         gradient_electronic = np.real(
-            np.sum(self._electron_potential_g[None, :, :, :, None] * derivative_kernel, axis=(1, 2, 3))
+            np.sum(
+                self._electron_potential_g[None, :, :, :, None] * derivative_kernel, axis=(1, 2, 3)
+            )
         ).T
         gradient_ionic = np.real(
             np.sum(self._ionic_potential_g[None, :, :, :, None] * derivative_kernel, axis=(1, 2, 3))
@@ -585,10 +622,15 @@ class UepField:
         g_outer = self._g_grid[:, None, :, :, :] * self._g_grid[None, :, :, :, :]
         second_kernel = -g_outer[:, :, :, :, :, None] * kernel[None, None, :, :, :, :]
         hessian_electronic = np.real(
-            np.sum(self._electron_potential_g[None, None, :, :, :, None] * second_kernel, axis=(2, 3, 4))
+            np.sum(
+                self._electron_potential_g[None, None, :, :, :, None] * second_kernel,
+                axis=(2, 3, 4),
+            )
         ).T
         hessian_ionic = np.real(
-            np.sum(self._ionic_potential_g[None, None, :, :, :, None] * second_kernel, axis=(2, 3, 4))
+            np.sum(
+                self._ionic_potential_g[None, None, :, :, :, None] * second_kernel, axis=(2, 3, 4)
+            )
         ).T
         # Match the Cartesian second derivative of ``potential()`` with respect
         # to Angstrom coordinates, as exposed by pymuon-suite after its
@@ -624,7 +666,11 @@ def potential_grid(field: UepField) -> UepPotentialGrid:
     grid = tuple(int(value) for value in field.source.density.grid)
     point_count = int(np.prod(grid))
     scale = _COULOMB_PREFactor * cnst.e * 1e10
-    total = np.real(np.fft.ifftn(field._electron_potential_g + field._ionic_potential_g)) * point_count * scale
+    total = (
+        np.real(np.fft.ifftn(field._electron_potential_g + field._ionic_potential_g))
+        * point_count
+        * scale
+    )
     return UepPotentialGrid(
         lattice_vectors=field.lattice_vectors,
         grid=grid,
@@ -645,12 +691,16 @@ def _periodic_resample_axis(values: np.ndarray, target_size: int, *, axis: int) 
         return source.copy()
 
     moved = np.moveaxis(source, axis, 0)
-    sample_positions = np.arange(target_size, dtype=float) * (float(source_size) / float(target_size))
+    sample_positions = np.arange(target_size, dtype=float) * (
+        float(source_size) / float(target_size)
+    )
     lower = np.floor(sample_positions).astype(int) % source_size
     upper = (lower + 1) % source_size
     weights = (sample_positions - np.floor(sample_positions)).astype(float)
     reshape = (target_size,) + (1,) * (moved.ndim - 1)
-    resampled = (1.0 - weights).reshape(reshape) * moved[lower] + weights.reshape(reshape) * moved[upper]
+    resampled = (1.0 - weights).reshape(reshape) * moved[lower] + weights.reshape(reshape) * moved[
+        upper
+    ]
     return np.moveaxis(resampled, 0, axis)
 
 
@@ -663,7 +713,9 @@ def preview_potential_grid(
 
     values = np.asarray(potential.potential_total_ev, dtype=float)
     if values.ndim != 3 or min(values.shape) < 2:
-        raise UepError("Isosurface previews need a 3D potential grid with at least two points per axis.")
+        raise UepError(
+            "Isosurface previews need a 3D potential grid with at least two points per axis."
+        )
 
     limit = max(2, int(max_grid_points))
     target_grid = tuple(min(int(size), limit) for size in values.shape)
@@ -705,7 +757,9 @@ def _slice_lattice(lattice_vectors: object) -> np.ndarray:
 
 
 def fractional_point_to_cartesian(
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     fractional_position: tuple[float, float, float] | np.ndarray,
 ) -> tuple[float, float, float]:
     """Convert one fractional point into Cartesian coordinates."""
@@ -718,7 +772,9 @@ def fractional_point_to_cartesian(
 
 
 def miller_indices_to_cartesian_normal(
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     miller_indices: tuple[float, float, float] | np.ndarray,
 ) -> tuple[float, float, float]:
     """Convert Miller indices into the corresponding Cartesian plane normal."""
@@ -734,7 +790,9 @@ def miller_indices_to_cartesian_normal(
 
 
 def cartesian_normal_to_lattice_plane_components(
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     normal_ang: tuple[float, float, float] | np.ndarray,
 ) -> tuple[float, float, float]:
     """Convert a Cartesian plane normal into normalized lattice-plane components."""
@@ -755,9 +813,13 @@ def _interpolate_periodic_grid_trilinear(
 ) -> np.ndarray:
     values = np.asarray(potential.potential_total_ev, dtype=float)
     if values.ndim != 3 or min(values.shape) < 2:
-        raise UepError("Slice sampling needs a 3D potential grid with at least two points per axis.")
+        raise UepError(
+            "Slice sampling needs a 3D potential grid with at least two points per axis."
+        )
 
-    fractional = cartesian_to_fractional(positions_ang, _slice_lattice(potential.lattice_vectors), error=UepError)
+    fractional = cartesian_to_fractional(
+        positions_ang, _slice_lattice(potential.lattice_vectors), error=UepError
+    )
     wrapped = np.mod(fractional, 1.0)
     grid_shape = np.asarray(values.shape, dtype=float)
     scaled = wrapped * grid_shape.reshape(1, 3)
@@ -788,7 +850,9 @@ def _interpolate_periodic_grid_trilinear(
     return ((1.0 - wz) * c0) + (wz * c1)
 
 
-def normalize_plane_normal(normal_ang: tuple[float, float, float] | np.ndarray) -> tuple[float, float, float]:
+def normalize_plane_normal(
+    normal_ang: tuple[float, float, float] | np.ndarray,
+) -> tuple[float, float, float]:
     """Return a normalized plane normal or raise if it is degenerate."""
 
     normal = np.asarray(normal_ang, dtype=float)
@@ -800,7 +864,9 @@ def normalize_plane_normal(normal_ang: tuple[float, float, float] | np.ndarray) 
     return tuple(float(value) for value in (normal / norm))
 
 
-def plane_basis_from_normal(normal_ang: tuple[float, float, float] | np.ndarray) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+def plane_basis_from_normal(
+    normal_ang: tuple[float, float, float] | np.ndarray,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
     """Build an orthonormal in-plane basis for a plane normal."""
 
     normal = np.asarray(normalize_plane_normal(normal_ang), dtype=float)
@@ -821,7 +887,9 @@ def plane_from_point_and_normal(
     *,
     anchor_ang: tuple[float, float, float] | np.ndarray,
     normal_ang: tuple[float, float, float] | np.ndarray,
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     points_u: int = 161,
     points_v: int = 161,
 ) -> UepSlicePlane:
@@ -840,10 +908,15 @@ def plane_from_point_and_normal(
             lattice_vectors[0],
             lattice_vectors[1],
             lattice_vectors[2],
-            np.asarray(lattice_vectors[0], dtype=float) + np.asarray(lattice_vectors[1], dtype=float),
-            np.asarray(lattice_vectors[0], dtype=float) + np.asarray(lattice_vectors[2], dtype=float),
-            np.asarray(lattice_vectors[1], dtype=float) + np.asarray(lattice_vectors[2], dtype=float),
-            np.asarray(lattice_vectors[0], dtype=float) + np.asarray(lattice_vectors[1], dtype=float) + np.asarray(lattice_vectors[2], dtype=float),
+            np.asarray(lattice_vectors[0], dtype=float)
+            + np.asarray(lattice_vectors[1], dtype=float),
+            np.asarray(lattice_vectors[0], dtype=float)
+            + np.asarray(lattice_vectors[2], dtype=float),
+            np.asarray(lattice_vectors[1], dtype=float)
+            + np.asarray(lattice_vectors[2], dtype=float),
+            np.asarray(lattice_vectors[0], dtype=float)
+            + np.asarray(lattice_vectors[1], dtype=float)
+            + np.asarray(lattice_vectors[2], dtype=float),
         ],
         dtype=float,
     )
@@ -872,7 +945,9 @@ def plane_from_fractional_anchor_and_miller(
     *,
     anchor_fractional: tuple[float, float, float] | np.ndarray,
     miller_indices: tuple[float, float, float] | np.ndarray,
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     points_u: int = 161,
     points_v: int = 161,
 ) -> UepSlicePlane:
@@ -894,7 +969,9 @@ def plane_from_three_points(
     point_a_ang: tuple[float, float, float] | np.ndarray,
     point_b_ang: tuple[float, float, float] | np.ndarray,
     point_c_ang: tuple[float, float, float] | np.ndarray,
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     points_u: int = 161,
     points_v: int = 161,
 ) -> UepSlicePlane:
@@ -918,8 +995,12 @@ def plane_from_three_points(
 
 def plane_from_best_fit(
     *,
-    points_ang: tuple[tuple[float, float, float], ...] | list[tuple[float, float, float]] | np.ndarray,
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    points_ang: tuple[tuple[float, float, float], ...]
+    | list[tuple[float, float, float]]
+    | np.ndarray,
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
     points_u: int = 161,
     points_v: int = 161,
 ) -> UepSlicePlane:
@@ -933,7 +1014,9 @@ def plane_from_best_fit(
     _u, singular_values, vh = np.linalg.svd(centered, full_matrices=False)
     normal = vh[-1]
     if len(singular_values) < 2 or singular_values[1] <= 1e-12:
-        raise UepError("Best-fit plane construction failed because the selected atoms are collinear.")
+        raise UepError(
+            "Best-fit plane construction failed because the selected atoms are collinear."
+        )
     return plane_from_point_and_normal(
         anchor_ang=anchor,
         normal_ang=normal,
@@ -954,8 +1037,12 @@ def sample_grid_slice(
     anchor = np.asarray(plane.anchor_ang, dtype=float)
     basis_u = np.asarray(plane.basis_u_ang, dtype=float)
     basis_v = np.asarray(plane.basis_v_ang, dtype=float)
-    xs = np.linspace(float(plane.extent_u_ang[0]), float(plane.extent_u_ang[1]), int(plane.points_u))
-    ys = np.linspace(float(plane.extent_v_ang[0]), float(plane.extent_v_ang[1]), int(plane.points_v))
+    xs = np.linspace(
+        float(plane.extent_u_ang[0]), float(plane.extent_u_ang[1]), int(plane.points_u)
+    )
+    ys = np.linspace(
+        float(plane.extent_v_ang[0]), float(plane.extent_v_ang[1]), int(plane.points_v)
+    )
     x_grid, y_grid = np.meshgrid(xs, ys, indexing="ij")
     points = (
         anchor.reshape(1, 1, 3)
@@ -963,7 +1050,9 @@ def sample_grid_slice(
         + (y_grid[..., np.newaxis] * basis_v.reshape(1, 1, 3))
     )
     flat_points = points.reshape((-1, 3))
-    sampled = _interpolate_periodic_grid_trilinear(potential, flat_points).reshape((int(plane.points_u), int(plane.points_v)))
+    sampled = _interpolate_periodic_grid_trilinear(potential, flat_points).reshape(
+        (int(plane.points_u), int(plane.points_v))
+    )
     return UepGridSliceSample(
         plane=plane,
         x_coordinates_ang=tuple(tuple(float(value) for value in row) for row in points[:, :, 0]),
@@ -1083,7 +1172,9 @@ def extract_isosurface(
 
     values = np.asarray(potential.potential_total_ev, dtype=float)
     if values.ndim != 3 or min(values.shape) < 2:
-        raise UepError("Isosurface extraction needs a 3D potential grid with at least two points per axis.")
+        raise UepError(
+            "Isosurface extraction needs a 3D potential grid with at least two points per axis."
+        )
 
     minimum = float(np.min(values))
     maximum = float(np.max(values))
@@ -1174,7 +1265,9 @@ def _reshape_pyvista_faces(faces: np.ndarray) -> np.ndarray:
             triangles.append((int(vertices[0]), int(vertices[1]), int(vertices[2])))
         else:
             for offset in range(1, vertex_count - 1):
-                triangles.append((int(vertices[0]), int(vertices[offset]), int(vertices[offset + 1])))
+                triangles.append(
+                    (int(vertices[0]), int(vertices[offset]), int(vertices[offset + 1]))
+                )
         index += 1 + vertex_count
     return np.asarray(triangles, dtype=int)
 
@@ -1225,9 +1318,12 @@ def _extract_isosurface_fallback(
         for ib in range(ny):
             for ic in range(nz):
                 cube_points = tuple(
-                    np.asarray(cartesian_points[ia + dx, ib + dy, ic + dz], dtype=float) for dx, dy, dz in cube_offsets
+                    np.asarray(cartesian_points[ia + dx, ib + dy, ic + dz], dtype=float)
+                    for dx, dy, dz in cube_offsets
                 )
-                cube_values = tuple(float(extended_values[ia + dx, ib + dy, ic + dz]) for dx, dy, dz in cube_offsets)
+                cube_values = tuple(
+                    float(extended_values[ia + dx, ib + dy, ic + dz]) for dx, dy, dz in cube_offsets
+                )
                 if minimum > level_ev or maximum < level_ev:
                     continue
                 if level_ev < min(cube_values) or level_ev > max(cube_values):
@@ -1235,7 +1331,9 @@ def _extract_isosurface_fallback(
                 for tetrahedron in _CUBE_TETRAHEDRA:
                     tetra_points = tuple(cube_points[index] for index in tetrahedron)
                     tetra_values = tuple(cube_values[index] for index in tetrahedron)
-                    for triangle in _polygonize_tetrahedron(tetra_points, tetra_values, level_ev=level_ev):
+                    for triangle in _polygonize_tetrahedron(
+                        tetra_points, tetra_values, level_ev=level_ev
+                    ):
                         indices = tuple(add_vertex(vertex) for vertex in triangle)
                         if len({indices[0], indices[1], indices[2]}) == 3:
                             faces.append(indices)
@@ -1255,7 +1353,8 @@ def _extract_isosurface_fallback(
 
 
 def classify_stationary_point(
-    hessian_ev_per_ang2: np.ndarray | tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    hessian_ev_per_ang2: np.ndarray
+    | tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
     *,
     tolerance: float = 1e-6,
 ) -> StationaryPointClassification:
@@ -1284,7 +1383,8 @@ def classify_stationary_point(
 
 
 def zero_point_energy_ev(
-    hessian_ev_per_ang2: np.ndarray | tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    hessian_ev_per_ang2: np.ndarray
+    | tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
     *,
     particle_mass_kg: float = _MUON_MASS_KG,
 ) -> float | None:
@@ -1332,9 +1432,15 @@ def probe_point(
         gradient_total_ev_per_ang=tuple(float(value) for value in total_gradient[0]),
         gradient_electronic_ev_per_ang=tuple(float(value) for value in electronic_gradient[0]),
         gradient_ionic_ev_per_ang=tuple(float(value) for value in ionic_gradient[0]),
-        hessian_total_ev_per_ang2=tuple(tuple(float(value) for value in row) for row in total_hessian[0]),
-        hessian_electronic_ev_per_ang2=tuple(tuple(float(value) for value in row) for row in electronic_hessian[0]),
-        hessian_ionic_ev_per_ang2=tuple(tuple(float(value) for value in row) for row in ionic_hessian[0]),
+        hessian_total_ev_per_ang2=tuple(
+            tuple(float(value) for value in row) for row in total_hessian[0]
+        ),
+        hessian_electronic_ev_per_ang2=tuple(
+            tuple(float(value) for value in row) for row in electronic_hessian[0]
+        ),
+        hessian_ionic_ev_per_ang2=tuple(
+            tuple(float(value) for value in row) for row in ionic_hessian[0]
+        ),
         classification=classification,
         zero_point_energy_ev=zpe,
         total_quantum_energy_ev=total_energy,

@@ -91,7 +91,11 @@ from PySide6.QtWidgets import QApplication, QWidget
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
-from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
+from mufinder.science.magnetic_structure import (
+    AtomSelector,
+    MagneticStructureModel,
+    build_collinear_component,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 if TYPE_CHECKING:
@@ -248,7 +252,12 @@ def _build_fixture(directory: Path) -> tuple[ProjectService, ProjectDocument]:
     service.generate_candidate_sites(
         document,
         method="near_element",
-        parameters={"element": "F", "muons_per_atom": 1, "bond_distance": 1.0, "min_muon_atom": 0.8},
+        parameters={
+            "element": "F",
+            "muons_per_atom": 1,
+            "bond_distance": 1.0,
+            "min_muon_atom": 0.8,
+        },
     )
     service.generate_candidate_sites(
         document,
@@ -320,7 +329,9 @@ def _converged_fixture(directory: Path) -> tuple[ProjectService, ProjectDocument
         document, ADOPTED_GRID, lattice_vectors=host.lattice_vectors, **criteria
     )
 
-    def snapshot(default_value: object, sweep: dict[Any, tuple[float, float]], x: Callable[[Any], float]) -> dict:
+    def snapshot(
+        default_value: object, sweep: dict[Any, tuple[float, float]], x: Callable[[Any], float]
+    ) -> dict:
         return {
             "host_structure_id": host_id,
             "simulation_cell_structure_id": host_id,
@@ -338,7 +349,9 @@ def _converged_fixture(directory: Path) -> tuple[ProjectService, ProjectDocument
         }
 
     kpoint = snapshot(list(ADOPTED_GRID), _KPOINT_SWEEP, lambda grid: float(np.prod(grid)))
-    kpoint["point_labels"] = {str(float(np.prod(grid))): format_kpoint_grid(grid) for grid in _KPOINT_SWEEP}
+    kpoint["point_labels"] = {
+        str(float(np.prod(grid))): format_kpoint_grid(grid) for grid in _KPOINT_SWEEP
+    }
     document.ui_state["convergence_overview_snapshots"] = {
         "cutoff": snapshot(ADOPTED_CUTOFF_EV, _CUTOFF_SWEEP, float),
         "kpoint": kpoint,
@@ -361,7 +374,9 @@ def sweep_job_labels(document: ProjectDocument, stage: WorkflowStage) -> list[st
     from mufinder.app.workflow_config_codecs import deserialize_convergence_config
     from mufinder.workflow.bridge import structure_to_spec
 
-    definition = next(item for item in document.calculations.values() if item.workflow_stage == stage)
+    definition = next(
+        item for item in document.calculations.values() if item.workflow_stage == stage
+    )
     config = deserialize_convergence_config(definition.parameters["configuration"])
     structure = document.structures[definition.input_structure_ids[0]]
     expansion = expand_convergence_jobs(structure=structure_to_spec(structure), config=config)
@@ -387,11 +402,19 @@ def dashboard_project(directory: Path) -> Path:
         if definition.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
     )
     outcomes = (  # cutoff, status, cause, message, minutes run
-        (300.0, JobStatus.FAILED, FailureReason.CASTEP_ERROR, "SCF did not converge in 100 cycles", 9),
+        (
+            300.0,
+            JobStatus.FAILED,
+            FailureReason.CASTEP_ERROR,
+            "SCF did not converge in 100 cycles",
+            9,
+        ),
         (400.0, JobStatus.STOPPED, FailureReason.WALLTIME, "Stopped at the walltime limit", 60),
         (500.0, JobStatus.CANCELLED, None, None, 4),
     )
-    labels = dict(zip(CUTOFFS_EV, sweep_job_labels(document, WorkflowStage.CONVERGENCE_CUTOFF), strict=True))
+    labels = dict(
+        zip(CUTOFFS_EV, sweep_job_labels(document, WorkflowStage.CONVERGENCE_CUTOFF), strict=True)
+    )
     mapping = definition.parameters.setdefault("job_ids_by_cutoff", {})
     finished = utc_now()
     for cutoff, status, reason, message, minutes in outcomes:
@@ -434,9 +457,19 @@ UEP_ROW = "source_01"  # the UEP page's first row label
 # pulls the ion towards the muon. At 4c the two nearest F move in by 0.50 and
 # 0.57 Å, forming the F-mu-F complex, and the two nearest Co move out by 0.14
 # and 0.17 Å. T_A and T_F are De Renzi's rejected candidates.
-POSITIVE_SITES: dict[str, tuple[tuple[float, float, float], float, tuple[tuple[str, int, float], ...]]] = {
-    "4c": ((0.0, 0.5, 0.0), 0.0, (("F", 0, -0.50), ("F", 1, -0.57), ("Co", 0, 0.14), ("Co", 1, 0.17))),
-    "T_A": ((0.5, 0.0, 0.25), 0.34, (("F", 0, -0.12), ("F", 1, -0.12), ("Co", 0, 0.06), ("Co", 1, 0.06))),
+POSITIVE_SITES: dict[
+    str, tuple[tuple[float, float, float], float, tuple[tuple[str, int, float], ...]]
+] = {
+    "4c": (
+        (0.0, 0.5, 0.0),
+        0.0,
+        (("F", 0, -0.50), ("F", 1, -0.57), ("Co", 0, 0.14), ("Co", 1, 0.17)),
+    ),
+    "T_A": (
+        (0.5, 0.0, 0.25),
+        0.34,
+        (("F", 0, -0.12), ("F", 1, -0.12), ("Co", 0, 0.06), ("Co", 1, 0.06)),
+    ),
     "T_F": ((0.65, 0.84, 0.0), 0.82, (("F", 0, 0.25), ("Co", 0, 0.05), ("Co", 1, 0.04))),
 }
 # A positive-muon start within this distance (Å) of a T_F or T_A site relaxes
@@ -471,7 +504,9 @@ def _host_orbit(site: tuple[float, float, float]) -> tuple[tuple[float, float, f
     orbit: list[np.ndarray] = []
     for rotation, translation in zip(rotations, translations, strict=True):
         image = (np.asarray(rotation) @ np.asarray(site) + translation) % 1.0
-        if not any(np.allclose((image - other + 0.5) % 1.0 - 0.5, 0.0, atol=1e-6) for other in orbit):
+        if not any(
+            np.allclose((image - other + 0.5) % 1.0 - 0.5, 0.0, atol=1e-6) for other in orbit
+        ):
             orbit.append(image)
     return tuple(tuple(float(value) for value in image) for image in orbit)
 
@@ -528,7 +563,9 @@ def _relaxed_muon_cell(
     fractional = np.asarray(cell.fractional_positions, dtype=float)
     species = list(cell.species)
     muon = species.index("H:mu")
-    repeats = np.rint(np.linalg.norm(lattice, axis=1) / np.linalg.norm(cof2_host().lattice_vectors, axis=1))
+    repeats = np.rint(
+        np.linalg.norm(lattice, axis=1) / np.linalg.norm(cof2_host().lattice_vectors, axis=1)
+    )
     fractional[muon] = fractional[muon] + (np.asarray(site) - np.asarray(start)) / repeats
     separation = (fractional - fractional[muon] + 0.5) % 1.0 - 0.5
     vectors = separation @ lattice
@@ -541,7 +578,9 @@ def _relaxed_muon_cell(
     return cell_text(lattice.tolist(), species, (fractional % 1.0).tolist())
 
 
-def _ranked_displacements(entries: tuple[tuple[str, int, float], ...]) -> Callable[[list[str], np.ndarray], np.ndarray]:
+def _ranked_displacements(
+    entries: tuple[tuple[str, int, float], ...],
+) -> Callable[[list[str], np.ndarray], np.ndarray]:
     """Radial changes for the ``rank``-th nearest ion of each species, ties broken by atom index."""
 
     def changes(species: list[str], vectors: np.ndarray) -> np.ndarray:
@@ -559,7 +598,9 @@ def _ranked_displacements(entries: tuple[tuple[str, int, float], ...]) -> Callab
     return changes
 
 
-def _outward_displacements(change: float, radius: float) -> Callable[[list[str], np.ndarray], np.ndarray]:
+def _outward_displacements(
+    change: float, radius: float
+) -> Callable[[list[str], np.ndarray], np.ndarray]:
     """The same outward change for every ion within ``radius`` Å of the muon."""
 
     def changes(species: list[str], vectors: np.ndarray) -> np.ndarray:
@@ -569,7 +610,9 @@ def _outward_displacements(change: float, radius: float) -> Callable[[list[str],
     return changes
 
 
-def _rank_in_cluster(window: MainWindow, definition: Any, row: Any, kind_of: Callable[[Any], str]) -> int:
+def _rank_in_cluster(
+    window: MainWindow, definition: Any, row: Any, kind_of: Callable[[Any], str]
+) -> int:
     """How many of the definition's earlier rows of this charge state relax to the same cluster.
 
     Each cluster's first row, in the Relaxations table's order, takes the
@@ -613,7 +656,12 @@ def _muon_outputs(window: MainWindow) -> Outputs:
         (job_dir / f"{seed}-out.cell").write_text(
             _relaxed_muon_cell(cell, start, relaxed, displacements), encoding="utf-8"
         )
-        text = castep_text(energy=energy, species=list(cell.species), geometry=True, wall_time=21843.2 + 977.0 * number)
+        text = castep_text(
+            energy=energy,
+            species=list(cell.species),
+            geometry=True,
+            wall_time=21843.2 + 977.0 * number,
+        )
         (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
         return True
 
@@ -628,7 +676,14 @@ def _pristine_outputs(*, running: bool) -> Outputs:
         a, b, c = PRISTINE_LATTICE
         lattice = [[a, 0.0, 0.0], [0.0, b, 0.0], [0.0, 0.0, c]]
         species = cof2_host().species
-        fractional = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [x, x, 0.0], [1 - x, 1 - x, 0.0], [0.5 + x, 0.5 - x, 0.5], [0.5 - x, 0.5 + x, 0.5]]
+        fractional = [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5],
+            [x, x, 0.0],
+            [1 - x, 1 - x, 0.0],
+            [0.5 + x, 0.5 - x, 0.5],
+            [0.5 - x, 0.5 + x, 0.5],
+        ]
         text = bfgs_log_text(
             lattice=lattice,
             species=species,
@@ -643,7 +698,9 @@ def _pristine_outputs(*, running: bool) -> Outputs:
         )
         (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
         if not running:
-            (job_dir / f"{seed}-out.cell").write_text(cell_text(lattice, species, fractional), encoding="utf-8")
+            (job_dir / f"{seed}-out.cell").write_text(
+                cell_text(lattice, species, fractional), encoding="utf-8"
+            )
         return not running
 
     return write
@@ -653,9 +710,20 @@ def _uep_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
     """The model density of the host cell and the single-point output the UEP analysis reads."""
 
     host = cof2_host()
-    arguments = {"lattice": host.lattice_vectors, "species": host.species, "fractional": host.fractional_positions}
-    (job_dir / f"{seed}.den_fmt").write_text(den_fmt_text(**arguments, grid=UEP_GRID, shells=UEP_SHELLS), encoding="utf-8")
-    text = uep_castep_text(**arguments, pseudopotentials=UEP_PSEUDOPOTENTIALS, energy=PRISTINE_ENERGY_EV + 0.0021, wall_time=1843.2)
+    arguments = {
+        "lattice": host.lattice_vectors,
+        "species": host.species,
+        "fractional": host.fractional_positions,
+    }
+    (job_dir / f"{seed}.den_fmt").write_text(
+        den_fmt_text(**arguments, grid=UEP_GRID, shells=UEP_SHELLS), encoding="utf-8"
+    )
+    text = uep_castep_text(
+        **arguments,
+        pseudopotentials=UEP_PSEUDOPOTENTIALS,
+        energy=PRISTINE_ENERGY_EV + 0.0021,
+        wall_time=1843.2,
+    )
     (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
     return True
 
@@ -672,7 +740,12 @@ def _phonon_outputs(job: Any, job_dir: Path, seed: str) -> bool:
         host_top_cm=HOST_BAND_TOP_CM,
     )
     (job_dir / f"{seed}.phonon").write_text(phonon, encoding="utf-8")
-    text = castep_text(energy=POSITIVE_ENERGY_EV - 0.0004, species=list(cell.species), geometry=False, wall_time=86126.4)
+    text = castep_text(
+        energy=POSITIVE_ENERGY_EV - 0.0004,
+        species=list(cell.species),
+        geometry=False,
+        wall_time=86126.4,
+    )
     (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
     return True
 
@@ -684,8 +757,13 @@ def _spin_polarise(view: Any, table: Any = None) -> None:
     rows keep their other inherited parameters.
     """
 
-    row_ids = tuple(entry.row_id for entry in view._row_entries() if table is None or entry.table is table)
-    when_modal("ParameterDialog", lambda dialog: (dialog.set_values({"spin_polarized": True}), dialog._accept_if_valid()))
+    row_ids = tuple(
+        entry.row_id for entry in view._row_entries() if table is None or entry.table is table
+    )
+    when_modal(
+        "ParameterDialog",
+        lambda dialog: (dialog.set_values({"spin_polarized": True}), dialog._accept_if_valid()),
+    )
     view._open_parameter_dialog(row_ids)
 
 
@@ -704,7 +782,10 @@ def _positive_cluster_row(dialog: QWidget) -> int:
 
     for row in range(dialog._site_table.rowCount()):
         option = dialog._site_table.item(row, 0).data(magnetic_field_widget._SITE_OPTION_ROLE)
-        if option.distortion_structure_id is not None and "muonium" not in (option.source_label or "").lower():
+        if (
+            option.distortion_structure_id is not None
+            and "muonium" not in (option.source_label or "").lower()
+        ):
             return row
     raise RuntimeError("No pinned positive-muon site with a relaxed structure")
 
@@ -720,7 +801,10 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
 
     # The muon relaxations run in the 2x2x2 supercell, so configuring them
     # rescales the adopted unit-cell k-point grid and says so.
-    with opened(app, document.project_root) as window, refuse_message_boxes(app, expected=("K-point grids adjusted",)):
+    with (
+        opened(app, document.project_root) as window,
+        refuse_message_boxes(app, expected=("K-point grids adjusted",)),
+    ):
         document = window._document
         # Pristine relaxation: one variable-cell row, run as Run All Locally runs it.
         pristine = window._pristine_relaxation_view
@@ -747,14 +831,18 @@ def _build_results(directory: Path, *, running_pristine: bool = False) -> Path:
         # Every start, in the Generation table's order, staged in both charge
         # states as relaxations in the 2x2x2 supercell.
         relaxations = window._muon_relaxation_view
-        when_modal("MuonChargeStateDialog", lambda dialog: (dialog._both.setChecked(True), dialog.accept()))
+        when_modal(
+            "MuonChargeStateDialog", lambda dialog: (dialog._both.setChecked(True), dialog.accept())
+        )
         open_charge_state_dialog(window)
         for entry in list(relaxations._row_entries()):
             relaxations.set_row_supercell(entry.row_id, [list(row) for row in SUPERCELL_2X2X2])
         # Muonium rows are spin-polarised by default; the positive muon's are ticked here.
         _spin_polarise(relaxations, relaxations._table_for_charge_state(POSITIVE_MUON_CHARGE_STATE))
         for charge_state in (POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE):
-            relaxations._charge_tabs.setCurrentWidget(relaxations._table_for_charge_state(charge_state))
+            relaxations._charge_tabs.setCurrentWidget(
+                relaxations._table_for_charge_state(charge_state)
+            )
             relaxations._active_table().clearSelection()
             with synthetic_runs(window, _muon_outputs(window)):
                 relaxations._run_local_selected_rows()
@@ -833,14 +921,20 @@ def _legacy_folder(root: Path) -> Path:
         for folder in ("input", "results", f"run/site{index}"):
             (root / folder).mkdir(parents=True, exist_ok=True)
         (root / "input" / f"{stem}.cell").write_text(
-            cell_text(supercell.lattice_vectors, species, initial) + "\nFIX_ALL_CELL : TRUE\n", encoding="utf-8"
+            cell_text(supercell.lattice_vectors, species, initial) + "\nFIX_ALL_CELL : TRUE\n",
+            encoding="utf-8",
         )
         (root / "results" / f"{stem}-out.cell").write_text(
             cell_text(supercell.lattice_vectors, species, final), encoding="utf-8"
         )
         energy = POSITIVE_ENERGY_EV + energy_above + 0.0011 * index
         (root / "results" / f"{stem}.castep").write_text(
-            legacy_castep_text(energy=energy, converged=converged, cut_off_ev=ADOPTED_CUTOFF_EV, spin_polarized=True),
+            legacy_castep_text(
+                energy=energy,
+                converged=converged,
+                cut_off_ev=ADOPTED_CUTOFF_EV,
+                spin_polarized=True,
+            ),
             encoding="utf-8",
         )
         (root / f"run/site{index}" / f"{stem}.param").write_text(
@@ -905,7 +999,9 @@ def open_local_submission(window: MainWindow) -> None:
     ideal_thread_count = submission_dialog.QThread.idealThreadCount
     submission_dialog.QThread.idealThreadCount = staticmethod(lambda: 8)
     try:
-        dialog = submission_dialog.LocalSubmissionDialog(job_labels=labels, mpirun_configured=True, parent=window)
+        dialog = submission_dialog.LocalSubmissionDialog(
+            job_labels=labels, mpirun_configured=True, parent=window
+        )
     finally:
         submission_dialog.QThread.idealThreadCount = ideal_thread_count
     dialog.exec()
@@ -919,7 +1015,9 @@ def show_saved_supercell_along_a(dialog: QWidget) -> None:
 def open_charge_state_dialog(window: MainWindow) -> None:
     """Select every generated site and click ``Create Relaxation Jobs``, which asks for the charge state."""
 
-    sites = sorted(window._document.sites.values(), key=lambda site: window._natural_label_sort_key(site.label))
+    sites = sorted(
+        window._document.sites.values(), key=lambda site: window._natural_label_sort_key(site.label)
+    )
     window._on_create_muon_relaxation_jobs_requested([str(site.id) for site in sites])
 
 
@@ -943,7 +1041,9 @@ def open_analysis_workspace(charge_state: str) -> Callable[[MainWindow], None]:
     """Open the results project's analysis workspace of ``charge_state`` in the navigator."""
 
     def open_workspace(window: MainWindow) -> None:
-        window._set_active_route(window._relaxation_analysis_workspace_route(_workspace_id(window, charge_state)))
+        window._set_active_route(
+            window._relaxation_analysis_workspace_route(_workspace_id(window, charge_state))
+        )
 
     return open_workspace
 
@@ -995,7 +1095,11 @@ def show_running_progress(window: MainWindow) -> QWidget:
 
     from mufinder.domain.enums import JobStatus
 
-    job = next(job for job in window._document.jobs.values() if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION)
+    job = next(
+        job
+        for job in window._document.jobs.values()
+        if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION
+    )
     job.status = JobStatus.RUNNING
     castep = window._job_output_directory(job) / f"{window._job_seed_name(job)}.castep"
     monitor = window._job_progress
@@ -1087,8 +1191,15 @@ def open_legacy_import(window: MainWindow) -> None:
 
     host = window._project_service.active_host_structure(window._document)
     root = _legacy_folder(scratch_directory("legacy-") / "cof2-muon-sites")
-    scan = scan_legacy_folder(root, host_lattice=[list(row) for row in host.lattice_vectors], host_species=list(host.species))
-    scan = replace(scan, warnings=tuple(warning for warning in scan.warnings if "keyword catalog" not in warning))
+    scan = scan_legacy_folder(
+        root,
+        host_lattice=[list(row) for row in host.lattice_vectors],
+        host_species=list(host.species),
+    )
+    scan = replace(
+        scan,
+        warnings=tuple(warning for warning in scan.warnings if "keyword catalog" not in warning),
+    )
     LegacyImportDialog(scan, parent=window).exec()
 
 
@@ -1103,56 +1214,108 @@ SCENES: dict[str, Scene] = {
     # Getting started and setup.
     "project_home": Scene(converged_project, None, Window()),
     "host_structure_page": Scene(
-        fixture_project, "host_structure", Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins)
+        fixture_project,
+        "host_structure",
+        Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins),
     ),
     "supercell_editor": Scene(
-        fixture_project, "supercell_editor", Dialog(open_supercell_editor, size=(1180, 760), prepare=show_saved_supercell_along_a)
+        fixture_project,
+        "supercell_editor",
+        Dialog(open_supercell_editor, size=(1180, 760), prepare=show_saved_supercell_along_a),
     ),
     "supercell_suggestions": Scene(
-        fixture_project, "supercell_editor", Dialog(open_supercell_suggestions, kind="SupercellSuggestionDialog")
+        fixture_project,
+        "supercell_editor",
+        Dialog(open_supercell_suggestions, kind="SupercellSuggestionDialog"),
     ),
-    "convergence_overview": Scene(converged_project, "convergence", Page("_convergence_overview_view", (1100, 760))),
-    "cutoff_convergence_page": Scene(fixture_project, "convergence_cutoff", Page("_convergence_view", (1100, 720))),
+    "convergence_overview": Scene(
+        converged_project, "convergence", Page("_convergence_overview_view", (1100, 760))
+    ),
+    "cutoff_convergence_page": Scene(
+        fixture_project, "convergence_cutoff", Page("_convergence_view", (1100, 720))
+    ),
     "kpoint_convergence_page": Scene(
         fixture_project, "convergence_kpoint", Page("_kpoint_convergence_view", (1100, 760))
     ),
     "parameter_dialog": Scene(
         fixture_project,
         "convergence_cutoff",
-        Dialog(open_cutoff_parameters, kind="ParameterDialog", size=(900, 520), prepare=hide_catalog_notice),
+        Dialog(
+            open_cutoff_parameters,
+            kind="ParameterDialog",
+            size=(900, 520),
+            prepare=hide_catalog_notice,
+        ),
     ),
     "site_generation_page": Scene(
-        fixture_project, "muon_candidates", Page("_muon_generation_view", (1160, 740), prepare=select_all_sites)
+        fixture_project,
+        "muon_candidates",
+        Page("_muon_generation_view", (1160, 740), prepare=select_all_sites),
     ),
     "charge_state_dialog": Scene(
         fixture_project,
         "muon_candidates",
-        Dialog(open_charge_state_dialog, kind="MuonChargeStateDialog", prepare=choose_both_charge_states),
+        Dialog(
+            open_charge_state_dialog,
+            kind="MuonChargeStateDialog",
+            prepare=choose_both_charge_states,
+        ),
     ),
     "journal_page": Scene(results_project, "provenance_log", Page("_journal_view", (1100, 800))),
-    "castep_setup_dialog": Scene(fixture_project, None, Dialog(lambda window: window._open_castep_setup_dialog())),
-    "cluster_setup_dialog": Scene(fixture_project, None, Dialog(lambda window: window._open_cluster_setup_dialog())),
+    "castep_setup_dialog": Scene(
+        fixture_project, None, Dialog(lambda window: window._open_castep_setup_dialog())
+    ),
+    "cluster_setup_dialog": Scene(
+        fixture_project, None, Dialog(lambda window: window._open_cluster_setup_dialog())
+    ),
     "local_submission_dialog": Scene(
-        fixture_project, "convergence_cutoff", Dialog(open_local_submission, prepare=focus_default_button)
+        fixture_project,
+        "convergence_cutoff",
+        Dialog(open_local_submission, prepare=focus_default_button),
     ),
     "job_dashboard": Scene(dashboard_project, "convergence_cutoff", Window(dashboard=True)),
     # Pristine relaxation and the comparison table.
-    "pristine_relaxation_page": Scene(results_project, "pristine_relaxation", Page("_pristine_relaxation_view", (1100, 540))),
+    "pristine_relaxation_page": Scene(
+        results_project, "pristine_relaxation", Page("_pristine_relaxation_view", (1100, 540))
+    ),
     "geometry_progress_dialog": Scene(
-        running_relaxation_project, "pristine_relaxation", Floating(show_running_progress, size=(820, 640))
+        running_relaxation_project,
+        "pristine_relaxation",
+        Floating(show_running_progress, size=(820, 640)),
     ),
     "comparison_job_dialog": Scene(
-        results_project, "pristine_relaxation", Dialog(open_comparison_job_dialog, kind="ComparisonJobDialog", size=(900, 380), prepare=tick_every_job)
+        results_project,
+        "pristine_relaxation",
+        Dialog(
+            open_comparison_job_dialog,
+            kind="ComparisonJobDialog",
+            size=(900, 380),
+            prepare=tick_every_job,
+        ),
     ),
-    "comparison_table": Scene(results_project, None, Page(current_page, (780, 820)), setup=open_comparison_table),
+    "comparison_table": Scene(
+        results_project, None, Page(current_page, (780, 820)), setup=open_comparison_table
+    ),
     # UEP.
     "uep_page": Scene(results_project, "uep", Page("_uep_view", (1100, 540))),
-    "uep_batch_search": Scene(results_project, "uep", Floating(open_uep_batch_search, size=(1280, 820), prepare=frame_viewers)),
-    "uep_clustering_dialog": Scene(results_project, "uep", Floating(open_uep_clustering, size=(1180, 760), prepare=frame_viewers)),
+    "uep_batch_search": Scene(
+        results_project,
+        "uep",
+        Floating(open_uep_batch_search, size=(1280, 820), prepare=frame_viewers),
+    ),
+    "uep_clustering_dialog": Scene(
+        results_project,
+        "uep",
+        Floating(open_uep_clustering, size=(1180, 760), prepare=frame_viewers),
+    ),
     # Muon relaxations and their analysis.
-    "muon_relaxations_page": Scene(results_project, "muon_relaxations", Page("_muon_relaxation_view", (1100, 760))),
+    "muon_relaxations_page": Scene(
+        results_project, "muon_relaxations", Page("_muon_relaxation_view", (1100, 760))
+    ),
     "muonium_relaxations_page": Scene(
-        results_project, "muon_relaxations", Page("_muon_relaxation_view", (1100, 760), prepare=show_muonium_tab)
+        results_project,
+        "muon_relaxations",
+        Page("_muon_relaxation_view", (1100, 760), prepare=show_muonium_tab),
     ),
     "relaxation_analysis_workspace": Scene(
         results_project,
@@ -1167,18 +1330,38 @@ SCENES: dict[str, Scene] = {
         setup=open_analysis_workspace(MUONIUM_CHARGE_STATE),
     ),
     "relaxation_clustering_dialog": Scene(
-        results_project, None, Dialog(open_relaxation_clustering, kind="RelaxationClusteringDialog", size=(1280, 820), prepare=frame_viewers)
+        results_project,
+        None,
+        Dialog(
+            open_relaxation_clustering,
+            kind="RelaxationClusteringDialog",
+            size=(1280, 820),
+            prepare=frame_viewers,
+        ),
     ),
     "displacement_analysis_dialog": Scene(
-        results_project, None, Dialog(open_displacement_analysis, kind="DisplacementAnalysisDialog", size=(1180, 720), prepare=frame_viewers)
+        results_project,
+        None,
+        Dialog(
+            open_displacement_analysis,
+            kind="DisplacementAnalysisDialog",
+            size=(1180, 720),
+            prepare=frame_viewers,
+        ),
     ),
-    "muon_sites_summary": Scene(results_project, "muon_sites", Page("_muon_sites_summary_view", (1100, 800), prepare=frame_viewers)),
+    "muon_sites_summary": Scene(
+        results_project,
+        "muon_sites",
+        Page("_muon_sites_summary_view", (1100, 800), prepare=frame_viewers),
+    ),
     # Quantum corrections.
     "quantum_corrections_page": Scene(
         results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 680))
     ),
     "phonon_analysis_window": Scene(
-        results_project, "quantum_corrections", Floating(open_phonon_analysis, size=(1180, 780), prepare=frame_viewers)
+        results_project,
+        "quantum_corrections",
+        Floating(open_phonon_analysis, size=(1180, 780), prepare=frame_viewers),
     ),
     # Magnetic fields.
     "cof2_magnetic_fields_page": Scene(
@@ -1223,12 +1406,19 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "cof2_magnetic_field_workspace": Scene(
-        results_project, "magnetic_fields", Page(current_page, (1100, 1140)), setup=save_magnetic_workspace("CoF2 4c site")
+        results_project,
+        "magnetic_fields",
+        Page(current_page, (1100, 1140)),
+        setup=save_magnetic_workspace("CoF2 4c site"),
     ),
     # Energy barriers.
-    "energy_barriers_page": Scene(results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))),
+    "energy_barriers_page": Scene(
+        results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 740))
+    ),
     # The legacy importer.
     "legacy_import_dialog": Scene(
-        fixture_project, None, Dialog(open_legacy_import, kind="LegacyImportDialog", prepare=focus_default_button)
+        fixture_project,
+        None,
+        Dialog(open_legacy_import, kind="LegacyImportDialog", prepare=focus_default_button),
     ),
 }

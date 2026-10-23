@@ -45,8 +45,7 @@ from mufinder.app.workflow_table_utils import set_workflow_table_item
 
 
 _IMPORTED_ROW_TOOLTIP = (
-    "Imported from a calculation run outside MuFinder. Its parameters and results "
-    "are read-only."
+    "Imported from a calculation run outside MuFinder. Its parameters and results are read-only."
 )
 _CHARGE_STATE_TABS = (
     (POSITIVE_MUON_CHARGE_STATE, "Positive muon"),
@@ -65,9 +64,7 @@ class _GroupedCoordinateHeader(QHeaderView):
         super().__init__(Qt.Orientation.Horizontal, parent)
         self._groups = groups
         self._coordinate_columns = {
-            column
-            for start, end, _label in groups
-            for column in range(start, end + 1)
+            column for start, end, _label in groups for column in range(start, end + 1)
         }
         self.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -96,10 +93,14 @@ class _GroupedCoordinateHeader(QHeaderView):
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.setPen(QColor(palette.text_primary))
 
-        text = self.model().headerData(logical_index, self.orientation(), Qt.ItemDataRole.DisplayRole)
+        text = self.model().headerData(
+            logical_index, self.orientation(), Qt.ItemDataRole.DisplayRole
+        )
         label_rect = QRect(rect)
         label_rect.setTop(rect.top() + rect.height() // 2)
-        painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, "" if text is None else str(text))
+        painter.drawText(
+            label_rect, Qt.AlignmentFlag.AlignCenter, "" if text is None else str(text)
+        )
         painter.restore()
 
     def paintEvent(self, event) -> None:  # noqa: ANN001 - Qt override signature.
@@ -122,7 +123,9 @@ class _GroupedCoordinateHeader(QHeaderView):
             painter.drawText(group_rect, Qt.AlignmentFlag.AlignCenter, label)
             painter.setPen(QColor(palette.border))
             underline_y = group_rect.bottom()
-            painter.drawLine(group_rect.left() + 6, underline_y, group_rect.right() - 6, underline_y)
+            painter.drawLine(
+                group_rect.left() + 6, underline_y, group_rect.right() - 6, underline_y
+            )
             painter.setPen(QColor(palette.text_primary))
 
 
@@ -157,9 +160,15 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
     )
 
     _WORKFLOW_STAGE = "muon_relaxation"
-    _EXCLUDED_PARAMETER_NAMES = frozenset({"task", "fix_all_cell", "write_cell_structure", "charge"})
+    _EXCLUDED_PARAMETER_NAMES = frozenset(
+        {"task", "fix_all_cell", "write_cell_structure", "charge"}
+    )
     # Starting values that differ from the schema default in this workflow.
-    _PARAMETER_DEFAULT_OVERRIDES = {"geom_max_iter": 300, "continuation": "DEFAULT", "symmetry_generate": None}
+    _PARAMETER_DEFAULT_OVERRIDES = {
+        "geom_max_iter": 300,
+        "continuation": "DEFAULT",
+        "symmetry_generate": None,
+    }
     _DIALOG_SUBJECT = "Muon Relaxation Parameters"
     _LOCKED_DIALOG_VALUES = {
         "task": "GEOMETRYOPTIMIZATION",
@@ -212,7 +221,10 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
             self._tables_by_charge_state[charge_state] = table
             self._charge_tabs.addTab(table, tab_label)
         self._table = self._tables_by_charge_state[POSITIVE_MUON_CHARGE_STATE]
-        return tuple(self._tables_by_charge_state[charge_state] for charge_state, _label in _CHARGE_STATE_TABS)
+        return tuple(
+            self._tables_by_charge_state[charge_state]
+            for charge_state, _label in _CHARGE_STATE_TABS
+        )
 
     def _active_table(self) -> QTableWidget:
         current = self._charge_tabs.currentWidget()
@@ -224,7 +236,10 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
     def set_active_host(self, structure: object | None) -> None:
         """Update the active-host badge."""
         from mufinder.domain.models import Structure as _Structure
-        self._active_host_badge.set_active_host(structure if isinstance(structure, _Structure) else None)
+
+        self._active_host_badge.set_active_host(
+            structure if isinstance(structure, _Structure) else None
+        )
 
     def add_staged_sites(
         self,
@@ -243,12 +258,16 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
                 site_id = UUID(str(raw_site_id))
             except (TypeError, ValueError):
                 continue
-            fractional = row_data.get("fractional_position", row_data.get("fractional", (0.0, 0.0, 0.0)))
+            fractional = row_data.get(
+                "fractional_position", row_data.get("fractional", (0.0, 0.0, 0.0))
+            )
             if not isinstance(fractional, (list, tuple)) or len(fractional) != 3:
                 continue
             for charge_state in normalized_charge_states:
                 table = self._table_for_charge_state(charge_state)
-                base_label = str(row_data.get("label", "")).strip() or f"site_{table.rowCount() + 1}"
+                base_label = (
+                    str(row_data.get("label", "")).strip() or f"site_{table.rowCount() + 1}"
+                )
                 row_id = self._new_site_row_id(
                     site_id=site_id,
                     fractional=(float(fractional[0]), float(fractional[1]), float(fractional[2])),
@@ -279,7 +298,9 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
         self._row_site_ids[row_id] = site_id
         self._row_positions[row_id] = fractional
         self._row_charge_states[row_id] = (
-            charge_state if charge_state in self._tables_by_charge_state else POSITIVE_MUON_CHARGE_STATE
+            charge_state
+            if charge_state in self._tables_by_charge_state
+            else POSITIVE_MUON_CHARGE_STATE
         )
         return row_id
 

@@ -248,7 +248,9 @@ class JobExecutionController:
             if retrieval_for_job is not None:
                 retrieval = retrieval_for_job(job)
             else:
-                retrieval = _legacy_retrieval_flags(job, task_farming_for_job, retrieve_flags_for_job)
+                retrieval = _legacy_retrieval_flags(
+                    job, task_farming_for_job, retrieve_flags_for_job
+                )
 
             try:
                 job.execution_target = "local"
@@ -327,7 +329,9 @@ class JobExecutionController:
         job.execution_target = request.execution_target
         job.remote_directory = request.remote_target
         run = self._create_active_run(document, job, JobStatus.SUBMITTING)
-        return PreparedClusterSubmission(job=job, run=run, submit_kwargs=_cluster_submit_kwargs(request))
+        return PreparedClusterSubmission(
+            job=job, run=run, submit_kwargs=_cluster_submit_kwargs(request)
+        )
 
     def finalize_cluster_submission(
         self, prepared: PreparedClusterSubmission, remote_job_id: str
@@ -352,7 +356,9 @@ class JobExecutionController:
             self._project_service.fail_job(job, message, reason=FailureReason.SUBMISSION)
         except ValueError:
             pass
-        self._close_active_run(job, prepared.run, JobStatus.FAILED, "job_failed", error_message=message)
+        self._close_active_run(
+            job, prepared.run, JobStatus.FAILED, "job_failed", error_message=message
+        )
         return ClusterJobSubmissionOutcome(
             failed_message=f"- {job.label}: {message}",
             journal_changed=True,
@@ -477,7 +483,9 @@ class JobExecutionController:
                 pass
 
         if source is not None:
-            self._stamp_monitor_metadata(job, source=source, message=status_message or "process started")
+            self._stamp_monitor_metadata(
+                job, source=source, message=status_message or "process started"
+            )
         elif not is_cluster_job(job):
             self._stamp_monitor_metadata(
                 job, source="local_runner", message=status_message or "process started"
@@ -664,11 +672,17 @@ class JobExecutionController:
         try:
             if mapped == JobStatus.QUEUED and job.status == JobStatus.SUBMITTING:
                 self._project_service.mark_job_queued(job, remote_job_id=job.remote_job_id)
-            elif mapped == JobStatus.RUNNING and job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
+            elif mapped == JobStatus.RUNNING and job.status in {
+                JobStatus.SUBMITTING,
+                JobStatus.QUEUED,
+            }:
                 self._project_service.start_job(job)
             elif mapped == JobStatus.RETRIEVING and job.status == JobStatus.RUNNING:
                 self._project_service.mark_job_retrieving(job)
-            elif mapped == JobStatus.STOPPED and job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}:
+            elif mapped == JobStatus.STOPPED and job.status in {
+                JobStatus.RUNNING,
+                JobStatus.RETRIEVING,
+            }:
                 # The cluster runner reports ``stopped`` only for a walltime
                 # stop: the scheduler's TIMEOUT state, or a time-limit kill in
                 # the scheduler log of a run with incomplete output.
@@ -684,7 +698,9 @@ class JobExecutionController:
 
         run = self.run_for_job(job_id)
         if mapped == JobStatus.STOPPED:
-            self._close_active_run(job, run, JobStatus.STOPPED, "job_stopped", error_message=job.error_message)
+            self._close_active_run(
+                job, run, JobStatus.STOPPED, "job_stopped", error_message=job.error_message
+            )
             return LifecycleUpdate(job=job, changed=True, journal_changed=True)
         if run is not None:
             run.status = mapped

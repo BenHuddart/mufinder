@@ -53,7 +53,9 @@ def test_convergence_configured_registers_snapshot(
     window.close()
 
 
-def test_refresh_convergence_simulation_cell_without_document_disables_selector(main_window) -> None:
+def test_refresh_convergence_simulation_cell_without_document_disables_selector(
+    main_window,
+) -> None:
     window = main_window
 
     window._refresh_convergence_simulation_cell()
@@ -83,7 +85,9 @@ def test_convergence_simulation_cell_create_requested_handles_missing_context(
     window._on_convergence_simulation_cell_create_requested()
 
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "conv_supercell_missing_host.mufinder", "ConvNoHost")
+    window._document = service.create_project(
+        tmp_path / "conv_supercell_missing_host.mufinder", "ConvNoHost"
+    )
     window._on_convergence_simulation_cell_create_requested()
 
     assert infos == ["No project"]
@@ -91,10 +95,14 @@ def test_convergence_simulation_cell_create_requested_handles_missing_context(
     window.close()
 
 
-def test_convergence_simulation_cell_use_unit_cell_requested_resets_selection(main_window, tmp_path: Path) -> None:
+def test_convergence_simulation_cell_use_unit_cell_requested_resets_selection(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_supercell_unit_reset.mufinder", "ConvSupercellUnitReset")
+    doc = service.create_project(
+        tmp_path / "conv_supercell_unit_reset.mufinder", "ConvSupercellUnitReset"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -123,10 +131,14 @@ def test_convergence_simulation_cell_use_unit_cell_requested_resets_selection(ma
     window.close()
 
 
-def test_convergence_supercell_initial_matrix_prefers_selected_asset(main_window, tmp_path: Path) -> None:
+def test_convergence_supercell_initial_matrix_prefers_selected_asset(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_supercell_initial_matrix.mufinder", "ConvSupercellInitial")
+    doc = service.create_project(
+        tmp_path / "conv_supercell_initial_matrix.mufinder", "ConvSupercellInitial"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -158,7 +170,9 @@ def test_convergence_manage_supercells_selects_returned_asset(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_supercell_editor_select.mufinder", "ConvEditorSelect")
+    doc = service.create_project(
+        tmp_path / "conv_supercell_editor_select.mufinder", "ConvEditorSelect"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -185,7 +199,9 @@ def test_convergence_manage_supercells_selects_returned_asset(
 
     window._on_convergence_simulation_cell_create_requested()
 
-    assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["structure_id"] == str(asset.id)
+    assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["structure_id"] == str(
+        asset.id
+    )
     window.close()
 
 
@@ -194,7 +210,9 @@ def test_convergence_simulation_cell_selection_clones_other_workflow_asset(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_supercell_clone_ui.mufinder", "ConvSupercellClone")
+    doc = service.create_project(
+        tmp_path / "conv_supercell_clone_ui.mufinder", "ConvSupercellClone"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -311,10 +329,14 @@ def test_convergence_configured_reuses_matching_definition(main_window, tmp_path
     window.close()
 
 
-def test_materialize_convergence_jobs_writes_saved_supercell_structure(main_window, tmp_path: Path) -> None:
+def test_materialize_convergence_jobs_writes_saved_supercell_structure(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_materialize_supercell.mufinder", "ConvMaterializeSupercell")
+    doc = service.create_project(
+        tmp_path / "conv_materialize_supercell.mufinder", "ConvMaterializeSupercell"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -349,7 +371,9 @@ def test_materialize_convergence_jobs_writes_saved_supercell_structure(main_wind
     jobs = window._convergence_controller.materialize([300.0])
 
     assert len(jobs) == 1
-    cell_path = doc.project_root / "files" / "convergence_cutoff" / "conv_ecut_300" / "conv_ecut_300.cell"
+    cell_path = (
+        doc.project_root / "files" / "convergence_cutoff" / "conv_ecut_300" / "conv_ecut_300.cell"
+    )
     cell_text = cell_path.read_text(encoding="utf-8")
     assert "10 0 0" in cell_text
     assert cell_text.count("Si ") >= 2
@@ -518,7 +542,9 @@ def test_materialize_convergence_jobs_repairs_legacy_zero_spin_supercell_asset(
         properties={
             "atomic_spins": [2.0],
             "magnetic_structure": {
-                "moments": [{"label": "Fe1", "vector": [0.0, 0.0, 2.0], "coordinate_system": "cartesian"}],
+                "moments": [
+                    {"label": "Fe1", "vector": [0.0, 0.0, 2.0], "coordinate_system": "cartesian"}
+                ],
                 "propagation_vector": [0.0, 0.0, 0.0],
             },
         },
@@ -557,7 +583,9 @@ def test_materialize_convergence_jobs_repairs_legacy_zero_spin_supercell_asset(
     jobs = window._convergence_controller.materialize([300.0])
 
     assert len(jobs) == 1
-    cell_path = doc.project_root / "files" / "convergence_cutoff" / "conv_ecut_300" / "conv_ecut_300.cell"
+    cell_path = (
+        doc.project_root / "files" / "convergence_cutoff" / "conv_ecut_300" / "conv_ecut_300.cell"
+    )
     cell_text = cell_path.read_text(encoding="utf-8")
     assert "SPIN=2" in cell_text
     window.close()
@@ -598,7 +626,9 @@ def test_main_window_syncs_convergence_row_status_and_energy(main_window, tmp_pa
     job_360.status = JobStatus.DEFINED
 
     run = CalculationRun(job_id=job_300.id, status=JobStatus.COMPLETED, run_index=1)
-    result = Result(calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -12.3456})
+    result = Result(
+        calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -12.3456}
+    )
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
@@ -613,16 +643,33 @@ def test_main_window_syncs_convergence_row_status_and_energy(main_window, tmp_pa
             "overrides": [],
         },
         output_directory=doc.project_root / "files" / "convergence_cutoff",
-        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job_300.id), main_window_module.MainWindow._cutoff_key(360.0): str(job_360.id)},
+        job_ids_by_cutoff={
+            main_window_module.MainWindow._cutoff_key(300.0): str(job_300.id),
+            main_window_module.MainWindow._cutoff_key(360.0): str(job_360.id),
+        },
     )
 
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text() == "completed"
-    assert window._convergence_view._table.item(0, window._convergence_view._TOTAL_ENERGY_COLUMN).text() == "-12.3456"
-    assert window._convergence_view._table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text() == ""
-    assert window._convergence_view._table.item(1, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text()
+        == "completed"
+    )
+    assert (
+        window._convergence_view._table.item(
+            0, window._convergence_view._TOTAL_ENERGY_COLUMN
+        ).text()
+        == "-12.3456"
+    )
+    assert (
+        window._convergence_view._table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text()
+        == ""
+    )
+    assert (
+        window._convergence_view._table.item(1, window._convergence_view._STATUS_COLUMN).text()
+        == "ready"
+    )
     window.close()
 
 
@@ -679,7 +726,10 @@ def test_main_window_syncs_convergence_row_max_force(main_window, tmp_path: Path
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text() == "0.0987"
+    assert (
+        window._convergence_view._table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text()
+        == "0.0987"
+    )
     window.close()
 
 
@@ -715,7 +765,9 @@ def test_main_window_deserializes_convergence_config_with_structured_values(main
     window.close()
 
 
-def test_main_window_convergence_definition_helpers_support_legacy_labels(main_window, tmp_path: Path) -> None:
+def test_main_window_convergence_definition_helpers_support_legacy_labels(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_legacy_labels.mufinder", "ConvLegacyLabels")
@@ -751,11 +803,16 @@ def test_main_window_convergence_definition_helpers_support_legacy_labels(main_w
     resolved_job = window._convergence_controller.job_for_cutoff(definition, 300.0)
 
     assert resolved_job is job
-    assert definition_output_directory(doc, definition) == doc.project_root / "files" / "convergence_cutoff"
+    assert (
+        definition_output_directory(doc, definition)
+        == doc.project_root / "files" / "convergence_cutoff"
+    )
     window.close()
 
 
-def test_main_window_detach_convergence_job_clears_job_id_mapping(main_window, tmp_path: Path) -> None:
+def test_main_window_detach_convergence_job_clears_job_id_mapping(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_detach_job.mufinder", "ConvDetachJob")
@@ -799,7 +856,9 @@ def test_main_window_build_states_merges_equivalent_convergence_definition_jobs(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_active_definition.mufinder", "ConvActiveDefinition")
+    doc = service.create_project(
+        tmp_path / "conv_active_definition.mufinder", "ConvActiveDefinition"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -817,7 +876,9 @@ def test_main_window_build_states_merges_equivalent_convergence_definition_jobs(
     )
     old_job.status = JobStatus.COMPLETED
     run = CalculationRun(job_id=old_job.id, status=JobStatus.COMPLETED, run_index=1)
-    result = Result(calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -9.99})
+    result = Result(
+        calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -9.99}
+    )
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
@@ -933,7 +994,9 @@ def test_main_window_regenerated_cutoff_list_does_not_inherit_stale_results(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_stale_result_guard.mufinder", "ConvStaleResultGuard")
+    doc = service.create_project(
+        tmp_path / "conv_stale_result_guard.mufinder", "ConvStaleResultGuard"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -951,7 +1014,9 @@ def test_main_window_regenerated_cutoff_list_does_not_inherit_stale_results(
     )
     old_job.status = JobStatus.COMPLETED
     run = CalculationRun(job_id=old_job.id, status=JobStatus.COMPLETED, run_index=1)
-    result = Result(calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -9.99})
+    result = Result(
+        calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -9.99}
+    )
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
@@ -1186,13 +1251,14 @@ def test_main_window_configured_cutoff_shows_ready_and_stays_off_dashboard(
     window._refresh_ui_after_project_change()
 
     assert window._jobs_table.rowCount() == 0
-    assert window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text()
+        == "ready"
+    )
     window.close()
 
 
-def test_main_window_form_cutoff_shows_ready_before_submission(
-    main_window, tmp_path: Path
-) -> None:
+def test_main_window_form_cutoff_shows_ready_before_submission(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_form_ready.mufinder", "ConvFormReady")
@@ -1218,8 +1284,14 @@ def test_main_window_form_cutoff_shows_ready_before_submission(
     window._refresh_ui_after_project_change()
 
     assert window._jobs_table.rowCount() == 0
-    assert window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text() == "ready"
-    assert window._convergence_view._table.item(1, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text()
+        == "ready"
+    )
+    assert (
+        window._convergence_view._table.item(1, window._convergence_view._STATUS_COLUMN).text()
+        == "ready"
+    )
     window.close()
 
 
@@ -1228,7 +1300,9 @@ def test_main_window_recovers_convergence_form_rows_from_definition_when_ui_stat
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_restore_from_definition.mufinder", "ConvRestoreFromDefinition")
+    doc = service.create_project(
+        tmp_path / "conv_restore_from_definition.mufinder", "ConvRestoreFromDefinition"
+    )
 
     host = Structure(
         label="Host",
@@ -1257,8 +1331,14 @@ def test_main_window_recovers_convergence_form_rows_from_definition_when_ui_stat
     window._refresh_ui_after_project_change()
 
     assert window._convergence_view._table.rowCount() == 2
-    assert window._convergence_view._table.item(0, window._convergence_view._KEY_COLUMN).text() == "300"
-    assert window._convergence_view._table.item(1, window._convergence_view._KEY_COLUMN).text() == "360"
+    assert (
+        window._convergence_view._table.item(0, window._convergence_view._KEY_COLUMN).text()
+        == "300"
+    )
+    assert (
+        window._convergence_view._table.item(1, window._convergence_view._KEY_COLUMN).text()
+        == "360"
+    )
     assert doc.ui_state["convergence_form"]["cutoff_energies"] == [300.0, 360.0]
     assert "sweep_values" not in doc.ui_state["convergence_form"]
     window.close()
@@ -1345,7 +1425,9 @@ def test_main_window_remove_convergence_cutoff_deletes_files_and_entities(
     (job_dir / f"{job.label}.castep").write_text("done", encoding="utf-8")
 
     run = CalculationRun(job_id=job.id, status=JobStatus.FAILED, run_index=1)
-    result = Result(calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -1.0})
+    result = Result(
+        calculation_run_id=run.id, result_type="castep_singlepoint", data={"total_energy": -1.0}
+    )
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
@@ -1365,7 +1447,9 @@ def test_main_window_remove_convergence_cutoff_deletes_files_and_entities(
 
     window._document = doc
     window._refresh_ui_after_project_change()
-    monkeypatch.setattr(window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "delete")
+    monkeypatch.setattr(
+        window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "delete"
+    )
 
     window._on_remove_cutoffs_from_convergence([300.0])
 
@@ -1417,7 +1501,9 @@ def test_main_window_remove_convergence_cutoff_archives_files_when_kept(
 
     window._document = doc
     window._refresh_ui_after_project_change()
-    monkeypatch.setattr(window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "archive")
+    monkeypatch.setattr(
+        window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "archive"
+    )
 
     window._on_remove_cutoffs_from_convergence([300.0])
 
@@ -1468,7 +1554,9 @@ def test_main_window_remove_convergence_cutoff_cancel_keeps_row_and_files(
 
     window._document = doc
     window._refresh_ui_after_project_change()
-    monkeypatch.setattr(window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: None)
+    monkeypatch.setattr(
+        window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: None
+    )
 
     window._on_remove_cutoffs_from_convergence([300.0])
 
@@ -1484,7 +1572,9 @@ def test_main_window_remove_cutoffs_without_document_delegates_to_widget(
     window = main_window
 
     removed: list[list[float]] = []
-    monkeypatch.setattr(window._convergence_view, "remove_cutoffs", lambda cutoffs: removed.append(list(cutoffs)))
+    monkeypatch.setattr(
+        window._convergence_view, "remove_cutoffs", lambda cutoffs: removed.append(list(cutoffs))
+    )
 
     window._on_remove_cutoffs_from_convergence([300.0])
 
@@ -1524,7 +1614,9 @@ def test_main_window_remove_convergence_cutoff_warns_on_file_cleanup_error(
     window._document = doc
 
     warnings: list[str] = []
-    monkeypatch.setattr(window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "delete")
+    monkeypatch.setattr(
+        window, "_prompt_cutoff_file_disposition", lambda cutoff, path, **kwargs: "delete"
+    )
     monkeypatch.setattr(
         window._job_file_cleanup, "delete_path", lambda path: (_ for _ in ()).throw(OSError("busy"))
     )
@@ -1544,10 +1636,14 @@ def test_main_window_remove_convergence_cutoff_warns_on_file_cleanup_error(
     window.close()
 
 
-def test_main_window_remove_cutoff_from_definition_updates_lists_and_labels(main_window, tmp_path: Path) -> None:
+def test_main_window_remove_cutoff_from_definition_updates_lists_and_labels(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_remove_definition.mufinder", "ConvRemoveDefinition")
+    doc = service.create_project(
+        tmp_path / "conv_remove_definition.mufinder", "ConvRemoveDefinition"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -1826,7 +1922,9 @@ def test_main_window_convergence_examiner_state_changed_updates_ui_state_without
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_examiner_state_update.mufinder", "ConvExaminerStateUpdate")
+    doc = service.create_project(
+        tmp_path / "conv_examiner_state_update.mufinder", "ConvExaminerStateUpdate"
+    )
     window._document = doc
     initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
 
@@ -1869,8 +1967,15 @@ def test_main_window_convergence_examiner_state_persists_across_project_reload_a
     service.save_project(doc)
     loaded = service.load_project(root)
 
-    assert loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["results_text"] == "Recommended cutoff: 500 eV"
-    assert loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [300.0, 400.0, 500.0]
+    assert (
+        loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["results_text"]
+        == "Recommended cutoff: 500 eV"
+    )
+    assert loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [
+        300.0,
+        400.0,
+        500.0,
+    ]
     window.close()
 
 

@@ -131,7 +131,9 @@ def generate_candidate_sites(
     if method == "manual":
         batch = _generate_manual_site(document, host, parameters)
     elif method == "random":
-        batch = _generate_random_sites(document, host, parameters, requested_count, progress_callback)
+        batch = _generate_random_sites(
+            document, host, parameters, requested_count, progress_callback
+        )
     elif method == "near_element":
         batch = _generate_attached_element_sites(document, host, parameters, progress_callback)
     elif method == "uep_clusters":
@@ -161,7 +163,9 @@ def cluster_candidate_positions(
 
     host = active_host_structure(document)
     if host is None:
-        raise SiteGenerationError("Select a host structure before clustering generated muon positions.")
+        raise SiteGenerationError(
+            "Select a host structure before clustering generated muon positions."
+        )
     if not site_ids:
         raise SiteGenerationError("Select one or more generated muon positions to cluster.")
     if len(anchor_fractional) != 3:
@@ -175,7 +179,9 @@ def cluster_candidate_positions(
         if site is None or site.status not in LEGACY_GENERATED_SITE_STATUSES:
             continue
         if len(site.initial_fractional_position) != 3:
-            raise SiteGenerationError(f"Muon site '{site.label}' is missing a valid fractional position.")
+            raise SiteGenerationError(
+                f"Muon site '{site.label}' is missing a valid fractional position."
+            )
         clustered = closest_symmetry_equivalent_position(
             site.initial_fractional_position,
             anchor_frac=anchor,
@@ -205,7 +211,9 @@ def cluster_candidate_positions(
     return SiteGenerationOutcome(sites=updated, provenance=[record])
 
 
-def remove_candidate_sites(document: ProjectDocument, site_ids: Sequence[UUID]) -> SiteGenerationOutcome:
+def remove_candidate_sites(
+    document: ProjectDocument, site_ids: Sequence[UUID]
+) -> SiteGenerationOutcome:
     """Remove generated muon sites by id; ids of other sites are ignored.
 
     The outcome lists the removed sites, with a ``delete_candidates`` record
@@ -232,7 +240,9 @@ def remove_candidate_sites(document: ProjectDocument, site_ids: Sequence[UUID]) 
     return SiteGenerationOutcome(sites=removed, provenance=[record])
 
 
-def stage_generated_sites(document: ProjectDocument, site_ids: Sequence[UUID]) -> SiteGenerationOutcome:
+def stage_generated_sites(
+    document: ProjectDocument, site_ids: Sequence[UUID]
+) -> SiteGenerationOutcome:
     """Mark generated (or already staged) muon sites as staged for structural relaxation.
 
     The outcome lists the staged sites, with a ``stage_muon_relaxation_sites``
@@ -261,7 +271,9 @@ def stage_generated_sites(document: ProjectDocument, site_ids: Sequence[UUID]) -
     return SiteGenerationOutcome(sites=staged, provenance=[record])
 
 
-def _requested_site_count(method: str, parameters: dict[str, Any], host_species: Sequence[str]) -> int | None:
+def _requested_site_count(
+    method: str, parameters: dict[str, Any], host_species: Sequence[str]
+) -> int | None:
     """Return how many sites the request asks for, or ``None`` when it sets no target."""
 
     if method == "manual":
@@ -272,7 +284,9 @@ def _requested_site_count(method: str, parameters: dict[str, Any], host_species:
         return len(parameters.get("selections", []))
     if method == "near_element":
         target = str(parameters.get("element", "")).strip().lower()
-        matching_atoms = sum(1 for species in host_species if str(species).strip().lower() == target)
+        matching_atoms = sum(
+            1 for species in host_species if str(species).strip().lower() == target
+        )
         return matching_atoms * _muons_per_atom(parameters) if target and matching_atoms else None
     return int(parameters.get("count", 1))
 
@@ -285,7 +299,11 @@ def _generate_manual_site(
     """Place one site at user-entered fractional or Cartesian coordinates."""
 
     coord_system = str(parameters.get("coord_system", "fractional"))
-    coords = [float(parameters.get("x", 0.0)), float(parameters.get("y", 0.0)), float(parameters.get("z", 0.0))]
+    coords = [
+        float(parameters.get("x", 0.0)),
+        float(parameters.get("y", 0.0)),
+        float(parameters.get("z", 0.0)),
+    ]
     lattice = host.lattice or _IDENTITY_LATTICE
     if coord_system == "cartesian":
         fractional = [v % 1.0 for v in lattice_cart_to_frac(coords, lattice)]
@@ -326,7 +344,13 @@ def _generate_random_sites(
     else:
         target_count = max(1, int(requested_count or parameters.get("count", 1)))
         draw = _random_draw_by_count(
-            host, parameters, target_count, seed, min_muon_atom, include_symmetry_equivalents, progress_callback
+            host,
+            parameters,
+            target_count,
+            seed,
+            min_muon_atom,
+            include_symmetry_equivalents,
+            progress_callback,
         )
 
     label_prefix = "Random Site"
@@ -344,7 +368,9 @@ def _generate_random_sites(
                 "min_muon_muon": draw.min_muon_muon,
                 "min_muon_atom": min_muon_atom,
                 "include_symmetry_equivalents": include_symmetry_equivalents,
-                **({"target_count": int(requested_count or 0)} if selection_mode == "count" else {}),
+                **(
+                    {"target_count": int(requested_count or 0)} if selection_mode == "count" else {}
+                ),
                 **(
                     {"estimated_min_muon_muon": draw.estimated_min_muon_muon}
                     if draw.estimated_min_muon_muon is not None
@@ -514,9 +540,13 @@ def _generate_uep_cluster_sites(
         sites.append(site)
 
     if not sites and skipped_duplicates:
-        raise SiteGenerationError("Selected UEP cluster rows are already present in the generated-site list.")
+        raise SiteGenerationError(
+            "Selected UEP cluster rows are already present in the generated-site list."
+        )
     if not sites:
-        raise SiteGenerationError("Selected UEP cluster rows did not contain any usable generated sites.")
+        raise SiteGenerationError(
+            "Selected UEP cluster rows did not contain any usable generated sites."
+        )
     return _GeneratedBatch(sites=sites)
 
 
@@ -550,7 +580,9 @@ def _uep_cluster_site(
         properties = {}
     method_name = str(selection.get("generation_method", "")).strip()
     if method_name not in _UEP_CLUSTER_METHODS:
-        method_name = "uep_cluster_member" if properties.get("selection_kind") == "member" else "uep_cluster"
+        method_name = (
+            "uep_cluster_member" if properties.get("selection_kind") == "member" else "uep_cluster"
+        )
     merged_properties = dict(properties)
     if source_key:
         merged_properties["uep_source_key"] = source_key
@@ -638,7 +670,9 @@ def _muons_per_atom(parameters: dict[str, Any]) -> int:
     )
 
 
-def _has_duplicate_uep_cluster_site(document: ProjectDocument, source_key: str, fractional: Sequence[float]) -> bool:
+def _has_duplicate_uep_cluster_site(
+    document: ProjectDocument, source_key: str, fractional: Sequence[float]
+) -> bool:
     for site in document.sites.values():
         if site.properties.get("uep_source_key") == source_key:
             return True
@@ -646,7 +680,10 @@ def _has_duplicate_uep_cluster_site(document: ProjectDocument, source_key: str, 
             continue
         if not site.initial_fractional_position or len(site.initial_fractional_position) != 3:
             continue
-        if all(abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6 for a, b in zip(site.initial_fractional_position, fractional)):
+        if all(
+            abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6
+            for a, b in zip(site.initial_fractional_position, fractional)
+        ):
             return True
     return False
 

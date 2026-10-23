@@ -106,11 +106,15 @@ def queue_issues(queues: Sequence[ClusterQueue], *, profile_walltime: str = "") 
 
         walltime = queue.default_walltime.strip()
         max_walltime = queue.max_walltime.strip()
-        format_problems = [problem for problem in map(walltime_issue, (walltime, max_walltime)) if problem]
+        format_problems = [
+            problem for problem in map(walltime_issue, (walltime, max_walltime)) if problem
+        ]
         issues.extend(f"{label}: {problem}" for problem in format_problems)
         effective_walltime = walltime or profile_walltime.strip()
         if max_walltime and not format_problems and not walltime_issue(effective_walltime):
-            limit_problem = walltime_issue(effective_walltime, max_walltime=max_walltime, queue_name=name)
+            limit_problem = walltime_issue(
+                effective_walltime, max_walltime=max_walltime, queue_name=name
+            )
             if limit_problem and not walltime:
                 limit_problem = (
                     f"{limit_problem} The queue uses the cluster's default walltime; "

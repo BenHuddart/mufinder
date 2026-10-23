@@ -83,7 +83,9 @@ def _cutoff_context_and_deps(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
-        definition_output_directory=lambda d: document.project_root / "files" / "convergence_cutoff",
+        definition_output_directory=lambda d: (
+            document.project_root / "files" / "convergence_cutoff"
+        ),
         job_output_directory=lambda _job: None,
         job_seed_name=lambda job: job.label,
         job_file_cleanup=None,  # type: ignore[arg-type]
@@ -297,13 +299,17 @@ def test_convergence_controller_handles_only_its_calc_type(tmp_path: Path) -> No
     controller = ConvergenceCutoffController(
         make_context(document=document), _stub_deps(), _FakeConvergenceView()
     )
-    handled = make_job("j", service=service, document=document, calc_type="castep_convergence_cutoff")
+    handled = make_job(
+        "j", service=service, document=document, calc_type="castep_convergence_cutoff"
+    )
     other = make_job("k", service=service, document=document, calc_type="castep_uep_source")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False
 
 
-def test_cutoff_controller_finds_a_legacy_definitions_job_through_job_labels(tmp_path: Path) -> None:
+def test_cutoff_controller_finds_a_legacy_definitions_job_through_job_labels(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "conv.mufinder", "Conv")
     definition, _config = _seed_convergence_document(service, document)

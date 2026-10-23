@@ -178,7 +178,9 @@ def test_unavailable_output_is_retry_eligible_only_when_missing_from_queue(
     )
 
 
-def test_incomplete_walltime_run_is_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_incomplete_walltime_run_is_stopped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     # A walltime kill leaves nothing in the .castep file; only the scheduler
     # log (downloaded during retrieval) records it.
     ssh = FakeSSH()
@@ -204,7 +206,8 @@ def test_incomplete_without_scheduler_evidence_fails(
     ssh = FakeSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"partial"
     _parse_as(
-        monkeypatch, CastepResult(completed=False, error_message="ERROR: wall clock estimate failed")
+        monkeypatch,
+        CastepResult(completed=False, error_message="ERROR: wall clock estimate failed"),
     )
 
     result = _retrieve(ssh, tmp_path, remote_job_id="131")
@@ -289,13 +292,17 @@ def test_secondary_outputs_are_skipped_when_not_requested(
     ssh.remote_files["/remote/job/seed.ts"] = b"ts output"
     _parse_as(monkeypatch, _COMPLETED)
 
-    _retrieve(ssh, tmp_path, retrieval=RetrievalFlags(retrieve_den_fmt=False, retrieve_out_cell=False))
+    _retrieve(
+        ssh, tmp_path, retrieval=RetrievalFlags(retrieve_den_fmt=False, retrieve_out_cell=False)
+    )
 
     for name in ("seed.den_fmt", "seed-out.cell", "seed.phonon", "seed.ts"):
         assert not (tmp_path / name).exists()
 
 
-def test_task_farm_primary_output_is_parsed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_task_farm_primary_output_is_parsed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     ssh = FakeSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"minimal output"
     ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
@@ -335,7 +342,9 @@ def test_farmed_ts_file_is_downloaded_under_its_farm_name(
     assert not (tmp_path / "seed.ts").exists()
 
 
-def test_numbered_error_files_are_downloaded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_numbered_error_files_are_downloaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     ssh = FakeSSH()
     ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     ssh.remote_files["/remote/job/seed.0001.err"] = b"rank one"

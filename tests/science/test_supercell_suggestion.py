@@ -175,7 +175,7 @@ def test_recommended_affordable_is_tagged_not_criterion() -> None:
     result = suggest_supercell(_cubic(3.0), primitive_atom_count=4)
     idx = result.recommended_index
     # All candidates after recommended have atom_count >= max_atoms.
-    for c in result.candidates[idx + 1:]:
+    for c in result.candidates[idx + 1 :]:
         assert c.atom_count >= MAX_SUPERCELL_ATOMS
 
 

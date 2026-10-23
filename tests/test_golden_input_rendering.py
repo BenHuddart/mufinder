@@ -34,7 +34,9 @@ def test_rendered_inputs_match_golden(
 ) -> None:
     cell_golden = GOLDEN_DIR / workflow / f"{job_name}.cell"
     param_golden = GOLDEN_DIR / workflow / f"{job_name}.param"
-    assert cell_golden.exists(), f"missing golden cell: {cell_golden} (run python -m tests.support.golden_inputs)"
+    assert cell_golden.exists(), (
+        f"missing golden cell: {cell_golden} (run python -m tests.support.golden_inputs)"
+    )
     assert param_golden.exists(), f"missing golden param: {param_golden}"
     assert cell_text == cell_golden.read_text(encoding="utf-8")
     assert param_text == param_golden.read_text(encoding="utf-8")

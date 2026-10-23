@@ -31,7 +31,9 @@ def test_make_canvas_uses_device_pixel_ratio() -> None:
 
 
 def test_best_font_family_falls_back_for_unknown_fonts() -> None:
-    chosen = MuFinderSplashScreen._best_font_family(("DefinitelyNotInstalledFont",), fallback="Helvetica")
+    chosen = MuFinderSplashScreen._best_font_family(
+        ("DefinitelyNotInstalledFont",), fallback="Helvetica"
+    )
     assert chosen == "Helvetica"
 
 

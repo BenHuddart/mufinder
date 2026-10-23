@@ -247,7 +247,9 @@ class TestParseParamValue:
     ("text", "atomic_spins", "expected"),
     [
         pytest.param("SPIN_POLARIZED : TRUE", None, True, id="explicit-true"),
-        pytest.param("spin_polarised : false", (0.0, 2.0), False, id="explicit-false-beats-atomic-spins"),
+        pytest.param(
+            "spin_polarised : false", (0.0, 2.0), False, id="explicit-false-beats-atomic-spins"
+        ),
         pytest.param("SPIN : -2", None, True, id="negative-net-spin"),
         pytest.param("SPIN : 0", None, False, id="zero-net-spin"),
         pytest.param("TASK : SINGLEPOINT", (0.0, 2.0), True, id="atomic-spins"),

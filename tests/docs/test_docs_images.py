@@ -33,7 +33,9 @@ def _renderer_scale_factor() -> int:
     """The renderer's ``SCALE_FACTOR``, read from its source: importing it configures Qt."""
 
     for node in ast.parse(RENDER.read_text(encoding="utf-8")).body:
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "SCALE_FACTOR" for t in node.targets):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "SCALE_FACTOR" for t in node.targets
+        ):
             return int(ast.literal_eval(node.value))
     raise AssertionError(f"{RENDER.name} does not assign SCALE_FACTOR")
 
@@ -41,12 +43,22 @@ def _renderer_scale_factor() -> int:
 def _build(tmp_path: Path, page: str) -> str:
     source = tmp_path / "source"
     (source / "_generated").mkdir(parents=True)
-    Image.new("RGB", (64, 40), (200, 120, 40)).save(source / "_generated" / "shot.webp", "WEBP", lossless=True)
+    Image.new("RGB", (64, 40), (200, 120, 40)).save(
+        source / "_generated" / "shot.webp", "WEBP", lossless=True
+    )
     Image.new("RGB", (30, 20), (40, 120, 200)).save(source / "_generated" / "logo.png")
     (source / "conf.py").write_text("", encoding="utf-8")
     (source / "index.rst").write_text(page, encoding="utf-8")
     output = tmp_path / "html"
-    app = Sphinx(str(source), str(source), str(output), str(tmp_path / "doctrees"), "html", status=None, warning=None)
+    app = Sphinx(
+        str(source),
+        str(source),
+        str(output),
+        str(tmp_path / "doctrees"),
+        "html",
+        status=None,
+        warning=None,
+    )
     app.connect("build-finished", _hook())
     app.build()
     return (output / "index.html").read_text(encoding="utf-8")

@@ -8,7 +8,10 @@ from uuid import uuid4
 
 import pytest
 
-from mufinder.castep_io.geometry_progress import parse_geometry_progress, parse_geometry_progress_text
+from mufinder.castep_io.geometry_progress import (
+    parse_geometry_progress,
+    parse_geometry_progress_text,
+)
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job
 from mufinder.services.job_progress import (
@@ -25,7 +28,12 @@ BFGS = Path(__file__).resolve().parents[1] / "fixtures" / "geometry" / "Si2_bfgs
 LBFGS_CONTINUED = BFGS.with_name("Si2_lbfgs.castep")
 
 
-def _job(stage: WorkflowStage = WorkflowStage.MUON_RELAXATION, *, status=JobStatus.RUNNING, target="local") -> Job:
+def _job(
+    stage: WorkflowStage = WorkflowStage.MUON_RELAXATION,
+    *,
+    status=JobStatus.RUNNING,
+    target="local",
+) -> Job:
     return Job(label="job", workflow_stage=stage, status=status, execution_target=target)
 
 
@@ -101,7 +109,9 @@ def test_reader_does_not_hold_its_lock_while_reading() -> None:
         release.wait(5)
         return data[offset:]
 
-    worker = threading.Thread(target=lambda: reader.read("job", size=len(data), read_from=slow_read_from))
+    worker = threading.Thread(
+        target=lambda: reader.read("job", size=len(data), read_from=slow_read_from)
+    )
     worker.start()
     assert reading.wait(5)
     forgetting = threading.Thread(target=lambda: reader.forget_all_except(()))
@@ -116,7 +126,9 @@ def test_reader_does_not_hold_its_lock_while_reading() -> None:
     # The read finished after its cursor was forgotten, so nothing was kept:
     # the next read starts from the beginning.
     offsets: list[int] = []
-    reader.read("job", size=len(data), read_from=lambda offset: offsets.append(offset) or data[offset:])
+    reader.read(
+        "job", size=len(data), read_from=lambda offset: offsets.append(offset) or data[offset:]
+    )
     assert offsets == [0]
 
 
@@ -172,7 +184,9 @@ def monitor(qapp, tmp_path: Path):
         run_in_background=lambda task: task(),
         clock=lambda: recorder.now,
     )
-    monitor.progress_changed.connect(lambda job_id, progress: recorder.changes.append((job_id, progress)))
+    monitor.progress_changed.connect(
+        lambda job_id, progress: recorder.changes.append((job_id, progress))
+    )
     yield monitor, recorder, paths
     monitor.deleteLater()
 

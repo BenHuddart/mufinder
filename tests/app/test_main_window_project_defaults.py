@@ -84,9 +84,12 @@ def test_adopting_a_mixed_functional_sweep_leaves_the_project_functional_alone(
         shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"},
         overrides=[{"cutoffs": [400.0], "params": {"xc_functional": "LDA"}}],
     )
-    assert window._convergence_definition_xc_functional(
-        window._convergence_controller.active_definition()
-    ) is None
+    assert (
+        window._convergence_definition_xc_functional(
+            window._convergence_controller.active_definition()
+        )
+        is None
+    )
 
     window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
 
@@ -212,9 +215,9 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     assert window._kpoint_convergence_view._default_params["cut_off_energy"].value == (
         pytest.approx(850.0)
     )
-    assert project_convergence_parameter_values(window._document.project)["cut_off_energy"].value == (
-        pytest.approx(850.0)
-    )
+    assert project_convergence_parameter_values(window._document.project)[
+        "cut_off_energy"
+    ].value == (pytest.approx(850.0))
     # The pinned overview plot belonged to the adopted value, so it no longer applies.
     assert window._validated_cutoff_overview_snapshot() is None
     assert "850" in window.statusBar().currentMessage()
@@ -232,7 +235,11 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     assert project.recommended_kpoint_grid == (6, 6, 4)
     assert project.recommended_kpoint_method == "manual"
     assert project.recommended_kpoint_lattice == [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
-    assert project_convergence_parameter_values(window._document.project)["kpoint_mp_grid"] == (6, 6, 4)
+    assert project_convergence_parameter_values(window._document.project)["kpoint_mp_grid"] == (
+        6,
+        6,
+        4,
+    )
     assert window._uep_view._default_params["kpoint_mp_grid"] == (6, 6, 4)
     assert "kpoint" not in doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
 

@@ -64,7 +64,10 @@ def test_main_window_reset_failed_jobs_can_clean_output_directory(
     window._reset_failed_jobs([job])
 
     assert job.status == JobStatus.DEFINED
-    assert sorted(path.name for path in output_dir.iterdir()) == [f"{job.label}.cell", f"{job.label}.param"]
+    assert sorted(path.name for path in output_dir.iterdir()) == [
+        f"{job.label}.cell",
+        f"{job.label}.param",
+    ]
     assert doc.provenance[-1].action == "job_reset"
     window.close()
 
@@ -346,7 +349,9 @@ def test_main_window_failure_diagnostics_includes_slurm_output(
     window.close()
 
 
-def test_main_window_failure_diagnostics_without_output_directory(main_window, tmp_path: Path) -> None:
+def test_main_window_failure_diagnostics_without_output_directory(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "inspect_no_output.mufinder", "InspectNoOutput")
@@ -387,7 +392,9 @@ def test_main_window_error_file_candidates_fallback_and_excerpt_helpers(
     assert [path.name for path in candidates] == ["job_x.err"]
 
     assert MainWindow._read_error_contexts(output_dir / "empty.err") == "[File is empty]"
-    assert MainWindow._read_error_contexts(output_dir / "missing.err").startswith("Could not read file")
+    assert MainWindow._read_error_contexts(output_dir / "missing.err").startswith(
+        "Could not read file"
+    )
     assert "2: error here" in MainWindow._read_error_contexts(output_dir / "job_x.err")
     window.close()
 
@@ -485,7 +492,9 @@ def test_main_window_prompt_failed_job_cleanup_choices(
     window.close()
 
 
-def test_main_window_error_file_candidates_handles_missing_directory(main_window, tmp_path: Path) -> None:
+def test_main_window_error_file_candidates_handles_missing_directory(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "missing_errors.mufinder", "MissingErrors")
@@ -655,8 +664,18 @@ def test_dashboard_dismiss_multi_select(
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "dismiss_multi.mufinder", "DismissMulti")
-    job0 = service.add_job(doc, label="d0", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
-    job1 = service.add_job(doc, label="d1", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job0 = service.add_job(
+        doc,
+        label="d0",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job1 = service.add_job(
+        doc,
+        label="d1",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
     job0.status = JobStatus.FAILED
     job1.status = JobStatus.STOPPED
 
@@ -814,9 +833,7 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
     assert window._convergence_view._table.item(0, status_column).text() == "ready"
     # The cutoff panel's Submit actions are gated on the projected row status,
     # so they become available again for the dismissed row.
-    assert not workflow_table_utils.workflow_row_is_locked(
-        window._convergence_view._row_status(0)
-    )
+    assert not workflow_table_utils.workflow_row_is_locked(window._convergence_view._row_status(0))
 
     submitted: list[list[Job]] = []
     monkeypatch.setattr(
@@ -935,9 +952,7 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
     window._refresh_ui_after_project_change()
 
     assert (
-        window._convergence_view._table.item(
-            0, window._convergence_view._STATUS_COLUMN
-        ).text()
+        window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text()
         == "failed"
     )
 
@@ -1305,7 +1320,9 @@ def _pristine_continue_fixture(tmp_path: Path):
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={"geom_max_iter": 120})
+    row = main_window_module.PristineRelaxationRow(
+        label="row_1", parameter_values={"geom_max_iter": 120}
+    )
     output_root = doc.project_root / "files" / "pristine_relaxation"
     definition = service.register_pristine_relaxation_definition(
         doc,
@@ -1326,7 +1343,12 @@ def _pristine_continue_fixture(tmp_path: Path):
     doc.ui_state["pristine_relaxation_form"] = {
         "name_prefix": "pristine_relax",
         "rows": [
-            {"label": "row_1", "fix_all_cell": False, "params": {"geom_max_iter": 120}, "added_advanced": []}
+            {
+                "label": "row_1",
+                "fix_all_cell": False,
+                "params": {"geom_max_iter": 120},
+                "added_advanced": [],
+            }
         ],
     }
     window._refresh_ui_after_project_change()
@@ -1402,7 +1424,9 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     job.error_message = "previous castep failure"
     job.dismissed_at = datetime.now(UTC)
     window._refresh_ui_after_project_change()
-    assert window._pristine_relaxation_view._row_status(0) == "ready"  # dismissed -> displays "ready"
+    assert (
+        window._pristine_relaxation_view._row_status(0) == "ready"
+    )  # dismissed -> displays "ready"
 
     fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
     submit_calls = _wire_fake_cluster_submission(window, monkeypatch, cluster_name="alpha")
@@ -1410,8 +1434,9 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     monkeypatch.setattr(
         window,
         "_prompt_failed_job_cleanup",
-        lambda count: cleanup_prompted.append(count) or pytest.fail(
-            "Continue must never trigger the dismissed-job cleanup prompt"
+        lambda count: (
+            cleanup_prompted.append(count)
+            or pytest.fail("Continue must never trigger the dismissed-job cleanup prompt")
         ),
     )
 
@@ -1530,7 +1555,9 @@ def test_continue_relaxation_cluster_not_connected_dialog_still_opens_with_unava
     monkeypatch.setattr(
         window._cluster_runner,
         "check_remote_files",
-        lambda *_a, **_k: pytest.fail("Not connected: the checkpoint probe must not hit the network"),
+        lambda *_a, **_k: pytest.fail(
+            "Not connected: the checkpoint probe must not hit the network"
+        ),
     )
     fake_continue_dialog.accept = False  # cancel: no submission wiring needed
 
@@ -1996,8 +2023,9 @@ def test_main_window_reset_failed_jobs_uses_supplied_cleanup_choice_without_aski
     monkeypatch.setattr(
         window,
         "_apply_failed_job_reset",
-        lambda jobs, *, cleanup_choice, detach_convergence: applied.append((list(jobs), cleanup_choice))
-        or (0, []),
+        lambda jobs, *, cleanup_choice, detach_convergence: (
+            applied.append((list(jobs), cleanup_choice)) or (0, [])
+        ),
     )
 
     window._reset_failed_jobs([job], cleanup_choice=False)
@@ -2125,7 +2153,9 @@ def test_main_window_start_again_locally_clears_the_previous_output(
 
     monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
     submit_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs))
+    monkeypatch.setattr(
+        window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
+    )
 
     window._submit_jobs_locally(
         [job],
@@ -2155,7 +2185,9 @@ def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     warnings: list[str] = []
     monkeypatch.setattr(
-        main_window_module, "show_detailed_warning", lambda _parent, _title, text, **_kw: warnings.append(text)
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, _title, text, **_kw: warnings.append(text),
     )
 
     def _locked(_directory: Path) -> None:

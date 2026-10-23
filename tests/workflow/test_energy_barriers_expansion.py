@@ -74,10 +74,15 @@ def test_expand_nudged_elastic_band_jobs_renders_intermediate_blocks() -> None:
     assert job.provenance["calc_type"] == NUDGED_ELASTIC_BAND_CALC_TYPE
     assert any(block.name == "positions_frac_product" for block in job.cell_file.blocks)
     assert any(block.name == "positions_frac_intermediate" for block in job.cell_file.blocks)
-    assert any(keyword.name == "tssearch_method" and keyword.value == "NEB" for keyword in job.param_file.keywords)
+    assert any(
+        keyword.name == "tssearch_method" and keyword.value == "NEB"
+        for keyword in job.param_file.keywords
+    )
 
 
-def test_expand_nudged_elastic_band_jobs_sets_task_and_spin_polarisation_from_reactant_spins() -> None:
+def test_expand_nudged_elastic_band_jobs_sets_task_and_spin_polarisation_from_reactant_spins() -> (
+    None
+):
     spinless = _structure_spec()
     spinless = StructureSpec(
         lattice_cart=spinless.lattice_cart,
@@ -139,11 +144,16 @@ def test_expand_nudged_elastic_band_jobs_without_intermediate_omits_block() -> N
     assert "source_transition_state_job_id" not in job.provenance
     assert any(block.name == "positions_frac_product" for block in job.cell_file.blocks)
     assert not any(block.name == "positions_frac_intermediate" for block in job.cell_file.blocks)
-    assert any(keyword.name == "tssearch_method" and keyword.value == "NEB" for keyword in job.param_file.keywords)
+    assert any(
+        keyword.name == "tssearch_method" and keyword.value == "NEB"
+        for keyword in job.param_file.keywords
+    )
     # Climbing image is enabled by default so the band yields the saddle energy.
     assert any(
-        keyword.name == "tssearch_neb_climbing" and keyword.value is True for keyword in job.param_file.keywords
+        keyword.name == "tssearch_neb_climbing" and keyword.value is True
+        for keyword in job.param_file.keywords
     )
+
 
 def _neb_source() -> NudgedElasticBandSource:
     return NudgedElasticBandSource(
@@ -218,7 +228,9 @@ def test_replace_serialized_sources_for_pair_drops_only_that_pair() -> None:
         existing,
         reactant_site_id="r",
         product_site_id="p",
-        new_sources=[{"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p", "new": True}],
+        new_sources=[
+            {"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p", "new": True}
+        ],
     )
 
     assert [source["key"] for source in replaced] == ["r:q:1", "p:r:1", "r:p:1"]
@@ -247,8 +259,18 @@ def test_strip_legacy_energy_barrier_params_drops_placeholders_only() -> None:
 
 def test_replace_serialized_sources_for_pair_keeps_the_other_charge_states_paths() -> None:
     existing = [
-        {"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p", "charge_state": "positive_muon"},
-        {"key": "r:mu:p:mu:1", "reactant_site_id": "r", "product_site_id": "p", "charge_state": "muonium"},
+        {
+            "key": "r:p:1",
+            "reactant_site_id": "r",
+            "product_site_id": "p",
+            "charge_state": "positive_muon",
+        },
+        {
+            "key": "r:mu:p:mu:1",
+            "reactant_site_id": "r",
+            "product_site_id": "p",
+            "charge_state": "muonium",
+        },
         {"key": "legacy", "reactant_site_id": "r", "product_site_id": "p"},
     ]
 

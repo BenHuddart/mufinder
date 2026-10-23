@@ -8,7 +8,17 @@ from uuid import uuid4
 import numpy as np
 import pytest
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QDialog, QDockWidget, QFrame, QHeaderView, QLabel, QMessageBox, QTabWidget, QToolButton, QTreeWidgetItem
+from PySide6.QtWidgets import (
+    QDialog,
+    QDockWidget,
+    QFrame,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QTabWidget,
+    QToolButton,
+    QTreeWidgetItem,
+)
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
@@ -28,10 +38,25 @@ from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePa
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
-from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    ComparisonTable,
+    Job,
+    MuonSite,
+    Result,
+    Structure,
+)
+from mufinder.workflow.energy_barriers import (
+    NUDGED_ELASTIC_BAND_CALC_TYPE,
+    TRANSITION_STATE_SEARCH_CALC_TYPE,
+)
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
-from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
+from mufinder.science.magnetic_structure import (
+    AtomSelector,
+    MagneticStructureModel,
+    build_collinear_component,
+)
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
@@ -39,7 +64,10 @@ from mufinder.services.magnetic_field_results import (
 )
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import StageStatus, summarize_project
-from mufinder.services.source_candidates import energy_barrier_generated_sources, quantum_source_relative_energies
+from mufinder.services.source_candidates import (
+    energy_barrier_generated_sources,
+    quantum_source_relative_energies,
+)
 from tests.support.qt import find_tree_item_by_route
 
 
@@ -267,7 +295,9 @@ def test_main_window_routes_to_muon_relaxation_panel(qapp, tmp_path: Path) -> No
     window.close()
 
 
-def test_main_window_routes_to_magnetic_fields_panel_and_persists_model(qapp, tmp_path: Path) -> None:
+def test_main_window_routes_to_magnetic_fields_panel_and_persists_model(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
 
     service = ProjectService()
@@ -357,11 +387,15 @@ def test_main_window_restores_magnetic_field_form_state(qapp, tmp_path: Path) ->
     reloaded_window.close()
 
 
-def test_main_window_persists_magnetic_field_calculation_results(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_main_window_persists_magnetic_field_calculation_results(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     window = MainWindow()
 
     service = ProjectService()
-    doc = service.create_project(tmp_path / "ui_magnetic_results_doc.mufinder", "UI Magnetic Results")
+    doc = service.create_project(
+        tmp_path / "ui_magnetic_results_doc.mufinder", "UI Magnetic Results"
+    )
     host = Structure(
         label="Fe",
         lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
@@ -385,13 +419,23 @@ def test_main_window_persists_magnetic_field_calculation_results(qapp, tmp_path:
                 "magnitude_T": self.magnitude,
             }
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *_args, **_kwargs: (_Result(),))
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_fields",
+        lambda *_args, **_kwargs: (_Result(),),
+    )
 
     window._document = doc
     window._refresh_ui_after_project_change()
     window._magnetic_field_view._set_model(_magnetic_model("Main field"))
-    window._magnetic_field_view._selected_muon_site = window._magnetic_field_view._default_muon_site()
+    window._magnetic_field_view._selected_muon_site = (
+        window._magnetic_field_view._default_muon_site()
+    )
     window._magnetic_field_view._calculate_fields()
 
     assert "magnetic_field_results" not in doc.ui_state["magnetic_field_form"]
@@ -424,7 +468,9 @@ def test_main_window_persists_magnetic_field_calculation_results(qapp, tmp_path:
     reloaded_window.close()
 
 
-def test_main_window_magnetic_field_results_do_not_leak_into_the_next_project(qapp, tmp_path: Path) -> None:
+def test_main_window_magnetic_field_results_do_not_leak_into_the_next_project(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     first = service.create_project(tmp_path / "first.mufinder", "First")
@@ -464,7 +510,9 @@ def test_main_window_pinned_magnetic_field_workspace_owns_a_copy_of_the_page_res
     window = MainWindow()
 
     service = ProjectService()
-    doc = service.create_project(tmp_path / "ui_magnetic_pin_results_doc.mufinder", "UI Magnetic Pin Results")
+    doc = service.create_project(
+        tmp_path / "ui_magnetic_pin_results_doc.mufinder", "UI Magnetic Pin Results"
+    )
     host = Structure(
         label="Fe",
         lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
@@ -480,7 +528,9 @@ def test_main_window_pinned_magnetic_field_workspace_owns_a_copy_of_the_page_res
         {
             "magnetic_field_results": {
                 "kind": "commensurate",
-                "results": [{"site_label": "site 1", "total_T": [0.1, 0.2, 0.3], "magnitude_T": 0.374}],
+                "results": [
+                    {"site_label": "site 1", "total_T": [0.1, 0.2, 0.3], "magnitude_T": 0.374}
+                ],
             },
             "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4},
         }
@@ -535,7 +585,9 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     window = MainWindow()
 
     service = ProjectService()
-    doc = service.create_project(tmp_path / "ui_magnetic_workspace_doc.mufinder", "UI Magnetic Workspace")
+    doc = service.create_project(
+        tmp_path / "ui_magnetic_workspace_doc.mufinder", "UI Magnetic Workspace"
+    )
     host = Structure(
         label="Fe",
         lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
@@ -573,9 +625,9 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     workspace_widget._set_model(_magnetic_model("Copied helix"))
 
     assert doc.project.magnetic_structure == main_structure
-    assert doc.ui_state["magnetic_field_workspaces"][0]["magnetic_structure"]["components"][0]["label"] == (
-        "Copied helix"
-    )
+    assert doc.ui_state["magnetic_field_workspaces"][0]["magnetic_structure"]["components"][0][
+        "label"
+    ] == ("Copied helix")
 
     workspace_widget._title_edit.setText("Renamed helix")
     workspace_widget._on_title_edit_finished()
@@ -610,7 +662,9 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     reloaded_window.close()
 
 
-def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, tmp_path: Path) -> None:
+def test_main_window_routes_to_quantum_view_and_construction_placeholders(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
 
     service = ProjectService()
@@ -775,7 +829,9 @@ def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> N
     assert window._shutting_down is True
 
 
-def test_main_window_materializes_one_quantum_phonon_job_from_relaxed_sources(qapp, tmp_path: Path) -> None:
+def test_main_window_materializes_one_quantum_phonon_job_from_relaxed_sources(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_doc.mufinder", "Quantum")
@@ -800,7 +856,9 @@ def test_main_window_materializes_one_quantum_phonon_job_from_relaxed_sources(qa
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -864,7 +922,9 @@ def test_main_window_materializes_one_quantum_phonon_job_from_relaxed_sources(qa
     assert "NUM_FARMS" not in param_text
 
 
-def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_farms(qapp, tmp_path: Path) -> None:
+def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_farms(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_farms_doc.mufinder", "QuantumFarms")
@@ -887,7 +947,9 @@ def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -950,7 +1012,9 @@ def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_
     assert "TASK : PHONON" in param_text
 
 
-def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp, tmp_path: Path) -> None:
+def test_main_window_applies_quantum_row_configuration_to_materialized_job(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_row_config_doc.mufinder", "QuantumRowConfig")
@@ -973,7 +1037,9 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -1050,7 +1116,9 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
 def test_main_window_quantum_corrections_hides_fine_cutoff_from_default_rows(qapp) -> None:
     window = MainWindow()
 
-    dialog = QuantumCorrectionsConfigDialog(specs=window._quantum_corrections_controller.parameter_specs())
+    dialog = QuantumCorrectionsConfigDialog(
+        specs=window._quantum_corrections_controller.parameter_specs()
+    )
 
     assert "fine_cut_off_energy" not in dialog._visible_names()
     assert "fine_cut_off_energy" in {spec.name for spec in dialog._available_advanced_specs()}
@@ -1102,7 +1170,9 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
 ) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "quantum_duplicate_labels_doc.mufinder", "Quantum Duplicates")
+    doc = service.create_project(
+        tmp_path / "quantum_duplicate_labels_doc.mufinder", "Quantum Duplicates"
+    )
     window._document = doc
 
     for index, muon_x in enumerate((0.25, 0.75), start=1):
@@ -1123,7 +1193,9 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
             status=JobStatus.COMPLETED,
         )
         doc.jobs[source_job.id] = source_job
-        run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+        run = CalculationRun(
+            job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+        )
         result = Result(
             calculation_run_id=run.id,
             result_type=source_job.calc_type,
@@ -1133,10 +1205,14 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
         run.result_id = result.id
         doc.runs[run.id] = run
         doc.results[result.id] = result
-        site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0 - index)
+        site = MuonSite(
+            label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0 - index
+        )
         doc.sites[site.id] = site
 
-        source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
+        source_dir = (
+            doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
+        )
         source_dir.mkdir(parents=True, exist_ok=True)
         (source_dir / f"{source_job.label}.cell").write_text(
             "\n".join(
@@ -1164,7 +1240,10 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
             encoding="utf-8",
         )
 
-    labels = [window._quantum_corrections_controller.source_label(candidate) for candidate in window._quantum_corrections_controller.candidates()]
+    labels = [
+        window._quantum_corrections_controller.source_label(candidate)
+        for candidate in window._quantum_corrections_controller.candidates()
+    ]
 
     assert labels == ["siteA", "siteA_2"]
 
@@ -1183,7 +1262,9 @@ def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_
 ) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "quantum_stale_label_doc.mufinder", "Quantum Stale Label")
+    doc = service.create_project(
+        tmp_path / "quantum_stale_label_doc.mufinder", "Quantum Stale Label"
+    )
     window._document = doc
 
     relaxed_structure = Structure(
@@ -1203,7 +1284,9 @@ def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -1238,7 +1321,9 @@ def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_
     window.close()
 
 
-def test_main_window_quantum_corrections_allows_editing_eligible_site_name(qapp, tmp_path: Path) -> None:
+def test_main_window_quantum_corrections_allows_editing_eligible_site_name(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_rename_doc.mufinder", "Quantum Rename")
@@ -1262,7 +1347,9 @@ def test_main_window_quantum_corrections_allows_editing_eligible_site_name(qapp,
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -1312,7 +1399,10 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
         species=["Si", "Si", "H:mu"],
         fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
         parent_structure_id=host.id,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+        properties={
+            "source_workflow_stage": WorkflowStage.MUON_RELAXATION.value,
+            "atomic_spins": [1.0, -1.0, 0.0],
+        },
     )
     relaxed_b = Structure(
         label="siteB relaxed",
@@ -1321,7 +1411,10 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
         species=["Si", "Si", "H:mu"],
         fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
         parent_structure_id=host.id,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+        properties={
+            "source_workflow_stage": WorkflowStage.MUON_RELAXATION.value,
+            "atomic_spins": [1.0, -1.0, 0.0],
+        },
     )
     doc.structures[relaxed_a.id] = relaxed_a
     doc.structures[relaxed_b.id] = relaxed_b
@@ -1360,8 +1453,12 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1416,7 +1513,9 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     assert opened["end_fractional"] == candidate.path.end_fractional
 
 
-def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_changes(qapp, tmp_path: Path) -> None:
+def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_changes(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "barrier_persist_doc.mufinder", "BarrierPersist")
@@ -1487,8 +1586,12 @@ def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_change
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1500,14 +1603,20 @@ def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_change
     window._energy_barriers_controller.select_endpoints(str(site_b.id), str(site_a.id))
     generated_after = window._energy_barriers_controller.candidates()
 
-    assert [candidate.key for candidate in generated_after] == [candidate.key for candidate in generated_before]
+    assert [candidate.key for candidate in generated_after] == [
+        candidate.key for candidate in generated_before
+    ]
     window.close()
 
 
-def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_for_supercell(qapp, tmp_path: Path) -> None:
+def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_for_supercell(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_supercell_kpoints_doc.mufinder", "BarrierSupercellKPoints")
+    doc = service.create_project(
+        tmp_path / "barrier_supercell_kpoints_doc.mufinder", "BarrierSupercellKPoints"
+    )
     window._document = doc
 
     host = Structure(
@@ -1600,8 +1709,12 @@ def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_fo
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1622,7 +1735,9 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     """Navigating to energy barriers with pre-existing generated sources and max_path_length works."""
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_existing_state.mufinder", "BarrierExistingState")
+    doc = service.create_project(
+        tmp_path / "barrier_existing_state.mufinder", "BarrierExistingState"
+    )
     window._document = doc
 
     host = Structure(
@@ -1690,8 +1805,12 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1725,7 +1844,9 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     window2.close()
 
 
-def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(qapp, tmp_path: Path) -> None:
+def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
+    qapp, tmp_path: Path
+) -> None:
     """Legacy projects with zero-value tolerance params and tssearch_lst_max_iter open cleanly."""
     window = MainWindow()
     service = ProjectService()
@@ -1797,8 +1918,12 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1840,11 +1965,15 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
     window.close()
 
 
-def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qapp, tmp_path: Path) -> None:
+def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(
+    qapp, tmp_path: Path
+) -> None:
     """NEB jobs inherit the k-point grid from the reactant relaxation's output cell file."""
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_cell_kpoints_doc.mufinder", "BarrierCellKPoints")
+    doc = service.create_project(
+        tmp_path / "barrier_cell_kpoints_doc.mufinder", "BarrierCellKPoints"
+    )
     window._document = doc
 
     doc.project.recommended_kpoint_grid = (4, 4, 4)
@@ -1862,13 +1991,25 @@ def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qap
 
     supercell_species = ["Si"] * 8 + ["H:mu"]
     supercell_positions_a = [
-        [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0],
-        [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.5, 0.5],
+        [0.0, 0.0, 0.0],
+        [0.5, 0.0, 0.0],
+        [0.0, 0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5],
+        [0.5, 0.0, 0.5],
+        [0.0, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
         [0.125, 0.125, 0.125],
     ]
     supercell_positions_b = [
-        [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0],
-        [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.5, 0.5],
+        [0.0, 0.0, 0.0],
+        [0.5, 0.0, 0.0],
+        [0.0, 0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5],
+        [0.5, 0.0, 0.5],
+        [0.0, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
         [0.375, 0.125, 0.125],
     ]
     relaxed_a = Structure(
@@ -1926,8 +2067,12 @@ def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qap
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1935,20 +2080,22 @@ def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qap
     source_dir_a = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / job_a.label
     source_dir_a.mkdir(parents=True, exist_ok=True)
     (source_dir_a / f"{job_a.label}.cell").write_text(
-        "\n".join([
-            "%BLOCK LATTICE_CART",
-            "ang",
-            "8.0 0.0 0.0",
-            "0.0 8.0 0.0",
-            "0.0 0.0 8.0",
-            "%ENDBLOCK LATTICE_CART",
-            "%BLOCK POSITIONS_FRAC",
-            "Si 0.0 0.0 0.0",
-            "H:mu 0.125 0.125 0.125",
-            "%ENDBLOCK POSITIONS_FRAC",
-            "KPOINT_MP_GRID 2 2 2",
-            "",
-        ]),
+        "\n".join(
+            [
+                "%BLOCK LATTICE_CART",
+                "ang",
+                "8.0 0.0 0.0",
+                "0.0 8.0 0.0",
+                "0.0 0.0 8.0",
+                "%ENDBLOCK LATTICE_CART",
+                "%BLOCK POSITIONS_FRAC",
+                "Si 0.0 0.0 0.0",
+                "H:mu 0.125 0.125 0.125",
+                "%ENDBLOCK POSITIONS_FRAC",
+                "KPOINT_MP_GRID 2 2 2",
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -2023,7 +2170,9 @@ def test_main_window_generates_same_site_energy_barrier_paths(qapp, tmp_path: Pa
     window.close()
 
 
-def test_main_window_generates_energy_barrier_paths_with_user_max_length(qapp, tmp_path: Path) -> None:
+def test_main_window_generates_energy_barrier_paths_with_user_max_length(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "barrier_max_length_doc.mufinder", "BarrierMaxLength")
@@ -2094,8 +2243,12 @@ def test_main_window_generates_energy_barrier_paths_with_user_max_length(qapp, t
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -2177,8 +2330,12 @@ def test_main_window_removes_energy_barrier_generated_path(qapp, tmp_path: Path)
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
+    site_a = MuonSite(
+        label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0
+    )
+    site_b = MuonSite(
+        label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9
+    )
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -2273,7 +2430,9 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
     # validate_artifacts and build_result, so patch the collector's parse helper.
     monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
 
-    window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
 
     stored = next(iter(doc.results.values()))
     assert stored.result_type == TRANSITION_STATE_SEARCH_CALC_TYPE
@@ -2283,9 +2442,7 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
     window.close()
 
 
-def test_main_window_materializes_neb_jobs_directly_from_endpoints(
-    qapp, tmp_path: Path
-) -> None:
+def test_main_window_materializes_neb_jobs_directly_from_endpoints(qapp, tmp_path: Path) -> None:
     # The simplified workflow: NEB is seeded straight from the two relaxed endpoints with no
     # transition-state search. CASTEP's NEB driver still requires an INTERMEDIATE structure, so the
     # app synthesises the minimum-image midpoint and writes both a product and an intermediate block.
@@ -2372,7 +2529,9 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     assert "%BLOCK POSITIONS_FRAC_INTERMEDIATE" in cell_text
     intermediate_section = cell_text.split("%BLOCK POSITIONS_FRAC_INTERMEDIATE", 1)[1]
     intermediate_section = intermediate_section.split("%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE", 1)[0]
-    muon_line = next(line for line in intermediate_section.splitlines() if line.strip().startswith("H:mu"))
+    muon_line = next(
+        line for line in intermediate_section.splitlines() if line.strip().startswith("H:mu")
+    )
     muon_coords = [float(value) for value in muon_line.split()[1:4]]
     assert len(muon_coords) == 3
     assert "TSSEARCH_METHOD : NEB" in param_text
@@ -2388,7 +2547,9 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
 ) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_neb_row_config_doc.mufinder", "BarrierNebRowConfig")
+    doc = service.create_project(
+        tmp_path / "barrier_neb_row_config_doc.mufinder", "BarrierNebRowConfig"
+    )
     window._document = doc
     doc.project.recommended_cutoff_energy = 680.0
 
@@ -2552,7 +2713,11 @@ def test_energy_barrier_neb_specs_expose_force_tol_editable_with_castep_default(
     window = MainWindow()
     try:
         spec = next(
-            (s for s in window._energy_barriers_controller.parameter_specs() if s.name == "tssearch_force_tol"),
+            (
+                s
+                for s in window._energy_barriers_controller.parameter_specs()
+                if s.name == "tssearch_force_tol"
+            ),
             None,
         )
         assert spec is not None, "tssearch_force_tol should be an exposed NEB parameter"
@@ -2644,9 +2809,13 @@ def test_main_window_records_neb_result_and_loads_preview(
     # (``EnergyBarriersController.show_neb_preview``) is a separate on-demand
     # parse in the controller module, so patch both.
     monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
-    monkeypatch.setattr(energy_barriers_controller_module, "parse_transition_state_file", _fake_parse)
+    monkeypatch.setattr(
+        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
+    )
 
-    window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
 
     stored = next(iter(doc.results.values()))
     assert stored.result_type == NUDGED_ELASTIC_BAND_CALC_TYPE
@@ -2689,10 +2858,22 @@ def test_main_window_jobs_table_includes_cluster_columns(qapp) -> None:
     header = window._jobs_table.horizontalHeader()
     assert header.sectionResizeMode(window._JOB_LABEL_COLUMN) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(window._JOB_REMOTE_ID_COLUMN) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(window._JOB_RUNTIME_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
-    assert header.sectionResizeMode(window._JOB_PROCESSES_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
-    assert header.sectionResizeMode(window._JOB_PROGRESS_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
-    assert header.sectionResizeMode(window._JOB_SUBMIT_COLUMN) == QHeaderView.ResizeMode.ResizeToContents
+    assert (
+        header.sectionResizeMode(window._JOB_RUNTIME_COLUMN)
+        == QHeaderView.ResizeMode.ResizeToContents
+    )
+    assert (
+        header.sectionResizeMode(window._JOB_PROCESSES_COLUMN)
+        == QHeaderView.ResizeMode.ResizeToContents
+    )
+    assert (
+        header.sectionResizeMode(window._JOB_PROGRESS_COLUMN)
+        == QHeaderView.ResizeMode.ResizeToContents
+    )
+    assert (
+        header.sectionResizeMode(window._JOB_SUBMIT_COLUMN)
+        == QHeaderView.ResizeMode.ResizeToContents
+    )
     dock = window.findChild(QDockWidget, "jobDashboardDock")
     assert dock is not None
     window.close()
@@ -2721,7 +2902,9 @@ def test_main_window_project_tree_uses_custom_panel_header(qapp) -> None:
     window.close()
 
 
-def test_main_window_project_tree_header_shows_project_name_without_root_item(qapp, tmp_path: Path) -> None:
+def test_main_window_project_tree_header_shows_project_name_without_root_item(
+    qapp, tmp_path: Path
+) -> None:
     window = MainWindow()
 
     doc = ProjectService().create_project(tmp_path / "ui_flat_tree_doc.mufinder", "CoF2")
@@ -2940,7 +3123,9 @@ def test_main_window_supercell_editor_complete_when_active_host_has_saved_asset(
     window = MainWindow()
 
     service = ProjectService()
-    doc = service.create_project(tmp_path / "ui_supercell_progress.mufinder", "UI Supercell Progress")
+    doc = service.create_project(
+        tmp_path / "ui_supercell_progress.mufinder", "UI Supercell Progress"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -3000,7 +3185,9 @@ def test_main_window_muon_relaxation_workflow_complete_when_table_jobs_done(
 ) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "ui_muon_relax_progress.mufinder", "Muon Relax Progress")
+    doc = service.create_project(
+        tmp_path / "ui_muon_relax_progress.mufinder", "Muon Relax Progress"
+    )
 
     first_job = service.add_job(
         doc,
@@ -3125,7 +3312,10 @@ def test_main_window_persists_and_restores_geometry_via_qsettings(qapp) -> None:
     reloaded_window = MainWindow()
     try:
         avail = reloaded_window.screen().availableGeometry()
-        if window.frameGeometry().width() <= avail.width() and window.frameGeometry().height() <= avail.height():
+        if (
+            window.frameGeometry().width() <= avail.width()
+            and window.frameGeometry().height() <= avail.height()
+        ):
             assert reloaded_window.pos().x() == window.pos().x()
             assert reloaded_window.pos().y() == window.pos().y()
         else:
@@ -3303,9 +3493,7 @@ def test_main_window_neb_submit_passes_farm_settings_to_local_runner(
     window.close()
 
 
-def test_main_window_neb_configure_is_read_only_once_a_job_exists(
-    qapp, tmp_path: Path
-) -> None:
+def test_main_window_neb_configure_is_read_only_once_a_job_exists(qapp, tmp_path: Path) -> None:
     """A row whose NEB job is FAILED is not "ready", so its configuration --
     including the farm count -- cannot be edited.
 
@@ -3488,7 +3676,9 @@ def test_main_window_missing_farmed_ts_names_the_farmed_file(
     window.close()
 
 
-def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(qapp, tmp_path: Path) -> None:
+def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(
+    qapp, tmp_path: Path
+) -> None:
     """The dE column offsets each site by the lowest site with the same charge state and cell.
 
     ``MuonSite.total_energy_eV`` stores the absolute total energy, so two
@@ -3504,13 +3694,25 @@ def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(
     set_show_every_relaxed_site(doc, QUANTUM_CORRECTIONS_SCOPE, True)
     set_show_every_relaxed_site(doc, ENERGY_BARRIERS_SCOPE, True)
     positive = "castep_positivemuon_relaxation"
-    low = add_relaxed_muon_site(doc, label="low", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-100.0)
-    high = add_relaxed_muon_site(doc, label="high", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-99.75)
+    low = add_relaxed_muon_site(
+        doc, label="low", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-100.0
+    )
+    high = add_relaxed_muon_site(
+        doc, label="high", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-99.75
+    )
     muonium = add_relaxed_muon_site(
-        doc, label="mu0", charge_calc_type="castep_muonium_relaxation", species=["Si", "H:mu"], total_energy=-250.0
+        doc,
+        label="mu0",
+        charge_calc_type="castep_muonium_relaxation",
+        species=["Si", "H:mu"],
+        total_energy=-250.0,
     )
     supercell = add_relaxed_muon_site(
-        doc, label="big", charge_calc_type=positive, species=["Si", "Si", "H:mu"], total_energy=-300.0
+        doc,
+        label="big",
+        charge_calc_type=positive,
+        species=["Si", "Si", "H:mu"],
+        total_energy=-300.0,
     )
 
     relative = quantum_source_relative_energies(window._quantum_corrections_controller.candidates())
@@ -3523,10 +3725,14 @@ def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(
     window._refresh_quantum_corrections_view()
     table = window._quantum_corrections_view._sources_table
     assert table.horizontalHeaderItem(2).text() == "dE (eV)"
-    shown = {table.item(row, 0).text(): table.item(row, 2).text() for row in range(table.rowCount())}
+    shown = {
+        table.item(row, 0).text(): table.item(row, 2).text() for row in range(table.rowCount())
+    }
     assert shown == {"low": "0.00000", "high": "0.25000", "mu0": "0.00000", "big": "0.00000"}
 
-    endpoint_labels = {row.label: row.relative_energy for row in window._energy_barriers_controller.endpoint_rows()}
+    endpoint_labels = {
+        row.label: row.relative_energy for row in window._energy_barriers_controller.endpoint_rows()
+    }
     assert endpoint_labels["high"] == "dE 0.25000 eV"
     assert endpoint_labels["low"] == "dE 0.00000 eV"
 
@@ -3543,7 +3749,9 @@ def test_main_window_configures_neb_paths_through_the_dialog(
     window._document = doc
     positive = "castep_positivemuon_relaxation"
     sites = [
-        add_relaxed_muon_site(doc, label=label, charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-1.0)
+        add_relaxed_muon_site(
+            doc, label=label, charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-1.0
+        )
         for label in ("siteA", "siteB")
     ]
     source: dict[str, object] = {"key": "path-1", "label": "siteA_to_siteB_path1", "path_index": 1}
@@ -3553,7 +3761,11 @@ def test_main_window_configures_neb_paths_through_the_dialog(
         source[f"{side}_run_id"] = str(run.id)
         source[f"{side}_job_id"] = str(run.job_id)
         source[f"{side}_structure_id"] = str(doc.results[run.result_id].derived_structure_ids[0])
-    source.update(path_start_fractional=[0.25, 0.25, 0.25], path_end_fractional=[0.75, 0.25, 0.25], path_length_ang=2.5)
+    source.update(
+        path_start_fractional=[0.25, 0.25, 0.25],
+        path_end_fractional=[0.75, 0.25, 0.25],
+        path_length_ang=2.5,
+    )
     doc.ui_state["energy_barriers_form"] = {"generated_sources": [source]}
 
     opened: list[dict[str, object]] = []

@@ -103,7 +103,10 @@ class OffscreenInteractor(QWidget):
 
     def _sync_window_size(self) -> None:
         ratio = self.devicePixelRatioF()
-        self._plotter.window_size = (max(int(self.width() * ratio), 1), max(int(self.height() * ratio), 1))
+        self._plotter.window_size = (
+            max(int(self.width() * ratio), 1),
+            max(int(self.height() * ratio), 1),
+        )
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         # A camera fitted to the scene uses the render window's aspect ratio,
@@ -187,7 +190,9 @@ def save(widget: QWidget, path: Path, rect: QRect | None = None) -> None:
 ProjectBuilder = Callable[[Path], Path]
 
 
-def new_project(directory: Path, name: str, host: Structure) -> tuple[ProjectService, ProjectDocument]:
+def new_project(
+    directory: Path, name: str, host: Structure
+) -> tuple[ProjectService, ProjectDocument]:
     """A new project named ``name`` under ``directory`` with ``host`` as its host structure."""
 
     service = ProjectService()
@@ -210,7 +215,9 @@ def custom_site(host: Structure, fractional: tuple[float, float, float]) -> dict
     }
 
 
-def magnetic_project(name: str, host: Structure, model: Any, form: dict[str, object]) -> ProjectBuilder:
+def magnetic_project(
+    name: str, host: Structure, model: Any, form: dict[str, object]
+) -> ProjectBuilder:
     """A builder for ``host`` with the magnetic ``model`` and a Magnetic Fields ``form``.
 
     The project is a host structure and a Magnetic Fields form: no CASTEP job
@@ -510,7 +517,9 @@ def _active_modal(app: QApplication, kind: str) -> QDialog | None:
     return dialog if isinstance(dialog, QDialog) and dialog.inherits(kind) else None
 
 
-def when_modal(kind: str, step: Callable[[QDialog], None], *, timeout_ms: int = MODAL_TIMEOUT_MS) -> None:
+def when_modal(
+    kind: str, step: Callable[[QDialog], None], *, timeout_ms: int = MODAL_TIMEOUT_MS
+) -> None:
     """Run ``step`` on the active modal dialog once it inherits the class named ``kind``.
 
     After ``timeout_ms`` without one, every open dialog is dismissed so a
@@ -619,7 +628,11 @@ def render(app: QApplication, scene: Scene, path: Path) -> None:
             widget: QWidget = window
         elif isinstance(target, Dock):
             window.resize(*target.window_size)
-            docks = [dock for dock in window.findChildren(QDockWidget) if dock.windowTitle() == target.title]
+            docks = [
+                dock
+                for dock in window.findChildren(QDockWidget)
+                if dock.windowTitle() == target.title
+            ]
             if not docks:
                 raise RuntimeError(f"No dock titled {target.title!r}")
             widget = docks[0]
@@ -721,7 +734,9 @@ def calculate_field(page: Any) -> None:
     page._calculate_button.click()
     if page._result_table.rowCount() == 0:
         # A screenshot of a failed calculation must not reach the docs.
-        raise RuntimeError(f"The field calculation gave no result: {page._calculation_status.text()}")
+        raise RuntimeError(
+            f"The field calculation gave no result: {page._calculation_status.text()}"
+        )
     page._result_table.selectRow(0)
 
 

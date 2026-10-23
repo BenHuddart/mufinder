@@ -103,9 +103,7 @@ def test_local_runner_rejects_missing_executable(qapp, tmp_path: Path) -> None:
     assert statuses == [(job_id, JobStatus.FAILED.value)]
 
 
-def test_local_runner_queues_and_cancels_pending_jobs(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
+def test_local_runner_queues_and_cancels_pending_jobs(qapp, monkeypatch, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     runner.max_concurrent = 1
 
@@ -157,9 +155,7 @@ def test_local_runner_queues_and_cancels_pending_jobs(
     assert (second_job, JobStatus.CANCELLED.value) in status_events
 
 
-def test_local_runner_launch_uses_mpirun_for_multicore(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
+def test_local_runner_launch_uses_mpirun_for_multicore(qapp, monkeypatch, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     fake_process = _FakeQProcess()
     monkeypatch.setattr(local_runner_module, "QProcess", lambda _parent: fake_process)
@@ -209,9 +205,7 @@ def test_local_runner_launch_uses_executable_for_single_core(
     assert fake_process.arguments == ["job_single"]
 
 
-def test_local_runner_cancel_running_process(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_cancel_running_process(qapp, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     job_id = uuid4()
     request = local_runner_module._PendingJob(
@@ -238,9 +232,7 @@ def test_local_runner_cancel_running_process(
     assert statuses[-1] == (job_id, JobStatus.CANCELLED.value)
 
 
-def test_local_runner_process_finished_nonzero_exit_reports_stderr(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_process_finished_nonzero_exit_reports_stderr(qapp, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     job_id = uuid4()
     request = local_runner_module._PendingJob(
@@ -266,9 +258,7 @@ def test_local_runner_process_finished_nonzero_exit_reports_stderr(
     assert statuses[-1] == (job_id, JobStatus.FAILED.value)
 
 
-def test_local_runner_process_finished_handles_missing_output(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_process_finished_handles_missing_output(qapp, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     job_id = uuid4()
     request = local_runner_module._PendingJob(
@@ -307,9 +297,15 @@ def test_local_runner_process_finished_handles_parse_error(
         mpirun_path="",
         num_cores=1,
     )
-    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+    runner._active[job_id] = local_runner_module._ActiveJob(
+        request=request, process=_DummyProcess()
+    )
 
-    monkeypatch.setattr(local_runner_module, "parse_castep_output", lambda _path: (_ for _ in ()).throw(ValueError("boom")))
+    monkeypatch.setattr(
+        local_runner_module,
+        "parse_castep_output",
+        lambda _path: (_ for _ in ()).throw(ValueError("boom")),
+    )
 
     failures: list[str] = []
     runner.job_failed.connect(lambda _jid, msg: failures.append(msg))
@@ -335,7 +331,9 @@ def test_local_runner_process_finished_handles_incomplete_result(
         mpirun_path="",
         num_cores=1,
     )
-    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+    runner._active[job_id] = local_runner_module._ActiveJob(
+        request=request, process=_DummyProcess()
+    )
 
     monkeypatch.setattr(
         local_runner_module,
@@ -354,9 +352,7 @@ def test_local_runner_process_finished_handles_incomplete_result(
     assert statuses[-1] == (job_id, JobStatus.FAILED.value)
 
 
-def test_local_runner_process_finished_emits_success(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
+def test_local_runner_process_finished_emits_success(qapp, monkeypatch, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     job_id = uuid4()
     seed = "success"
@@ -371,7 +367,9 @@ def test_local_runner_process_finished_emits_success(
         mpirun_path="",
         num_cores=1,
     )
-    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+    runner._active[job_id] = local_runner_module._ActiveJob(
+        request=request, process=_DummyProcess()
+    )
 
     parsed = CastepResult(completed=True, total_energy=-1.23)
     monkeypatch.setattr(local_runner_module, "parse_castep_output", lambda _path: parsed)
@@ -404,7 +402,9 @@ def test_local_runner_process_finished_uses_task_farm_primary_output(
         num_cores=1,
         retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=4),
     )
-    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+    runner._active[job_id] = local_runner_module._ActiveJob(
+        request=request, process=_DummyProcess()
+    )
 
     seen_paths: list[Path] = []
     parsed = CastepResult(completed=True, total_energy=-1.23)
@@ -419,9 +419,7 @@ def test_local_runner_process_finished_uses_task_farm_primary_output(
     assert seen_paths == [tmp_path / f"{seed}_farm001.castep"]
 
 
-def test_local_runner_cancel_all_cancels_pending_and_running(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_cancel_all_cancels_pending_and_running(qapp, tmp_path: Path) -> None:
     runner = LocalJobRunner()
 
     pending_id = uuid4()
@@ -459,9 +457,7 @@ def test_local_runner_cancel_all_cancels_pending_and_running(
     assert process.killed is True
 
 
-def test_local_runner_misc_small_branches(
-    qapp, monkeypatch, tmp_path: Path
-) -> None:
+def test_local_runner_misc_small_branches(qapp, monkeypatch, tmp_path: Path) -> None:
     runner = LocalJobRunner()
 
     # Property and helper accessors.
@@ -526,9 +522,7 @@ def test_local_runner_misc_small_branches(
     assert len(launched) == 1
 
 
-def test_local_runner_process_error_updates_active_entry(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_process_error_updates_active_entry(qapp, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     job_id = uuid4()
     request = local_runner_module._PendingJob(
@@ -547,9 +541,7 @@ def test_local_runner_process_error_updates_active_entry(
     assert active.process_error == "FailedToStart"
 
 
-def test_local_runner_shutdown_clears_state(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_shutdown_clears_state(qapp, tmp_path: Path) -> None:
     runner = LocalJobRunner()
     job_id = uuid4()
     request = local_runner_module._PendingJob(
@@ -628,9 +620,7 @@ def test_local_runner_failed_to_start_fails_fast(qapp, monkeypatch, tmp_path: Pa
     assert launched == [pending_id]
 
 
-def test_local_runner_failed_to_start_uses_enum_name_when_no_detail(
-    qapp, tmp_path: Path
-) -> None:
+def test_local_runner_failed_to_start_uses_enum_name_when_no_detail(qapp, tmp_path: Path) -> None:
     # REC #6: when errorString() is empty the message falls back to the enum name.
     runner = LocalJobRunner()
     job_id, _process = _active_failed_to_start_job(runner, tmp_path, error_string="")
@@ -737,7 +727,12 @@ def test_local_runner_output_candidates_name_a_running_jobs_castep(qapp, tmp_pat
         num_cores=1,
         retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=3),
     )
-    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+    runner._active[job_id] = local_runner_module._ActiveJob(
+        request=request, process=_DummyProcess()
+    )
 
-    assert runner.output_candidates(job_id) == (tmp_path / "seed_farm001.castep", tmp_path / "seed.castep")
+    assert runner.output_candidates(job_id) == (
+        tmp_path / "seed_farm001.castep",
+        tmp_path / "seed.castep",
+    )
     assert runner.output_candidates(uuid4()) == ()

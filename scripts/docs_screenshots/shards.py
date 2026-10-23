@@ -32,10 +32,15 @@ def load_durations(path: Path = DURATIONS_PATH) -> dict[str, float]:
 
     if not path.exists():
         return {}
-    return {str(name): float(seconds) for name, seconds in json.loads(path.read_text(encoding="utf-8")).items()}
+    return {
+        str(name): float(seconds)
+        for name, seconds in json.loads(path.read_text(encoding="utf-8")).items()
+    }
 
 
-def store_durations(measured: Mapping[str, float], known: Sequence[str], path: Path = DURATIONS_PATH) -> None:
+def store_durations(
+    measured: Mapping[str, float], known: Sequence[str], path: Path = DURATIONS_PATH
+) -> None:
     """Merge ``measured`` into ``path``, keeping only the ``known`` scene names, in their order."""
 
     durations = load_durations(path)

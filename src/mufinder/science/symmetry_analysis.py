@@ -122,7 +122,9 @@ def compare_topology(
 
     preserved = added == 0 and removed == 0
     summary = (
-        "Topology preserved." if preserved else f"Connectivity changed: +{added} / -{removed} bonds."
+        "Topology preserved."
+        if preserved
+        else f"Connectivity changed: +{added} / -{removed} bonds."
     )
     return TopologyResult(
         preserved=preserved,

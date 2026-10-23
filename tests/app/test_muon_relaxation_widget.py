@@ -224,7 +224,9 @@ def test_muon_relaxation_widget_cancelled_row_keeps_parameters_editable(qapp) ->
         ]
     )
 
-    widget.set_runtime_states({"positivemuon:Cancelled Site": RelaxationRunState(status="cancelled")})
+    widget.set_runtime_states(
+        {"positivemuon:Cancelled Site": RelaxationRunState(status="cancelled")}
+    )
 
     label_item = widget._table.item(0, widget._LABEL_COLUMN)
     assert label_item is not None
@@ -387,7 +389,9 @@ def test_muon_relaxation_widget_project_cutoff_removes_basis_precision_default(q
         ]
     )
 
-    widget.set_project_defaults(cutoff_energy=650.0, kpoint_grid=None, kpoint_reference_lattice=None)
+    widget.set_project_defaults(
+        cutoff_energy=650.0, kpoint_grid=None, kpoint_reference_lattice=None
+    )
 
     effective = widget._effective_params_for_row(1)
     assert effective["cut_off_energy"] == ValueWithUnit(650.0, "eV")
@@ -407,7 +411,9 @@ def test_muon_relaxation_widget_explicit_basis_precision_removes_implicit_cutoff
             }
         ]
     )
-    widget.set_project_defaults(cutoff_energy=650.0, kpoint_grid=None, kpoint_reference_lattice=None)
+    widget.set_project_defaults(
+        cutoff_energy=650.0, kpoint_grid=None, kpoint_reference_lattice=None
+    )
     widget._row_parameter_values[1] = {"basis_precision": "FINE"}
 
     effective = widget._effective_params_for_row(1)
@@ -462,7 +468,10 @@ def test_muon_relaxation_widget_runtime_states_are_charge_aware(qapp) -> None:
         }
     )
 
-    assert widget._table.horizontalHeaderItem(widget._TOTAL_ENERGY_COLUMN).text() == "Total Energy\n(eV)"
+    assert (
+        widget._table.horizontalHeaderItem(widget._TOTAL_ENERGY_COLUMN).text()
+        == "Total Energy\n(eV)"
+    )
     assert widget._table.item(0, widget._STATUS_COLUMN).text() == "completed"
     assert widget._table.item(0, widget._FINAL_FX_COLUMN).text() == "0.700"
     assert widget._table.item(0, widget._FINAL_FY_COLUMN).text() == "0.800"
@@ -692,9 +701,7 @@ def test_muon_relaxation_batch_configure_button_tracks_selection(qapp) -> None:
     assert widget._batch_configure_button.isEnabled() is False
 
 
-def test_muon_relaxation_batch_configure_applies_to_all_selected_rows(
-    qapp, monkeypatch
-) -> None:
+def test_muon_relaxation_batch_configure_applies_to_all_selected_rows(qapp, monkeypatch) -> None:
     widget = MuonRelaxationWidget()
     _stage_muon_rows(widget, 3)
     first_id = widget._row_id_at(0)
@@ -726,9 +733,7 @@ def test_muon_relaxation_batch_configure_applies_to_all_selected_rows(
     assert widget._row_parameter_values.get(unselected_id, {}) == {}
 
 
-def test_muon_relaxation_batch_configure_empty_selection_shows_info(
-    qapp, monkeypatch
-) -> None:
+def test_muon_relaxation_batch_configure_empty_selection_shows_info(qapp, monkeypatch) -> None:
     widget = MuonRelaxationWidget()
     _stage_muon_rows(widget, 1)
 
@@ -752,9 +757,7 @@ def test_muon_relaxation_batch_configure_empty_selection_shows_info(
     assert opened == []
 
 
-def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(
-    qapp, monkeypatch
-) -> None:
+def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) -> None:
     # The per-row Configure button snapshots the selection so a platform
     # focus-collapse to the clicked row does not shrink a multi-row batch.
     from PySide6.QtWidgets import QPushButton as _QPushButton
@@ -861,7 +864,9 @@ def test_muon_relaxation_widget_context_menu_targets_the_clicked_charge_state_ta
     assert payloads == [["muonium:Mu Site"]]
 
 
-def test_muon_relaxation_widget_context_menu_disables_reset_for_queued_row(qapp, monkeypatch) -> None:
+def test_muon_relaxation_widget_context_menu_disables_reset_for_queued_row(
+    qapp, monkeypatch
+) -> None:
     widget = MuonRelaxationWidget()
     widget.add_staged_sites(
         [
@@ -1029,7 +1034,9 @@ def test_muon_relaxation_row_menu_cancel_emits_submission_keys(
     menu.action("Cancel").triggered.emit()
 
     assert cancelled == [keys]
-    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Cancel 2 calculations?"]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == [
+        "Cancel 2 calculations?"
+    ]
 
 
 def test_muon_relaxation_shared_controls_follow_the_table_on_show(qapp) -> None:
@@ -1070,7 +1077,9 @@ def _expanded_spin_polarized(widget: MuonRelaxationWidget) -> object:
         project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
     )
     (job,) = expansion.jobs
-    return {keyword.name: keyword.value for keyword in job.param_file.keywords}.get("spin_polarized")
+    return {keyword.name: keyword.value for keyword in job.param_file.keywords}.get(
+        "spin_polarized"
+    )
 
 
 def _staged_muonium_row(widget: MuonRelaxationWidget) -> int:
@@ -1083,7 +1092,9 @@ def _staged_muonium_row(widget: MuonRelaxationWidget) -> int:
     return row_id
 
 
-def _save_dialog(monkeypatch, widget: MuonRelaxationWidget, row_id: int, *, spin_polarized: bool | None = None) -> bool:
+def _save_dialog(
+    monkeypatch, widget: MuonRelaxationWidget, row_id: int, *, spin_polarized: bool | None = None
+) -> bool:
     """Accept the real dialog, optionally setting Spin Polarized; return what it first showed."""
 
     shown: list[bool] = []

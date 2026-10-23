@@ -29,7 +29,12 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIE
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
-from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    current_palette,
+    style_hint_text,
+    style_section_subtitle,
+    style_section_title,
+)
 from mufinder.domain.models import Structure
 from mufinder.science.uep import UepError, UepOptimizationResult
 from mufinder.science.uep_clustering import (
@@ -221,7 +226,11 @@ class _EqualInitialSplitter(QSplitter):
         self._programmatic_sizing = False
 
     def _schedule_equal_initial_sizes(self) -> None:
-        if self._equal_initial_sizes_pending and self.isVisible() and not self._equal_initial_sizes_scheduled:
+        if (
+            self._equal_initial_sizes_pending
+            and self.isVisible()
+            and not self._equal_initial_sizes_scheduled
+        ):
             self._equal_initial_sizes_scheduled = True
             QTimer.singleShot(0, self._apply_equal_initial_sizes)
 
@@ -376,7 +385,9 @@ class UepClusteringDialog(QDialog):
 
         self._kmeans_controls = QWidget(controls_card)
         self._kmeans_controls.setStyleSheet("background: transparent;")
-        self._kmeans_controls.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._kmeans_controls.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
+        )
         kmeans_layout = QHBoxLayout(self._kmeans_controls)
         kmeans_layout.setContentsMargins(0, 0, 0, 0)
         kmeans_layout.setSpacing(8)
@@ -402,12 +413,18 @@ class UepClusteringDialog(QDialog):
         kmeans_layout.addWidget(self._kmeans_k_spin, 0)
 
         self._controls_summary_label = QLabel("Relaxed sites: -  Clusters: -", controls_card)
-        self._controls_summary_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._controls_summary_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self._controls_summary_label.setWordWrap(True)
         style_hint_text(self._controls_summary_label)
 
-        controls_layout.addWidget(self._hier_controls, 0, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        controls_layout.addWidget(self._kmeans_controls, 0, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        controls_layout.addWidget(
+            self._hier_controls, 0, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        controls_layout.addWidget(
+            self._kmeans_controls, 0, 2, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         controls_layout.addWidget(self._controls_summary_label, 0, 3)
         controls_layout.setColumnStretch(2, 1)
         controls_layout.setColumnStretch(3, 1)
@@ -452,7 +469,9 @@ class UepClusteringDialog(QDialog):
 
         self._structure_viewer = AtomicStructureViewer(viewer_panel)
         self._structure_viewer.setMinimumWidth(0)
-        self._structure_viewer.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self._structure_viewer.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
         self._structure_viewer.set_structure(self._viewer_host_structure)
         self._structure_viewer.setMinimumHeight(260)
         viewer_layout.addWidget(self._structure_viewer, 1)
@@ -466,7 +485,9 @@ class UepClusteringDialog(QDialog):
         bubble_title = QLabel("Cluster Energy Spread", bubble_card)
         bubble_title.setObjectName("uepIsosurfaceLegendTitle")
         bubble_layout.addWidget(bubble_title)
-        self._bubble_frame = PlotFrame(self._bubble_canvas, title="Cluster energy spread", parent=bubble_card)
+        self._bubble_frame = PlotFrame(
+            self._bubble_canvas, title="Cluster energy spread", parent=bubble_card
+        )
         bubble_layout.addWidget(self._bubble_frame, 1)
         self._bubble_note_label = QLabel("", bubble_card)
         self._bubble_note_label.setWordWrap(True)
@@ -483,11 +504,15 @@ class UepClusteringDialog(QDialog):
         right_splitter.setSizes([1, 1])
         self._right_splitter = right_splitter
         self._right_splitter.splitterMoved.connect(
-            lambda *_args: None
-            if self._right_splitter.is_programmatic_sizing()
-            else self._right_splitter.mark_user_sized()
+            lambda *_args: (
+                None
+                if self._right_splitter.is_programmatic_sizing()
+                else self._right_splitter.mark_user_sized()
+            )
         )
-        self._right_splitter.splitterMoved.connect(lambda *_args: self._schedule_geometry_state_changed())
+        self._right_splitter.splitterMoved.connect(
+            lambda *_args: self._schedule_geometry_state_changed()
+        )
         right_layout.addWidget(right_splitter, 1)
 
         splitter.addWidget(left_panel)
@@ -496,11 +521,15 @@ class UepClusteringDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([1, 1])
         self._main_splitter.splitterMoved.connect(
-            lambda *_args: None
-            if self._main_splitter.is_programmatic_sizing()
-            else self._main_splitter.mark_user_sized()
+            lambda *_args: (
+                None
+                if self._main_splitter.is_programmatic_sizing()
+                else self._main_splitter.mark_user_sized()
+            )
         )
-        self._main_splitter.splitterMoved.connect(lambda *_args: self._schedule_geometry_state_changed())
+        self._main_splitter.splitterMoved.connect(
+            lambda *_args: self._schedule_geometry_state_changed()
+        )
         layout.addWidget(splitter, 1)
 
         self._structure_viewer.view_state_changed.connect(self._schedule_geometry_state_changed)
@@ -517,11 +546,19 @@ class UepClusteringDialog(QDialog):
     def _compute_pca_projection(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         vectors = np.asarray(self._prepared.normalized_genome_vectors, dtype=float)
         if vectors.size == 0:
-            return np.empty((0, 2), dtype=float), np.empty((0, 0), dtype=float), np.empty((0,), dtype=float)
+            return (
+                np.empty((0, 2), dtype=float),
+                np.empty((0, 0), dtype=float),
+                np.empty((0,), dtype=float),
+            )
         origin = np.mean(vectors, axis=0)
         centred = vectors - origin
         if len(vectors) == 1:
-            return np.zeros((1, 2), dtype=float), np.zeros((2, vectors.shape[1]), dtype=float), origin
+            return (
+                np.zeros((1, 2), dtype=float),
+                np.zeros((2, vectors.shape[1]), dtype=float),
+                origin,
+            )
         _, _, vh = np.linalg.svd(centred, full_matrices=False)
         components = np.asarray(vh[:2], dtype=float)
         if components.shape[0] == 1:
@@ -556,7 +593,9 @@ class UepClusteringDialog(QDialog):
         self._hier_controls.setVisible(hierarchical)
         self._kmeans_controls.setVisible(not hierarchical)
         self._hier_toolbar.setVisible(hierarchical)
-        self._left_panel_title.setText("Hierarchical clustering" if hierarchical else "K-means clustering")
+        self._left_panel_title.setText(
+            "Hierarchical clustering" if hierarchical else "K-means clustering"
+        )
         self._apply_responsive_layout()
 
     def _set_default_splitter_balance(self) -> None:
@@ -648,7 +687,9 @@ class UepClusteringDialog(QDialog):
                 except (TypeError, ValueError):
                     parsed_limits = []
                     break
-            self._structure_viewer._limits = tuple(parsed_limits) if len(parsed_limits) == 3 else None
+            self._structure_viewer._limits = (
+                tuple(parsed_limits) if len(parsed_limits) == 3 else None
+            )
 
         self._structure_viewer._render()
 
@@ -670,7 +711,9 @@ class UepClusteringDialog(QDialog):
         # side by side: stacking them vertically left the dendrogram a few
         # pixels tall once the viewer and energy-spread card took their minimum
         # heights.
-        compact = (self.width() <= _COMPACT_LAYOUT_MAX_WIDTH) or (self.height() <= _COMPACT_LAYOUT_MAX_HEIGHT)
+        compact = (self.width() <= _COMPACT_LAYOUT_MAX_WIDTH) or (
+            self.height() <= _COMPACT_LAYOUT_MAX_HEIGHT
+        )
 
         self._controls_layout.removeWidget(self._hier_controls)
         self._controls_layout.removeWidget(self._kmeans_controls)
@@ -793,7 +836,10 @@ class UepClusteringDialog(QDialog):
     def _on_left_canvas_motion(self, event) -> None:
         if self._hier_line_press_event is None:
             return
-        if getattr(event, "inaxes", None) is not self._hier_axis or getattr(event, "ydata", None) is None:
+        if (
+            getattr(event, "inaxes", None) is not self._hier_axis
+            or getattr(event, "ydata", None) is None
+        ):
             return
         if not self._hier_line_dragging:
             if abs(float(event.y) - self._hier_line_press_event[1]) < _HIER_CUT_LINE_DRAG_PIXELS:
@@ -821,10 +867,14 @@ class UepClusteringDialog(QDialog):
             node_id = count + row_index
             left = node_map.get(int(row[0]))
             right = node_map.get(int(row[1]))
-            node_map[node_id] = left if left is not None and right is not None and left == right else None
+            node_map[node_id] = (
+                left if left is not None and right is not None and left == right else None
+            )
         return node_map
 
-    def _render_hierarchical_plot(self, result: UepClusteringResult, color_map: Mapping[int, str]) -> None:
+    def _render_hierarchical_plot(
+        self, result: UepClusteringResult, color_map: Mapping[int, str]
+    ) -> None:
         from scipy.cluster import hierarchy
 
         self._left_figure.clear()
@@ -844,10 +894,15 @@ class UepClusteringDialog(QDialog):
         hierarchy.dendrogram(
             linkage_matrix,
             ax=axis,
-            labels=[str(self._site_number_map.get(index, index + 1)) for index in range(len(result.cluster_labels))],
+            labels=[
+                str(self._site_number_map.get(index, index + 1))
+                for index in range(len(result.cluster_labels))
+            ],
             color_threshold=0.0,
             above_threshold_color=muted,
-            link_color_func=lambda node_id: color_map.get(int(node_clusters.get(int(node_id), -1) or -1), muted),
+            link_color_func=lambda node_id: color_map.get(
+                int(node_clusters.get(int(node_id), -1) or -1), muted
+            ),
         )
         self._hier_cut_line_artist = axis.axhline(
             result.config.clustering_hier_t,
@@ -871,7 +926,9 @@ class UepClusteringDialog(QDialog):
             return np.zeros((len(points), 2), dtype=float)
         return (np.asarray(points, dtype=float) - self._pca_origin) @ self._pca_components.T
 
-    def _render_kmeans_plot(self, result: UepClusteringResult, color_map: Mapping[int, str]) -> None:
+    def _render_kmeans_plot(
+        self, result: UepClusteringResult, color_map: Mapping[int, str]
+    ) -> None:
         self._left_figure.clear()
         self._hier_axis = None
         self._hier_cut_line_artist = None
@@ -907,7 +964,13 @@ class UepClusteringDialog(QDialog):
                 edgecolors=current_palette().bg_surface,
             )
             for index, point in enumerate(projected_centroids, start=1):
-                axis.text(point[0], point[1], f" C{index}", color=current_palette().text_primary, va="center")
+                axis.text(
+                    point[0],
+                    point[1],
+                    f" C{index}",
+                    color=current_palette().text_primary,
+                    va="center",
+                )
         axis.set_xlabel("PC1")
         axis.set_ylabel("PC2")
         axis.spines["top"].set_visible(False)
@@ -917,10 +980,14 @@ class UepClusteringDialog(QDialog):
         axis.tick_params(colors=current_palette().text_primary)
         self._left_canvas.draw_idle()
 
-    def _render_structure_view(self, result: UepClusteringResult, color_map: Mapping[int, str]) -> None:
+    def _render_structure_view(
+        self, result: UepClusteringResult, color_map: Mapping[int, str]
+    ) -> None:
         overlays = [
             {
-                "positions": [optimization.optimized_position_ang for optimization in self._optimizations],
+                "positions": [
+                    optimization.optimized_position_ang for optimization in self._optimizations
+                ],
                 "colors": [color_map[int(label)] for label in result.cluster_labels],
                 "radii": [MUON_VIEWER_RADIUS_ANG] * len(self._optimizations),
                 "alpha": 0.96,
@@ -928,7 +995,9 @@ class UepClusteringDialog(QDialog):
         ]
         previous_camera = deepcopy(getattr(self._structure_viewer, "_camera_state", None))
         previous_limits = deepcopy(getattr(self._structure_viewer, "_limits", None))
-        live_pyvista_snapshot = getattr(self._structure_viewer, "_current_pyvista_camera_snapshot", lambda: None)()
+        live_pyvista_snapshot = getattr(
+            self._structure_viewer, "_current_pyvista_camera_snapshot", lambda: None
+        )()
         previous_pyvista_snapshot = deepcopy(
             live_pyvista_snapshot
             if live_pyvista_snapshot is not None
@@ -937,10 +1006,15 @@ class UepClusteringDialog(QDialog):
         if getattr(self._structure_viewer, "_structure", None) is not self._viewer_host_structure:
             self._structure_viewer.set_structure(self._viewer_host_structure)
         self._structure_viewer.set_point_overlays(overlays)
-        current_pyvista_snapshot = getattr(self._structure_viewer, "_current_pyvista_camera_snapshot", lambda: None)()
-        snapshot_changed = previous_pyvista_snapshot is not None and not _pyvista_camera_snapshots_match(
-            current_pyvista_snapshot,
-            previous_pyvista_snapshot,
+        current_pyvista_snapshot = getattr(
+            self._structure_viewer, "_current_pyvista_camera_snapshot", lambda: None
+        )()
+        snapshot_changed = (
+            previous_pyvista_snapshot is not None
+            and not _pyvista_camera_snapshots_match(
+                current_pyvista_snapshot,
+                previous_pyvista_snapshot,
+            )
         )
         if previous_camera is not None and (
             getattr(self._structure_viewer, "_camera_state", None) != previous_camera
@@ -957,7 +1031,9 @@ class UepClusteringDialog(QDialog):
             self._structure_viewer._pyvista_camera_snapshot = previous_pyvista_snapshot
             self._structure_viewer._render()
 
-    def _render_cluster_energy_summary(self, result: UepClusteringResult, color_map: Mapping[int, str]) -> None:
+    def _render_cluster_energy_summary(
+        self, result: UepClusteringResult, color_map: Mapping[int, str]
+    ) -> None:
         self._bubble_figure.clear()
         axis = self._bubble_figure.add_subplot(111)
         axis.set_facecolor(current_palette().bg_surface)
@@ -995,7 +1071,13 @@ class UepClusteringDialog(QDialog):
                 linewidths=0.6,
                 zorder=4,
             )
-            axis.text(x_value, y_value, f" {cluster.cluster_index}", color=current_palette().text_primary, va="center")
+            axis.text(
+                x_value,
+                y_value,
+                f" {cluster.cluster_index}",
+                color=current_palette().text_primary,
+                va="center",
+            )
         # Short labels: the card title already says "Cluster Energy Spread", and
         # on a small screen the plot is only about 150 px tall and 390 px wide.
         axis.set_xlabel("Mean energy above minimum (eV)")
@@ -1061,11 +1143,18 @@ class UepClusteringDialog(QDialog):
             "hierarchical_t": float(self._current_hier_t()),
             "kmeans_k": int(self._kmeans_k_spin.value()),
             "is_open": bool(self.isVisible()),
-            "window_geometry": [int(geometry.x()), int(geometry.y()), int(geometry.width()), int(geometry.height())],
+            "window_geometry": [
+                int(geometry.x()),
+                int(geometry.y()),
+                int(geometry.width()),
+                int(geometry.height()),
+            ],
             "splitter_sizes": list(self._main_splitter.sizes()),
             "right_splitter_sizes": list(self._right_splitter.sizes()),
             "viewer_state": self._viewer_state_snapshot(),
-            "current_result_summary": None if self._current_result is None else asdict(self._current_result.summary),
+            "current_result_summary": (
+                None if self._current_result is None else asdict(self._current_result.summary)
+            ),
         }
 
     def _restore_initial_state(self, state: Mapping[str, object] | None) -> None:
@@ -1091,7 +1180,11 @@ class UepClusteringDialog(QDialog):
 
             kmeans_k = state.get("kmeans_k")
             try:
-                value = int(kmeans_k) if kmeans_k is not None else min(4, max(len(self._optimizations), 1))
+                value = (
+                    int(kmeans_k)
+                    if kmeans_k is not None
+                    else min(4, max(len(self._optimizations), 1))
+                )
             except (TypeError, ValueError):
                 value = min(4, max(len(self._optimizations), 1))
             value = min(max(value, 1), max(len(self._optimizations), 1))
@@ -1103,16 +1196,24 @@ class UepClusteringDialog(QDialog):
                     self._main_splitter.setSizes([int(splitter_sizes[0]), int(splitter_sizes[1])])
                     self._main_splitter.mark_user_sized()
                     self._has_restored_splitter_state = True
-                    self._pending_main_splitter_sizes = [int(splitter_sizes[0]), int(splitter_sizes[1])]
+                    self._pending_main_splitter_sizes = [
+                        int(splitter_sizes[0]),
+                        int(splitter_sizes[1]),
+                    ]
                 except (TypeError, ValueError):
                     pass
             right_splitter_sizes = state.get("right_splitter_sizes")
             if isinstance(right_splitter_sizes, list) and len(right_splitter_sizes) == 2:
                 try:
-                    self._right_splitter.setSizes([int(right_splitter_sizes[0]), int(right_splitter_sizes[1])])
+                    self._right_splitter.setSizes(
+                        [int(right_splitter_sizes[0]), int(right_splitter_sizes[1])]
+                    )
                     self._right_splitter.mark_user_sized()
                     self._has_restored_splitter_state = True
-                    self._pending_right_splitter_sizes = [int(right_splitter_sizes[0]), int(right_splitter_sizes[1])]
+                    self._pending_right_splitter_sizes = [
+                        int(right_splitter_sizes[0]),
+                        int(right_splitter_sizes[1]),
+                    ]
                 except (TypeError, ValueError):
                     pass
             self._restore_viewer_state(state.get("viewer_state"))
@@ -1140,10 +1241,15 @@ class UepClusteringDialog(QDialog):
                 self._main_splitter.mark_user_sized()
             except (TypeError, ValueError):
                 pass
-        right_splitter_sizes = state.get("right_splitter_sizes") if isinstance(state, Mapping) else None
+        right_splitter_sizes = (
+            state.get("right_splitter_sizes") if isinstance(state, Mapping) else None
+        )
         if isinstance(right_splitter_sizes, list) and len(right_splitter_sizes) == 2:
             try:
-                self._pending_right_splitter_sizes = [int(right_splitter_sizes[0]), int(right_splitter_sizes[1])]
+                self._pending_right_splitter_sizes = [
+                    int(right_splitter_sizes[0]),
+                    int(right_splitter_sizes[1]),
+                ]
                 self._right_splitter.setSizes(self._pending_right_splitter_sizes)
                 self._right_splitter.mark_user_sized()
             except (TypeError, ValueError):

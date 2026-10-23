@@ -102,7 +102,10 @@ def test_metric_info_text_lists_every_populated_section_in_order() -> None:
 def test_metric_info_text_omits_absent_optional_sections() -> None:
     text = metric_info_text(_minimal_definition())
 
-    assert text == "Meaning:\nBare meaning.\n\nInterpretation:\nBare interpretation.\n\nCaveats:\nBare caveats."
+    assert (
+        text
+        == "Meaning:\nBare meaning.\n\nInterpretation:\nBare interpretation.\n\nCaveats:\nBare caveats."
+    )
 
 
 def test_metric_info_text_round_trips_real_definitions() -> None:

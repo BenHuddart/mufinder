@@ -37,7 +37,9 @@ MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE = (
 )
 
 #: Message for a retry-retrieval request made while the job's cluster is offline.
-RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE = "Cannot retry retrieval: not connected to the job's cluster."
+RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE = (
+    "Cannot retry retrieval: not connected to the job's cluster."
+)
 
 #: Short label shown next to the job status in the dashboard. Kept to a word
 #: or two so ``failed · <label>`` fits the Status column on a laptop screen;
@@ -85,7 +87,10 @@ _SCHEDULER_PATTERNS: tuple[tuple[FailureReason, re.Pattern[str]], ...] = (
     (FailureReason.WALLTIME, re.compile(r"time\s+limit\s+(?:exceeded|reached)", re.IGNORECASE)),
     (FailureReason.OUT_OF_MEMORY, re.compile(r"\boom[-_ ]kill", re.IGNORECASE)),
     (FailureReason.OUT_OF_MEMORY, re.compile(r"out-of-memory handler", re.IGNORECASE)),
-    (FailureReason.OUT_OF_MEMORY, re.compile(r"exceeded\s+(?:job|step)\s+memory\s+limit", re.IGNORECASE)),
+    (
+        FailureReason.OUT_OF_MEMORY,
+        re.compile(r"exceeded\s+(?:job|step)\s+memory\s+limit", re.IGNORECASE),
+    ),
     (FailureReason.OUT_OF_MEMORY, re.compile(r"\bOUT_OF_MEMORY\b")),
     (FailureReason.OUT_OF_MEMORY, re.compile(r"job killed:\s+mem\b", re.IGNORECASE)),
     (FailureReason.NODE_FAILURE, re.compile(r"DUE TO NODE FAIL", re.IGNORECASE)),
@@ -135,7 +140,11 @@ def diagnose_failure(
     Unreadable files are skipped too, so a diagnosis never raises.
     """
 
-    logs = [(path, text) for path in log_files if (text := _fresh_log_text(path, not_before)) is not None]
+    logs = [
+        (path, text)
+        for path in log_files
+        if (text := _fresh_log_text(path, not_before)) is not None
+    ]
 
     sources = [("failure message", message or ""), *((path.name, text) for path, text in logs)]
     scheduler = _scheduler_evidence(sources)
@@ -196,7 +205,9 @@ def find_failure_log_files(
 
     numbered_patterns = [re.compile(rf"{re.escape(seed)}(_farm\d+)?\.\d+\.err") for seed in seeds]
     for candidate in sorted(output_dir.iterdir()):
-        if candidate.is_file() and any(pattern.fullmatch(candidate.name) for pattern in numbered_patterns):
+        if candidate.is_file() and any(
+            pattern.fullmatch(candidate.name) for pattern in numbered_patterns
+        ):
             discovered.append(candidate)
 
     if discovered:
@@ -238,7 +249,9 @@ def _fresh_log_text(path: Path, not_before: datetime | None) -> str | None:
     try:
         if not_before is not None:
             modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-            threshold = not_before if not_before.tzinfo is not None else not_before.replace(tzinfo=UTC)
+            threshold = (
+                not_before if not_before.tzinfo is not None else not_before.replace(tzinfo=UTC)
+            )
             if modified < threshold - _FRESHNESS_SLACK:
                 return None
         return read_log_tail(path)
@@ -249,7 +262,10 @@ def _fresh_log_text(path: Path, not_before: datetime | None) -> str | None:
 def _scheduler_evidence(sources: Sequence[tuple[str, str]]) -> FailureDiagnosis | None:
     """Return the highest-priority scheduler cause across ``(source, text)`` pairs."""
 
-    split = [(source, [line.strip() for line in text.splitlines() if line.strip()]) for source, text in sources]
+    split = [
+        (source, [line.strip() for line in text.splitlines() if line.strip()])
+        for source, text in sources
+    ]
     for reason, pattern in _SCHEDULER_PATTERNS:
         for source, lines in split:
             for line in lines:

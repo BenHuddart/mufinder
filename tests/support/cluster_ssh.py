@@ -42,7 +42,7 @@ class FakeSSH:
         entries: list[str] = []
         for path in self.remote_files:
             if path.startswith(prefix):
-                entries.append(path[len(prefix):].split("/", 1)[0])
+                entries.append(path[len(prefix) :].split("/", 1)[0])
         return sorted(set(entries))
 
     def disconnect(self) -> None:

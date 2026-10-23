@@ -50,7 +50,9 @@ _ALLOWED_VALUES_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _DEFAULT_VALUE_RE = re.compile(r"Default value\s*:\s*(.+)", re.IGNORECASE)
-_EXAMPLE_RE = re.compile(r"Example:\s*(.+?)(?:Default value\s*:|Allowed values:|$)", re.IGNORECASE | re.DOTALL)
+_EXAMPLE_RE = re.compile(
+    r"Example:\s*(.+?)(?:Default value\s*:|Allowed values:|$)", re.IGNORECASE | re.DOTALL
+)
 _ALIAS_RE = re.compile(r"Default value:\s*Determined from ([A-Z0-9_+]+)", re.IGNORECASE)
 _ENUM_TOKEN_RE = re.compile(r"[A-Za-z0-9_+\-*/.]+")
 _NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -236,7 +238,9 @@ def _load_base_catalog() -> dict[str, Any]:
     for candidate in candidates:
         if not candidate.path.is_file():
             if _is_explicit_origin(candidate.origin):
-                issues.append(f"The configured keyword catalog '{candidate.path}' no longer exists.")
+                issues.append(
+                    f"The configured keyword catalog '{candidate.path}' no longer exists."
+                )
             continue
         try:
             payload, summary = read_keyword_catalog_file(candidate.path, require_complete=False)
@@ -362,7 +366,9 @@ def _infer_unit(docstring: str, option_type: str) -> str | None:
     return None
 
 
-def _infer_value_type(name: str, option_type: str, allowed_values: tuple[str, ...]) -> tuple[KeywordKind, str]:
+def _infer_value_type(
+    name: str, option_type: str, allowed_values: tuple[str, ...]
+) -> tuple[KeywordKind, str]:
     if option_type == "Block":
         return ("block", "block")
     if option_type == "Defined":
@@ -406,7 +412,9 @@ def _infer_category(file: FileKind, name: str) -> str:
         return "molecular_dynamics"
     if name.startswith(("phonon_", "raman_", "born_", "thermo_")):
         return "phonon"
-    if name.startswith(("magres_", "elnes_", "spectral_", "optics_", "tddft_", "wannier_", "tssearch_")):
+    if name.startswith(
+        ("magres_", "elnes_", "spectral_", "optics_", "tddft_", "wannier_", "tssearch_")
+    ):
         return name.split("_", maxsplit=1)[0]
     if name.startswith(("print_", "write_", "backup_", "checkpoint", "continuation", "reuse")):
         return "io"
@@ -461,10 +469,16 @@ def _build_block_schema(payload: dict[str, object] | None) -> BlockSchema | None
         family=str(payload.get("family", "raw_rows")),
         columns=columns,
         allow_unit=bool(payload.get("allow_unit", False)),
-        default_unit=str(payload["default_unit"]) if payload.get("default_unit") is not None else None,
-        fixed_row_count=int(payload["fixed_row_count"]) if payload.get("fixed_row_count") is not None else None,
+        default_unit=str(payload["default_unit"])
+        if payload.get("default_unit") is not None
+        else None,
+        fixed_row_count=int(payload["fixed_row_count"])
+        if payload.get("fixed_row_count") is not None
+        else None,
         min_rows=int(payload.get("min_rows", 0)),
-        row_group_size=int(payload["row_group_size"]) if payload.get("row_group_size") is not None else None,
+        row_group_size=int(payload["row_group_size"])
+        if payload.get("row_group_size") is not None
+        else None,
         row_labels=tuple(str(item) for item in payload.get("row_labels", ())),
         summary_mode=str(payload.get("summary_mode", "row_count")),
     )
@@ -473,13 +487,17 @@ def _build_block_schema(payload: dict[str, object] | None) -> BlockSchema | None
 def _apply_override(spec: KeywordSpec, override: dict[str, object]) -> KeywordSpec:
     payload = dict(override)
     if "block_schema" not in payload and spec.kind == "block":
-        payload["block_schema"] = _build_block_schema(BLOCK_SCHEMAS.get(spec.file, {}).get(spec.name))
+        payload["block_schema"] = _build_block_schema(
+            BLOCK_SCHEMAS.get(spec.file, {}).get(spec.name)
+        )
     elif "block_schema" in payload and isinstance(payload["block_schema"], dict):
         payload["block_schema"] = _build_block_schema(payload["block_schema"])
     return replace(spec, **payload)
 
 
-def _base_spec(file: FileKind, entry: dict[str, object], *, aliases: tuple[str, ...]) -> KeywordSpec:
+def _base_spec(
+    file: FileKind, entry: dict[str, object], *, aliases: tuple[str, ...]
+) -> KeywordSpec:
     name = str(entry["name"]).lower()
     option_type = str(entry.get("option_type", ""))
     docstring = str(entry.get("docstring", ""))
@@ -546,7 +564,9 @@ def _auto_alias_map(file: FileKind, entries: list[dict[str, object]]) -> dict[st
     return alias_map
 
 
-def _build_schema() -> tuple[dict[str, KeywordSpec], dict[str, KeywordSpec], dict[str, tuple[str, ...]]]:
+def _build_schema() -> tuple[
+    dict[str, KeywordSpec], dict[str, KeywordSpec], dict[str, tuple[str, ...]]
+]:
     payload = _load_base_catalog()
     schema_by_file: dict[str, dict[str, KeywordSpec]] = {}
     source_names: dict[str, tuple[str, ...]] = {}
@@ -572,7 +592,9 @@ def _build_schema() -> tuple[dict[str, KeywordSpec], dict[str, KeywordSpec], dic
             base_entry = entries_by_name.get(canonical)
             if base_entry is None:
                 continue
-            spec = _base_spec(file, base_entry, aliases=tuple(sorted(set(alias_groups.get(canonical, ())))))
+            spec = _base_spec(
+                file, base_entry, aliases=tuple(sorted(set(alias_groups.get(canonical, ()))))
+            )
             specs[canonical] = spec
 
         extra_names = [name for name in _override_canonical_names(file) if name not in specs]
@@ -676,29 +698,40 @@ def _override_spec(
         docstring=docstring,
         unit=str(unit) if unit is not None else None,
         allowed_values=tuple(str(item) for item in override.get("allowed_values", ())),
-        mutually_exclusive_with=tuple(str(item) for item in override.get("mutually_exclusive_with", ())),
+        mutually_exclusive_with=tuple(
+            str(item) for item in override.get("mutually_exclusive_with", ())
+        ),
         requires=tuple(str(item) for item in override.get("requires", ())),
         requires_any_of=tuple(str(item) for item in override.get("requires_any_of", ())),
         repeatable=bool(override.get("repeatable", False)),
         aliases=aliases,
-        allowed_tasks=tuple(str(item) for item in override.get("allowed_tasks", _infer_allowed_tasks(name))),
+        allowed_tasks=tuple(
+            str(item) for item in override.get("allowed_tasks", _infer_allowed_tasks(name))
+        ),
         example=str(override["example"]) if override.get("example") is not None else None,
         notes=str(override["notes"]) if override.get("notes") is not None else None,
         label=str(override.get("label") or _humanize(name)),
         description=str(override.get("description") or _first_sentence(docstring)),
         help_text=str(override.get("help_text") or docstring),
         category=str(override.get("category") or _infer_category(file, name)),
-        widget_hint=str(override["widget_hint"]) if override.get("widget_hint") is not None else None,
+        widget_hint=str(override["widget_hint"])
+        if override.get("widget_hint") is not None
+        else None,
         basic_workflows=tuple(
-            str(item) for item in override.get("basic_workflows", ALL_WORKFLOWS if name == "task" else ())
+            str(item)
+            for item in override.get("basic_workflows", ALL_WORKFLOWS if name == "task" else ())
         ),
-        advanced_workflows=tuple(str(item) for item in override.get("advanced_workflows", ALL_WORKFLOWS)),
+        advanced_workflows=tuple(
+            str(item) for item in override.get("advanced_workflows", ALL_WORKFLOWS)
+        ),
         locked_in_workflows=tuple(str(item) for item in override.get("locked_in_workflows", ())),
         default_value=override.get("default_value"),
         min_value=override.get("min_value"),
         max_value=override.get("max_value"),
         step=override.get("step"),
-        exclusive_group=str(override["exclusive_group"]) if override.get("exclusive_group") is not None else None,
+        exclusive_group=str(override["exclusive_group"])
+        if override.get("exclusive_group") is not None
+        else None,
         block_schema=block_schema,
         source_order=source_order,
         vector_length=(
@@ -709,7 +742,9 @@ def _override_spec(
     )
 
 
-def _build_starter_schema() -> tuple[dict[str, KeywordSpec], dict[str, KeywordSpec], dict[str, tuple[str, ...]]]:
+def _build_starter_schema() -> tuple[
+    dict[str, KeywordSpec], dict[str, KeywordSpec], dict[str, tuple[str, ...]]
+]:
     """Build the schema from the bundled starter catalog and record it as the source.
 
     The translation lives in ``mufinder.castep_io.starter_catalog``, which imports

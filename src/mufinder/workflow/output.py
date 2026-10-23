@@ -26,7 +26,9 @@ def write_job_directory(job_spec: JobSpec, base_path: Path) -> Path:
     return job_dir
 
 
-def write_manifest(jobs: Sequence[JobSpec], base_path: Path, *, file_name: str = "manifest.json") -> Path:
+def write_manifest(
+    jobs: Sequence[JobSpec], base_path: Path, *, file_name: str = "manifest.json"
+) -> Path:
     """Write a reproducibility manifest for a set of resolved jobs."""
 
     base_path.mkdir(parents=True, exist_ok=True)

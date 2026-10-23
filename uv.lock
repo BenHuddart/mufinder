@@ -1008,7 +1008,7 @@ requires-dist = [
     { name = "pyvista", specifier = ">=0.43" },
     { name = "pyvistaqt", specifier = ">=0.11" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14,<1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.17,<0.18" },
     { name = "scipy", specifier = ">=1.12" },
     { name = "soprano", marker = "extra == 'scientific-backends'", specifier = ">=0.10,<0.12" },
     { name = "spglib", specifier = ">=2.5" },

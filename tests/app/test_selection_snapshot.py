@@ -56,7 +56,9 @@ def test_resolve_returns_clicked_key_when_snapshot_is_empty(qapp):
 
 def test_resolve_no_prompt_when_only_one_eligible(qapp, monkeypatch):
     called = []
-    monkeypatch.setattr(selection_snapshot, "ask_selection_scope", lambda *a, **kw: called.append(1))
+    monkeypatch.setattr(
+        selection_snapshot, "ask_selection_scope", lambda *a, **kw: called.append(1)
+    )
 
     btn = _make_widget(qapp)
     result = resolve_target_keys(
@@ -181,7 +183,9 @@ def test_resolve_snapshot_rows_cleared_after_consumption(qapp, monkeypatch):
     # A second call, now building snapshot_keys from the cleared rows, would
     # produce an empty snapshot — single-row fallback, no prompt
     called = []
-    monkeypatch.setattr(selection_snapshot, "ask_selection_scope", lambda *a, **kw: called.append(1))
+    monkeypatch.setattr(
+        selection_snapshot, "ask_selection_scope", lambda *a, **kw: called.append(1)
+    )
     snapshot_rows_2 = list(btn.selection_snapshot_rows)  # empty
     result2 = resolve_target_keys(
         btn,
@@ -275,14 +279,22 @@ def test_ask_selection_scope_maps_each_button(qapp, monkeypatch, button_index, e
 
     def _ordered(box):
         by_text = {button.text(): button for button in box.buttons()}
-        cancel = next(b for b in box.buttons() if b not in (by_text["All 3 selected rows"], by_text["This row only"]))
+        cancel = next(
+            b
+            for b in box.buttons()
+            if b not in (by_text["All 3 selected rows"], by_text["This row only"])
+        )
         return [by_text["All 3 selected rows"], by_text["This row only"], cancel]
 
     monkeypatch.setattr(QMessageBox, "exec", _fake_exec)
 
     parent = QPushButton()
     result = selection_snapshot.ask_selection_scope(
-        parent, "Apply to selected rows?", "Remove all 3 selected rows?", "All 3 selected rows", "This row only"
+        parent,
+        "Apply to selected rows?",
+        "Remove all 3 selected rows?",
+        "All 3 selected rows",
+        "This row only",
     )
 
     assert result is expected

@@ -90,13 +90,24 @@ def test_the_progress_parser_reads_every_iteration_with_falling_energy_and_force
     assert (progress.method, progress.max_iterations, progress.converged) == ("BFGS", 100, True)
     assert [iteration.iteration for iteration in progress.iterations] == list(range(7))
     enthalpies = [iteration.enthalpy for iteration in progress.iterations]
-    assert enthalpies[0] == pytest.approx(-340.682656) and enthalpies[-1] == pytest.approx(-340.953487)
+    assert enthalpies[0] == pytest.approx(-340.682656) and enthalpies[-1] == pytest.approx(
+        -340.953487
+    )
     assert all(later < earlier for earlier, later in zip(enthalpies, enthalpies[1:]))
     drops = [earlier - later for earlier, later in zip(enthalpies, enthalpies[1:])]
     assert all(later < earlier for earlier, later in zip(drops, drops[1:]))
-    forces = [criterion.value for iteration in progress.iterations for criterion in iteration.criteria if criterion.name == "|F|max"]
+    forces = [
+        criterion.value
+        for iteration in progress.iterations
+        for criterion in iteration.criteria
+        if criterion.name == "|F|max"
+    ]
     assert all(later < earlier for earlier, later in zip(forces, forces[1:]))
-    assert [criterion.name for criterion in progress.latest.criteria] == ["dE/ion", "|F|max", "|dR|max"]
+    assert [criterion.name for criterion in progress.latest.criteria] == [
+        "dE/ion",
+        "|F|max",
+        "|dR|max",
+    ]
     assert progress.latest.criteria_met == 3
     assert progress.iterations[0].criteria_met == 0
 
@@ -160,7 +171,9 @@ def _fmuf_cell() -> SimpleNamespace:
     vectors = separation @ lattice
     distances = np.linalg.norm(vectors, axis=1)
     for index in np.argsort(distances)[:2]:
-        fractional[index] = muon + np.linalg.solve(lattice.T, vectors[index] * 1.17 / distances[index])
+        fractional[index] = muon + np.linalg.solve(
+            lattice.T, vectors[index] * 1.17 / distances[index]
+        )
     return SimpleNamespace(
         lattice_vectors=lattice.tolist(),
         species=[*species, "H:mu"],
@@ -207,30 +220,55 @@ def test_the_fmuf_phonon_gives_moller_s_muon_modes_and_zero_point_energy() -> No
 def test_the_model_density_and_single_point_load_as_a_neutral_uep_source(tmp_path: Path) -> None:
     shells = {"Co": ((8.0, 0.22), (7.0, 0.42)), "F": ((2.0, 0.25), (6.0, 0.60))}
     arguments = {"lattice": COF2_LATTICE, "species": COF2_SPECIES, "fractional": COF2_FRACTIONAL}
-    (tmp_path / "CoF2.den_fmt").write_text(den_fmt_text(**arguments, grid=(32, 32, 24), shells=shells), encoding="utf-8")
+    (tmp_path / "CoF2.den_fmt").write_text(
+        den_fmt_text(**arguments, grid=(32, 32, 24), shells=shells), encoding="utf-8"
+    )
     (tmp_path / "CoF2.castep").write_text(
-        uep_castep_text(**arguments, pseudopotentials={"Co": (17.0, 1.8), "F": (7.0, 1.4)}, energy=-5621.8722, wall_time=1843.2),
+        uep_castep_text(
+            **arguments,
+            pseudopotentials={"Co": (17.0, 1.8), "F": (7.0, 1.4)},
+            energy=-5621.8722,
+            wall_time=1843.2,
+        ),
         encoding="utf-8",
     )
 
-    source = load_uep_source(den_fmt_path=tmp_path / "CoF2.den_fmt", castep_path=tmp_path / "CoF2.castep")
+    source = load_uep_source(
+        den_fmt_path=tmp_path / "CoF2.den_fmt", castep_path=tmp_path / "CoF2.castep"
+    )
 
     assert source.density.grid == (32, 32, 24)
     assert float(np.mean(source.density.values[..., 0])) == pytest.approx(62.0)
     assert float(np.min(source.density.values[..., 0])) > 0.0
     assert source.structure.species == tuple(COF2_SPECIES)
-    assert [item.ionic_charge for item in source.pseudopotentials] == [17.0, 17.0, 7.0, 7.0, 7.0, 7.0]
+    assert [item.ionic_charge for item in source.pseudopotentials] == [
+        17.0,
+        17.0,
+        7.0,
+        7.0,
+        7.0,
+        7.0,
+    ]
     # The UEP of this model density is lowest in the channel along c, at 4d,
     # below the 4c site the positive muon takes once the fluorines relax.
     field = UepField(source)
     lattice = np.asarray(COF2_LATTICE)
-    at_4d, at_4c = (float(field.potential(np.asarray(site) @ lattice)[0][0]) for site in ((0.0, 0.5, 0.25), (0.0, 0.5, 0.0)))
+    at_4d, at_4c = (
+        float(field.potential(np.asarray(site) @ lattice)[0][0])
+        for site in ((0.0, 0.5, 0.25), (0.0, 0.5, 0.0))
+    )
     assert at_4d < at_4c
 
 
 def test_a_density_too_narrow_for_its_grid_is_refused() -> None:
     with pytest.raises(ValueError, match="too narrow"):
-        den_fmt_text(COF2_LATTICE, COF2_SPECIES, COF2_FRACTIONAL, grid=(8, 8, 6), shells={"Co": ((17.0, 0.05),), "F": ((7.0, 0.05),)})
+        den_fmt_text(
+            COF2_LATTICE,
+            COF2_SPECIES,
+            COF2_FRACTIONAL,
+            grid=(8, 8, 6),
+            shells={"Co": ((17.0, 0.05),), "F": ((7.0, 0.05),)},
+        )
 
 
 # --- alpha-N2: the [N2-mu-N2]+ complex and its phonon ----------------------------------
@@ -245,15 +283,26 @@ N2_MOLECULES = (
     ((0.0, 0.5, 0.5), (-1, 1, -1)),
     ((0.5, 0.5, 0.0), (1, -1, -1)),
 )
-N2_COMPLEX = {"muon_bond": 1.29, "molecule_bond": 1.115, "neighbour_shift": 0.03, "neighbour_radius": 4.5}
-N2_BANDS_CM = {"stretch_band_cm": (2330.0, 2350.0), "libration_band_cm": (30.0, 70.0), "translation_band_cm": (15.0, 95.0)}
+N2_COMPLEX = {
+    "muon_bond": 1.29,
+    "molecule_bond": 1.115,
+    "neighbour_shift": 0.03,
+    "neighbour_radius": 4.5,
+}
+N2_BANDS_CM = {
+    "stretch_band_cm": (2330.0, 2350.0),
+    "libration_band_cm": (30.0, 70.0),
+    "translation_band_cm": (15.0, 95.0),
+}
 
 
 def _n2_supercell() -> SimpleNamespace:
     """The 2x2x2 alpha-N2 supercell, 64 N, with a muon at (0, 1/4, 1/4) between two molecules."""
 
     host = [
-        (np.asarray(centre) + sign * N2_X * np.asarray(axis)) % 1.0 for centre, axis in N2_MOLECULES for sign in (1.0, -1.0)
+        (np.asarray(centre) + sign * N2_X * np.asarray(axis)) % 1.0
+        for centre, axis in N2_MOLECULES
+        for sign in (1.0, -1.0)
     ]
     fractional = [(position + shift) / 2.0 for shift in np.ndindex(2, 2, 2) for position in host]
     return SimpleNamespace(
@@ -335,7 +384,9 @@ def test_the_complex_phonon_gives_the_harmonic_numbers_of_gomilsek_et_al() -> No
     assert zpe.warnings == ()
     assert zpe.total_eV == pytest.approx(0.58, abs=0.01)
     assert [round(mode.zpe_eV, 2) for mode in zpe.modes] == [0.17, 0.20, 0.20]
-    assert [mode.frequency_cm for mode in zpe.modes] == pytest.approx([2807.05, 3274.32, 3274.32], abs=0.01)
+    assert [mode.frequency_cm for mode in zpe.modes] == pytest.approx(
+        [2807.05, 3274.32, 3274.32], abs=0.01
+    )
     assert [round(mode.width_A, 2) for mode in zpe.modes] == [0.23, 0.21, 0.21]
     assert w1_entanglement_witness(phonon) == pytest.approx(-0.14, abs=0.01)
     # The muon is the last atom; its nearest nitrogens are the near atoms of the complex.
@@ -352,6 +403,10 @@ def test_a_muon_between_molecules_of_two_species_is_refused() -> None:
         species[int(index)] = "F"
     with pytest.raises(ValueError, match="share a species"):
         bridged_diatomic_phonon_text(
-            SimpleNamespace(lattice_vectors=cell.lattice_vectors, species=species, fractional_positions=cell.fractional_positions),
+            SimpleNamespace(
+                lattice_vectors=cell.lattice_vectors,
+                species=species,
+                fractional_positions=cell.fractional_positions,
+            ),
             **N2_BANDS_CM,
         )

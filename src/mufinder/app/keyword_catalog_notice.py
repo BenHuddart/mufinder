@@ -40,7 +40,11 @@ def catalog_source_description(status: KeywordCatalogStatus) -> str:
     if status.is_starter:
         return "No keyword catalog is loaded; MuFinder is using its limited built-in keyword set."
 
-    version = f"CASTEP {status.castep_version}" if status.castep_version else "an unrecorded CASTEP version"
+    version = (
+        f"CASTEP {status.castep_version}"
+        if status.castep_version
+        else "an unrecorded CASTEP version"
+    )
     counts = f"{status.cell_count} cell and {status.param_count} param keywords"
     if status.origin == "setup":
         source = "installed through CASTEP setup"

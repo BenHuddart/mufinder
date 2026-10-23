@@ -34,6 +34,7 @@ from mufinder.persistence.migrations import migrate_project_payloads
 from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.perf_trace import PerfTrace
+
 # The document aggregate, its read-only queries and the supercell records are
 # re-exported: callers import them from this module.
 from mufinder.services.project_document import (
@@ -146,7 +147,9 @@ class SiteHostMismatch:
 
     active_host_id: UUID
     active_host_label: str
-    offenders: list[tuple[UUID, str, UUID | None, str]]  # (site_id, label, source_host_id, source_host_label)
+    offenders: list[
+        tuple[UUID, str, UUID | None, str]
+    ]  # (site_id, label, source_host_id, source_host_label)
 
 
 @dataclass(slots=True)
@@ -155,7 +158,9 @@ class StructureHostMismatch:
 
     active_host_id: UUID
     active_host_label: str
-    offenders: list[tuple[UUID, str, UUID | None, str]]  # (struct_id, label, resolved_host_id, host_label)
+    offenders: list[
+        tuple[UUID, str, UUID | None, str]
+    ]  # (struct_id, label, resolved_host_id, host_label)
 
 
 class ProjectService:
@@ -264,7 +269,15 @@ class ProjectService:
         manifest = store.read_json(store.project_manifest_path)
         payloads = {
             entity_type: store.load_entities(entity_type)
-            for entity_type in ("structures", "sites", "calculations", "runs", "results", "comparison_tables", "jobs")
+            for entity_type in (
+                "structures",
+                "sites",
+                "calculations",
+                "runs",
+                "results",
+                "comparison_tables",
+                "jobs",
+            )
         }
         ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
         # Projects saved at an older schema are upgraded in memory; the entity
@@ -316,9 +329,9 @@ class ProjectService:
                     to_jsonable(entity)
                 )
         if (self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID) not in unsaved_keys:
-            self._content_hashes[(root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)] = (
-                self._payload_hash(to_jsonable(ui_state))
-            )
+            self._content_hashes[
+                (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+            ] = self._payload_hash(to_jsonable(ui_state))
 
         issues = self.validate_document(document)
         if issues:
@@ -375,9 +388,7 @@ class ProjectService:
         for key in [
             key
             for key in self._content_hashes
-            if key[0] == root_key
-            and key[1] != self._UI_STATE_ENTITY_TYPE
-            and key not in live_keys
+            if key[0] == root_key and key[1] != self._UI_STATE_ENTITY_TYPE and key not in live_keys
         ]:
             del self._content_hashes[key]
 
@@ -410,7 +421,9 @@ class ProjectService:
         """Register one persisted comparison table in the current document."""
         document.comparison_tables[table.id] = table
 
-    def rename_comparison_table(self, document: ProjectDocument, table_id: UUID, label: str) -> ComparisonTable | None:
+    def rename_comparison_table(
+        self, document: ProjectDocument, table_id: UUID, label: str
+    ) -> ComparisonTable | None:
         """Update the display label for one persisted comparison table."""
         table = document.comparison_tables.get(table_id)
         if table is None:
@@ -422,7 +435,9 @@ class ProjectService:
         """Delete one persisted comparison table from the current document."""
         document.comparison_tables.pop(table_id, None)
 
-    def remove_candidate_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
+    def remove_candidate_sites(
+        self, document: ProjectDocument, site_ids: Sequence[UUID]
+    ) -> list[MuonSite]:
         """Remove generated muon sites by id and record the edit in provenance."""
         outcome = site_generation_service.remove_candidate_sites(document, site_ids)
         return self._record_site_change(document, outcome)
@@ -440,7 +455,9 @@ class ProjectService:
         )
         return self._record_site_change(document, outcome)
 
-    def stage_generated_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
+    def stage_generated_sites(
+        self, document: ProjectDocument, site_ids: Sequence[UUID]
+    ) -> list[MuonSite]:
         """Mark generated muon sites as staged for structural relaxation."""
         outcome = site_generation_service.stage_generated_sites(document, site_ids)
         return self._record_site_change(document, outcome)
@@ -454,11 +471,17 @@ class ProjectService:
     ) -> None:
         """Append one provenance milestone for a user submission action."""
 
-        submitted_jobs = [job for job in jobs if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}]
+        submitted_jobs = [
+            job for job in jobs if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}
+        ]
         if not submitted_jobs:
             return
 
-        workflow_stage = submitted_jobs[0].workflow_stage if len({job.workflow_stage for job in submitted_jobs}) == 1 else None
+        workflow_stage = (
+            submitted_jobs[0].workflow_stage
+            if len({job.workflow_stage for job in submitted_jobs}) == 1
+            else None
+        )
         self.append_provenance(
             document,
             ProvenanceRecord(
@@ -479,7 +502,9 @@ class ProjectService:
                             "remote_job_id": job.remote_job_id,
                             "remote_directory": job.remote_directory,
                             "num_processes": job.num_processes,
-                            "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
+                            "submitted_at": (
+                                job.submitted_at.isoformat() if job.submitted_at else None
+                            ),
                         }
                         for job in submitted_jobs
                     ],
@@ -655,7 +680,9 @@ class ProjectService:
                     "table_label": table.label,
                     "dft_structure_count": len(table.dft_structure_ids),
                 },
-                input_entity_ids=[table.experimental_structure_id] if table.experimental_structure_id is not None else [],
+                input_entity_ids=[table.experimental_structure_id]
+                if table.experimental_structure_id is not None
+                else [],
                 output_entity_ids=[table.id, *table.dft_structure_ids],
             ),
         )
@@ -691,11 +718,17 @@ class ProjectService:
         host_structure_id: UUID | None,
     ) -> list[WorkflowSupercellAsset]:
         """Return the saved supercell assets built from ``host_structure_id``."""
-        return supercell_assets.list_workflow_supercell_assets(document, host_structure_id=host_structure_id)
+        return supercell_assets.list_workflow_supercell_assets(
+            document, host_structure_id=host_structure_id
+        )
 
-    def repair_supercell_asset_if_needed(self, document: ProjectDocument, *, structure_id: UUID) -> bool:
+    def repair_supercell_asset_if_needed(
+        self, document: ProjectDocument, *, structure_id: UUID
+    ) -> bool:
         """Rebuild an asset that lacks its magnetic host's spins; return whether it was rebuilt."""
-        return supercell_assets.repair_supercell_asset_if_needed(document, structure_id=structure_id)
+        return supercell_assets.repair_supercell_asset_if_needed(
+            document, structure_id=structure_id
+        )
 
     def structure_atomic_spins(self, structure: Structure) -> list[float]:
         """Return numeric per-atom spins for a structure, defaulting missing values to zero."""
@@ -727,13 +760,21 @@ class ProjectService:
             reuse_existing=reuse_existing,
         )
 
-    def supercell_asset_references(self, document: ProjectDocument, *, asset_structure_id: UUID) -> list[str]:
+    def supercell_asset_references(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> list[str]:
         """Return user-facing references to a saved supercell asset."""
-        return supercell_assets.supercell_asset_references(document, asset_structure_id=asset_structure_id)
+        return supercell_assets.supercell_asset_references(
+            document, asset_structure_id=asset_structure_id
+        )
 
-    def supercell_asset_is_frozen(self, document: ProjectDocument, *, asset_structure_id: UUID) -> bool:
+    def supercell_asset_is_frozen(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> bool:
         """Return whether the asset is frozen into a calculation definition."""
-        return supercell_assets.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id)
+        return supercell_assets.supercell_asset_is_frozen(
+            document, asset_structure_id=asset_structure_id
+        )
 
     def rename_workflow_supercell_asset(
         self,
@@ -760,9 +801,13 @@ class ProjectService:
             document, asset_structure_id=asset_structure_id, matrix=matrix, label=label
         )
 
-    def delete_workflow_supercell_asset(self, document: ProjectDocument, *, asset_structure_id: UUID) -> Structure:
+    def delete_workflow_supercell_asset(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> Structure:
         """Delete an unused saved supercell asset and clear stale active selections."""
-        return supercell_assets.delete_workflow_supercell_asset(document, asset_structure_id=asset_structure_id)
+        return supercell_assets.delete_workflow_supercell_asset(
+            document, asset_structure_id=asset_structure_id
+        )
 
     def use_workflow_supercell_asset(
         self,
@@ -776,7 +821,9 @@ class ProjectService:
             document, workflow_stage=workflow_stage, asset_structure_id=asset_structure_id
         )
 
-    def clear_workflow_supercell_selection(self, document: ProjectDocument, workflow_stage: WorkflowStage) -> None:
+    def clear_workflow_supercell_selection(
+        self, document: ProjectDocument, workflow_stage: WorkflowStage
+    ) -> None:
         """Reset ``workflow_stage`` to simulate the single unit cell."""
         supercell_assets.clear_workflow_supercell_selection(document, workflow_stage)
 
@@ -788,7 +835,9 @@ class ProjectService:
         normalize_state: bool = False,
     ) -> WorkflowStructureResolution:
         """Return the structure ``workflow_stage`` simulates and its selection state."""
-        return supercell_assets.resolve_workflow_structure(document, workflow_stage, normalize_state=normalize_state)
+        return supercell_assets.resolve_workflow_structure(
+            document, workflow_stage, normalize_state=normalize_state
+        )
 
     def import_structure_file(
         self,
@@ -1286,10 +1335,7 @@ class ProjectService:
         grid = (int(kpoint_grid[0]), int(kpoint_grid[1]), int(kpoint_grid[2]))
         document.project.recommended_kpoint_grid = grid
         document.project.recommended_kpoint_lattice = (
-            [
-                [float(row[0]), float(row[1]), float(row[2])]
-                for row in lattice_vectors
-            ]
+            [[float(row[0]), float(row[1]), float(row[2])] for row in lattice_vectors]
             if isinstance(lattice_vectors, list) and len(lattice_vectors) == 3
             else None
         )
@@ -1321,8 +1367,7 @@ class ProjectService:
                 workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
                 actor="user",
                 description=(
-                    "Set project recommended k-point grid to "
-                    f"{grid[0]}x{grid[1]}x{grid[2]}"
+                    f"Set project recommended k-point grid to {grid[0]}x{grid[1]}x{grid[2]}"
                 ),
                 parameters={
                     "recommended_kpoint_grid": [grid[0], grid[1], grid[2]],
@@ -1478,9 +1523,7 @@ class ProjectService:
         """
 
         if job.status not in CONTINUABLE_JOB_STATUSES:
-            raise ValueError(
-                "Only completed, failed, stopped, or cancelled jobs can be continued."
-            )
+            raise ValueError("Only completed, failed, stopped, or cancelled jobs can be continued.")
 
         job.status = JobStatus.DEFINED
         job.submitted_at = None
@@ -1672,7 +1715,11 @@ class ProjectService:
             if not result.calculation_run_id:
                 continue
             run = document.runs.get(result.calculation_run_id)
-            if run is None or run.status != JobStatus.COMPLETED or run.convergence_achieved is False:
+            if (
+                run is None
+                or run.status != JobStatus.COMPLETED
+                or run.convergence_achieved is False
+            ):
                 continue
             for struct_id in result.derived_structure_ids:
                 completed_ids.add(struct_id)
@@ -1683,14 +1730,20 @@ class ProjectService:
             if supercell_assets.supercell_asset(structure) is not None:
                 continue
             if structure.origin == "imported":
-                hint = f"Imported from {structure.source_file}" if structure.source_file else "Imported structure"
-                promotable.append(PromotableHost(
-                    structure_id=structure.id,
-                    label=f"Original — {structure.label}",
-                    provenance_hint=hint,
-                    kind="imported",
-                    created_at=None,
-                ))
+                hint = (
+                    f"Imported from {structure.source_file}"
+                    if structure.source_file
+                    else "Imported structure"
+                )
+                promotable.append(
+                    PromotableHost(
+                        structure_id=structure.id,
+                        label=f"Original — {structure.label}",
+                        provenance_hint=hint,
+                        kind="imported",
+                        created_at=None,
+                    )
+                )
             elif structure.origin == "pristine_relaxation" and structure.id in completed_ids:
                 created_at = result_created_at.get(structure.id)
                 date_str = created_at.strftime("%Y-%m-%d") if created_at else ""
@@ -1709,13 +1762,15 @@ class ProjectService:
                 hint = f"Result of pristine relaxation '{job_label}'"
                 if date_str:
                     hint += f" completed {date_str}"
-                promotable.append(PromotableHost(
-                    structure_id=structure.id,
-                    label=label,
-                    provenance_hint=hint,
-                    kind="relaxed",
-                    created_at=created_at,
-                ))
+                promotable.append(
+                    PromotableHost(
+                        structure_id=structure.id,
+                        label=label,
+                        provenance_hint=hint,
+                        kind="relaxed",
+                        created_at=created_at,
+                    )
+                )
 
         def _sort_key(h: PromotableHost) -> tuple:
             if h.created_at is None:
@@ -1855,7 +1910,9 @@ class ProjectService:
                 continue
             resolved_host_id = self.resolve_underlying_host(document, struct_id)
             if resolved_host_id != host.id:
-                resolved_host = document.structures.get(resolved_host_id) if resolved_host_id else None
+                resolved_host = (
+                    document.structures.get(resolved_host_id) if resolved_host_id else None
+                )
                 resolved_label = resolved_host.label if resolved_host else "(unknown)"
                 offenders.append((struct_id, structure.label, resolved_host_id, resolved_label))
         if not offenders:
@@ -1893,11 +1950,17 @@ class ProjectService:
         """Validate cross-entity references and return detected issues."""
         issues: list[str] = []
 
-        if document.project.host_structure_id and document.project.host_structure_id not in document.structures:
+        if (
+            document.project.host_structure_id
+            and document.project.host_structure_id not in document.structures
+        ):
             issues.append("project.host_structure_id does not reference a known structure")
 
         for structure in document.structures.values():
-            if structure.parent_structure_id and structure.parent_structure_id not in document.structures:
+            if (
+                structure.parent_structure_id
+                and structure.parent_structure_id not in document.structures
+            ):
                 issues.append(
                     f"structure {structure.id} references missing parent structure {structure.parent_structure_id}"
                 )
@@ -1916,7 +1979,9 @@ class ProjectService:
                 )
 
         for calc in document.calculations.values():
-            missing_structures = [sid for sid in calc.input_structure_ids if sid not in document.structures]
+            missing_structures = [
+                sid for sid in calc.input_structure_ids if sid not in document.structures
+            ]
             if missing_structures:
                 issues.append(
                     f"calculation {calc.id} references missing structures: {', '.join(str(s) for s in missing_structures)}"
@@ -1924,7 +1989,9 @@ class ProjectService:
 
         for run in document.runs.values():
             if run.definition_id and run.definition_id not in document.calculations:
-                issues.append(f"run {run.id} references missing calculation definition {run.definition_id}")
+                issues.append(
+                    f"run {run.id} references missing calculation definition {run.definition_id}"
+                )
             if run.job_id and run.job_id not in document.jobs:
                 issues.append(f"run {run.id} references missing job {run.job_id}")
             if run.result_id and run.result_id not in document.results:
@@ -1935,7 +2002,9 @@ class ProjectService:
                 issues.append(
                     f"result {result.id} references missing calculation run {result.calculation_run_id}"
                 )
-            missing_structures = [sid for sid in result.derived_structure_ids if sid not in document.structures]
+            missing_structures = [
+                sid for sid in result.derived_structure_ids if sid not in document.structures
+            ]
             if missing_structures:
                 issues.append(
                     f"result {result.id} references missing derived structures: {', '.join(str(s) for s in missing_structures)}"
@@ -1943,7 +2012,9 @@ class ProjectService:
 
         for site in document.sites.values():
             if site.source_structure_id and site.source_structure_id not in document.structures:
-                issues.append(f"site {site.id} references missing structure {site.source_structure_id}")
+                issues.append(
+                    f"site {site.id} references missing structure {site.source_structure_id}"
+                )
             if site.relaxation_run_id and site.relaxation_run_id not in document.runs:
                 issues.append(f"site {site.id} references missing run {site.relaxation_run_id}")
 
@@ -1956,7 +2027,9 @@ class ProjectService:
                     "comparison table "
                     f"{table.id} references missing experimental structure {table.experimental_structure_id}"
                 )
-            missing_structures = [sid for sid in table.dft_structure_ids if sid not in document.structures]
+            missing_structures = [
+                sid for sid in table.dft_structure_ids if sid not in document.structures
+            ]
             if missing_structures:
                 issues.append(
                     "comparison table "

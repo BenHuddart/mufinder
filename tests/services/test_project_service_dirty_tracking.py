@@ -45,10 +45,7 @@ def _entity_dir(root: Path, entity_type: str) -> Path:
 
 def _all_entity_mtimes(root: Path) -> dict[Path, float]:
     entities_root = root / "entities"
-    return {
-        path: path.stat().st_mtime_ns
-        for path in entities_root.rglob("*.json")
-    }
+    return {path: path.stat().st_mtime_ns for path in entities_root.rglob("*.json")}
 
 
 def test_second_save_without_mutation_writes_no_entity_files(tmp_path: Path, monkeypatch) -> None:
@@ -218,7 +215,12 @@ def test_tojsonable_roundtrips_to_exact_loaded_payload(tmp_path: Path) -> None:
     job.status = JobStatus.COMPLETED
     result = Result(
         result_type="relaxation",
-        data={"total_energy": -1.5, "max_force": 0.01, "warnings": ["a", "b"], "nested": {"k": [1, 2, 3]}},
+        data={
+            "total_energy": -1.5,
+            "max_force": 0.01,
+            "warnings": ["a", "b"],
+            "nested": {"k": [1, 2, 3]},
+        },
         output_files=["out.castep"],
     )
     doc.results[result.id] = result
@@ -233,7 +235,9 @@ def test_tojsonable_roundtrips_to_exact_loaded_payload(tmp_path: Path) -> None:
     ]
     for entity_type, entity in cases:
         entity_id = str(entity.id)
-        on_disk = (root / "entities" / entity_type / f"{entity_id}.json").read_text(encoding="utf-8")
+        on_disk = (root / "entities" / entity_type / f"{entity_id}.json").read_text(
+            encoding="utf-8"
+        )
         regenerated = ProjectStore.canonical_json(to_jsonable(entity))
         assert regenerated == on_disk, f"{entity_type} {entity_id} did not round-trip exactly"
 

@@ -52,7 +52,10 @@ from mufinder.cluster_setup import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.job_artifacts import RetrievalFlags
-from mufinder.services.job_execution_controller import ClusterJobSubmission, PreparedClusterSubmission
+from mufinder.services.job_execution_controller import (
+    ClusterJobSubmission,
+    PreparedClusterSubmission,
+)
 
 #: The answers to the "remote directory exists" prompt.
 OverwriteChoice = Literal["yes", "yes_to_all", "no", "no_to_all"]
@@ -185,7 +188,9 @@ class ClusterTargetPlan:
     def without_jobs(self, job_ids: Collection[UUID]) -> ClusterTargetPlan:
         """Return this plan without the targets of ``job_ids``."""
 
-        return replace(self, targets=[target for target in self.targets if target.job.id not in job_ids])
+        return replace(
+            self, targets=[target for target in self.targets if target.job.id not in job_ids]
+        )
 
     def fresh_start_jobs(self, decisions: OverwriteDecisions) -> list[Job]:
         """Return the start-again jobs going ahead, whose local output is cleared first."""
@@ -246,10 +251,16 @@ def plan_remote_targets(
         # On a different cluster that path does not exist, so the job falls
         # through to a recomputed target and the normal existence check.
         if job.status == JobStatus.DEFINED and on_cluster and own_directory:
-            targets.append(RemoteTarget(job=job, remote_target=own_directory, allow_existing_remote_directory=True))
+            targets.append(
+                RemoteTarget(
+                    job=job, remote_target=own_directory, allow_existing_remote_directory=True
+                )
+            )
             continue
         if reuse_existing_remote_files and job.id not in fresh_ids and own_directory:
-            targets.append(RemoteTarget(job=job, remote_target=own_directory, reuse_existing_files=True))
+            targets.append(
+                RemoteTarget(job=job, remote_target=own_directory, reuse_existing_files=True)
+            )
             continue
         targets.append(
             RemoteTarget(
@@ -260,7 +271,9 @@ def plan_remote_targets(
                 ),
             )
         )
-    return ClusterTargetPlan(targets=targets, seed_name_by_job=dict(seed_name_by_job), fresh_start_job_ids=fresh_ids)
+    return ClusterTargetPlan(
+        targets=targets, seed_name_by_job=dict(seed_name_by_job), fresh_start_job_ids=fresh_ids
+    )
 
 
 def remote_check_failures(plan: ClusterTargetPlan, errors: Mapping[UUID, str]) -> list[str]:

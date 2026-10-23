@@ -61,7 +61,9 @@ def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
     assert expansion.kpoint_adjustments == ()
 
 
-def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_with_reference_lattice() -> None:
+def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_with_reference_lattice() -> (
+    None
+):
     config = PristineRelaxationConfig(
         name_prefix="pristine_relax",
         rows=(
@@ -88,7 +90,9 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_w
     assert expansion.kpoint_adjustments == ()
 
 
-def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic_unit_cell() -> None:
+def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic_unit_cell() -> (
+    None
+):
     config = PristineRelaxationConfig(
         name_prefix="pristine_relax",
         rows=(
@@ -139,7 +143,9 @@ def test_expand_pristine_relaxation_jobs_forces_write_cell_structure_true() -> N
         project_kpoint_reference_lattice=None,
     )
 
-    param_values = {keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords}
+    param_values = {
+        keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords
+    }
     assert param_values["write_cell_structure"] is True
 
 
@@ -198,7 +204,6 @@ def test_expand_pristine_relaxation_jobs_honors_explicit_row_kpoint_override() -
     assert expansion.kpoint_adjustments == ()
 
 
-
 def test_suggested_grid_for_row_handles_identity_and_supercell() -> None:
     host_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
 
@@ -232,7 +237,9 @@ def test_suggested_grid_for_row_halves_grid_for_doubled_unequal_lattice() -> Non
     assert grid == (2, 2, 2)
 
 
-def test_suggested_grid_for_row_returns_exact_project_grid_for_identity_reference_mismatch() -> None:
+def test_suggested_grid_for_row_returns_exact_project_grid_for_identity_reference_mismatch() -> (
+    None
+):
     grid = suggested_grid_for_row(
         host_lattice=[[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
         row_matrix=None,
@@ -264,7 +271,11 @@ def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
                 label="site_a",
                 initial_fractional_position=(0.2, 0.4, 0.6),
                 charge_state="positive_muon",
-                parameter_values={"fix_all_cell": False, "charge": 0, "write_cell_structure": False},
+                parameter_values={
+                    "fix_all_cell": False,
+                    "charge": 0,
+                    "write_cell_structure": False,
+                },
             ),
             MuonRelaxationRow(
                 site_id=uuid4(),
@@ -286,8 +297,12 @@ def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
     assert [job.name for job in expansion.jobs] == ["positivemuon_site_a", "muonium_site_b"]
     assert {job.workflow_stage.value for job in expansion.jobs} == {"muon_relaxation"}
     assert {job.provenance["workflow"] for job in expansion.jobs} == {"muon_relaxation"}
-    positive_params = {keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords}
-    muonium_params = {keyword.name: keyword.value for keyword in expansion.jobs[1].param_file.keywords}
+    positive_params = {
+        keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords
+    }
+    muonium_params = {
+        keyword.name: keyword.value for keyword in expansion.jobs[1].param_file.keywords
+    }
     positive_cell = {keyword.name: keyword.value for keyword in expansion.jobs[0].cell_file.scalars}
 
     assert positive_params["continuation"] == "DEFAULT"
@@ -446,7 +461,9 @@ def test_expand_muon_relaxation_jobs_rejects_sanitized_seed_name_collisions() ->
         )
 
 
-def test_expand_pristine_relaxation_jobs_applies_project_xc_functional_unless_row_sets_one() -> None:
+def test_expand_pristine_relaxation_jobs_applies_project_xc_functional_unless_row_sets_one() -> (
+    None
+):
     config = PristineRelaxationConfig(
         name_prefix="pristine_relax",
         rows=(

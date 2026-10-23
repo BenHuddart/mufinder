@@ -70,4 +70,3 @@ def test_block_dialog_roundtrips_supported_block_families(
     assert summarize_block_value(spec, initial_value) == summary
 
     dialog.close()
-

@@ -39,7 +39,12 @@ from mufinder.app.theme import (
 )
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, is_muon_label
-from mufinder.science.cell_projection import PROJECTION_AXES, CellProjection, cell_projection, periodic_boundary_images
+from mufinder.science.cell_projection import (
+    PROJECTION_AXES,
+    CellProjection,
+    cell_projection,
+    periodic_boundary_images,
+)
 from mufinder.science.lattice import LatticeError
 from mufinder.services.project_survey import SurveyLayer, SurveyMarker, SurveyMarkerKind
 
@@ -134,12 +139,16 @@ class _SurveyCanvas(QWidget):
         projected = projection.project(fractional)
         return to_screen(projected.x, projected.y)
 
-    def _paint_cell(self, painter: QPainter, palette, projection: CellProjection, to_screen) -> None:
+    def _paint_cell(
+        self, painter: QPainter, palette, projection: CellProjection, to_screen
+    ) -> None:
         painter.setPen(QPen(QColor(palette.border), 1.2))
         for start, end in projection.edges:
             painter.drawLine(to_screen(*start), to_screen(*end))
 
-    def _paint_atoms(self, painter: QPainter, palette, projection: CellProjection, to_screen) -> None:
+    def _paint_atoms(
+        self, painter: QPainter, palette, projection: CellProjection, to_screen
+    ) -> None:
         assert self.host is not None
         tones = _SPECIES_TONES_LIGHT if palette.mode == THEME_LIGHT else _SPECIES_TONES_DARK
         elements: list[str] = []
@@ -167,7 +176,9 @@ class _SurveyCanvas(QWidget):
             painter.drawEllipse(center, radius, radius)
             self._hits.append((center, radius, element))
 
-    def _paint_species_key(self, painter: QPainter, palette, elements: list[str], tones: tuple[str, ...]) -> None:
+    def _paint_species_key(
+        self, painter: QPainter, palette, elements: list[str], tones: tuple[str, ...]
+    ) -> None:
         font = QFont(body_font_family())
         font.setPixelSize(11)
         painter.setFont(font)
@@ -180,7 +191,9 @@ class _SurveyCanvas(QWidget):
             painter.drawText(QPointF(22.0, y + 4.0), element)
             y += 16.0
 
-    def _paint_layer(self, painter: QPainter, palette, projection: CellProjection, to_screen, layer: SurveyLayer) -> None:
+    def _paint_layer(
+        self, painter: QPainter, palette, projection: CellProjection, to_screen, layer: SurveyLayer
+    ) -> None:
         accent = QColor(palette.accent)
         font = QFont(body_font_family())
         font.setPixelSize(11)
@@ -334,7 +347,9 @@ class CellSurveyWidget(QFrame):
         The stepper keeps its place when the new layers belong to the same stage.
         """
 
-        same_stage = bool(layers) and bool(self._layers) and layers[0].stage_key == self._layers[0].stage_key
+        same_stage = (
+            bool(layers) and bool(self._layers) and layers[0].stage_key == self._layers[0].stage_key
+        )
         self._layers = tuple(layers)
         self._fallback = fallback
         self._index = min(self._index, len(self._layers) - 1) if same_stage else 0
@@ -389,6 +404,8 @@ class CellSurveyWidget(QFrame):
             self.canvas.layer = None
             self.canvas.faded = False
             self.layer_label.setText("")
-            self.note_label.setText("No muon positions found yet." if self.canvas.host is not None else "")
+            self.note_label.setText(
+                "No muon positions found yet." if self.canvas.host is not None else ""
+            )
         self.note_label.setVisible(bool(self.note_label.text()))
         self.canvas.update()

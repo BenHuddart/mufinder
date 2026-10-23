@@ -149,7 +149,12 @@ def test_uep_config_stored_shape_and_round_trip() -> None:
                 "parameter_values": _params(),
                 "added_advanced": ["spin_polarized"],
             },
-            {"label": "uep_b", "supercell_matrix": None, "parameter_values": {}, "added_advanced": []},
+            {
+                "label": "uep_b",
+                "supercell_matrix": None,
+                "parameter_values": {},
+                "added_advanced": [],
+            },
         ],
     }
     expected = UepConfig(name_prefix="uep", rows=_uep_config().rows)
@@ -298,13 +303,22 @@ def test_muon_deserialize_skips_rows_without_site_or_position() -> None:
 
     # ``params`` is not read for muon rows, and an unreadable batch id is dropped.
     assert config == MuonRelaxationConfig(
-        rows=(MuonRelaxationRow(site_id=_SITE_ID, label="c", initial_fractional_position=(0.1, 0.2, 0.3)),)
+        rows=(
+            MuonRelaxationRow(
+                site_id=_SITE_ID, label="c", initial_fractional_position=(0.1, 0.2, 0.3)
+            ),
+        )
     )
 
 
 def test_convergence_deserialize_rejects_unreadable_sweeps() -> None:
     assert deserialize_convergence_config({"sweep_parameter": "smearing_width"}) is None
-    assert deserialize_convergence_config({"sweep_parameter": "kpoint_mp_grid", "sweep_values": [[1, 2]]}) is None
+    assert (
+        deserialize_convergence_config(
+            {"sweep_parameter": "kpoint_mp_grid", "sweep_values": [[1, 2]]}
+        )
+        is None
+    )
     assert deserialize_convergence_config({"sweep_values": [300.0], "shared_params": []}) is None
 
     # Schema 2 stores a sweep only in ``sweep_values``; the schema 1 key is
@@ -316,7 +330,10 @@ def test_convergence_deserialize_rejects_unreadable_sweeps() -> None:
     config = deserialize_convergence_config(
         {
             "sweep_values": [300.0],
-            "overrides": [{"cutoffs": ["x"], "params": {}}, {"sweep_values": [300.0], "params": {"task": "X"}}],
+            "overrides": [
+                {"cutoffs": ["x"], "params": {}},
+                {"sweep_values": [300.0], "params": {"task": "X"}},
+            ],
         }
     )
 
@@ -397,7 +414,9 @@ def test_workflow_row_configuration_restores_values_and_splits_extras() -> None:
 
 
 def test_workflow_row_configuration_exists_ignores_blank_extras() -> None:
-    definition = _definition_with_rows({"blank": {"pseudopotential_family": " "}, "farmed": {"num_farms": 2}})
+    definition = _definition_with_rows(
+        {"blank": {"pseudopotential_family": " "}, "farmed": {"num_farms": 2}}
+    )
 
     assert workflow_row_configuration_exists(definition, "blank") is False
     assert workflow_row_configuration_exists(definition, "farmed") is True
@@ -475,5 +494,3 @@ def test_store_workflow_row_configuration_adds_and_removes_rows() -> None:
 
     store_workflow_row_configuration(definition, "path", None)
     assert definition.parameters["configuration"] == {}
-
-

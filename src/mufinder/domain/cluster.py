@@ -115,7 +115,9 @@ class ClusterConfig:
             default_walltime=queue.default_walltime.strip() or self.default_walltime,
             cores_per_node=queue.cores_per_node if queue.cores_per_node else self.cores_per_node,
             default_memory_gb=(
-                queue.default_memory_gb if queue.default_memory_gb is not None else self.default_memory_gb
+                queue.default_memory_gb
+                if queue.default_memory_gb is not None
+                else self.default_memory_gb
             ),
             default_mem_per_cpu_gb=(
                 queue.default_mem_per_cpu_gb

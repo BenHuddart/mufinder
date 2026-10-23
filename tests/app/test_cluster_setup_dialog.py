@@ -64,7 +64,9 @@ def test_cluster_setup_dialog_adds_default_cluster(qapp) -> None:
     assert dialog._queue_system_combo.currentText() == "SLURM"
     assert dialog._keyword_mode_combo.currentText() == "Scheduler job (recommended)"
     assert dialog._keyword_mode_combo.currentData() == "scheduler"
-    assert [dialog._keyword_mode_combo.itemData(i) for i in range(dialog._keyword_mode_combo.count())] == [
+    assert [
+        dialog._keyword_mode_combo.itemData(i) for i in range(dialog._keyword_mode_combo.count())
+    ] == [
         "scheduler",
         "direct",
     ]
@@ -161,7 +163,9 @@ def test_cluster_setup_dialog_refuses_names_that_differ_only_in_case(
 ) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message)
+    )
 
     dialog._name_edit.setText("redwood")
     dialog._accept_and_save()
@@ -336,7 +340,9 @@ def test_cluster_setup_dialog_test_connection_uses_ssh_client(
 
     infos: list[str] = []
     monkeypatch.setattr(dialog_module, "SSHConnection", _FakeConnection)
-    monkeypatch.setattr(dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: SSHCredentials())
+    monkeypatch.setattr(
+        dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: SSHCredentials()
+    )
     monkeypatch.setattr(
         dialog_module.QMessageBox,
         "information",
@@ -414,8 +420,14 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
             super().connect(password=password)
 
     monkeypatch.setattr(dialog_module, "SSHConnection", _UnknownHostConnection)
-    monkeypatch.setattr(dialog_module, "prompt_to_trust_host_key", lambda *_args, **_kwargs: prompted.append("yes") or True)
-    monkeypatch.setattr(dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: SSHCredentials())
+    monkeypatch.setattr(
+        dialog_module,
+        "prompt_to_trust_host_key",
+        lambda *_args, **_kwargs: prompted.append("yes") or True,
+    )
+    monkeypatch.setattr(
+        dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: SSHCredentials()
+    )
     monkeypatch.setattr(
         dialog_module.QMessageBox,
         "information",
@@ -430,7 +442,10 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
     assert pump_until(lambda: bool(infos), timeout=5.0)
     assert prompted == ["yes"]
     assert infos == ["Connection successful"]
-    assert dialog._settings.value("trusted_host_keys/SCARF/alpha.example/algorithm", "", str) == "ssh-ed25519"
+    assert (
+        dialog._settings.value("trusted_host_keys/SCARF/alpha.example/algorithm", "", str)
+        == "ssh-ed25519"
+    )
     dialog.close()
 
 
@@ -679,7 +694,9 @@ def test_cluster_setup_dialog_saves_queues_with_overrides(qapp) -> None:
     _set_queue_cell(dialog, 1, dialog_module._QUEUE_MEMORY_COLUMN, "8")
     _set_queue_cell(dialog, 1, dialog_module._QUEUE_EXECUTABLE_COLUMN, "/opt/castep/castep.mpi")
     _set_queue_cell(dialog, 1, dialog_module._QUEUE_TEMPLATE_COLUMN, "/templates/daily.sh")
-    assert [dialog._default_queue_combo.itemText(i) for i in range(dialog._default_queue_combo.count())] == [
+    assert [
+        dialog._default_queue_combo.itemText(i) for i in range(dialog._default_queue_combo.count())
+    ] == [
         "hourly",
         "daily",
     ]
@@ -730,7 +747,11 @@ def test_cluster_setup_dialog_addqueue_queue_memory_is_per_core(qapp) -> None:
 
     saved = next(config for config in load_cluster_configs(settings) if config.name == "Redwood")
     (queue,) = saved.queues
-    assert (queue.name, queue.default_memory_gb, queue.default_mem_per_cpu_gb) == ("redwood", 15.0, None)
+    assert (queue.name, queue.default_memory_gb, queue.default_mem_per_cpu_gb) == (
+        "redwood",
+        15.0,
+        None,
+    )
     dialog.close()
 
 
@@ -741,8 +762,16 @@ def test_cluster_setup_dialog_addqueue_queue_memory_is_per_core(qapp) -> None:
         (dialog_module._QUEUE_NAME_COLUMN, "", "has no name"),
         (dialog_module._QUEUE_MAX_WALLTIME_COLUMN, "forever", "is not a walltime"),
         (dialog_module._QUEUE_WALLTIME_COLUMN, "2-00:00:00", "longer than the 1-00:00:00 maximum"),
-        (dialog_module._QUEUE_MAX_WALLTIME_COLUMN, "06:00:00", "uses the cluster's default walltime"),
-        (dialog_module._QUEUE_CORES_COLUMN, "many", "cores per node must be a positive whole number"),
+        (
+            dialog_module._QUEUE_MAX_WALLTIME_COLUMN,
+            "06:00:00",
+            "uses the cluster's default walltime",
+        ),
+        (
+            dialog_module._QUEUE_CORES_COLUMN,
+            "many",
+            "cores per node must be a positive whole number",
+        ),
         (dialog_module._QUEUE_MEMORY_COLUMN, "-1", "memory must be a positive number of GB"),
     ],
 )
@@ -756,7 +785,9 @@ def test_cluster_setup_dialog_refuses_invalid_queues(
     settings = _FakeSettings()
     dialog = ClusterSetupDialog(settings=settings)
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message)
+    )
     _fill_valid_cluster(dialog)
     dialog._add_queue()
     _set_queue_cell(dialog, 0, dialog_module._QUEUE_MAX_WALLTIME_COLUMN, "1-00:00:00")
@@ -769,10 +800,14 @@ def test_cluster_setup_dialog_refuses_invalid_queues(
     dialog.close()
 
 
-def test_cluster_setup_dialog_refuses_duplicate_queue_names(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cluster_setup_dialog_refuses_duplicate_queue_names(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message)
+    )
     _fill_valid_cluster(dialog)
     dialog._add_queue()
     dialog._add_queue()
@@ -804,7 +839,9 @@ def test_cluster_setup_dialog_stays_on_a_cluster_with_invalid_queues(
 ) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
     warnings: list[str] = []
-    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _p, title, _m: warnings.append(title))
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, title, _m: warnings.append(title)
+    )
     dialog._add_queue()
     _set_queue_cell(dialog, 0, dialog_module._QUEUE_CORES_COLUMN, "lots")
 
@@ -856,7 +893,9 @@ def test_cluster_setup_dialog_remove_cluster_is_confirmed(
 
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: True)
     dialog._remove_cluster()
-    assert [dialog._cluster_list.item(i).text() for i in range(dialog._cluster_list.count())] == ["Redwood"]
+    assert [dialog._cluster_list.item(i).text() for i in range(dialog._cluster_list.count())] == [
+        "Redwood"
+    ]
     assert dialog._name_edit.text() == "Redwood"
     dialog.close()
 
@@ -871,7 +910,11 @@ def test_cluster_setup_dialog_delete_keys_remove_the_selected_cluster_and_queue(
     from PySide6.QtGui import QKeySequence
 
     dialog = ClusterSetupDialog(settings=_FakeSettings())
-    sequence = QKeySequence(QKeySequence.StandardKey.Delete) if key == "delete" else QKeySequence(Qt.Key.Key_Backspace)
+    sequence = (
+        QKeySequence(QKeySequence.StandardKey.Delete)
+        if key == "delete"
+        else QKeySequence(Qt.Key.Key_Backspace)
+    )
 
     list_shortcut = next(s for s in dialog._cluster_list_shortcuts if s.key() == sequence)
     assert list_shortcut.context() == Qt.ShortcutContext.WidgetShortcut
@@ -883,7 +926,10 @@ def test_cluster_setup_dialog_delete_keys_remove_the_selected_cluster_and_queue(
     assert queue_shortcut.context() == Qt.ShortcutContext.WidgetShortcut
     queue_shortcut.activated.emit()
     assert dialog._queue_table.rowCount() == 0
-    assert [prompt["title"] for prompt in confirmed_destructive_actions] == ["Remove cluster", "Remove queue"]
+    assert [prompt["title"] for prompt in confirmed_destructive_actions] == [
+        "Remove cluster",
+        "Remove queue",
+    ]
     dialog.close()
 
 

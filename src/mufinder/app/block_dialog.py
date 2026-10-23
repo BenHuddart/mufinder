@@ -126,7 +126,9 @@ class BlockParameterDialog(QDialog):
     def _populate_from_initial(self) -> None:
         if self._schema.allow_unit:
             default_unit = self._schema.default_unit or self._spec.unit or ""
-            self._unit_edit.setText((self._initial_value.unit if self._initial_value else default_unit) or "")
+            self._unit_edit.setText(
+                (self._initial_value.unit if self._initial_value else default_unit) or ""
+            )
 
         if self._initial_value is not None:
             for row in self._initial_value.rows:
@@ -166,7 +168,9 @@ class BlockParameterDialog(QDialog):
     def _update_row_controls(self) -> None:
         fixed = self._schema.fixed_row_count is not None
         self._add_row_button.setEnabled(not fixed)
-        self._remove_row_button.setEnabled(not fixed and self._table.rowCount() > self._schema.min_rows)
+        self._remove_row_button.setEnabled(
+            not fixed and self._table.rowCount() > self._schema.min_rows
+        )
 
     def _accept_if_valid(self) -> None:
         try:
@@ -185,7 +189,9 @@ class BlockParameterDialog(QDialog):
                 f"{self._spec.name.upper()} requires exactly {self._schema.fixed_row_count} rows."
             )
         if row_count < self._schema.min_rows:
-            raise ValueError(f"{self._spec.name.upper()} requires at least {self._schema.min_rows} rows.")
+            raise ValueError(
+                f"{self._spec.name.upper()} requires at least {self._schema.min_rows} rows."
+            )
         if self._schema.row_group_size is not None and row_count % self._schema.row_group_size != 0:
             raise ValueError(
                 f"{self._spec.name.upper()} row count must be a multiple of {self._schema.row_group_size}."

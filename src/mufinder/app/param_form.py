@@ -92,7 +92,9 @@ class CastepParamForm(QWidget):
 
             info_button = QPushButton("Info")
             info_button.setMaximumWidth(48)
-            info_button.clicked.connect(lambda _checked=False, row_spec=spec: self._show_help(row_spec))
+            info_button.clicked.connect(
+                lambda _checked=False, row_spec=spec: self._show_help(row_spec)
+            )
             row_layout.addWidget(info_button)
 
             label = spec.label or spec.name.upper()
@@ -160,7 +162,11 @@ class CastepParamForm(QWidget):
     def validate(self) -> list[str]:
         """Validate field-level and simple cross-field constraints."""
 
-        return validate_gui_values(self.collect_values(), {name: row.spec for name, row in self._rows.items()}, task=self._task)
+        return validate_gui_values(
+            self.collect_values(),
+            {name: row.spec for name, row in self._rows.items()},
+            task=self._task,
+        )
 
     def set_advanced_visible(self, visible: bool) -> None:
         self._advanced_toggle.setChecked(visible)
@@ -169,9 +175,8 @@ class CastepParamForm(QWidget):
         return self._advanced_toggle.isChecked()
 
     def _row_participates(self, row: _FormRow) -> bool:
-        return (
-            keyword_visible_for_task(row.spec, task=self._task)
-            and (self._advanced_toggle.isChecked() or not row.advanced_only)
+        return keyword_visible_for_task(row.spec, task=self._task) and (
+            self._advanced_toggle.isChecked() or not row.advanced_only
         )
 
     def _on_task_changed(self) -> None:

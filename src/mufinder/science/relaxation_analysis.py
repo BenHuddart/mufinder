@@ -146,7 +146,9 @@ def _muon_image_nearest_marker(
 
     markers = [
         position
-        for species, position in zip(relaxed_structure.species, relaxed_structure.fractional_positions, strict=True)
+        for species, position in zip(
+            relaxed_structure.species, relaxed_structure.fractional_positions, strict=True
+        )
         if str(species).strip().casefold() == "h:mu"
     ]
     if not normalized.is_supercell or len(markers) != 1:
@@ -228,7 +230,9 @@ def normalize_site_energies(sites: Sequence[RelaxedMuonSite]) -> tuple[RelaxedMu
                 site_id=site.site_id,
                 folded_fractional_position=_wrap_fractional(site.folded_fractional_position),
                 cartesian_position_ang=tuple(float(value) for value in site.cartesian_position_ang),
-                total_energy_ev=None if site.total_energy_ev is None else float(site.total_energy_ev),
+                total_energy_ev=None
+                if site.total_energy_ev is None
+                else float(site.total_energy_ev),
                 relative_energy_ev=relative,
             )
         )
@@ -264,7 +268,11 @@ def symmetry_distance_matrix(
     for right_index in range(1, count):
         equivalents = equivalents_by_index[right_index]
         # Every earlier site against every equivalent of this one, in one broadcast.
-        screened = minimum_image_distance_matrix(positions[:right_index], equivalents, lattice) if equivalents else None
+        screened = (
+            minimum_image_distance_matrix(positions[:right_index], equivalents, lattice)
+            if equivalents
+            else None
+        )
         for left_index in range(right_index):
             left = positions[left_index]
             if screened is None:
@@ -316,7 +324,9 @@ def _cluster_summaries(
         representative_index = min(
             member_indexes,
             key=lambda idx: (
-                float("inf") if sites[idx].total_energy_ev is None else float(sites[idx].total_energy_ev),
+                float("inf")
+                if sites[idx].total_energy_ev is None
+                else float(sites[idx].total_energy_ev),
                 idx,
             ),
         )
@@ -404,11 +414,15 @@ def cluster_connected_components(
         for summary in summaries
         for raw_label in {int(labels[index]) for index in summary.member_indexes}
     }
-    normalized_labels = tuple(int(label_remap.get(int(label), int(label))) for label in labels.tolist())
+    normalized_labels = tuple(
+        int(label_remap.get(int(label), int(label))) for label in labels.tolist()
+    )
     return ConnectedComponentsResult(
         tolerance_ang=float(tolerance_ang),
         cluster_labels=normalized_labels,
-        distance_matrix_ang=tuple(tuple(float(value) for value in row) for row in distances.tolist()),
+        distance_matrix_ang=tuple(
+            tuple(float(value) for value in row) for row in distances.tolist()
+        ),
         adjacency_matrix=tuple(tuple(int(value) for value in row) for row in adjacency.tolist()),
         clusters=summaries,
     )
@@ -466,7 +480,9 @@ def anchored_sites(
         representative = min(
             indexes,
             key=lambda idx: (
-                float("inf") if ordered_sites[idx].total_energy_ev is None else float(ordered_sites[idx].total_energy_ev),
+                float("inf")
+                if ordered_sites[idx].total_energy_ev is None
+                else float(ordered_sites[idx].total_energy_ev),
                 idx,
             ),
         )
@@ -484,7 +500,9 @@ def anchored_sites(
             symprec=symprec,
         )
         original = site.folded_fractional_position
-        is_shifted = minimum_image_distance(original, shifted, host_structure.lattice_vectors) > float(tolerance)
+        is_shifted = minimum_image_distance(
+            original, shifted, host_structure.lattice_vectors
+        ) > float(tolerance)
         anchored.append(
             AnchoredRelaxedSite(
                 site_index=index,
@@ -606,7 +624,9 @@ def muon_fractional_position_from_cell(cell: object) -> tuple[float, float, floa
 def folded_muon_position_from_structure(structure: Structure) -> tuple[float, float, float] | None:
     """Return the last H:mu fractional coordinate in a relaxed structure."""
 
-    for species, position in reversed(list(zip(structure.species, structure.fractional_positions, strict=False))):
+    for species, position in reversed(
+        list(zip(structure.species, structure.fractional_positions, strict=False))
+    ):
         if str(species).strip().casefold() != "h:mu":
             continue
         if isinstance(position, Sequence) and len(position) == 3:
@@ -617,7 +637,11 @@ def folded_muon_position_from_structure(structure: Structure) -> tuple[float, fl
 def host_only_structure(structure: Structure) -> Structure:
     """Return a copy of a relaxed structure without the implanted muon atom."""
 
-    keep = [index for index, species in enumerate(structure.species) if str(species).strip().casefold() != "h:mu"]
+    keep = [
+        index
+        for index, species in enumerate(structure.species)
+        if str(species).strip().casefold() != "h:mu"
+    ]
     return Structure(
         id=structure.id,
         label=structure.label,
@@ -669,8 +693,12 @@ def analyze_displacements(
     for pair in matching.pairs:
         comparison_frac = normalized.experimental.fractional_positions[pair.experimental_index]
         relaxed_frac = normalized.dft.fractional_positions[pair.dft_index]
-        displacement_vector = np.asarray(nearest_image_cartesian_delta(relaxed_frac, comparison_frac, lattice), dtype=float)
-        muon_to_comparison = np.asarray(nearest_image_cartesian_delta(comparison_frac, muon, lattice), dtype=float)
+        displacement_vector = np.asarray(
+            nearest_image_cartesian_delta(relaxed_frac, comparison_frac, lattice), dtype=float
+        )
+        muon_to_comparison = np.asarray(
+            nearest_image_cartesian_delta(comparison_frac, muon, lattice), dtype=float
+        )
         distance = float(np.linalg.norm(muon_to_comparison))
         if distance <= 1e-12:
             radial = 0.0
@@ -686,7 +714,9 @@ def analyze_displacements(
                 radial_displacement_ang=radial,
             )
         )
-    points.sort(key=lambda point: (point.distance_from_muon_ang, point.species, point.comparison_index))
+    points.sort(
+        key=lambda point: (point.distance_from_muon_ang, point.species, point.comparison_index)
+    )
     warnings = list(normalized.warnings)
     warnings.extend(matching.warnings)
     return DisplacementAnalysisResult(

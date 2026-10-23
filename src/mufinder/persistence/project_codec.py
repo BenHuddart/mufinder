@@ -66,7 +66,9 @@ def project_from_dict(payload: dict[str, Any]) -> Project:
 
     raw_recommended_cutoff = payload.get("recommended_cutoff_energy")
     try:
-        recommended_cutoff = float(raw_recommended_cutoff) if raw_recommended_cutoff is not None else None
+        recommended_cutoff = (
+            float(raw_recommended_cutoff) if raw_recommended_cutoff is not None else None
+        )
     except (TypeError, ValueError):
         recommended_cutoff = None
 
@@ -118,7 +120,10 @@ def project_from_dict(payload: dict[str, Any]) -> Project:
 
     raw_recommended_kpoint_lattice = payload.get("recommended_kpoint_lattice")
     recommended_kpoint_lattice: list[list[float]] | None = None
-    if isinstance(raw_recommended_kpoint_lattice, list) and len(raw_recommended_kpoint_lattice) == 3:
+    if (
+        isinstance(raw_recommended_kpoint_lattice, list)
+        and len(raw_recommended_kpoint_lattice) == 3
+    ):
         parsed_lattice: list[list[float]] = []
         valid_lattice = True
         for row in raw_recommended_kpoint_lattice:
@@ -295,7 +300,9 @@ def jobs_in_creation_order(
     """
 
     jobs = [job_from_dict(payload) for payload in payloads]
-    legacy_ids = {job.id for job, payload in zip(jobs, payloads) if payload.get("created_at") is None}
+    legacy_ids = {
+        job.id for job, payload in zip(jobs, payloads) if payload.get("created_at") is None
+    }
     if legacy_ids:
         first_mentioned = _job_first_mentions(legacy_ids, provenance)
         for job in jobs:

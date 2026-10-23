@@ -26,7 +26,12 @@ from uuid import UUID
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job, Structure
-from mufinder.science.lattice import LatticeError, lattice_cart_to_frac, lattice_frac_to_cart, wrap_fractional
+from mufinder.science.lattice import (
+    LatticeError,
+    lattice_cart_to_frac,
+    lattice_frac_to_cart,
+    wrap_fractional,
+)
 from mufinder.services.job_results import latest_result_for_job, total_energy_for_job
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_RESULT_TYPE,
@@ -35,7 +40,11 @@ from mufinder.services.magnetic_field_results import (
     is_unrelaxed_site_source,
     magnetic_field_result,
 )
-from mufinder.services.project_document import ProjectDocument, active_host_structure, definitions_for_stage
+from mufinder.services.project_document import (
+    ProjectDocument,
+    active_host_structure,
+    definitions_for_stage,
+)
 from mufinder.services.project_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
     latest_run_for_job,
@@ -152,13 +161,19 @@ def _uep_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]
         if job is None or not isinstance(clusters, list):
             continue
         source_id = _uep_source_structure_id(document, job)
-        if source_id is not None and source_id != host.id and _derived_from(document, source_id) != host.id:
+        if (
+            source_id is not None
+            and source_id != host.id
+            and _derived_from(document, source_id) != host.id
+        ):
             continue
         markers = []
         for cluster in clusters:
             if not isinstance(cluster, Mapping):
                 continue
-            position = _host_fractional_from_cartesian(cluster.get("representative_position_ang"), host)
+            position = _host_fractional_from_cartesian(
+                cluster.get("representative_position_ang"), host
+            )
             if position is None:
                 continue
             members = _int(cluster.get("size")) or len(_list(cluster.get("member_indexes"))) or 1
@@ -174,12 +189,16 @@ def _uep_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]
                     weight=members,
                 )
             )
-        layers.append(SurveyLayer("uep", f"UEP minima · {job.label or 'source job'}", tuple(markers)))
+        layers.append(
+            SurveyLayer("uep", f"UEP minima · {job.label or 'source job'}", tuple(markers))
+        )
     return layers
 
 
 def _candidate_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
-    sites = [site for site in document.sites.values() if site.source_structure_id in (None, host.id)]
+    sites = [
+        site for site in document.sites.values() if site.source_structure_id in (None, host.id)
+    ]
     markers = tuple(
         SurveyMarker(
             _wrap(site.initial_fractional_position),
@@ -211,7 +230,9 @@ def _relaxation_layers(document: ProjectDocument, host: Structure) -> list[Surve
         total_energy_for_job=partial(total_energy_for_job, document),
     )
     completed_by_job = {source.job_id: source for source in completed}
-    energies = [source.total_energy_ev for source in completed if source.total_energy_ev is not None]
+    energies = [
+        source.total_energy_ev for source in completed if source.total_energy_ev is not None
+    ]
     lowest = min(energies) if energies else None
     by_charge_state: dict[str, list[SurveyMarker]] = {}
     for label, charge_state, site_id, job in rows:
@@ -225,11 +246,18 @@ def _relaxation_layers(document: ProjectDocument, host: Structure) -> list[Surve
             if energy is not None and lowest is not None:
                 detail += f" · {energy - lowest:+.3f} eV"
             markers.append(
-                SurveyMarker(_wrap(source.folded_fractional_position), SurveyMarkerKind.RELAXED, detail=detail, start=start)
+                SurveyMarker(
+                    _wrap(source.folded_fractional_position),
+                    SurveyMarkerKind.RELAXED,
+                    detail=detail,
+                    start=start,
+                )
             )
         elif start is not None:
             status = job.status.value if job is not None else "not submitted"
-            markers.append(SurveyMarker(start, SurveyMarkerKind.CANDIDATE, detail=f"{label} · {status}"))
+            markers.append(
+                SurveyMarker(start, SurveyMarkerKind.CANDIDATE, detail=f"{label} · {status}")
+            )
     layers = []
     for charge_state, markers in by_charge_state.items():
         relaxed = sum(marker.kind == SurveyMarkerKind.RELAXED for marker in markers)
@@ -264,7 +292,9 @@ def _analysis_layers(document: ProjectDocument, host: Structure) -> list[SurveyL
             detail = f"{tag} · {size} relaxation{'s' if size != 1 else ''}"
             if energy is not None:
                 detail += f" · {energy:+.3f} eV"
-            markers.append(SurveyMarker(_wrap(position), SurveyMarkerKind.SITE, tag, detail, weight=size))
+            markers.append(
+                SurveyMarker(_wrap(position), SurveyMarkerKind.SITE, tag, detail, weight=size)
+            )
         name = str(workspace.get("name", "")).strip() or "Analysis workspace"
         pinned = " (pinned)" if str(workspace.get("id", "")) in pinned_ids else ""
         layers.append(SurveyLayer("muon_analysis", f"{name}{pinned}", tuple(markers)))
@@ -278,7 +308,9 @@ def _quantum_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
         WorkflowStage.QUANTUM_CORRECTIONS,
         calc_type=QUANTUM_PHONON_SET_CALC_TYPE,
     ):
-        for site_key, job in _mapped_jobs(document, definition, "phonon_job_ids_by_label", "job_ids_by_label"):
+        for site_key, job in _mapped_jobs(
+            document, definition, "phonon_job_ids_by_label", "job_ids_by_label"
+        ):
             site = document.sites.get(_uuid(site_key)) if _uuid(site_key) else None
             result = latest_result_for_job(document, job.id)
             if site is None or result is None or not isinstance(result.data, Mapping):
@@ -295,7 +327,11 @@ def _quantum_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
                     f"{site.label or 'Site'} · zero-point energy {zpe:.3f} eV",
                 )
             )
-    return [SurveyLayer("quantum_corrections", f"{len(markers)} sites with zero-point energies", tuple(markers))]
+    return [
+        SurveyLayer(
+            "quantum_corrections", f"{len(markers)} sites with zero-point energies", tuple(markers)
+        )
+    ]
 
 
 def _barrier_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
@@ -303,18 +339,27 @@ def _barrier_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
         definition
         for definition in document.calculations.values()
         if definition.workflow_stage == WorkflowStage.ENERGY_BARRIERS
-        and definition.calc_type in {NUDGED_ELASTIC_BAND_SET_CALC_TYPE, TRANSITION_STATE_SEARCH_SET_CALC_TYPE}
+        and definition.calc_type
+        in {NUDGED_ELASTIC_BAND_SET_CALC_TYPE, TRANSITION_STATE_SEARCH_SET_CALC_TYPE}
     ]
     heights: dict[str, float] = {}
     for job_id, source in energy_barrier_neb_sources_by_job_id(document, definitions).items():
         result = latest_result_for_job(document, job_id)
-        height = _float(result.data.get("barrier_height_eV")) if result is not None and isinstance(result.data, Mapping) else None
+        height = (
+            _float(result.data.get("barrier_height_eV"))
+            if result is not None and isinstance(result.data, Mapping)
+            else None
+        )
         if height is not None:
             heights[str(source.get("key", ""))] = height
     paths = []
     markers: dict[Fractional, SurveyMarker] = {}
     for source in energy_barrier_generated_sources(document):
-        cell = document.structures.get(_uuid(source.get("reactant_structure_id"))) if _uuid(source.get("reactant_structure_id")) else None
+        cell = (
+            document.structures.get(_uuid(source.get("reactant_structure_id")))
+            if _uuid(source.get("reactant_structure_id"))
+            else None
+        )
         start = _host_fractional_from_cell(source.get("path_start_fractional"), cell, host)
         end = _host_fractional_from_cell(source.get("path_end_fractional"), cell, host)
         if start is None or end is None:
@@ -322,7 +367,9 @@ def _barrier_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
         height = heights.get(str(source.get("key", "")))
         paths.append(SurveyPath(start, end, f"{height:.2f} eV" if height is not None else ""))
         for point in (start, end):
-            markers.setdefault(point, SurveyMarker(point, SurveyMarkerKind.SITE, detail="Path endpoint"))
+            markers.setdefault(
+                point, SurveyMarker(point, SurveyMarkerKind.SITE, detail="Path endpoint")
+            )
     computed = sum(bool(path.label) for path in paths)
     title = f"{len(paths)} diffusion path{'s' if len(paths) != 1 else ''}, {computed} with barriers"
     return [SurveyLayer("energy_barriers", title, tuple(markers.values()), tuple(paths))]
@@ -331,7 +378,9 @@ def _barrier_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
 def _magnetic_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
     layers = []
     for workspace in magnetic_field_workspaces(document):
-        result = magnetic_field_result(document, str(workspace.get("id", "")).strip(), MAGNETIC_FIELD_RESULT_TYPE)
+        result = magnetic_field_result(
+            document, str(workspace.get("id", "")).strip(), MAGNETIC_FIELD_RESULT_TYPE
+        )
         if result is None or result.data.get("kind") != "commensurate":
             continue
         form = workspace.get("form")
@@ -376,13 +425,20 @@ def _pinned_sites_layer(document: ProjectDocument, host: Structure) -> SurveyLay
         return None
     markers = []
     for charge_state, snapshot in snapshots.items():
-        if not isinstance(snapshot, Mapping) or str(snapshot.get("host_structure_id", "")) != str(host.id):
+        if not isinstance(snapshot, Mapping) or str(snapshot.get("host_structure_id", "")) != str(
+            host.id
+        ):
             continue
         for site in _list(snapshot.get("sites")):
-            position = _triplet(site.get("fractional_position")) if isinstance(site, Mapping) else None
+            position = (
+                _triplet(site.get("fractional_position")) if isinstance(site, Mapping) else None
+            )
             if position is None:
                 continue
-            tag = str(site.get("wyckoff_label", "")).strip() or f"Site {_int(site.get('cluster_index')) or len(markers) + 1}"
+            tag = (
+                str(site.get("wyckoff_label", "")).strip()
+                or f"Site {_int(site.get('cluster_index')) or len(markers) + 1}"
+            )
             energy = _float(site.get("relative_energy_ev"))
             detail = f"{tag} · {muon_charge_state_label(str(charge_state))}"
             if energy is not None:
@@ -403,7 +459,8 @@ def _pinned_workspace_ids(document: ProjectDocument, host: Structure) -> set[str
     return {
         str(snapshot.get("workspace_id", ""))
         for snapshot in snapshots.values()
-        if isinstance(snapshot, Mapping) and str(snapshot.get("host_structure_id", "")) == str(host.id)
+        if isinstance(snapshot, Mapping)
+        and str(snapshot.get("host_structure_id", "")) == str(host.id)
     }
 
 
@@ -425,7 +482,9 @@ def _uep_source_structure_id(document: ProjectDocument, job: Job) -> UUID | None
         if definition.workflow_stage != WorkflowStage.UEP:
             continue
         mapping = definition.parameters.get("job_ids_by_label")
-        if isinstance(mapping, Mapping) and str(job.id) in {str(value) for value in mapping.values()}:
+        if isinstance(mapping, Mapping) and str(job.id) in {
+            str(value) for value in mapping.values()
+        }:
             return definition.input_structure_ids[0] if definition.input_structure_ids else None
     return None
 
@@ -461,7 +520,9 @@ def _host_fractional_from_cartesian(value: object, host: Structure) -> Fractiona
         return None
 
 
-def _host_fractional_from_cell(value: object, cell: Structure | None, host: Structure) -> Fractional | None:
+def _host_fractional_from_cell(
+    value: object, cell: Structure | None, host: Structure
+) -> Fractional | None:
     fractional = _triplet(value)
     if fractional is None:
         return None

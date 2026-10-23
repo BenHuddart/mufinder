@@ -456,8 +456,14 @@ class ClusterJobRunner(QObject):
         for job_id in job_ids:
             entry = self._tracked_jobs.get(job_id)
             progress = None
-            if ssh is not None and entry is not None and self._tracked_job_matches_connected_cluster(entry):
-                candidates = remote_castep_candidates(entry.remote_dir, entry.seed_name, entry.retrieval.farm_count)
+            if (
+                ssh is not None
+                and entry is not None
+                and self._tracked_job_matches_connected_cluster(entry)
+            ):
+                candidates = remote_castep_candidates(
+                    entry.remote_dir, entry.seed_name, entry.retrieval.farm_count
+                )
                 try:
                     progress = self._progress_reader.read_remote(job_id, ssh, candidates)
                 except Exception:  # noqa: BLE001 - a failed read keeps the last progress shown
@@ -720,7 +726,9 @@ class ClusterJobRunner(QObject):
                 info = history.get(entry.remote_job_id)
 
             if entry.watch_for_recovery:
-                observations_by_job_id[entry.job_id] = self._check_reappearance(entry, info, scheduler)
+                observations_by_job_id[entry.job_id] = self._check_reappearance(
+                    entry, info, scheduler
+                )
                 continue
 
             if info is not None and info.elapsed_runtime:
@@ -750,7 +758,9 @@ class ClusterJobRunner(QObject):
         )
 
     @staticmethod
-    def _scheduler_history(ssh, scheduler: Scheduler, job_ids: list[str]) -> dict[str, SchedulerJobInfo]:
+    def _scheduler_history(
+        ssh, scheduler: Scheduler, job_ids: list[str]
+    ) -> dict[str, SchedulerJobInfo]:
         """Return accounting records for ``job_ids``, or none if the lookup fails.
 
         The queue poll already succeeded, so a failed accounting lookup leaves
@@ -825,7 +835,9 @@ class ClusterJobRunner(QObject):
             if mapped == JobStatus.STOPPED:
                 self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
             else:
-                self._fail(entry, f"Scheduler reported the job as {scheduler.state_name(info.state)}.")
+                self._fail(
+                    entry, f"Scheduler reported the job as {scheduler.state_name(info.state)}."
+                )
         return observation
 
     def _check_reappearance(
@@ -888,14 +900,18 @@ class ClusterJobRunner(QObject):
             entry.missing_retrieval_attempts += 1
             attempts = entry.missing_retrieval_attempts
             if attempts < MISSING_ENTRY_RETRIEVAL_ATTEMPTS:
-                detail = f"waiting for output (attempt {attempts} of {MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
+                detail = (
+                    f"waiting for output (attempt {attempts} of {MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
+                )
                 return queue_observation(detail, missing_from_queue=True)
             if accounted:
                 self._fail(entry, failure.message)
             else:
                 self._fail(entry, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
                 entry.watch_for_recovery = True
-            detail = f"output could not be retrieved after {MISSING_ENTRY_RETRIEVAL_ATTEMPTS} checks"
+            detail = (
+                f"output could not be retrieved after {MISSING_ENTRY_RETRIEVAL_ATTEMPTS} checks"
+            )
             return queue_observation(detail, missing_from_queue=True)
         if failure is not None:
             self._fail(entry, failure.message)

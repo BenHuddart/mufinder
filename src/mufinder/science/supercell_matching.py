@@ -35,7 +35,9 @@ class NormalizedStructurePair:
 _IDENTITY_MATRIX = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 
 
-def _matrix_from_array(values: np.ndarray) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+def _matrix_from_array(
+    values: np.ndarray,
+) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
     return (
         (int(values[0, 0]), int(values[0, 1]), int(values[0, 2])),
         (int(values[1, 0]), int(values[1, 1]), int(values[1, 2])),

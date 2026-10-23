@@ -21,7 +21,11 @@ from mufinder.app.keyword_catalog_notice import (
     catalog_short_label,
     catalog_source_description,
 )
-from mufinder.castep_io.schema import CatalogSourceInfo, KeywordCatalogStatus, refresh_keyword_catalog
+from mufinder.castep_io.schema import (
+    CatalogSourceInfo,
+    KeywordCatalogStatus,
+    refresh_keyword_catalog,
+)
 from tests.support.keyword_catalogs import write_complete_catalog
 
 
@@ -58,14 +62,18 @@ class _Harness:
             return answers.pop(0)
 
         monkeypatch.setattr(KeywordCatalogGuard, "_show_choice", show_choice)
-        self.guard = KeywordCatalogGuard(parent=self.parent, settings=self.settings, open_setup=self._open_setup)
+        self.guard = KeywordCatalogGuard(
+            parent=self.parent, settings=self.settings, open_setup=self._open_setup
+        )
 
     def _open_setup(self) -> None:
         self.setup_opened += 1
         self.on_setup()
 
 
-def test_status_button_flags_the_limited_set_and_opens_setup(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_status_button_flags_the_limited_set_and_opens_setup(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     _use_catalog(monkeypatch, None)
     harness = _Harness(monkeypatch, [])
     button = harness.guard.status_button
@@ -94,7 +102,9 @@ def test_status_button_flags_a_skipped_catalog_even_when_another_loaded(
         schema_module,
         "_candidate_catalog_sources",
         lambda: (
-            CatalogSourceInfo(path=tmp_path / "gone.json", origin="env_json:MUFINDER_CASTEP_KEYWORDS_JSON"),
+            CatalogSourceInfo(
+                path=tmp_path / "gone.json", origin="env_json:MUFINDER_CASTEP_KEYWORDS_JSON"
+            ),
             CatalogSourceInfo(path=good, origin="setup"),
         ),
     )
@@ -106,7 +116,9 @@ def test_status_button_flags_a_skipped_catalog_even_when_another_loaded(
     assert "gone.json' no longer exists" in harness.guard.status_button.toolTip()
 
 
-def test_startup_prompt_is_silent_with_a_catalog(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_startup_prompt_is_silent_with_a_catalog(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _use_catalog(monkeypatch, write_complete_catalog(tmp_path / "castep_keywords.json"))
     harness = _Harness(monkeypatch, [])
 
@@ -163,7 +175,9 @@ def test_startup_prompt_says_why_a_configured_catalog_was_dropped(
     assert harness.setup_opened == 0
 
 
-def test_submission_is_not_questioned_with_a_catalog(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_submission_is_not_questioned_with_a_catalog(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _use_catalog(monkeypatch, write_complete_catalog(tmp_path / "castep_keywords.json"))
     harness = _Harness(monkeypatch, [])
 
@@ -171,7 +185,9 @@ def test_submission_is_not_questioned_with_a_catalog(qapp, monkeypatch: pytest.M
     assert harness.prompts == []
 
 
-def test_submission_warning_allows_submitting_anyway_once_per_session(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_submission_warning_allows_submitting_anyway_once_per_session(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _use_catalog(monkeypatch, None)
     harness = _Harness(monkeypatch, [(CHOICE_CONTINUE, False)])
 
@@ -184,7 +200,9 @@ def test_submission_warning_allows_submitting_anyway_once_per_session(qapp, monk
     assert "may be unable to read the results" in harness.prompts[0]["informative_text"]
 
 
-def test_submission_warning_cancel_blocks_and_asks_again(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_submission_warning_cancel_blocks_and_asks_again(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _use_catalog(monkeypatch, None)
     harness = _Harness(monkeypatch, [(CHOICE_CANCEL, False), (CHOICE_CANCEL, False)])
 
@@ -235,7 +253,9 @@ def test_show_choice_maps_buttons_to_choices(
         seen["buttons"] = [button.text().replace("&", "") for button in box.buttons()]
         if tick_skip:
             box.checkBox().setChecked(True)
-        next(button for button in box.buttons() if button.text().replace("&", "") == button_text).click()
+        next(
+            button for button in box.buttons() if button.text().replace("&", "") == button_text
+        ).click()
         return 0
 
     monkeypatch.setattr(QMessageBox, "exec", fake_exec)
@@ -257,7 +277,9 @@ def test_show_choice_maps_buttons_to_choices(
 
 
 def test_catalog_wording_for_each_origin() -> None:
-    def _status(origin: str, *, version: str = "26.11", issue: str | None = None) -> KeywordCatalogStatus:
+    def _status(
+        origin: str, *, version: str = "26.11", issue: str | None = None
+    ) -> KeywordCatalogStatus:
         return KeywordCatalogStatus(
             origin=origin,
             path=Path("/data/castep_keywords.json"),
@@ -277,22 +299,33 @@ def test_catalog_wording_for_each_origin() -> None:
     assert catalog_detail_text(setup) == catalog_source_description(setup)
 
     override = catalog_source_description(_status("env_json:CASTEP_KEYWORDS_JSON"))
-    assert "set by the CASTEP_KEYWORDS_JSON environment variable, which overrides CASTEP setup" in override
+    assert (
+        "set by the CASTEP_KEYWORDS_JSON environment variable, which overrides CASTEP setup"
+        in override
+    )
 
     discovered = _status("auto_discovery", version="")
     assert catalog_short_label(discovered) == "CASTEP keywords: loaded"
     assert "an unrecorded CASTEP version" in catalog_source_description(discovered)
     assert "found automatically in a CASTEP source tree" in catalog_source_description(discovered)
 
-    starter = _status("bundled_starter_catalog", version="", issue="The configured keyword catalog is gone.")
+    starter = _status(
+        "bundled_starter_catalog", version="", issue="The configured keyword catalog is gone."
+    )
     assert catalog_short_label(starter) == "CASTEP keywords: limited built-in set"
     detail = catalog_detail_text(starter)
-    assert detail.index("No keyword catalog is loaded") < detail.index("The configured keyword catalog is gone.")
+    assert detail.index("No keyword catalog is loaded") < detail.index(
+        "The configured keyword catalog is gone."
+    )
     assert detail.endswith("or to import an existing castep_keywords.json.")
 
 
 def test_guard_module_exports_choices() -> None:
-    assert {guard_module.CHOICE_SETUP, guard_module.CHOICE_CONTINUE, guard_module.CHOICE_CANCEL} == {
+    assert {
+        guard_module.CHOICE_SETUP,
+        guard_module.CHOICE_CONTINUE,
+        guard_module.CHOICE_CANCEL,
+    } == {
         "setup",
         "continue",
         "cancel",

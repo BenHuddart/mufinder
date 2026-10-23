@@ -65,13 +65,20 @@ def test_next_job_created_at_strictly_increases_when_the_clock_ties(monkeypatch)
     assert stamps == sorted(set(stamps))
 
 
-def test_add_job_stamps_increasing_creation_times_under_a_coarse_clock(tmp_path: Path, monkeypatch) -> None:
+def test_add_job_stamps_increasing_creation_times_under_a_coarse_clock(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(models, "utc_now", lambda: _FROZEN)
     service = ProjectService()
     document = service.create_project(tmp_path / "coarse.mufinder", "Coarse")
 
     created = [
-        service.add_job(document, label=f"job-{i}", workflow_stage=WorkflowStage.MUON_RELAXATION, calc_type="geom")
+        service.add_job(
+            document,
+            label=f"job-{i}",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="geom",
+        )
         for i in range(4)
     ]
 
@@ -87,7 +94,9 @@ def test_jobs_reload_in_creation_order_not_file_order(tmp_path: Path, monkeypatc
     root = tmp_path / "order.mufinder"
     document = service.create_project(root, "Order")
     for index, job_id in enumerate(_descending_ids(6)):
-        job = Job(id=job_id, label=f"job-{index}", created_at=next_job_created_at(document.jobs.values()))
+        job = Job(
+            id=job_id, label=f"job-{index}", created_at=next_job_created_at(document.jobs.values())
+        )
         document.jobs[job.id] = job
     created_order = [job.label for job in document.jobs.values()]
     service.save_project(document)
@@ -102,7 +111,9 @@ def test_resubmitting_or_resetting_a_job_does_not_move_it(tmp_path: Path) -> Non
     root = tmp_path / "stable.mufinder"
     document = service.create_project(root, "Stable")
     for index, job_id in enumerate(_descending_ids(3)):
-        job = Job(id=job_id, label=f"job-{index}", created_at=next_job_created_at(document.jobs.values()))
+        job = Job(
+            id=job_id, label=f"job-{index}", created_at=next_job_created_at(document.jobs.values())
+        )
         document.jobs[job.id] = job
     first = next(iter(document.jobs.values()))
     first.status = JobStatus.FAILED

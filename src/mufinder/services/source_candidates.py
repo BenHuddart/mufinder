@@ -217,7 +217,9 @@ def uuid_from_source(source: Mapping[str, object], key: str) -> UUID | None:
         return None
 
 
-def fractional_triplet_from_source(source: Mapping[str, object], key: str) -> tuple[float, float, float]:
+def fractional_triplet_from_source(
+    source: Mapping[str, object], key: str
+) -> tuple[float, float, float]:
     """Return ``source[key]`` as three floats; raise ``ValueError`` when malformed."""
 
     raw = source.get(key)
@@ -313,22 +315,37 @@ def site_charge_state_relaxation_jobs(document: ProjectDocument) -> dict[UUID, d
         WorkflowStage.MUON_RELAXATION,
         calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE,
     ):
-        for _label, _row_charge_state, site_id, job in muon_relaxation_row_jobs(document, definition):
+        for _label, _row_charge_state, site_id, job in muon_relaxation_row_jobs(
+            document, definition
+        ):
             charge_state = charge_state_for_job(job)
-            if site_id is None or job is None or charge_state is None or job.status != JobStatus.COMPLETED:
+            if (
+                site_id is None
+                or job is None
+                or charge_state is None
+                or job.status != JobStatus.COMPLETED
+            ):
                 continue
             jobs.setdefault(site_id, {}).setdefault(charge_state, job)
     return jobs
 
 
-def _relaxed_structure_for_run(document: ProjectDocument, run: CalculationRun | None) -> Structure | None:
-    result = document.results.get(run.result_id) if run is not None and run.result_id is not None else None
+def _relaxed_structure_for_run(
+    document: ProjectDocument, run: CalculationRun | None
+) -> Structure | None:
+    result = (
+        document.results.get(run.result_id)
+        if run is not None and run.result_id is not None
+        else None
+    )
     if result is None or not result.derived_structure_ids:
         return None
     return document.structures.get(result.derived_structure_ids[0])
 
 
-def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list[QuantumSourceCandidate]:
+def eligible_quantum_source_candidates(
+    document: ProjectDocument | None,
+) -> list[QuantumSourceCandidate]:
     """Return every relaxed muon site, per charge state, that can seed a quantum-corrections row.
 
     A site qualifies through the relaxation its own link records, and through
@@ -346,7 +363,11 @@ def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list
     row_jobs = site_charge_state_relaxation_jobs(document)
     candidates: list[QuantumSourceCandidate] = []
     for site in document.sites.values():
-        run = document.runs.get(site.relaxation_run_id) if site.relaxation_run_id is not None else None
+        run = (
+            document.runs.get(site.relaxation_run_id)
+            if site.relaxation_run_id is not None
+            else None
+        )
         job = document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
         relaxed_structure = _relaxed_structure_for_run(document, run)
         verdict = quantum_source_eligibility(
@@ -356,7 +377,12 @@ def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list
             relaxed_structure=relaxed_structure,
         )
         linked_charge_state = charge_state_for_job(job)
-        if verdict.eligible and run is not None and job is not None and relaxed_structure is not None:
+        if (
+            verdict.eligible
+            and run is not None
+            and job is not None
+            and relaxed_structure is not None
+        ):
             candidates.append(
                 QuantumSourceCandidate(
                     key=quantum_source_key(document, site, job),
@@ -467,7 +493,9 @@ def quantum_source_labels_by_key(candidates: Iterable[QuantumSourceCandidate]) -
     return labels_by_key
 
 
-def quantum_source_label(document: ProjectDocument | None, candidate: QuantumSourceCandidate) -> str:
+def quantum_source_label(
+    document: ProjectDocument | None, candidate: QuantumSourceCandidate
+) -> str:
     """Return ``candidate``'s unique display label among the eligible sources."""
 
     labels = quantum_source_labels_by_key(eligible_quantum_source_candidates(document))
@@ -486,7 +514,9 @@ def quantum_seed_name_for_key(
     when the source is no longer eligible.
     """
 
-    mapping = definition.parameters.get("job_seed_names_by_label", {}) if definition is not None else {}
+    mapping = (
+        definition.parameters.get("job_seed_names_by_label", {}) if definition is not None else {}
+    )
     raw_seed = mapping.get(key) if isinstance(mapping, dict) else None
     if isinstance(raw_seed, str) and raw_seed.strip():
         return raw_seed.strip()
@@ -553,7 +583,9 @@ def source_relaxation_parameter_values(
         except (CellParseError, OSError, ValueError):
             parsed_cell = None
         if parsed_cell is not None and parsed_cell.cell_file.kpoint_mp_grid is not None:
-            values["kpoint_mp_grid"] = tuple(int(component) for component in parsed_cell.cell_file.kpoint_mp_grid)
+            values["kpoint_mp_grid"] = tuple(
+                int(component) for component in parsed_cell.cell_file.kpoint_mp_grid
+            )
 
     param_path = output_dir / f"{seed_name}.param"
     assignments: dict[str, object] | None = None
@@ -654,7 +686,9 @@ def selected_energy_barrier_endpoint_keys(
     """
 
     if available_keys is None:
-        available_keys = [candidate.key for candidate in eligible_quantum_source_candidates(document)]
+        available_keys = [
+            candidate.key for candidate in eligible_quantum_source_candidates(document)
+        ]
     available = list(available_keys)
     state = energy_barrier_form_state(document)
     reactant_key = str(state.get("selected_reactant_key", "")).strip()
@@ -727,7 +761,9 @@ def energy_barrier_path_preview_structure(
 
     matrix = np.rint(target_lattice @ np.linalg.inv(pristine_lattice)).astype(int)
     if not np.allclose(matrix @ pristine_lattice, target_lattice, atol=1e-6):
-        raise ValueError("Could not construct a pristine supercell matching the relaxed endpoint cell.")
+        raise ValueError(
+            "Could not construct a pristine supercell matching the relaxed endpoint cell."
+        )
 
     expanded_structure, _spins = build_supercell_structure(host, matrix.tolist())
     return replace(
@@ -764,7 +800,10 @@ def enumerate_energy_barrier_source_candidates(
         return []
     if charge_state_for_job(reactant.job) != charge_state_for_job(product.job):
         return []
-    if reactant.structure.parent_structure_id != host.id or product.structure.parent_structure_id != host.id:
+    if (
+        reactant.structure.parent_structure_id != host.id
+        or product.structure.parent_structure_id != host.id
+    ):
         return []
     try:
         paths = enumerate_distinct_muon_paths(
@@ -804,7 +843,9 @@ def _stored_endpoint(
         run=run,
         job=job,
         structure=structure,
-        total_energy_eV=site.total_energy_eV if key == str(site.id) else total_energy_for_job(document, job.id),
+        total_energy_eV=site.total_energy_eV
+        if key == str(site.id)
+        else total_energy_for_job(document, job.id),
     )
 
 
@@ -836,15 +877,16 @@ def eligible_energy_barrier_source_candidates(
         if any(value is None for value in ids.values()):
             continue
         records = {
-            (side, field): stores[field].get(record_id)
-            for (side, field), record_id in ids.items()
+            (side, field): stores[field].get(record_id) for (side, field), record_id in ids.items()
         }
         if any(value is None for value in records.values()):
             continue
         try:
             path_index = int(raw_source.get("path_index", 1))
             path = MuonPath(
-                start_fractional=fractional_triplet_from_source(raw_source, "path_start_fractional"),
+                start_fractional=fractional_triplet_from_source(
+                    raw_source, "path_start_fractional"
+                ),
                 end_fractional=fractional_triplet_from_source(raw_source, "path_end_fractional"),
                 length_ang=float(raw_source.get("path_length_ang", 0.0)),
             )
@@ -872,7 +914,9 @@ def eligible_energy_barrier_source_candidates(
     return candidates
 
 
-def energy_barrier_neb_source_candidates(document: ProjectDocument | None) -> list[EnergyBarrierNebCandidate]:
+def energy_barrier_neb_source_candidates(
+    document: ProjectDocument | None,
+) -> list[EnergyBarrierNebCandidate]:
     """Return every keyed generated path as an NEB source, sorted by key."""
 
     if document is None:
@@ -892,7 +936,9 @@ def serialize_energy_barrier_neb_sources(
 ) -> list[dict[str, object]]:
     """Return copies of the generated-path sources ``keys`` name, in that order."""
 
-    candidates_by_key = {candidate.key: candidate for candidate in energy_barrier_neb_source_candidates(document)}
+    candidates_by_key = {
+        candidate.key: candidate for candidate in energy_barrier_neb_source_candidates(document)
+    }
     return [dict(candidates_by_key[key].source) for key in keys if key in candidates_by_key]
 
 
@@ -933,7 +979,11 @@ def completed_energy_barrier_neb_candidates(
     for result in document.results.values():
         if result.result_type != NUDGED_ELASTIC_BAND_CALC_TYPE:
             continue
-        run = document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
+        run = (
+            document.runs.get(result.calculation_run_id)
+            if result.calculation_run_id is not None
+            else None
+        )
         job = document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
         if run is None or job is None:
             continue
@@ -1015,7 +1065,9 @@ def completed_muon_relaxation_sources(
             continue
         fractional = None
         if isinstance(result.data, dict):
-            fractional = coerce_fractional_triplet(result.data.get("muon_final_fractional_position_host"))
+            fractional = coerce_fractional_triplet(
+                result.data.get("muon_final_fractional_position_host")
+            )
         if fractional is None:
             fractional = folded_muon_position_from_structure(structure)
         if fractional is None:

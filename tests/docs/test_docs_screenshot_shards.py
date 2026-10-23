@@ -114,7 +114,9 @@ def test_a_shard_is_written_k_of_n(text: str, expected: tuple[int, int]) -> None
     assert parse_shard(text) == expected
 
 
-@pytest.mark.parametrize(("text", "message"), [("0/4", "between"), ("5/4", "between"), ("2", "K/N"), ("a/b", "K/N")])
+@pytest.mark.parametrize(
+    ("text", "message"), [("0/4", "between"), ("5/4", "between"), ("2", "K/N"), ("a/b", "K/N")]
+)
 def test_a_malformed_or_out_of_range_shard_is_refused(text: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         parse_shard(text)

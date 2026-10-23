@@ -53,11 +53,7 @@ def check_farm_counts(
     in the calling dialog so the message points at the right spin box.
     """
 
-    farmed = {
-        str(label): int(count)
-        for label, count in farm_counts.items()
-        if int(count) > 1
-    }
+    farmed = {str(label): int(count) for label, count in farm_counts.items() if int(count) > 1}
     if not farmed:
         return FarmRankVerdict()
 

@@ -58,9 +58,13 @@ def _block(
     for row in lattice:
         lines.append(" " * 9 + "".join(_field(c) for c in row) + "  <-- h")
     for elem, pos in zip(species, positions):
-        lines.append(" " + elem.ljust(8) + " " + f"{1:4d}" + "".join(_field(c) for c in pos) + "  <-- R")
+        lines.append(
+            " " + elem.ljust(8) + " " + f"{1:4d}" + "".join(_field(c) for c in pos) + "  <-- R"
+        )
     for elem, frc in zip(species, forces):
-        lines.append(" " + elem.ljust(8) + " " + f"{1:4d}" + "".join(_field(c) for c in frc) + "  <-- F")
+        lines.append(
+            " " + elem.ljust(8) + " " + f"{1:4d}" + "".join(_field(c) for c in frc) + "  <-- F"
+        )
     lines.append("  ")  # separator (list-directed write of ' ')
     return lines
 
@@ -95,8 +99,12 @@ def build_neb_ts(
 
     lines: list[str] = [" TSTYPE TSConfirmation"]
     # REA / PRO written once.
-    lines += _block("REA", 1, 0.0, reactant.energy_ha, lattice, species, reactant.positions, zero_forces)
-    lines += _block("PRO", 1, 1.0, product.energy_ha, lattice, species, product.positions, zero_forces)
+    lines += _block(
+        "REA", 1, 0.0, reactant.energy_ha, lattice, species, reactant.positions, zero_forces
+    )
+    lines += _block(
+        "PRO", 1, 1.0, product.energy_ha, lattice, species, product.positions, zero_forces
+    )
 
     coords = [(i + 1) / (n_images + 1) for i in range(n_images)]  # interior beads
     for it in range(1, iterations + 1):
@@ -132,8 +140,10 @@ def _demo_endpoints() -> tuple[list[tuple[float, float, float]], Endpoint, Endpo
         (0.0, 0.5 * a, 0.5 * a),
     ]
     e_reac = -6.67206998e3  # Hartree, taken to match the real Cu .ts scale
-    reactant = Endpoint(e_reac, species, [*cu, (0.5 * a, 0.5 * a, 0.5 * a)])      # octahedral
-    product = Endpoint(e_reac + 1.0e-4, species, [*cu, (0.25 * a, 0.25 * a, 0.25 * a)])  # tetrahedral
+    reactant = Endpoint(e_reac, species, [*cu, (0.5 * a, 0.5 * a, 0.5 * a)])  # octahedral
+    product = Endpoint(
+        e_reac + 1.0e-4, species, [*cu, (0.25 * a, 0.25 * a, 0.25 * a)]
+    )  # tetrahedral
     return lattice, reactant, product
 
 
@@ -141,7 +151,9 @@ if __name__ == "__main__":
     import pathlib
 
     lattice, reactant, product = _demo_endpoints()
-    text = build_neb_ts(lattice=lattice, reactant=reactant, product=product, n_images=5, iterations=3)
+    text = build_neb_ts(
+        lattice=lattice, reactant=reactant, product=product, n_images=5, iterations=3
+    )
     out = pathlib.Path(__file__).with_name("neb_path.ts")
     out.write_text(text, encoding="utf-8")
     print(f"wrote {out} ({len(text.splitlines())} lines)")
