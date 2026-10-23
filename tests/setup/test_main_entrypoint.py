@@ -6,10 +6,22 @@ from types import ModuleType
 from types import SimpleNamespace
 import sys
 
+import pytest
+
 import mufinder.main as main_module
 
 
+@pytest.fixture(autouse=True)
+def _bare_command_line(monkeypatch):
+    """Run every entry-point test as a bare ``mufinder``, not with pytest's arguments."""
+
+    monkeypatch.setattr(sys, "argv", ["mufinder"])
+
+
 class _FakeApp:
+    # The command line after Qt has removed its own options; tests set it per run.
+    cli_arguments: list[str] = []
+
     def __init__(self, argv):
         self.argv = argv
         self.app_name = None
@@ -28,6 +40,9 @@ class _FakeApp:
 
     def processEvents(self):
         self.events_processed = True
+
+    def arguments(self):
+        return ["mufinder", *self.cli_arguments]
 
     def exec(self):
         return 77
@@ -101,6 +116,127 @@ def test_run_bootstraps_qt_and_returns_exit_code(monkeypatch):
     assert created["window"].shown is True
     assert created["app"].events_processed is True
     assert created["collected_by"] is created["app"]
+
+
+class _ProjectWindow(_FakeWindow):
+    """A window double that records the command-line project and page requests."""
+
+    def __init__(self, *, opens=True):
+        super().__init__()
+        self.opens = opens
+        self.calls = []
+
+    def open_project(self, path):
+        self.calls.append(("open", path, self.shown))
+        return self.opens
+
+    def show_page(self, route):
+        self.calls.append(("page", route))
+        return True
+
+
+def _run_with_arguments(monkeypatch, arguments, window):
+    """Run the entry point with ``arguments`` and return the deferred callbacks."""
+
+    monkeypatch.setattr(_FakeApp, "cli_arguments", list(arguments))
+    monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
+    monkeypatch.setattr(main_module, "_install_gui_garbage_collector", lambda _app: None)
+    monkeypatch.setattr(main_module, "_main_window_ctor", lambda: lambda: window)
+    monkeypatch.setattr(
+        main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
+    monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
+    monkeypatch.setattr(
+        main_module,
+        "_theme_helpers",
+        lambda: (
+            lambda *_args, **_kwargs: "light",
+            lambda _settings: "system",
+        ),
+    )
+    monkeypatch.setattr(main_module, "_splash_screen_ctor", lambda: _FakeSplash)
+    scheduled = []
+    monkeypatch.setattr(
+        main_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append(callback),
+    )
+    assert main_module.run() == 77
+    return scheduled
+
+
+def test_run_without_a_project_argument_opens_nothing(monkeypatch):
+    window = _ProjectWindow()
+
+    scheduled = _run_with_arguments(monkeypatch, [], window)
+
+    assert scheduled == []
+    assert window.calls == []
+
+
+def test_run_opens_the_project_argument_after_the_window_is_shown(monkeypatch, tmp_path):
+    window = _ProjectWindow()
+    project = tmp_path / "Example.mufinder"
+
+    scheduled = _run_with_arguments(monkeypatch, [str(project), "--page", "uep"], window)
+
+    # Nothing loads until the event loop runs the deferred open.
+    assert window.calls == []
+    assert len(scheduled) == 1
+    scheduled[0]()
+    assert window.calls == [("open", project, True), ("page", "uep")]
+
+
+def test_run_skips_the_page_when_the_project_fails_to_open(monkeypatch, tmp_path):
+    window = _ProjectWindow(opens=False)
+    project = tmp_path / "missing.mufinder"
+
+    scheduled = _run_with_arguments(monkeypatch, [str(project), "--page", "uep"], window)
+    scheduled[0]()
+
+    # The window reported the failure itself; the app keeps running on the welcome page.
+    assert window.calls == [("open", project, True)]
+
+
+def _refuse_qt_startup(*_args):
+    raise AssertionError("the command line must be checked before Qt starts")
+
+
+def test_page_without_a_project_is_a_usage_error_before_qt_starts(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["mufinder", "--page", "uep"])
+    monkeypatch.setattr(main_module, "QApplication", _refuse_qt_startup)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.run()
+
+    assert exit_info.value.code == 2
+    assert "--page needs a project" in capsys.readouterr().err
+
+
+def test_help_lists_the_project_argument_before_qt_starts(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["mufinder", "--help"])
+    monkeypatch.setattr(main_module, "QApplication", _refuse_qt_startup)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.run()
+
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "project" in help_text
+    assert "--page" in help_text
+
+
+def test_qt_options_are_left_for_qt_before_it_starts(monkeypatch, tmp_path):
+    window = _ProjectWindow()
+    project = tmp_path / "Example.mufinder"
+    # Qt removes ``-platform xcb`` before arguments() reaches the real parse.
+    monkeypatch.setattr(sys, "argv", ["mufinder", "-platform", "xcb", str(project)])
+
+    scheduled = _run_with_arguments(monkeypatch, [str(project)], window)
+    scheduled[0]()
+
+    assert window.calls == [("open", project, True)]
 
 
 def test_run_applies_saved_castep_environment(monkeypatch):

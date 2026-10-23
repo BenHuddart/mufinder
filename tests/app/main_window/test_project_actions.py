@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Qt
 from ase import Atoms
 from ase.io import write as ase_write
 
@@ -124,6 +125,122 @@ def test_main_window_recent_projects_tracks_latest_first(
     assert str(first.project_root) in menu_actions
     assert "Clear Recent Projects" in menu_actions
     window.close()
+
+
+def test_open_project_accepts_the_folder_or_its_manifest(main_window, tmp_path: Path) -> None:
+    created = ProjectService().create_project(tmp_path / "cli.mufinder", "FromCommandLine")
+
+    assert main_window.open_project(created.project_root)
+    assert main_window._document.project.name == "FromCommandLine"
+    assert main_window.open_project(created.project_root / "project.json")
+    assert main_window._document.project_root == created.project_root
+
+
+def test_open_project_records_a_relative_path_as_absolute(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = ProjectService().create_project(tmp_path / "relative.mufinder", "Relative")
+    monkeypatch.chdir(tmp_path)
+
+    assert main_window.open_project(Path("relative.mufinder"))
+
+    assert main_window._recent_projects()[0] == str(created.project_root.resolve())
+
+
+@pytest.mark.parametrize("make_target", ["missing", "empty_folder"])
+def test_open_project_reports_a_path_without_a_project(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_target: str
+) -> None:
+    target = tmp_path / "not_a_project"
+    if make_target == "empty_folder":
+        target.mkdir()
+    errors: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "critical",
+        lambda _parent, title, text: errors.append((title, text)),
+    )
+
+    assert not main_window.open_project(target)
+
+    assert errors == [("Invalid project", f"{target} does not contain project.json.")]
+    assert main_window._document is None
+
+
+def test_open_project_reports_an_unreadable_project(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "broken.mufinder"
+    target.mkdir()
+    (target / "project.json").write_text("{not json", encoding="utf-8")
+    errors: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "critical",
+        lambda _parent, title, _text: errors.append(title),
+    )
+
+    assert not main_window.open_project(target)
+
+    assert errors == ["Open failed"]
+    assert main_window._document is None
+
+
+def test_show_page_selects_a_workflow_page(project_with_host) -> None:
+    window, _service, _document = project_with_host
+
+    assert window.show_page("uep")
+
+    assert window._main_stack.currentWidget() is window._uep_view
+
+
+def test_show_page_warns_about_an_unknown_page(
+    project_with_host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _document = project_with_host
+    current = window._main_stack.currentWidget()
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, text: warnings.append(text),
+    )
+
+    assert not window.show_page("no_such_page")
+
+    assert warnings == ["MuFinder has no page named 'no_such_page' for the open project."]
+    assert window._main_stack.currentWidget() is current
+
+
+def test_show_page_needs_an_open_project(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _text: warnings.append(title),
+    )
+
+    assert not main_window.show_page("uep")
+
+    assert warnings == ["No project open"]
+
+
+def test_page_routes_match_the_project_navigator(project_with_host) -> None:
+    from PySide6.QtWidgets import QTreeWidgetItemIterator
+
+    from mufinder.main import PAGE_ROUTES
+
+    window, _service, _document = project_with_host
+    routes = set()
+    iterator = QTreeWidgetItemIterator(window._project_tree)
+    while iterator.value() is not None:
+        route = iterator.value().data(0, Qt.ItemDataRole.UserRole)
+        # Saved workspaces and comparison tables add routes of their own under a "/".
+        if isinstance(route, str) and "/" not in route:
+            routes.add(route)
+        iterator += 1
+
+    assert routes == set(PAGE_ROUTES)
 
 
 def test_open_recent_project_removes_missing_entry(

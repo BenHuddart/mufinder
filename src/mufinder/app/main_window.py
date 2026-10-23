@@ -1555,6 +1555,42 @@ class MainWindow(QMainWindow):
 
         self._open_project_from_path(Path(project_dir))
 
+    def open_project(self, project_path: Path) -> bool:
+        """Open the project at ``project_path``, reporting failures in a dialog.
+
+        ``project_path`` is a ``.mufinder`` project folder or the ``project.json``
+        inside it. This is the path File > Open Project takes, for callers outside
+        the window such as the command-line entry point.
+        """
+
+        # Resolved so a path relative to the shell's directory is recorded in
+        # Open Recent as a path that still works from anywhere.
+        project_root = Path(project_path).expanduser().resolve()
+        if project_root.name == "project.json" and project_root.is_file():
+            project_root = project_root.parent
+        return self._open_project_from_path(project_root)
+
+    def show_page(self, route: str) -> bool:
+        """Show the workflow page for ``route`` in the open project.
+
+        ``route`` is a project-tree route key such as ``host_structure`` or
+        ``uep``. An unknown route, or no open project, shows a warning and leaves
+        the current page in place.
+        """
+
+        if self._document is None:
+            QMessageBox.warning(self, "No project open", f"Open a project to show '{route}'.")
+            return False
+        if self._find_tree_item_by_route(route) is None:
+            QMessageBox.warning(
+                self,
+                "Unknown page",
+                f"MuFinder has no page named '{route}' for the open project.",
+            )
+            return False
+        self._set_active_route(route)
+        return True
+
     def _open_project_from_path(self, project_root: Path, *, show_errors: bool = True) -> bool:
         manifest = project_root / "project.json"
         if not manifest.exists():
@@ -1562,7 +1598,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(
                     self,
                     "Invalid project",
-                    "Selected folder does not contain project.json.",
+                    f"{project_root} does not contain project.json.",
                 )
             return False
 
