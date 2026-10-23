@@ -342,8 +342,8 @@ def test_keyword_is_supported_reflects_the_runtime_schema() -> None:
 
 
 def test_a_mapped_keyword_can_still_be_absent_from_a_thin_catalog() -> None:
-    """"MuFinder cannot name this line" and "this catalog does not carry that
-    keyword" are different failures, and only the second is recoverable by
+    """The failures "MuFinder cannot name this line" and "this catalog does not
+    carry that keyword" are different, and only the second is recoverable by
     pointing MuFinder at a CASTEP installation.
 
     The density-mixing keywords are the live example: the bundled starter
