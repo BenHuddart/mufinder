@@ -127,8 +127,14 @@ PAGE_ROUTES = (
 )
 
 
-def _parse_arguments(arguments: list[str]) -> argparse.Namespace:
-    """Parse the command line left over once Qt has taken its own options."""
+def _parse_arguments(arguments: list[str], *, before_qt: bool = False) -> argparse.Namespace:
+    """Parse the command line left over once Qt has taken its own options.
+
+    With ``before_qt`` the raw command line is checked before any GUI starts,
+    so ``--help`` and usage errors work without a display. Qt's own options
+    are still present then, so unknown options are tolerated and the parse
+    after ``QApplication`` strips them is the one that counts.
+    """
 
     parser = argparse.ArgumentParser(
         prog="mufinder",
@@ -146,7 +152,10 @@ def _parse_arguments(arguments: list[str]) -> argparse.Namespace:
         help="workflow page to show once the project is open, by route key: "
         + ", ".join(PAGE_ROUTES),
     )
-    options = parser.parse_args(arguments)
+    if before_qt:
+        options, _qt_options = parser.parse_known_args(arguments)
+    else:
+        options = parser.parse_args(arguments)
     if options.page is not None and options.project is None:
         parser.error("--page needs a project to open")
     return options
@@ -214,6 +223,7 @@ def run() -> int:
     """Start the Qt application."""
     minimum_splash_ms = 1600
 
+    _parse_arguments(sys.argv[1:], before_qt=True)
     _set_windows_app_id()
     _force_x11_platform_on_wayland()
     app = QApplication(sys.argv)

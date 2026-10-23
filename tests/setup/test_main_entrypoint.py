@@ -11,6 +11,13 @@ import pytest
 import mufinder.main as main_module
 
 
+@pytest.fixture(autouse=True)
+def _bare_command_line(monkeypatch):
+    """Run every entry-point test as a bare ``mufinder``, not with pytest's arguments."""
+
+    monkeypatch.setattr(sys, "argv", ["mufinder"])
+
+
 class _FakeApp:
     # The command line after Qt has removed its own options; tests set it per run.
     cli_arguments: list[str] = []
@@ -192,23 +199,24 @@ def test_run_skips_the_page_when_the_project_fails_to_open(monkeypatch, tmp_path
     assert window.calls == [("open", project, True)]
 
 
-def test_page_without_a_project_is_a_usage_error_before_the_splash(monkeypatch, capsys):
-    splashes = []
-    monkeypatch.setattr(_FakeApp, "cli_arguments", ["--page", "uep"])
-    monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
-    monkeypatch.setattr(main_module, "_splash_screen_ctor", lambda: lambda: splashes.append(1))
+def _refuse_qt_startup(*_args):
+    raise AssertionError("the command line must be checked before Qt starts")
+
+
+def test_page_without_a_project_is_a_usage_error_before_qt_starts(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["mufinder", "--page", "uep"])
+    monkeypatch.setattr(main_module, "QApplication", _refuse_qt_startup)
 
     with pytest.raises(SystemExit) as exit_info:
         main_module.run()
 
     assert exit_info.value.code == 2
     assert "--page needs a project" in capsys.readouterr().err
-    assert splashes == []
 
 
-def test_help_lists_the_project_argument_and_exits(monkeypatch, capsys):
-    monkeypatch.setattr(_FakeApp, "cli_arguments", ["--help"])
-    monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
+def test_help_lists_the_project_argument_before_qt_starts(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["mufinder", "--help"])
+    monkeypatch.setattr(main_module, "QApplication", _refuse_qt_startup)
 
     with pytest.raises(SystemExit) as exit_info:
         main_module.run()
@@ -217,6 +225,18 @@ def test_help_lists_the_project_argument_and_exits(monkeypatch, capsys):
     help_text = capsys.readouterr().out
     assert "project" in help_text
     assert "--page" in help_text
+
+
+def test_qt_options_are_left_for_qt_before_it_starts(monkeypatch, tmp_path):
+    window = _ProjectWindow()
+    project = tmp_path / "Example.mufinder"
+    # Qt removes ``-platform xcb`` before arguments() reaches the real parse.
+    monkeypatch.setattr(sys, "argv", ["mufinder", "-platform", "xcb", str(project)])
+
+    scheduled = _run_with_arguments(monkeypatch, [str(project)], window)
+    scheduled[0]()
+
+    assert window.calls == [("open", project, True)]
 
 
 def test_run_applies_saved_castep_environment(monkeypatch):
