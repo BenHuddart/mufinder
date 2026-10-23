@@ -67,8 +67,25 @@ hand-tuned and is not a review topic.
 
 The ``dev`` extra pins ruff to one minor version, because the formatter's style
 can change between minor releases and a different version would reformat files
-that CI accepts. Raising the pin is a change of its own, committed together with
-the ``make format`` output it produces.
+that CI accepts. CI installs the exact version in ``uv.lock``; the pin keeps a
+``pip`` install (``make install``) on the same minor version. Patch releases do
+not change the formatter's style, so ``uv lock --upgrade-package ruff`` within
+the pinned minor version can ride along with any change.
+
+Moving to a new minor version is a pull request of its own:
+
+1. Raise the range in the ``dev`` extra to the next minor version, for example
+   ``ruff>=0.18,<0.19``, and run ``uv lock --upgrade-package ruff``.
+2. Run ``make format``, then ``make lint``, and fix anything the new version's
+   lint rules report.
+3. Commit the version change, then the ``make format`` output alone in a
+   ``style:`` commit.
+4. If the formatter changed any file, add the ``style:`` commit's hash to
+   ``.git-blame-ignore-revs`` in a third commit, and merge the pull request with
+   a merge commit. If it changed nothing, squash as usual.
+
+Open the pull request when few others are open: every branch cut before it
+needs the update step at the end of this section.
 
 The formatter removes the indentation that every line of a docstring after the
 summary shares. An indented example keeps its indentation only when a line of
