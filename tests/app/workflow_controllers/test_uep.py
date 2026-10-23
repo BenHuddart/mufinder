@@ -81,9 +81,7 @@ def _uep_job(service: ProjectService, document: ProjectDocument, label: str) -> 
 def test_uep_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    controller = UepController(
-        make_context(document=document), _stub_uep_deps(), _FakeUepView()
-    )
+    controller = UepController(make_context(document=document), _stub_uep_deps(), _FakeUepView())
     handled = _uep_job(service, document, "uep_row1")
     other = service.add_job(
         document,
@@ -106,9 +104,7 @@ def test_uep_controller_uses_workflow_row_ready_predicate() -> None:
 
 def test_uep_controller_refresh_view_without_document_clears_rows() -> None:
     view = _FakeUepView()
-    controller = UepController(
-        make_context(document=None), _stub_uep_deps(), view
-    )
+    controller = UepController(make_context(document=None), _stub_uep_deps(), view)
     controller.refresh_view()
     assert view.runtime_states == [{}]
 
@@ -368,7 +364,9 @@ def test_uep_and_pristine_sync_rank_a_defined_job_against_a_failed_one(tmp_path:
     _uep_sync_definition(service, document, host, {"row_1": uep_failed})
     _uep_sync_definition(service, document, host, {"row_1": uep_defined})
     uep_target = _uep_sync_definition(service, document, host)
-    relax_failed, relax_defined = jobs(WorkflowStage.PRISTINE_RELAXATION, "castep_pristine_relaxation")
+    relax_failed, relax_defined = jobs(
+        WorkflowStage.PRISTINE_RELAXATION, "castep_pristine_relaxation"
+    )
     pristine_sync_definition(service, document, host, job_ids_by_label={"row_1": relax_failed})
     pristine_sync_definition(service, document, host, job_ids_by_label={"row_1": relax_defined})
     pristine_target = pristine_sync_definition(service, document, host)
@@ -378,7 +376,9 @@ def test_uep_and_pristine_sync_rank_a_defined_job_against_a_failed_one(tmp_path:
     )
     pristine = PristineRelaxationController(
         context,
-        stub_pristine_deps(deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config),
+        stub_pristine_deps(
+            deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config
+        ),
         FakeRelaxationView(),
     )
 

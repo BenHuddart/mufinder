@@ -52,7 +52,6 @@ def test_main_window_adds_and_deletes_comparison_subtab(main_window, tmp_path: P
     assert table.id not in doc.comparison_tables
 
 
-
 def test_widget_delete_request_removes_only_requested_table_without_extra_prompt(
     main_window, tmp_path: Path, monkeypatch
 ) -> None:
@@ -105,7 +104,9 @@ def test_widget_delete_request_removes_only_requested_table_without_extra_prompt
 
     def _unexpected_question(*args, **kwargs):
         calls.append((args, kwargs))
-        raise AssertionError("MainWindow should not ask for a second confirmation for widget-originated deletes")
+        raise AssertionError(
+            "MainWindow should not ask for a second confirmation for widget-originated deletes"
+        )
 
     monkeypatch.setattr("mufinder.app.main_window.QMessageBox.question", _unexpected_question)
 
@@ -114,4 +115,3 @@ def test_widget_delete_request_removes_only_requested_table_without_extra_prompt
     assert table_a.id not in doc.comparison_tables
     assert table_b.id in doc.comparison_tables
     assert calls == []
-

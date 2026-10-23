@@ -36,11 +36,11 @@ from math import pi, sqrt
 
 import numpy as np
 
-from mufinder.domain.constants import MUON_MASS_AMU
-from mufinder.science.quantum_phonons import (
+from mufinder.domain.constants import (
     ATOMIC_MASS_KG,
     ELEMENTARY_CHARGE_C,
     LIGHT_SPEED_M_S,
+    MUON_MASS_AMU,
 )
 
 #: Nitrogen mass written in the fixture header (AMU).
@@ -85,7 +85,10 @@ _OMEGA_UNIT_RAD_S = sqrt(ELEMENTARY_CHARGE_C / (1e-20 * ATOMIC_MASS_KG))
 
 def _chain_masses() -> np.ndarray:
     return np.array(
-        [FIXTURE_MUON_MASS_AMU if species == "H:mu" else NITROGEN_MASS_AMU for species in CHAIN_SPECIES]
+        [
+            FIXTURE_MUON_MASS_AMU if species == "H:mu" else NITROGEN_MASS_AMU
+            for species in CHAIN_SPECIES
+        ]
     )
 
 
@@ -100,7 +103,12 @@ def _block_hessian(muon_nitrogen: float, nitrogen_nitrogen: float, lattice: floa
     """Return one 5 x 5 Cartesian block of the force-constant matrix (eV/Å²)."""
 
     hessian = np.zeros((5, 5))
-    pairs = ((0, 1, nitrogen_nitrogen), (1, 2, muon_nitrogen), (2, 3, muon_nitrogen), (3, 4, nitrogen_nitrogen))
+    pairs = (
+        (0, 1, nitrogen_nitrogen),
+        (1, 2, muon_nitrogen),
+        (2, 3, muon_nitrogen),
+        (3, 4, nitrogen_nitrogen),
+    )
     for i, j, k in pairs:
         hessian[i, i] += k
         hessian[j, j] += k
@@ -121,7 +129,11 @@ def _block_modes(hessian: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     frequencies = angular / (2.0 * pi * LIGHT_SPEED_M_S * 100.0)
     for column in range(eigenvectors.shape[1]):
         vector = eigenvectors[:, column]
-        pivot = MUON_ATOM_INDEX - 1 if abs(vector[MUON_ATOM_INDEX - 1]) > 1e-9 else int(np.argmax(np.abs(vector)))
+        pivot = (
+            MUON_ATOM_INDEX - 1
+            if abs(vector[MUON_ATOM_INDEX - 1]) > 1e-9
+            else int(np.argmax(np.abs(vector)))
+        )
         if vector[pivot] < 0.0:
             eigenvectors[:, column] = -vector
     return frequencies, eigenvectors
@@ -136,10 +148,14 @@ def n2_mu_n2_modes(
     """
 
     along = _block_modes(
-        _block_hessian(constants.muon_nitrogen_stretch, constants.nitrogen_stretch, constants.nitrogen_lattice)
+        _block_hessian(
+            constants.muon_nitrogen_stretch, constants.nitrogen_stretch, constants.nitrogen_lattice
+        )
     )
     across = _block_modes(
-        _block_hessian(constants.muon_nitrogen_bend, constants.nitrogen_bend, constants.nitrogen_lattice)
+        _block_hessian(
+            constants.muon_nitrogen_bend, constants.nitrogen_bend, constants.nitrogen_lattice
+        )
     )
     frequencies: list[float] = []
     vectors: list[np.ndarray] = []
@@ -171,7 +187,9 @@ def n2_mu_n2_phonon_text(constants: ChainForceConstants = N2_MU_N2_FORCE_CONSTAN
         f"    0.000000    0.000000   {BOX_EDGE_ANG:10.6f}",
         " Fractional Co-ordinates",
     ]
-    for index, (species, x, mass) in enumerate(zip(CHAIN_SPECIES, _chain_x_positions(), masses), start=1):
+    for index, (species, x, mass) in enumerate(
+        zip(CHAIN_SPECIES, _chain_x_positions(), masses), start=1
+    ):
         lines.append(
             f"   {index:3d}     {x / BOX_EDGE_ANG:.6f}    0.500000    0.500000   {species:<6s} {mass:12.7f}"
         )
@@ -180,7 +198,9 @@ def n2_mu_n2_phonon_text(constants: ChainForceConstants = N2_MU_N2_FORCE_CONSTAN
     for mode, frequency in enumerate(frequencies, start=1):
         lines.append(f"     {mode:3d}  {frequency:14.6f}")
     lines.append("                        Phonon Eigenvectors")
-    lines.append("Mode Ion                X                                   Y                                   Z")
+    lines.append(
+        "Mode Ion                X                                   Y                                   Z"
+    )
     for mode, vector in enumerate(eigenvectors, start=1):
         for atom, (x, y, z) in enumerate(vector, start=1):
             lines.append(

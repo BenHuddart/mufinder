@@ -60,14 +60,20 @@ def _legacy_quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon
     directory.mkdir(parents=True, exist_ok=True)
     for name in QUANTUM_FILES:
         (directory / name).write_text("data\n", encoding="utf-8")
-    assert window._job_output_directory(singlepoint) == window._job_output_directory(phonon) == directory
+    assert (
+        window._job_output_directory(singlepoint)
+        == window._job_output_directory(phonon)
+        == directory
+    )
     return window, doc, definition, candidate, singlepoint, phonon, directory
 
 
 def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     warnings: list[str] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text)
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
     )
     return warnings
 

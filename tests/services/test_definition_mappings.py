@@ -50,7 +50,9 @@ def _serialize(config: _Config) -> dict[str, object]:
 def _deserialize(payload: object) -> _Config | None:
     if not isinstance(payload, dict) or not isinstance(payload.get("rows"), list):
         return None
-    return _Config(rows=tuple(_Row(str(row["label"]), str(row["signature"])) for row in payload["rows"]))
+    return _Config(
+        rows=tuple(_Row(str(row["label"]), str(row["signature"])) for row in payload["rows"])
+    )
 
 
 def _row_signatures(config: _Config) -> dict[str, object]:
@@ -142,7 +144,9 @@ def test_priorities_rank_unknown_jobs_lowest(document: ProjectDocument) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_workflow_context_needs_stage_calc_type_structures_and_output(document: ProjectDocument) -> None:
+def test_workflow_context_needs_stage_calc_type_structures_and_output(
+    document: ProjectDocument,
+) -> None:
     target = _definition(document)
     same = _definition(document)
     elsewhere = _definition(document, output_directory="files/other")
@@ -182,7 +186,11 @@ def test_sync_copies_a_binding_for_an_unchanged_row(document: ProjectDocument) -
 
 
 def test_sync_skips_a_row_whose_signature_changed(document: ProjectDocument) -> None:
-    _definition(document, (_Row("a", "old"),), job_ids_by_label={"a": _job_id(document, JobStatus.COMPLETED)})
+    _definition(
+        document,
+        (_Row("a", "old"),),
+        job_ids_by_label={"a": _job_id(document, JobStatus.COMPLETED)},
+    )
     target = _definition(document, (_Row("a", "new"),))
 
     _sync(document, target)
@@ -216,7 +224,9 @@ def test_sync_carries_a_key_neither_configuration_lists(document: ProjectDocumen
 
 def test_sync_keeps_a_target_binding_that_ranks_as_high(document: ProjectDocument) -> None:
     own = _job_id(document, JobStatus.COMPLETED)
-    _definition(document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.COMPLETED)})
+    _definition(
+        document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.COMPLETED)}
+    )
     target = _definition(document, (_Row("a"),), job_ids_by_label={"a": own})
 
     _sync(document, target)
@@ -227,14 +237,18 @@ def test_sync_keeps_a_target_binding_that_ranks_as_high(document: ProjectDocumen
 def test_sync_replaces_a_lower_ranked_target_binding(document: ProjectDocument) -> None:
     running = _job_id(document, JobStatus.RUNNING)
     _definition(document, (_Row("a"),), job_ids_by_label={"a": running})
-    target = _definition(document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.FAILED)})
+    target = _definition(
+        document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.FAILED)}
+    )
 
     _sync(document, target)
 
     assert target.parameters["job_ids_by_label"] == {"a": running}
 
 
-def test_sync_priority_decides_between_a_defined_and_a_failed_job(document: ProjectDocument) -> None:
+def test_sync_priority_decides_between_a_defined_and_a_failed_job(
+    document: ProjectDocument,
+) -> None:
     """The relaxation order prefers a re-staged (defined) job; the convergence order a failed one."""
 
     defined = _job_id(document, JobStatus.DEFINED)
@@ -270,7 +284,9 @@ def test_sync_replaces_a_broken_target_mapping_when_it_copies(document: ProjectD
 
 
 def test_sync_does_nothing_for_an_unreadable_target(document: ProjectDocument) -> None:
-    _definition(document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.COMPLETED)})
+    _definition(
+        document, (_Row("a"),), job_ids_by_label={"a": _job_id(document, JobStatus.COMPLETED)}
+    )
     target = _definition(document, (_Row("a"),))
     target.parameters["configuration"] = "broken"
 
@@ -321,7 +337,9 @@ def test_sync_respells_parsed_keys_and_needs_both_configurations_to_list_them(
 # --------------------------------------------------------------------------- #
 
 
-def _muon_like_sync(document: ProjectDocument, target: CalculationDefinition, **options: object) -> None:
+def _muon_like_sync(
+    document: ProjectDocument, target: CalculationDefinition, **options: object
+) -> None:
     _sync(
         document,
         target,
@@ -382,7 +400,9 @@ def test_sync_creates_the_seed_mapping_but_ignores_a_blank_seed(document: Projec
 def test_sync_drops_candidates_the_job_filter_rejects(document: ProjectDocument) -> None:
     rejected = _job_id(document, JobStatus.COMPLETED)
     accepted = _job_id(document, JobStatus.FAILED)
-    _definition(document, (_Row("a"), _Row("b")), job_ids_by_label={"q:a": rejected, "q:b": accepted})
+    _definition(
+        document, (_Row("a"), _Row("b")), job_ids_by_label={"q:a": rejected, "q:b": accepted}
+    )
     target = _definition(document, (_Row("a"), _Row("b")))
     seen: list[tuple[str, str]] = []
 
@@ -401,7 +421,9 @@ def test_sync_drops_candidates_the_job_filter_rejects(document: ProjectDocument)
 # --------------------------------------------------------------------------- #
 
 
-def _remove(document: ProjectDocument, definition: CalculationDefinition, labels: set[str], **options):
+def _remove(
+    document: ProjectDocument, definition: CalculationDefinition, labels: set[str], **options
+):
     options.setdefault("active_key", "active_id")
     return remove_labels_from_definition(
         document,
@@ -414,7 +436,9 @@ def _remove(document: ProjectDocument, definition: CalculationDefinition, labels
 
 
 def test_remove_labels_drops_rows_and_bindings(document: ProjectDocument) -> None:
-    definition = _definition(document, (_Row("a"), _Row("b")), job_ids_by_label={"a": "1", "b": "2"})
+    definition = _definition(
+        document, (_Row("a"), _Row("b")), job_ids_by_label={"a": "1", "b": "2"}
+    )
 
     assert _remove(document, definition, {"a"}) is False
 
@@ -423,7 +447,9 @@ def test_remove_labels_drops_rows_and_bindings(document: ProjectDocument) -> Non
     assert definition.id in document.calculations
 
 
-def test_remove_labels_deletes_an_emptied_definition_and_its_active_key(document: ProjectDocument) -> None:
+def test_remove_labels_deletes_an_emptied_definition_and_its_active_key(
+    document: ProjectDocument,
+) -> None:
     definition = _definition(document, (_Row("a"),))
     document.ui_state["active_id"] = str(definition.id)
 
@@ -454,7 +480,9 @@ def test_remove_labels_uses_custom_matchers_across_mappings(document: ProjectDoc
     assert definition.parameters["job_seed_names_by_label"] == {}
 
 
-def test_remove_definition_if_no_rows_keeps_definitions_it_cannot_read(document: ProjectDocument) -> None:
+def test_remove_definition_if_no_rows_keeps_definitions_it_cannot_read(
+    document: ProjectDocument,
+) -> None:
     unreadable = _definition(document)
     unreadable.parameters["configuration"] = {"rows": "broken"}
     other_active = _definition(document)
@@ -470,9 +498,13 @@ def test_remove_definition_if_no_rows_keeps_definitions_it_cannot_read(document:
 # --------------------------------------------------------------------------- #
 
 
-def test_remove_grid_keys_keeps_the_definition_and_unreadable_values(document: ProjectDocument) -> None:
+def test_remove_grid_keys_keeps_the_definition_and_unreadable_values(
+    document: ProjectDocument,
+) -> None:
     definition = _definition(document, job_ids_by_grid={"2x2x2": "1", "3x3x3": "2"})
-    definition.parameters["configuration"] = {"sweep_values": [[2, 2, 2], [3, 3, 3], "bad", [1, "x", 1]]}
+    definition.parameters["configuration"] = {
+        "sweep_values": [[2, 2, 2], [3, 3, 3], "bad", [1, "x", 1]]
+    }
 
     remove_grid_keys_from_definition(
         definition,
@@ -522,7 +554,9 @@ def test_remove_source_keys_drops_sources_settings_and_bindings(document: Projec
     assert definition.id not in document.calculations
 
 
-def test_remove_generated_sources_drops_paths_from_the_form_state(document: ProjectDocument) -> None:
+def test_remove_generated_sources_drops_paths_from_the_form_state(
+    document: ProjectDocument,
+) -> None:
     document.ui_state["energy_barriers_form"] = {
         "selected_reactant_key": "a",
         "generated_sources": [{"key": "p1"}, {"key": " p2 "}, "unreadable"],

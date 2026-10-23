@@ -14,7 +14,11 @@ from pathlib import Path
 import pytest
 
 from mufinder.services import job_artifacts as job_artifacts_module
-from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags, collect_job_artifacts
+from mufinder.services.job_artifacts import (
+    ParsedJobArtifacts,
+    RetrievalFlags,
+    collect_job_artifacts,
+)
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
@@ -192,9 +196,7 @@ def test_collect_phonon_downstream_compute_failure_captured_as_error(
 
 
 def test_collect_ts_success_carries_path(tmp_path: Path) -> None:
-    (tmp_path / "seed.ts").write_text(
-        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    (tmp_path / "seed.ts").write_text(_TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True)
 
@@ -231,9 +233,7 @@ def test_collect_ts_ignores_stale_unfarmed_file_when_task_farming(tmp_path: Path
     # Only a leftover unfarmed .ts from an earlier run is present. CASTEP appends
     # to an existing .ts, so reading it could splice two runs' bands together and
     # report a barrier that was never computed -- report missing instead.
-    (tmp_path / "seed.ts").write_text(
-        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    (tmp_path / "seed.ts").write_text(_TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True, num_farms=2)
 
@@ -244,9 +244,7 @@ def test_collect_ts_ignores_stale_unfarmed_file_when_task_farming(tmp_path: Path
 
 def test_collect_ts_uses_unfarmed_file_for_single_farm(tmp_path: Path) -> None:
     # num_farms=1 is "farming off": CASTEP does not rename anything.
-    (tmp_path / "seed.ts").write_text(
-        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    (tmp_path / "seed.ts").write_text(_TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
     artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True, num_farms=1)
 

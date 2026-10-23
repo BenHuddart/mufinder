@@ -30,7 +30,10 @@ def test_progress_cell_is_iteration_and_criteria_met() -> None:
 
     assert progress_cell_text(running) == "6 · 3/4"
     assert progress_cell_text(progress) == "7 · 4/4"
-    assert progress_cell_text(GeometryProgress(method="BFGS", max_iterations=30, iterations=())) == "starting"
+    assert (
+        progress_cell_text(GeometryProgress(method="BFGS", max_iterations=30, iterations=()))
+        == "starting"
+    )
     assert progress_cell_text(None) == ""
 
 
@@ -64,10 +67,20 @@ def test_progress_dialog_tabulates_the_latest_step_and_plots_each_criterion(qapp
         dialog.set_progress(progress)
 
         assert dialog.windowTitle() == "Geometry Progress - Si_site_1"
-        assert [dialog._table.item(row, 0).text() for row in range(4)] == ["dE/ion", "|F|max", "|dR|max", "Smax"]
+        assert [dialog._table.item(row, 0).text() for row in range(4)] == [
+            "dE/ion",
+            "|F|max",
+            "|dR|max",
+            "Smax",
+        ]
         assert dialog._table.item(1, 3).text() == "Yes"
         axes = dialog._figure.axes
-        assert [axis.get_title() for axis in axes] == ["dE/ion (eV)", "|F|max (eV/A)", "|dR|max (A)", "Smax (GPa)"]
+        assert [axis.get_title() for axis in axes] == [
+            "dE/ion (eV)",
+            "|F|max (eV/A)",
+            "|dR|max (A)",
+            "Smax (GPa)",
+        ]
         value_line, tolerance_line = axes[1].lines
         assert list(value_line.get_xdata()) == list(range(8))
         assert set(tolerance_line.get_ydata()) == {0.02}
@@ -105,12 +118,16 @@ def _row_cell(window, job, column):
     for row in range(window._jobs_table.rowCount()):
         item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
         if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job.id):
-            return window._jobs_table.item(row, column), window._jobs_table.cellWidget(row, window._JOB_INSPECT_COLUMN)
+            return window._jobs_table.item(row, column), window._jobs_table.cellWidget(
+                row, window._JOB_INSPECT_COLUMN
+            )
     raise AssertionError("job row missing")
 
 
 def test_dashboard_shows_progress_of_a_running_relaxation(main_window, tmp_path: Path) -> None:
-    window, job = _running_window(main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION)
+    window, job = _running_window(
+        main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION
+    )
     try:
         item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
 
@@ -133,21 +150,30 @@ def test_dashboard_shows_progress_of_a_running_relaxation(main_window, tmp_path:
 
 def test_dashboard_progress_follows_a_cluster_answer(main_window, tmp_path: Path) -> None:
     window, job = _running_window(
-        main_window, tmp_path, stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION, target="scarf"
+        main_window,
+        tmp_path,
+        stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
+        target="scarf",
     )
     try:
         item, _inspect = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
         assert item.text() == ""
 
-        window._job_progress.accept_remote_progress({job.id: parse_geometry_progress(LBFGS_CONTINUED)})
+        window._job_progress.accept_remote_progress(
+            {job.id: parse_geometry_progress(LBFGS_CONTINUED)}
+        )
 
         assert item.text() == "3 · 3/3"
     finally:
         window._document = None
 
 
-def test_inspect_opens_one_progress_dialog_per_running_relaxation(main_window, tmp_path: Path) -> None:
-    window, job = _running_window(main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION)
+def test_inspect_opens_one_progress_dialog_per_running_relaxation(
+    main_window, tmp_path: Path
+) -> None:
+    window, job = _running_window(
+        main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION
+    )
     try:
         _item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
 
@@ -174,7 +200,9 @@ def test_inspect_opens_one_progress_dialog_per_running_relaxation(main_window, t
 def test_inspect_stays_disabled_for_a_running_job_without_geometry_progress(
     main_window, tmp_path: Path
 ) -> None:
-    window, job = _running_window(main_window, tmp_path, stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF)
+    window, job = _running_window(
+        main_window, tmp_path, stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF
+    )
     try:
         item, inspect_button = _row_cell(window, job, window._JOB_PROGRESS_COLUMN)
 
@@ -188,7 +216,9 @@ def test_inspect_stays_disabled_for_a_running_job_without_geometry_progress(
 def test_inspect_on_a_mixed_selection_routes_failed_jobs_to_diagnostics(
     main_window, tmp_path: Path, monkeypatch
 ) -> None:
-    window, running = _running_window(main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION)
+    window, running = _running_window(
+        main_window, tmp_path, stage=main_window_module.WorkflowStage.MUON_RELAXATION
+    )
     failed = ProjectService().add_job(
         window._document,
         label="failed",

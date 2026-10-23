@@ -70,14 +70,20 @@ def test_the_pages_reference_exactly_the_screenshots_the_registry_renders() -> N
     rendered = set(_listed())
 
     assert referenced, "no page references a generated screenshot"
-    assert referenced <= rendered, f"the pages reference screenshots the registry does not render: {sorted(referenced - rendered)}"
-    assert rendered <= referenced, f"the registry renders screenshots no page uses: {sorted(rendered - referenced)}"
+    assert referenced <= rendered, (
+        f"the pages reference screenshots the registry does not render: {sorted(referenced - rendered)}"
+    )
+    assert rendered <= referenced, (
+        f"the registry renders screenshots no page uses: {sorted(rendered - referenced)}"
+    )
 
 
 def test_every_example_module_is_registered() -> None:
     per_example = [name for example in _examples() for name in _listed("--example", example)]
 
-    assert sorted(per_example) == sorted(_listed()), "an example module is missing from the registry"
+    assert sorted(per_example) == sorted(_listed()), (
+        "an example module is missing from the registry"
+    )
 
 
 def test_the_recorded_durations_cover_exactly_the_registry() -> None:
@@ -94,9 +100,15 @@ def _ci_screenshot_shards() -> int:
 
     job = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]["docs-screenshots"]
     shards = job["strategy"]["matrix"]["shard"]
-    assert shards == list(range(1, len(shards) + 1)), "the docs-screenshots matrix must number its shards 1..N"
-    render = next(step["run"] for step in job["steps"] if "screenshots-shard" in step.get("run", ""))
-    assert f"SHARDS={len(shards)}" in render, "the render step's SHARDS differs from the matrix size"
+    assert shards == list(range(1, len(shards) + 1)), (
+        "the docs-screenshots matrix must number its shards 1..N"
+    )
+    render = next(
+        step["run"] for step in job["steps"] if "screenshots-shard" in step.get("run", "")
+    )
+    assert f"SHARDS={len(shards)}" in render, (
+        "the render step's SHARDS differs from the matrix size"
+    )
     return len(shards)
 
 
@@ -138,6 +150,10 @@ def test_the_renderer_renders_every_scene_of_an_example(example: str, tmp_path: 
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(f"{name}{IMAGE_SUFFIX}" for name in names)
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
+        f"{name}{IMAGE_SUFFIX}" for name in names
+    )
     for name in names:
-        assert (tmp_path / f"{name}{IMAGE_SUFFIX}").stat().st_size > 10_000, f"{name}{IMAGE_SUFFIX} is suspiciously small"
+        assert (tmp_path / f"{name}{IMAGE_SUFFIX}").stat().st_size > 10_000, (
+            f"{name}{IMAGE_SUFFIX} is suspiciously small"
+        )

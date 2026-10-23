@@ -17,7 +17,9 @@ RENDERER = SCRIPTS / "render_docs_screenshots.py"
 SUBPROCESS_TIMEOUT_S = 60
 
 
-def _run_scene(body: str, *, seconds: float, cleanup: str = "None") -> subprocess.CompletedProcess[str]:
+def _run_scene(
+    body: str, *, seconds: float, cleanup: str = "None"
+) -> subprocess.CompletedProcess[str]:
     program = "\n".join(
         [
             "import pathlib, sys, time",
@@ -42,7 +44,10 @@ def test_a_scene_past_its_limit_is_named_and_every_stack_is_dumped() -> None:
     completed = _run_scene("time.sleep(30)", seconds=0.5)
 
     assert completed.returncode == 3
-    assert "Scene 'slow_scene' did not finish within 0.5 s; the stack of every thread follows." in completed.stderr
+    assert (
+        "Scene 'slow_scene' did not finish within 0.5 s; the stack of every thread follows."
+        in completed.stderr
+    )
     # The timer's own stack, then the stuck scene's, at the line it is stuck on.
     assert "Current thread 0x" in completed.stderr
     assert "\nThread 0x" in completed.stderr
@@ -53,7 +58,9 @@ def test_a_scene_past_its_limit_is_named_and_every_stack_is_dumped() -> None:
 def test_a_scene_past_its_limit_runs_the_cleanup_before_exiting(tmp_path: Path) -> None:
     marker = tmp_path / "cleaned"
 
-    completed = _run_scene("time.sleep(30)", seconds=0.5, cleanup=f"lambda: pathlib.Path({str(marker)!r}).touch()")
+    completed = _run_scene(
+        "time.sleep(30)", seconds=0.5, cleanup=f"lambda: pathlib.Path({str(marker)!r}).touch()"
+    )
 
     assert completed.returncode == 3
     assert marker.exists()
@@ -115,7 +122,10 @@ def test_a_scene_timeout_out_of_range_is_refused(value: str) -> None:
     )
 
     assert completed.returncode == 2
-    assert f"--scene-timeout: must be more than 0 and at most 86400 seconds, not {value}" in completed.stderr
+    assert (
+        f"--scene-timeout: must be more than 0 and at most 86400 seconds, not {value}"
+        in completed.stderr
+    )
 
 
 def test_a_limit_that_runs_out_as_its_scene_finishes_does_nothing() -> None:

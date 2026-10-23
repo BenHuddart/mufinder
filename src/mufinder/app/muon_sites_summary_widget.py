@@ -315,7 +315,9 @@ class _ChargeStatePanel(QFrame):
         self._open_button.setText(self._OPEN_PINNED_TEXT)
         self._open_button.setEnabled(True)
         self._unpin_button.setEnabled(True)
-        self._export_cif_button.setEnabled(host_structure is not None and bool(host_structure.species))
+        self._export_cif_button.setEnabled(
+            host_structure is not None and bool(host_structure.species)
+        )
 
         self._set_summary_rows(
             [
@@ -344,7 +346,9 @@ class _ChargeStatePanel(QFrame):
                 item = QTableWidgetItem(value)
                 item.setData(_CLUSTER_ROLE, cluster_index)
                 if column != self._POSITION_COLUMN:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
                 self._table.setItem(row, column, item)
         self._table.resizeColumnsToContents()
         self._table.horizontalHeader().setSectionResizeMode(
@@ -423,7 +427,9 @@ class _ChargeStatePanel(QFrame):
         if not muon_sites:
             return
 
-        default_name = f"{_charge_state_title(self._charge_state).lower().replace(' ', '_')}_muon_sites.cif"
+        default_name = (
+            f"{_charge_state_title(self._charge_state).lower().replace(' ', '_')}_muon_sites.cif"
+        )
         file_path, _selected_filter = QFileDialog.getSaveFileName(
             self, "Export Muon Sites CIF", default_name, "CIF Files (*.cif)"
         )
@@ -431,7 +437,9 @@ class _ChargeStatePanel(QFrame):
             return
 
         try:
-            proximity_warnings = export_structure_with_muon_sites(host_structure, muon_sites, Path(file_path))
+            proximity_warnings = export_structure_with_muon_sites(
+                host_structure, muon_sites, Path(file_path)
+            )
         except OSError as exc:
             QMessageBox.warning(self, "Export failed", str(exc))
             return

@@ -43,9 +43,15 @@ _host_structure = partial(
 def _site(label: str, frac: tuple[float, float, float], energy: float) -> RelaxedMuonSite:
     host = _host_structure()
     cart = (
-        frac[0] * host.lattice_vectors[0][0] + frac[1] * host.lattice_vectors[1][0] + frac[2] * host.lattice_vectors[2][0],
-        frac[0] * host.lattice_vectors[0][1] + frac[1] * host.lattice_vectors[1][1] + frac[2] * host.lattice_vectors[2][1],
-        frac[0] * host.lattice_vectors[0][2] + frac[1] * host.lattice_vectors[1][2] + frac[2] * host.lattice_vectors[2][2],
+        frac[0] * host.lattice_vectors[0][0]
+        + frac[1] * host.lattice_vectors[1][0]
+        + frac[2] * host.lattice_vectors[2][0],
+        frac[0] * host.lattice_vectors[0][1]
+        + frac[1] * host.lattice_vectors[1][1]
+        + frac[2] * host.lattice_vectors[2][1],
+        frac[0] * host.lattice_vectors[0][2]
+        + frac[1] * host.lattice_vectors[1][2]
+        + frac[2] * host.lattice_vectors[2][2],
     )
     return RelaxedMuonSite(
         job_id=uuid4(),
@@ -172,7 +178,10 @@ def test_muon_fractional_position_from_cell_rejects_missing_or_malformed_muon() 
             self.fractional_positions = positions
 
     assert muon_fractional_position_from_cell(_Cell(["Si"], [[0.0, 0.0, 0.0]])) is None
-    assert muon_fractional_position_from_cell(_Cell(["H:mu", "H:mu"], [[0.1, 0.2, 0.3], [0.5, 0.5]])) is None
+    assert (
+        muon_fractional_position_from_cell(_Cell(["H:mu", "H:mu"], [[0.1, 0.2, 0.3], [0.5, 0.5]]))
+        is None
+    )
     assert muon_fractional_position_from_cell(object()) is None
 
 
@@ -256,9 +265,16 @@ def test_displacement_analysis_converts_host_frame_muon_position_for_supercells(
     )
 
     assert len(primitive_host_result.points) == 8
-    assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(supercell_host_result.points[0].distance_from_muon_ang)
-    assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(10.0 * (3.0 ** 0.5) * 0.1)
-    assert primitive_host_result.points[0].comparison_index == supercell_host_result.points[0].comparison_index
+    assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(
+        supercell_host_result.points[0].distance_from_muon_ang
+    )
+    assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(
+        10.0 * (3.0**0.5) * 0.1
+    )
+    assert (
+        primitive_host_result.points[0].comparison_index
+        == supercell_host_result.points[0].comparison_index
+    )
 
 
 def test_displacement_analysis_measures_from_the_supercell_image_the_muon_relaxed_to() -> None:
@@ -296,20 +312,32 @@ def test_displacement_analysis_picks_the_nearest_image_with_the_lattice_metric()
     # is nearest the muon marker is not the one the per-component fold of the
     # fractional displacement names.
     host_lattice = np.array([[5.0, 0.0, 0.0], [4.0, 1.0, 0.0], [0.0, 0.0, 5.0]])
-    comparison = Structure(label="Host", lattice_vectors=host_lattice.tolist(), species=["K"], fractional_positions=[[0.0, 0.0, 0.0]])
+    comparison = Structure(
+        label="Host",
+        lattice_vectors=host_lattice.tolist(),
+        species=["K"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
     supercell_lattice = 2.0 * host_lattice
     pristine = [[x, y, z] for x in (0.0, 0.5) for y in (0.0, 0.5) for z in (0.0, 0.5)]
     site = np.array([0.2, 0.2, 0.2])
     marker = np.array([0.875, 0.875, 0.1])
     marker_host = 2.0 * marker
     folded_image = site - np.round(site - marker_host)
-    nearest_image = marker_host + np.asarray(nearest_image_delta(site, marker_host, host_lattice.tolist()))
+    nearest_image = marker_host + np.asarray(
+        nearest_image_delta(site, marker_host, host_lattice.tolist())
+    )
     assert not np.allclose(folded_image, nearest_image)
     # Push the K nearest that image 0.3 A straight away from it.
-    distances = [nearest_image_distance(position, nearest_image / 2.0, supercell_lattice.tolist()) for position in pristine]
+    distances = [
+        nearest_image_distance(position, nearest_image / 2.0, supercell_lattice.tolist())
+        for position in pristine
+    ]
     neighbour = int(np.argmin(distances))
     pristine_cart = np.asarray(pristine[neighbour]) @ supercell_lattice
-    radial = nearest_image_cartesian_delta(pristine[neighbour], nearest_image / 2.0, supercell_lattice.tolist())
+    radial = nearest_image_cartesian_delta(
+        pristine[neighbour], nearest_image / 2.0, supercell_lattice.tolist()
+    )
     radial = np.asarray(radial)
     pushed = pristine_cart + 0.3 * radial / np.linalg.norm(radial)
     relaxed_positions = [list(position) for position in pristine]
@@ -341,7 +369,9 @@ def test_wyckoff_assignment_finds_high_symmetry_site_for_cluster() -> None:
     ]
     result = cluster_connected_components(sites, host, tolerance_ang=0.3)
 
-    assignments = assign_cluster_wyckoff_sites(sites, result.clusters, host, match_tolerance_ang=0.25)
+    assignments = assign_cluster_wyckoff_sites(
+        sites, result.clusters, host, match_tolerance_ang=0.25
+    )
 
     assert len(assignments) == 1
     assert assignments[0].match.matched is True
@@ -358,7 +388,9 @@ def test_wyckoff_assignment_handles_variable_coordinate_special_site() -> None:
     ]
     result = cluster_connected_components(sites, host, tolerance_ang=0.3)
 
-    assignments = assign_cluster_wyckoff_sites(sites, result.clusters, host, match_tolerance_ang=0.2)
+    assignments = assign_cluster_wyckoff_sites(
+        sites, result.clusters, host, match_tolerance_ang=0.2
+    )
 
     assert assignments[0].match.matched is True
     assert assignments[0].match.label == "12e"
@@ -462,18 +494,26 @@ def test_tolerance_scan_measures_symmetry_distances_once(monkeypatch: pytest.Mon
     assert calls == [3]
     # Each row agrees with clustering at that tolerance on its own.
     for tolerance, count in scan:
-        assert count == len(cluster_connected_components(sites, host, tolerance_ang=tolerance).clusters)
+        assert count == len(
+            cluster_connected_components(sites, host, tolerance_ang=tolerance).clusters
+        )
 
 
-def test_symmetry_distance_falls_back_to_direct_distance_without_equivalents(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_symmetry_distance_falls_back_to_direct_distance_without_equivalents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     host = _host_structure()
     sites = [_site("a", (0.1, 0.1, 0.1), -10.0), _site("b", (0.9, 0.1, 0.1), -9.0)]
-    monkeypatch.setattr(relaxation_analysis, "symmetry_equivalent_positions", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        relaxation_analysis, "symmetry_equivalent_positions", lambda *args, **kwargs: []
+    )
 
     matrix = relaxation_analysis.symmetry_distance_matrix(sites, host)
 
     expected = minimum_image_distance((0.1, 0.1, 0.1), (0.9, 0.1, 0.1), host.lattice_vectors)
     assert matrix == ((0.0, expected), (expected, 0.0))
+
+
 def test_grouped_relative_energies_offsets_each_group_by_its_own_minimum() -> None:
     relative = grouped_relative_energies(
         {

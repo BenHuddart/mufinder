@@ -47,12 +47,16 @@ class DemagnetizingSample:
             semi_axes=_float_triplet(payload.get("semi_axes"), default=(1.0, 1.0, 1.0)),
             prism_lengths=_float_triplet(payload.get("prism_lengths"), default=(1.0, 1.0, 1.0)),
             plate_normal_axis=str(payload.get("plate_normal_axis", "c")).strip() or "c",
-            fourier_grid=int(payload.get("fourier_grid", _DEFAULT_PRISM_GRID) or _DEFAULT_PRISM_GRID),
+            fourier_grid=int(
+                payload.get("fourier_grid", _DEFAULT_PRISM_GRID) or _DEFAULT_PRISM_GRID
+            ),
             padding=float(payload.get("padding", _DEFAULT_PRISM_PADDING) or _DEFAULT_PRISM_PADDING),
         )
 
 
-def demagnetizing_tensor(sample: DemagnetizingSample, *, n_grid: int = _DEFAULT_ELLIPSOID_GRID) -> np.ndarray:
+def demagnetizing_tensor(
+    sample: DemagnetizingSample, *, n_grid: int = _DEFAULT_ELLIPSOID_GRID
+) -> np.ndarray:
     """Return the demagnetizing tensor for a supported sample description."""
 
     shape = _normalize_shape(sample.shape)
@@ -149,7 +153,9 @@ def magnetometric_rectangular_prism_tensor(
     x = np.linspace(-a + 0.5 * dx, a - 0.5 * dx, n)
     y = np.linspace(-b + 0.5 * dy, b - 0.5 * dy, n)
     z = np.linspace(-c + 0.5 * dz, c - 0.5 * dz, n)
-    tensor = rectangular_prism_tensor(x[:, None, None], y[None, :, None], z[None, None, :], (a, b, c))
+    tensor = rectangular_prism_tensor(
+        x[:, None, None], y[None, :, None], z[None, None, :], (a, b, c)
+    )
     avg = np.mean(tensor, axis=(2, 3, 4))
     return 0.5 * (avg + avg.T)
 
@@ -163,7 +169,9 @@ def rectangular_prism_tensor(
     """Return the local demagnetizing tensor for an axis-aligned rectangular prism."""
 
     a, b, c = _positive_triplet(half_lengths, "half_lengths")
-    xb, yb, zb = np.broadcast_arrays(np.asarray(x, dtype=float), np.asarray(y, dtype=float), np.asarray(z, dtype=float))
+    xb, yb, zb = np.broadcast_arrays(
+        np.asarray(x, dtype=float), np.asarray(y, dtype=float), np.asarray(z, dtype=float)
+    )
 
     nzz = _rectangular_diagonal_component(xb, yb, zb, a, b, c)
     nxx = _rectangular_diagonal_component(zb, yb, xb, c, b, a)
@@ -416,7 +424,9 @@ def _spacing3(value: float | Sequence[float]) -> tuple[float, float, float]:
     return _positive_triplet(out, "spacing")
 
 
-def _float_triplet(value: object, *, default: tuple[float, float, float]) -> tuple[float, float, float]:
+def _float_triplet(
+    value: object, *, default: tuple[float, float, float]
+) -> tuple[float, float, float]:
     if value is None:
         return default
     try:
@@ -428,7 +438,9 @@ def _float_triplet(value: object, *, default: tuple[float, float, float]) -> tup
     return (float(arr[0]), float(arr[1]), float(arr[2]))
 
 
-def _positive_triplet(values: Iterable[float] | Sequence[float], name: str) -> tuple[float, float, float]:
+def _positive_triplet(
+    values: Iterable[float] | Sequence[float], name: str
+) -> tuple[float, float, float]:
     try:
         a, b, c = (float(value) for value in values)
     except (TypeError, ValueError) as exc:

@@ -119,7 +119,11 @@ def test_host_symmetry_is_detected_once_per_host(monkeypatch: pytest.MonkeyPatch
         return real(cell, symprec=symprec)
 
     monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", counting)
-    host = {"lattice_vectors": _CUBIC, "host_species": ["Si", "Si"], "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]}
+    host = {
+        "lattice_vectors": _CUBIC,
+        "host_species": ["Si", "Si"],
+        "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    }
     try:
         first = symmetry_equivalent_positions([0.1, 0.1, 0.1], **host)
         second = symmetry_equivalent_positions([0.3, 0.2, 0.1], **host)
@@ -135,7 +139,9 @@ def test_host_symmetry_is_detected_once_per_host(monkeypatch: pytest.MonkeyPatch
     assert all(not rotation.flags.writeable for rotation in operations[0])
 
 
-def test_symmetry_equivalents_fall_back_to_input_when_spglib_finds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_symmetry_equivalents_fall_back_to_input_when_spglib_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spglib_compat.clear_symmetry_operations_cache()
     monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", lambda cell, *, symprec: None)
     try:
@@ -383,8 +389,14 @@ def test_generate_random_sites_symmetry_without_species_falls_back() -> None:
     assert len(points) == 2
 
 
-def test_random_generation_checks_whole_orbits_when_identity_is_not_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    host = {"lattice_vectors": _CUBIC, "host_species": ["Si", "Si"], "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]}
+def test_random_generation_checks_whole_orbits_when_identity_is_not_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = {
+        "lattice_vectors": _CUBIC,
+        "host_species": ["Si", "Si"],
+        "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    }
     real = site_generation._symmetry_operations
 
     def identity_last(**kwargs):
@@ -394,19 +406,30 @@ def test_random_generation_checks_whole_orbits_when_identity_is_not_first(monkey
     monkeypatch.setattr(site_generation, "_symmetry_operations", identity_last)
 
     points, _attempts = generate_random_sites_by_distance(
-        **host, min_muon_muon=0.8, min_muon_atom=1.0, max_attempts=300, seed=3, include_symmetry_equivalents=True
+        **host,
+        min_muon_muon=0.8,
+        min_muon_atom=1.0,
+        max_attempts=300,
+        seed=3,
+        include_symmetry_equivalents=True,
     )
 
     assert points
     orbits = [
-        spglib_compat.symmetry_orbit(point.fractional, identity_last(**host), lattice_vectors=_CUBIC, tolerance=1e-5)
+        spglib_compat.symmetry_orbit(
+            point.fractional, identity_last(**host), lattice_vectors=_CUBIC, tolerance=1e-5
+        )
         for point in points
     ]
     for orbit in orbits:
         for image in orbit:
-            assert all(_pbc_distance(image, atom, _CUBIC) >= 1.0 for atom in host["host_positions_frac"])
+            assert all(
+                _pbc_distance(image, atom, _CUBIC) >= 1.0 for atom in host["host_positions_frac"]
+            )
     for first, second in combinations(range(len(orbits)), 2):
-        assert all(_pbc_distance(a, b, _CUBIC) >= 0.8 for a in orbits[first] for b in orbits[second])
+        assert all(
+            _pbc_distance(a, b, _CUBIC) >= 0.8 for a in orbits[first] for b in orbits[second]
+        )
 
 
 def test_random_generation_reports_progress_as_sites_are_accepted() -> None:
@@ -646,7 +669,9 @@ def test_attached_sites_sit_at_the_bond_distance_in_a_non_orthogonal_cell() -> N
     assert len(points) == 3
     for point in points:
         assert _pbc_distance(point.fractional, anchor, lattice) == pytest.approx(1.0)
-        assert lattice_cart_to_frac(point.cartesian, lattice) == pytest.approx(point.fractional, abs=1e-12)
+        assert lattice_cart_to_frac(point.cartesian, lattice) == pytest.approx(
+            point.fractional, abs=1e-12
+        )
 
 
 def test_attached_sites_none_lattice_uses_neighbour_geometry() -> None:
@@ -756,11 +781,16 @@ def test_broadcast_spacing_check_decides_exactly_at_the_limit() -> None:
 
     # ``_pbc_distance(point, reference) < limit`` decides, so the exact distance is not "closer".
     assert site_generation._any_closer_than(points, references, _CUBIC, limit) is False
-    assert site_generation._any_closer_than(points, references, _CUBIC, math.nextafter(limit, 10.0)) is True
+    assert (
+        site_generation._any_closer_than(points, references, _CUBIC, math.nextafter(limit, 10.0))
+        is True
+    )
     assert site_generation._any_closer_than(points, np.empty((0, 3)), _CUBIC, limit) is False
 
 
-def test_broadcast_spacing_check_scans_large_inputs_in_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_broadcast_spacing_check_scans_large_inputs_in_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(site_generation, "_DISTANCE_CHECK_BLOCK", 4)
     references = np.asarray([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
     far = np.asarray([[0.25, 0.25, 0.0]] * 9)

@@ -71,7 +71,9 @@ def definitions_for_stage(
         if definition.workflow_stage == stage
         and (calc_type is None or definition.calc_type == calc_type)
     ]
-    definitions.sort(key=lambda definition: (definition.created_at, str(definition.id)), reverse=True)
+    definitions.sort(
+        key=lambda definition: (definition.created_at, str(definition.id)), reverse=True
+    )
     return definitions
 
 

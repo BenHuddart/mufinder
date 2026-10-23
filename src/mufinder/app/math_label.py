@@ -35,7 +35,9 @@ def _normalize_math_expression(expression: str) -> str:
 
 
 @lru_cache(maxsize=256)
-def _render_png(expression: str, display_mode: bool, color: str, device_pixel_ratio_x100: int) -> bytes | None:
+def _render_png(
+    expression: str, display_mode: bool, color: str, device_pixel_ratio_x100: int
+) -> bytes | None:
     if _math_to_image is None or FontProperties is None:
         return None
 
@@ -140,7 +142,10 @@ class MathLabel(QWidget):
         content_height = sum(widget.sizeHint().height() for widget in self._line_widgets)
         if len(self._line_widgets) > 1:
             content_height += self._layout.spacing() * (len(self._line_widgets) - 1)
-        return QSize(margins.left() + content_width + margins.right(), margins.top() + content_height + margins.bottom())
+        return QSize(
+            margins.left() + content_width + margins.right(),
+            margins.top() + content_height + margins.bottom(),
+        )
 
     def minimumSizeHint(self) -> QSize:
         return self.sizeHint()
@@ -171,7 +176,10 @@ class MathLabel(QWidget):
     def _rerender_lines_if_context_changed(self) -> None:
         current_dpr = self._current_device_pixel_ratio()
         current_color = self._current_text_color()
-        if abs(current_dpr - self._render_device_pixel_ratio) > 0.01 or current_color != self._render_color:
+        if (
+            abs(current_dpr - self._render_device_pixel_ratio) > 0.01
+            or current_color != self._render_color
+        ):
             self._rerender_lines()
 
     def _rerender_lines(self) -> None:

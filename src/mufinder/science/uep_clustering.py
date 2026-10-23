@@ -108,7 +108,6 @@ class UepPreparedClusteringDataset:
     linkage_matrix: tuple[tuple[float, float, float, float], ...] = ()
 
 
-
 def cluster_optimized_positions(
     optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
     *,
@@ -157,7 +156,9 @@ def cluster_optimized_positions(
 
     clusters: list[UepClusterSummary] = []
     for cluster_index, cluster_id in enumerate(cluster_ids, start=1):
-        member_indexes = tuple(index for index, label in enumerate(labels) if int(label) == cluster_id)
+        member_indexes = tuple(
+            index for index, label in enumerate(labels) if int(label) == cluster_id
+        )
         members = [optimizations[index] for index in member_indexes]
         numeric_energies = [_clustering_energy(entry) for entry in members]
         representative_offset = min(
@@ -214,7 +215,9 @@ def _clustering_energy(entry: UepOptimizationResult) -> float:
         return float(entry.total_energy_ev)
     if not isnan(entry.classical_energy_ev):
         return float(entry.classical_energy_ev)
-    raise UepError("UEP clustering requires a finite classical or total energy for every optimization.")
+    raise UepError(
+        "UEP clustering requires a finite classical or total energy for every optimization."
+    )
 
 
 def relaxed_site_number_map(
@@ -231,7 +234,10 @@ def relaxed_site_number_map(
             int(idx),
         ),
     )
-    return {int(result_index): int(site_number) for site_number, result_index in enumerate(ordered_indexes, start=1)}
+    return {
+        int(result_index): int(site_number)
+        for site_number, result_index in enumerate(ordered_indexes, start=1)
+    }
 
 
 def _cluster_average_classical_energy(
@@ -274,7 +280,9 @@ def _renumber_cluster_summaries(
             int(cluster.cluster_index),
         ),
     )
-    cluster_index_map = {int(cluster.cluster_index): index + 1 for index, cluster in enumerate(ordered)}
+    cluster_index_map = {
+        int(cluster.cluster_index): index + 1 for index, cluster in enumerate(ordered)
+    }
     normalized = tuple(
         UepClusterSummary(
             cluster_index=index + 1,
@@ -299,8 +307,12 @@ def _renumber_cluster_similarity_summaries(
 ) -> tuple[UepClusterSimilaritySummary, ...]:
     remapped: list[UepClusterSimilaritySummary] = []
     for similarity in similarities:
-        left_index = cluster_index_map.get(int(similarity.left_cluster_index), int(similarity.left_cluster_index))
-        right_index = cluster_index_map.get(int(similarity.right_cluster_index), int(similarity.right_cluster_index))
+        left_index = cluster_index_map.get(
+            int(similarity.left_cluster_index), int(similarity.left_cluster_index)
+        )
+        right_index = cluster_index_map.get(
+            int(similarity.right_cluster_index), int(similarity.right_cluster_index)
+        )
         ordered_left, ordered_right = sorted((left_index, right_index))
         remapped.append(
             UepClusterSimilaritySummary(
@@ -309,14 +321,23 @@ def _renumber_cluster_similarity_summaries(
                 distance=float(similarity.distance),
             )
         )
-    return tuple(sorted(remapped, key=lambda item: (item.distance, item.left_cluster_index, item.right_cluster_index)))
+    return tuple(
+        sorted(
+            remapped,
+            key=lambda item: (item.distance, item.left_cluster_index, item.right_cluster_index),
+        )
+    )
 
 
 def _asymmetric_images_centre(
     optimizations: list[UepOptimizationResult] | tuple[UepOptimizationResult, ...],
 ) -> np.ndarray:
-    reference_index = min(range(len(optimizations)), key=lambda idx: (_clustering_energy(optimizations[idx]), idx))
-    reference = np.asarray(optimizations[reference_index].optimized_fractional_position, dtype=float)
+    reference_index = min(
+        range(len(optimizations)), key=lambda idx: (_clustering_energy(optimizations[idx]), idx)
+    )
+    reference = np.asarray(
+        optimizations[reference_index].optimized_fractional_position, dtype=float
+    )
     # Avoid high-symmetry centres, which Soprano warns can produce unstable image selection.
     jitter = np.array((1.61803398875e-6, 2.41421356237e-6, 3.14159265359e-6), dtype=float)
     return (reference + jitter) % 1.0
@@ -351,7 +372,9 @@ def _cluster_similarity_summaries(
 ) -> tuple[UepClusterSimilaritySummary, ...]:
     if len(cluster_groups) < 2:
         return ()
-    centres = np.array([np.average(genome_vectors[group], axis=0) for group in cluster_groups], dtype=float)
+    centres = np.array(
+        [np.average(genome_vectors[group], axis=0) for group in cluster_groups], dtype=float
+    )
     distances = np.linalg.norm(centres[:, None] - centres[None, :], axis=-1)
     pairs: list[UepClusterSimilaritySummary] = []
     for left_index in range(len(cluster_groups) - 1):
@@ -363,7 +386,12 @@ def _cluster_similarity_summaries(
                     distance=float(distances[left_index, right_index]),
                 )
             )
-    return tuple(sorted(pairs, key=lambda item: (item.distance, item.left_cluster_index, item.right_cluster_index)))
+    return tuple(
+        sorted(
+            pairs,
+            key=lambda item: (item.distance, item.left_cluster_index, item.right_cluster_index),
+        )
+    )
 
 
 def _validate_clustering_config(config: UepClusteringConfig) -> UepClusteringConfig:
@@ -406,7 +434,9 @@ def prepare_uep_clustering_dataset(
             linkage_matrix=(),
         )
 
-    Gene, PhylogenCluster, AtomsCollection, compute_asymmetric_distmat = _import_soprano_clustering()
+    Gene, PhylogenCluster, AtomsCollection, compute_asymmetric_distmat = (
+        _import_soprano_clustering()
+    )
     host_atoms = structure_to_ase_atoms(source_structure, error=UepError)
     collection = AtomsCollection(
         [
@@ -444,17 +474,21 @@ def prepare_uep_clustering_dataset(
         config=active,
         optimizations=tuple(optimizations),
         asymmetric_fractional_positions=tuple(
-            tuple(float(value) for value in row.tolist()) for row in np.asarray(genome_vectors[:, 1:4], dtype=float)
+            tuple(float(value) for value in row.tolist())
+            for row in np.asarray(genome_vectors[:, 1:4], dtype=float)
         ),
         genome_vectors=tuple(
-            tuple(float(value) for value in row.tolist()) for row in np.asarray(genome_vectors, dtype=float)
+            tuple(float(value) for value in row.tolist())
+            for row in np.asarray(genome_vectors, dtype=float)
         ),
         normalized_genome_vectors=tuple(
-            tuple(float(value) for value in row.tolist()) for row in np.asarray(normalized_vectors, dtype=float)
+            tuple(float(value) for value in row.tolist())
+            for row in np.asarray(normalized_vectors, dtype=float)
         ),
         linkage_method=active.clustering_linkage_method,
         linkage_matrix=tuple(
-            tuple(float(value) for value in row.tolist()) for row in np.asarray(linkage_matrix, dtype=float)
+            tuple(float(value) for value in row.tolist())
+            for row in np.asarray(linkage_matrix, dtype=float)
         ),
     )
 
@@ -505,7 +539,9 @@ def _build_clustering_result(
             for member in cluster_members
             if member.total_energy_ev is not None and not isnan(member.total_energy_ev)
         ]
-        representative_index = min(member_indexes, key=lambda idx: (_clustering_energy(optimizations[idx]), idx))
+        representative_index = min(
+            member_indexes, key=lambda idx: (_clustering_energy(optimizations[idx]), idx)
+        )
         representative = optimizations[representative_index]
         clusters.append(
             UepClusterSummary(
@@ -515,8 +551,12 @@ def _build_clustering_result(
                 representative_position_ang=representative.optimized_position_ang,
                 representative_fractional_position=representative.optimized_fractional_position,
                 minimum_energy_ev=min(finite_total_energies) if finite_total_energies else None,
-                average_energy_ev=float(np.mean(finite_total_energies)) if finite_total_energies else None,
-                standard_deviation_ev=float(np.std(finite_total_energies)) if finite_total_energies else None,
+                average_energy_ev=float(np.mean(finite_total_energies))
+                if finite_total_energies
+                else None,
+                standard_deviation_ev=float(np.std(finite_total_energies))
+                if finite_total_energies
+                else None,
                 member_indexes=member_indexes,
                 representative_asymmetric_fractional_position=tuple(
                     float(value) for value in asymmetric_positions[representative_index].tolist()
@@ -540,17 +580,25 @@ def _build_clustering_result(
     )
     return UepClusteringResult(
         config=config,
-        cluster_labels=tuple(int(value) for value in np.asarray(cluster_labels, dtype=int).tolist()),
+        cluster_labels=tuple(
+            int(value) for value in np.asarray(cluster_labels, dtype=int).tolist()
+        ),
         asymmetric_fractional_positions=prepared.asymmetric_fractional_positions,
         genome_vectors=prepared.genome_vectors,
         normalized_genome_vectors=prepared.normalized_genome_vectors,
         linkage_matrix=tuple(
             tuple(float(value) for value in row.tolist())
-            for row in np.asarray(np.empty((0, 4), dtype=float) if linkage_matrix is None else linkage_matrix, dtype=float)
+            for row in np.asarray(
+                np.empty((0, 4), dtype=float) if linkage_matrix is None else linkage_matrix,
+                dtype=float,
+            )
         ),
         kmeans_centroids=tuple(
             tuple(float(value) for value in row.tolist())
-            for row in np.asarray(np.empty((0, 0), dtype=float) if kmeans_centroids is None else kmeans_centroids, dtype=float)
+            for row in np.asarray(
+                np.empty((0, 0), dtype=float) if kmeans_centroids is None else kmeans_centroids,
+                dtype=float,
+            )
         ),
         summary=summary,
     )
@@ -579,8 +627,12 @@ def cluster_prepared_uep_dataset(
                 clusters=(),
                 clustering_method=method,
                 clustering_hier_t=float(active.clustering_hier_t),
-                clustering_kmeans_k=(int(active.clustering_kmeans_k) if method == "kmeans" else None),
-                clustering_linkage_method=active.clustering_linkage_method if method == "hier" else None,
+                clustering_kmeans_k=(
+                    int(active.clustering_kmeans_k) if method == "kmeans" else None
+                ),
+                clustering_linkage_method=active.clustering_linkage_method
+                if method == "hier"
+                else None,
                 feature_mode=active.feature_mode,
                 similarities=(),
             ),
@@ -592,7 +644,9 @@ def cluster_prepared_uep_dataset(
             cluster_groups = [np.array([0], dtype=int)]
             linkage_matrix = np.empty((0, 4), dtype=float)
         else:
-            linkage_matrix = _linkage_matrix_for_prepared(prepared, method=active.clustering_linkage_method)
+            linkage_matrix = _linkage_matrix_for_prepared(
+                prepared, method=active.clustering_linkage_method
+            )
             cluster_labels = hierarchy.fcluster(
                 linkage_matrix,
                 t=max(float(active.clustering_hier_t), 1e-12),
@@ -618,7 +672,10 @@ def cluster_prepared_uep_dataset(
     )
     zero_based_labels, _distances = vq.vq(normalized_vectors, centroids)
     cluster_labels = zero_based_labels.astype(int) + 1
-    cluster_groups = [np.where(zero_based_labels == index)[0].astype(int) for index in range(int(np.max(zero_based_labels)) + 1)]
+    cluster_groups = [
+        np.where(zero_based_labels == index)[0].astype(int)
+        for index in range(int(np.max(zero_based_labels)) + 1)
+    ]
     return _build_clustering_result(
         prepared,
         config=active,

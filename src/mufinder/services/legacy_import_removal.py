@@ -137,9 +137,7 @@ def _definition_owns_targets(definition: Any, targets: set[UUID]) -> bool:
     return definition.workflow_stage == WorkflowStage.MUON_RELAXATION
 
 
-def find_references(
-    document: Any, targets: Sequence[ImportedRelaxationRef]
-) -> list[str]:
+def find_references(document: Any, targets: Sequence[ImportedRelaxationRef]) -> list[str]:
     """Return user-facing descriptions of everything still needing ``targets``.
 
     An empty list means removal is safe.
@@ -229,9 +227,7 @@ def plan_removal(
     """Describe what removing ``targets`` would do, or why it cannot happen."""
 
     directories = tuple(
-        path
-        for ref in targets
-        if (path := (job_directories or {}).get(ref.job_id)) is not None
+        path for ref in targets if (path := (job_directories or {}).get(ref.job_id)) is not None
     )
     return RemovalPlan(
         targets=tuple(targets),
@@ -271,9 +267,7 @@ def remove_imported_relaxations(
     for ref in plan.targets:
         job = document.jobs.get(ref.job_id)
         if job is None or IMPORTED_JOB_TAG not in (job.tags or ()):
-            errors.append(
-                f"'{ref.label}' was not removed: its job is no longer an imported job."
-            )
+            errors.append(f"'{ref.label}' was not removed: its job is no longer an imported job.")
             continue
 
         document.jobs.pop(ref.job_id, None)
@@ -332,9 +326,7 @@ def detach_rows_from_definition(definition: Any, targets: Sequence[ImportedRelax
     site_ids = {str(ref.site_id) for ref in targets}
     keep = [row for row in rows if str(row.get("site_id", "")) not in site_ids]
     dropped_labels = {
-        str(row.get("label", ""))
-        for row in rows
-        if str(row.get("site_id", "")) in site_ids
+        str(row.get("label", "")) for row in rows if str(row.get("site_id", "")) in site_ids
     }
     configuration["rows"] = keep
 

@@ -34,7 +34,9 @@ def _allocate_past_every_threshold() -> list[list[list[object]]]:
 
 def _allocate_in_worker() -> list[object]:
     kept: list[object] = []
-    worker = threading.Thread(target=lambda: kept.append(_allocate_past_every_threshold()), name="test-worker")
+    worker = threading.Thread(
+        target=lambda: kept.append(_allocate_past_every_threshold()), name="test-worker"
+    )
     worker.start()
     worker.join()
     return kept
@@ -94,7 +96,9 @@ def test_stop_turns_automatic_collection_back_on(without_session_garbage_collect
     assert gc.isenabled()
 
 
-def test_stop_leaves_automatic_collection_off_when_it_was_off_before(without_session_garbage_collector) -> None:
+def test_stop_leaves_automatic_collection_off_when_it_was_off_before(
+    without_session_garbage_collector,
+) -> None:
     gc.disable()
     collector = GuiGarbageCollector()
     try:
@@ -106,7 +110,9 @@ def test_stop_leaves_automatic_collection_off_when_it_was_off_before(without_ses
         gc.enable()
 
 
-def test_automatic_collection_stays_off_until_the_last_collector_stops(without_session_garbage_collector) -> None:
+def test_automatic_collection_stays_off_until_the_last_collector_stops(
+    without_session_garbage_collector,
+) -> None:
     first = GuiGarbageCollector()
     second = GuiGarbageCollector()
     first.start()

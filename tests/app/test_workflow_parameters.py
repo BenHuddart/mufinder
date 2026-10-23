@@ -134,7 +134,9 @@ def test_reorder_workflow_parameter_specs_moves_common_parameters_to_shared_posi
     ]
 
 
-def test_parameter_dialog_with_workflow_surface_shows_basic_and_allows_advanced(qapp, monkeypatch) -> None:
+def test_parameter_dialog_with_workflow_surface_shows_basic_and_allows_advanced(
+    qapp, monkeypatch
+) -> None:
     task_spec = _spec(
         "task",
         allowed_values=("SINGLEPOINT", "PHONON"),
@@ -267,18 +269,28 @@ def _typed_spec(
 
 
 _CUTOFF = _typed_spec("cut_off_energy", "physical", unit="eV")
-_GRID = _typed_spec("kpoint_mp_grid", "int_triplet", file="cell", mutually_exclusive_with=("kpoint_mp_spacing",))
-_SPACING = _typed_spec("kpoint_mp_spacing", "physical", file="cell", unit="1/ang", mutually_exclusive_with=("kpoint_mp_grid",))
+_GRID = _typed_spec(
+    "kpoint_mp_grid", "int_triplet", file="cell", mutually_exclusive_with=("kpoint_mp_spacing",)
+)
+_SPACING = _typed_spec(
+    "kpoint_mp_spacing",
+    "physical",
+    file="cell",
+    unit="1/ang",
+    mutually_exclusive_with=("kpoint_mp_grid",),
+)
 _SPECS_BY_NAME = {spec.name: spec for spec in (_CUTOFF, _GRID, _SPACING)}
 
 
 def test_restore_structured_value_rebuilds_values_flattened_by_json() -> None:
-    assert restore_structured_value(_SPECS_BY_NAME, "cut_off_energy", {"value": 500.0, "unit": "eV"}) == (
-        ValueWithUnit(500.0, "eV")
-    )
+    assert restore_structured_value(
+        _SPECS_BY_NAME, "cut_off_energy", {"value": 500.0, "unit": "eV"}
+    ) == (ValueWithUnit(500.0, "eV"))
     assert restore_structured_value(_SPECS_BY_NAME, "kpoint_mp_grid", [4, 4, 2]) == (4, 4, 2)
     # A bare number picks up the spec's unit.
-    assert restore_structured_value(_SPECS_BY_NAME, "cut_off_energy", 400) == ValueWithUnit(400.0, "eV")
+    assert restore_structured_value(_SPECS_BY_NAME, "cut_off_energy", 400) == ValueWithUnit(
+        400.0, "eV"
+    )
 
 
 def test_restore_structured_value_leaves_unknown_and_rejected_values_alone() -> None:
@@ -301,9 +313,15 @@ def test_restore_structured_value_without_specs_reads_the_keyword_catalog(monkey
 
 
 def test_sanitize_parameter_mapping_drops_names_without_a_spec() -> None:
-    stored = {"cut_off_energy": {"value": 500.0, "unit": "eV"}, "task": "SINGLEPOINT", "retired_keyword": 1}
+    stored = {
+        "cut_off_energy": {"value": 500.0, "unit": "eV"},
+        "task": "SINGLEPOINT",
+        "retired_keyword": 1,
+    }
 
-    assert sanitize_parameter_mapping(stored, _SPECS_BY_NAME) == {"cut_off_energy": ValueWithUnit(500.0, "eV")}
+    assert sanitize_parameter_mapping(stored, _SPECS_BY_NAME) == {
+        "cut_off_energy": ValueWithUnit(500.0, "eV")
+    }
     assert sanitize_parameter_mapping(stored, _SPECS_BY_NAME, keep=("task",)) == {
         "cut_off_energy": ValueWithUnit(500.0, "eV"),
         "task": "SINGLEPOINT",
@@ -343,7 +361,9 @@ def test_spec_is_blocked_by_locked_only_for_the_other_half_of_a_pair() -> None:
 def test_workflow_default_params_keeps_basic_unlocked_unskipped_defaults() -> None:
     stage = "pristine_relaxation"
     specs = [
-        _typed_spec("cut_off_energy", "physical", unit="eV", default_value=300, basic_workflows=(stage,)),
+        _typed_spec(
+            "cut_off_energy", "physical", unit="eV", default_value=300, basic_workflows=(stage,)
+        ),
         _typed_spec("max_scf_cycles", "int", default_value=100, basic_workflows=(stage,)),
         _typed_spec("nextra_bands", "int", default_value=4),  # advanced only
         _typed_spec("elec_energy_tol", "float", default_value=1e-5, basic_workflows=(stage,)),
@@ -354,7 +374,9 @@ def test_workflow_default_params_keeps_basic_unlocked_unskipped_defaults() -> No
             basic_workflows=(stage,),
             mutually_exclusive_with=("kpoint_mp_grid",),
         ),
-        _typed_spec("kpoint_mp_grid", "int_triplet", default_value=(1, 1, 1), basic_workflows=(stage,)),
+        _typed_spec(
+            "kpoint_mp_grid", "int_triplet", default_value=(1, 1, 1), basic_workflows=(stage,)
+        ),
     ]
 
     defaults = workflow_default_params(
@@ -399,7 +421,9 @@ def test_clone_spec_for_workflow_adds_the_stage_and_applies_default_overrides() 
     assert cloned.advanced_workflows == spec.advanced_workflows
     assert cloned.default_value == 300
     # Adding a stage twice is a no-op, and without overrides the default stays.
-    again = clone_spec_for_workflow(cloned, workflow_stage="muon_relaxation", basic=True, advanced=False)
+    again = clone_spec_for_workflow(
+        cloned, workflow_stage="muon_relaxation", basic=True, advanced=False
+    )
     assert again.basic_workflows == ("uep", "muon_relaxation")
     assert again.default_value == 300
 
@@ -408,12 +432,17 @@ def test_drop_explicit_conflicts_lets_a_rows_own_choice_win() -> None:
     # The row chose spacing; the inherited grid default goes, the cutoff stays.
     values = {"kpoint_mp_grid": (2, 2, 2), "kpoint_mp_spacing": 0.05, "cut_off_energy": 300}
 
-    assert drop_explicit_conflicts(values, _SPECS_BY_NAME, explicit_names={"kpoint_mp_spacing"}) is values
+    assert (
+        drop_explicit_conflicts(values, _SPECS_BY_NAME, explicit_names={"kpoint_mp_spacing"})
+        is values
+    )
     assert values == {"kpoint_mp_spacing": 0.05, "cut_off_energy": 300}
 
     # Two explicit values are both kept: only defaults give way.
     values = {"kpoint_mp_grid": (2, 2, 2), "kpoint_mp_spacing": 0.05}
-    drop_explicit_conflicts(values, _SPECS_BY_NAME, explicit_names={"kpoint_mp_grid", "kpoint_mp_spacing"})
+    drop_explicit_conflicts(
+        values, _SPECS_BY_NAME, explicit_names={"kpoint_mp_grid", "kpoint_mp_spacing"}
+    )
     assert values == {"kpoint_mp_grid": (2, 2, 2), "kpoint_mp_spacing": 0.05}
 
 
@@ -436,7 +465,6 @@ def test_geometry_relaxation_parameter_specs_shape_the_relaxation_surface() -> N
     assert len(by_name) == len(specs)
 
 
-
 def test_shared_parameter_values_keeps_what_every_row_agrees_on() -> None:
     rows = [
         {"xc_functional": "PBE", "max_scf_cycles": 80, "task": "SINGLEPOINT"},
@@ -453,7 +481,9 @@ def test_shared_parameter_values_keeps_what_every_row_agrees_on() -> None:
 def test_species_options_list_each_species_once_in_first_seen_order() -> None:
     from mufinder.domain.models import Structure
 
-    first = Structure(label="a", species=["Fe", " O ", "Fe", ""], fractional_positions=[[0, 0, 0]] * 4)
+    first = Structure(
+        label="a", species=["Fe", " O ", "Fe", ""], fractional_positions=[[0, 0, 0]] * 4
+    )
     second = Structure(label="b", species=["H:mu", "O"], fractional_positions=[[0, 0, 0]] * 2)
 
     assert structure_species_options(first) == ("Fe", "O")

@@ -23,9 +23,13 @@ from mufinder.services.project_service import ProjectService
 
 _FIELD = {
     "kind": "commensurate",
-    "results": [{"site_label": "site 1", "muon_position": [0.25, 0.25, 0.25], "total_T": [0.1, 0.2, 0.3]}],
+    "results": [
+        {"site_label": "site 1", "muon_position": [0.25, 0.25, 0.25], "total_T": [0.1, 0.2, 0.3]}
+    ],
 }
-_TENSORS = [{"site_label": "site 1", "tensor": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]}]
+_TENSORS = [
+    {"site_label": "site 1", "tensor": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]}
+]
 _NUCLEAR = {"mode": "zero_field_powder", "sigma_us_inv": 0.4}
 
 
@@ -56,12 +60,18 @@ def test_store_records_each_result_and_returns_the_form_without_them(tmp_path: P
         NUCLEAR_RELAXATION_RESULT_TYPE,
     }
     assert all(record.calculation_run_id is None for record in records.values())
-    assert records[MAGNETIC_FIELD_RESULT_TYPE].data == {"owner": MAGNETIC_FIELD_PAGE_OWNER, **_FIELD}
+    assert records[MAGNETIC_FIELD_RESULT_TYPE].data == {
+        "owner": MAGNETIC_FIELD_PAGE_OWNER,
+        **_FIELD,
+    }
     assert records[MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE].data == {
         "owner": MAGNETIC_FIELD_PAGE_OWNER,
         "results": _TENSORS,
     }
-    assert records[NUCLEAR_RELAXATION_RESULT_TYPE].data == {"owner": MAGNETIC_FIELD_PAGE_OWNER, "result": _NUCLEAR}
+    assert records[NUCLEAR_RELAXATION_RESULT_TYPE].data == {
+        "owner": MAGNETIC_FIELD_PAGE_OWNER,
+        "result": _NUCLEAR,
+    }
 
 
 def test_attach_restores_the_form_the_page_stored(tmp_path: Path) -> None:
@@ -75,7 +85,9 @@ def test_attach_restores_the_form_the_page_stored(tmp_path: Path) -> None:
 def test_attach_gives_every_missing_result_an_explicit_empty_value(tmp_path: Path) -> None:
     # A page reused across projects must clear results the owner has no record of.
     document = _document(tmp_path)
-    store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, {"magnetic_field_results": _FIELD})
+    store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, {"magnetic_field_results": _FIELD}
+    )
 
     assert attach_magnetic_field_results(document, "other-workspace", {"histogram_bins": 512}) == {
         "histogram_bins": 512,
@@ -98,15 +110,23 @@ def test_unchanged_results_keep_their_record_and_changed_results_replace_it(tmp_
     store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form(histogram_bins=1024))
     assert {record.result_type: record.id for record in magnetic_field_results(document)} == before
 
-    recalculated = {"kind": "commensurate", "results": [{"site_label": "site 1", "total_T": [0.0, 0.0, 1.0]}]}
-    store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form(magnetic_field_results=recalculated))
+    recalculated = {
+        "kind": "commensurate",
+        "results": [{"site_label": "site 1", "total_T": [0.0, 0.0, 1.0]}],
+    }
+    store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, _form(magnetic_field_results=recalculated)
+    )
 
     after = {record.result_type: record.id for record in magnetic_field_results(document)}
     assert len(document.results) == 3
     assert after[MAGNETIC_FIELD_RESULT_TYPE] != before[MAGNETIC_FIELD_RESULT_TYPE]
     assert after[NUCLEAR_RELAXATION_RESULT_TYPE] == before[NUCLEAR_RELAXATION_RESULT_TYPE]
-    assert magnetic_field_result(document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE).data["results"] == (
-        recalculated["results"]
+    assert (
+        magnetic_field_result(document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE).data[
+            "results"
+        ]
+        == (recalculated["results"])
     )
 
 
@@ -138,12 +158,19 @@ def test_owners_keep_separate_records(tmp_path: Path) -> None:
     assert len(magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER)) == 3
 
 
-def test_commensurate_field_entries_skip_distributions_and_malformed_entries(tmp_path: Path) -> None:
+def test_commensurate_field_entries_skip_distributions_and_malformed_entries(
+    tmp_path: Path,
+) -> None:
     document = _document(tmp_path)
     store_magnetic_field_results(
         document,
         "commensurate",
-        {"magnetic_field_results": {"kind": "commensurate", "results": [{"site_label": "a"}, "bad"]}},
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "a"}, "bad"],
+            }
+        },
     )
     store_magnetic_field_results(
         document,
@@ -167,16 +194,21 @@ def test_records_survive_a_save_and_reload(tmp_path: Path) -> None:
 
     reloaded = service.load_project(document.project_root)
 
-    assert attach_magnetic_field_results(
-        reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
-    ) == _form()
+    assert (
+        attach_magnetic_field_results(
+            reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
+        )
+        == _form()
+    )
 
 
 def test_field_records_keep_the_site_source_through_a_save_and_reload(tmp_path: Path) -> None:
     service = ProjectService()
     document = _document(tmp_path)
     form = _form(magnetic_field_results={**_FIELD, "site_source": "uep_clustering"})
-    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, form)
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, form
+    )
     service.save_project(document)
 
     reloaded = service.load_project(document.project_root)
@@ -191,32 +223,53 @@ def test_field_records_keep_the_site_source_through_a_save_and_reload(tmp_path: 
 
 def test_attach_takes_a_missing_site_source_from_the_selected_site(tmp_path: Path) -> None:
     document = _document(tmp_path)
-    selected = {"source": "uep_clustering", "label": "UEP cluster 1", "fractional_position": [0.1, 0.2, 0.3]}
-    stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form(selected_muon_site=selected))
+    selected = {
+        "source": "uep_clustering",
+        "label": "UEP cluster 1",
+        "fractional_position": [0.1, 0.2, 0.3],
+    }
+    stored = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, _form(selected_muon_site=selected)
+    )
 
     attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored)
 
     assert attached["magnetic_field_results"] == {**_FIELD, "site_source": "uep_clustering"}
     # Without a selected site nothing is inferred.
     other = store_magnetic_field_results(document, "other", _form())
-    assert "site_source" not in attach_magnetic_field_results(document, "other", other)["magnetic_field_results"]
+    assert (
+        "site_source"
+        not in attach_magnetic_field_results(document, "other", other)["magnetic_field_results"]
+    )
 
 
-def test_tensor_and_nuclear_records_keep_the_site_source_through_a_save_and_reload(tmp_path: Path) -> None:
+def test_tensor_and_nuclear_records_keep_the_site_source_through_a_save_and_reload(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     document = _document(tmp_path)
     form = _form(
         dipolar_tensor_results=[{**row, "site_source": "uep_clustering"} for row in _TENSORS],
         nuclear_relaxation_results={**_NUCLEAR, "site_source": "relaxation_clustering"},
     )
-    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, form)
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, form
+    )
     service.save_project(document)
 
     reloaded = service.load_project(document.project_root)
 
-    tensor = magnetic_field_result(reloaded, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE)
-    assert tensor.data == {"owner": MAGNETIC_FIELD_PAGE_OWNER, "results": _TENSORS, "site_source": "uep_clustering"}
-    nuclear = magnetic_field_result(reloaded, MAGNETIC_FIELD_PAGE_OWNER, NUCLEAR_RELAXATION_RESULT_TYPE)
+    tensor = magnetic_field_result(
+        reloaded, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE
+    )
+    assert tensor.data == {
+        "owner": MAGNETIC_FIELD_PAGE_OWNER,
+        "results": _TENSORS,
+        "site_source": "uep_clustering",
+    }
+    nuclear = magnetic_field_result(
+        reloaded, MAGNETIC_FIELD_PAGE_OWNER, NUCLEAR_RELAXATION_RESULT_TYPE
+    )
     assert nuclear.data == {
         "owner": MAGNETIC_FIELD_PAGE_OWNER,
         "result": _NUCLEAR,
@@ -228,11 +281,19 @@ def test_tensor_and_nuclear_records_keep_the_site_source_through_a_save_and_relo
     assert attached == form
 
 
-def test_tensor_and_nuclear_records_without_a_source_take_none_from_the_selected_site(tmp_path: Path) -> None:
+def test_tensor_and_nuclear_records_without_a_source_take_none_from_the_selected_site(
+    tmp_path: Path,
+) -> None:
     # These results survive a change of muon site, so the selected site says nothing about them.
     document = _document(tmp_path)
-    selected = {"source": "uep_clustering", "label": "UEP cluster 1", "fractional_position": [0.1, 0.2, 0.3]}
-    stored = store_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, _form(selected_muon_site=selected))
+    selected = {
+        "source": "uep_clustering",
+        "label": "UEP cluster 1",
+        "fractional_position": [0.1, 0.2, 0.3],
+    }
+    stored = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, _form(selected_muon_site=selected)
+    )
 
     attached = attach_magnetic_field_results(document, MAGNETIC_FIELD_PAGE_OWNER, stored)
 
@@ -245,6 +306,14 @@ def test_only_uep_sites_are_unrelaxed_estimates() -> None:
     assert not is_unrelaxed_site_source("relaxation_clustering")
     assert not is_unrelaxed_site_source("custom")
     assert not is_unrelaxed_site_source(None)
-    assert field_result_site_source({"site_source": "custom"}, {"selected_muon_site": {"source": "uep_clustering"}}) == "custom"
-    assert field_result_site_source({}, {"selected_muon_site": {"source": "uep_clustering"}}) == "uep_clustering"
+    assert (
+        field_result_site_source(
+            {"site_source": "custom"}, {"selected_muon_site": {"source": "uep_clustering"}}
+        )
+        == "custom"
+    )
+    assert (
+        field_result_site_source({}, {"selected_muon_site": {"source": "uep_clustering"}})
+        == "uep_clustering"
+    )
     assert field_result_site_source({}, None) is None

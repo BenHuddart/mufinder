@@ -107,7 +107,9 @@ class DetectedRun:
     converged: bool | None = None
     total_energy: float | None = None
 
-    supercell_matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None = None
+    supercell_matrix: (
+        tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None
+    ) = None
     supercell_residual: float | None = None
     initial_muon_fractional_supercell: tuple[float, float, float] | None = None
     final_muon_fractional_supercell: tuple[float, float, float] | None = None
@@ -295,7 +297,6 @@ def _magnitude(value: object) -> float | None:
     return None
 
 
-
 def _host_composition_blockers(
     *,
     input_cell: ParsedCell,
@@ -340,9 +341,7 @@ def _host_composition_blockers(
     for name in expected:
         expected[name] *= determinant
     if Counter(species) != expected:
-        blockers.append(
-            "The input cell's composition does not match the active host structure."
-        )
+        blockers.append("The input cell's composition does not match the active host structure.")
     return blockers
 
 
@@ -521,7 +520,9 @@ def _detect_run(
         completed=completed,
         converged=converged,
         total_energy=result.total_energy if result is not None else None,
-        supercell_matrix=detection.matrix if detection is not None and detection.is_supercell else None,
+        supercell_matrix=detection.matrix
+        if detection is not None and detection.is_supercell
+        else None,
         supercell_residual=detection.residual if detection is not None else None,
         initial_muon_fractional_supercell=initial_position,
         final_muon_fractional_supercell=final_position,

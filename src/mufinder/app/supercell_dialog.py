@@ -91,7 +91,9 @@ class SupercellPreviewDialog(QDialog):
         if ok_button is not None:
             ok_button.setText(accept_button_text)
         if show_unit_cell_button:
-            unit_cell_button = buttons.addButton("Use Unit Cell", QDialogButtonBox.ButtonRole.ActionRole)
+            unit_cell_button = buttons.addButton(
+                "Use Unit Cell", QDialogButtonBox.ButtonRole.ActionRole
+            )
             unit_cell_button.clicked.connect(self._accept_unit_cell)
 
         self._build_advanced_matrix_grid()
@@ -112,10 +114,7 @@ class SupercellPreviewDialog(QDialog):
                 [0, int(self._simple_ny.value()), 0],
                 [0, 0, int(self._simple_nz.value())],
             ]
-        return [
-            [int(cell.value()) for cell in row]
-            for row in self._advanced_cells
-        ]
+        return [[int(cell.value()) for cell in row] for row in self._advanced_cells]
 
     def result_mode(self) -> str:
         """Return which high-level action accepted the dialog."""
@@ -294,7 +293,9 @@ class SupercellEditorDialog(QDialog):
 
         self._title = QLabel("Supercell Editor")
         style_section_title(self._title)
-        self._subtitle = QLabel("Generate, preview, name, and manage reusable supercells for this project.")
+        self._subtitle = QLabel(
+            "Generate, preview, name, and manage reusable supercells for this project."
+        )
         style_section_subtitle(self._subtitle)
         self._subtitle.setWordWrap(True)
 
@@ -391,7 +392,12 @@ class SupercellEditorDialog(QDialog):
     def _configure_asset_table_columns(self) -> None:
         header = self._asset_table.horizontalHeader()
         header.setSectionResizeMode(self._ID_COLUMN, QHeaderView.ResizeMode.Fixed)
-        for column in (self._NAME_COLUMN, self._MATRIX_COLUMN, self._ATOMS_COLUMN, self._USAGE_COLUMN):
+        for column in (
+            self._NAME_COLUMN,
+            self._MATRIX_COLUMN,
+            self._ATOMS_COLUMN,
+            self._USAGE_COLUMN,
+        ):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
 
     def matrix(self) -> list[list[int]]:
@@ -565,13 +571,23 @@ class SupercellEditorDialog(QDialog):
             for asset in assets:
                 row = self._asset_table.rowCount()
                 self._asset_table.insertRow(row)
-                self._asset_table.setItem(row, self._ID_COLUMN, QTableWidgetItem(str(asset.structure_id)))
+                self._asset_table.setItem(
+                    row, self._ID_COLUMN, QTableWidgetItem(str(asset.structure_id))
+                )
                 self._asset_table.setItem(row, self._NAME_COLUMN, QTableWidgetItem(asset.label))
-                self._asset_table.setItem(row, self._MATRIX_COLUMN, QTableWidgetItem(self._matrix_label(asset.matrix)))
+                self._asset_table.setItem(
+                    row, self._MATRIX_COLUMN, QTableWidgetItem(self._matrix_label(asset.matrix))
+                )
                 structure = self._document.structures.get(asset.structure_id)
                 atom_count = len(structure.species) if structure is not None else 0
-                self._asset_table.setItem(row, self._ATOMS_COLUMN, QTableWidgetItem(str(atom_count)))
-                self._asset_table.setItem(row, self._USAGE_COLUMN, QTableWidgetItem(self._asset_usage_text(asset.structure_id)))
+                self._asset_table.setItem(
+                    row, self._ATOMS_COLUMN, QTableWidgetItem(str(atom_count))
+                )
+                self._asset_table.setItem(
+                    row,
+                    self._USAGE_COLUMN,
+                    QTableWidgetItem(self._asset_usage_text(asset.structure_id)),
+                )
                 if asset.structure_id == select_id:
                     selected_row = row
             self._asset_table.resizeColumnsToContents()
@@ -683,10 +699,13 @@ class SupercellEditorDialog(QDialog):
             return self._save_as_asset()
 
         try:
-            if self._project_service.supercell_asset_is_frozen(
-                self._document,
-                asset_structure_id=self._current_asset_id,
-            ) and matrix != asset.matrix:
+            if (
+                self._project_service.supercell_asset_is_frozen(
+                    self._document,
+                    asset_structure_id=self._current_asset_id,
+                )
+                and matrix != asset.matrix
+            ):
                 saved = self._project_service.create_workflow_supercell_asset(
                     self._document,
                     workflow_stage=self._workflow_stage,
@@ -726,11 +745,14 @@ class SupercellEditorDialog(QDialog):
         structure = self._document.structures.get(self._current_asset_id)
         if structure is None:
             return
-        if QMessageBox.question(
-            self,
-            "Delete supercell",
-            f"Delete saved supercell '{structure.label}'?",
-        ) != QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(
+                self,
+                "Delete supercell",
+                f"Delete saved supercell '{structure.label}'?",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
             return
         try:
             removed = self._project_service.delete_workflow_supercell_asset(
@@ -778,7 +800,9 @@ class SupercellEditorDialog(QDialog):
                 self._source_structure,
                 matrix,
                 atomic_spins=self._project_service.structure_atomic_spins(self._source_structure),
-                propagation_vector=self._project_service.structure_propagation_vector(self._source_structure),
+                propagation_vector=self._project_service.structure_propagation_vector(
+                    self._source_structure
+                ),
             )
         except ValueError as exc:
             self._status_label.setText(f"Supercell generation failed: {exc}")

@@ -48,12 +48,18 @@ from mufinder.app.theme import (
 )
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
-from mufinder.science.quantum_adiabatic import DirectionalPotential, SingleParticleResult, solve_single_particle_ground_state
-from mufinder.science.quantum_phonons import (
+from mufinder.domain.constants import (
     ATOMIC_MASS_KG,
     ELEMENTARY_CHARGE_C,
     LIGHT_SPEED_M_S,
     MUON_MASS_AMU,
+)
+from mufinder.science.quantum_adiabatic import (
+    DirectionalPotential,
+    SingleParticleResult,
+    solve_single_particle_ground_state,
+)
+from mufinder.science.quantum_phonons import (
     PhononCalculation,
     correlation_matrix,
     covariance_matrix,
@@ -119,8 +125,12 @@ class QuantumPhononAnalysisDialog(QDialog):
             label=f"{job_label} phonon structure",
         )
         self._phonon_lattice = np.asarray(self._phonon_structure.lattice_vectors, dtype=float)
-        self._phonon_fractional_positions = np.asarray(self._phonon_structure.fractional_positions, dtype=float)
-        self._phonon_equilibrium_cartesian_positions = self._phonon_fractional_positions @ self._phonon_lattice
+        self._phonon_fractional_positions = np.asarray(
+            self._phonon_structure.fractional_positions, dtype=float
+        )
+        self._phonon_equilibrium_cartesian_positions = (
+            self._phonon_fractional_positions @ self._phonon_lattice
+        )
         self._muon_atom_index = self._calculation.atom_index_for_species("H:mu") - 1
         self._current_phonon_mode_row: int | None = None
         self._phonon_view_initialized = False
@@ -212,7 +222,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._phonon_amplitude_spin.setDecimals(2)
         self._phonon_amplitude_spin.setSingleStep(0.05)
         self._phonon_amplitude_spin.setValue(1.00)
-        self._phonon_amplitude_spin.valueChanged.connect(lambda _value: self._refresh_phonon_mode_view())
+        self._phonon_amplitude_spin.valueChanged.connect(
+            lambda _value: self._refresh_phonon_mode_view()
+        )
         controls.addWidget(self._phonon_amplitude_spin)
         controls.addWidget(QLabel("Cycle time (s)"))
         self._phonon_cycle_spin = QDoubleSpinBox(tab)
@@ -220,11 +232,15 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._phonon_cycle_spin.setDecimals(2)
         self._phonon_cycle_spin.setSingleStep(0.25)
         self._phonon_cycle_spin.setValue(2.0)
-        self._phonon_cycle_spin.valueChanged.connect(lambda _value: self._refresh_phonon_mode_view())
+        self._phonon_cycle_spin.valueChanged.connect(
+            lambda _value: self._refresh_phonon_mode_view()
+        )
         controls.addWidget(self._phonon_cycle_spin)
         self._phonon_show_vectors_checkbox = QCheckBox("Show vectors", tab)
         self._phonon_show_vectors_checkbox.setChecked(False)
-        self._phonon_show_vectors_checkbox.toggled.connect(lambda _checked: self._refresh_phonon_mode_view())
+        self._phonon_show_vectors_checkbox.toggled.connect(
+            lambda _checked: self._refresh_phonon_mode_view()
+        )
         controls.addWidget(self._phonon_show_vectors_checkbox)
         self._phonon_play_button = QPushButton("Play animation", tab)
         self._phonon_play_button.setCheckable(True)
@@ -240,7 +256,10 @@ class QuantumPhononAnalysisDialog(QDialog):
         controls.addWidget(self._phonon_play_button)
         self._phonon_reset_button = QPushButton("Reset", tab)
         self._phonon_reset_button.clicked.connect(self._reset_phonon_animation)
-        play_button_fixed_height = max(self._phonon_play_button.sizeHint().height(), self._phonon_reset_button.sizeHint().height())
+        play_button_fixed_height = max(
+            self._phonon_play_button.sizeHint().height(),
+            self._phonon_reset_button.sizeHint().height(),
+        )
         self._phonon_play_button.setFixedHeight(play_button_fixed_height)
         controls.addWidget(self._phonon_reset_button)
         self._phonon_animation_status_label = QLabel(tab)
@@ -365,7 +384,9 @@ class QuantumPhononAnalysisDialog(QDialog):
             self._atom_b_combo.addItem(label, atom.index)
         muon_index = self._calculation.atom_index_for_species("H:mu")
         self._atom_a_combo.setCurrentIndex(max(0, muon_index - 1))
-        self._atom_b_combo.setCurrentIndex(0 if muon_index != 1 else min(1, len(self._calculation.atoms) - 1))
+        self._atom_b_combo.setCurrentIndex(
+            0 if muon_index != 1 else min(1, len(self._calculation.atoms) - 1)
+        )
 
         summary = QHBoxLayout()
         self._w2_label = QLabel("w2")
@@ -449,7 +470,9 @@ class QuantumPhononAnalysisDialog(QDialog):
             _fill_single_particle_table(self._single_particle_table, rows)
             if rows:
                 self._single_particle_table.setRangeSelected(
-                    QTableWidgetSelectionRange(0, 0, len(rows) - 1, self._single_particle_table.columnCount() - 1),
+                    QTableWidgetSelectionRange(
+                        0, 0, len(rows) - 1, self._single_particle_table.columnCount() - 1
+                    ),
                     True,
                 )
             self._plot_single_particle()
@@ -460,7 +483,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._figure.clear()
         axis = self._figure.add_subplot(111)
         _style_energy_axis(self._figure, axis)
-        sqrt_scale = hasattr(self, "_scale_combo") and self._scale_combo.currentText() == "Sqrt energy"
+        sqrt_scale = (
+            hasattr(self, "_scale_combo") and self._scale_combo.currentText() == "Sqrt energy"
+        )
         palette = current_palette()
         colours = _analysis_line_colours()
         selected_indices = self._selected_single_particle_indices()
@@ -480,7 +505,14 @@ class QuantumPhononAnalysisDialog(QDialog):
                 y_energy = energy_meV
                 y_label = r"$E\ (\mathrm{meV})$"
             axis.plot(x, y_potential, color=colour, linewidth=1.7, label=rf"{result.label}: $V(q)$")
-            axis.axhline(y_energy, color=colour, linestyle="--", linewidth=1.0, alpha=0.82, label=rf"{result.label}: $E_0$")
+            axis.axhline(
+                y_energy,
+                color=colour,
+                linestyle="--",
+                linewidth=1.0,
+                alpha=0.82,
+                label=rf"{result.label}: $E_0$",
+            )
             if density.max() > 0.0:
                 density_scaled = density / density.max()
                 span = max(float(np.max(y_potential)), y_energy, 1.0)
@@ -518,7 +550,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         corr = correlation_matrix(self._calculation, atom_a, atom_b)
         _fill_matrix_table(self._covariance_table, cov)
         _fill_matrix_table(self._correlation_table, corr)
-        self._w2_label.setText(f"w₂ = {w2_entanglement_witness(self._calculation, atom_a, atom_b):.6g}")
+        self._w2_label.setText(
+            f"w₂ = {w2_entanglement_witness(self._calculation, atom_a, atom_b):.6g}"
+        )
 
     def _show_single_particle_help(self) -> None:
         dialog = QuantumAnalysisHelpDialog(_single_particle_help_definition(), parent=self)
@@ -535,7 +569,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         for zero_based_index, frequency_cm in enumerate(gamma.frequencies_cm):
             mode_index = zero_based_index + 1
             mode_shape = real_mode_displacements(self._calculation, mode_index)
-            direction_label = _direction_label(_normalized_mode_direction(mode_shape[self._muon_atom_index]))
+            direction_label = _direction_label(
+                _normalized_mode_direction(mode_shape[self._muon_atom_index])
+            )
             rows.append(
                 PhononModeAnalysisRow(
                     mode_index=mode_index,
@@ -589,7 +625,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         palette = current_palette()
         if playing:
             self._phonon_play_button.setText("Pause animation")
-            self._phonon_play_button.setToolTip("Animation is running. Click to pause the phonon mode.")
+            self._phonon_play_button.setToolTip(
+                "Animation is running. Click to pause the phonon mode."
+            )
             self._phonon_play_button.setStyleSheet(
                 f"QPushButton {{ background-color: {palette.success}; color: white; border: 2px solid {palette.success}; font-weight: 700; }}"
                 f"QPushButton:hover {{ background-color: {palette.success}; }}"
@@ -620,14 +658,20 @@ class QuantumPhononAnalysisDialog(QDialog):
 
     def _reset_phonon_animation(self) -> None:
         self._phonon_phase_radians = 0.0
-        self._phonon_last_tick_seconds = perf_counter() if self._phonon_animation_timer.isActive() else None
+        self._phonon_last_tick_seconds = (
+            perf_counter() if self._phonon_animation_timer.isActive() else None
+        )
         self._refresh_phonon_mode_view()
 
     def _advance_phonon_animation(self) -> None:
         cycle_seconds = max(0.25, float(self._phonon_cycle_spin.value()))
         now = perf_counter()
         previous = self._phonon_last_tick_seconds
-        elapsed_seconds = max(0.0, now - previous) if previous is not None else (self._phonon_animation_timer.interval() / 1000.0)
+        elapsed_seconds = (
+            max(0.0, now - previous)
+            if previous is not None
+            else (self._phonon_animation_timer.interval() / 1000.0)
+        )
         self._phonon_last_tick_seconds = now
         phase_step = 2.0 * pi * elapsed_seconds / cycle_seconds
         self._phonon_phase_radians = (self._phonon_phase_radians + phase_step) % (2.0 * pi)
@@ -639,14 +683,22 @@ class QuantumPhononAnalysisDialog(QDialog):
             return
         mode = self._selected_phonon_mode()
         if mode is None:
-            viewer.set_structure(self._phonon_structure) if not self._phonon_view_initialized else viewer.update_structure_geometry_preserving_view(self._phonon_structure)
+            viewer.set_structure(
+                self._phonon_structure
+            ) if not self._phonon_view_initialized else viewer.update_structure_geometry_preserving_view(
+                self._phonon_structure
+            )
             viewer.set_line_overlays(None)
             self._phonon_view_initialized = True
             return
 
         amplitude = float(self._phonon_amplitude_spin.value())
-        full_displacements = scaled_mode_displacements(self._calculation, mode.mode_index, amplitude)
-        phase_scale = np.sin(self._phonon_phase_radians) if self._phonon_play_button.isChecked() else 0.0
+        full_displacements = scaled_mode_displacements(
+            self._calculation, mode.mode_index, amplitude
+        )
+        phase_scale = (
+            np.sin(self._phonon_phase_radians) if self._phonon_play_button.isChecked() else 0.0
+        )
         animated_displacements = full_displacements * phase_scale
         structure = self._structure_with_cartesian_displacements(animated_displacements)
         if not self._phonon_view_initialized or getattr(viewer, "_structure", None) is None:
@@ -662,7 +714,9 @@ class QuantumPhononAnalysisDialog(QDialog):
             viewer.select_atoms([self._muon_atom_index])
 
     def _structure_with_cartesian_displacements(self, displacements_ang: np.ndarray) -> Structure:
-        cartesian = self._phonon_equilibrium_cartesian_positions + np.asarray(displacements_ang, dtype=float)
+        cartesian = self._phonon_equilibrium_cartesian_positions + np.asarray(
+            displacements_ang, dtype=float
+        )
         fractional = np.linalg.solve(self._phonon_lattice.T, cartesian.T).T
         return type(self._phonon_structure)(
             label=self._phonon_structure.label,
@@ -925,9 +979,18 @@ def _single_particle_help_definition() -> dict[str, object]:
         "symbols": (
             (r"q", "Muon displacement along the selected phonon-mode direction."),
             (r"\omega=2\pi c\nu", "Angular frequency converted from the CASTEP phonon frequency."),
-            (r"E_0", "Ground-state energy of the well; equals ħω/2 for a harmonic well and is reported as ZPE in the table."),
-            (r"\sigma_\mu", "Muon wavefunction width along this one-dimensional coordinate, as computed numerically."),
-            (r"\Delta x", "Analytic ground-state width of the harmonic well; the numerical width reproduces it."),
+            (
+                r"E_0",
+                "Ground-state energy of the well; equals ħω/2 for a harmonic well and is reported as ZPE in the table.",
+            ),
+            (
+                r"\sigma_\mu",
+                "Muon wavefunction width along this one-dimensional coordinate, as computed numerically.",
+            ),
+            (
+                r"\Delta x",
+                "Analytic ground-state width of the harmonic well; the numerical width reproduces it.",
+            ),
         ),
     }
 
@@ -950,7 +1013,10 @@ def _correlation_help_definition() -> dict[str, object]:
             (r"C_{ab}", "Covariance tensor between atoms a and b, reported in Å squared."),
             (r"\rho_{ab}", "Normalized correlation tensor between atoms a and b."),
             (r"e_{an}^i", "Cartesian phonon eigenvector component for atom a in mode n."),
-            (r"w_2", "Pairwise witness: the normalized covariance trace, from -1 (strongly correlated) to 0."),
+            (
+                r"w_2",
+                "Pairwise witness: the normalized covariance trace, from -1 (strongly correlated) to 0.",
+            ),
         ),
     }
 

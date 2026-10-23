@@ -201,7 +201,9 @@ class ContinueRelaxationDialog(ParameterDialog):
         # workflow_dialogs.run_row_parameter_dialog): seed values first, then the advanced
         # set, so the shown editors reflect exactly what the row was
         # continuing from before any edits are made.
-        self.set_values(dict(initial_values), preferred_exclusive=kpoint_exclusive_hint([initial_values]))
+        self.set_values(
+            dict(initial_values), preferred_exclusive=kpoint_exclusive_hint([initial_values])
+        )
         self.set_advanced_names(initial_advanced)
 
         self._checkpoint_label = QLabel(_checkpoint_status_text(checkpoint_probe), self)

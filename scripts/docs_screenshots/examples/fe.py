@@ -38,7 +38,11 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QApplication, QWidget
 
 from mufinder.domain.models import Structure
-from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
+from mufinder.science.magnetic_structure import (
+    AtomSelector,
+    MagneticStructureModel,
+    build_collinear_component,
+)
 
 if TYPE_CHECKING:
     from mufinder.app.main_window import MainWindow
@@ -136,7 +140,9 @@ def save_both_workspaces(window: MainWindow) -> None:
     settle(QApplication.instance())
 
     def choose_tetrahedral(dialog: QWidget) -> None:
-        for edit, value in zip((dialog._custom_x, dialog._custom_y, dialog._custom_z), TETRAHEDRAL_SITE, strict=True):
+        for edit, value in zip(
+            (dialog._custom_x, dialog._custom_y, dialog._custom_z), TETRAHEDRAL_SITE, strict=True
+        ):
             edit.setText(f"{value:g}")
         dialog.accept()
 
@@ -157,7 +163,9 @@ octahedral_project = fe_project("Iron", _OCTAHEDRAL)
 
 SCENES: dict[str, Scene] = {
     "fe_host_structure": Scene(
-        octahedral_project, "host_structure", Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins)
+        octahedral_project,
+        "host_structure",
+        Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins),
     ),
     "fe_magnetic_fields_page": Scene(
         octahedral_project,
@@ -175,7 +183,10 @@ SCENES: dict[str, Scene] = {
         fe_project("Iron without demagnetizing field", {**_OCTAHEDRAL, "demag_shape": "none"}),
         "magnetic_fields",
         Page(calculation_card, (1100, 900)),
-        setup=lambda window: (calculate_and_list(window), select_parallel_site(window._magnetic_field_view)),
+        setup=lambda window: (
+            calculate_and_list(window),
+            select_parallel_site(window._magnetic_field_view),
+        ),
     ),
     "fe_demagnetizing_shapes": Scene(
         octahedral_project,
@@ -206,5 +217,7 @@ SCENES: dict[str, Scene] = {
             prepare=focus_default_button,
         ),
     ),
-    "fe_magnetic_workspaces": Scene(octahedral_project, "magnetic_fields", Window((1280, 1140)), setup=save_both_workspaces),
+    "fe_magnetic_workspaces": Scene(
+        octahedral_project, "magnetic_fields", Window((1280, 1140)), setup=save_both_workspaces
+    ),
 }

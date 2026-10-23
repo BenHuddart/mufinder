@@ -93,7 +93,9 @@ class CastepSetupDialog(QDialog):
         super().__init__(parent)
         self._settings = settings if settings is not None else QSettings("MuFinder", "MuFinder")
         self._setup = load_castep_setup(self._settings)
-        self._cluster_configs = {config.name: config for config in load_cluster_configs(self._settings)}
+        self._cluster_configs = {
+            config.name: config for config in load_cluster_configs(self._settings)
+        }
         self._generation_process: QProcess | None = None
         self._generation_thread: QThread | None = None
         self._generation_worker: ClusterKeywordGenerationWorker | None = None
@@ -198,7 +200,7 @@ class CastepSetupDialog(QDialog):
         local_layout = QVBoxLayout(local_group)
         local_note = QLabel(
             "Only needed to run calculations on this computer, or to generate the keyword catalog from "
-            "\"This computer\". Cluster jobs and cluster keyword generation never use these paths: each "
+            '"This computer". Cluster jobs and cluster keyword generation never use these paths: each '
             "cluster's own CASTEP executable is set in Setup > HPC Clusters."
         )
         local_note.setWordWrap(True)
@@ -237,8 +239,12 @@ class CastepSetupDialog(QDialog):
         local_layout.addLayout(form)
         root.addWidget(local_group)
 
-        self._generate_target_combo.currentIndexChanged.connect(lambda *_: self._on_generate_target_changed())
-        self._generate_method_combo.currentIndexChanged.connect(lambda *_: self._refresh_generate_target_hint())
+        self._generate_target_combo.currentIndexChanged.connect(
+            lambda *_: self._on_generate_target_changed()
+        )
+        self._generate_method_combo.currentIndexChanged.connect(
+            lambda *_: self._refresh_generate_target_hint()
+        )
         self._on_generate_target_changed()
 
         buttons = QDialogButtonBox(
@@ -278,7 +284,10 @@ class CastepSetupDialog(QDialog):
         """Return ``config`` with the method chosen here, remembering a change."""
 
         mode = str(self._generate_method_combo.currentData() or "scheduler")
-        if config.queue_system.strip().lower() == "addqueue" or mode == config.keyword_execution_mode:
+        if (
+            config.queue_system.strip().lower() == "addqueue"
+            or mode == config.keyword_execution_mode
+        ):
             return config
         updated = replace(config, keyword_execution_mode=mode)
         self._cluster_configs[config.name] = updated
@@ -412,7 +421,9 @@ class CastepSetupDialog(QDialog):
 
         config = self._cluster_configs.get(target_key)
         if config is None:
-            QMessageBox.warning(self, "Cluster not found", "The selected cluster is no longer configured.")
+            QMessageBox.warning(
+                self, "Cluster not found", "The selected cluster is no longer configured."
+            )
             return
         config = self._cluster_config_with_selected_method(config)
 
@@ -429,7 +440,9 @@ class CastepSetupDialog(QDialog):
 
         credentials = prompt_for_cluster_credentials(self, config)
         if credentials is None:
-            QMessageBox.warning(self, "Missing credentials", "Credentials are required for this cluster.")
+            QMessageBox.warning(
+                self, "Missing credentials", "Credentials are required for this cluster."
+            )
             return
         # Verify connectivity and host-key trust on a worker thread before
         # starting generation: the inline paramiko connect used to freeze the
@@ -475,7 +488,11 @@ class CastepSetupDialog(QDialog):
         setup = self.setup()
         if setup.mpirun_path:
             mpirun_path = Path(setup.mpirun_path).expanduser()
-            if not mpirun_path.exists() or not mpirun_path.is_file() or not os.access(mpirun_path, os.X_OK):
+            if (
+                not mpirun_path.exists()
+                or not mpirun_path.is_file()
+                or not os.access(mpirun_path, os.X_OK)
+            ):
                 QMessageBox.warning(
                     self,
                     "Invalid MPI launcher",
@@ -609,7 +626,8 @@ class CastepSetupDialog(QDialog):
         self._generate_target_combo.setEnabled(not running)
         self._generate_method_combo.setEnabled(
             not running
-            and getattr(self._selected_cluster_config(), "queue_system", "").strip().lower() != "addqueue"
+            and getattr(self._selected_cluster_config(), "queue_system", "").strip().lower()
+            != "addqueue"
         )
         self._browse_executable_button.setEnabled(not running)
         self._import_button.setEnabled(not running)
@@ -634,8 +652,12 @@ class CastepSetupDialog(QDialog):
     def _on_generation_output(self) -> None:
         if self._generation_process is None:
             return
-        stdout = bytes(self._generation_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        stderr = bytes(self._generation_process.readAllStandardError()).decode("utf-8", errors="replace")
+        stdout = bytes(self._generation_process.readAllStandardOutput()).decode(
+            "utf-8", errors="replace"
+        )
+        stderr = bytes(self._generation_process.readAllStandardError()).decode(
+            "utf-8", errors="replace"
+        )
         text = stdout + stderr
         if not text:
             return
@@ -666,7 +688,8 @@ class CastepSetupDialog(QDialog):
 
         if exit_code != 0 or output_path is None or not output_path.exists():
             self._show_generation_error(
-                self._generation_log.strip() or "CASTEP keyword generation did not complete successfully."
+                self._generation_log.strip()
+                or "CASTEP keyword generation did not complete successfully."
             )
             self._progress_label.setText("Generation failed.")
             self._discard_generation_scratch()
@@ -698,7 +721,9 @@ class CastepSetupDialog(QDialog):
         self._generation_worker = None
         self._discard_generation_scratch()
         self._progress_label.setText("Generation failed.")
-        self._show_generation_error(message.strip() or "CASTEP keyword generation did not complete successfully.")
+        self._show_generation_error(
+            message.strip() or "CASTEP keyword generation did not complete successfully."
+        )
 
     def _on_cluster_generation_cancelled(self) -> None:
         self._set_generation_running(False)
@@ -740,4 +765,3 @@ class CastepSetupDialog(QDialog):
         box.setInformativeText("Open Details to view the full cluster log and traceback.")
         box.setDetailedText(text)
         box.exec()
-

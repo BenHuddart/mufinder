@@ -9,8 +9,9 @@ Package layers
 --------------
 
 ``mufinder.domain``
-   Dataclasses, enums, timestamps, and durable domain records. This layer must
-   not import outer MuFinder packages.
+   Dataclasses, enums, timestamps, durable domain records, and the physical
+   constants every layer uses. This layer must not import outer MuFinder
+   packages.
 
 ``mufinder.castep_io``
    CASTEP parsing, writing, schema metadata, presets, and validation. It owns
@@ -122,6 +123,9 @@ policy, move the reusable part into the appropriate shared layer:
 - any other cross-workflow UI concern belongs in the module listed under
   Shared workflow infrastructure below
 - job lifecycle transitions belong in ``mufinder.services``
+- physical constants and unit conversions belong in
+  ``mufinder.domain.constants``, taken from ``scipy.constants`` with their units
+  in their names; a module that needs one imports it from there
 - scientific calculation behavior belongs in ``mufinder.science``; within it,
   lattice maths (fractional/Cartesian conversion, minimum-image distances,
   periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
@@ -577,6 +581,14 @@ no two workflow widgets may define the same private method.
        (``*_from_dict``, ``ENTITY_DECODERS``, ``jobs_in_creation_order``) and
        the read-side repairs for older projects; encoding is ``to_jsonable``
        in ``mufinder.persistence.codec``.
+   * - ``mufinder.domain.constants``
+     - Every physical constant and unit conversion (``HBAR_J_S``,
+       ``MU0_T_M_PER_A``, ``BOHR_MAGNETON_J_PER_T``, ``BOHR_RADIUS_ANGSTROM``,
+       ``MUON_MASS_AMU``, ``MUON_GAMMA_RAD_S_T`` and the rest), each taken from
+       ``scipy.constants`` (CODATA 2022) or an exact SI definition, with its units
+       in its name. The only module that imports ``scipy.constants`` or
+       ``ase.units``. Derived, workflow-specific factors stay in their science
+       module, built from these constants.
    * - ``mufinder.domain.magnetic_properties``
      - Spins and propagation vectors read from ``Structure.properties``
        (``atomic_spins_from_structure``,

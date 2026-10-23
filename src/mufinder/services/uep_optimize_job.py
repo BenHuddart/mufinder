@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from mufinder.domain.constants import MUON_MASS_KG
 from mufinder.science.uep import (
     UepError,
     UepField,
@@ -84,9 +85,18 @@ def parse_result_file(job_dir: str | Path, seed_name: str) -> UepJobResult:
 
     classification_payload = optimization_payload.get("classification", {})
     optimization = UepOptimizationResult(
-        start_position_ang=tuple(float(value) for value in optimization_payload.get("start_position_ang", (0.0, 0.0, 0.0))),
-        optimized_position_ang=tuple(float(value) for value in optimization_payload.get("optimized_position_ang", (0.0, 0.0, 0.0))),
-        optimized_fractional_position=tuple(float(value) for value in optimization_payload.get("optimized_fractional_position", (0.0, 0.0, 0.0))),
+        start_position_ang=tuple(
+            float(value)
+            for value in optimization_payload.get("start_position_ang", (0.0, 0.0, 0.0))
+        ),
+        optimized_position_ang=tuple(
+            float(value)
+            for value in optimization_payload.get("optimized_position_ang", (0.0, 0.0, 0.0))
+        ),
+        optimized_fractional_position=tuple(
+            float(value)
+            for value in optimization_payload.get("optimized_fractional_position", (0.0, 0.0, 0.0))
+        ),
         classical_energy_ev=float(optimization_payload.get("classical_energy_ev", 0.0)),
         zero_point_energy_ev=(
             float(optimization_payload["zero_point_energy_ev"])
@@ -101,7 +111,9 @@ def parse_result_file(job_dir: str | Path, seed_name: str) -> UepJobResult:
         success=bool(optimization_payload.get("success", False)),
         message=str(optimization_payload.get("message", "")),
         iterations=int(optimization_payload.get("iterations", 0)),
-        classification=_parse_classification(classification_payload if isinstance(classification_payload, dict) else {}),
+        classification=_parse_classification(
+            classification_payload if isinstance(classification_payload, dict) else {}
+        ),
     )
     probe_payload = payload.get("probe")
     return UepJobResult(
@@ -116,22 +128,45 @@ def payload_to_probe(payload: dict[str, Any]) -> UepProbeResult:
     """Deserialize a stored probe payload into a typed result."""
 
     classification_payload = payload.get("classification", {})
-    classification = _parse_classification(classification_payload if isinstance(classification_payload, dict) else {})
+    classification = _parse_classification(
+        classification_payload if isinstance(classification_payload, dict) else {}
+    )
     return UepProbeResult(
         position_ang=tuple(float(value) for value in payload.get("position_ang", (0.0, 0.0, 0.0))),
-        fractional_position=tuple(float(value) for value in payload.get("fractional_position", (0.0, 0.0, 0.0))),
+        fractional_position=tuple(
+            float(value) for value in payload.get("fractional_position", (0.0, 0.0, 0.0))
+        ),
         potential_total_ev=float(payload.get("potential_total_ev", 0.0)),
         potential_electronic_ev=float(payload.get("potential_electronic_ev", 0.0)),
         potential_ionic_ev=float(payload.get("potential_ionic_ev", 0.0)),
-        gradient_total_ev_per_ang=tuple(float(value) for value in payload.get("gradient_total_ev_per_ang", (0.0, 0.0, 0.0))),
-        gradient_electronic_ev_per_ang=tuple(float(value) for value in payload.get("gradient_electronic_ev_per_ang", (0.0, 0.0, 0.0))),
-        gradient_ionic_ev_per_ang=tuple(float(value) for value in payload.get("gradient_ionic_ev_per_ang", (0.0, 0.0, 0.0))),
-        hessian_total_ev_per_ang2=tuple(tuple(float(value) for value in row) for row in payload.get("hessian_total_ev_per_ang2", ((0.0, 0.0, 0.0),) * 3)),
-        hessian_electronic_ev_per_ang2=tuple(tuple(float(value) for value in row) for row in payload.get("hessian_electronic_ev_per_ang2", ((0.0, 0.0, 0.0),) * 3)),
-        hessian_ionic_ev_per_ang2=tuple(tuple(float(value) for value in row) for row in payload.get("hessian_ionic_ev_per_ang2", ((0.0, 0.0, 0.0),) * 3)),
+        gradient_total_ev_per_ang=tuple(
+            float(value) for value in payload.get("gradient_total_ev_per_ang", (0.0, 0.0, 0.0))
+        ),
+        gradient_electronic_ev_per_ang=tuple(
+            float(value) for value in payload.get("gradient_electronic_ev_per_ang", (0.0, 0.0, 0.0))
+        ),
+        gradient_ionic_ev_per_ang=tuple(
+            float(value) for value in payload.get("gradient_ionic_ev_per_ang", (0.0, 0.0, 0.0))
+        ),
+        hessian_total_ev_per_ang2=tuple(
+            tuple(float(value) for value in row)
+            for row in payload.get("hessian_total_ev_per_ang2", ((0.0, 0.0, 0.0),) * 3)
+        ),
+        hessian_electronic_ev_per_ang2=tuple(
+            tuple(float(value) for value in row)
+            for row in payload.get("hessian_electronic_ev_per_ang2", ((0.0, 0.0, 0.0),) * 3)
+        ),
+        hessian_ionic_ev_per_ang2=tuple(
+            tuple(float(value) for value in row)
+            for row in payload.get("hessian_ionic_ev_per_ang2", ((0.0, 0.0, 0.0),) * 3)
+        ),
         classification=classification,
-        zero_point_energy_ev=float(payload["zero_point_energy_ev"]) if payload.get("zero_point_energy_ev") is not None else None,
-        total_quantum_energy_ev=float(payload["total_quantum_energy_ev"]) if payload.get("total_quantum_energy_ev") is not None else None,
+        zero_point_energy_ev=float(payload["zero_point_energy_ev"])
+        if payload.get("zero_point_energy_ev") is not None
+        else None,
+        total_quantum_energy_ev=float(payload["total_quantum_energy_ev"])
+        if payload.get("total_quantum_energy_ev") is not None
+        else None,
     )
 
 
@@ -150,14 +185,17 @@ def run_manifest_file(path: str | Path) -> Path:
             gw_factor=float(payload.get("gw_factor", 5.0)),
         )
         field = UepField(source_data)
-        particle_mass_kg = (
-            float(payload["particle_mass_kg"])
-            if payload.get("particle_mass_kg") is not None
-            else particle_mass_kg_from_amu(float(payload.get("particle_mass_amu", 0.1134289257)))
-        )
+        if payload.get("particle_mass_kg") is not None:
+            particle_mass_kg = float(payload["particle_mass_kg"])
+        elif payload.get("particle_mass_amu") is not None:
+            particle_mass_kg = particle_mass_kg_from_amu(float(payload["particle_mass_amu"]))
+        else:
+            particle_mass_kg = MUON_MASS_KG
         optimization = optimize_muon_position(
             field,
-            start_position_ang=tuple(float(value) for value in payload.get("start_position_ang", (0.0, 0.0, 0.0))),
+            start_position_ang=tuple(
+                float(value) for value in payload.get("start_position_ang", (0.0, 0.0, 0.0))
+            ),
             particle_mass_kg=particle_mass_kg,
             tolerance_ev=float(payload.get("tolerance_ev", 1e-5)),
             max_steps=int(payload.get("max_steps", 300)),

@@ -228,7 +228,9 @@ def _cell_for_seed(
 #: Keywords that belong in the rendered ``.param``. Structure-controlled and
 #: cell-file keywords are excluded: they are carried by the ``.cell``, and
 #: emitting them here would produce a file CASTEP rejects.
-_PARAM_EXCLUDED = frozenset({"kpoint_mp_grid", "kpoint_mp_spacing", "fix_all_cell", "symmetry_generate"})
+_PARAM_EXCLUDED = frozenset(
+    {"kpoint_mp_grid", "kpoint_mp_spacing", "fix_all_cell", "symmetry_generate"}
+)
 
 #: Keywords the import *asserts* rather than recovers. ``TASK`` and ``CHARGE``
 #: define what the job is; ``FIX_ALL_CELL`` and ``WRITE_CELL_STRUCTURE`` are
@@ -316,9 +318,7 @@ def _param_for_seed(
         KeywordAssignment("task", "GEOMETRYOPTIMIZATION"),
         KeywordAssignment("charge", muon_charge_for_state(charge_state)),
     ]
-    keywords.extend(
-        KeywordAssignment(name, value) for name, value in resolved.items()
-    )
+    keywords.extend(KeywordAssignment(name, value) for name, value in resolved.items())
 
     return ParamFile(keywords=tuple(keywords)), dropped
 
@@ -351,9 +351,7 @@ def _materialise_files(
         target = job_directory / source.name
         shutil.copy2(source, target)
         written.append(target.name)
-        manifest.append(
-            {"file": target.name, "source": str(source), "sha256": _digest(target)}
-        )
+        manifest.append({"file": target.name, "source": str(source), "sha256": _digest(target)})
 
     # Byte-exact originals of the *inputs*, which the rendered seed files replace.
     for source in (run.input_cell_path, run.run_param_path):
@@ -393,7 +391,9 @@ def _materialise_files(
     try:
         param_file, dropped = _param_for_seed(parameters, charge_state=charge_state)
         param_text = write_param(param_file)
-        (job_directory / f"{seed_name}.param").write_text(param_text, encoding="utf-8", newline="\n")
+        (job_directory / f"{seed_name}.param").write_text(
+            param_text, encoding="utf-8", newline="\n"
+        )
         written.append(f"{seed_name}.param")
         if dropped:
             warnings.append(
@@ -471,11 +471,7 @@ def row_parameter_values(run: DetectedRun) -> dict[str, Any]:
     """
 
     resolved, _ = resolve_recovered_parameters(run.parameters)
-    values = {
-        name: value
-        for name, value in resolved.items()
-        if name not in _ASSERTED_KEYWORDS
-    }
+    values = {name: value for name, value in resolved.items() if name not in _ASSERTED_KEYWORDS}
 
     grid = run.parameters.get(canonical_keyword_name("cell", "kpoint_mp_grid"))
     if isinstance(grid, (list, tuple)) and len(grid) == 3:
@@ -668,7 +664,9 @@ def commit_legacy_import(
         )
         final_supercell = run.final_muon_fractional_supercell
         final_host = (
-            _fold_to_host(final_supercell, run.supercell_matrix) if final_supercell is not None else None
+            _fold_to_host(final_supercell, run.supercell_matrix)
+            if final_supercell is not None
+            else None
         )
         site.record_relaxation(
             run_record.id,
@@ -685,9 +683,7 @@ def commit_legacy_import(
         if final_supercell is not None and final_host is not None:
             payload["muon_final_fractional_position_supercell"] = list(final_supercell)
             payload["muon_final_fractional_position_host"] = list(final_host)
-        lattice_a, lattice_b, lattice_c = (
-            vector_length(row) for row in relaxed.lattice_vectors
-        )
+        lattice_a, lattice_b, lattice_c = (vector_length(row) for row in relaxed.lattice_vectors)
         payload["lattice_a"] = lattice_a
         payload["lattice_b"] = lattice_b
         payload["lattice_c"] = lattice_c
@@ -763,17 +759,13 @@ def commit_legacy_import(
         action=IMPORT_ACTION,
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         actor="user",
-        description=(
-            f"Imported {len(imported)} legacy muon relaxation(s) from {scan.root.name}"
-        ),
+        description=(f"Imported {len(imported)} legacy muon relaxation(s) from {scan.root.name}"),
         parameters={
             "batch_id": str(batch),
             "source_folder": str(scan.root),
             "keyword_catalog_origin": scan.catalog_origin,
             "imported_sites": site_records,
-            "skipped": [
-                {"site_index": index, "reason": reason} for index, reason in skipped
-            ],
+            "skipped": [{"site_index": index, "reason": reason} for index, reason in skipped],
         },
         input_entity_ids=[host_structure.id],
         output_entity_ids=[item.site_id for item in imported],

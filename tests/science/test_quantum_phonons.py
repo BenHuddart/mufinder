@@ -7,12 +7,9 @@ import math
 import numpy as np
 import pytest
 
+from mufinder.domain.constants import ATOMIC_MASS_KG, HBAR_J_S, LIGHT_SPEED_M_S, MUON_MASS_AMU
 from mufinder.science.quantum_phonons import (
-    ATOMIC_MASS_KG,
     CM_INV_ZPE_TO_EV,
-    HBAR_J_S,
-    LIGHT_SPEED_M_S,
-    MUON_MASS_AMU,
     PhononParseError,
     correlation_matrix,
     covariance_matrix,
@@ -448,7 +445,12 @@ def _muon_localised_text() -> str:
             columns = "      ".join(f"{value:.12f}  0.000000000000" for value in vector)
             rows.append(f"   {mode}   {ion}  {columns}")
     header, _eigenvectors = PHONON_TEXT.split("Mode Ion")
-    return header + "Mode Ion                X                                   Y                                   Z\n" + "\n".join(rows) + "\n"
+    return (
+        header
+        + "Mode Ion                X                                   Y                                   Z\n"
+        + "\n".join(rows)
+        + "\n"
+    )
 
 
 def test_w1_is_zero_when_the_muon_motion_is_fully_in_three_modes() -> None:
@@ -594,7 +596,9 @@ def test_n2_mu_n2_selected_modes_carry_most_but_not_all_muon_motion() -> None:
     # which takes most of the muon weight the three selected modes miss.
     participation = muon_mode_participations(calculation)
     assert modes[0].participation == pytest.approx(0.87, abs=0.01)
-    unselected = [value for index, value in enumerate(participation) if index + 1 not in {13, 14, 15}]
+    unselected = [
+        value for index, value in enumerate(participation) if index + 1 not in {13, 14, 15}
+    ]
     assert max(unselected) == participation[10] == pytest.approx(0.13, abs=0.01)
 
 
@@ -603,7 +607,11 @@ def test_n2_mu_n2_harmonic_widths_match_the_worked_example() -> None:
 
     muon_mass_kg = ATOMIC_MASS_KG * MUON_MASS_AMU
     widths = [
-        1e10 * math.sqrt(HBAR_J_S / (2.0 * muon_mass_kg * 2.0 * math.pi * LIGHT_SPEED_M_S * 100.0 * mode.frequency_cm))
+        1e10
+        * math.sqrt(
+            HBAR_J_S
+            / (2.0 * muon_mass_kg * 2.0 * math.pi * LIGHT_SPEED_M_S * 100.0 * mode.frequency_cm)
+        )
         for mode in modes
     ]
     assert [round(width, 2) for width in widths] == [0.23, 0.21, 0.21]

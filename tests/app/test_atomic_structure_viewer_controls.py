@@ -68,12 +68,21 @@ def test_controls_share_one_line_when_wide(qapp) -> None:
 def test_controls_wrap_onto_a_second_line_instead_of_clipping_when_narrow(qapp) -> None:
     viewer = _shown_viewer(qapp, _NARROW_VIEWER_WIDTH)
 
-    for control in viewer.findChildren(QPushButton) + [viewer._show_cell, viewer._show_bonds, viewer._show_spins]:
+    for control in viewer.findChildren(QPushButton) + [
+        viewer._show_cell,
+        viewer._show_bonds,
+        viewer._show_spins,
+    ]:
         if control.isVisibleTo(viewer):
-            assert _right_edge_in(control, viewer) <= viewer.width(), f"{control.text()!r} is clipped"
+            assert _right_edge_in(control, viewer) <= viewer.width(), (
+                f"{control.text()!r} is clipped"
+            )
     assert _top_in(viewer._reset_view_button, viewer) > _top_in(viewer._show_cell, viewer) + 10
     # The second control line pushes the hint and the 3D canvas down rather than overlapping them.
-    assert _top_in(viewer._interaction_hint, viewer) >= _top_in(viewer._reset_view_button, viewer) + viewer._reset_view_button.height()
+    assert (
+        _top_in(viewer._interaction_hint, viewer)
+        >= _top_in(viewer._reset_view_button, viewer) + viewer._reset_view_button.height()
+    )
     viewer.close()
 
 
@@ -119,7 +128,9 @@ def _relaxation_clustering_dialog() -> RelaxationClusteringDialog:
         )
         for index, fraction in enumerate(fractions)
     ]
-    dialog = RelaxationClusteringDialog(workspace={"name": "Workspace"}, host_structure=host, sites=sites)
+    dialog = RelaxationClusteringDialog(
+        workspace={"name": "Workspace"}, host_structure=host, sites=sites
+    )
     dialog._method_combo.setCurrentIndex(2)
     return dialog
 

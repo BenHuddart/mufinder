@@ -179,7 +179,10 @@ def most_uniform_grid(
     magnitudes = [_norm(vector) for vector in reciprocal_lattice_vectors(lattice_vectors)]
 
     def anisotropy(grid: tuple[int, int, int]) -> float:
-        spacings = [magnitude / (2.0 * math.pi * max(1, int(n))) for magnitude, n in zip(magnitudes, grid, strict=True)]
+        spacings = [
+            magnitude / (2.0 * math.pi * max(1, int(n)))
+            for magnitude, n in zip(magnitudes, grid, strict=True)
+        ]
         return max(spacings) / min(spacings)
 
     best = grids[0]

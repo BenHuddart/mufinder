@@ -312,7 +312,9 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
     service.submit_job(dismissed)
     service.fail_job(dismissed, "boom")
     service.dismiss_job(dismissed)
-    still_failed = make_job("still-failed", service=service, document=document, calc_type="fake_calc")
+    still_failed = make_job(
+        "still-failed", service=service, document=document, calc_type="fake_calc"
+    )
     service.submit_job(still_failed)
     service.fail_job(still_failed, "boom")
 
@@ -347,7 +349,11 @@ def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> No
     controller = _FakeController(
         context,
         # "a" is ready, "b" has a running job, "c" is not ready and has no job.
-        states={"a": FakeRowState("ready"), "b": FakeRowState("running"), "c": FakeRowState("completed")},
+        states={
+            "a": FakeRowState("ready"),
+            "b": FakeRowState("running"),
+            "c": FakeRowState("completed"),
+        },
         existing={"b": running_job},
         materialized={"a": ready_job},
     )
@@ -390,7 +396,11 @@ def test_submit_skipped_report_goes_on_the_last_group_only(tmp_path: Path) -> No
     local = RecordingBackend()
     controller = _FakeController(
         make_context(local_backend=local),
-        states={"a": FakeRowState("ready"), "b": FakeRowState("ready"), "c": FakeRowState("completed")},
+        states={
+            "a": FakeRowState("ready"),
+            "b": FakeRowState("ready"),
+            "c": FakeRowState("completed"),
+        },
         materialized={"a": job_a, "b": job_b},
         group_by_size=True,
     )
@@ -437,7 +447,9 @@ def test_base_definition_lookups_read_the_context_document(tmp_path: Path) -> No
     )
     for definition in (older, newer):
         document.calculations[definition.id] = definition
-    job = service.add_job(document, label="row", workflow_stage=WorkflowStage.UEP, calc_type="fake_calc")
+    job = service.add_job(
+        document, label="row", workflow_stage=WorkflowStage.UEP, calc_type="fake_calc"
+    )
     older.parameters["job_ids_by_label"] = {"row": str(job.id)}
     controller = _StagedFakeController(make_context(document=document), states={})
 
@@ -450,7 +462,9 @@ def test_base_definition_lookups_read_the_context_document(tmp_path: Path) -> No
     assert controller.job_for_key(newer, "row") is None
 
 
-def test_base_definitions_keep_creation_order_when_the_clock_ties(tmp_path: Path, monkeypatch) -> None:
+def test_base_definitions_keep_creation_order_when_the_clock_ties(
+    tmp_path: Path, monkeypatch
+) -> None:
     from datetime import UTC, datetime
 
     from mufinder.domain import models
@@ -465,11 +479,19 @@ def test_base_definitions_keep_creation_order_when_the_clock_ties(tmp_path: Path
     monkeypatch.setattr(models, "datetime", _FrozenClock)
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    host = Structure(label="host", lattice_vectors=[[3.0, 0, 0], [0, 3.0, 0], [0, 0, 3.0]], species=["Fe"], fractional_positions=[[0, 0, 0]])
+    host = Structure(
+        label="host",
+        lattice_vectors=[[3.0, 0, 0], [0, 3.0, 0], [0, 0, 3.0]],
+        species=["Fe"],
+        fractional_positions=[[0, 0, 0]],
+    )
     service.add_structure(document, host)
     created = [
         service.register_uep_definition(
-            document, input_structure_id=host.id, parameters={"row": index}, output_directory=tmp_path / "uep"
+            document,
+            input_structure_id=host.id,
+            parameters={"row": index},
+            output_directory=tmp_path / "uep",
         )
         for index in range(4)
     ]
@@ -484,7 +506,9 @@ def test_base_definitions_keep_creation_order_when_the_clock_ties(tmp_path: Path
     assert [definition.id for definition in controller.definitions()] == newest_first
 
 
-def test_base_definitions_sharing_a_timestamp_are_ordered_by_id_whatever_the_load_order(tmp_path: Path) -> None:
+def test_base_definitions_sharing_a_timestamp_are_ordered_by_id_whatever_the_load_order(
+    tmp_path: Path,
+) -> None:
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -495,7 +519,9 @@ def test_base_definitions_sharing_a_timestamp_are_ordered_by_id_whatever_the_loa
     for ids in ((1, 2, 3), (3, 1, 2)):
         document = ProjectService().create_project(tmp_path / f"p{ids[0]}.mufinder", "P")
         for value in ids:
-            definition = CalculationDefinition(id=UUID(int=value), workflow_stage=WorkflowStage.UEP, created_at=instant)
+            definition = CalculationDefinition(
+                id=UUID(int=value), workflow_stage=WorkflowStage.UEP, created_at=instant
+            )
             document.calculations[definition.id] = definition
         controller = _StagedFakeController(make_context(document=document), states={})
         orders.append([definition.id.int for definition in controller.definitions()])
@@ -646,18 +672,29 @@ def test_validate_controller_artifacts_asks_the_owning_controller(tmp_path: Path
     rejecting = _RejectingController(make_context(), states={})
     unhandled = make_job("u", service=service, document=document, calc_type="unhandled_calc")
 
-    assert validate_controller_artifacts([default], job, completed_castep_result(), run, no_artifacts()) is None
     assert (
-        validate_controller_artifacts([rejecting], unhandled, completed_castep_result(), run, no_artifacts())
+        validate_controller_artifacts(
+            [default], job, completed_castep_result(), run, no_artifacts()
+        )
+        is None
+    )
+    assert (
+        validate_controller_artifacts(
+            [rejecting], unhandled, completed_castep_result(), run, no_artifacts()
+        )
         is None
     )
     # The first handling controller wins, exactly as for result dispatch.
     assert (
-        validate_controller_artifacts([rejecting, default], job, completed_castep_result(), run, no_artifacts())
+        validate_controller_artifacts(
+            [rejecting, default], job, completed_castep_result(), run, no_artifacts()
+        )
         == "rejected j"
     )
     assert (
-        validate_controller_artifacts([default, rejecting], job, completed_castep_result(), run, no_artifacts())
+        validate_controller_artifacts(
+            [default, rejecting], job, completed_castep_result(), run, no_artifacts()
+        )
         is None
     )
 

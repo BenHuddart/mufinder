@@ -61,7 +61,9 @@ class KeywordCatalogGuard(QObject):
         label = catalog_short_label(status)
         needs_attention = status.is_starter or bool(status.issue)
         self.status_button.setText(f"⚠ {label}" if needs_attention else label)
-        self.status_button.setToolTip(f"{catalog_detail_text(status)}\n\nClick to open CASTEP setup.")
+        self.status_button.setToolTip(
+            f"{catalog_detail_text(status)}\n\nClick to open CASTEP setup."
+        )
         self.status_button.setProperty("catalogLimited", needs_attention)
 
     def prompt_at_startup_if_needed(self) -> None:

@@ -62,8 +62,6 @@ infrastructure" in `docs/architecture.rst`; read it before adding a helper, exte
 helper there and never copy a sibling workflow's implementation. The harness pins
 duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
 
-Rules:
-
 - A new workflow is a `WorkflowJobController` subclass plus a widget built from the shared
   helpers. Never add `_on_submit_*` / `_materialize_*` handlers to `MainWindow`.
 - If a shared helper lacks something a workflow needs, extend the helper in the same PR.
@@ -72,6 +70,8 @@ Rules:
 - Logic that computes, validates or mutates project state belongs in `services`,
   `workflow` or `science`, not in a widget or `MainWindow`.
 - Reusable styling goes in `theme.py`, not in feature-local stylesheets.
+- Physical constants live in `mufinder.domain.constants`, taken from `scipy.constants`
+  with units in their names; never type one elsewhere. The harness checks this.
 
 ## Standing rules
 
@@ -133,7 +133,8 @@ The `Makefile` is the executable definition; run its targets, not the raw comman
 make install                          # dev + scientific-backends extras (or: uv sync --extra dev --extra scientific-backends)
 make test-fast FILES="tests/app/test_convergence_widget.py"   # focused tests, no coverage
 make test                             # full suite, coverage >= 85 %; foreground, at most 4 workers
-make lint                             # ruff
+make lint                             # ruff check and ruff format --check
+make format                           # ruff format; layout is the tool's, never hand-tuned
 make docs                             # sphinx -W
 make harness                          # tests/test_agent_harness.py
 ```

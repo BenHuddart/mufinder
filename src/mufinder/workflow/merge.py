@@ -25,8 +25,7 @@ def _merge_assignments(
     incoming: tuple[KeywordAssignment, ...],
 ) -> tuple[KeywordAssignment, ...]:
     merged: dict[str, KeywordAssignment] = {
-        canonical_keyword_name(file_kind, assignment.name): assignment
-        for assignment in current
+        canonical_keyword_name(file_kind, assignment.name): assignment for assignment in current
     }
     for assignment in incoming:
         merged[canonical_keyword_name(file_kind, assignment.name)] = assignment
@@ -34,10 +33,11 @@ def _merge_assignments(
     return tuple(merged[key] for key in ordered_keys)
 
 
-def _merge_blocks(file_kind: str, current: tuple[Any, ...], incoming: tuple[Any, ...]) -> tuple[Any, ...]:
+def _merge_blocks(
+    file_kind: str, current: tuple[Any, ...], incoming: tuple[Any, ...]
+) -> tuple[Any, ...]:
     merged: dict[str, Any] = {
-        canonical_keyword_name(file_kind, block.name): block
-        for block in current
+        canonical_keyword_name(file_kind, block.name): block for block in current
     }
     for block in incoming:
         merged[canonical_keyword_name(file_kind, block.name)] = block
@@ -213,7 +213,9 @@ def resolve_job(
 ) -> JobSpec:
     """Resolve one concrete JobSpec from layered templates and an optional patch."""
 
-    resolved_structure = patch.structure if patch and patch.structure is not None else base_structure
+    resolved_structure = (
+        patch.structure if patch and patch.structure is not None else base_structure
+    )
 
     sweep_overrides = None
     if patch is not None and (patch.cell is not None or patch.param is not None):
@@ -254,13 +256,17 @@ def resolve_job(
         lattice_cart=(
             cell_template.lattice_cart
             if cell_template.lattice_cart is not None
-            else None if cell_template.lattice_abc is not None else resolved_structure.lattice_cart
+            else None
+            if cell_template.lattice_abc is not None
+            else resolved_structure.lattice_cart
         ),
         lattice_abc=cell_template.lattice_abc,
         positions_frac=(
             cell_template.positions_frac
             if cell_template.positions_frac is not None
-            else None if cell_template.positions_abs is not None else resolved_structure.positions_frac
+            else None
+            if cell_template.positions_abs is not None
+            else resolved_structure.positions_frac
         ),
         positions_abs=cell_template.positions_abs,
         atomic_spins=(
@@ -276,7 +282,9 @@ def resolve_job(
         kpoints_list=cell_template.kpoints_list or (),
         kpoint_mp_grid=cell_template.kpoint_mp_grid,
         kpoint_mp_spacing=cell_template.kpoint_mp_spacing,
-        symmetry_generate=cell_template.symmetry_generate if cell_template.symmetry_generate is not None else False,
+        symmetry_generate=cell_template.symmetry_generate
+        if cell_template.symmetry_generate is not None
+        else False,
         scalars=extra_scalars,
         blocks=extra_blocks,
     )

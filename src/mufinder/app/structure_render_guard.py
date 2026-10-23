@@ -62,16 +62,8 @@ def structure_geometry_fingerprint(structure: Structure | None) -> tuple[object,
     return (
         structure.id,
         tuple(structure.species),
-        tuple(
-            float(value)
-            for position in structure.fractional_positions
-            for value in position
-        ),
-        tuple(
-            float(value)
-            for vector in structure.lattice_vectors
-            for value in vector
-        ),
+        tuple(float(value) for position in structure.fractional_positions for value in position),
+        tuple(float(value) for vector in structure.lattice_vectors for value in vector),
     )
 
 

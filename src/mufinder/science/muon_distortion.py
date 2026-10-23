@@ -85,7 +85,9 @@ def map_muon_distortion(
     if not unit_symbols:
         raise error("Pristine structure does not contain any host atoms.")
     all_symbols = list(
-        structure_to_ase_atoms(distorted_structure, sanitize_symbols=True, error=error).get_chemical_symbols()
+        structure_to_ase_atoms(
+            distorted_structure, sanitize_symbols=True, error=error
+        ).get_chemical_symbols()
     )
     labels = [str(label) for label in distorted_structure.species]
     muon_indices = [index for index, label in enumerate(labels) if is_muon_label(label)]
@@ -193,7 +195,9 @@ def equivalent_site_distortion(
                 target,
                 error=error,
             )
-    raise error("The requested muon site is not symmetry-equivalent to the distorted structure's site.")
+    raise error(
+        "The requested muon site is not symmetry-equivalent to the distorted structure's site."
+    )
 
 
 def _apply_operation(
@@ -212,7 +216,9 @@ def _apply_operation(
     structure_frac = np.asarray(pristine_structure.fractional_positions, dtype=float)
     pristine_unit = structure_frac[distortion.atom_indices] + distortion.cell_offsets
     images = pristine_unit @ rotation.T + translation
-    host_indices, cell_offsets = _nearest_pristine_sites(images, distortion.symbols, unit_frac, unit_symbols, lattice)
+    host_indices, cell_offsets = _nearest_pristine_sites(
+        images, distortion.symbols, unit_frac, unit_symbols, lattice
+    )
     residual = (images - unit_frac[host_indices] - cell_offsets) @ lattice
     if np.any(np.linalg.norm(residual, axis=1) > _SYMMETRY_ATOM_TOLERANCE_ANG):
         raise error("A host symmetry operation did not map the pristine host onto itself.")
@@ -226,12 +232,19 @@ def _apply_operation(
     )
 
 
-def _host_sites(structure: Structure, *, error: type[Exception]) -> tuple[list[str], np.ndarray, np.ndarray]:
+def _host_sites(
+    structure: Structure, *, error: type[Exception]
+) -> tuple[list[str], np.ndarray, np.ndarray]:
     """Return the element symbols, fractional positions and structure indices of a structure's host atoms."""
 
     atoms = structure_to_ase_atoms(structure, skip_muon=True, sanitize_symbols=True, error=error)
-    rows = np.asarray([index for index, label in enumerate(structure.species) if not is_muon_label(label)], dtype=int)
-    frac = np.asarray(structure.fractional_positions, dtype=float).reshape(-1, 3)[rows].reshape(-1, 3)
+    rows = np.asarray(
+        [index for index, label in enumerate(structure.species) if not is_muon_label(label)],
+        dtype=int,
+    )
+    frac = (
+        np.asarray(structure.fractional_positions, dtype=float).reshape(-1, 3)[rows].reshape(-1, 3)
+    )
     return list(atoms.get_chemical_symbols()), frac, rows
 
 
@@ -244,7 +257,9 @@ def _check_composition(
 ) -> None:
     foreign = sorted(set(host_symbols) - set(unit_symbols))
     if foreign:
-        raise error(f"Pristine structure has no atoms of species '{foreign[0]}' required by the distorted structure.")
+        raise error(
+            f"Pristine structure has no atoms of species '{foreign[0]}' required by the distorted structure."
+        )
     for symbol in sorted(set(unit_symbols)):
         expected = determinant * sum(1 for value in unit_symbols if value == symbol)
         found = sum(1 for value in host_symbols if value == symbol)

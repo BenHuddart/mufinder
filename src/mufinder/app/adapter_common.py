@@ -154,7 +154,9 @@ def summarize_kpoint_adjustments(
         lines.append(f"• {cell}: {change} ({_rows(count)})")
     hidden = len(ordered) - max_groups
     if hidden > 0:
-        lines.append(f"• and {hidden} more {'change' if hidden == 1 else 'changes'}; see Show Details.")
+        lines.append(
+            f"• and {hidden} more {'change' if hidden == 1 else 'changes'}; see Show Details."
+        )
     return KpointAdjustmentSummary(
         headline=f"K-point grid rescaled for {_rows(len(records))}.",
         body="\n".join(lines),
@@ -556,8 +558,14 @@ def project_convergence_parameter_values(
     if grid is not None:
         resolved_grid = tuple(int(component) for component in grid)
         reference_lattice = project.recommended_kpoint_lattice
-        if target_lattice is not None and isinstance(reference_lattice, list) and len(reference_lattice) == 3:
-            resolved_grid = equivalent_grid_for_supercell(reference_lattice, resolved_grid, target_lattice)
+        if (
+            target_lattice is not None
+            and isinstance(reference_lattice, list)
+            and len(reference_lattice) == 3
+        ):
+            resolved_grid = equivalent_grid_for_supercell(
+                reference_lattice, resolved_grid, target_lattice
+            )
         values["kpoint_mp_grid"] = resolved_grid
     return values
 
@@ -572,7 +580,10 @@ def kpoint_reference_lattice(
     is taken to belong to the host cell.
     """
 
-    if isinstance(project_kpoint_reference_lattice, list) and len(project_kpoint_reference_lattice) == 3:
+    if (
+        isinstance(project_kpoint_reference_lattice, list)
+        and len(project_kpoint_reference_lattice) == 3
+    ):
         return project_kpoint_reference_lattice
     return host_structure.lattice_vectors
 
@@ -657,10 +668,16 @@ def prepare_row(
             row_lattice=structure.lattice_vectors,
             is_identity_supercell=is_identity_supercell(supercell_matrix),
         )
-        if project_kpoint_grid is not None and kpoint_grid is not None and kpoint_grid != project_kpoint_grid:
+        if (
+            project_kpoint_grid is not None
+            and kpoint_grid is not None
+            and kpoint_grid != project_kpoint_grid
+        ):
             adjustment = KpointAdjustment(
                 row_label=label,
-                cell_label=supercell_label(supercell_matrix, unit_cell="unit cell", spell_out_custom=True),
+                cell_label=supercell_label(
+                    supercell_matrix, unit_cell="unit cell", spell_out_custom=True
+                ),
                 project_grid=tuple(project_kpoint_grid),  # type: ignore[arg-type]
                 adjusted_grid=tuple(kpoint_grid),  # type: ignore[arg-type]
             )

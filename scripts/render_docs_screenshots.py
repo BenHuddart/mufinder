@@ -1,5 +1,7 @@
 """Render the documentation screenshots; see the ``docs_screenshots`` package beside this script.
 
+Usage:
+
     python scripts/render_docs_screenshots.py --help
 """
 

@@ -202,7 +202,9 @@ def test_jobs_failed_for_a_missing_scheduler_entry_are_watched(qapp, tmp_path, m
     window.close()
 
 
-def test_refresh_reconnects_clusters_of_jobs_awaiting_reappearance(qapp, tmp_path, monkeypatch) -> None:
+def test_refresh_reconnects_clusters_of_jobs_awaiting_reappearance(
+    qapp, tmp_path, monkeypatch
+) -> None:
     # Refresh Queue while disconnected reconnects the clusters it must poll,
     # including one whose only job is a failed job awaiting reappearance.
     service, document, window, _tracked = _prepare_window(qapp, tmp_path, monkeypatch)

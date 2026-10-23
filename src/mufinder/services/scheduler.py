@@ -154,7 +154,9 @@ class SlurmScheduler(Scheduler):
             return {}
 
         ids_arg = ",".join(job_ids)
-        queue_command = self._resolve_command(ssh, "status", "squeue", self._queue_check_command_path)
+        queue_command = self._resolve_command(
+            ssh, "status", "squeue", self._queue_check_command_path
+        )
         command = self._queue_command(queue_command, ids_arg)
         exit_code, stdout, stderr = ssh.exec_command(command, timeout=60)
         if exit_code != 0:
@@ -323,7 +325,12 @@ class AddqueueScheduler(SlurmScheduler):
 
     def submit(self, ssh, request: SchedulerSubmitRequest) -> str:
         submit_command = self._resolve_command(ssh, "submit", "addqueue", self._submit_command_path)
-        args: list[str] = [submit_command, "--sbatch", "-n", str(max(1, int(request.num_processes)))]
+        args: list[str] = [
+            submit_command,
+            "--sbatch",
+            "-n",
+            str(max(1, int(request.num_processes))),
+        ]
 
         queue_name = request.queue_name.strip()
         if queue_name:

@@ -101,12 +101,16 @@ def checkpoint_summary(candidates: Sequence[ResubmitCandidate]) -> str:
             return "No checkpoint was found, so the run will start from its initial structure."
         return "No checkpoints were found, so the runs will start from their initial structures."
     if unknown == total:
-        return "Checkpoints could not be checked; a run without one starts from its initial structure."
+        return (
+            "Checkpoints could not be checked; a run without one starts from its initial structure."
+        )
     parts = []
     if found:
         parts.append(f"{found} {'has' if found == 1 else 'have'} a checkpoint")
     if absent:
-        parts.append(f"{absent} {'has' if absent == 1 else 'have'} none and will start from the initial structure")
+        parts.append(
+            f"{absent} {'has' if absent == 1 else 'have'} none and will start from the initial structure"
+        )
     if unknown:
         parts.append(f"{unknown} could not be checked")
     return "; ".join(parts) + "."

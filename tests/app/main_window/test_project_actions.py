@@ -21,7 +21,9 @@ from tests.support.main_window import select_route
 def test_new_project_success(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = main_window
 
-    monkeypatch.setattr(main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("MyProj", True))
+    monkeypatch.setattr(
+        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("MyProj", True)
+    )
     monkeypatch.setattr(
         main_window_module.QFileDialog,
         "getExistingDirectory",
@@ -36,7 +38,9 @@ def test_new_project_success(main_window, tmp_path: Path, monkeypatch: pytest.Mo
     window.close()
 
 
-def test_new_project_existing_non_empty_warns(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_new_project_existing_non_empty_warns(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "Exists.mufinder"
     root.mkdir()
     (root / "dummy.txt").write_text("x", encoding="utf-8")
@@ -44,13 +48,17 @@ def test_new_project_existing_non_empty_warns(main_window, tmp_path: Path, monke
     window = main_window
     calls: list[str] = []
 
-    monkeypatch.setattr(main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("Exists", True))
+    monkeypatch.setattr(
+        main_window_module.QInputDialog, "getText", lambda *args, **kwargs: ("Exists", True)
+    )
     monkeypatch.setattr(
         main_window_module.QFileDialog,
         "getExistingDirectory",
         lambda *args, **kwargs: str(tmp_path),
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: calls.append("warn"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda *args, **kwargs: calls.append("warn")
+    )
 
     window._new_project()
 
@@ -58,7 +66,9 @@ def test_new_project_existing_non_empty_warns(main_window, tmp_path: Path, monke
     window.close()
 
 
-def test_open_invalid_project_shows_error(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_open_invalid_project_shows_error(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     folder = tmp_path / "not_project"
     folder.mkdir()
 
@@ -69,7 +79,11 @@ def test_open_invalid_project_shows_error(main_window, tmp_path: Path, monkeypat
         "getExistingDirectory",
         lambda *args, **kwargs: str(folder),
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "critical", lambda *args, **kwargs: errors.append("critical"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "critical",
+        lambda *args, **kwargs: errors.append("critical"),
+    )
 
     window._open_project()
     assert errors == ["critical"]
@@ -103,7 +117,9 @@ def test_main_window_recent_projects_tracks_latest_first(
     recents = window._recent_projects()
     assert recents[:2] == [str(second.project_root), str(first.project_root)]
 
-    menu_actions = [action.text() for action in window._recent_projects_menu.actions() if action.text()]
+    menu_actions = [
+        action.text() for action in window._recent_projects_menu.actions() if action.text()
+    ]
     assert str(second.project_root) in menu_actions
     assert str(first.project_root) in menu_actions
     assert "Clear Recent Projects" in menu_actions
@@ -131,7 +147,9 @@ def test_open_recent_project_removes_missing_entry(
     window._refresh_recent_projects_menu()
 
     warnings: list[str] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: warnings.append("warn"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda *args, **kwargs: warnings.append("warn")
+    )
 
     window._open_recent_project(missing_path)
 
@@ -212,7 +230,9 @@ def test_file_dialogs_use_scoped_last_selected_directory(
 def test_save_without_document_shows_info(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
     window = main_window
     infos: list[str] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *args, **kwargs: infos.append("info"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *args, **kwargs: infos.append("info")
+    )
 
     window._save_project()
 
@@ -223,13 +243,17 @@ def test_save_without_document_shows_info(main_window, monkeypatch: pytest.Monke
 def test_add_demo_job_requires_project(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
     window = main_window
     infos: list[str] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *args, **kwargs: infos.append("info"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *args, **kwargs: infos.append("info")
+    )
     window._add_demo_job()
     assert infos == ["info"]
     window.close()
 
 
-def test_open_castep_setup_dialog_updates_status_bar(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_open_castep_setup_dialog_updates_status_bar(
+    main_window, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
 
     class FakeDialog:
@@ -265,7 +289,9 @@ def test_journal_write_does_not_change_active_workflow_view_on_submission(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "journal_route_preserved.mufinder", "JournalRoutePreserved")
+    doc = service.create_project(
+        tmp_path / "journal_route_preserved.mufinder", "JournalRoutePreserved"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -350,7 +376,9 @@ def test_main_window_project_tree_uses_journal_route_and_view(main_window, tmp_p
     window.close()
 
 
-def test_main_window_journal_populates_from_imported_provenance(main_window, tmp_path: Path) -> None:
+def test_main_window_journal_populates_from_imported_provenance(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "journal_populated.mufinder", "JournalPopulated")
@@ -424,7 +452,9 @@ def test_main_window_close_cancel_keeps_window_open(
     window.close()
 
 
-def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class _FakeMessageBox:
         Icon = SimpleNamespace(Warning=1)
         StandardButton = SimpleNamespace(Yes=1, No=2, Cancel=3, YesToAll=4, NoToAll=5)
@@ -464,11 +494,20 @@ def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(main_wind
     _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Cancel
     assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job") is None
     _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Yes
-    assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True) == "delete"
+    assert (
+        window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True)
+        == "delete"
+    )
     _FakeMessageBox._answer = _FakeMessageBox.StandardButton.YesToAll
-    assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True) == "delete_all"
+    assert (
+        window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True)
+        == "delete_all"
+    )
     _FakeMessageBox._answer = _FakeMessageBox.StandardButton.NoToAll
-    assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True) == "archive_all"
+    assert (
+        window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True)
+        == "archive_all"
+    )
 
     file_path = tmp_path / "orphan.txt"
     file_path.write_text("x", encoding="utf-8")

@@ -50,7 +50,11 @@ def test_structure_like_objects_convert() -> None:
     host = type(
         "_Host",
         (),
-        {"lattice_vectors": tuple(tuple(row) for row in _LATTICE), "species": ("Si",), "fractional_positions": ((0.5, 0.5, 0.5),)},
+        {
+            "lattice_vectors": tuple(tuple(row) for row in _LATTICE),
+            "species": ("Si",),
+            "fractional_positions": ((0.5, 0.5, 0.5),),
+        },
     )()
 
     atoms = structure_to_ase_atoms(host)
@@ -62,14 +66,38 @@ def test_structure_like_objects_convert() -> None:
 @pytest.mark.parametrize(
     ("host", "message"),
     [
-        (type("_Partial", (), {"lattice_vectors": _LATTICE, "species": ("Si",), "fractional_positions": None})(),
-         "must define lattice_vectors, species"),
-        (type("_Mismatched", (), {"lattice_vectors": _LATTICE, "species": ("Si", "Si"),
-                                  "fractional_positions": ((0.0, 0.0, 0.0),)})(),
-         "matching lengths"),
-        (type("_Flat", (), {"lattice_vectors": [[1.0, 0.0, 0.0]], "species": ("Si",),
-                            "fractional_positions": ((0.0, 0.0, 0.0),)})(),
-         "3x3 matrix"),
+        (
+            type(
+                "_Partial",
+                (),
+                {"lattice_vectors": _LATTICE, "species": ("Si",), "fractional_positions": None},
+            )(),
+            "must define lattice_vectors, species",
+        ),
+        (
+            type(
+                "_Mismatched",
+                (),
+                {
+                    "lattice_vectors": _LATTICE,
+                    "species": ("Si", "Si"),
+                    "fractional_positions": ((0.0, 0.0, 0.0),),
+                },
+            )(),
+            "matching lengths",
+        ),
+        (
+            type(
+                "_Flat",
+                (),
+                {
+                    "lattice_vectors": [[1.0, 0.0, 0.0]],
+                    "species": ("Si",),
+                    "fractional_positions": ((0.0, 0.0, 0.0),),
+                },
+            )(),
+            "3x3 matrix",
+        ),
     ],
     ids=["missing-positions", "mismatched-lengths", "bad-lattice"],
 )
@@ -86,7 +114,9 @@ def test_malformed_structures_raise_the_callers_error(host: object, message: str
 def test_skip_muon_drops_muon_sites_and_records_the_kept_labels() -> None:
     structure = _structure(["Fe1", "H:mu", "O"])
 
-    atoms = structure_to_ase_atoms(structure, skip_muon=True, sanitize_symbols=True, record_species_labels=True)
+    atoms = structure_to_ase_atoms(
+        structure, skip_muon=True, sanitize_symbols=True, record_species_labels=True
+    )
 
     assert atoms.get_chemical_symbols() == ["Fe", "O"]
     assert atoms.info["mufinder_species_labels"] == ["Fe1", "O"]
@@ -94,7 +124,9 @@ def test_skip_muon_drops_muon_sites_and_records_the_kept_labels() -> None:
 
 
 def test_sanitize_symbols_maps_the_muon_to_hydrogen() -> None:
-    atoms = structure_to_ase_atoms(_structure(["O", "mu"]), sanitize_symbols=True, record_species_labels=True)
+    atoms = structure_to_ase_atoms(
+        _structure(["O", "mu"]), sanitize_symbols=True, record_species_labels=True
+    )
 
     assert atoms.get_chemical_symbols() == ["O", "H"]
     assert atoms.info["mufinder_species_labels"] == ["O", "mu"]
@@ -123,6 +155,9 @@ def test_element_symbol_reads_the_leading_element_and_rejects_unreadable_labels(
 
 
 def test_reduced_formula_counts_formula_units_and_skips_the_muon_and_unreadable_labels() -> None:
-    assert reduced_formula(["Fe1", "Fe2", "O", "O", "O", "Fe", "Fe", "O", "O", "O", "H:mu"]) == ("Fe2O3", 2)
+    assert reduced_formula(["Fe1", "Fe2", "O", "O", "O", "Fe", "Fe", "O", "O", "O", "H:mu"]) == (
+        "Fe2O3",
+        2,
+    )
     assert reduced_formula(["Sr", "Ti", "O", "O", "O", "123"]) == ("SrTiO3", 1)
     assert reduced_formula(["X", "muon"]) == ("", 0)

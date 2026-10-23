@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.castep_io import KeywordAssignment, ParamFile, ValueWithUnit, geometry_optimization, write_param
+from mufinder.castep_io import (
+    KeywordAssignment,
+    ParamFile,
+    ValueWithUnit,
+    geometry_optimization,
+    write_param,
+)
 from mufinder.castep_io.param_writer import _render_value
 from mufinder.castep_io.types import BlockSection
 
@@ -104,13 +110,7 @@ def test_write_param_renders_block_unit_line() -> None:
 
     rendered = write_param(param_file)
 
-    assert rendered == (
-        "%BLOCK DEVEL_CODE\n"
-        "eV\n"
-        "foo=1\n"
-        "bar=2\n"
-        "%ENDBLOCK DEVEL_CODE\n"
-    )
+    assert rendered == ("%BLOCK DEVEL_CODE\neV\nfoo=1\nbar=2\n%ENDBLOCK DEVEL_CODE\n")
 
 
 def test_write_param_block_only_has_no_leading_blank_line() -> None:
@@ -124,11 +124,7 @@ def test_write_param_block_only_has_no_leading_blank_line() -> None:
     rendered = write_param(param_file)
 
     assert not rendered.startswith("\n")
-    assert rendered == (
-        "%BLOCK DEVEL_CODE\n"
-        "x=1\n"
-        "%ENDBLOCK DEVEL_CODE\n"
-    )
+    assert rendered == ("%BLOCK DEVEL_CODE\nx=1\n%ENDBLOCK DEVEL_CODE\n")
 
 
 def test_write_param_separates_multiple_blocks_with_blank_line() -> None:
@@ -165,10 +161,4 @@ def test_write_param_inserts_blank_line_between_scalars_and_blocks() -> None:
 
     rendered = write_param(param_file)
 
-    assert rendered == (
-        "IPRINT : 1\n"
-        "\n"
-        "%BLOCK DEVEL_CODE\n"
-        "y=2\n"
-        "%ENDBLOCK DEVEL_CODE\n"
-    )
+    assert rendered == ("IPRINT : 1\n\n%BLOCK DEVEL_CODE\ny=2\n%ENDBLOCK DEVEL_CODE\n")

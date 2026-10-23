@@ -140,7 +140,9 @@ class MuonSite:
         self.relaxation_run_id = run_id
         self.total_energy_eV = total_energy_eV
         self.relaxed_fractional_position = (
-            [float(value) for value in fractional_position] if fractional_position is not None else None
+            [float(value) for value in fractional_position]
+            if fractional_position is not None
+            else None
         )
 
     def clear_relaxation(self) -> None:

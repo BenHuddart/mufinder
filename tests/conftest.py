@@ -285,7 +285,9 @@ def confirmed_destructive_actions(monkeypatch: pytest.MonkeyPatch) -> list[dict[
 
     prompts: list[dict[str, str]] = []
 
-    def _accept(_parent, title, text, detail="", accept_label="Remove", reject_label="Cancel") -> bool:
+    def _accept(
+        _parent, title, text, detail="", accept_label="Remove", reject_label="Cancel"
+    ) -> bool:
         prompts.append(
             {
                 "title": title,
@@ -486,7 +488,9 @@ def _fake_pyvista_qt_backend(request: pytest.FixtureRequest, monkeypatch: pytest
 
     monkeypatch.setattr(atomic_structure_viewer_module, "_pyvista_modules", lambda: (pv, object()))
     monkeypatch.setattr(atomic_structure_viewer_module, "_PyVistaCanvas", _FakePyVistaCanvas)
-    monkeypatch.setattr(atomic_structure_viewer_module, "_PyVistaTriadCanvas", _FakePyVistaTriadCanvas)
+    monkeypatch.setattr(
+        atomic_structure_viewer_module, "_PyVistaTriadCanvas", _FakePyVistaTriadCanvas
+    )
 
 
 @pytest.hookimpl(trylast=True)

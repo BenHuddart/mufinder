@@ -416,7 +416,9 @@ class ParameterDialog(QDialog):
         candidates = {
             name
             for name in names
-            if name in self._specs_by_name and self._is_advanced_name(name) and name not in self._blocked_names
+            if name in self._specs_by_name
+            and self._is_advanced_name(name)
+            and name not in self._blocked_names
         }
         for name, value in self._values.items():
             if (
@@ -492,7 +494,9 @@ class ParameterDialog(QDialog):
             name
             for name in self._specs_by_name
             if name in self._locked_values
-            or keyword_locked_in_workflow(self._specs_by_name[name], workflow_stage=self._workflow_stage)
+            or keyword_locked_in_workflow(
+                self._specs_by_name[name], workflow_stage=self._workflow_stage
+            )
         }
 
         blocked = set()
@@ -722,14 +726,20 @@ class ParameterDialog(QDialog):
 
             reset_button = QPushButton("Reset", self._table_widget)
             reset_button.setMaximumWidth(58)
-            reset_button.setEnabled(self._is_name_editable(name) and not locked and editor is not None)
+            reset_button.setEnabled(
+                self._is_name_editable(name) and not locked and editor is not None
+            )
             if self._is_name_editable(name) and not locked and editor is not None:
-                reset_button.clicked.connect(lambda _checked=False, param=name: self._reset_parameter(param))
+                reset_button.clicked.connect(
+                    lambda _checked=False, param=name: self._reset_parameter(param)
+                )
             self._table_layout.addWidget(reset_button, row_index, 2)
 
             info_button = QPushButton("Info", self._table_widget)
             info_button.setMaximumWidth(52)
-            info_button.clicked.connect(lambda _checked=False, row_spec=spec: self._show_help(row_spec))
+            info_button.clicked.connect(
+                lambda _checked=False, row_spec=spec: self._show_help(row_spec)
+            )
             self._table_layout.addWidget(info_button, row_index, 3)
 
             remove_button = QToolButton(self._table_widget)
@@ -743,7 +753,9 @@ class ParameterDialog(QDialog):
             remove_button.setEnabled(can_remove)
             remove_button.setVisible(can_remove)
             if can_remove:
-                remove_button.clicked.connect(lambda _checked=False, param=name: self._remove_advanced(param))
+                remove_button.clicked.connect(
+                    lambda _checked=False, param=name: self._remove_advanced(param)
+                )
             self._table_layout.addWidget(remove_button, row_index, 4)
 
             self._rows[name] = _DialogRow(
@@ -752,7 +764,13 @@ class ParameterDialog(QDialog):
                 radio=radio,
                 locked=locked,
                 advanced=self._is_advanced_name(name),
-                cells=(label_widget, value_widget, reset_button, info_button, *((remove_button,) if can_remove else ())),
+                cells=(
+                    label_widget,
+                    value_widget,
+                    reset_button,
+                    info_button,
+                    *((remove_button,) if can_remove else ()),
+                ),
             )
 
         self._table_layout.setRowStretch(len(visible_names) + 1, 1)
@@ -877,7 +895,9 @@ class ParameterDialog(QDialog):
                 return name
 
         for name in group_key:
-            if name in self._values and gui_value_is_active(self._specs_by_name[name], self._values[name]):
+            if name in self._values and gui_value_is_active(
+                self._specs_by_name[name], self._values[name]
+            ):
                 return name
 
         return group_key[0]
@@ -947,7 +967,9 @@ class ParameterDialog(QDialog):
 
     def _prune_incompatible_values(self) -> None:
         incompatible = {
-            name for name, spec in self._specs_by_name.items() if not keyword_visible_for_task(spec, task=self._task)
+            name
+            for name, spec in self._specs_by_name.items()
+            if not keyword_visible_for_task(spec, task=self._task)
         }
         if not incompatible:
             return
@@ -982,4 +1004,6 @@ class ParameterDialog(QDialog):
         self._rebuild_rows()
 
     def _refresh_add_button_state(self) -> None:
-        self._add_advanced_button.setEnabled(not self._read_only and bool(self._available_advanced_specs()))
+        self._add_advanced_button.setEnabled(
+            not self._read_only and bool(self._available_advanced_specs())
+        )

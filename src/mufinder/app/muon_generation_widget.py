@@ -228,7 +228,9 @@ class MuonGenerationWidget(QWidget):
         self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
             self, self._emit_delete_selected
         )
-        self._clear_selection_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._site_table)
+        self._clear_selection_shortcut = QShortcut(
+            QKeySequence(Qt.Key.Key_Escape), self._site_table
+        )
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)
 
@@ -241,7 +243,9 @@ class MuonGenerationWidget(QWidget):
             stretch_last_section=False,
         )
         self._uep_cluster_table.setFixedHeight(128)
-        self._uep_cluster_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._uep_cluster_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._uep_cluster_table.viewport().installEventFilter(self)
 
         self._viewer = AtomicStructureViewer()
@@ -259,7 +263,9 @@ class MuonGenerationWidget(QWidget):
         style_section_title(header)
         layout.addWidget(header)
 
-        subtitle = QLabel("Generate initial muon site positions using a suite of generation methods.")
+        subtitle = QLabel(
+            "Generate initial muon site positions using a suite of generation methods."
+        )
         style_section_subtitle(subtitle)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -343,8 +349,7 @@ class MuonGenerationWidget(QWidget):
         self._param_stack.addWidget(manual_page)
         self._param_stack.addWidget(uep_page)
         param_stack_height = max(
-            page.sizeHint().height()
-            for page in (random_page, near_page, manual_page, uep_page)
+            page.sizeHint().height() for page in (random_page, near_page, manual_page, uep_page)
         )
         self._param_stack.setFixedHeight(param_stack_height)
 
@@ -461,10 +466,15 @@ class MuonGenerationWidget(QWidget):
             item = self._site_table.itemAt(position)
             if item is None:
                 self._clear_site_selection()
-            elif self._site_table.selectionModel().isRowSelected(item.row(), self._site_table.rootIndex()):
+            elif self._site_table.selectionModel().isRowSelected(
+                item.row(), self._site_table.rootIndex()
+            ):
                 self._deselect_site_row(item.row())
                 return True
-        if watched is self._uep_cluster_table.viewport() and event.type() == QEvent.Type.MouseButtonPress:
+        if (
+            watched is self._uep_cluster_table.viewport()
+            and event.type() == QEvent.Type.MouseButtonPress
+        ):
             position_getter = getattr(event, "position", None)
             position = position_getter().toPoint() if callable(position_getter) else event.pos()
             item = self._uep_cluster_table.itemAt(position)
@@ -475,7 +485,11 @@ class MuonGenerationWidget(QWidget):
         return super().eventFilter(watched, event)
 
     def _sync_manual_coordinate_labels(self) -> None:
-        labels = ("X (Å)", "Y (Å)", "Z (Å)") if self._manual_coord_system.currentText() == "cartesian" else ("fX", "fY", "fZ")
+        labels = (
+            ("X (Å)", "Y (Å)", "Z (Å)")
+            if self._manual_coord_system.currentText() == "cartesian"
+            else ("fX", "fY", "fZ")
+        )
         for label, text in zip(
             (self._manual_x_label, self._manual_y_label, self._manual_z_label),
             labels,
@@ -524,7 +538,11 @@ class MuonGenerationWidget(QWidget):
                 refresh_widget_style(child)
 
     def _sync_random_count_spacing(self) -> None:
-        if self._restoring_form_state or not self._random_by_count.isChecked() or self._host_structure is None:
+        if (
+            self._restoring_form_state
+            or not self._random_by_count.isChecked()
+            or self._host_structure is None
+        ):
             return
         try:
             spacing = estimate_muon_muon_separation_for_count(
@@ -540,7 +558,9 @@ class MuonGenerationWidget(QWidget):
         self.set_random_muon_muon_distance(spacing)
 
     def _apply_generation_progress_style(self, *, completed: bool) -> None:
-        self._generation_progress.setProperty("generationState", "complete" if completed else "active")
+        self._generation_progress.setProperty(
+            "generationState", "complete" if completed else "active"
+        )
         refresh_widget_style(self._generation_progress)
 
     def changeEvent(self, event: QEvent) -> None:
@@ -581,7 +601,9 @@ class MuonGenerationWidget(QWidget):
         self._delete_btn.setEnabled(enabled and bool(self._selected_site_ids()))
         self._create_jobs_btn.setEnabled(enabled and bool(self._selected_site_ids()))
 
-    def set_generation_progress(self, generated: int, expected: int, message: str = "Generated %v/%m sites") -> None:
+    def set_generation_progress(
+        self, generated: int, expected: int, message: str = "Generated %v/%m sites"
+    ) -> None:
         """Show determinate generation progress as accepted muon-site count."""
         bounded_expected = max(int(expected), 1)
         bounded_generated = max(0, int(generated))
@@ -608,7 +630,9 @@ class MuonGenerationWidget(QWidget):
         site_rows = self._selected_site_rows()
         site_ids = self._selected_site_ids()
         if not site_ids:
-            QMessageBox.information(self, "No positions selected", "Select one or more generated muon positions first.")
+            QMessageBox.information(
+                self, "No positions selected", "Select one or more generated muon positions first."
+            )
             return
 
         dialog = _ClusterPositionsDialog(site_rows, self)
@@ -692,7 +716,9 @@ class MuonGenerationWidget(QWidget):
         return {
             "method": self._current_method(),
             "random": {
-                "selection_mode": "separation" if self._random_by_separation.isChecked() else "count",
+                "selection_mode": (
+                    "separation" if self._random_by_separation.isChecked() else "count"
+                ),
                 "count": self._random_count.value(),
                 "min_muon_muon": self._random_min_muon_muon.value(),
                 "min_muon_atom": self._random_min_muon_atom.value(),
@@ -735,7 +761,11 @@ class MuonGenerationWidget(QWidget):
                 int(random_state.get("max_attempts", self._random_max_attempts.value()))
             )
             self._random_seed = str(random_state.get("seed", self._random_seed))
-            random_mode = str(random_state.get("selection_mode", random_state.get("mode", ""))).strip().lower()
+            random_mode = (
+                str(random_state.get("selection_mode", random_state.get("mode", "")))
+                .strip()
+                .lower()
+            )
             if random_mode in {"count", "number", "target_count"}:
                 self._random_by_count.setChecked(True)
             else:
@@ -760,7 +790,11 @@ class MuonGenerationWidget(QWidget):
             )
         )
         self._near_bond_distance.setValue(
-            float(near_state.get("bond_distance", near_state.get("shell_min", self._near_bond_distance.value())))
+            float(
+                near_state.get(
+                    "bond_distance", near_state.get("shell_min", self._near_bond_distance.value())
+                )
+            )
         )
         self._near_min_muon_atom.setValue(
             float(near_state.get("min_muon_atom", self._near_min_muon_atom.value()))
@@ -827,7 +861,9 @@ class MuonGenerationWidget(QWidget):
             if item0 is None:
                 continue
             row_data = item0.data(Qt.ItemDataRole.UserRole)
-            source_id = str(row_data.get("source_structure_id", "")) if isinstance(row_data, dict) else ""
+            source_id = (
+                str(row_data.get("source_structure_id", "")) if isinstance(row_data, dict) else ""
+            )
             stale = active_host_id is not None and source_id and source_id != active_host_id
             for col in range(self._site_table.columnCount()):
                 item = self._site_table.item(row, col)
@@ -838,7 +874,9 @@ class MuonGenerationWidget(QWidget):
                     original_label = str(row_data.get("label", ""))
                     if not original_label.endswith(" (stale)"):
                         item.setText(original_label + " (stale)")
-                    item.setToolTip("Generated for a different host structure. Regenerate or switch active host.")
+                    item.setToolTip(
+                        "Generated for a different host structure. Regenerate or switch active host."
+                    )
                 elif col == 0:
                     item.setText(str(row_data.get("label", "")))
                     item.setToolTip("")
@@ -895,7 +933,13 @@ class MuonGenerationWidget(QWidget):
         self._host_fingerprint = fingerprint
         self._host_fingerprint_valid = True
         current = self._near_element.currentText()
-        elements = sorted({str(symbol).strip() for symbol in (structure.species if structure else []) if str(symbol).strip()})
+        elements = sorted(
+            {
+                str(symbol).strip()
+                for symbol in (structure.species if structure else [])
+                if str(symbol).strip()
+            }
+        )
         previous = self._near_element.blockSignals(True)
         self._near_element.clear()
         self._near_element.addItems(elements)
@@ -985,8 +1029,14 @@ class MuonGenerationWidget(QWidget):
         if isinstance(cartesian, (list, tuple)) and len(cartesian) == 3:
             return [float(value) for value in cartesian]
         fractional = row_data.get("fractional_position", row_data.get("fractional"))
-        if self._host_structure is not None and isinstance(fractional, (list, tuple)) and len(fractional) == 3:
-            return lattice_frac_to_cart([float(value) for value in fractional], self._host_structure.lattice_vectors)
+        if (
+            self._host_structure is not None
+            and isinstance(fractional, (list, tuple))
+            and len(fractional) == 3
+        ):
+            return lattice_frac_to_cart(
+                [float(value) for value in fractional], self._host_structure.lattice_vectors
+            )
         return None
 
     def _selected_site_rows(self) -> list[dict[str, Any]]:
@@ -1013,13 +1063,19 @@ class MuonGenerationWidget(QWidget):
         return ids
 
     def _update_delete_button_state(self) -> None:
-        self._delete_btn.setEnabled(self._generate_btn.isEnabled() and bool(self._selected_site_ids()))
+        self._delete_btn.setEnabled(
+            self._generate_btn.isEnabled() and bool(self._selected_site_ids())
+        )
 
     def _update_cluster_button_state(self) -> None:
-        self._cluster_btn.setEnabled(self._generate_btn.isEnabled() and bool(self._selected_site_ids()))
+        self._cluster_btn.setEnabled(
+            self._generate_btn.isEnabled() and bool(self._selected_site_ids())
+        )
 
     def _update_create_jobs_button_state(self) -> None:
-        self._create_jobs_btn.setEnabled(self._generate_btn.isEnabled() and bool(self._selected_site_ids()))
+        self._create_jobs_btn.setEnabled(
+            self._generate_btn.isEnabled() and bool(self._selected_site_ids())
+        )
 
     def _manual_preview_row(self) -> dict[str, Any] | None:
         if self._host_structure is None:

@@ -193,7 +193,9 @@ def build_muon_sites_summary_snapshot(workspace: Mapping[str, object]) -> dict[s
             site["cluster_index"],
         )
     )
-    charge_state = canonical_charge_state(workspace.get("charge_state")) or POSITIVE_MUON_CHARGE_STATE
+    charge_state = (
+        canonical_charge_state(workspace.get("charge_state")) or POSITIVE_MUON_CHARGE_STATE
+    )
     return {
         "charge_state": charge_state,
         "workspace_id": str(workspace.get("id", "")),
@@ -303,7 +305,8 @@ def pinned_muon_sites(document: ProjectDocument | None, charge_state: str) -> li
                 relative_energy_ev=energy,
                 fractional_position=fractional,
                 workspace_id=workspace_id,
-                workspace_name=str(snapshot.get("workspace_name", "")).strip() or "Analysis workspace",
+                workspace_name=str(snapshot.get("workspace_name", "")).strip()
+                or "Analysis workspace",
                 representative_job_id=job_id,
             )
         )
@@ -336,7 +339,9 @@ def pinned_source_selection(
             continue
         pinned_charge_states.append(charge_state)
         for site in sites:
-            candidate = by_job_id.get(site.representative_job_id) if site.representative_job_id else None
+            candidate = (
+                by_job_id.get(site.representative_job_id) if site.representative_job_id else None
+            )
             if (
                 candidate is None
                 or candidate.key in seen
@@ -391,7 +396,9 @@ def show_every_relaxed_site(document: ProjectDocument | None, workflow: str) -> 
     return bool(raw.get(workflow, False)) if isinstance(raw, Mapping) else False
 
 
-def set_show_every_relaxed_site(document: ProjectDocument | None, workflow: str, enabled: bool) -> None:
+def set_show_every_relaxed_site(
+    document: ProjectDocument | None, workflow: str, enabled: bool
+) -> None:
     """Store ``workflow``'s "Show every relaxed site" choice in the project."""
 
     if document is None:
@@ -454,7 +461,11 @@ class DownstreamSiteScope:
         if self.show_every_site:
             return list(candidates)
         eligible = {candidate.key for candidate in candidates}
-        pinned = [source.candidate for source in self.selection.sources if source.candidate.key in eligible]
+        pinned = [
+            source.candidate
+            for source in self.selection.sources
+            if source.candidate.key in eligible
+        ]
         pinned_keys = {candidate.key for candidate in pinned}
         keep = set(keep_keys)
         extras = [
@@ -493,7 +504,9 @@ def downstream_site_scope(
 # --- helpers ----------------------------------------------------------------------
 
 
-def _workspace_representative_job_ids(document: ProjectDocument, workspace_id: str) -> dict[int, UUID]:
+def _workspace_representative_job_ids(
+    document: ProjectDocument, workspace_id: str
+) -> dict[int, UUID]:
     for workspace in relaxation_analysis_workspaces(document):
         if str(workspace.get("id", "")) != workspace_id:
             continue

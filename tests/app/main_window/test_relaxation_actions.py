@@ -28,7 +28,9 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "local_finish_pristine_relax.mufinder", "LocalFinishPristineRelax")
+    doc = service.create_project(
+        tmp_path / "local_finish_pristine_relax.mufinder", "LocalFinishPristineRelax"
+    )
 
     host = Structure(
         label="Host",
@@ -172,7 +174,9 @@ Si 0.01 0.02 0.03
 """
 
 
-def _pristine_relaxation_job_fixture(window: MainWindow, service: ProjectService, tmp_path: Path, name: str):
+def _pristine_relaxation_job_fixture(
+    window: MainWindow, service: ProjectService, tmp_path: Path, name: str
+):
     """Build a document with one running pristine-relaxation job and its output dir."""
 
     doc = service.create_project(tmp_path / f"{name}.mufinder", name)
@@ -224,9 +228,7 @@ def test_main_window_local_finish_relaxation_stale_out_cell_fails_job(
     )
 
     # The previous run's relaxed structure, left behind in the re-used directory.
-    (output_dir / f"{job.label}-out.cell").write_text(
-        _PRISTINE_OUT_CELL_FIRST, encoding="utf-8"
-    )
+    (output_dir / f"{job.label}-out.cell").write_text(_PRISTINE_OUT_CELL_FIRST, encoding="utf-8")
     run = _start_pristine_run(window, service, doc, job, run_index=2)
     # This run started well after that file was written.
     run.started_at = datetime.now(UTC) + timedelta(minutes=5)
@@ -289,14 +291,10 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     doc, host, job, output_dir = _pristine_relaxation_job_fixture(
         window, service, tmp_path, "PristineRecompletion"
     )
-    parsed = CastepResult(
-        completed=True, total_energy=-11.0, warnings=(), geom_converged=True
-    )
+    parsed = CastepResult(completed=True, total_energy=-11.0, warnings=(), geom_converged=True)
 
     run_one = _start_pristine_run(window, service, doc, job, run_index=1)
-    (output_dir / f"{job.label}-out.cell").write_text(
-        _PRISTINE_OUT_CELL_FIRST, encoding="utf-8"
-    )
+    (output_dir / f"{job.label}-out.cell").write_text(_PRISTINE_OUT_CELL_FIRST, encoding="utf-8")
     window._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
@@ -391,7 +389,9 @@ def test_on_pristine_relaxation_configured_surfaces_kpoint_adjustment(
     boxes = _capture_message_boxes(monkeypatch)
 
     window._on_pristine_relaxation_configured(
-        main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(_supercell_row("super"),))
+        main_window_module.PristineRelaxationConfig(
+            name_prefix="pristine_relax", rows=(_supercell_row("super"),)
+        )
     )
 
     assert len(boxes) == 1
@@ -451,8 +451,18 @@ def test_main_window_form_pristine_relaxation_shows_ready_before_submission(
     window._refresh_ui_after_project_change()
 
     assert window._jobs_table.rowCount() == 0
-    assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
-    assert window._pristine_relaxation_view._table.item(1, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._pristine_relaxation_view._table.item(
+            0, window._pristine_relaxation_view._STATUS_COLUMN
+        ).text()
+        == "ready"
+    )
+    assert (
+        window._pristine_relaxation_view._table.item(
+            1, window._pristine_relaxation_view._STATUS_COLUMN
+        ).text()
+        == "ready"
+    )
     window.close()
 
 
@@ -499,7 +509,12 @@ def test_main_window_pristine_form_edit_hides_stale_definition_status(
 
     window._refresh_ui_after_project_change()
 
-    assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._pristine_relaxation_view._table.item(
+            0, window._pristine_relaxation_view._STATUS_COLUMN
+        ).text()
+        == "ready"
+    )
     window.close()
 
 
@@ -508,7 +523,9 @@ def test_main_window_pristine_form_edit_preserves_matching_row_statuses(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "pristine_form_partial_status.mufinder", "PristineFormPartialStatus")
+    doc = service.create_project(
+        tmp_path / "pristine_form_partial_status.mufinder", "PristineFormPartialStatus"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -574,8 +591,18 @@ def test_main_window_pristine_form_edit_preserves_matching_row_statuses(
 
     window._refresh_ui_after_project_change()
 
-    assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "completed"
-    assert window._pristine_relaxation_view._table.item(1, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._pristine_relaxation_view._table.item(
+            0, window._pristine_relaxation_view._STATUS_COLUMN
+        ).text()
+        == "completed"
+    )
+    assert (
+        window._pristine_relaxation_view._table.item(
+            1, window._pristine_relaxation_view._STATUS_COLUMN
+        ).text()
+        == "ready"
+    )
     window.close()
 
 
@@ -597,7 +624,9 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
 
     row_1 = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
     row_2 = main_window_module.PristineRelaxationRow(label="row_2", parameter_values={})
-    old_config = main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row_1,))
+    old_config = main_window_module.PristineRelaxationConfig(
+        name_prefix="pristine_relax", rows=(row_1,)
+    )
     old_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -613,7 +642,9 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     running_job.status = JobStatus.RUNNING
     old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
 
-    new_config = main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row_1, row_2))
+    new_config = main_window_module.PristineRelaxationConfig(
+        name_prefix="pristine_relax", rows=(row_1, row_2)
+    )
     new_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -701,9 +732,7 @@ def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
     assert states["row_1"].job_id == job.id
     assert states["row_1"].status == JobStatus.COMPLETED.value
 
-    config = deserialize_pristine_relaxation_config(
-        definition.parameters["configuration"]
-    )
+    config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
     assert config.rows[0].parameter_values["geom_max_iter"] == 500
     # The widget is the normalizer of record: it strips the implicit ``task``
     # default, so the definition must not keep it either.
@@ -712,17 +741,18 @@ def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
     assert window._pristine_relaxation_row_signature(
         form_config.rows[0]
     ) == window._pristine_relaxation_row_signature(config.rows[0])
-    assert (
-        doc.ui_state["pristine_relaxation_form"]["rows"][0]["params"]["geom_max_iter"]
-        == 500
-    )
+    assert doc.ui_state["pristine_relaxation_form"]["rows"][0]["params"]["geom_max_iter"] == 500
     window.close()
 
 
-def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: Path) -> None:
+def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "pristine_deleted_stale.mufinder", "PristineDeletedStale")
+    doc = service.create_project(
+        tmp_path / "pristine_deleted_stale.mufinder", "PristineDeletedStale"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -820,7 +850,9 @@ def test_pristine_relaxation_remove_row_cancel_keeps_files_and_restores_form(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "pristine_remove_cancel.mufinder", "PristineRemoveCancel")
+    doc = service.create_project(
+        tmp_path / "pristine_remove_cancel.mufinder", "PristineRemoveCancel"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],

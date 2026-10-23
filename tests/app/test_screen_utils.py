@@ -47,7 +47,9 @@ def test_clamped_size_clamps_when_requested_size_exceeds_fraction(qapp) -> None:
         widget.deleteLater()
 
 
-def test_clamped_size_headless_widget_without_screen_returns_requested_size(qapp, monkeypatch) -> None:
+def test_clamped_size_headless_widget_without_screen_returns_requested_size(
+    qapp, monkeypatch
+) -> None:
     widget = QWidget()
     try:
         monkeypatch.setattr(QWidget, "screen", lambda self: None)

@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 from ase.geometry import cellpar_to_cell
 
+from mufinder.domain.constants import BOHR_RADIUS_ANGSTROM
+
 from .schema import canonical_keyword_name, get_keyword_spec
 from .types import (
     AtomicPosition,
@@ -27,7 +29,7 @@ from .validators import validate_cell_file
 
 
 _CELL_UNITS = {
-    "bohr": 0.529177210903,
+    "bohr": BOHR_RADIUS_ANGSTROM,
     "ang": 1.0,
     "m": 1e10,
     "cm": 1e8,
@@ -41,7 +43,14 @@ _CELL_FACE_TOLERANCE = 1e-12
 _BLOCK_START_RE = re.compile(r"^\s*%BLOCK\s+([A-Za-z0-9_]+)\s*$", re.IGNORECASE)
 _BLOCK_END_RE = re.compile(r"^\s*%ENDBLOCK\s+([A-Za-z0-9_]+)\s*$", re.IGNORECASE)
 _STRUCTURED_BLOCKS = frozenset(
-    {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs", "species_pot", "kpoints_list"}
+    {
+        "lattice_cart",
+        "lattice_abc",
+        "positions_frac",
+        "positions_abs",
+        "species_pot",
+        "kpoints_list",
+    }
 )
 _GEOMETRY_BLOCKS = frozenset({"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"})
 
@@ -55,7 +64,9 @@ class ParsedCell:
     """Structured parsed CELL payload with geometry convenience fields."""
 
     cell_file: CellFile
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     species: tuple[str, ...]
     fractional_positions: tuple[tuple[float, float, float], ...]
     atomic_spins: tuple[float, ...] | None = None
@@ -104,7 +115,9 @@ def parse_cell_text(text: str, *, geometry_only: bool = False) -> ParsedCell:
     if lattice_cart is None and lattice_abc is None:
         raise CellParseError("CELL text must contain LATTICE_CART or LATTICE_ABC.")
 
-    lattice_vectors = lattice_cart.vectors if lattice_cart is not None else _lattice_from_abc(lattice_abc)
+    lattice_vectors = (
+        lattice_cart.vectors if lattice_cart is not None else _lattice_from_abc(lattice_abc)
+    )
 
     positions_frac, positions_abs, spins = _parse_positions(
         positions_frac_lines=known_blocks.get("positions_frac"),
@@ -152,12 +165,10 @@ def parse_cell_text(text: str, *, geometry_only: bool = False) -> ParsedCell:
         kpoint_mp_spacing=kpoint_mp_spacing,
         symmetry_generate=symmetry_generate,
         scalars=tuple(
-            _to_keyword_assignment(item["name"], item["value"])
-            for item in extra_scalars
+            _to_keyword_assignment(item["name"], item["value"]) for item in extra_scalars
         ),
         blocks=tuple(
-            BlockSection(name=name, rows=rows, unit=unit)
-            for name, rows, unit in unknown_blocks
+            BlockSection(name=name, rows=rows, unit=unit) for name, rows, unit in unknown_blocks
         ),
     )
 
@@ -212,7 +223,9 @@ def _fractional_from_cartesian(
     try:
         fractional = cartesian @ np.linalg.inv(lattice)
     except np.linalg.LinAlgError as exc:
-        raise CellParseError(f"CELL lattice vectors are singular and cannot be inverted: {exc}") from exc
+        raise CellParseError(
+            f"CELL lattice vectors are singular and cannot be inverted: {exc}"
+        ) from exc
 
     # An atom on a cell face of a non-orthogonal lattice converts to a
     # coordinate a rounding error below an integer, which wraps to 1.0 or to
@@ -264,7 +277,9 @@ def _partition_cell_text(
             kept_blocks = _GEOMETRY_BLOCKS if geometry_only else _STRUCTURED_BLOCKS
             if current_name in kept_blocks:
                 if current_name in known_blocks:
-                    raise CellParseError(f"Duplicate block {current_name.upper()} is not supported.")
+                    raise CellParseError(
+                        f"Duplicate block {current_name.upper()} is not supported."
+                    )
                 known_blocks[current_name] = list(current_lines)
             elif not geometry_only:
                 unit, rows = _parse_generic_block_rows(current_lines)
@@ -344,17 +359,21 @@ def _parse_lattice_abc(lines: list[str] | None) -> LatticeABC | None:
     return LatticeABC(lengths=lengths, angles=angles, unit=unit)
 
 
-def _lattice_from_abc(lattice: LatticeABC | None) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+def _lattice_from_abc(
+    lattice: LatticeABC | None,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
     if lattice is None:
         raise CellParseError("Missing LATTICE_ABC definition.")
-    cell = cellpar_to_cell([
-        float(lattice.lengths[0]),
-        float(lattice.lengths[1]),
-        float(lattice.lengths[2]),
-        float(lattice.angles[0]),
-        float(lattice.angles[1]),
-        float(lattice.angles[2]),
-    ])
+    cell = cellpar_to_cell(
+        [
+            float(lattice.lengths[0]),
+            float(lattice.lengths[1]),
+            float(lattice.lengths[2]),
+            float(lattice.angles[0]),
+            float(lattice.angles[1]),
+            float(lattice.angles[2]),
+        ]
+    )
     return (
         (float(cell[0][0]), float(cell[0][1]), float(cell[0][2])),
         (float(cell[1][0]), float(cell[1][1]), float(cell[1][2])),
@@ -366,7 +385,9 @@ def _parse_positions(
     *,
     positions_frac_lines: list[str] | None,
     positions_abs_lines: list[str] | None,
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
 ) -> tuple[PositionBlock | None, PositionBlock | None, tuple[float, ...] | None]:
     if positions_frac_lines is not None and positions_abs_lines is not None:
         raise CellParseError("CELL text may not contain both POSITIONS_FRAC and POSITIONS_ABS.")
@@ -380,7 +401,9 @@ def _parse_positions(
         for line in positions_frac_lines:
             parts = shlex.split(line)
             if len(parts) < 4:
-                raise CellParseError("POSITIONS_FRAC rows must contain species and three coordinates.")
+                raise CellParseError(
+                    "POSITIONS_FRAC rows must contain species and three coordinates."
+                )
             species = parts[0]
             coordinates = (float(parts[1]), float(parts[2]), float(parts[3]))
             positions.append(AtomicPosition(species=species, coordinates=coordinates))
@@ -399,7 +422,9 @@ def _parse_positions(
                     try:
                         spin_value = float(spin_raw)
                     except ValueError as exc:
-                        raise CellParseError(f"Invalid SPIN value '{spin_raw}' in POSITIONS_FRAC row.") from exc
+                        raise CellParseError(
+                            f"Invalid SPIN value '{spin_raw}' in POSITIONS_FRAC row."
+                        ) from exc
                     saw_spin = True
                     break
             spins.append(spin_value)

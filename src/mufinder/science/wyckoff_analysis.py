@@ -80,7 +80,9 @@ def _deduplicate_positions(
 
 
 def _as_tuples(positions: Sequence[Sequence[float]]) -> tuple[tuple[float, float, float], ...]:
-    return tuple((float(position[0]), float(position[1]), float(position[2])) for position in positions)
+    return tuple(
+        (float(position[0]), float(position[1]), float(position[2])) for position in positions
+    )
 
 
 def _dummy_atomic_number(host_numbers: Sequence[int]) -> int:
@@ -178,7 +180,9 @@ def _non_identity_operations(
     operations: list[tuple[np.ndarray, np.ndarray]] = []
     identity = np.eye(3)
     for rotation, translation in zip(rotations, translations, strict=False):
-        is_identity = np.allclose(rotation, identity) and np.allclose(translation - np.round(translation), 0.0)
+        is_identity = np.allclose(rotation, identity) and np.allclose(
+            translation - np.round(translation), 0.0
+        )
         if not is_identity:
             operations.append((rotation, translation))
     return operations
@@ -187,7 +191,9 @@ def _non_identity_operations(
 def _batched_pseudo_inverse(matrices: np.ndarray) -> np.ndarray:
     u, singular_values, vt = np.linalg.svd(matrices)
     cutoff = 1e-10 * np.max(singular_values, axis=-1, keepdims=True)
-    inverse = np.divide(1.0, singular_values, out=np.zeros_like(singular_values), where=singular_values > cutoff)
+    inverse = np.divide(
+        1.0, singular_values, out=np.zeros_like(singular_values), where=singular_values > cutoff
+    )
     return np.swapaxes(vt, -1, -2) @ (inverse[..., :, None] * np.swapaxes(u, -1, -2))
 
 
@@ -281,7 +287,11 @@ def _project_nearby_special_candidates(
     if not candidates:
         return ()
     distances = minimum_image_distance_matrix([reference], candidates, lattice)[0]
-    nearby = [candidate for candidate, distance in zip(candidates, distances, strict=True) if distance <= cutoff]
+    nearby = [
+        candidate
+        for candidate, distance in zip(candidates, distances, strict=True)
+        if distance <= cutoff
+    ]
     return _deduplicate_positions(nearby, lattice, tolerance_ang=1e-4)
 
 
@@ -291,10 +301,7 @@ def _cluster_reference(
     if not positions:
         return (0.0, 0.0, 0.0)
     anchor = np.asarray(_wrap_fractional(positions[0]), dtype=float)
-    deltas = [
-        minimum_image_delta(_wrap_fractional(position), anchor)
-        for position in positions
-    ]
+    deltas = [minimum_image_delta(_wrap_fractional(position), anchor) for position in positions]
     return _wrap_fractional(anchor + np.mean(np.asarray(deltas, dtype=float), axis=0))
 
 
@@ -366,7 +373,9 @@ def assign_cluster_wyckoff_sites(
         return tuple(
             ClusterWyckoffAssignment(
                 cluster_index=int(cluster.cluster_index),
-                match=_unavailable_match("Host symmetry is unavailable because one or more species are not recognised."),
+                match=_unavailable_match(
+                    "Host symmetry is unavailable because one or more species are not recognised."
+                ),
             )
             for cluster in clusters
         )
@@ -412,7 +421,9 @@ def assign_cluster_wyckoff_sites(
             occupancy_tolerance_ang=float(occupancy_tolerance_ang),
             symprec=float(symprec),
         )
-        assignments.append(ClusterWyckoffAssignment(cluster_index=int(cluster.cluster_index), match=match))
+        assignments.append(
+            ClusterWyckoffAssignment(cluster_index=int(cluster.cluster_index), match=match)
+        )
 
     return tuple(assignments)
 
@@ -457,10 +468,21 @@ def _match_cluster(
     # Rank every geometrically acceptable candidate first; the rank does not depend on
     # the spglib label, so only candidates in rank order need labelling, stopping at the
     # first one spglib can label. Python's sort is stable, so ties keep candidate order.
-    ranked: list[tuple[tuple[float, float, float, float], tuple[tuple[float, float, float], ...], tuple[float, ...], float, float | None, bool]] = []
+    ranked: list[
+        tuple[
+            tuple[float, float, float, float],
+            tuple[tuple[float, float, float], ...],
+            tuple[float, ...],
+            float,
+            float | None,
+            bool,
+        ]
+    ] = []
     for candidate in candidates:
         orbit = _as_tuples(
-            symmetry_orbit(candidate, operations, lattice_vectors=lattice, tolerance=max(symprec, 1e-5))
+            symmetry_orbit(
+                candidate, operations, lattice_vectors=lattice, tolerance=max(symprec, 1e-5)
+            )
         )
         if not orbit:
             continue
@@ -469,13 +491,17 @@ def _match_cluster(
         mean_distance = float(np.mean(distances)) if distances else None
         if max_distance is None or max_distance > match_tolerance_ang:
             continue
-        if _orbit_is_occupied(orbit, host_positions, lattice, tolerance_ang=occupancy_tolerance_ang):
+        if _orbit_is_occupied(
+            orbit, host_positions, lattice, tolerance_ang=occupancy_tolerance_ang
+        ):
             continue
         # Operations mapping the candidate onto itself (images wrapped once).
         stabilizer = int(
             np.count_nonzero(
                 minimum_image_distance_matrix(
-                    np.mod(operation_images(candidate, rotations, translations), 1.0), [candidate], lattice
+                    np.mod(operation_images(candidate, rotations, translations), 1.0),
+                    [candidate],
+                    lattice,
                 )
                 <= max(symprec * 10.0, 1e-4)
             )
@@ -513,4 +539,6 @@ def _match_cluster(
             special=bool(special),
             warnings=(),
         )
-    return _unavailable_match("No unoccupied Wyckoff position was consistent with every cluster member.")
+    return _unavailable_match(
+        "No unoccupied Wyckoff position was consistent with every cluster member."
+    )

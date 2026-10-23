@@ -49,11 +49,17 @@ class KeywordCatalogSummary:
     def describe(self) -> str:
         """Return a one-line human-readable description."""
 
-        version = f"CASTEP {self.castep_version}" if self.castep_version else "CASTEP (version not recorded)"
+        version = (
+            f"CASTEP {self.castep_version}"
+            if self.castep_version
+            else "CASTEP (version not recorded)"
+        )
         return f"{version}: {self.cell_count} cell and {self.param_count} param keywords"
 
 
-def validate_keyword_catalog_payload(payload: object, *, require_complete: bool = True) -> KeywordCatalogSummary:
+def validate_keyword_catalog_payload(
+    payload: object, *, require_complete: bool = True
+) -> KeywordCatalogSummary:
     """Check that ``payload`` is a CASTEP keyword catalog and summarise it.
 
     Args:
@@ -100,7 +106,10 @@ def validate_keyword_catalog_payload(payload: object, *, require_complete: bool 
                     f"The '{section}' section does not describe {', '.join(absent)}, "
                     "which every CASTEP keyword catalog contains."
                 )
-        if counts["cell"] < MIN_COMPLETE_CELL_KEYWORDS or counts["param"] < MIN_COMPLETE_PARAM_KEYWORDS:
+        if (
+            counts["cell"] < MIN_COMPLETE_CELL_KEYWORDS
+            or counts["param"] < MIN_COMPLETE_PARAM_KEYWORDS
+        ):
             raise KeywordCatalogValidationError(
                 f"The catalog is incomplete: it describes {counts['cell']} cell and {counts['param']} param "
                 f"keywords, but a full CASTEP catalog has at least {MIN_COMPLETE_CELL_KEYWORDS} and "

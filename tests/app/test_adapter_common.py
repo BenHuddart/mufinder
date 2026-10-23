@@ -89,7 +89,9 @@ def test_summarize_kpoint_adjustments_groups_rows_by_cell_and_grid_change() -> N
 
 
 def test_summarize_kpoint_adjustments_stays_short_for_many_distinct_cells() -> None:
-    adjustments = [_adjustment(f"row_{index}", f"{index + 2}x1x1", (2, 4, 4)) for index in range(200)]
+    adjustments = [
+        _adjustment(f"row_{index}", f"{index + 2}x1x1", (2, 4, 4)) for index in range(200)
+    ]
 
     summary = summarize_kpoint_adjustments(adjustments, max_groups=3)
 
@@ -124,7 +126,9 @@ def test_build_input_template_parses_param_and_cell() -> None:
 def test_build_input_template_context_label_appears_in_unsupported_error() -> None:
     # The context_label parameter is one of the genuinely-differing fragments:
     # each adapter phrases the "Unsupported CASTEP keyword" message differently.
-    with pytest.raises(ValueError, match="Unsupported CASTEP keyword 'made_up' in bespoke context."):
+    with pytest.raises(
+        ValueError, match="Unsupported CASTEP keyword 'made_up' in bespoke context."
+    ):
         build_input_template({"made_up": 1}, context_label="bespoke context")
 
 
@@ -167,7 +171,9 @@ def test_build_workflow_settings_template_locks_structure_keywords() -> None:
         match="positions_frac is controlled by the workflow structure and cannot be overridden.",
     ):
         build_workflow_settings_template({"positions_frac": BlockSection("positions_frac", ())})
-    with pytest.raises(ValueError, match="Unsupported CASTEP keyword 'made_up' in workflow settings."):
+    with pytest.raises(
+        ValueError, match="Unsupported CASTEP keyword 'made_up' in workflow settings."
+    ):
         build_workflow_settings_template({"made_up": 1})
 
 
@@ -189,13 +195,9 @@ def test_build_workflow_settings_template_clears_kpoints_list_and_types_blocks()
 
 
 def test_template_has_explicit_kpoints() -> None:
-    assert template_has_explicit_kpoints(
-        InputTemplate(cell=CellTemplate(kpoint_mp_grid=(2, 2, 2)))
-    )
+    assert template_has_explicit_kpoints(InputTemplate(cell=CellTemplate(kpoint_mp_grid=(2, 2, 2))))
     assert not template_has_explicit_kpoints(InputTemplate(cell=None))
-    assert not template_has_explicit_kpoints(
-        InputTemplate(param=ParamTemplate(keywords=()))
-    )
+    assert not template_has_explicit_kpoints(InputTemplate(param=ParamTemplate(keywords=())))
 
 
 def test_row_values_has_keyword() -> None:
@@ -250,9 +252,14 @@ def test_rescale_kpoint_grid_rescales_unit_cell_rows_for_a_supercell_reference()
 def test_reference_is_supercell_of_distinguishes_supercells_from_other_unit_cells() -> None:
     unit = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
 
-    assert reference_is_supercell_of([[6.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]], unit) is True
+    assert (
+        reference_is_supercell_of([[6.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]], unit) is True
+    )
     assert reference_is_supercell_of(unit, unit) is False
-    assert reference_is_supercell_of([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]], unit) is False
+    assert (
+        reference_is_supercell_of([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]], unit)
+        is False
+    )
     assert reference_is_supercell_of(None, unit) is False
 
 
@@ -269,7 +276,9 @@ def _structure(lattice: list[list[float]] = _CUBIC_4) -> Structure:
 
 
 def _template(values) -> InputTemplate:
-    return build_input_template(values, context_label="test settings", forbidden={}, kpoints_list_reset=None)
+    return build_input_template(
+        values, context_label="test settings", forbidden={}, kpoints_list_reset=None
+    )
 
 
 @pytest.mark.parametrize(
@@ -286,7 +295,13 @@ def test_coerce_supercell_matrix_accepts_lists_tuples_and_integer_strings(value)
 
 @pytest.mark.parametrize(
     "value",
-    [None, "2x2x1", [[1, 0, 0]], [[1, 0, 0], [0, 1], [0, 0, 1]], [[1, 0, 0], [0, "a", 0], [0, 0, 1]]],
+    [
+        None,
+        "2x2x1",
+        [[1, 0, 0]],
+        [[1, 0, 0], [0, 1], [0, 0, 1]],
+        [[1, 0, 0], [0, "a", 0], [0, 0, 1]],
+    ],
 )
 def test_coerce_supercell_matrix_rejects_malformed_values(value) -> None:
     assert coerce_supercell_matrix(value) is None
@@ -305,7 +320,10 @@ def test_supercell_label_names_unit_diagonal_and_custom_cells() -> None:
     # The adapter wording: lowercase unit cell, custom matrices spelled out
     # (this form also names the supercell structure, so it must stay stable).
     assert supercell_label(None, unit_cell="unit cell", spell_out_custom=True) == "unit cell"
-    assert supercell_label(custom, unit_cell="unit cell", spell_out_custom=True) == "[1 1 0; 0 1 0; 0 0 2]"
+    assert (
+        supercell_label(custom, unit_cell="unit cell", spell_out_custom=True)
+        == "[1 1 0; 0 1 0; 0 0 2]"
+    )
 
 
 def test_seed_workflow_defaults_layers_project_defaults_over_workflow_values() -> None:
@@ -389,7 +407,9 @@ def test_prepare_row_keeps_a_row_pinned_kpoint_grid() -> None:
 
 
 def test_prepare_row_reports_an_unconvertible_structure_by_row_label() -> None:
-    broken = Structure(label="broken", lattice_vectors=_CUBIC_4, species=["Si"], fractional_positions=[])
+    broken = Structure(
+        label="broken", lattice_vectors=_CUBIC_4, species=["Si"], fractional_positions=[]
+    )
 
     with pytest.raises(ValueError, match=r"^Could not convert row 'row_a' structure: "):
         prepare_row(
@@ -423,4 +443,6 @@ def test_project_convergence_parameter_values_applies_only_set_defaults() -> Non
         "kpoint_mp_grid": (4, 4, 4),
     }
     doubled = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 5.0]]
-    assert project_convergence_parameter_values(project, target_lattice=doubled)["kpoint_mp_grid"] == (2, 2, 4)
+    assert project_convergence_parameter_values(project, target_lattice=doubled)[
+        "kpoint_mp_grid"
+    ] == (2, 2, 4)

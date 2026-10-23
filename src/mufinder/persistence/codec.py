@@ -26,7 +26,9 @@ def to_jsonable(value: Any) -> Any:
     if kind is list or kind is tuple:
         return [item if type(item) in _JSON_SCALAR_TYPES else to_jsonable(item) for item in value]
     if kind is dict:
-        return {str(k): v if type(v) in _JSON_SCALAR_TYPES else to_jsonable(v) for k, v in value.items()}
+        return {
+            str(k): v if type(v) in _JSON_SCALAR_TYPES else to_jsonable(v) for k, v in value.items()
+        }
     if is_dataclass(value):
         return to_jsonable(asdict(value))
     if isinstance(value, dict):

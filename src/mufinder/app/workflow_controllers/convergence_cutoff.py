@@ -47,9 +47,7 @@ class ConvergenceCutoffController(SweepConvergenceController):
     calc_types = frozenset({"castep_convergence_cutoff"})
     stage = WorkflowStage.CONVERGENCE_CUTOFF
     active_key = "active_convergence_cutoff_definition_id"
-    no_ready_message = (
-        "Only configured cutoffs that have not yet been submitted can be submitted."
-    )
+    no_ready_message = "Only configured cutoffs that have not yet been submitted can be submitted."
 
     key_codec = CUTOFF_KEY_CODEC
     sweep_parameter = "cut_off_energy"
@@ -90,7 +88,9 @@ class ConvergenceCutoffController(SweepConvergenceController):
             signatures[cutoff] = (config.name_prefix, params)
         return signatures
 
-    def remove_cutoff_from_definition(self, definition: CalculationDefinition, cutoff: float) -> bool:
+    def remove_cutoff_from_definition(
+        self, definition: CalculationDefinition, cutoff: float
+    ) -> bool:
         """Drop ``cutoff`` from ``definition``; return whether the definition was deleted.
 
         See :func:`~mufinder.services.definition_mappings.remove_cutoff_from_definition`.

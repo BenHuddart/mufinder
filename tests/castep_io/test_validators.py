@@ -76,18 +76,24 @@ def test_validate_cell_rejects_conflicting_lattice_blocks() -> None:
         positions_frac=PositionBlock(positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)),
     )
 
-    with pytest.raises(ConflictingKeywordError, match="LATTICE_CART cannot be used together with LATTICE_ABC"):
+    with pytest.raises(
+        ConflictingKeywordError, match="LATTICE_CART cannot be used together with LATTICE_ABC"
+    ):
         validate_cell_file(cell_file)
 
 
 def test_validate_cell_requires_a_lattice() -> None:
-    with pytest.raises(MissingRequiredKeywordError, match="requires either LATTICE_CART or LATTICE_ABC"):
+    with pytest.raises(
+        MissingRequiredKeywordError, match="requires either LATTICE_CART or LATTICE_ABC"
+    ):
         validate_cell_file(CellFile())
 
     # Positions without a lattice fail the keyword requirement rule first.
     with pytest.raises(MissingRequiredKeywordError):
         validate_cell_file(
-            CellFile(positions_frac=PositionBlock(positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)))
+            CellFile(
+                positions_frac=PositionBlock(positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),))
+            )
         )
 
 
@@ -96,7 +102,9 @@ def test_validate_cell_requires_positions() -> None:
         lattice_cart=LatticeCart(vectors=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
     )
 
-    with pytest.raises(MissingRequiredKeywordError, match="requires either POSITIONS_FRAC or POSITIONS_ABS"):
+    with pytest.raises(
+        MissingRequiredKeywordError, match="requires either POSITIONS_FRAC or POSITIONS_ABS"
+    ):
         validate_cell_file(cell_file)
 
 
@@ -114,22 +122,35 @@ def test_validate_cell_requires_positions() -> None:
             id="short-lattice-vector",
         ),
         pytest.param(
-            {"lattice_cart": LatticeCart(vectors=((1.0, "bad", 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))},  # type: ignore[arg-type]
+            {
+                "lattice_cart": LatticeCart(
+                    vectors=((1.0, "bad", 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+                )
+            },  # type: ignore[arg-type]
             "expects numeric values",
             id="non-numeric-lattice-vector",
         ),
         pytest.param(
-            {"lattice_cart": None, "lattice_abc": LatticeABC(lengths=(4.0, 4.0), angles=(90.0, 90.0, 90.0))},  # type: ignore[arg-type]
+            {
+                "lattice_cart": None,
+                "lattice_abc": LatticeABC(lengths=(4.0, 4.0), angles=(90.0, 90.0, 90.0)),
+            },  # type: ignore[arg-type]
             "requires three lengths and three angles",
             id="two-abc-lengths",
         ),
         pytest.param(
-            {"lattice_cart": None, "lattice_abc": LatticeABC(lengths=(4.0, 0.0, 4.0), angles=(90.0, 90.0, 90.0))},
+            {
+                "lattice_cart": None,
+                "lattice_abc": LatticeABC(lengths=(4.0, 0.0, 4.0), angles=(90.0, 90.0, 90.0)),
+            },
             "lengths values must be greater than zero",
             id="zero-abc-length",
         ),
         pytest.param(
-            {"lattice_cart": None, "lattice_abc": LatticeABC(lengths=(4.0, 4.0, 4.0), angles=(90.0, 90.0, 180.0))},
+            {
+                "lattice_cart": None,
+                "lattice_abc": LatticeABC(lengths=(4.0, 4.0, 4.0), angles=(90.0, 90.0, 180.0)),
+            },
             "angles must be less than 180",
             id="straight-abc-angle",
         ),
@@ -196,7 +217,9 @@ def test_validate_kpoints_list_requires_weights_to_sum_to_one() -> None:
 
 
 def test_validate_kpoints_list_rows() -> None:
-    validate_cell_file(_cell(kpoints_list=(KPoint((0.0, 0.0, 0.0), 0.5), KPoint((0.5, 0.5, 0.5), 0.5))))
+    validate_cell_file(
+        _cell(kpoints_list=(KPoint((0.0, 0.0, 0.0), 0.5), KPoint((0.5, 0.5, 0.5), 0.5)))
+    )
 
     with pytest.raises(CastepValidationError, match="must contain three coordinates"):
         validate_cell_file(_cell(kpoints_list=(KPoint((0.0, 0.0), 1.0),)))  # type: ignore[arg-type]
@@ -210,9 +233,13 @@ def test_kpoint_grid_and_spacing_are_validated_and_mutually_exclusive() -> None:
     validate_cell_file(_cell(kpoint_mp_spacing=ValueWithUnit(0.05, "1/ang")))
 
     with pytest.raises(ConflictingKeywordError, match="cannot be used together"):
-        validate_cell_file(_cell(kpoint_mp_grid=(2, 2, 2), kpoint_mp_spacing=ValueWithUnit(0.05, "1/ang")))
+        validate_cell_file(
+            _cell(kpoint_mp_grid=(2, 2, 2), kpoint_mp_spacing=ValueWithUnit(0.05, "1/ang"))
+        )
 
-    with pytest.raises(CastepValidationError, match="KPOINT_MP_GRID values must be greater than zero"):
+    with pytest.raises(
+        CastepValidationError, match="KPOINT_MP_GRID values must be greater than zero"
+    ):
         validate_cell_file(_cell(kpoint_mp_grid=(1, 0, 1)))
 
     with pytest.raises(CastepValidationError, match="KPOINT_MP_SPACING expects a numeric value"):
@@ -269,7 +296,9 @@ def test_validate_param_rejects_conflicting_spin_spellings() -> None:
         )
     )
 
-    with pytest.raises(ConflictingKeywordError, match="SPIN_POLARIZED cannot be used together with SPIN_POLARISED"):
+    with pytest.raises(
+        ConflictingKeywordError, match="SPIN_POLARIZED cannot be used together with SPIN_POLARISED"
+    ):
         validate_param_file(param_file)
 
 
@@ -306,7 +335,9 @@ def test_validate_param_rejects_basis_precision_and_cutoff_combination() -> None
         )
     )
 
-    with pytest.raises(ConflictingKeywordError, match="BASIS_PRECISION cannot be used together with CUT_OFF_ENERGY"):
+    with pytest.raises(
+        ConflictingKeywordError, match="BASIS_PRECISION cannot be used together with CUT_OFF_ENERGY"
+    ):
         validate_param_file(param_file)
 
 
@@ -496,7 +527,9 @@ def test_block_keywords_require_block_values_and_rows() -> None:
         validate_keyword_value("cell", "species_pot", "Si")
 
     # The block name is taken from the keyword when the section is unnamed or aliased.
-    validate_keyword_value("cell", "species_pot", BlockSection("not_canonical", (("Si", "Si.recpot"),)))
+    validate_keyword_value(
+        "cell", "species_pot", BlockSection("not_canonical", (("Si", "Si.recpot"),))
+    )
 
     with pytest.raises(CastepValidationError, match="must contain at least one row"):
         _block("species_pot", ())
@@ -580,10 +613,16 @@ def test_hubbard_u_rows_accept_castep_token_layouts(row: tuple[object, ...]) -> 
     [
         pytest.param((1, "d: 2.4"), "must start with a species label", id="numeric-species"),
         pytest.param(("   ", "d: 2.4"), "must start with a species label", id="blank-species"),
-        pytest.param(("Fe", 0, "d: 2.4"), "atom indices must be positive integers", id="zero-index"),
-        pytest.param(("Fe", -3, "d: 2.4"), "atom indices must be positive integers", id="negative-index"),
+        pytest.param(
+            ("Fe", 0, "d: 2.4"), "atom indices must be positive integers", id="zero-index"
+        ),
+        pytest.param(
+            ("Fe", -3, "d: 2.4"), "atom indices must be positive integers", id="negative-index"
+        ),
         # bool subclasses int but is not a valid atom index.
-        pytest.param(("Fe", True, "d: 2.4"), "atom indices must be positive integers", id="bool-index"),
+        pytest.param(
+            ("Fe", True, "d: 2.4"), "atom indices must be positive integers", id="bool-index"
+        ),
         # A non-colon token after the species is treated as an atom index.
         pytest.param(("Fe", "nocolon"), "atom indices must be positive integers", id="text-index"),
         pytest.param(("Fe", 1, 2.4), "must use tokens such as 'd: 2.4'", id="bare-value"),

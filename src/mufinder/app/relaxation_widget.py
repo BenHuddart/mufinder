@@ -106,7 +106,11 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
         fix_combo = table.cellWidget(row, self._FIX_CELL_COLUMN)
         if isinstance(fix_combo, QComboBox):
             fix_combo.setEnabled(not locked)
-        lattice = (None, None, None) if runtime is None else (runtime.lattice_a, runtime.lattice_b, runtime.lattice_c)
+        lattice = (
+            (None, None, None)
+            if runtime is None
+            else (runtime.lattice_a, runtime.lattice_b, runtime.lattice_c)
+        )
         for column, value in zip(
             (self._LATTICE_A_COLUMN, self._LATTICE_B_COLUMN, self._LATTICE_C_COLUMN),
             lattice,
@@ -122,7 +126,9 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
 
     def _on_fix_cell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
         snapshot_keys = [
-            key for row in combo.selection_snapshot_rows if (key := self._row_id_at(row)) is not None
+            key
+            for row in combo.selection_snapshot_rows
+            if (key := self._row_id_at(row)) is not None
         ]
         target_row_ids = resolve_target_keys(
             combo,
@@ -138,7 +144,9 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
         if len(target_row_ids) > 1:
             show_status_message(
                 self,
-                multi_row_outcome_text("Cell constraint set on", len(target_row_ids), len(snapshot_keys)),
+                multi_row_outcome_text(
+                    "Cell constraint set on", len(target_row_ids), len(snapshot_keys)
+                ),
             )
         for target_row_id in target_row_ids:
             location = self._row_location_for_id(target_row_id)
@@ -191,7 +199,9 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
                     continue
                 row_id = self._allocate_row_id()
                 self._restore_row_fields(row_id, entry, params_key="params")
-                row = self._insert_row(row_id, str(entry.get("label", self._new_row_label())).strip())
+                row = self._insert_row(
+                    row_id, str(entry.get("label", self._new_row_label())).strip()
+                )
                 fix_combo = self._table.cellWidget(row, self._FIX_CELL_COLUMN)
                 if isinstance(fix_combo, QComboBox):
                     index = fix_combo.findData(bool(entry.get("fix_all_cell", False)))

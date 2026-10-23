@@ -12,28 +12,40 @@ from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import ProjectService
 
 
-def test_generate_requested_handles_errors(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_requested_handles_errors(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
     window._document = service.create_project(tmp_path / "gen_ui.mufinder", "GenUI")
 
     warnings: list[str] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: warnings.append("warning"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append("warning"),
+    )
 
     def boom(*args, **kwargs):
         raise SiteGenerationError("boom")
 
     monkeypatch.setattr(window._project_service, "generate_candidate_sites", boom)
-    window._on_generate_requested("manual", {"coord_system": "fractional", "x": 0.0, "y": 0.0, "z": 0.0})
+    window._on_generate_requested(
+        "manual", {"coord_system": "fractional", "x": 0.0, "y": 0.0, "z": 0.0}
+    )
 
     assert warnings == ["warning"]
     window.close()
 
 
-def test_delete_muon_candidates_requested_removes_selected_rows(main_window, tmp_path: Path) -> None:
+def test_delete_muon_candidates_requested_removes_selected_rows(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "delete_candidate_ui.mufinder", "DeleteCandidateUI")
+    window._document = service.create_project(
+        tmp_path / "delete_candidate_ui.mufinder", "DeleteCandidateUI"
+    )
     candidate = MuonSite(label="Candidate", status="generated", generation_method="manual")
     relaxed = MuonSite(label="Relaxed", status="relaxed", generation_method="manual")
     window._document.sites[candidate.id] = candidate
@@ -63,7 +75,9 @@ def test_delete_muon_candidates_requested_removes_selected_rows(main_window, tmp
 def test_cluster_muon_positions_requested_updates_rows(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "cluster_candidate_ui.mufinder", "ClusterCandidateUI")
+    window._document = service.create_project(
+        tmp_path / "cluster_candidate_ui.mufinder", "ClusterCandidateUI"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -93,10 +107,14 @@ def test_cluster_muon_positions_requested_updates_rows(main_window, tmp_path: Pa
     window.close()
 
 
-def test_muon_generation_table_uses_natural_candidate_label_order(main_window, tmp_path: Path) -> None:
+def test_muon_generation_table_uses_natural_candidate_label_order(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "candidate_order_ui.mufinder", "CandidateOrderUI")
+    window._document = service.create_project(
+        tmp_path / "candidate_order_ui.mufinder", "CandidateOrderUI"
+    )
     for label in ("Random Site 1", "Random Site 10", "Random Site 2"):
         site = MuonSite(label=label, status="generated", generation_method="random")
         window._document.sites[site.id] = site
@@ -112,10 +130,14 @@ def test_muon_generation_table_uses_natural_candidate_label_order(main_window, t
     window.close()
 
 
-def test_random_generation_runs_in_worker_and_updates_estimated_distance(main_window, qapp, tmp_path: Path) -> None:
+def test_random_generation_runs_in_worker_and_updates_estimated_distance(
+    main_window, qapp, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "async_random_ui.mufinder", "AsyncRandomUI")
+    window._document = service.create_project(
+        tmp_path / "async_random_ui.mufinder", "AsyncRandomUI"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
@@ -160,10 +182,14 @@ def test_random_generation_runs_in_worker_and_updates_estimated_distance(main_wi
     window.close()
 
 
-def test_random_generation_progress_text_omits_predicted_total_for_separation_mode(main_window, tmp_path: Path) -> None:
+def test_random_generation_progress_text_omits_predicted_total_for_separation_mode(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "random_progress_text.mufinder", "RandomProgressText")
+    window._document = service.create_project(
+        tmp_path / "random_progress_text.mufinder", "RandomProgressText"
+    )
 
     window._on_generation_progress_changed("random", 6, 13, "separation")
 

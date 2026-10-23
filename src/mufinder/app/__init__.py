@@ -31,8 +31,14 @@ __all__ = [
 
 _EXPORTS: dict[str, tuple[str, str]] = {
     "ClusterSetupDialog": ("mufinder.app.cluster_setup_dialog", "ClusterSetupDialog"),
-    "ClusterSubmissionConfig": ("mufinder.app.cluster_submission_dialog", "ClusterSubmissionConfig"),
-    "ClusterSubmissionDialog": ("mufinder.app.cluster_submission_dialog", "ClusterSubmissionDialog"),
+    "ClusterSubmissionConfig": (
+        "mufinder.app.cluster_submission_dialog",
+        "ClusterSubmissionConfig",
+    ),
+    "ClusterSubmissionDialog": (
+        "mufinder.app.cluster_submission_dialog",
+        "ClusterSubmissionDialog",
+    ),
     "CastepSetupDialog": ("mufinder.app.castep_setup_dialog", "CastepSetupDialog"),
     "CastepParamForm": ("mufinder.app.param_form", "CastepParamForm"),
     "ConvergenceConfig": ("mufinder.app.convergence_types", "ConvergenceConfig"),
@@ -42,15 +48,24 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "PristineRelaxationWidget": ("mufinder.app.relaxation_widget", "PristineRelaxationWidget"),
     "MuonRelaxationConfig": ("mufinder.app.relaxation_types", "MuonRelaxationConfig"),
     "MuonRelaxationWidget": ("mufinder.app.muon_relaxation_widget", "MuonRelaxationWidget"),
-    "KPointConvergenceWidget": ("mufinder.app.kpoint_convergence_widget", "KPointConvergenceWidget"),
+    "KPointConvergenceWidget": (
+        "mufinder.app.kpoint_convergence_widget",
+        "KPointConvergenceWidget",
+    ),
     "MathLabel": ("mufinder.app.math_label", "MathLabel"),
     "ParameterDialog": ("mufinder.app.param_dialog", "ParameterDialog"),
     "ParameterHelpDialog": ("mufinder.app.help_dialog", "ParameterHelpDialog"),
     "LocalSubmissionDialog": ("mufinder.app.submission_dialog", "LocalSubmissionDialog"),
     "SubmissionConfig": ("mufinder.app.submission_dialog", "SubmissionConfig"),
     "expand_convergence_jobs": ("mufinder.app.convergence_adapter", "expand_convergence_jobs"),
-    "expand_pristine_relaxation_jobs": ("mufinder.app.relaxation_adapter", "expand_pristine_relaxation_jobs"),
-    "expand_muon_relaxation_jobs": ("mufinder.app.relaxation_adapter", "expand_muon_relaxation_jobs"),
+    "expand_pristine_relaxation_jobs": (
+        "mufinder.app.relaxation_adapter",
+        "expand_pristine_relaxation_jobs",
+    ),
+    "expand_muon_relaxation_jobs": (
+        "mufinder.app.relaxation_adapter",
+        "expand_muon_relaxation_jobs",
+    ),
 }
 
 

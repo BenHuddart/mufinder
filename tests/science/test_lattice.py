@@ -51,9 +51,21 @@ def _random_pairs(count: int = 200, seed: int = 7) -> list[tuple[list[float], li
 
 
 def _site_generation_frac_to_cart(fractional, lattice):
-    x = fractional[0] * lattice[0][0] + fractional[1] * lattice[1][0] + fractional[2] * lattice[2][0]
-    y = fractional[0] * lattice[0][1] + fractional[1] * lattice[1][1] + fractional[2] * lattice[2][1]
-    z = fractional[0] * lattice[0][2] + fractional[1] * lattice[1][2] + fractional[2] * lattice[2][2]
+    x = (
+        fractional[0] * lattice[0][0]
+        + fractional[1] * lattice[1][0]
+        + fractional[2] * lattice[2][0]
+    )
+    y = (
+        fractional[0] * lattice[0][1]
+        + fractional[1] * lattice[1][1]
+        + fractional[2] * lattice[2][1]
+    )
+    z = (
+        fractional[0] * lattice[0][2]
+        + fractional[1] * lattice[1][2]
+        + fractional[2] * lattice[2][2]
+    )
     return [x, y, z]
 
 
@@ -67,7 +79,11 @@ def _site_generation_pbc_distance(a, b, lattice):
 def _relaxation_analysis_pbc_distance(left, right, lattice):
     delta = np.asarray(right, dtype=float) - np.asarray(left, dtype=float)
     delta = delta - np.round(delta)
-    return float(np.linalg.norm(np.asarray(_site_generation_frac_to_cart(delta.tolist(), lattice), dtype=float)))
+    return float(
+        np.linalg.norm(
+            np.asarray(_site_generation_frac_to_cart(delta.tolist(), lattice), dtype=float)
+        )
+    )
 
 
 def _structure_io_minimum_periodic_distance(a, b, lattice_vectors):
@@ -136,7 +152,9 @@ def test_scalar_and_broadcast_conversions_agree_bit_for_bit() -> None:
     cartesian = fractional_to_cartesian(points, _TRICLINIC)
     for point, row in zip(points.tolist(), cartesian.tolist(), strict=True):
         assert lattice_frac_to_cart(point, _TRICLINIC) == row
-        assert lattice_frac_to_cart(point, _TRICLINIC) == _site_generation_frac_to_cart(point, _TRICLINIC)
+        assert lattice_frac_to_cart(point, _TRICLINIC) == _site_generation_frac_to_cart(
+            point, _TRICLINIC
+        )
 
     fractional = cartesian_to_fractional(cartesian, _TRICLINIC)
     for point, row in zip(cartesian.tolist(), fractional.tolist(), strict=True):
@@ -182,18 +200,28 @@ def test_folding_a_supercell_position_matches_the_legacy_import_arithmetic() -> 
 
 
 def test_minimum_image_delta_folds_each_component() -> None:
-    assert minimum_image_delta([0.9, 0.1, 2.25], [0.1, 0.9, 0.0]) == pytest.approx([-0.2, 0.2, 0.25])
-    assert minimum_image_cartesian_delta([0.9, 0.0, 0.0], [0.1, 0.0, 0.0], _CUBIC) == pytest.approx([-1.0, 0.0, 0.0])
-    assert minimum_image_cartesian_delta([0.9, 0.0, 0.0], [0.1, 0.0, 0.0]) == pytest.approx([-0.2, 0.0, 0.0])
+    assert minimum_image_delta([0.9, 0.1, 2.25], [0.1, 0.9, 0.0]) == pytest.approx(
+        [-0.2, 0.2, 0.25]
+    )
+    assert minimum_image_cartesian_delta([0.9, 0.0, 0.0], [0.1, 0.0, 0.0], _CUBIC) == pytest.approx(
+        [-1.0, 0.0, 0.0]
+    )
+    assert minimum_image_cartesian_delta([0.9, 0.0, 0.0], [0.1, 0.0, 0.0]) == pytest.approx(
+        [-0.2, 0.0, 0.0]
+    )
 
 
-@pytest.mark.parametrize("lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"])
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
 def test_minimum_image_distance_matches_site_generation_bit_for_bit(lattice) -> None:
     for a, b in _random_pairs():
         assert minimum_image_distance(a, b, lattice) == _site_generation_pbc_distance(a, b, lattice)
 
 
-@pytest.mark.parametrize("lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"])
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
 def test_minimum_image_distance_matches_relaxation_analysis(lattice) -> None:
     for a, b in _random_pairs():
         assert minimum_image_distance(a, b, lattice) == pytest.approx(
@@ -203,14 +231,18 @@ def test_minimum_image_distance_matches_relaxation_analysis(lattice) -> None:
 
 def test_fractional_minimum_image_distance_matches_magnetic_fields() -> None:
     for a, b in _random_pairs():
-        assert minimum_image_distance(a, b) == pytest.approx(_magnetic_fields_fractional_distance(a, b), abs=1e-12)
+        assert minimum_image_distance(a, b) == pytest.approx(
+            _magnetic_fields_fractional_distance(a, b), abs=1e-12
+        )
     # Exactly half a cell apart: both fold to the same length.
-    assert minimum_image_distance([0.5, 0.0, 0.0], [0.0, 0.0, 0.0]) == _magnetic_fields_fractional_distance(
+    assert minimum_image_distance(
         [0.5, 0.0, 0.0], [0.0, 0.0, 0.0]
-    )
+    ) == _magnetic_fields_fractional_distance([0.5, 0.0, 0.0], [0.0, 0.0, 0.0])
 
 
-@pytest.mark.parametrize("lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"])
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
 def test_nearest_image_distance_matches_structure_io(lattice) -> None:
     for a, b in _random_pairs():
         assert nearest_image_distance(a, b, lattice) == pytest.approx(
@@ -230,7 +262,9 @@ def test_nearest_image_delta_names_the_image_the_distance_is_measured_to() -> No
     delta = nearest_image_delta(a, b, _SKEWED)
 
     assert delta != pytest.approx(minimum_image_delta(a, b))
-    assert np.linalg.norm(np.asarray(delta) @ np.asarray(_SKEWED)) == pytest.approx(nearest_image_distance(a, b, _SKEWED))
+    assert np.linalg.norm(np.asarray(delta) @ np.asarray(_SKEWED)) == pytest.approx(
+        nearest_image_distance(a, b, _SKEWED)
+    )
     shift = np.asarray(delta) - (np.asarray(a) - np.asarray(b))
     assert shift == pytest.approx(np.round(shift))
 
@@ -244,7 +278,9 @@ def test_distance_matrix_matches_the_scalar_helper() -> None:
         matrix = minimum_image_distance_matrix(left, right, lattice)
         assert matrix.shape == (6, 4)
         for i, j in np.ndindex(matrix.shape):
-            assert matrix[i, j] == pytest.approx(minimum_image_distance(right[j], left[i], lattice), rel=1e-14)
+            assert matrix[i, j] == pytest.approx(
+                minimum_image_distance(right[j], left[i], lattice), rel=1e-14
+            )
 
 
 def test_near_minimum_indexes_keeps_every_near_tie() -> None:
@@ -281,7 +317,10 @@ def test_deduplication_keeps_first_occurrence_and_drops_exact_repeats() -> None:
 def test_deduplication_without_a_lattice_uses_fractional_distances() -> None:
     positions = [[0.0, 0.0, 0.0], [0.9995, 0.0, 0.0], [0.002, 0.0, 0.0]]
 
-    assert deduplicate_periodic_positions(positions, None, tolerance=1e-3) == [[0.0, 0.0, 0.0], [0.002, 0.0, 0.0]]
+    assert deduplicate_periodic_positions(positions, None, tolerance=1e-3) == [
+        [0.0, 0.0, 0.0],
+        [0.002, 0.0, 0.0],
+    ]
 
 
 def test_reciprocal_to_cartesian_gives_the_dual_basis() -> None:
@@ -299,4 +338,6 @@ def test_reciprocal_to_cartesian_rejects_a_singular_lattice_with_the_callers_err
         pass
 
     with pytest.raises(_Error, match="singular"):
-        reciprocal_to_cartesian((1.0, 0.0, 0.0), [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]], error=_Error)
+        reciprocal_to_cartesian(
+            (1.0, 0.0, 0.0), [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]], error=_Error
+        )

@@ -207,7 +207,13 @@ def test_convergence_examiner_kpoint_mode_uses_delta_only_and_emits_default(qapp
     adopted: list[tuple[float, str, float, float, object]] = []
     dialog.default_adopted.connect(
         lambda value, method, energy_threshold, force_threshold, stress_threshold: adopted.append(
-            (float(value), method, float(energy_threshold), float(force_threshold), stress_threshold)
+            (
+                float(value),
+                method,
+                float(energy_threshold),
+                float(force_threshold),
+                stress_threshold,
+            )
         )
     )
     dialog._emit_adopted_cutoff()
@@ -226,10 +232,7 @@ def test_convergence_examiner_kpoint_mode_adds_spacing_axis_when_lattice_provide
         counts[1]: _completed_state(-10.02, 0.18),
         counts[2]: _completed_state(-10.025, 0.17),
     }
-    labels = {
-        counts[i]: f"Grid: {grids[i][0]} x {grids[i][1]} x {grids[i][2]}"
-        for i in range(3)
-    }
+    labels = {counts[i]: f"Grid: {grids[i][0]} x {grids[i][1]} x {grids[i][2]}" for i in range(3)}
 
     dialog = ConvergenceExaminerDialog(
         sweep_data,
@@ -275,9 +278,7 @@ def test_convergence_examiner_kpoint_mode_adds_spacing_axis_when_lattice_provide
 
     # The bottom n_kpoints axis and the spacing twin both use log scale so
     # small grids stop collapsing into the leftmost sliver of the plot.
-    energy_ax = next(
-        ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)"
-    )
+    energy_ax = next(ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)")
     assert energy_ax.get_xscale() == "log"
     assert spacing_ax.get_xscale() == "log"
 
@@ -303,9 +304,7 @@ def test_convergence_examiner_kpoint_mode_omits_spacing_axis_without_lattice(qap
     assert spacing_axes == []
     # Log scale applies even without lattice vectors — it's the n_kpoints
     # crowding fix, independent of whether spacing labels are drawn.
-    energy_ax = next(
-        ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)"
-    )
+    energy_ax = next(ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)")
     assert energy_ax.get_xscale() == "log"
 
 
@@ -329,9 +328,7 @@ def test_convergence_examiner_cutoff_mode_has_no_spacing_axis(qapp) -> None:
     assert spacing_axes == []
     assert dialog._point_spacings == {}
     # Cutoff sweeps keep the historical linear x-axis.
-    energy_ax = next(
-        ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)"
-    )
+    energy_ax = next(ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)")
     assert energy_ax.get_xscale() == "linear"
 
 
@@ -351,8 +348,18 @@ def test_convergence_examiner_handles_invalid_restore_payloads(qapp) -> None:
             "energy_threshold": "bad",
             "force_threshold": object(),
             "recommended_value": "bad",
-            "energy_result": {"converged": True, "method": "delta-threshold", "details": "ok", "deltas": "bad"},
-            "force_result": {"converged": True, "method": "delta-threshold", "details": "ok", "fitted_curve": "bad"},
+            "energy_result": {
+                "converged": True,
+                "method": "delta-threshold",
+                "details": "ok",
+                "deltas": "bad",
+            },
+            "force_result": {
+                "converged": True,
+                "method": "delta-threshold",
+                "details": "ok",
+                "fitted_curve": "bad",
+            },
             "plot_data": {"cutoffs": [300.0], "energies": [1.0, 2.0], "forces": [0.1]},
         },
     )
@@ -392,10 +399,18 @@ def test_convergence_examiner_analysis_warns_when_backend_raises(
 def test_convergence_examiner_requires_matching_energy_and_force_rows(qapp) -> None:
     dialog = ConvergenceExaminerDialog(
         {
-            300.0: convergence_examiner_module.SweepPointRunState(status="completed", total_energy=-10.0, max_force=None),
-            400.0: convergence_examiner_module.SweepPointRunState(status="completed", total_energy=-10.02, max_force=None),
-            500.0: convergence_examiner_module.SweepPointRunState(status="completed", total_energy=None, max_force=0.20),
-            600.0: convergence_examiner_module.SweepPointRunState(status="completed", total_energy=None, max_force=0.18),
+            300.0: convergence_examiner_module.SweepPointRunState(
+                status="completed", total_energy=-10.0, max_force=None
+            ),
+            400.0: convergence_examiner_module.SweepPointRunState(
+                status="completed", total_energy=-10.02, max_force=None
+            ),
+            500.0: convergence_examiner_module.SweepPointRunState(
+                status="completed", total_energy=None, max_force=0.20
+            ),
+            600.0: convergence_examiner_module.SweepPointRunState(
+                status="completed", total_energy=None, max_force=0.18
+            ),
         },
         num_atoms=2,
     )
@@ -414,9 +429,15 @@ def test_convergence_examiner_hover_routes_twin_axes_to_logical_subplot(qapp) ->
     # subplot and show the matching tooltip.
     lattice = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
     sweep_data = {
-        1.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=2.0),
-        8.0: SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.18, max_stress=0.50),
-        27.0: SweepPointRunState(status="completed", total_energy=-10.025, max_force=0.17, max_stress=0.05),
+        1.0: SweepPointRunState(
+            status="completed", total_energy=-10.0, max_force=0.30, max_stress=2.0
+        ),
+        8.0: SweepPointRunState(
+            status="completed", total_energy=-10.02, max_force=0.18, max_stress=0.50
+        ),
+        27.0: SweepPointRunState(
+            status="completed", total_energy=-10.025, max_force=0.17, max_stress=0.05
+        ),
     }
     dialog = ConvergenceExaminerDialog(
         sweep_data,
@@ -433,9 +454,7 @@ def test_convergence_examiner_hover_routes_twin_axes_to_logical_subplot(qapp) ->
 
     # Hover on the spacing twin (top of the energy subplot) — should still
     # report an energy-subplot tooltip anchored on the energy axis.
-    dialog._on_plot_hover(
-        SimpleNamespace(inaxes=dialog._spacing_ax, xdata=8.0, ydata=-10.02)
-    )
+    dialog._on_plot_hover(SimpleNamespace(inaxes=dialog._spacing_ax, xdata=8.0, ydata=-10.02))
     assert dialog._hover_annotation is not None
     assert "Grid: 2 x 2 x 2" in dialog._hover_annotation.get_text()
     assert dialog._hover_annotation.axes is dialog._energy_ax
@@ -443,9 +462,7 @@ def test_convergence_examiner_hover_routes_twin_axes_to_logical_subplot(qapp) ->
     # Hover on the stress twin (top of the force subplot) — should still
     # report a force-subplot tooltip anchored on the force axis (kpoint
     # mode shows just the grid label).
-    dialog._on_plot_hover(
-        SimpleNamespace(inaxes=dialog._stress_ax, xdata=27.0, ydata=0.05)
-    )
+    dialog._on_plot_hover(SimpleNamespace(inaxes=dialog._stress_ax, xdata=27.0, ydata=0.05))
     assert "Grid: 3 x 3 x 3" in dialog._hover_annotation.get_text()
     assert dialog._hover_annotation.axes is dialog._force_ax
 
@@ -455,18 +472,22 @@ def test_convergence_examiner_hover_combines_force_and_stress_in_cutoff_mode(qap
     # annotation should be anchored on the stress axis (so the arrow points
     # at the stress data point, not the force line) and show both metrics.
     sweep_data = {
-        300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.5),
-        400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.4),
-        500.0: SweepPointRunState(status="completed", total_energy=-10.011, max_force=0.05, max_stress=0.08),
+        300.0: SweepPointRunState(
+            status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.5
+        ),
+        400.0: SweepPointRunState(
+            status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.4
+        ),
+        500.0: SweepPointRunState(
+            status="completed", total_energy=-10.011, max_force=0.05, max_stress=0.08
+        ),
     }
     dialog = ConvergenceExaminerDialog(sweep_data, num_atoms=2, sweep_kind="cutoff")
     dialog._include_stress.setChecked(True)
     dialog._run_analysis()
 
     assert dialog._stress_ax is not None
-    dialog._on_plot_hover(
-        SimpleNamespace(inaxes=dialog._stress_ax, xdata=400.0, ydata=0.4)
-    )
+    dialog._on_plot_hover(SimpleNamespace(inaxes=dialog._stress_ax, xdata=400.0, ydata=0.4))
     text = dialog._hover_annotation.get_text()
     assert "Cutoff: 400" in text
     assert "Max force" in text
@@ -547,8 +568,12 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
 
     defaults: list[tuple] = []
     cutoffs: list[tuple] = []
-    dialog.default_adopted.connect(lambda value, method, et, ft, st: defaults.append((value, method, et, ft, st)))
-    dialog.cutoff_adopted.connect(lambda value, method, et, ft, st: cutoffs.append((value, method, et, ft, st)))
+    dialog.default_adopted.connect(
+        lambda value, method, et, ft, st: defaults.append((value, method, et, ft, st))
+    )
+    dialog.cutoff_adopted.connect(
+        lambda value, method, et, ft, st: cutoffs.append((value, method, et, ft, st))
+    )
 
     dialog._emit_adopted_cutoff()
 
@@ -556,7 +581,9 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
     assert cutoffs == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07), None)]
 
 
-def _completed_state_with_stress(energy: float, force: float, stress: float | None) -> SweepPointRunState:
+def _completed_state_with_stress(
+    energy: float, force: float, stress: float | None
+) -> SweepPointRunState:
     return SweepPointRunState(
         status="completed", total_energy=energy, max_force=force, max_stress=stress
     )
@@ -666,9 +693,7 @@ def test_recompute_spacings_in_snapshot_replaces_stale_values() -> None:
         },
     }
 
-    refreshed = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(
-        snapshot, lattice
-    )
+    refreshed = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(snapshot, lattice)
 
     expected_8 = spacing_from_grid(lattice, (2, 2, 2))
     expected_27 = spacing_from_grid(lattice, (3, 3, 3))
@@ -809,9 +834,15 @@ def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precisio
 
     dialog = ConvergenceExaminerDialog(
         {
-            300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.0),
-            400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.6),
-            500.0: SweepPointRunState(status="completed", total_energy=-10.0105, max_force=0.15, max_stress=0.4),
+            300.0: SweepPointRunState(
+                status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.0
+            ),
+            400.0: SweepPointRunState(
+                status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.6
+            ),
+            500.0: SweepPointRunState(
+                status="completed", total_energy=-10.0105, max_force=0.15, max_stress=0.4
+            ),
         },
         num_atoms=2,
     )
@@ -830,7 +861,9 @@ def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precisio
     assert "0.00001 eV/Ang" in dialog._force_threshold.toolTip()
 
 
-def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_positive_value(qapp) -> None:
+def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_positive_value(
+    qapp,
+) -> None:
     dialog = ConvergenceExaminerDialog(
         {
             300.0: _completed_state(-10.0, 0.30),

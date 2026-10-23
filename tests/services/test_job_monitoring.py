@@ -27,25 +27,34 @@ _job = partial(
 )
 
 
-@pytest.mark.parametrize("target,expected", [
-    ("scarf", True),
-    ("local", False),
-    ("LOCAL", False),
-    ("", False),
-    ("  ", False),
-])
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        ("scarf", True),
+        ("local", False),
+        ("LOCAL", False),
+        ("", False),
+        ("  ", False),
+    ],
+)
 def test_is_cluster_job_matches_reconciliation_semantics(target: str, expected: bool) -> None:
     assert is_cluster_job(_job(execution_target=target)) is expected
 
 
 def test_terminal_and_local_jobs_are_never_stale() -> None:
     old = _NOW - timedelta(hours=5)
-    assert job_staleness(
-        _job(status=JobStatus.FAILED, last_checked_at=old), now=_NOW, cluster_connected=False
-    ) is None
-    assert job_staleness(
-        _job(execution_target="local", last_checked_at=old), now=_NOW, cluster_connected=False
-    ) is None
+    assert (
+        job_staleness(
+            _job(status=JobStatus.FAILED, last_checked_at=old), now=_NOW, cluster_connected=False
+        )
+        is None
+    )
+    assert (
+        job_staleness(
+            _job(execution_target="local", last_checked_at=old), now=_NOW, cluster_connected=False
+        )
+        is None
+    )
 
 
 def test_disconnected_cluster_marks_active_job_stale() -> None:

@@ -114,9 +114,15 @@ def _sized_img_tag(tag: str, page: Path, outdir: Path) -> str:
 
         with Image.open(image) as opened:
             width, height = opened.size
-        attributes = {"width": str(width // SCREENSHOT_SCALE), "height": str(height // SCREENSHOT_SCALE), **attributes}
+        attributes = {
+            "width": str(width // SCREENSHOT_SCALE),
+            "height": str(height // SCREENSHOT_SCALE),
+            **attributes,
+        }
     added = "".join(
-        f' {name}="{value}"' for name, value in attributes.items() if re.search(rf"\b{name}=", tag) is None
+        f' {name}="{value}"'
+        for name, value in attributes.items()
+        if re.search(rf"\b{name}=", tag) is None
     )
     end = -2 if tag.endswith("/>") else -1
     return tag[:end].rstrip() + added + (" />" if end == -2 else ">")

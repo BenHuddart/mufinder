@@ -117,7 +117,9 @@ class ComparisonJobDialog(QDialog):
             self._table.setItem(
                 row,
                 self._ENERGY_COLUMN,
-                QTableWidgetItem("" if job.total_energy is None else f"{float(job.total_energy):.8g}"),
+                QTableWidgetItem(
+                    "" if job.total_energy is None else f"{float(job.total_energy):.8g}"
+                ),
             )
             self._table.setItem(
                 row,
@@ -142,7 +144,9 @@ class ComparisonJobDialog(QDialog):
             QMessageBox.warning(self, "No jobs selected", "Select at least one completed job.")
             return
         if not self.table_label():
-            QMessageBox.warning(self, "Missing label", "Provide a non-empty comparison table label.")
+            QMessageBox.warning(
+                self, "Missing label", "Provide a non-empty comparison table label."
+            )
             return
         self.accept()
 

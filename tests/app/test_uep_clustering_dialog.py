@@ -19,7 +19,9 @@ from mufinder.science.uep_clustering import relaxed_site_number_map
 from tests.support.structures import QUARTER_DIAGONAL, host_structure
 
 
-_host_structure = partial(host_structure, positions=QUARTER_DIAGONAL, properties={"pbc": [True, True, True]})
+_host_structure = partial(
+    host_structure, positions=QUARTER_DIAGONAL, properties={"pbc": [True, True, True]}
+)
 
 
 def _classification() -> StationaryPointClassification:
@@ -82,7 +84,9 @@ def test_uep_clustering_dialog_hierarchical_view_keeps_entry_and_overlay_in_sync
     assert dialog._hier_controls.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
     assert dialog._hier_t_input.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
     assert dialog._structure_viewer._point_overlay_specs
-    assert np.allclose(dialog._structure_viewer._point_overlay_specs[0].radii, MUON_VIEWER_RADIUS_ANG)
+    assert np.allclose(
+        dialog._structure_viewer._point_overlay_specs[0].radii, MUON_VIEWER_RADIUS_ANG
+    )
     assert dialog._hier_toolbar.isHidden() is False
     assert dialog._hier_toolbar._home_button.text() == "Reset"
     assert dialog._hier_toolbar._pan_button.text() == "Pan"
@@ -103,7 +107,9 @@ def test_uep_clustering_dialog_hierarchical_view_keeps_entry_and_overlay_in_sync
     dialog._on_hier_input_changed()
 
     assert dialog._hier_t_input.value() == pytest.approx(0.18, rel=0.0, abs=1e-3)
-    assert list(dialog._hier_cut_line_artist.get_ydata()) == pytest.approx([0.18, 0.18], rel=0.0, abs=1e-3)
+    assert list(dialog._hier_cut_line_artist.get_ydata()) == pytest.approx(
+        [0.18, 0.18], rel=0.0, abs=1e-3
+    )
     assert dialog._left_figure.axes
     dialog.close()
 
@@ -262,8 +268,12 @@ def test_uep_clustering_dialog_restores_persisted_window_and_viewer_state(qapp) 
     # the dialog's own minimum size, so the floor is whichever is larger.
     restored_geometry = restored.state_snapshot()["window_geometry"]
     avail = restored.screen().availableGeometry()
-    expected_max_width = max(min(snapshot["window_geometry"][2], avail.width()), restored.minimumWidth())
-    expected_max_height = max(min(snapshot["window_geometry"][3], avail.height()), restored.minimumHeight())
+    expected_max_width = max(
+        min(snapshot["window_geometry"][2], avail.width()), restored.minimumWidth()
+    )
+    expected_max_height = max(
+        min(snapshot["window_geometry"][3], avail.height()), restored.minimumHeight()
+    )
     assert restored_geometry[2] <= expected_max_width
     assert restored_geometry[3] <= expected_max_height
     assert restored._structure_viewer._show_cell.isChecked() is False
@@ -295,7 +305,9 @@ def test_uep_clustering_dialog_close_shuts_down_structure_viewer(qapp, monkeypat
     assert calls == ["shutdown"]
 
 
-def test_uep_clustering_dialog_survives_move_and_resize_while_building_viewer(qapp, monkeypatch) -> None:
+def test_uep_clustering_dialog_survives_move_and_resize_while_building_viewer(
+    qapp, monkeypatch
+) -> None:
     # On Windows the viewer's VTK interactor calls winId() mid-build, which
     # creates the dialog's native window and delivers move/resize events before
     # the splitters exist. Replay that ordering on every platform.
@@ -355,7 +367,9 @@ def test_uep_clustering_dialog_coalesces_geometry_state_emissions(qapp) -> None:
     dialog.close()
 
 
-def test_uep_clustering_dialog_dragging_cut_line_updates_entry_and_refreshes_on_release(qapp, monkeypatch) -> None:
+def test_uep_clustering_dialog_dragging_cut_line_updates_entry_and_refreshes_on_release(
+    qapp, monkeypatch
+) -> None:
     host = _host_structure()
     dialog = UepClusteringDialog(
         source_job_label="uep_source_row1",
@@ -376,7 +390,9 @@ def test_uep_clustering_dialog_dragging_cut_line_updates_entry_and_refreshes_on_
     drag_x, drag_y = axis.transData.transform((x_centre, target_t))
 
     dialog._on_left_canvas_button_press(
-        SimpleNamespace(button=1, inaxes=axis, x=float(start_x), y=float(start_y), ydata=float(start_t))
+        SimpleNamespace(
+            button=1, inaxes=axis, x=float(start_x), y=float(start_y), ydata=float(start_t)
+        )
     )
     dialog._on_left_canvas_motion(
         SimpleNamespace(inaxes=axis, x=float(drag_x), y=float(drag_y), ydata=float(target_t))
@@ -386,14 +402,18 @@ def test_uep_clustering_dialog_dragging_cut_line_updates_entry_and_refreshes_on_
     assert dialog._hier_t_input.value() == pytest.approx(target_t, rel=0.0, abs=1e-3)
 
     dialog._on_left_canvas_button_release(
-        SimpleNamespace(button=1, inaxes=axis, x=float(drag_x), y=float(drag_y), ydata=float(target_t))
+        SimpleNamespace(
+            button=1, inaxes=axis, x=float(drag_x), y=float(drag_y), ydata=float(target_t)
+        )
     )
 
     assert calls == [True]
     dialog.close()
 
 
-def test_uep_clustering_dialog_clicking_cut_line_does_not_refresh_or_open_editor(qapp, monkeypatch) -> None:
+def test_uep_clustering_dialog_clicking_cut_line_does_not_refresh_or_open_editor(
+    qapp, monkeypatch
+) -> None:
     host = _host_structure()
     dialog = UepClusteringDialog(
         source_job_label="uep_source_row1",
@@ -411,7 +431,9 @@ def test_uep_clustering_dialog_clicking_cut_line_does_not_refresh_or_open_editor
     x_centre = 0.5 * sum(axis.get_xlim())
     click_x, click_y = axis.transData.transform((x_centre, current_t))
 
-    event = SimpleNamespace(button=1, inaxes=axis, x=float(click_x), y=float(click_y), ydata=float(current_t))
+    event = SimpleNamespace(
+        button=1, inaxes=axis, x=float(click_x), y=float(click_y), ydata=float(current_t)
+    )
     dialog._on_left_canvas_button_press(event)
     dialog._on_left_canvas_button_release(event)
 
@@ -447,7 +469,9 @@ def test_uep_clustering_dialog_dendrogram_labels_use_global_energy_rank(qapp, mo
         optimizations=optimizations,
     )
 
-    expected_labels = [str(relaxed_site_number_map(optimizations)[index]) for index in range(len(optimizations))]
+    expected_labels = [
+        str(relaxed_site_number_map(optimizations)[index]) for index in range(len(optimizations))
+    ]
     assert captured["labels"] == expected_labels
     dialog.close()
 
@@ -474,12 +498,15 @@ def test_uep_clustering_dialog_has_no_unlaid_label_over_the_viewer_toolbar(qapp)
     assert not [
         label
         for label in dialog.findChildren(QLabel)
-        if label.isVisibleTo(dialog) and label.text().startswith(("Showing", "Relaxed muon sites are colored"))
+        if label.isVisibleTo(dialog)
+        and label.text().startswith(("Showing", "Relaxed muon sites are colored"))
     ]
     dialog.close()
 
 
-def test_uep_clustering_cut_line_ignores_drags_while_a_popped_out_plot_pans(qapp, monkeypatch) -> None:
+def test_uep_clustering_cut_line_ignores_drags_while_a_popped_out_plot_pans(
+    qapp, monkeypatch
+) -> None:
     """A pop-out window's Pan/Zoom owns the drag; the cut line must not move with it."""
 
     host = _host_structure()
@@ -507,9 +534,13 @@ def test_uep_clustering_cut_line_ignores_drags_while_a_popped_out_plot_pans(qapp
     target_t = min(start_t + 0.08, dialog._hierarchical_distance_max)
     drag_x, drag_y = axis.transData.transform((x_centre, target_t))
     dialog._on_left_canvas_button_press(
-        SimpleNamespace(button=1, inaxes=axis, x=float(start_x), y=float(start_y), ydata=float(start_t))
+        SimpleNamespace(
+            button=1, inaxes=axis, x=float(start_x), y=float(start_y), ydata=float(start_t)
+        )
     )
-    dialog._on_left_canvas_motion(SimpleNamespace(inaxes=axis, x=float(drag_x), y=float(drag_y), ydata=float(target_t)))
+    dialog._on_left_canvas_motion(
+        SimpleNamespace(inaxes=axis, x=float(drag_x), y=float(drag_y), ydata=float(target_t))
+    )
 
     assert dialog._hier_t_input.value() == pytest.approx(start_t, rel=0.0, abs=1e-9)
 

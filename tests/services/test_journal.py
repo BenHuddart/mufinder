@@ -8,7 +8,12 @@ from uuid import uuid4
 
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
-from mufinder.services.journal import build_journal, export_journal, render_journal_markdown, render_journal_text
+from mufinder.services.journal import (
+    build_journal,
+    export_journal,
+    render_journal_markdown,
+    render_journal_text,
+)
 
 
 def test_build_journal_groups_entries_by_day_and_maps_actions() -> None:
@@ -23,7 +28,10 @@ def test_build_journal_groups_entries_by_day_and_maps_actions() -> None:
         timestamp=datetime(2026, 4, 21, 15, 0, tzinfo=UTC),
         action="set_recommended_cutoff",
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        parameters={"recommended_cutoff_energy": 600.0, "recommended_cutoff_method": "energy_window"},
+        parameters={
+            "recommended_cutoff_energy": 600.0,
+            "recommended_cutoff_method": "energy_window",
+        },
     )
     third = ProvenanceRecord(
         timestamp=datetime(2026, 4, 22, 10, 0, tzinfo=UTC),
@@ -41,7 +49,10 @@ def test_build_journal_groups_entries_by_day_and_maps_actions() -> None:
 
     journal = build_journal("JournalTest", [second, third, first])
 
-    assert [day.date_label for day in journal.days] == ["Tuesday 21 April 2026", "Wednesday 22 April 2026"]
+    assert [day.date_label for day in journal.days] == [
+        "Tuesday 21 April 2026",
+        "Wednesday 22 April 2026",
+    ]
     assert [entry.title for entry in journal.days[0].entries] == [
         "Host structure imported",
         "Recommended cutoff adopted",
@@ -195,25 +206,29 @@ def test_journal_distinguishes_manual_and_cleared_defaults() -> None:
             parameters=parameters,
         )
 
-    entries = build_journal(
-        "Manual",
-        [
-            record(
-                9,
-                "set_recommended_cutoff",
-                recommended_cutoff_energy=800.0,
-                recommended_cutoff_method="manual",
-            ),
-            record(
-                10,
-                "set_recommended_kpoint_grid",
-                recommended_kpoint_grid=[6, 6, 4],
-                recommended_kpoint_method="manual",
-            ),
-            record(11, "clear_recommended_cutoff"),
-            record(12, "clear_recommended_kpoint_grid"),
-        ],
-    ).days[0].entries
+    entries = (
+        build_journal(
+            "Manual",
+            [
+                record(
+                    9,
+                    "set_recommended_cutoff",
+                    recommended_cutoff_energy=800.0,
+                    recommended_cutoff_method="manual",
+                ),
+                record(
+                    10,
+                    "set_recommended_kpoint_grid",
+                    recommended_kpoint_grid=[6, 6, 4],
+                    recommended_kpoint_method="manual",
+                ),
+                record(11, "clear_recommended_cutoff"),
+                record(12, "clear_recommended_kpoint_grid"),
+            ],
+        )
+        .days[0]
+        .entries
+    )
 
     assert [entry.title for entry in entries] == [
         "Default cutoff set manually",
@@ -238,7 +253,9 @@ def test_journal_counts_cutoffs_under_either_configuration_key() -> None:
 
     records = [
         configured({"cutoff_energies": [300.0, 360.0]}),
-        configured({"sweep_values": [300.0, 360.0, 420.0], "cutoff_energies": [300.0, 360.0, 420.0]}),
+        configured(
+            {"sweep_values": [300.0, 360.0, 420.0], "cutoff_energies": [300.0, 360.0, 420.0]}
+        ),
         configured({"sweep_values": [300.0, 360.0, 420.0, 480.0]}),
     ]
 

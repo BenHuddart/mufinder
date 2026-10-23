@@ -11,7 +11,11 @@ import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
 import mufinder.app.sweep_convergence_widget as sweep_widget_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import SweepPointRunState
-from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget, KPointGridDialog, KPointSpacingDialog
+from mufinder.app.kpoint_convergence_widget import (
+    KPointConvergenceWidget,
+    KPointGridDialog,
+    KPointSpacingDialog,
+)
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.types import ValueWithUnit
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
@@ -40,7 +44,9 @@ def test_kpoint_widget_generates_grids_from_spacing(qapp, monkeypatch: pytest.Mo
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(kpoint_widget_module.KPointSpacingDialog, "spacing", lambda _self: 0.1)
-    monkeypatch.setattr(kpoint_widget_module.KPointSpacingDialog, "replace_existing", lambda _self: True)
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointSpacingDialog, "replace_existing", lambda _self: True
+    )
     monkeypatch.setattr(
         kpoint_widget_module.KPointSpacingDialog,
         "defaults_state",
@@ -106,7 +112,6 @@ def test_kpoint_widget_updates_runtime_and_examine_enablement(qapp) -> None:
     assert widget._examine_button.isEnabled() is True
 
 
-
 def test_kpoint_spacing_dialog_round_trip_state(qapp) -> None:
     dialog = KPointSpacingDialog({"spacing": 0.25, "replace_existing": True})
 
@@ -148,7 +153,9 @@ def test_kpoint_widget_open_add_grid_dialog_adds_row_on_accept(
 ) -> None:
     widget = KPointConvergenceWidget()
 
-    monkeypatch.setattr(kpoint_widget_module.KPointGridDialog, "exec", lambda _self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointGridDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
+    )
     monkeypatch.setattr(kpoint_widget_module.KPointGridDialog, "grid", lambda _self: (4, 4, 2))
 
     widget._on_add_clicked()
@@ -161,7 +168,9 @@ def test_kpoint_widget_open_add_grid_dialog_ignores_cancel(
 ) -> None:
     widget = KPointConvergenceWidget()
 
-    monkeypatch.setattr(kpoint_widget_module.KPointGridDialog, "exec", lambda _self: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointGridDialog, "exec", lambda _self: QDialog.DialogCode.Rejected
+    )
 
     widget._on_add_clicked()
 
@@ -290,7 +299,9 @@ def test_kpoint_widget_open_spacing_dialog_handles_reject_and_generation_error(
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(kpoint_widget_module.KPointSpacingDialog, "spacing", lambda _self: 0.2)
-    monkeypatch.setattr(kpoint_widget_module.KPointSpacingDialog, "replace_existing", lambda _self: True)
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointSpacingDialog, "replace_existing", lambda _self: True
+    )
     monkeypatch.setattr(
         kpoint_widget_module,
         "generate_kpoint_grids",
@@ -325,7 +336,9 @@ def test_kpoint_widget_open_spacing_dialog_merges_existing_grids(
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(kpoint_widget_module.KPointSpacingDialog, "spacing", lambda _self: 0.15)
-    monkeypatch.setattr(kpoint_widget_module.KPointSpacingDialog, "replace_existing", lambda _self: False)
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointSpacingDialog, "replace_existing", lambda _self: False
+    )
     monkeypatch.setattr(
         kpoint_widget_module.KPointSpacingDialog,
         "defaults_state",
@@ -532,7 +545,12 @@ def test_kpoint_widget_parameter_dialog_places_kpoint_below_basis_controls(
     assert "cut_off_energy" in names
     assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("basis_precision") < names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
+    assert (
+        names.index("basis_precision")
+        < names.index("cut_off_energy")
+        < names.index("elec_energy_tol")
+        < names.index("kpoint_mp_grid")
+    )
 
 
 def test_kpoint_widget_remove_grids_prunes_configs(qapp) -> None:
@@ -697,7 +715,10 @@ def test_kpoint_widget_set_form_state_restores_structured_values(qapp) -> None:
                     "task": "SINGLEPOINT",
                     "cut_off_energy": {"value": 520.0, "unit": "eV"},
                     "kpoint_mp_grid": [2, 2, 2],
-                    "lattice_cart": {"name": "lattice_cart", "rows": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+                    "lattice_cart": {
+                        "name": "lattice_cart",
+                        "rows": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    },
                 },
                 "added_advanced": ["max_scf_cycles"],
             }
@@ -732,7 +753,9 @@ def test_kpoint_widget_context_menu_emits_reset_for_failed_row(qapp, monkeypatch
 def test_kpoint_widget_context_menu_disables_reset_for_completed_row(qapp, monkeypatch) -> None:
     widget = KPointConvergenceWidget()
     widget._add_row((2, 2, 2))
-    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="completed", total_energy=-1.0)})
+    widget.set_runtime_states(
+        {(2, 2, 2): SweepPointRunState(status="completed", total_energy=-1.0)}
+    )
 
     payloads: list[object] = []
     widget.reset_failed_requested.connect(payloads.append)

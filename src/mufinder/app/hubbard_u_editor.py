@@ -54,7 +54,9 @@ def summarize_hubbard_u(value: BlockSection | None) -> str:
     return f"{len(entries)} {entry_noun} ({unit})"
 
 
-def hubbard_block_from_entries(entries: tuple[HubbardUEntry, ...], *, unit: str = "eV") -> BlockSection | None:
+def hubbard_block_from_entries(
+    entries: tuple[HubbardUEntry, ...], *, unit: str = "eV"
+) -> BlockSection | None:
     """Build a normalized HUBBARD_U block from dialog entries."""
 
     rows: list[tuple[object, ...]] = []
@@ -123,12 +125,16 @@ def _parse_orbital_values(tokens: tuple[object, ...], *, row_index: int) -> dict
         else:
             index += 1
             if index >= len(tokens):
-                raise ValueError(f"HUBBARD_U row {row_index} is missing a value for orbital '{orbital}'.")
+                raise ValueError(
+                    f"HUBBARD_U row {row_index} is missing a value for orbital '{orbital}'."
+                )
             raw_value = str(tokens[index]).strip()
         try:
             orbitals[orbital] = float(raw_value)
         except ValueError as exc:
-            raise ValueError(f"HUBBARD_U row {row_index} has an invalid U value '{raw_value}'.") from exc
+            raise ValueError(
+                f"HUBBARD_U row {row_index} has an invalid U value '{raw_value}'."
+            ) from exc
         index += 1
     if not orbitals:
         raise ValueError(f"HUBBARD_U row {row_index} must define at least one orbital U value.")
@@ -295,10 +301,16 @@ class HubbardUDialog(QDialog):
 
     def _entry_for_row(self, row: int, *, require_value: bool) -> HubbardUEntry:
         species_widget = self._table.cellWidget(row, self._SPECIES_COLUMN)
-        species = species_widget.currentText().strip() if isinstance(species_widget, QComboBox) else ""
+        species = (
+            species_widget.currentText().strip() if isinstance(species_widget, QComboBox) else ""
+        )
 
         orbital_widget = self._table.cellWidget(row, self._ORBITAL_COLUMN)
-        orbital = orbital_widget.currentText().strip().lower() if isinstance(orbital_widget, QComboBox) else ""
+        orbital = (
+            orbital_widget.currentText().strip().lower()
+            if isinstance(orbital_widget, QComboBox)
+            else ""
+        )
 
         value_widget = self._table.cellWidget(row, self._VALUE_COLUMN)
         text = value_widget.text().strip() if isinstance(value_widget, QLineEdit) else ""

@@ -30,7 +30,9 @@ GIL_BACKSTOP_S = 30.0
 
 
 @contextmanager
-def scene_deadline(name: str, seconds: float, *, cleanup: Callable[[], None] | None = None) -> Iterator[None]:
+def scene_deadline(
+    name: str, seconds: float, *, cleanup: Callable[[], None] | None = None
+) -> Iterator[None]:
     """End the process, naming ``name`` and dumping every stack, if the block runs past ``seconds``.
 
     ``cleanup`` runs after the dump and before the exit, which skips
@@ -63,7 +65,9 @@ def scene_deadline(name: str, seconds: float, *, cleanup: Callable[[], None] | N
 
 
 def _report_and_exit(name: str, seconds: float, cleanup: Callable[[], None] | None) -> None:
-    sys.stderr.write(f"Scene {name!r} did not finish within {seconds:g} s; the stack of every thread follows.\n")
+    sys.stderr.write(
+        f"Scene {name!r} did not finish within {seconds:g} s; the stack of every thread follows.\n"
+    )
     sys.stderr.flush()
     faulthandler.dump_traceback(all_threads=True)
     if cleanup is not None:

@@ -56,7 +56,9 @@ def _cubic_host(*, length: float = 5.0) -> Structure:
     )
 
 
-def _relaxed_site(host: Structure, fractional: tuple[float, float, float], energy: float) -> RelaxedMuonSite:
+def _relaxed_site(
+    host: Structure, fractional: tuple[float, float, float], energy: float
+) -> RelaxedMuonSite:
     length = host.lattice_vectors[0][0]
     return RelaxedMuonSite(
         job_id=uuid4(),
@@ -94,8 +96,13 @@ def _relaxation_clustering(
     fractions: tuple[tuple[float, float, float], ...] = _SPREAD_SITE_FRACTIONS,
 ) -> QDialog:
     host = _cubic_host()
-    sites = [_relaxed_site(host, fraction, -10.0 + 0.05 * index) for index, fraction in enumerate(fractions)]
-    dialog = RelaxationClusteringDialog(workspace={"name": "Workspace"}, host_structure=host, sites=sites)
+    sites = [
+        _relaxed_site(host, fraction, -10.0 + 0.05 * index)
+        for index, fraction in enumerate(fractions)
+    ]
+    dialog = RelaxationClusteringDialog(
+        workspace={"name": "Workspace"}, host_structure=host, sites=sites
+    )
     dialog._method_combo.setCurrentIndex(method_index)
     if method_index == 0:
         dialog._scan_tolerances()
@@ -140,7 +147,9 @@ def _displacements() -> QDialog:
     )
 
 
-def _uep_optimization(fractional: tuple[float, float, float], energy: float) -> UepOptimizationResult:
+def _uep_optimization(
+    fractional: tuple[float, float, float], energy: float
+) -> UepOptimizationResult:
     position = tuple(value * 5.0 for value in fractional)
     return UepOptimizationResult(
         start_position_ang=position,
@@ -239,7 +248,9 @@ def _decoration_boxes(axes, renderer) -> list[Bbox]:
     the whole label.
     """
 
-    boxes = [axis.get_tightbbox(renderer) for axis in (axes.xaxis, axes.yaxis) if axis.get_visible()]
+    boxes = [
+        axis.get_tightbbox(renderer) for axis in (axes.xaxis, axes.yaxis) if axis.get_visible()
+    ]
     boxes.extend(
         title.get_window_extent(renderer)
         for title in (axes.title, axes._left_title, axes._right_title)
@@ -266,7 +277,9 @@ def _decoration_overflow_px(canvas: FigureCanvasQTAgg) -> dict[str, float]:
             overflow["right"] = max(overflow["right"], box.x1 - figure_box.x1)
             overflow["bottom"] = max(overflow["bottom"], figure_box.y0 - box.y0)
             overflow["top"] = max(overflow["top"], box.y1 - figure_box.y1)
-    return {side: round(value, 1) for side, value in overflow.items() if value > _OVERFLOW_TOLERANCE_PX}
+    return {
+        side: round(value, 1) for side, value in overflow.items() if value > _OVERFLOW_TOLERANCE_PX
+    }
 
 
 @pytest.mark.parametrize("name", sorted(PLOT_DIALOGS))
@@ -287,8 +300,12 @@ def test_plot_dialog_keeps_axis_decorations_inside_canvas_on_small_screens(qapp,
             assert canvases, f"{name} shows no plot"
             for canvas in canvases:
                 where = f"{name} at {dialog.width()}x{dialog.height()}, canvas {canvas.width()}x{canvas.height()}"
-                assert canvas.width() >= canvas.minimumWidth(), f"{where}: squeezed below its minimum width"
-                assert canvas.height() >= canvas.minimumHeight(), f"{where}: squeezed below its minimum height"
+                assert canvas.width() >= canvas.minimumWidth(), (
+                    f"{where}: squeezed below its minimum width"
+                )
+                assert canvas.height() >= canvas.minimumHeight(), (
+                    f"{where}: squeezed below its minimum height"
+                )
                 overflow = _decoration_overflow_px(canvas)
                 assert not overflow, f"{where}: labels clipped by {overflow} px"
     finally:
@@ -330,12 +347,20 @@ def test_connected_graph_nodes_stay_inside_the_axes_and_apart(qapp, fractions) -
             inner = axes.bbox.padded(_OVERFLOW_TOLERANCE_PX)
             extents = [circle.get_window_extent(renderer) for circle in circles]
             for extent in extents:
-                assert inner.x0 <= extent.x0 and extent.x1 <= inner.x1, f"{where}: node cut off horizontally"
-                assert inner.y0 <= extent.y0 and extent.y1 <= inner.y1, f"{where}: node cut off vertically"
+                assert inner.x0 <= extent.x0 and extent.x1 <= inner.x1, (
+                    f"{where}: node cut off horizontally"
+                )
+                assert inner.y0 <= extent.y0 and extent.y1 <= inner.y1, (
+                    f"{where}: node cut off vertically"
+                )
             for label, extent in zip(labels, extents, strict=True):
                 label_extent = label.get_window_extent(renderer)
-                assert extent.x0 < label_extent.x0 and label_extent.x1 < extent.x1, f"{where}: label wider than node"
-                assert extent.y0 < label_extent.y0 and label_extent.y1 < extent.y1, f"{where}: label taller than node"
+                assert extent.x0 < label_extent.x0 and label_extent.x1 < extent.x1, (
+                    f"{where}: label wider than node"
+                )
+                assert extent.y0 < label_extent.y0 and label_extent.y1 < extent.y1, (
+                    f"{where}: label taller than node"
+                )
             centres = np.array([[(e.x0 + e.x1) / 2.0, (e.y0 + e.y1) / 2.0] for e in extents])
             radius_px = extents[0].width / 2.0
             gaps = np.linalg.norm(centres[:, np.newaxis, :] - centres[np.newaxis, :, :], axis=2)
@@ -347,14 +372,17 @@ def test_connected_graph_nodes_stay_inside_the_axes_and_apart(qapp, fractions) -
             assert radius_px >= minimum_radius_px, f"{where}: nodes shrank to {radius_px:.1f} px"
             # ...and a small graph on a big canvas stops growing at the cap.
             max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * canvas.figure.dpi / 72.0
-            assert radius_px <= max_radius_px + _OVERFLOW_TOLERANCE_PX, f"{where}: nodes grew to {radius_px:.1f} px"
+            assert radius_px <= max_radius_px + _OVERFLOW_TOLERANCE_PX, (
+                f"{where}: nodes grew to {radius_px:.1f} px"
+            )
             # The graph uses the canvas: unless the node-size cap holds it back, it fills
             # most of one dimension and at least half of the other.
             if radius_px < max_radius_px - _OVERFLOW_TOLERANCE_PX:
                 fill = sorted(
                     (
                         (max(e.x1 for e in extents) - min(e.x0 for e in extents)) / axes.bbox.width,
-                        (max(e.y1 for e in extents) - min(e.y0 for e in extents)) / axes.bbox.height,
+                        (max(e.y1 for e in extents) - min(e.y0 for e in extents))
+                        / axes.bbox.height,
                     )
                 )
                 assert fill[1] >= 0.85, f"{where}: graph fills only {fill[1]:.2f} of the canvas"
@@ -375,10 +403,16 @@ def test_connected_graph_repacks_its_components_when_the_canvas_changes_shape(qa
                 qapp.processEvents()
             canvas = dialog._graph_canvas
             canvas.draw()
-            nodes = [patch for patch in canvas.figure.axes[0].patches if patch.get_gid() == GRAPH_NODE_GID]
+            nodes = [
+                patch
+                for patch in canvas.figure.axes[0].patches
+                if patch.get_gid() == GRAPH_NODE_GID
+            ]
             aspect = canvas.figure.bbox.width / canvas.figure.bbox.height
             row_counts[round(aspect, 1)] = len({round(node.center[1], 6) for node in nodes})
-        (wide_aspect, wide_rows), (tall_aspect, tall_rows) = sorted(row_counts.items(), reverse=True)
+        (wide_aspect, wide_rows), (tall_aspect, tall_rows) = sorted(
+            row_counts.items(), reverse=True
+        )
         assert wide_aspect > tall_aspect
         # A wide canvas gets fewer, longer rows of components than a squarer one.
         assert wide_rows < tall_rows
@@ -403,7 +437,9 @@ def test_create_plot_canvas_uses_constrained_layout_and_a_minimum_size(qapp) -> 
 
 
 def test_create_plot_canvas_transparent_background_and_custom_minimum(qapp) -> None:
-    figure, canvas = create_plot_canvas(figsize=(5.0, 3.0), transparent=True, minimum_size=(300, 240))
+    figure, canvas = create_plot_canvas(
+        figsize=(5.0, 3.0), transparent=True, minimum_size=(300, 240)
+    )
 
     assert figure.patch.get_alpha() == 0.0
     assert canvas.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)

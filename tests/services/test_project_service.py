@@ -255,7 +255,9 @@ def test_attached_element_generation_uses_muons_per_atom(tmp_path: Path) -> None
 
 def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: Path) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
+    doc = service.create_project(
+        tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration"
+    )
     host = silicon_oxide_host()
     service.add_structure(doc, host)
 
@@ -282,7 +284,9 @@ def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: P
         },
     }
 
-    sites = service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": [selection]})
+    sites = service.generate_candidate_sites(
+        doc, method="uep_clusters", parameters={"selections": [selection]}
+    )
 
     assert len(sites) == 1
     site = sites[0]
@@ -293,12 +297,16 @@ def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: P
     assert site.properties["classification"] == "minimum"
 
     with pytest.raises(SiteGenerationError, match="already present"):
-        service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": [selection]})
+        service.generate_candidate_sites(
+            doc, method="uep_clusters", parameters={"selections": [selection]}
+        )
 
 
 def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_cluster_multi_generation.mufinder", "UEPClusterMultiGeneration")
+    doc = service.create_project(
+        tmp_path / "uep_cluster_multi_generation.mufinder", "UEPClusterMultiGeneration"
+    )
     host = silicon_oxide_host()
     service.add_structure(doc, host)
 
@@ -326,7 +334,9 @@ def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -
         for index in (1, 2, 3)
     ]
 
-    sites = service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": selections})
+    sites = service.generate_candidate_sites(
+        doc, method="uep_clusters", parameters={"selections": selections}
+    )
 
     assert len(sites) == 3
     assert len(doc.sites) == 3
@@ -391,7 +401,12 @@ def test_random_generation_treats_a_blank_seed_as_unseeded(tmp_path: Path, seed:
     sites = service.generate_candidate_sites(
         doc,
         method="random",
-        parameters={"count": 1, "min_muon_atom": 0.8, "seed": seed, "include_symmetry_equivalents": False},
+        parameters={
+            "count": 1,
+            "min_muon_atom": 0.8,
+            "seed": seed,
+            "include_symmetry_equivalents": False,
+        },
     )
 
     assert len(sites) == 1
@@ -401,7 +416,9 @@ def test_random_generation_rejects_a_non_integer_seed(tmp_path: Path) -> None:
     service, doc, _host = _document_with_host(tmp_path)
 
     with pytest.raises(SiteGenerationError, match="seed must be an integer"):
-        service.generate_candidate_sites(doc, method="random", parameters={"count": 1, "seed": "abc"})
+        service.generate_candidate_sites(
+            doc, method="random", parameters={"count": 1, "seed": "abc"}
+        )
 
 
 def test_generation_rejects_an_unknown_method(tmp_path: Path) -> None:
@@ -425,7 +442,9 @@ def test_uep_cluster_generation_rejects_unusable_selections(
     service, doc, _host = _document_with_host(tmp_path)
 
     with pytest.raises(SiteGenerationError, match=message):
-        service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": selections})
+        service.generate_candidate_sites(
+            doc, method="uep_clusters", parameters={"selections": selections}
+        )
 
 
 def test_uep_cluster_generation_creates_member_sites(tmp_path: Path) -> None:
@@ -469,16 +488,24 @@ def test_uep_cluster_generation_treats_a_site_at_the_same_position_as_a_duplicat
     doc.sites[existing.id] = existing
 
     def _selection(source_key: str, fractional: list[float]) -> dict[str, object]:
-        return {"source_key": source_key, "fractional_position": fractional, "cartesian_position": [4.0, 4.0, 4.0]}
+        return {
+            "source_key": source_key,
+            "fractional_position": fractional,
+            "cartesian_position": [4.0, 4.0, 4.0],
+        }
 
     # A new source key at an occupied position (modulo the lattice) is still a duplicate.
     with pytest.raises(SiteGenerationError, match="already present"):
         service.generate_candidate_sites(
-            doc, method="uep_clusters", parameters={"selections": [_selection("new-key", [1.4, 0.4, -0.6])]}
+            doc,
+            method="uep_clusters",
+            parameters={"selections": [_selection("new-key", [1.4, 0.4, -0.6])]},
         )
 
     sites = service.generate_candidate_sites(
-        doc, method="uep_clusters", parameters={"selections": [_selection("new-key", [0.9, 0.1, 0.2])]}
+        doc,
+        method="uep_clusters",
+        parameters={"selections": [_selection("new-key", [0.9, 0.1, 0.2])]},
     )
     assert [site.properties["uep_source_key"] for site in sites] == ["new-key"]
 
@@ -533,7 +560,9 @@ def test_cluster_candidate_positions_updates_selected_sites_to_anchor_orbit(tmp_
 
 def test_cluster_candidate_positions_does_not_rewrite_staged_sites(tmp_path: Path) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_staged_candidates.mufinder", "ClusterStagedCandidates")
+    doc = service.create_project(
+        tmp_path / "cluster_staged_candidates.mufinder", "ClusterStagedCandidates"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -624,7 +653,9 @@ def test_load_project_normalizes_legacy_candidate_status(tmp_path: Path) -> None
 
     site_file = root / "entities" / "sites" / f"{site.id}.json"
     text = site_file.read_text(encoding="utf-8")
-    site_file.write_text(text.replace('"status": "generated"', '"status": "candidate"'), encoding="utf-8")
+    site_file.write_text(
+        text.replace('"status": "generated"', '"status": "candidate"'), encoding="utf-8"
+    )
 
     loaded = service.load_project(root)
 
@@ -645,7 +676,9 @@ def test_load_project_reads_site_total_energy_saved_under_legacy_key(tmp_path: P
     text = site_file.read_text(encoding="utf-8")
     assert '"total_energy_eV": -1234.5' in text
     assert "relative_energy_eV" not in text
-    site_file.write_text(text.replace('"total_energy_eV"', '"relative_energy_eV"'), encoding="utf-8")
+    site_file.write_text(
+        text.replace('"total_energy_eV"', '"relative_energy_eV"'), encoding="utf-8"
+    )
 
     loaded = service.load_project(root)
 
@@ -667,7 +700,9 @@ def test_integrity_validation_detects_missing_references(tmp_path: Path) -> None
     assert any("references missing result" in issue for issue in issues)
 
 
-def test_integrity_validation_reports_every_dangling_reference_and_blocks_save(tmp_path: Path) -> None:
+def test_integrity_validation_reports_every_dangling_reference_and_blocks_save(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "validate.mufinder", "Validate")
     doc.project.host_structure_id = uuid4()
@@ -698,7 +733,9 @@ def test_integrity_validation_reports_every_dangling_reference_and_blocks_save(t
     doc.results[result.id] = result
     site = MuonSite(label="S", source_structure_id=uuid4(), relaxation_run_id=uuid4())
     doc.sites[site.id] = site
-    table = ComparisonTable(label="T", experimental_structure_id=uuid4(), dft_structure_ids=[uuid4()])
+    table = ComparisonTable(
+        label="T", experimental_structure_id=uuid4(), dft_structure_ids=[uuid4()]
+    )
     doc.comparison_tables[table.id] = table
 
     joined = "\n".join(service.validate_document(doc))
@@ -759,7 +796,9 @@ def test_job_transition_rules(tmp_path: Path) -> None:
 
 def test_mark_job_queued_without_a_remote_id_keeps_it_unset(tmp_path: Path) -> None:
     service, doc, _host = _document_with_host(tmp_path)
-    job = service.add_job(doc, label="Q", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    job = service.add_job(
+        doc, label="Q", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source"
+    )
 
     service.submit_job(job)
     service.mark_job_queued(job)
@@ -770,8 +809,12 @@ def test_mark_job_queued_without_a_remote_id_keeps_it_unset(tmp_path: Path) -> N
 
 def test_fail_job_records_the_error_and_cancel_job_the_completion_time(tmp_path: Path) -> None:
     service, doc, _host = _document_with_host(tmp_path)
-    failed = service.add_job(doc, label="F", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
-    cancelled = service.add_job(doc, label="C", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    failed = service.add_job(
+        doc, label="F", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source"
+    )
+    cancelled = service.add_job(
+        doc, label="C", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source"
+    )
 
     service.submit_job(failed)
     service.start_job(failed)
@@ -816,7 +859,9 @@ def test_reset_failed_job_sets_defined_state(tmp_path: Path) -> None:
 
 def test_reset_failed_job_allows_cancelled_jobs(tmp_path: Path) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "job_reset_cancelled_test.mufinder", "JobResetCancelled")
+    doc = service.create_project(
+        tmp_path / "job_reset_cancelled_test.mufinder", "JobResetCancelled"
+    )
     job = service.add_job(
         doc,
         label="ResetCancelled",
@@ -933,11 +978,17 @@ def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) 
     )
 
     service.record_job_terminal_event(doc, action="job_completed", job=job, result=result)
-    service.record_job_terminal_event(doc, action="job_failed", job=job, error_message="Submission failed")
+    service.record_job_terminal_event(
+        doc, action="job_failed", job=job, error_message="Submission failed"
+    )
     service.record_job_reset(doc, job=job, cleaned_output_directory=True)
 
     completed, failed, reset = doc.provenance[-3:]
-    assert [record.action for record in (completed, failed, reset)] == ["job_completed", "job_failed", "job_reset"]
+    assert [record.action for record in (completed, failed, reset)] == [
+        "job_completed",
+        "job_failed",
+        "job_reset",
+    ]
     assert completed.parameters["result_total_energy"] == -500.0
     assert completed.parameters["result_max_force"] == 0.03
     assert completed.parameters["warnings_count"] == 1
@@ -1111,13 +1162,18 @@ def test_workflow_supercell_asset_roundtrip_and_selection_state(tmp_path: Path) 
     )
 
     assert loaded.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "saved_supercell"
-    assert loaded.ui_state["workflow_supercells"]["convergence_cutoff"]["structure_id"] == str(asset.id)
+    assert loaded.ui_state["workflow_supercells"]["convergence_cutoff"]["structure_id"] == str(
+        asset.id
+    )
     assert resolution.structure is not None
     assert resolution.structure.id == asset.id
     assert resolution.selected_asset is not None
     assert resolution.selected_asset.matrix == [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
     assert resolution.source_workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
-    assert loaded.structures[asset.id].properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
+    assert (
+        loaded.structures[asset.id].properties["supercell_asset"]["owner_workflow_stage"]
+        == "convergence_cutoff"
+    )
 
 
 def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) -> None:
@@ -1150,7 +1206,9 @@ def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) 
     assert repeated.id == selected.id
     assert selected.parent_structure_id == host.id
     assert selected.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
-    assert selected.properties["supercell_asset"]["source_asset_structure_id"] == str(source_asset.id)
+    assert selected.properties["supercell_asset"]["source_asset_structure_id"] == str(
+        source_asset.id
+    )
 
 
 def test_workflow_supercell_asset_rename_update_and_delete(tmp_path: Path) -> None:
@@ -1246,7 +1304,10 @@ def test_clear_workflow_supercell_selection_restores_the_unit_cell(tmp_path: Pat
 
     service.clear_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF)
 
-    assert service.get_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF).mode == "unit_cell"
+    assert (
+        service.get_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF).mode
+        == "unit_cell"
+    )
 
 
 def test_workflow_supercell_asset_operations_reject_invalid_targets(tmp_path: Path) -> None:
@@ -1255,11 +1316,17 @@ def test_workflow_supercell_asset_operations_reject_invalid_targets(tmp_path: Pa
 
     with pytest.raises(ValueError, match="must reference a known structure"):
         service.create_workflow_supercell_asset(
-            doc, workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF, host_structure_id=uuid4(), matrix=matrix
+            doc,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            host_structure_id=uuid4(),
+            matrix=matrix,
         )
     with pytest.raises(ValueError, match="3x3 integer matrix"):
         service.create_workflow_supercell_asset(
-            doc, workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF, host_structure_id=host.id, matrix=matrix[:2]
+            doc,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            host_structure_id=host.id,
+            matrix=matrix[:2],
         )
     asset = service.create_workflow_supercell_asset(
         doc,
@@ -1274,17 +1341,27 @@ def test_workflow_supercell_asset_operations_reject_invalid_targets(tmp_path: Pa
     with pytest.raises(ValueError, match="must not be empty"):
         service.rename_workflow_supercell_asset(doc, asset_structure_id=asset.id, label="  ")
     with pytest.raises(ValueError, match="does not exist"):
-        service.update_workflow_supercell_asset_matrix(doc, asset_structure_id=uuid4(), matrix=matrix)
+        service.update_workflow_supercell_asset_matrix(
+            doc, asset_structure_id=uuid4(), matrix=matrix
+        )
     with pytest.raises(ValueError, match="not a saved supercell asset"):
-        service.update_workflow_supercell_asset_matrix(doc, asset_structure_id=host.id, matrix=matrix)
+        service.update_workflow_supercell_asset_matrix(
+            doc, asset_structure_id=host.id, matrix=matrix
+        )
     with pytest.raises(ValueError, match="3x3 integer matrix"):
-        service.update_workflow_supercell_asset_matrix(doc, asset_structure_id=asset.id, matrix=[[2, 0, 0]])
+        service.update_workflow_supercell_asset_matrix(
+            doc, asset_structure_id=asset.id, matrix=[[2, 0, 0]]
+        )
     with pytest.raises(ValueError, match="not a saved supercell asset"):
         service.delete_workflow_supercell_asset(doc, asset_structure_id=host.id)
     with pytest.raises(ValueError, match="does not exist"):
-        service.use_workflow_supercell_asset(doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=uuid4())
+        service.use_workflow_supercell_asset(
+            doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=uuid4()
+        )
     with pytest.raises(ValueError, match="not a saved supercell asset"):
-        service.use_workflow_supercell_asset(doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=host.id)
+        service.use_workflow_supercell_asset(
+            doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=host.id
+        )
     # Only known saved assets are ever repaired.
     assert service.repair_supercell_asset_if_needed(doc, structure_id=uuid4()) is False
     assert service.repair_supercell_asset_if_needed(doc, structure_id=host.id) is False
@@ -1295,7 +1372,9 @@ def test_use_workflow_supercell_asset_requires_a_host(tmp_path: Path) -> None:
     doc = service.create_project(tmp_path / "no_host.mufinder", "NoHost")
 
     with pytest.raises(ValueError, match="Load a host structure"):
-        service.use_workflow_supercell_asset(doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=uuid4())
+        service.use_workflow_supercell_asset(
+            doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=uuid4()
+        )
 
 
 def test_supercell_asset_references_include_an_active_selection_without_freezing_it(
@@ -1319,9 +1398,13 @@ def test_supercell_asset_references_include_an_active_selection_without_freezing
     assert service.supercell_asset_is_frozen(doc, asset_structure_id=asset.id) is False
 
 
-def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(tmp_path: Path) -> None:
+def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "workflow_supercell_host_change.mufinder", "WorkflowHostChange")
+    doc = service.create_project(
+        tmp_path / "workflow_supercell_host_change.mufinder", "WorkflowHostChange"
+    )
     first_host = silicon_oxide_host()
     second_host = Structure(
         label="OtherHost",
@@ -1364,7 +1447,9 @@ def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(
 
 def test_workflow_supercell_helpers_handle_invalid_metadata_and_defaults(tmp_path: Path) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "workflow_supercell_helpers.mufinder", "WorkflowHelpers")
+    doc = service.create_project(
+        tmp_path / "workflow_supercell_helpers.mufinder", "WorkflowHelpers"
+    )
     doc.ui_state["workflow_supercells"] = "bad-state"
 
     selection = service.get_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF)
@@ -1403,7 +1488,9 @@ def test_workflow_supercell_helpers_handle_invalid_metadata_and_defaults(tmp_pat
     assert service.structure_atomic_spins(stale) == pytest.approx([1.75])
 
 
-def test_resolve_workflow_structure_repairs_legacy_zero_spin_supercell_asset(tmp_path: Path) -> None:
+def test_resolve_workflow_structure_repairs_legacy_zero_spin_supercell_asset(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "legacy_spin_repair.mufinder", "LegacySpinRepair")
     host = silicon_oxide_host()
@@ -1446,13 +1533,13 @@ def test_resolve_workflow_structure_repairs_legacy_zero_spin_supercell_asset(tmp
 
 
 def test_import_mcif_sets_project_magnetic_structure(tmp_path: Path) -> None:
-        service = ProjectService()
-        root = tmp_path / "import_mcif.mufinder"
-        doc = service.create_project(root, "ImportMCIF")
+    service = ProjectService()
+    root = tmp_path / "import_mcif.mufinder"
+    doc = service.create_project(root, "ImportMCIF")
 
-        source = tmp_path / "magnetic.mcif"
-        source.write_text(
-                """
+    source = tmp_path / "magnetic.mcif"
+    source.write_text(
+        """
 data_test
 _symmetry_space_group_name_H-M 'P 1'
 _cell_length_a 6
@@ -1478,23 +1565,27 @@ loop_
     _atom_site_moment.crystalaxis_z
     Fe1 0.0 0.0 2.0
 """.strip(),
-                encoding="utf-8",
-        )
+        encoding="utf-8",
+    )
 
-        structure = service.import_structure_file(doc, source, make_active=True)
-        assert structure.properties.get("magnetic_structure") is not None
-        assert structure.properties.get("atomic_spins") == pytest.approx([2.0])
-        assert structure.properties.get("propagation_vector") == pytest.approx([0.0, 0.0, 0.25])
-        assert doc.project.magnetic_structure is not None
-        assert doc.project.magnetic_structure["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
-        assert len(doc.project.magnetic_structure["propagation_vectors_rlu"]) == 1
-        assert doc.project.magnetic_structure["propagation_vectors_rlu"][0] == pytest.approx([0.0, 0.0, 0.25])
-        assert doc.project.magnetic_structure["moments"][0]["atom_index"] == 0
+    structure = service.import_structure_file(doc, source, make_active=True)
+    assert structure.properties.get("magnetic_structure") is not None
+    assert structure.properties.get("atomic_spins") == pytest.approx([2.0])
+    assert structure.properties.get("propagation_vector") == pytest.approx([0.0, 0.0, 0.25])
+    assert doc.project.magnetic_structure is not None
+    assert doc.project.magnetic_structure["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
+    assert len(doc.project.magnetic_structure["propagation_vectors_rlu"]) == 1
+    assert doc.project.magnetic_structure["propagation_vectors_rlu"][0] == pytest.approx(
+        [0.0, 0.0, 0.25]
+    )
+    assert doc.project.magnetic_structure["moments"][0]["atom_index"] == 0
 
-        service.save_project(doc)
-        loaded = service.load_project(root)
-        assert loaded.project.magnetic_structure is not None
-        assert loaded.project.magnetic_structure["moments"][0]["vector"] == pytest.approx([0.0, 0.0, 2.0])
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    assert loaded.project.magnetic_structure is not None
+    assert loaded.project.magnetic_structure["moments"][0]["vector"] == pytest.approx(
+        [0.0, 0.0, 2.0]
+    )
 
 
 def test_register_convergence_cutoff_definition_persists_snapshot(tmp_path: Path) -> None:
@@ -1551,7 +1642,9 @@ def _copy_schema_1_fixture(tmp_path: Path) -> Path:
     return root
 
 
-def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(tmp_path: Path) -> None:
+def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(
+    tmp_path: Path,
+) -> None:
     root = _copy_schema_1_fixture(tmp_path)
 
     loaded = ProjectService().load_project(root)
@@ -1565,28 +1658,44 @@ def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(tm
     assert kpoint["sweep_values"] == [[2, 2, 2], [4, 4, 4]]
     assert "cutoff_energies" not in kpoint
     # Provenance is history and the form state is not part of the migration.
-    assert loaded.provenance[0].parameters["configuration"]["cutoff_energies"] == [300.0, 400.0, 500.0]
+    assert loaded.provenance[0].parameters["configuration"]["cutoff_energies"] == [
+        300.0,
+        400.0,
+        500.0,
+    ]
     assert loaded.ui_state["convergence_form"]["cutoff_energies"] == [300.0, 400.0, 500.0]
     assert "Prepared a cutoff convergence sweep with 3 cutoff value(s)." in [
-        entry.body for day in build_journal("Schema 1", loaded.provenance).days for entry in day.entries
+        entry.body
+        for day in build_journal("Schema 1", loaded.provenance).days
+        for entry in day.entries
     ]
 
 
-def test_schema_1_project_is_persisted_at_the_current_schema_by_the_next_save(tmp_path: Path) -> None:
+def test_schema_1_project_is_persisted_at_the_current_schema_by_the_next_save(
+    tmp_path: Path,
+) -> None:
     root = _copy_schema_1_fixture(tmp_path)
     service = ProjectService()
 
     service.save_project(service.load_project(root))
 
-    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert (
+        json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    )
     for definition_id in (_SCHEMA_1_CUTOFF_ID, _SCHEMA_1_KPOINT_ID):
-        stored = json.loads((root / "entities" / "calculations" / f"{definition_id}.json").read_text())
+        stored = json.loads(
+            (root / "entities" / "calculations" / f"{definition_id}.json").read_text()
+        )
         assert "cutoff_energies" not in stored["parameters"]["configuration"]
-    assert (root / "provenance.jsonl").read_bytes() == (_SCHEMA_1_FIXTURE / "provenance.jsonl").read_bytes()
+    assert (root / "provenance.jsonl").read_bytes() == (
+        _SCHEMA_1_FIXTURE / "provenance.jsonl"
+    ).read_bytes()
 
     reloaded = ProjectService().load_project(root)
     assert reloaded.project.schema_version == PROJECT_SCHEMA_VERSION
-    assert reloaded.calculations[_SCHEMA_1_CUTOFF_ID].parameters["configuration"]["sweep_values"] == [
+    assert reloaded.calculations[_SCHEMA_1_CUTOFF_ID].parameters["configuration"][
+        "sweep_values"
+    ] == [
         300.0,
         400.0,
         500.0,
@@ -1604,7 +1713,9 @@ def _copy_schema_2_fixture(tmp_path: Path) -> Path:
     return root
 
 
-def test_schema_2_project_loads_with_initial_and_backfilled_relaxed_site_positions(tmp_path: Path) -> None:
+def test_schema_2_project_loads_with_initial_and_backfilled_relaxed_site_positions(
+    tmp_path: Path,
+) -> None:
     root = _copy_schema_2_fixture(tmp_path)
 
     loaded = ProjectService().load_project(root)
@@ -1623,14 +1734,20 @@ def test_schema_2_project_loads_with_initial_and_backfilled_relaxed_site_positio
     assert staged.current_fractional_position() == pytest.approx([0.5, 0.5, 0.5])
 
 
-def test_schema_2_project_sites_are_rewritten_with_the_new_keys_by_the_next_save(tmp_path: Path) -> None:
+def test_schema_2_project_sites_are_rewritten_with_the_new_keys_by_the_next_save(
+    tmp_path: Path,
+) -> None:
     root = _copy_schema_2_fixture(tmp_path)
     service = ProjectService()
 
     service.save_project(service.load_project(root))
 
-    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
-    stored = json.loads((root / "entities" / "sites" / f"{_SCHEMA_2_RELAXED_SITE_ID}.json").read_text())
+    assert (
+        json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    )
+    stored = json.loads(
+        (root / "entities" / "sites" / f"{_SCHEMA_2_RELAXED_SITE_ID}.json").read_text()
+    )
     assert "fractional_position" not in stored
     assert "cartesian_position" not in stored
     assert stored["initial_fractional_position"] == [0.1, 0.2, 0.3]
@@ -1641,10 +1758,14 @@ def test_schema_2_project_sites_are_rewritten_with_the_new_keys_by_the_next_save
     assert reloaded.sites[_SCHEMA_2_RELAXED_SITE_ID].relaxed_fractional_position == pytest.approx(
         [0.15, 0.25, 0.35]
     )
-    assert reloaded.sites[_SCHEMA_2_STAGED_SITE_ID].initial_fractional_position == pytest.approx([0.5, 0.5, 0.5])
+    assert reloaded.sites[_SCHEMA_2_STAGED_SITE_ID].initial_fractional_position == pytest.approx(
+        [0.5, 0.5, 0.5]
+    )
 
 
-_SCHEMA_3_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v3_magnetic_results"
+_SCHEMA_3_FIXTURE = (
+    Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v3_magnetic_results"
+)
 _SCHEMA_3_WORKSPACE_ID = "d3b07384-d9a0-4c9b-8f1e-2a3b4c5d6e7f"
 
 
@@ -1654,7 +1775,9 @@ def _copy_schema_3_fixture(tmp_path: Path) -> Path:
     return root
 
 
-def test_schema_3_project_loads_with_magnetic_field_results_as_result_records(tmp_path: Path) -> None:
+def test_schema_3_project_loads_with_magnetic_field_results_as_result_records(
+    tmp_path: Path,
+) -> None:
     root = _copy_schema_3_fixture(tmp_path)
 
     loaded = ProjectService().load_project(root)
@@ -1664,7 +1787,9 @@ def test_schema_3_project_loads_with_magnetic_field_results_as_result_records(tm
     assert [record.result_type for record in page] == [MAGNETIC_FIELD_RESULT_TYPE]
     assert page[0].calculation_run_id is None
     assert page[0].data["results"][0]["total_T"] == [0.1, 0.2, 0.3]
-    workspace = {record.result_type for record in magnetic_field_results(loaded, _SCHEMA_3_WORKSPACE_ID)}
+    workspace = {
+        record.result_type for record in magnetic_field_results(loaded, _SCHEMA_3_WORKSPACE_ID)
+    }
     assert workspace == {MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE, NUCLEAR_RELAXATION_RESULT_TYPE}
     assert loaded.ui_state["magnetic_field_form"] == {"histogram_bins": 512}
     assert loaded.ui_state["magnetic_field_workspaces"][0]["form"] == {"histogram_bins": 256}
@@ -1681,7 +1806,9 @@ def test_schema_3_project_is_persisted_with_result_records_by_the_next_save(tmp_
 
     service.save_project(loaded)
 
-    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert (
+        json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    )
     state = json.loads((root / "state.json").read_text())
     assert "magnetic_field_results" not in state["magnetic_field_form"]
     assert "dipolar_tensor_results" not in state["magnetic_field_workspaces"][0]["form"]
@@ -1702,7 +1829,9 @@ _SCHEMA_4_TENSOR_T_PER_MUB = [[0.14885, 0.0, 0.0], [0.0, 0.14885, 0.0], [0.0, 0.
 
 def _schema_4_tensor(root_or_project) -> list[list[float]]:
     if isinstance(root_or_project, Path):
-        record = json.loads((root_or_project / "entities" / "results" / f"{_SCHEMA_4_TENSOR_ID}.json").read_text())
+        record = json.loads(
+            (root_or_project / "entities" / "results" / f"{_SCHEMA_4_TENSOR_ID}.json").read_text()
+        )
         return record["data"]["results"][0]["dipolar_tensor_T_per_muB"]
     (record,) = magnetic_field_results(root_or_project, MAGNETIC_FIELD_PAGE_OWNER)
     assert record.result_type == MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE
@@ -1716,7 +1845,9 @@ def test_schema_4_project_loads_with_dipolar_tensors_in_tesla_per_mu_b(tmp_path:
     loaded = ProjectService().load_project(root)
 
     assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
-    assert _schema_4_tensor(loaded) == [pytest.approx(row, abs=1e-4) for row in _SCHEMA_4_TENSOR_T_PER_MUB]
+    assert _schema_4_tensor(loaded) == [
+        pytest.approx(row, abs=1e-4) for row in _SCHEMA_4_TENSOR_T_PER_MUB
+    ]
 
 
 def test_schema_4_project_tensor_is_converted_once_across_save_and_reload(tmp_path: Path) -> None:
@@ -1726,7 +1857,9 @@ def test_schema_4_project_tensor_is_converted_once_across_save_and_reload(tmp_pa
 
     service.save_project(service.load_project(root))
 
-    assert json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    assert (
+        json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    )
     stored = _schema_4_tensor(root)
     assert stored == [pytest.approx(row, abs=1e-4) for row in _SCHEMA_4_TENSOR_T_PER_MUB]
     assert _schema_4_tensor(ProjectService().load_project(root)) == stored
@@ -2198,7 +2331,9 @@ def test_set_recommended_kpoint_grid_persists_to_project_manifest(tmp_path: Path
 def test_set_recommended_cutoff_records_stress_threshold_and_trims_text(tmp_path: Path) -> None:
     service, doc, _host = _document_with_host(tmp_path)
 
-    service.set_recommended_cutoff(doc, 450.0, method="energy", stress_threshold=0.1, cell_id=" cellA ")
+    service.set_recommended_cutoff(
+        doc, 450.0, method="energy", stress_threshold=0.1, cell_id=" cellA "
+    )
 
     assert doc.project.recommended_cutoff_stress_threshold == 0.1
     assert doc.project.recommended_cutoff_cell_id == "cellA"
@@ -2262,7 +2397,9 @@ def test_register_pristine_relaxation_definition_persists_configuration(tmp_path
     service = ProjectService()
     root = tmp_path / "pristine_relax_definition.mufinder"
     doc = service.create_project(root, "PristineRelaxDefinition")
-    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    structure = service.import_structure_file(
+        doc, Path("tests/golden/si_geom_opt.cell"), make_active=True
+    )
 
     definition = service.register_pristine_relaxation_definition(
         doc,
@@ -2284,7 +2421,9 @@ def test_register_pristine_relaxation_definition_persists_configuration(tmp_path
 
     assert definition.id in doc.calculations
     assert doc.calculations[definition.id].workflow_stage == WorkflowStage.PRISTINE_RELAXATION
-    assert doc.calculations[definition.id].parameters["configuration"]["rows"][0]["label"] == "row_a"
+    assert (
+        doc.calculations[definition.id].parameters["configuration"]["rows"][0]["label"] == "row_a"
+    )
     assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
     assert doc.provenance[-1].action == "configure_pristine_relaxation"
 
@@ -2299,7 +2438,9 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     service = ProjectService()
     root = tmp_path / "quantum_definition.mufinder"
     doc = service.create_project(root, "QuantumDefinition")
-    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    structure = service.import_structure_file(
+        doc, Path("tests/golden/si_geom_opt.cell"), make_active=True
+    )
     site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
     doc.sites[site.id] = site
 
@@ -2320,12 +2461,19 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     assert definition.id in doc.calculations
     assert doc.calculations[definition.id].workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
     assert doc.calculations[definition.id].input_site_ids == [site.id]
-    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "finite_displacement"
+    assert (
+        doc.calculations[definition.id].parameters["configuration"]["method"]
+        == "finite_displacement"
+    )
     assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
     # A new definition binds each row to its phonon job only.
     assert "singlepoint_job_ids_by_label" not in doc.calculations[definition.id].parameters
-    assert doc.calculations[definition.id].parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
-    assert doc.calculations[definition.id].parameters["job_seed_names_by_label"] == {str(site.id): "quantum_siteA"}
+    assert doc.calculations[definition.id].parameters["phonon_job_ids_by_label"] == {
+        str(site.id): "ph-job"
+    }
+    assert doc.calculations[definition.id].parameters["job_seed_names_by_label"] == {
+        str(site.id): "quantum_siteA"
+    }
     assert doc.provenance[-1].action == "configure_quantum_corrections"
 
     service.save_project(doc)
@@ -2340,7 +2488,9 @@ def test_register_nudged_elastic_band_definition_persists_configuration(tmp_path
     service = ProjectService()
     root = tmp_path / "energy_barriers_neb_definition.mufinder"
     doc = service.create_project(root, "EnergyBarriersNebDefinition")
-    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    structure = service.import_structure_file(
+        doc, Path("tests/golden/si_geom_opt.cell"), make_active=True
+    )
     site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
     doc.sites[site.id] = site
 
@@ -2365,14 +2515,19 @@ def test_register_nudged_elastic_band_definition_persists_configuration(tmp_path
     service.save_project(doc)
     loaded = service.load_project(root)
     loaded_definition = loaded.calculations[definition.id]
-    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1_neb"
+    assert (
+        loaded_definition.parameters["configuration"]["sources"][0]["label"]
+        == "siteA_to_siteB_path1_neb"
+    )
 
 
 @pytest.mark.parametrize(
     "register",
     ["register_quantum_phonon_definition", "register_nudged_elastic_band_definition"],
 )
-def test_multi_input_definitions_validate_structures_and_sites(tmp_path: Path, register: str) -> None:
+def test_multi_input_definitions_validate_structures_and_sites(
+    tmp_path: Path, register: str
+) -> None:
     service, doc, host = _document_with_host(tmp_path)
     site = MuonSite(label="S", status="staged", source_structure_id=host.id)
     doc.sites[site.id] = site
@@ -2450,7 +2605,9 @@ def test_save_project_roundtrips_convergence_overview_snapshots(tmp_path: Path) 
     service.save_project(doc)
     loaded = service.load_project(root)
 
-    assert loaded.ui_state["convergence_overview_snapshots"]["cutoff"]["default_value"] == pytest.approx(550.0)
+    assert loaded.ui_state["convergence_overview_snapshots"]["cutoff"][
+        "default_value"
+    ] == pytest.approx(550.0)
     assert loaded.ui_state["convergence_overview_snapshots"]["kpoint"]["default_value"] == [2, 2, 2]
 
 
@@ -2465,7 +2622,9 @@ def _make_doc(tmp_path: Path):
     return service, doc
 
 
-def _supercell_structure(parent_id, stage: WorkflowStage = WorkflowStage.MUON_RELAXATION) -> Structure:
+def _supercell_structure(
+    parent_id, stage: WorkflowStage = WorkflowStage.MUON_RELAXATION
+) -> Structure:
     return Structure(
         label="Supercell",
         origin="supercell",
@@ -2483,7 +2642,9 @@ def _supercell_structure(parent_id, stage: WorkflowStage = WorkflowStage.MUON_RE
     )
 
 
-def _completed_result(structure_id, convergence_achieved: bool | None = True) -> tuple[CalculationRun, Result]:
+def _completed_result(
+    structure_id, convergence_achieved: bool | None = True
+) -> tuple[CalculationRun, Result]:
     run = CalculationRun(
         status=JobStatus.COMPLETED,
         convergence_achieved=convergence_achieved,
@@ -2498,6 +2659,7 @@ def _completed_result(structure_id, convergence_achieved: bool | None = True) ->
 
 
 # --- list_promotable_host_structures ---
+
 
 def test_promotable_imported_structure_included(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
@@ -2643,7 +2805,11 @@ def test_promotable_label_includes_job_label(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
     host = silicon_oxide_host()
     service.add_structure(doc, host)
-    job = Job(label="Fe2O3 pristine #1", workflow_stage=WorkflowStage.PRISTINE_RELAXATION, calc_type="castep_pristine_relaxation")
+    job = Job(
+        label="Fe2O3 pristine #1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
     doc.jobs[job.id] = job
     relaxed = Structure(
         label="Relaxed",
@@ -2665,6 +2831,7 @@ def test_promotable_label_includes_job_label(tmp_path: Path) -> None:
 
 
 # --- set_active_host_structure ---
+
 
 def test_set_active_host_switches_structure(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
@@ -2790,6 +2957,7 @@ def test_set_active_host_preserves_magnetic_if_new_host_has_it(tmp_path: Path) -
 
 # --- resolve_underlying_host ---
 
+
 def test_resolve_host_for_imported_structure(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
     host = silicon_oxide_host()
@@ -2861,8 +3029,20 @@ def test_resolve_host_broken_chain_returns_none(tmp_path: Path) -> None:
 
 def test_resolve_host_cycle_returns_none(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    a = Structure(label="A", origin="muon_relaxation", lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]], species=["O"], fractional_positions=[[0, 0, 0]])
-    b = Structure(label="B", origin="muon_relaxation", lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]], species=["O"], fractional_positions=[[0, 0, 0]])
+    a = Structure(
+        label="A",
+        origin="muon_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    b = Structure(
+        label="B",
+        origin="muon_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
     a.parent_structure_id = b.id
     b.parent_structure_id = a.id
     doc.structures[a.id] = a
@@ -2879,6 +3059,7 @@ def test_resolve_host_unknown_structure_returns_none(tmp_path: Path) -> None:
 
 # --- validate_sites_match_active_host ---
 
+
 def test_validate_sites_no_mismatch(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
     host = silicon_oxide_host()
@@ -2893,7 +3074,13 @@ def test_validate_sites_mismatch_detected(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
     host = silicon_oxide_host()
     service.add_structure(doc, host)
-    other_host = Structure(label="Other", origin="imported", lattice_vectors=[[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]], species=["C"], fractional_positions=[[0, 0, 0]])
+    other_host = Structure(
+        label="Other",
+        origin="imported",
+        lattice_vectors=[[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]],
+        species=["C"],
+        fractional_positions=[[0, 0, 0]],
+    )
     doc.structures[other_host.id] = other_host
     site = MuonSite(label="S1", status="generated", source_structure_id=other_host.id)
     doc.sites[site.id] = site
@@ -2925,6 +3112,7 @@ def test_validate_sites_no_active_host_returns_none(tmp_path: Path) -> None:
 
 
 # --- validate_structures_match_active_host ---
+
 
 def test_validate_structures_no_mismatch(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
@@ -3118,7 +3306,9 @@ def test_definitions_for_stage_filters_on_calc_type(tmp_path: Path) -> None:
     wanted = _definition_at(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="neb_set", day=1)
     _definition_at(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="ts_set", day=2)
 
-    assert definitions_for_stage(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="neb_set") == [wanted]
+    assert definitions_for_stage(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="neb_set") == [
+        wanted
+    ]
     assert len(definitions_for_stage(doc, WorkflowStage.ENERGY_BARRIERS)) == 2
 
 
@@ -3132,9 +3322,12 @@ def test_active_definition_prefers_the_ui_state_selection(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    "selection", ["not-a-uuid", "00000000-0000-4000-8000-000000000000", 7, "other-stage", "other-calc-type"]
+    "selection",
+    ["not-a-uuid", "00000000-0000-4000-8000-000000000000", 7, "other-stage", "other-calc-type"],
 )
-def test_active_definition_falls_back_to_the_newest_match(tmp_path: Path, selection: object) -> None:
+def test_active_definition_falls_back_to_the_newest_match(
+    tmp_path: Path, selection: object
+) -> None:
     doc = ProjectService().create_project(tmp_path / "active.mufinder", "Active")
     _definition_at(doc, WorkflowStage.MUON_RELAXATION, calc_type="muon_set", day=1)
     newest = _definition_at(doc, WorkflowStage.MUON_RELAXATION, calc_type="muon_set", day=2)
@@ -3157,14 +3350,18 @@ def test_active_definition_without_a_key_or_match(tmp_path: Path) -> None:
     first = _definition_at(doc, WorkflowStage.QUANTUM_CORRECTIONS, calc_type="phonon_set", day=1)
     doc.ui_state["ignored"] = str(uuid4())
 
-    assert active_definition(doc, WorkflowStage.QUANTUM_CORRECTIONS, calc_type="phonon_set") is first
+    assert (
+        active_definition(doc, WorkflowStage.QUANTUM_CORRECTIONS, calc_type="phonon_set") is first
+    )
     assert active_definition(doc, WorkflowStage.UEP, active_key="ignored") is None
 
 
 def test_job_for_mapping_key_resolves_the_mapped_job(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "jobs.mufinder", "Jobs")
-    job = service.add_job(doc, label="a", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    job = service.add_job(
+        doc, label="a", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source"
+    )
     definition = _definition_at(doc, WorkflowStage.UEP)
     definition.parameters["job_ids_by_label"] = {"a": str(job.id)}
     definition.parameters["job_ids_by_cutoff"] = {"300": str(job.id)}
@@ -3176,12 +3373,23 @@ def test_job_for_mapping_key_resolves_the_mapped_job(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "case",
-    ["no-definition", "no-mapping", "not-a-mapping", "unmapped", "non-string", "bad-uuid", "missing-job", "calc-type"],
+    [
+        "no-definition",
+        "no-mapping",
+        "not-a-mapping",
+        "unmapped",
+        "non-string",
+        "bad-uuid",
+        "missing-job",
+        "calc-type",
+    ],
 )
 def test_job_for_mapping_key_returns_none_when_unresolvable(tmp_path: Path, case: str) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "jobs.mufinder", "Jobs")
-    job = service.add_job(doc, label="a", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    job = service.add_job(
+        doc, label="a", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source"
+    )
     definition = _definition_at(doc, WorkflowStage.UEP)
     mapping: object = {
         "no-mapping": None,

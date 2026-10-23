@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from mufinder.science.quantum_phonons import (
+from mufinder.domain.constants import (
     ATOMIC_MASS_KG,
     ELEMENTARY_CHARGE_C,
     HBAR_J_S,
@@ -53,7 +53,9 @@ def solve_single_particle_ground_state(
     x_points = np.asarray(potential.displacement_A, dtype=float)
     energy_points = np.asarray(potential.energy_eV, dtype=float)
     if x_points.ndim != 1 or energy_points.ndim != 1 or len(x_points) != len(energy_points):
-        raise AdiabaticApproximationError("Displacement and energy arrays must be one-dimensional and equal length.")
+        raise AdiabaticApproximationError(
+            "Displacement and energy arrays must be one-dimensional and equal length."
+        )
     if len(x_points) < 3:
         raise AdiabaticApproximationError("At least three line-scan points are required.")
     if potential.effective_mass_amu <= 0.0:
@@ -108,13 +110,17 @@ def effective_mass_from_relaxed_scan(
     if muon_mass_amu <= 0.0:
         raise AdiabaticApproximationError("Muon mass must be positive.")
     if len(atom_masses_amu) != len(host_displacements_per_muon_A):
-        raise AdiabaticApproximationError("Mass and displacement-derivative arrays must have equal length.")
+        raise AdiabaticApproximationError(
+            "Mass and displacement-derivative arrays must have equal length."
+        )
     total = float(muon_mass_amu)
     for mass, derivative in zip(atom_masses_amu, host_displacements_per_muon_A, strict=True):
         if mass <= 0.0:
             raise AdiabaticApproximationError("Host atom masses must be positive.")
         vector = np.asarray(derivative, dtype=float)
         if vector.shape != (3,):
-            raise AdiabaticApproximationError("Each host displacement derivative must have three components.")
+            raise AdiabaticApproximationError(
+                "Each host displacement derivative must have three components."
+            )
         total += float(mass) * float(np.dot(vector, vector))
     return total

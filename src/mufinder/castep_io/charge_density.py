@@ -15,7 +15,8 @@ from pathlib import Path
 import re
 
 import numpy as np
-from scipy import constants as cnst
+
+from mufinder.domain.constants import BOHR_RADIUS_ANGSTROM
 
 
 _FLOAT_RE = r"[-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?"
@@ -25,7 +26,6 @@ _ELEMENT_RE = re.compile(r"Element:\s+([A-Za-z]{1,2})\s+Ionic charge:\s+([0-9.]+
 _CORE_RADIUS_RE = re.compile(r"(?:[0-9]+|loc)\s+[0-9]\s+[\-0-9.]+\s+([0-9.]+)")
 _NEUTRALITY_RE = re.compile(r"unit\s+cell\s+is\s+neutral", re.IGNORECASE)
 _TOTAL_CHARGE_RE = re.compile(rf"total\s+charge[^\n=]*=\s*({_FLOAT_RE})", re.IGNORECASE)
-_BOHR_TO_ANG = cnst.physical_constants["Bohr radius"][0] * 1e10
 
 
 class ChargeDensityInputError(ValueError):
@@ -36,7 +36,9 @@ class ChargeDensityInputError(ValueError):
 class FormattedDensity:
     """Parsed CASTEP formatted density grid."""
 
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     grid: tuple[int, int, int]
     nspins: int
     values: np.ndarray
@@ -55,7 +57,6 @@ class IonicPseudopotential:
         raise AttributeError("gaussian_width_ang depends on the chosen gw_factor.")
 
 
-
 def parse_formatted_density(path: str | Path) -> FormattedDensity:
     """Parse a CASTEP `.den_fmt` file into a dense FFT-ready grid."""
 
@@ -63,7 +64,9 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
     try:
         lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
-        raise ChargeDensityInputError(f"Failed to read formatted density '{source}': {exc}") from exc
+        raise ChargeDensityInputError(
+            f"Failed to read formatted density '{source}': {exc}"
+        ) from exc
 
     lattice_rows: list[tuple[float, float, float]] = []
     grid: tuple[int, int, int] | None = None
@@ -77,14 +80,18 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
                 row_line = lines[index + offset]
                 parts = row_line.split()[:3]
                 if len(parts) != 3:
-                    raise ChargeDensityInputError(f"Could not parse lattice vectors from '{source.name}'.")
+                    raise ChargeDensityInputError(
+                        f"Could not parse lattice vectors from '{source.name}'."
+                    )
                 lattice_rows.append(tuple(float(value) for value in parts))
             continue
         if "! nspins" in line:
             try:
                 nspins = int(line.split()[0])
             except (IndexError, ValueError) as exc:
-                raise ChargeDensityInputError(f"Could not parse nspins from '{source.name}'.") from exc
+                raise ChargeDensityInputError(
+                    f"Could not parse nspins from '{source.name}'."
+                ) from exc
             continue
         if "! fine FFT grid" in line:
             parts = line.split()[:3]
@@ -97,7 +104,9 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
             break
 
     if len(lattice_rows) != 3 or grid is None or nspins is None or data_start is None:
-        raise ChargeDensityInputError(f"Formatted density '{source.name}' does not contain a complete CASTEP header.")
+        raise ChargeDensityInputError(
+            f"Formatted density '{source.name}' does not contain a complete CASTEP header."
+        )
 
     values = np.zeros((grid[0], grid[1], grid[2], nspins), dtype=float)
     count = 0
@@ -114,9 +123,13 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
             ic = int(parts[2]) - 1
             charge = float(parts[3])
         except ValueError as exc:
-            raise ChargeDensityInputError(f"Invalid density row in '{source.name}': {line.strip()}") from exc
+            raise ChargeDensityInputError(
+                f"Invalid density row in '{source.name}': {line.strip()}"
+            ) from exc
         if not (0 <= ia < grid[0] and 0 <= ib < grid[1] and 0 <= ic < grid[2]):
-            raise ChargeDensityInputError(f"Density row index out of range in '{source.name}': {line.strip()}")
+            raise ChargeDensityInputError(
+                f"Density row index out of range in '{source.name}': {line.strip()}"
+            )
         values[ia, ib, ic, 0] = charge
         count += 1
 
@@ -165,7 +178,7 @@ def parse_castep_pseudopotentials(path: str | Path) -> dict[str, IonicPseudopote
                 ionic_charge = float(match.group(2))
                 continue
             if (match := _CORE_RADIUS_RE.search(line)) is not None:
-                core_radius_ang = min(core_radius_ang, float(match.group(1)) * _BOHR_TO_ANG)
+                core_radius_ang = min(core_radius_ang, float(match.group(1)) * BOHR_RADIUS_ANGSTROM)
         if element and ionic_charge is not None and np.isfinite(core_radius_ang):
             parsed[element] = IonicPseudopotential(
                 species=element,

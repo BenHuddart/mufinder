@@ -174,6 +174,14 @@ def test_page_guidance_explains_purpose_and_source_headers(qapp) -> None:
     for column in range(table.columnCount()):
         item = table.horizontalHeaderItem(column)
         tooltips[item.text()] = item.toolTip()
-    for header in ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Status", "Parameters"):
+    for header in (
+        "Site",
+        "Charge",
+        "dE (eV)",
+        "Displacements",
+        "Source Job",
+        "Status",
+        "Parameters",
+    ):
         assert tooltips[header].strip(), header
     assert "farm count" in tooltips["Displacements"]

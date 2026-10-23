@@ -36,7 +36,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from .output_parser import _FLOAT_RE, _GEOM_FAILURE_RE, _GEOM_SUCCESS_RE, _RUN_STARTED_RE, _last_run_segment
+from .output_parser import (
+    _FLOAT_RE,
+    _GEOM_FAILURE_RE,
+    _GEOM_SUCCESS_RE,
+    _RUN_STARTED_RE,
+    _last_run_segment,
+)
 
 #: Methods whose convergence tables :func:`parse_geometry_progress_lines` reads.
 GEOMETRY_METHODS = ("BFGS", "LBFGS", "TPSD", "DI")
@@ -179,7 +185,9 @@ def parse_geometry_progress_lines(lines: Iterable[str]) -> GeometryProgress | No
                 )
             elif _DIVIDER_RE.match(line) and open_criteria:
                 iteration, enthalpy, unit = open_iteration
-                iterations.append(GeometryIteration(iteration, enthalpy, unit, tuple(open_criteria)))
+                iterations.append(
+                    GeometryIteration(iteration, enthalpy, unit, tuple(open_criteria))
+                )
                 open_iteration = None
                 open_criteria = []
             continue

@@ -16,7 +16,6 @@ BUNDLED_FONT_ASSETS = [
 ]
 
 
-
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -54,11 +53,11 @@ def test_pyproject_packages_runtime_assets_and_science_data() -> None:
 def test_pyinstaller_spec_bundles_mufinder_runtime_assets_and_data() -> None:
     spec_text = _pyinstaller_spec_text()
 
-    assert 'if str(src_root) not in sys.path:' in spec_text
-    assert 'sys.path.insert(0, str(src_root))' in spec_text
-    assert 'def _module_is_available(module_name: str) -> bool:' in spec_text
-    assert 'def _require_installed_modules(*module_names: str) -> None:' in spec_text
-    assert 'PyInstaller build requires installed runtime modules:' in spec_text
+    assert "if str(src_root) not in sys.path:" in spec_text
+    assert "sys.path.insert(0, str(src_root))" in spec_text
+    assert "def _module_is_available(module_name: str) -> bool:" in spec_text
+    assert "def _require_installed_modules(*module_names: str) -> None:" in spec_text
+    assert "PyInstaller build requires installed runtime modules:" in spec_text
     assert 'collect_data_files("mufinder.assets")' in spec_text
     assert 'collect_data_files("mufinder.data")' in spec_text
     assert 'copy_metadata("mufinder")' in spec_text
@@ -106,11 +105,9 @@ def test_pyinstaller_spec_builds_windows_icon() -> None:
 
 
 def test_windows_installer_uses_application_icon() -> None:
-    iss_text = (_repo_root() / "packaging" / "windows" / "mufinder.iss").read_text(
-        encoding="utf-8"
-    )
+    iss_text = (_repo_root() / "packaging" / "windows" / "mufinder.iss").read_text(encoding="utf-8")
 
     assert "SetupIconFile={#IconFile}" in iss_text
-    assert 'UninstallDisplayIcon={app}\\mufinder.ico' in iss_text
+    assert "UninstallDisplayIcon={app}\\mufinder.ico" in iss_text
     assert 'Source: "{#IconFile}"; DestDir: "{app}"; DestName: "mufinder.ico"' in iss_text
     assert 'IconFilename: "{app}\\mufinder.ico"' in iss_text

@@ -203,9 +203,7 @@ def test_muon_controller_ready_predicate_matches_bare_and_qualified_labels() -> 
 
 def test_muon_controller_refresh_view_without_document_clears_rows() -> None:
     view = _FakeMuonRelaxationView()
-    controller = MuonRelaxationController(
-        make_context(document=None), _stub_muon_deps(), view
-    )
+    controller = MuonRelaxationController(make_context(document=None), _stub_muon_deps(), view)
     controller.refresh_view()
     assert view.runtime_states == [{}]
 
@@ -334,7 +332,6 @@ def _muon_two_row_submission_fixture(service: ProjectService, tmp_path: Path):
     """Document + config with one positive-muon and one muonium row, wired for
     real materialization through expand_muon_relaxation_jobs."""
 
-
     from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
     from mufinder.domain.models import MuonSite
 
@@ -391,9 +388,7 @@ def test_muon_controller_materialize_writes_charge_prefixed_mappings_and_persist
     import dataclasses
 
     service = ProjectService()
-    document, definition, deps, output_root = _muon_two_row_submission_fixture(
-        service, tmp_path
-    )
+    document, definition, deps, output_root = _muon_two_row_submission_fixture(service, tmp_path)
     persists: list[dict] = []
     context = dataclasses.replace(
         make_context(
@@ -428,9 +423,7 @@ def test_muon_controller_submit_local_splits_groups_across_backend_calls(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, deps, output_root = _muon_two_row_submission_fixture(
-        service, tmp_path
-    )
+    document, definition, deps, output_root = _muon_two_row_submission_fixture(service, tmp_path)
     local = RecordingBackend()
     cluster = RecordingBackend()
     context = make_context(
@@ -544,20 +537,13 @@ def test_muon_controller_update_row_parameters_touches_only_the_charge_state_row
     )
     definitions_before = set(document.calculations)
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
-    assert (
-        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
-        is True
-    )
+    assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is True
 
     assert set(document.calculations) == definitions_before
     assert document.calculations[definition.id] is definition
-    assert definition.parameters["job_ids_by_label"] == {
-        "positivemuon:Site 1": str(job.id)
-    }
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
     assert controller.jobs_for_keys(["positivemuon:Site 1"]) == [job]
 
     config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
@@ -571,11 +557,7 @@ def test_muon_controller_update_row_parameters_touches_only_the_charge_state_row
     assert form_by_charge["muonium"]["parameter_values"] == {"geom_max_iter": 400}
     assert document.ui_state["muon_relaxation_form"] == view.form_state
     assert persists == [
-        {
-            "failure_message": (
-                "Muon relaxation parameters were updated, but autosave failed."
-            )
-        }
+        {"failure_message": ("Muon relaxation parameters were updated, but autosave failed.")}
     ]
 
 
@@ -591,9 +573,7 @@ def test_muon_controller_update_row_parameters_rejects_bare_label(
     )
     before = copy.deepcopy(definition.parameters["configuration"])
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
     assert controller.update_row_parameters("Site 1", {"geom_max_iter": 500}) is False
 
@@ -612,22 +592,15 @@ def test_muon_controller_update_row_parameters_edits_the_second_charge_state_row
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
-    assert (
-        controller.update_row_parameters("muonium:Site 1", {"geom_max_iter": 700})
-        is True
-    )
+    assert controller.update_row_parameters("muonium:Site 1", {"geom_max_iter": 700}) is True
 
     config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 120}
     assert by_charge["muonium"].parameter_values == {"geom_max_iter": 700}
-    assert definition.parameters["job_ids_by_label"] == {
-        "positivemuon:Site 1": str(job.id)
-    }
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
     form_by_charge = {row["charge_state"]: row for row in view.form_state["rows"]}
     assert form_by_charge["positive_muon"]["parameter_values"] == {"geom_max_iter": 120}
     assert form_by_charge["muonium"]["parameter_values"] == {"geom_max_iter": 700}
@@ -646,21 +619,13 @@ def test_muon_controller_update_row_parameters_without_definition_or_config(
     controller = _muon_edit_controller(
         service, document, no_definition, view, output_root, persists
     )
-    assert (
-        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
-        is False
-    )
+    assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is False
 
     unparseable = _stub_muon_deps(
         deserialize_muon_relaxation_config=lambda _payload: None,
     )
-    controller = _muon_edit_controller(
-        service, document, unparseable, view, output_root, persists
-    )
-    assert (
-        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
-        is False
-    )
+    controller = _muon_edit_controller(service, document, unparseable, view, output_root, persists)
+    assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is False
     assert persists == []
 
 
@@ -676,22 +641,15 @@ def test_muon_controller_update_row_parameters_without_the_row_in_the_form(
     )
     view.form_state = {"rows": []}
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
-    assert (
-        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
-        is True
-    )
+    assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is True
 
     config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
     assert by_charge["muonium"].parameter_values == {"geom_max_iter": 400}
-    assert definition.parameters["job_ids_by_label"] == {
-        "positivemuon:Site 1": str(job.id)
-    }
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
     assert view.form_state["rows"] == []
     assert "muon_relaxation_form" not in document.ui_state
 
@@ -704,9 +662,7 @@ def test_muon_controller_materialize_after_edit_rewrites_same_directory(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
     assert controller.materialize(["positivemuon:Site 1"]) == [job]
     seed_mapping_before = dict(definition.parameters["job_seed_names_by_label"])
@@ -715,18 +671,13 @@ def test_muon_controller_materialize_after_edit_rewrites_same_directory(
     assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
 
     job.status = JobStatus.FAILED
-    assert (
-        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
-        is True
-    )
+    assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is True
     job.status = JobStatus.DEFINED
 
     assert controller.materialize(["positivemuon:Site 1"]) == [job]
 
     assert list(document.jobs) == [job.id]
-    assert definition.parameters["job_ids_by_label"] == {
-        "positivemuon:Site 1": str(job.id)
-    }
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
     # A changed seed name would relocate the directory and orphan the preserved
     # remote directory.
     assert definition.parameters["job_seed_names_by_label"] == seed_mapping_before
@@ -744,16 +695,11 @@ def test_muon_controller_build_states_keeps_job_after_parameter_edit(
     )
     job.status = JobStatus.COMPLETED
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     before = controller.build_states()
     assert before["positivemuon:Site 1"].job_id == job.id
 
-    assert (
-        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
-        is True
-    )
+    assert controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500}) is True
 
     after = controller.build_states()
     assert after["positivemuon:Site 1"].job_id == job.id
@@ -779,9 +725,7 @@ def test_muon_controller_row_is_continuable_uses_charge_qualified_key(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
 
     job.status = JobStatus.RUNNING
     assert controller.row_is_continuable("positivemuon:Site 1") is False
@@ -811,14 +755,10 @@ def test_muon_controller_render_row_param_text_previews_without_persisting(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
-    text = controller.render_row_param_text(
-        "positivemuon:Site 1", {"geom_max_iter": 777}, ()
-    )
+    text = controller.render_row_param_text("positivemuon:Site 1", {"geom_max_iter": 777}, ())
 
     assert "GEOM_MAX_ITER : 777" in text
     assert definition.parameters["configuration"] == before
@@ -835,9 +775,7 @@ def test_muon_controller_continue_job_returns_to_defined_and_rewrites_directory(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     controller.materialize(["positivemuon:Site 1"])
     seed_mapping_before = dict(definition.parameters["job_seed_names_by_label"])
     seed = seed_mapping_before["positivemuon:Site 1"]
@@ -861,9 +799,7 @@ def test_muon_controller_continue_job_returns_to_defined_and_rewrites_directory(
     assert job.dismissed_at is None
 
     assert list(document.jobs) == [job.id]
-    assert definition.parameters["job_ids_by_label"] == {
-        "positivemuon:Site 1": str(job.id)
-    }
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
     # A changed seed name would relocate the directory and orphan the
     # preserved remote directory.
     assert definition.parameters["job_seed_names_by_label"] == seed_mapping_before
@@ -886,9 +822,7 @@ def test_muon_controller_continue_job_rejects_non_continuable_job_without_mutati
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
     job.status = JobStatus.RUNNING
@@ -905,9 +839,7 @@ def test_muon_controller_continue_job_rejects_bare_label(tmp_path: Path) -> None
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
     job.status = JobStatus.FAILED
@@ -928,9 +860,7 @@ def test_muon_controller_continue_job_returns_none_when_materialize_fails(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _muon_edit_controller(
-        service, document, deps, view, output_root, persists
-    )
+    controller = _muon_edit_controller(service, document, deps, view, output_root, persists)
     controller.materialize(["positivemuon:Site 1"])
     seed_mapping_before = dict(definition.parameters["job_seed_names_by_label"])
     seed = seed_mapping_before["positivemuon:Site 1"]
@@ -955,9 +885,7 @@ def test_muon_controller_continue_job_returns_none_when_materialize_fails(
 
 def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, deps, output_root = _muon_two_row_submission_fixture(
-        service, tmp_path
-    )
+    document, _definition, deps, output_root = _muon_two_row_submission_fixture(service, tmp_path)
     local = RecordingBackend()
     cluster = RecordingBackend()
     context = make_context(
@@ -972,9 +900,10 @@ def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) 
     controller.submit(["positivemuon:Site 1", "muonium:Site 2"], target="cluster")
 
     assert local.calls == []
-    assert [
-        [job.calc_type for job in group] for group, _extras in cluster.calls
-    ] == [["castep_positivemuon_relaxation"], ["castep_muonium_relaxation"]]
+    assert [[job.calc_type for job in group] for group, _extras in cluster.calls] == [
+        ["castep_positivemuon_relaxation"],
+        ["castep_muonium_relaxation"],
+    ]
 
 
 def test_muon_controller_build_result_records_position_structure_and_site_mutation(
@@ -1046,9 +975,7 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     assert result.payload["muon_final_fractional_position_supercell"] == pytest.approx(
         [0.3, 0.4, 0.5]
     )
-    assert result.payload["muon_final_fractional_position_host"] == pytest.approx(
-        [0.6, 0.8, 0.5]
-    )
+    assert result.payload["muon_final_fractional_position_host"] == pytest.approx([0.6, 0.8, 0.5])
     # No output_files contributed — the call site already passes them generically.
     assert result.output_files == []
 
@@ -1217,9 +1144,7 @@ def test_muon_controller_recompletion_keeps_charge_states_separate(
     positive_row, definition = _muon_row_and_definition(document, host, site, "positive_muon")
     muonium_row, _ = _muon_row_and_definition(document, host, site, "muonium")
 
-    positive_job = _muon_job(
-        service, document, "Shared Site", "castep_positivemuon_relaxation"
-    )
+    positive_job = _muon_job(service, document, "Shared Site", "castep_positivemuon_relaxation")
     muonium_job = _muon_job(service, document, "Shared Site", "castep_muonium_relaxation")
     assert positive_job.label == muonium_job.label
 
@@ -1256,15 +1181,11 @@ def test_muon_controller_recompletion_keeps_charge_states_separate(
         muonium_controller, muonium_job, 1, _MUON_OUT_CELL_TEXT
     ).derived_structure_ids[0]
     assert positive_id != muonium_id
-    assert (
-        document.structures[positive_id].label == document.structures[muonium_id].label
-    )
+    assert document.structures[positive_id].label == document.structures[muonium_id].label
 
     # Continue only the positive-muon job: its structure moves, the muonium
     # structure is untouched.
-    second_positive = complete(
-        positive_controller, positive_job, 2, _MUON_OUT_CELL_TEXT_CONTINUED
-    )
+    second_positive = complete(positive_controller, positive_job, 2, _MUON_OUT_CELL_TEXT_CONTINUED)
     assert second_positive.derived_structure_ids == [positive_id]
     assert document.structures[positive_id].lattice_vectors == [
         [8.2, 0.0, 0.0],
@@ -1366,19 +1287,29 @@ def test_muon_controller_validate_artifacts_requires_the_muon(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    assert controller.validate_artifacts(
-        job, parsed, run, collect_job_artifacts(muonated_dir, job.label, want_out_cell=True)
-    ) is None
-    assert controller.validate_artifacts(
-        job, parsed, run, collect_job_artifacts(muonless_dir, job.label, want_out_cell=True)
-    ) == "Expected H:mu muon position was not found in Site 1-out.cell."
+    assert (
+        controller.validate_artifacts(
+            job, parsed, run, collect_job_artifacts(muonated_dir, job.label, want_out_cell=True)
+        )
+        is None
+    )
+    assert (
+        controller.validate_artifacts(
+            job, parsed, run, collect_job_artifacts(muonless_dir, job.label, want_out_cell=True)
+        )
+        == "Expected H:mu muon position was not found in Site 1-out.cell."
+    )
     # The shared relaxation checks run first.
-    assert controller.validate_artifacts(
-        job, parsed, run, ParsedJobArtifacts(cell_missing=True)
-    ) == "Expected relaxed structure output was not found: Site 1-out.cell"
-    assert controller.validate_artifacts(
-        job, CastepResult(completed=True, geom_converged=False), run, ParsedJobArtifacts()
-    ) == "Geometry optimization did not satisfy CASTEP convergence criteria."
+    assert (
+        controller.validate_artifacts(job, parsed, run, ParsedJobArtifacts(cell_missing=True))
+        == "Expected relaxed structure output was not found: Site 1-out.cell"
+    )
+    assert (
+        controller.validate_artifacts(
+            job, CastepResult(completed=True, geom_converged=False), run, ParsedJobArtifacts()
+        )
+        == "Geometry optimization did not satisfy CASTEP convergence criteria."
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1414,14 +1345,19 @@ def _muon_sync_controller(document: ProjectDocument) -> MuonRelaxationController
     )
 
 
-def test_muon_controller_sync_mappings_reads_legacy_keys_and_carries_seed_names(tmp_path: Path) -> None:
+def test_muon_controller_sync_mappings_reads_legacy_keys_and_carries_seed_names(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     document, host = muon_host_document(service, tmp_path)
     site_id = uuid4()
     output = document.project_root / "files" / "muon_relaxation"
     source, other_source, target = (
         service.register_muon_relaxation_definition(
-            document, input_structure_id=host.id, parameters=_muon_sync_rows(site_id), output_directory=output
+            document,
+            input_structure_id=host.id,
+            parameters=_muon_sync_rows(site_id),
+            output_directory=output,
         )
         for _ in range(3)
     )
@@ -1451,7 +1387,9 @@ def test_muon_controller_sync_mappings_reads_legacy_keys_and_carries_seed_names(
 
 
 def test_muon_controller_row_key_matcher_crosses_key_spellings() -> None:
-    controller = MuonRelaxationController(make_context(), _stub_muon_deps(), _FakeMuonRelaxationView())
+    controller = MuonRelaxationController(
+        make_context(), _stub_muon_deps(), _FakeMuonRelaxationView()
+    )
 
     matches = controller.row_key_matcher({"Site 1", "muonium:Site 2"})
 
@@ -1612,7 +1550,9 @@ def test_site_relaxed_in_both_charge_states_reaches_downstream_stages_in_both(
         job.status = JobStatus.COMPLETED
 
     candidates = eligible_quantum_source_candidates(document)
-    eligible = {(candidate.site.id, charge_state_for_job(candidate.job)) for candidate in candidates}
+    eligible = {
+        (candidate.site.id, charge_state_for_job(candidate.job)) for candidate in candidates
+    }
     assert eligible == {(site.id, state) for site in sites.values() for state in charge_states}
     assert len({candidate.key for candidate in candidates}) == 4
     muonium = [c for c in candidates if charge_state_for_job(c.job) == MUONIUM_CHARGE_STATE]

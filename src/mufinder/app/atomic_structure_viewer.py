@@ -32,7 +32,9 @@ from mufinder.domain.models import Structure
 
 _DEFAULT_VIEW = (20.0, 45.0)
 _DEFAULT_VIEW_ROLL = 0.0
-_DEFAULT_PYVISTA_LIGHT_DIRECTION = np.array([0.28, 0.36, 1.0], dtype=float) / math.sqrt(0.28**2 + 0.36**2 + 1.0**2)
+_DEFAULT_PYVISTA_LIGHT_DIRECTION = np.array([0.28, 0.36, 1.0], dtype=float) / math.sqrt(
+    0.28**2 + 0.36**2 + 1.0**2
+)
 MUON_VIEWER_RADIUS_ANG = 0.2
 
 
@@ -278,10 +280,14 @@ class _WrappingRowLayout(QLayout):
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
         visible = [item.sizeHint() for item in self._items if not item.isEmpty()]
-        width = sum(hint.width() for hint in visible) + self._item_spacing * max(len(visible) - 1, 0)
+        width = sum(hint.width() for hint in visible) + self._item_spacing * max(
+            len(visible) - 1, 0
+        )
         height = max((hint.height() for hint in visible), default=0)
         margins = self.contentsMargins()
-        return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
+        return QSize(
+            width + margins.left() + margins.right(), height + margins.top() + margins.bottom()
+        )
 
     def minimumSize(self) -> QSize:  # noqa: N802 - Qt API naming.
         size = QSize()
@@ -508,11 +514,15 @@ def _set_equal_limits(
     extra_points: np.ndarray | None = None,
     margin: float = 0.12,
 ) -> None:
-    limits = _compute_limits(positions, atom_radii=atom_radii, extra_points=extra_points, margin=margin)
+    limits = _compute_limits(
+        positions, atom_radii=atom_radii, extra_points=extra_points, margin=margin
+    )
     axis.set_xlim(*limits[0])
     axis.set_ylim(*limits[1])
     axis.set_zlim(*limits[2])
-    spans = np.array([limits[0][1] - limits[0][0], limits[1][1] - limits[1][0], limits[2][1] - limits[2][0]])
+    spans = np.array(
+        [limits[0][1] - limits[0][0], limits[1][1] - limits[1][0], limits[2][1] - limits[2][0]]
+    )
     _set_axis_box_aspect_from_spans(axis, spans)
 
 
@@ -695,8 +705,12 @@ def _plot_cylinder_segment(
     if abs(float(np.dot(axis_dir, reference))) > 0.92:
         reference = np.array([0.0, 1.0, 0.0], dtype=float)
 
-    basis_u = _normalized_vector(np.cross(axis_dir, reference), np.array([1.0, 0.0, 0.0], dtype=float))
-    basis_v = _normalized_vector(np.cross(axis_dir, basis_u), np.array([0.0, 1.0, 0.0], dtype=float))
+    basis_u = _normalized_vector(
+        np.cross(axis_dir, reference), np.array([1.0, 0.0, 0.0], dtype=float)
+    )
+    basis_v = _normalized_vector(
+        np.cross(axis_dir, basis_u), np.array([0.0, 1.0, 0.0], dtype=float)
+    )
 
     theta = np.linspace(0.0, 2.0 * np.pi, resolution)
     axial = np.array([0.0, length], dtype=float)
@@ -793,7 +807,9 @@ def _draw_spin_arrows(
     for position, radius, spin in zip(positions, radii, spins):
         spin_array = np.asarray(spin, dtype=float)
         is_vector = spin_array.shape == (3,)
-        spin_vector = spin_array if is_vector else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+        spin_vector = (
+            spin_array if is_vector else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+        )
         magnitude = float(np.linalg.norm(spin_vector))
         if magnitude <= 1e-10:
             continue
@@ -893,7 +909,11 @@ def _rotation_matrix_x(angle_deg: float) -> np.ndarray:
 
 
 def _camera_rotation_matrix(state: _CameraState) -> np.ndarray:
-    return _rotation_matrix_z(state.roll) @ _rotation_matrix_x(state.elev) @ _rotation_matrix_z(state.azim)
+    return (
+        _rotation_matrix_z(state.roll)
+        @ _rotation_matrix_x(state.elev)
+        @ _rotation_matrix_z(state.azim)
+    )
 
 
 def _camera_state_from_vectors(
@@ -903,7 +923,9 @@ def _camera_state_from_vectors(
 ) -> _CameraState:
     camera = np.asarray(position, dtype=float)
     focal = np.asarray(focal_point, dtype=float)
-    up_vector = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+    up_vector = _normalized_vector(
+        np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)
+    )
     direction = _normalized_vector(camera - focal, np.array([1.0, 0.0, 0.0], dtype=float))
     elev = math.degrees(math.asin(float(np.clip(direction[2], -1.0, 1.0))))
     azim = math.degrees(math.atan2(float(direction[1]), float(direction[0])))
@@ -911,8 +933,12 @@ def _camera_state_from_vectors(
     reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
     if abs(float(np.dot(direction, reference_up))) > 0.96:
         reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
-    right = _normalized_vector(np.cross(direction, reference_up), np.array([1.0, 0.0, 0.0], dtype=float))
-    default_up = _normalized_vector(np.cross(right, direction), np.array([0.0, 0.0, 1.0], dtype=float))
+    right = _normalized_vector(
+        np.cross(direction, reference_up), np.array([1.0, 0.0, 0.0], dtype=float)
+    )
+    default_up = _normalized_vector(
+        np.cross(right, direction), np.array([0.0, 0.0, 1.0], dtype=float)
+    )
     sin_roll = float(np.dot(np.cross(default_up, up_vector), direction))
     cos_roll = float(np.clip(np.dot(default_up, up_vector), -1.0, 1.0))
     roll = math.degrees(math.atan2(sin_roll, cos_roll))
@@ -935,11 +961,17 @@ def _camera_vectors_from_state(state: _CameraState) -> tuple[np.ndarray, np.ndar
     reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
     if abs(float(np.dot(direction, reference_up))) > 0.96:
         reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
-    right = _normalized_vector(np.cross(focal_point - position, reference_up), np.array([1.0, 0.0, 0.0], dtype=float))
-    up = _normalized_vector(np.cross(right, focal_point - position), np.array([0.0, 0.0, 1.0], dtype=float))
+    right = _normalized_vector(
+        np.cross(focal_point - position, reference_up), np.array([1.0, 0.0, 0.0], dtype=float)
+    )
+    up = _normalized_vector(
+        np.cross(right, focal_point - position), np.array([0.0, 0.0, 1.0], dtype=float)
+    )
     if abs(float(state.roll)) > 1e-12:
         angle = math.radians(float(state.roll))
-        view_direction = _normalized_vector(focal_point - position, np.array([0.0, 0.0, -1.0], dtype=float))
+        view_direction = _normalized_vector(
+            focal_point - position, np.array([0.0, 0.0, -1.0], dtype=float)
+        )
         up = (
             up * math.cos(angle)
             + np.cross(view_direction, up) * math.sin(angle)
@@ -955,7 +987,9 @@ def _camera_screen_basis(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     position = np.asarray(camera_position, dtype=float)
     focal = np.asarray(focal_point, dtype=float)
-    up_hint = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+    up_hint = _normalized_vector(
+        np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)
+    )
     view = _normalized_vector(focal - position, np.array([0.0, 0.0, -1.0], dtype=float))
     right = _normalized_vector(np.cross(view, up_hint), np.array([1.0, 0.0, 0.0], dtype=float))
     up = _normalized_vector(np.cross(right, view), np.array([0.0, 0.0, 1.0], dtype=float))
@@ -988,7 +1022,9 @@ class _CrystallographicTriadCanvas(QWidget):
             self._cell = np.asarray(cell, dtype=float)
         self._camera_position = np.asarray(camera_position, dtype=float)
         self._camera_focal_point = np.asarray(focal_point, dtype=float)
-        self._camera_up = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+        self._camera_up = _normalized_vector(
+            np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)
+        )
         self.update()
 
     def draw_idle(self) -> None:
@@ -998,8 +1034,13 @@ class _CrystallographicTriadCanvas(QWidget):
         self.update()
 
     def _project_axis(self, direction: np.ndarray) -> tuple[float, float, float]:
-        view = _normalized_vector(self._camera_focal_point - self._camera_position, np.array([0.0, 0.0, -1.0], dtype=float))
-        right = _normalized_vector(np.cross(view, self._camera_up), np.array([1.0, 0.0, 0.0], dtype=float))
+        view = _normalized_vector(
+            self._camera_focal_point - self._camera_position,
+            np.array([0.0, 0.0, -1.0], dtype=float),
+        )
+        right = _normalized_vector(
+            np.cross(view, self._camera_up), np.array([1.0, 0.0, 0.0], dtype=float)
+        )
         up = _normalized_vector(np.cross(right, view), np.array([0.0, 0.0, 1.0], dtype=float))
         return (
             float(np.dot(direction, right)),
@@ -1039,7 +1080,9 @@ class _CrystallographicTriadCanvas(QWidget):
         cone_length = 15.0
         cone_half_width = 7.8
 
-        for _depth, projected, label, color in sorted(payloads, key=lambda item: item[0], reverse=True):
+        for _depth, projected, label, color in sorted(
+            payloads, key=lambda item: item[0], reverse=True
+        ):
             vector_2d = QPointF(float(projected[0] * scale), float(-projected[1] * scale))
             length = math.hypot(vector_2d.x(), vector_2d.y())
             if length <= 1e-6:
@@ -1141,7 +1184,9 @@ def _build_pyvista_atom_glyph_mesh(
 ):
     points = pv.PolyData(np.asarray(positions, dtype=float))
     points["glyph_radius"] = np.asarray(radii, dtype=float)
-    points["atom_rgb"] = np.asarray(np.clip(np.asarray(colors, dtype=float), 0.0, 1.0) * 255.0, dtype=np.uint8)
+    points["atom_rgb"] = np.asarray(
+        np.clip(np.asarray(colors, dtype=float), 0.0, 1.0) * 255.0, dtype=np.uint8
+    )
     unit_sphere = _build_pyvista_sphere_mesh(
         pv,
         radius=1.0,
@@ -1199,7 +1244,9 @@ def _trim_bond_segment_to_surfaces(
         return None
 
     axis_dir = direction / length
-    trimmed_start = start_point + axis_dir * min(float(start_radius) * (1.0 - margin), 0.45 * length)
+    trimmed_start = start_point + axis_dir * min(
+        float(start_radius) * (1.0 - margin), 0.45 * length
+    )
     trimmed_end = end_point - axis_dir * min(float(end_radius) * (1.0 - margin), 0.45 * length)
     if float(np.linalg.norm(trimmed_end - trimmed_start)) <= 1e-8:
         return None
@@ -1511,7 +1558,9 @@ class _PyVistaTriadCanvas(QWidget):
         label_offset = 0.08
         label_points: list[np.ndarray] = []
 
-        hub = _build_pyvista_sphere_mesh(self._pv, radius=hub_radius, center=(0.0, 0.0, 0.0), subdivisions=3)
+        hub = _build_pyvista_sphere_mesh(
+            self._pv, radius=hub_radius, center=(0.0, 0.0, 0.0), subdivisions=3
+        )
         self._plotter.add_mesh(
             hub,
             color=style.triad_hub_mid,
@@ -1602,11 +1651,15 @@ class _PyVistaTriadCanvas(QWidget):
             self._build_axes_scene()
         self._camera_position = np.asarray(camera_position, dtype=float)
         self._camera_focal_point = np.asarray(focal_point, dtype=float)
-        self._camera_up = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+        self._camera_up = _normalized_vector(
+            np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)
+        )
         self._configure_background()
         self._apply_camera()
 
-    def set_light_direction(self, direction: np.ndarray | tuple[float, float, float] | list[float]) -> None:
+    def set_light_direction(
+        self, direction: np.ndarray | tuple[float, float, float] | list[float]
+    ) -> None:
         self._light_direction = _coerce_light_direction(direction)
         self._build_axes_scene()
 
@@ -1701,7 +1754,9 @@ class AtomicStructureViewer(QWidget):
         self._camera_state = _CameraState(*_DEFAULT_VIEW, _DEFAULT_VIEW_ROLL)
         self._view = _DEFAULT_VIEW
         self._view_roll = _DEFAULT_VIEW_ROLL
-        self._limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None = None
+        self._limits: (
+            tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None
+        ) = None
         self._axis = _AxesProxy(self._camera_state)
         self._triad_axis: _AxesProxy | None = None
         self._latched_selection_modifier = False
@@ -1727,7 +1782,9 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_bond_actors: list[object] = []
         self._pyvista_spin_actors: list[object] = []
         self._pyvista_last_camera_signature: tuple[float, ...] | None = None
-        self._pyvista_camera_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = None
+        self._pyvista_camera_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = (
+            None
+        )
         self._pyvista_light_direction = _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
         self._shutting_down = False
         self._refreshing_theme = False
@@ -1770,7 +1827,9 @@ class AtomicStructureViewer(QWidget):
             "Middle drag: pan | Wheel: zoom"
         )
         self._interaction_hint.setWordWrap(True)
-        self._interaction_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._interaction_hint.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         style_hint_text(self._interaction_hint)
         self._selection_label = _ElidingLabel("Selected atom: -")
         self._selection_label.setWordWrap(False)
@@ -1891,16 +1950,24 @@ class AtomicStructureViewer(QWidget):
         plotter = getattr(canvas, "plotter", None)
         if watched is canvas or watched is plotter:
             event_type = event.type()
-            if event_type == QEvent.Type.MouseButtonPress and getattr(event, "button", lambda: Qt.MouseButton.NoButton)() == Qt.MouseButton.LeftButton:
+            if (
+                event_type == QEvent.Type.MouseButtonPress
+                and getattr(event, "button", lambda: Qt.MouseButton.NoButton)()
+                == Qt.MouseButton.LeftButton
+            ):
                 modifiers = getattr(event, "modifiers", lambda: Qt.KeyboardModifier.NoModifier)()
-                self._native_selection_modifier = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+                self._native_selection_modifier = bool(
+                    modifiers & Qt.KeyboardModifier.ShiftModifier
+                )
                 self._latched_selection_modifier = self._native_selection_modifier
                 focus_target = watched if isinstance(watched, QWidget) else self._canvas
                 if isinstance(focus_target, QWidget):
                     focus_target.setFocus(Qt.FocusReason.MouseFocusReason)
             elif event_type in {QEvent.Type.KeyPress, QEvent.Type.KeyRelease}:
                 modifiers = getattr(event, "modifiers", lambda: Qt.KeyboardModifier.NoModifier)()
-                self._native_selection_modifier = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+                self._native_selection_modifier = bool(
+                    modifiers & Qt.KeyboardModifier.ShiftModifier
+                )
         return super().eventFilter(watched, event)
 
     def shutdown(self) -> None:
@@ -2067,9 +2134,13 @@ class AtomicStructureViewer(QWidget):
         previous_selected = list(getattr(self, "_selected_indexes", []))
         live_pyvista_snapshot = self._current_pyvista_camera_snapshot()
         previous_pyvista_snapshot = deepcopy(
-            live_pyvista_snapshot if live_pyvista_snapshot is not None else getattr(self, "_pyvista_camera_snapshot", None)
+            live_pyvista_snapshot
+            if live_pyvista_snapshot is not None
+            else getattr(self, "_pyvista_camera_snapshot", None)
         )
-        had_existing_structure = self._structure is not None and self._atoms is not None and len(self._atoms) > 0
+        had_existing_structure = (
+            self._structure is not None and self._atoms is not None and len(self._atoms) > 0
+        )
 
         self.set_structure(structure)
 
@@ -2080,9 +2151,7 @@ class AtomicStructureViewer(QWidget):
 
         max_atom_index = len(structure.species)
         normalized_selection = [
-            int(index)
-            for index in previous_selected
-            if 0 <= int(index) < max_atom_index
+            int(index) for index in previous_selected if 0 <= int(index) < max_atom_index
         ]
         self._selected_indexes = normalized_selection
         self._selected_index = None if not normalized_selection else int(normalized_selection[-1])
@@ -2114,8 +2183,12 @@ class AtomicStructureViewer(QWidget):
         self._atoms = self._to_atoms(structure)
         self._spins = self._extract_spins(structure)
         max_atom_index = len(structure.species)
-        self._selected_indexes = [index for index in self._selected_indexes if 0 <= int(index) < max_atom_index]
-        self._selected_index = None if not self._selected_indexes else int(self._selected_indexes[-1])
+        self._selected_indexes = [
+            index for index in self._selected_indexes if 0 <= int(index) < max_atom_index
+        ]
+        self._selected_index = (
+            None if not self._selected_indexes else int(self._selected_indexes[-1])
+        )
         self._update_selection_label()
 
         if self._try_update_pyvista_atom_geometry():
@@ -2128,14 +2201,20 @@ class AtomicStructureViewer(QWidget):
             self._spins = None
         else:
             spin_array = np.asarray(spins, dtype=float)
-            valid_shape = spin_array.shape == (len(self._atoms),) or spin_array.shape == (len(self._atoms), 3)
+            valid_shape = spin_array.shape == (len(self._atoms),) or spin_array.shape == (
+                len(self._atoms),
+                3,
+            )
             self._spins = spin_array.copy() if valid_shape else None
         if self._spins is not None and np.any(np.abs(self._spins) > 1e-10):
             self._show_spins.setChecked(True)
         self._store_view()
         self._render()
 
-    def set_moment_vectors(self, moments: list[list[float]] | tuple[tuple[float, float, float], ...] | np.ndarray | None) -> None:
+    def set_moment_vectors(
+        self,
+        moments: list[list[float]] | tuple[tuple[float, float, float], ...] | np.ndarray | None,
+    ) -> None:
         """Replace current per-atom magnetic moment vectors and redraw."""
         self.set_spins(moments)
 
@@ -2282,8 +2361,14 @@ class AtomicStructureViewer(QWidget):
                     qcolor = QColor(colors_raw)
                     if not qcolor.isValid():
                         continue
-                    colors = np.tile(np.asarray(qcolor.getRgbF()[:3], dtype=float), (len(positions), 1))
-                elif isinstance(colors_raw, (list, tuple)) and colors_raw and isinstance(colors_raw[0], str):
+                    colors = np.tile(
+                        np.asarray(qcolor.getRgbF()[:3], dtype=float), (len(positions), 1)
+                    )
+                elif (
+                    isinstance(colors_raw, (list, tuple))
+                    and colors_raw
+                    and isinstance(colors_raw[0], str)
+                ):
                     color_rows: list[np.ndarray] = []
                     if len(colors_raw) != len(positions):
                         continue
@@ -2428,7 +2513,9 @@ class AtomicStructureViewer(QWidget):
         return tuple(int(index) for index in self._selected_indexes)
 
     def _set_selected_atom(self, atom_index: int | None, *, emit_signal: bool) -> None:
-        self._set_selected_atoms([] if atom_index is None else [int(atom_index)], emit_signal=emit_signal)
+        self._set_selected_atoms(
+            [] if atom_index is None else [int(atom_index)], emit_signal=emit_signal
+        )
 
     def _set_selected_atoms(self, atom_indexes: Iterable[int], *, emit_signal: bool) -> None:
         normalized: list[int] = []
@@ -2468,8 +2555,12 @@ class AtomicStructureViewer(QWidget):
             self._selection_label.setText(selection_text)
             self._selection_label.setToolTip(selection_text)
             return
-        entries = [f"#{index + 1} {self._atoms[index].symbol}" for index in self._selected_indexes[:4]]
-        suffix = "" if len(self._selected_indexes) <= 4 else f" +{len(self._selected_indexes) - 4} more"
+        entries = [
+            f"#{index + 1} {self._atoms[index].symbol}" for index in self._selected_indexes[:4]
+        ]
+        suffix = (
+            "" if len(self._selected_indexes) <= 4 else f" +{len(self._selected_indexes) - 4} more"
+        )
         text = f"Selected atoms: {len(self._selected_indexes)} | " + ", ".join(entries) + suffix
         self._selection_label.setText(text)
         self._selection_label.setToolTip(text)
@@ -2531,7 +2622,11 @@ class AtomicStructureViewer(QWidget):
             return False
         current_lattice = np.asarray(self._structure.lattice_vectors, dtype=float)
         updated_lattice = np.asarray(structure.lattice_vectors, dtype=float)
-        return current_lattice.shape == (3, 3) and updated_lattice.shape == (3, 3) and np.allclose(current_lattice, updated_lattice)
+        return (
+            current_lattice.shape == (3, 3)
+            and updated_lattice.shape == (3, 3)
+            and np.allclose(current_lattice, updated_lattice)
+        )
 
     def _redraw_preserving_view(self) -> None:
         self._store_view()
@@ -2589,7 +2684,10 @@ class AtomicStructureViewer(QWidget):
             up_hint = np.array([0.0, 0.0, 1.0], dtype=float)
             for candidate in fallback_up_map.get(normalized_name, ()):
                 candidate_array = _normalized_vector(np.asarray(candidate, dtype=float), up_hint)
-                if abs(float(np.dot(_normalized_vector(direction, direction), candidate_array))) < 0.96:
+                if (
+                    abs(float(np.dot(_normalized_vector(direction, direction), candidate_array)))
+                    < 0.96
+                ):
                     up_hint = candidate_array
                     break
             camera_direction = _normalized_vector(direction, np.array([0.0, 0.0, 1.0], dtype=float))
@@ -2654,7 +2752,11 @@ class AtomicStructureViewer(QWidget):
             override_mask = np.all(np.isfinite(color_overrides), axis=1)
             colors[override_mask] = color_overrides[override_mask]
         spin_tips = np.empty((0, 3), dtype=float)
-        if self._show_spins.isChecked() and self._spins is not None and len(self._spins) == len(positions):
+        if (
+            self._show_spins.isChecked()
+            and self._spins is not None
+            and len(self._spins) == len(positions)
+        ):
             spin_tips = self._spin_extent_points(positions, radii, self._spins)
         extra_points = None
         if self._show_cell.isChecked():
@@ -2663,7 +2765,11 @@ class AtomicStructureViewer(QWidget):
         isosurface_vertices = [spec.vertices for spec in self._isosurface_specs if len(spec.faces)]
         if isosurface_vertices:
             isosurface_points = np.vstack(isosurface_vertices)
-            extra_points = isosurface_points if extra_points is None else np.vstack([extra_points, isosurface_points])
+            extra_points = (
+                isosurface_points
+                if extra_points is None
+                else np.vstack([extra_points, isosurface_points])
+            )
         slice_points: list[np.ndarray] = []
         for spec in self._slice_specs:
             slice_points.append(
@@ -2677,19 +2783,38 @@ class AtomicStructureViewer(QWidget):
             )
         if slice_points:
             overlay_points = np.vstack(slice_points)
-            extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
+            extra_points = (
+                overlay_points
+                if extra_points is None
+                else np.vstack([extra_points, overlay_points])
+            )
         if len(spin_tips):
-            extra_points = spin_tips if extra_points is None else np.vstack([extra_points, spin_tips])
+            extra_points = (
+                spin_tips if extra_points is None else np.vstack([extra_points, spin_tips])
+            )
         if self._point_overlay_specs:
-            overlay_points = np.vstack([spec.positions for spec in self._point_overlay_specs if len(spec.positions)])
-            if len(overlay_points):
-                extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
-        if self._line_overlay_specs:
             overlay_points = np.vstack(
-                [np.vstack([spec.start.reshape(1, 3), spec.end.reshape(1, 3)]) for spec in self._line_overlay_specs]
+                [spec.positions for spec in self._point_overlay_specs if len(spec.positions)]
             )
             if len(overlay_points):
-                extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
+                extra_points = (
+                    overlay_points
+                    if extra_points is None
+                    else np.vstack([extra_points, overlay_points])
+                )
+        if self._line_overlay_specs:
+            overlay_points = np.vstack(
+                [
+                    np.vstack([spec.start.reshape(1, 3), spec.end.reshape(1, 3)])
+                    for spec in self._line_overlay_specs
+                ]
+            )
+            if len(overlay_points):
+                extra_points = (
+                    overlay_points
+                    if extra_points is None
+                    else np.vstack([extra_points, overlay_points])
+                )
         if extra_points is None:
             extra_points = np.empty((0, 3), dtype=float)
         return positions, numbers, symbols, colors, radii, extra_points
@@ -2717,7 +2842,9 @@ class AtomicStructureViewer(QWidget):
             if abs(camera_sign) <= 1e-12:
                 hidden_mask &= False
                 continue
-            distances = np.asarray((positions - spec.anchor.reshape(1, 3)) @ spec.normal.reshape(3, 1), dtype=float).reshape(-1)
+            distances = np.asarray(
+                (positions - spec.anchor.reshape(1, 3)) @ spec.normal.reshape(3, 1), dtype=float
+            ).reshape(-1)
             hidden_mask &= (distances * camera_sign) > 1e-6
         return hidden_mask
 
@@ -2731,7 +2858,9 @@ class AtomicStructureViewer(QWidget):
             return np.zeros((0,), dtype=bool)
         return ~self._hidden_atom_indexes_for_slices(positions)
 
-    def _filtered_spin_values(self, spins: np.ndarray | None, visible_mask: np.ndarray) -> np.ndarray | None:
+    def _filtered_spin_values(
+        self, spins: np.ndarray | None, visible_mask: np.ndarray
+    ) -> np.ndarray | None:
         if spins is None:
             return None
         spin_values = np.asarray(spins, dtype=float)
@@ -2771,18 +2900,28 @@ class AtomicStructureViewer(QWidget):
     def _apply_pick_selection(self, atom_index: int, *, event=None) -> None:
         additive = self._selection_modifier_active(event) or self._latched_selection_modifier
         if additive and atom_index in self._selected_indexes:
-            self._set_selected_atoms([index for index in self._selected_indexes if index != atom_index], emit_signal=True)
+            self._set_selected_atoms(
+                [index for index in self._selected_indexes if index != atom_index], emit_signal=True
+            )
             return
         if additive:
-            self._set_selected_atoms(list(self._selected_indexes) + [int(atom_index)], emit_signal=True)
+            self._set_selected_atoms(
+                list(self._selected_indexes) + [int(atom_index)], emit_signal=True
+            )
             return
         self._set_selected_atoms([int(atom_index)], emit_signal=True)
 
-    def _spin_extent_points(self, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray) -> np.ndarray:
+    def _spin_extent_points(
+        self, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray
+    ) -> np.ndarray:
         tips: list[np.ndarray] = []
         for position, radius, spin in zip(positions, radii, spins):
             spin_array = np.asarray(spin, dtype=float)
-            spin_vector = spin_array if spin_array.shape == (3,) else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+            spin_vector = (
+                spin_array
+                if spin_array.shape == (3,)
+                else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+            )
             magnitude = float(np.linalg.norm(spin_vector))
             if magnitude <= 1e-10:
                 continue
@@ -2860,7 +2999,9 @@ class AtomicStructureViewer(QWidget):
             if self._slice_specs:
                 self._draw_pyvista_slices(plotter, pv)
             if self._limits is None:
-                self._limits = _compute_limits(positions, atom_radii=radii, extra_points=extra_points, margin=0.1)
+                self._limits = _compute_limits(
+                    positions, atom_radii=radii, extra_points=extra_points, margin=0.1
+                )
             self._apply_pyvista_camera()
             self._canvas.draw_idle()
             return
@@ -2911,7 +3052,9 @@ class AtomicStructureViewer(QWidget):
             )
 
         if self._show_spins.isChecked() and visible_spins is not None:
-            self._pyvista_spin_actors = self._draw_pyvista_spins(plotter, pv, draw_positions, draw_radii, visible_spins)
+            self._pyvista_spin_actors = self._draw_pyvista_spins(
+                plotter, pv, draw_positions, draw_radii, visible_spins
+            )
 
         if self._show_cell.isChecked():
             self._draw_pyvista_unit_cell(plotter, pv)
@@ -2927,11 +3070,15 @@ class AtomicStructureViewer(QWidget):
             self._draw_pyvista_selection(plotter, pv, positions, radii)
 
         if self._limits is None:
-            self._limits = _compute_limits(positions, atom_radii=radii, extra_points=extra_points, margin=0.1)
+            self._limits = _compute_limits(
+                positions, atom_radii=radii, extra_points=extra_points, margin=0.1
+            )
         self._apply_pyvista_camera()
         self._canvas.draw_idle()
 
-    def _current_pyvista_camera_snapshot(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
+    def _current_pyvista_camera_snapshot(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
         if self._backend_name != "pyvista" or self._shutting_down:
             return None
         camera = getattr(getattr(self._canvas, "plotter", None), "camera", None)
@@ -2963,7 +3110,9 @@ class AtomicStructureViewer(QWidget):
             plotter.camera.up = tuple(float(value) for value in up)
             plotter.camera.parallel_scale = float(parallel_scale)
             plotter.reset_camera_clipping_range()
-            self._configure_pyvista_lighting(plotter, _pyvista_modules()[0], focal_point=focal_point)
+            self._configure_pyvista_lighting(
+                plotter, _pyvista_modules()[0], focal_point=focal_point
+            )
             self._pyvista_last_camera_signature = self._pyvista_camera_signature()
             self._axis.set_from_state(self._camera_state)
             return
@@ -2988,8 +3137,12 @@ class AtomicStructureViewer(QWidget):
         reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
         if abs(float(np.dot(view_direction, reference_up))) > 0.96:
             reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
-        right = _normalized_vector(np.cross(view_direction, reference_up), np.array([1.0, 0.0, 0.0], dtype=float))
-        up = _normalized_vector(np.cross(right, view_direction), np.array([0.0, 0.0, 1.0], dtype=float))
+        right = _normalized_vector(
+            np.cross(view_direction, reference_up), np.array([1.0, 0.0, 0.0], dtype=float)
+        )
+        up = _normalized_vector(
+            np.cross(right, view_direction), np.array([0.0, 0.0, 1.0], dtype=float)
+        )
         if abs(float(self._camera_state.roll)) > 1e-12:
             angle = math.radians(float(self._camera_state.roll))
             up = (
@@ -3042,7 +3195,9 @@ class AtomicStructureViewer(QWidget):
         if signature is None or signature == self._pyvista_last_camera_signature:
             return
         camera = self._canvas.plotter.camera
-        self._camera_state = _camera_state_from_vectors(camera.position, camera.focal_point, camera.up)
+        self._camera_state = _camera_state_from_vectors(
+            camera.position, camera.focal_point, camera.up
+        )
         self._capture_pyvista_camera_snapshot()
         self._pyvista_last_camera_signature = signature
         self._view = (self._camera_state.elev, self._camera_state.azim)
@@ -3151,13 +3306,19 @@ class AtomicStructureViewer(QWidget):
         if point is None:
             return False
         coordinates = np.asarray(point, dtype=float)
-        if coordinates.shape != (3,) or self._pyvista_atom_positions.size == 0 or np.any(np.isnan(coordinates)):
+        if (
+            coordinates.shape != (3,)
+            or self._pyvista_atom_positions.size == 0
+            or np.any(np.isnan(coordinates))
+        ):
             return False
         distances = np.linalg.norm(self._pyvista_atom_positions - coordinates.reshape(1, 3), axis=1)
         index = int(np.argmin(distances))
         tolerance = max(0.45, 1.35 * float(self._pyvista_atom_radii[index]))
         if float(distances[index]) <= tolerance:
-            self._latched_selection_modifier = self._pyvista_selection_modifier_active() if additive is None else bool(additive)
+            self._latched_selection_modifier = (
+                self._pyvista_selection_modifier_active() if additive is None else bool(additive)
+            )
             mapped_index = index
             if 0 <= index < len(self._pyvista_atom_lookup_indices):
                 mapped_index = int(self._pyvista_atom_lookup_indices[index])
@@ -3309,7 +3470,10 @@ class AtomicStructureViewer(QWidget):
 
         removed = False
         actors = list(self._pyvista_isosurface_actors)
-        if self._pyvista_isosurface_actor is not None and self._pyvista_isosurface_actor not in actors:
+        if (
+            self._pyvista_isosurface_actor is not None
+            and self._pyvista_isosurface_actor not in actors
+        ):
             actors.append(self._pyvista_isosurface_actor)
         for actor in actors:
             try:
@@ -3322,7 +3486,12 @@ class AtomicStructureViewer(QWidget):
         return removed
 
     def _try_update_pyvista_isosurface_overlay(self) -> bool:
-        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+        if (
+            self._backend_name != "pyvista"
+            or self._shutting_down
+            or self._atoms is None
+            or len(self._atoms) == 0
+        ):
             return False
 
         plotter = getattr(self._canvas, "plotter", None)
@@ -3367,7 +3536,11 @@ class AtomicStructureViewer(QWidget):
         return removed
 
     def _try_update_pyvista_slice_overlay(self) -> bool:
-        if self._backend_name != "pyvista" or self._shutting_down or self._hide_atoms_in_front_of_planes:
+        if (
+            self._backend_name != "pyvista"
+            or self._shutting_down
+            or self._hide_atoms_in_front_of_planes
+        ):
             return False
 
         plotter = getattr(self._canvas, "plotter", None)
@@ -3416,7 +3589,12 @@ class AtomicStructureViewer(QWidget):
         return True
 
     def _try_update_pyvista_point_overlay(self) -> bool:
-        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+        if (
+            self._backend_name != "pyvista"
+            or self._shutting_down
+            or self._atoms is None
+            or len(self._atoms) == 0
+        ):
             return False
 
         plotter = getattr(self._canvas, "plotter", None)
@@ -3439,7 +3617,12 @@ class AtomicStructureViewer(QWidget):
         return True
 
     def _try_update_pyvista_line_overlay(self) -> bool:
-        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+        if (
+            self._backend_name != "pyvista"
+            or self._shutting_down
+            or self._atoms is None
+            or len(self._atoms) == 0
+        ):
             return False
 
         plotter = getattr(self._canvas, "plotter", None)
@@ -3504,12 +3687,19 @@ class AtomicStructureViewer(QWidget):
             return False
 
         self._remove_pyvista_selection_overlay()
-        self._draw_pyvista_selection(plotter, pv, self._pyvista_all_atom_positions, self._pyvista_all_atom_radii)
+        self._draw_pyvista_selection(
+            plotter, pv, self._pyvista_all_atom_positions, self._pyvista_all_atom_radii
+        )
         self._canvas.draw_idle()
         return True
 
     def _try_update_pyvista_atom_geometry(self) -> bool:
-        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+        if (
+            self._backend_name != "pyvista"
+            or self._shutting_down
+            or self._atoms is None
+            or len(self._atoms) == 0
+        ):
             return False
         plotter = getattr(self._canvas, "plotter", None)
         if plotter is None:
@@ -3580,10 +3770,14 @@ class AtomicStructureViewer(QWidget):
             name="atom-pick-points",
         )
 
-        self._try_update_pyvista_spin_overlay() if self._show_spins.isChecked() and visible_spins is not None else self._remove_pyvista_actor_group(self._pyvista_spin_actors)
+        self._try_update_pyvista_spin_overlay() if self._show_spins.isChecked() and visible_spins is not None else self._remove_pyvista_actor_group(
+            self._pyvista_spin_actors
+        )
         if not (self._show_spins.isChecked() and visible_spins is not None):
             self._pyvista_spin_actors = []
-        self._try_update_pyvista_bond_overlay() if self._show_bonds.isChecked() else self._remove_pyvista_actor_group(self._pyvista_bond_actors)
+        self._try_update_pyvista_bond_overlay() if self._show_bonds.isChecked() else self._remove_pyvista_actor_group(
+            self._pyvista_bond_actors
+        )
         if not self._show_bonds.isChecked():
             self._pyvista_bond_actors = []
         if self._selected_indexes:
@@ -3642,14 +3836,8 @@ class AtomicStructureViewer(QWidget):
                 self._pyvista_all_atom_positions.size == 0
                 and self._pyvista_atom_positions.size == 0
             )
-            or (
-                self._pyvista_all_atom_radii.size == 0
-                and self._pyvista_atom_radii.size == 0
-            )
-            or (
-                self._pyvista_all_atom_colors.size == 0
-                and self._pyvista_atom_colors.size == 0
-            )
+            or (self._pyvista_all_atom_radii.size == 0 and self._pyvista_atom_radii.size == 0)
+            or (self._pyvista_all_atom_colors.size == 0 and self._pyvista_atom_colors.size == 0)
         ):
             return False
 
@@ -3659,9 +3847,21 @@ class AtomicStructureViewer(QWidget):
 
         atom_alpha = 0.5 if self._show_spins.isChecked() and self._spins is not None else 1.0
         bond_alpha = float(np.clip(0.84 * atom_alpha, 0.2, 0.8))
-        positions = self._pyvista_all_atom_positions if self._pyvista_all_atom_positions.size != 0 else self._pyvista_atom_positions
-        colors = self._pyvista_all_atom_colors if self._pyvista_all_atom_colors.size != 0 else self._pyvista_atom_colors
-        radii = self._pyvista_all_atom_radii if self._pyvista_all_atom_radii.size != 0 else self._pyvista_atom_radii
+        positions = (
+            self._pyvista_all_atom_positions
+            if self._pyvista_all_atom_positions.size != 0
+            else self._pyvista_atom_positions
+        )
+        colors = (
+            self._pyvista_all_atom_colors
+            if self._pyvista_all_atom_colors.size != 0
+            else self._pyvista_atom_colors
+        )
+        radii = (
+            self._pyvista_all_atom_radii
+            if self._pyvista_all_atom_radii.size != 0
+            else self._pyvista_atom_radii
+        )
         visible_mask = self._visible_atom_mask(positions)
         self._pyvista_bond_actors = self._draw_pyvista_bonds(
             plotter,
@@ -3691,13 +3891,9 @@ class AtomicStructureViewer(QWidget):
             self._show_spins.isChecked()
             and self._spins is not None
             and (
-                self._pyvista_all_atom_positions.size != 0
-                or self._pyvista_atom_positions.size != 0
+                self._pyvista_all_atom_positions.size != 0 or self._pyvista_atom_positions.size != 0
             )
-            and (
-                self._pyvista_all_atom_radii.size != 0
-                or self._pyvista_atom_radii.size != 0
-            )
+            and (self._pyvista_all_atom_radii.size != 0 or self._pyvista_atom_radii.size != 0)
         )
         if not has_spins:
             if self._show_bonds.isChecked():
@@ -3710,8 +3906,16 @@ class AtomicStructureViewer(QWidget):
         if pv is None:
             return False
 
-        positions = self._pyvista_all_atom_positions if self._pyvista_all_atom_positions.size != 0 else self._pyvista_atom_positions
-        radii = self._pyvista_all_atom_radii if self._pyvista_all_atom_radii.size != 0 else self._pyvista_atom_radii
+        positions = (
+            self._pyvista_all_atom_positions
+            if self._pyvista_all_atom_positions.size != 0
+            else self._pyvista_atom_positions
+        )
+        radii = (
+            self._pyvista_all_atom_radii
+            if self._pyvista_all_atom_radii.size != 0
+            else self._pyvista_atom_radii
+        )
         visible_mask = self._visible_atom_mask(positions)
         visible_spins = self._filtered_spin_values(self._spins, visible_mask)
         if visible_spins is None:
@@ -3740,7 +3944,9 @@ class AtomicStructureViewer(QWidget):
             return self._try_update_pyvista_spin_overlay()
         return False
 
-    def _draw_pyvista_selection(self, plotter, pv, positions: np.ndarray, radii: np.ndarray) -> None:
+    def _draw_pyvista_selection(
+        self, plotter, pv, positions: np.ndarray, radii: np.ndarray
+    ) -> None:
         if not self._selected_indexes:
             return
         style = _viewer_style()
@@ -3798,7 +4004,9 @@ class AtomicStructureViewer(QWidget):
         neighbour_list = NeighborList(cutoffs, self_interaction=False, bothways=True, skin=0.0)
         neighbour_list.update(self._atoms)
         cell = np.asarray(self._atoms.cell, dtype=float)
-        bond_pairs: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float, float]] = []
+        bond_pairs: list[
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float, float]
+        ] = []
         for atom_index in range(len(self._atoms)):
             if atom_index >= len(positions) or not visible_mask[atom_index]:
                 continue
@@ -3810,7 +4018,9 @@ class AtomicStructureViewer(QWidget):
                 if neighbour_index >= len(positions) or not visible_mask[neighbour_index]:
                     continue
                 end = positions[neighbour_index] + np.dot(offset, cell)
-                bond_radius = float(np.clip(0.18 * min(radii[atom_index], radii[neighbour_index]), 0.06, 0.16))
+                bond_radius = float(
+                    np.clip(0.18 * min(radii[atom_index], radii[neighbour_index]), 0.06, 0.16)
+                )
                 bond_pairs.append(
                     (
                         start,
@@ -3825,7 +4035,15 @@ class AtomicStructureViewer(QWidget):
 
         if _should_use_fast_pyvista_bond_cylinders(len(self._atoms), len(bond_pairs)):
             tube_segments: list[tuple[np.ndarray, np.ndarray, np.ndarray, float]] = []
-            for start, end, start_color, end_color, bond_radius, start_radius, end_radius in bond_pairs:
+            for (
+                start,
+                end,
+                start_color,
+                end_color,
+                bond_radius,
+                start_radius,
+                end_radius,
+            ) in bond_pairs:
                 visible_segment = _trim_bond_segment_to_surfaces(
                     start,
                     end,
@@ -3834,46 +4052,70 @@ class AtomicStructureViewer(QWidget):
                 )
                 if visible_segment is None:
                     continue
-                bond_color = 0.5 * (np.asarray(start_color, dtype=float) + np.asarray(end_color, dtype=float))
-                tube_segments.append((visible_segment[0], visible_segment[1], bond_color, bond_radius))
+                bond_color = 0.5 * (
+                    np.asarray(start_color, dtype=float) + np.asarray(end_color, dtype=float)
+                )
+                tube_segments.append(
+                    (visible_segment[0], visible_segment[1], bond_color, bond_radius)
+                )
             bond_tubes = _build_pyvista_bond_tube_mesh(pv, segments=tube_segments)
             if bond_tubes is not None:
-                actors.append(plotter.add_mesh(
-                    bond_tubes,
-                    scalars="rgb",
-                    rgb=True,
-                    opacity=float(alpha),
-                    smooth_shading=True,
-                    ambient=0.58,
-                    diffuse=0.28,
-                    specular=0.0,
-                    specular_power=1.0,
-                    pbr=False,
-                    render=False,
-                ))
+                actors.append(
+                    plotter.add_mesh(
+                        bond_tubes,
+                        scalars="rgb",
+                        rgb=True,
+                        opacity=float(alpha),
+                        smooth_shading=True,
+                        ambient=0.58,
+                        diffuse=0.28,
+                        specular=0.0,
+                        specular_power=1.0,
+                        pbr=False,
+                        render=False,
+                    )
+                )
                 return actors
 
         if _should_use_fast_pyvista_bond_lines(len(self._atoms), len(bond_pairs)):
             line_segments: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-            for start, end, start_color, end_color, _bond_radius, _start_radius, _end_radius in bond_pairs:
+            for (
+                start,
+                end,
+                start_color,
+                end_color,
+                _bond_radius,
+                _start_radius,
+                _end_radius,
+            ) in bond_pairs:
                 midpoint = 0.5 * (start + end)
                 line_segments.append((start, midpoint, start_color))
                 line_segments.append((midpoint, end, end_color))
             line_mesh = _build_pyvista_bond_line_mesh(pv, segments=line_segments)
             if line_mesh is not None:
-                actors.append(plotter.add_mesh(
-                    line_mesh,
-                    scalars="rgb",
-                    rgb=True,
-                    opacity=float(alpha),
-                    line_width=2.2,
-                    lighting=False,
-                    pbr=False,
-                    render=False,
-                ))
+                actors.append(
+                    plotter.add_mesh(
+                        line_mesh,
+                        scalars="rgb",
+                        rgb=True,
+                        opacity=float(alpha),
+                        line_width=2.2,
+                        lighting=False,
+                        pbr=False,
+                        render=False,
+                    )
+                )
                 return actors
 
-        for start, end, start_color, end_color, bond_radius, _start_radius, _end_radius in bond_pairs:
+        for (
+            start,
+            end,
+            start_color,
+            end_color,
+            bond_radius,
+            _start_radius,
+            _end_radius,
+        ) in bond_pairs:
             midpoint = 0.5 * (start + end)
             actor = self._add_pyvista_cylinder(
                 plotter,
@@ -3899,7 +4141,17 @@ class AtomicStructureViewer(QWidget):
                 actors.append(actor)
         return actors
 
-    def _add_pyvista_cylinder(self, plotter, pv, start: np.ndarray, end: np.ndarray, *, radius: float, color: np.ndarray, alpha: float):
+    def _add_pyvista_cylinder(
+        self,
+        plotter,
+        pv,
+        start: np.ndarray,
+        end: np.ndarray,
+        *,
+        radius: float,
+        color: np.ndarray,
+        alpha: float,
+    ):
         direction = np.asarray(end, dtype=float) - np.asarray(start, dtype=float)
         height = float(np.linalg.norm(direction))
         if height <= 1e-12:
@@ -3925,11 +4177,17 @@ class AtomicStructureViewer(QWidget):
             render=False,
         )
 
-    def _draw_pyvista_spins(self, plotter, pv, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray) -> list[object]:
+    def _draw_pyvista_spins(
+        self, plotter, pv, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray
+    ) -> list[object]:
         actors: list[object] = []
         for position, radius, spin in zip(positions, radii, spins):
             spin_array = np.asarray(spin, dtype=float)
-            spin_vector = spin_array if spin_array.shape == (3,) else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+            spin_vector = (
+                spin_array
+                if spin_array.shape == (3,)
+                else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+            )
             magnitude = float(np.linalg.norm(spin_vector))
             if magnitude <= 1e-10:
                 continue
@@ -3964,18 +4222,20 @@ class AtomicStructureViewer(QWidget):
                 radius=float(head_radius),
                 resolution=18,
             )
-            actors.append(plotter.add_mesh(
-                cone,
-                color=color,
-                opacity=0.9,
-                smooth_shading=True,
-                ambient=0.58,
-                diffuse=0.28,
-                specular=0.0,
-                specular_power=1.0,
-                pbr=False,
-                render=False,
-            ))
+            actors.append(
+                plotter.add_mesh(
+                    cone,
+                    color=color,
+                    opacity=0.9,
+                    smooth_shading=True,
+                    ambient=0.58,
+                    diffuse=0.28,
+                    specular=0.0,
+                    specular_power=1.0,
+                    pbr=False,
+                    render=False,
+                )
+            )
         return actors
 
     def _draw_crystallographic_axes(self) -> None:

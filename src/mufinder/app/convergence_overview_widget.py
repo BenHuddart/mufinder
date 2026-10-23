@@ -31,6 +31,7 @@ from mufinder.app.theme import (
 
 _PINNED_PLOT_TITLES = {"cutoff": "Cut-off convergence", "kpoint": "k-point convergence"}
 
+
 class _PinnedPlotWidget(QWidget):
     """Render either a pinned convergence plot or an instructional placeholder."""
 
@@ -55,10 +56,14 @@ class _PinnedPlotWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._placeholder, stretch=1)
-        self._canvas_frame = PlotFrame(self._canvas, title=_PINNED_PLOT_TITLES.get(sweep_kind, "Convergence"), parent=self)
+        self._canvas_frame = PlotFrame(
+            self._canvas, title=_PINNED_PLOT_TITLES.get(sweep_kind, "Convergence"), parent=self
+        )
         layout.addWidget(self._canvas_frame, stretch=1)
 
-        self.show_placeholder("Open the analysis tool and adopt a result to pin a convergence plot here.")
+        self.show_placeholder(
+            "Open the analysis tool and adopt a result to pin a convergence plot here."
+        )
 
     def show_placeholder(self, message: str) -> None:
         self._placeholder.setText(message)
@@ -207,7 +212,9 @@ class _PinnedPlotWidget(QWidget):
         force_ax.plot(x_values, forces, marker="o", linestyle="-", color="#b91c1c")
 
         if recommended_value is not None:
-            energy_ax.axvline(recommended_value, color=palette.text_muted, linestyle="-", alpha=0.55)
+            energy_ax.axvline(
+                recommended_value, color=palette.text_muted, linestyle="-", alpha=0.55
+            )
             force_ax.axvline(recommended_value, color=palette.text_muted, linestyle="-", alpha=0.55)
         force_ax.axhline(force_threshold, color=palette.warning, linestyle=":", alpha=0.85)
 
@@ -247,12 +254,16 @@ class _PinnedPlotWidget(QWidget):
             # ticks as exempt from the "all grids have spacings" requirement
             # and suppress their sub-label so the overview is consistent with
             # the examiner's tooltip which also omits the spacing for 1x1x1.
-            has_spacings = bool(point_spacings) and all(
-                grid == "1x1x1" or value in point_spacings
-                for grid, value in zip(grid_labels, x_values, strict=True)
-            ) and any(
-                grid != "1x1x1" and value in point_spacings
-                for grid, value in zip(grid_labels, x_values, strict=True)
+            has_spacings = (
+                bool(point_spacings)
+                and all(
+                    grid == "1x1x1" or value in point_spacings
+                    for grid, value in zip(grid_labels, x_values, strict=True)
+                )
+                and any(
+                    grid != "1x1x1" and value in point_spacings
+                    for grid, value in zip(grid_labels, x_values, strict=True)
+                )
             )
             if has_spacings:
                 ordered_labels = [
@@ -261,9 +272,7 @@ class _PinnedPlotWidget(QWidget):
                     else grid
                     for grid, value in zip(grid_labels, x_values, strict=True)
                 ]
-                force_ax.set_xlabel(
-                    "K-point grid (spacing, 1/Ang)", labelpad=6, fontsize=9
-                )
+                force_ax.set_xlabel("K-point grid (spacing, 1/Ang)", labelpad=6, fontsize=9)
             else:
                 ordered_labels = grid_labels
                 force_ax.set_xlabel("K-point grid", labelpad=6, fontsize=9)

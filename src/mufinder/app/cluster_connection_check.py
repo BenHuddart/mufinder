@@ -122,9 +122,7 @@ class ClusterConnectionCheck(QObject):
             return
         self._active = True
         host = self._config.name or self._config.hostname
-        progress = QProgressDialog(
-            f"Connecting to {host}...", "Cancel", 0, 0, self._parent_widget
-        )
+        progress = QProgressDialog(f"Connecting to {host}...", "Cancel", 0, 0, self._parent_widget)
         progress.setWindowTitle(self._title)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
@@ -178,10 +176,7 @@ class ClusterConnectionCheck(QObject):
     def _on_attempt_failed(self, serial: int, exc: object) -> None:
         if not self._is_current(serial):
             return
-        if (
-            isinstance(exc, SSHUnknownHostKeyError)
-            and exc.endpoint not in self._trusted_endpoints
-        ):
+        if isinstance(exc, SSHUnknownHostKeyError) and exc.endpoint not in self._trusted_endpoints:
             # Hide the busy dialog while the trust prompt is up so the two
             # modal dialogs do not fight for attention.
             if self._progress is not None:
@@ -199,9 +194,7 @@ class ClusterConnectionCheck(QObject):
                     self._progress.show()
                 self._start_attempt()
                 return
-            exc = ConnectionError(
-                "Connection cancelled because the SSH host key was not trusted."
-            )
+            exc = ConnectionError("Connection cancelled because the SSH host key was not trusted.")
         self._finish()
         self.failed.emit(exc)
 

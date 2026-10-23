@@ -53,7 +53,9 @@ def imported(tmp_path: Path, host_structure: Structure):
     document = ProjectDocument(project_root=tmp_path / "project", project=project)
     document.structures[host_structure.id] = host_structure
 
-    scan = scan_legacy_folder(build_folder(tmp_path / "legacy", sites=(1, 2)), host_lattice=HOST_LATTICE)
+    scan = scan_legacy_folder(
+        build_folder(tmp_path / "legacy", sites=(1, 2)), host_lattice=HOST_LATTICE
+    )
     outcome = commit_legacy_import(
         document,
         scan=scan,
@@ -228,9 +230,7 @@ class TestRemoval:
         directories = list(plan.directories)
         assert all(path.is_dir() for path in directories)
 
-        result = remove_imported_relaxations(
-            document, plan, batch_id=outcome.batch_id
-        )
+        result = remove_imported_relaxations(document, plan, batch_id=outcome.batch_id)
 
         assert result.removed == 2
         assert result.errors == []
@@ -316,9 +316,7 @@ class TestRemoval:
         assert result.provenance is not None
 
         entries = [
-            entry
-            for day in build_journal("T", [result.provenance]).days
-            for entry in day.entries
+            entry for day in build_journal("T", [result.provenance]).days for entry in day.entries
         ]
         removal = [entry for entry in entries if entry.title == "Imported relaxations removed"]
 
@@ -371,10 +369,7 @@ class TestDetachingRows:
                     ]
                 },
                 "job_ids_by_label": {
-                    **{
-                        f"positivemuon:{item.label}": str(item.job_id)
-                        for item in outcome.imported
-                    },
+                    **{f"positivemuon:{item.label}": str(item.job_id) for item in outcome.imported},
                     "positivemuon:Site 1": str(uuid4()),
                 },
             },

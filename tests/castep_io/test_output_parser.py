@@ -228,7 +228,10 @@ def test_geometry_success_line_without_closing_summary_is_not_complete(tmp_path:
 def test_stress_run_with_stress_tensor_and_summary_is_complete(tmp_path: Path) -> None:
     output = tmp_path / "stress_complete.castep"
     output.write_text(
-        _STRESS_ON_HEADER + _ENERGY_AND_FORCES + _STRESS_BLOCK + "Total time          =     32.92 s\n",
+        _STRESS_ON_HEADER
+        + _ENERGY_AND_FORCES
+        + _STRESS_BLOCK
+        + "Total time          =     32.92 s\n",
         encoding="utf-8",
     )
 
@@ -248,7 +251,9 @@ def test_stress_run_missing_stress_tensor_is_not_complete_even_with_summary(tmp_
     assert parse_castep_output(output).completed is False
 
 
-def test_stress_tensor_from_an_earlier_restart_does_not_complete_a_later_one(tmp_path: Path) -> None:
+def test_stress_tensor_from_an_earlier_restart_does_not_complete_a_later_one(
+    tmp_path: Path,
+) -> None:
     # The latest restart requested stress but stopped before printing it; the
     # earlier restart's tensor must not stand in for it.
     output = tmp_path / "stress_restart.castep"
@@ -272,9 +277,7 @@ def test_stress_tensor_from_an_earlier_restart_does_not_complete_a_later_one(tmp
 def test_parse_castep_output_reads_max_force_line_without_force_block(tmp_path: Path) -> None:
     output = tmp_path / "max_force_only.castep"
     output.write_text(
-        "NB est. 0K energy (E-0.5TS) = -4.2 eV\n"
-        "Maximum force = 0.1234 eV/A\n"
-        "Total time = 3.0 s\n",
+        "NB est. 0K energy (E-0.5TS) = -4.2 eV\nMaximum force = 0.1234 eV/A\nTotal time = 3.0 s\n",
         encoding="utf-8",
     )
 
@@ -420,13 +423,9 @@ class TestBlockHeaderDetection:
             "************* Unconstrained Forces *************",
         ],
     )
-    def test_force_headers_are_found_in_any_case(
-        self, tmp_path: Path, force_header: str
-    ) -> None:
+    def test_force_headers_are_found_in_any_case(self, tmp_path: Path, force_header: str) -> None:
         path = tmp_path / "seed.castep"
-        path.write_text(
-            self._output(force_header, "***** Stress Tensor *****"), encoding="utf-8"
-        )
+        path.write_text(self._output(force_header, "***** Stress Tensor *****"), encoding="utf-8")
 
         result = parse_castep_output(path)
 
@@ -440,21 +439,15 @@ class TestBlockHeaderDetection:
             "***** STRESS TENSOR *****",
         ],
     )
-    def test_stress_headers_are_found_in_any_case(
-        self, tmp_path: Path, stress_header: str
-    ) -> None:
+    def test_stress_headers_are_found_in_any_case(self, tmp_path: Path, stress_header: str) -> None:
         path = tmp_path / "seed.castep"
-        path.write_text(
-            self._output("***** Forces *****", stress_header), encoding="utf-8"
-        )
+        path.write_text(self._output("***** Forces *****", stress_header), encoding="utf-8")
 
         result = parse_castep_output(path)
 
         assert result.stress[0] == pytest.approx((1.0, 0.0, 0.0))
 
-    def test_the_guard_is_permissive_and_the_regex_still_decides(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_guard_is_permissive_and_the_regex_still_decides(self, tmp_path: Path) -> None:
         """A line can pass the substring guard and still not be a header.
 
         The guard only rejects lines the regex could never match; it must not be

@@ -27,7 +27,9 @@ def add_relaxed_muon_site(
 ) -> MuonSite:
     """Add one eligible relaxed muon source whose site stores the absolute total energy."""
 
-    positions = [[0.1 * index, 0.0, 0.0] for index in range(len(species) - 1)] + [[0.25, 0.25, 0.25]]
+    positions = [[0.1 * index, 0.0, 0.0] for index in range(len(species) - 1)] + [
+        [0.25, 0.25, 0.25]
+    ]
     relaxed = Structure(
         label=f"{label} relaxed",
         origin="muon_relaxation",
@@ -54,7 +56,9 @@ def add_relaxed_muon_site(
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, total_energy_eV=total_energy)
+    site = MuonSite(
+        label=label, status="relaxed", relaxation_run_id=run.id, total_energy_eV=total_energy
+    )
     doc.sites[site.id] = site
     return site
 
@@ -67,7 +71,9 @@ def relaxation_job_id(doc: ProjectDocument, site: MuonSite) -> UUID:
     return run.job_id
 
 
-def bind_muon_relaxation_row(doc: ProjectDocument, site: MuonSite, job: Job, charge_state: str) -> None:
+def bind_muon_relaxation_row(
+    doc: ProjectDocument, site: MuonSite, job: Job, charge_state: str
+) -> None:
     """Bind ``job`` to ``site`` by a muon-relaxation row in ``charge_state``.
 
     Models a start relaxed in a second charge state: the site's own link stays
@@ -133,7 +139,10 @@ def clustered_workspace(
                     for cluster in clusters
                 ],
                 "wyckoff_assignments": [
-                    {"cluster_index": cluster.cluster_index, "match": {"label": cluster.wyckoff_label}}
+                    {
+                        "cluster_index": cluster.cluster_index,
+                        "match": {"label": cluster.wyckoff_label},
+                    }
                     for cluster in clusters
                     if cluster.wyckoff_label
                 ],

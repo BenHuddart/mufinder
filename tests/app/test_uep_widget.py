@@ -22,7 +22,9 @@ from tests.support.reset_menu import install_fake_menu, open_reset_menu
 def test_uep_widget_source_structure_selector_emits_selection_signal(qapp) -> None:
     widget = UEPWidget()
     selected: list[str] = []
-    widget.source_structure_selection_requested.connect(lambda payload: selected.append(str(payload)))
+    widget.source_structure_selection_requested.connect(
+        lambda payload: selected.append(str(payload))
+    )
 
     widget.set_source_structure_options(
         [
@@ -258,13 +260,13 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
             *,
             specs: list[Any],
             workflow_stage: str,
-                locked_values: Mapping[str, object],
-                intro_text: str | None = None,
-                read_only: bool = False,
-                species_options: tuple[str, ...] = (),
-                parent: object | None = None,
-            ) -> None:
-                del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
+            locked_values: Mapping[str, object],
+            intro_text: str | None = None,
+            read_only: bool = False,
+            species_options: tuple[str, ...] = (),
+            parent: object | None = None,
+        ) -> None:
+            del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
 
         def set_values(
             self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
@@ -326,14 +328,14 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
             *,
             specs: list[Any],
             workflow_stage: str,
-                locked_values: Mapping[str, object],
-                intro_text: str | None = None,
-                read_only: bool = False,
-                species_options: tuple[str, ...] = (),
-                parent: object | None = None,
-            ) -> None:
-                del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
-                self._payload = next(dialog_payloads)
+            locked_values: Mapping[str, object],
+            intro_text: str | None = None,
+            read_only: bool = False,
+            species_options: tuple[str, ...] = (),
+            parent: object | None = None,
+        ) -> None:
+            del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
+            self._payload = next(dialog_payloads)
 
         def set_values(
             self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
@@ -586,7 +588,9 @@ def test_uep_batch_configure_empty_selection_is_noop(qapp, monkeypatch) -> None:
         lambda _self: opened.append(1) or QDialog.DialogCode.Accepted,
     )
     infos: list[str] = []
-    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, _message: infos.append(title))
+    monkeypatch.setattr(
+        QMessageBox, "information", lambda _parent, title, _message: infos.append(title)
+    )
 
     widget._table.clearSelection()
     widget._configure_selected_rows()
@@ -688,7 +692,9 @@ def test_uep_wizard_button_opens_clicked_row_without_prompt(qapp, monkeypatch) -
     widget._add_row()
     widget._add_row()
     prompts: list[object] = []
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(a))
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(a)
+    )
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(a))
     requested: list[str] = []
     widget.wizard_requested.connect(requested.append)
@@ -705,9 +711,7 @@ def test_uep_wizard_button_opens_clicked_row_without_prompt(qapp, monkeypatch) -
 
 def test_uep_supercell_cancel_restores_combo_and_changes_nothing(qapp, monkeypatch) -> None:
     widget = UEPWidget()
-    widget.set_supercell_options(
-        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
-    )
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
     widget._add_row()
     widget._add_row()
     first_id = widget._row_id_at(0)
@@ -834,7 +838,11 @@ def test_uep_widget_result_cells_are_read_only(qapp) -> None:
     widget._add_row()
     widget.set_runtime_states({"source_01": UepRunState(status="completed", total_energy=-1.5)})
 
-    for column in (widget._STATUS_COLUMN, widget._TOTAL_ENERGY_COLUMN, widget._POTENTIAL_GRID_COLUMN):
+    for column in (
+        widget._STATUS_COLUMN,
+        widget._TOTAL_ENERGY_COLUMN,
+        widget._POTENTIAL_GRID_COLUMN,
+    ):
         item = widget._table.item(0, column)
         assert item is not None
         assert not bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
@@ -846,14 +854,19 @@ def test_uep_widget_supercell_shows_the_kpoint_adjustment(qapp) -> None:
     cubic = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
     widget = UEPWidget()
     widget.set_host_lattice(cubic)
-    widget.set_project_defaults(cutoff_energy=None, kpoint_grid=(4, 4, 4), kpoint_reference_lattice=cubic)
+    widget.set_project_defaults(
+        cutoff_energy=None, kpoint_grid=(4, 4, 4), kpoint_reference_lattice=cubic
+    )
     widget._add_row()
     row_id = widget._row_id_at(0)
 
     widget.set_row_supercell(row_id, ((2, 0, 0), (0, 2, 0), (0, 0, 2)))
 
     assert not widget._kpoint_message.isHidden()
-    assert widget._kpoint_message.text() == "K-point grid adjusted from 4x4x4 to 2x2x2 for equivalent density."
+    assert (
+        widget._kpoint_message.text()
+        == "K-point grid adjusted from 4x4x4 to 2x2x2 for equivalent density."
+    )
     assert widget._effective_params_for_row(row_id)["kpoint_mp_grid"] == (2, 2, 2)
 
 
@@ -865,7 +878,9 @@ def test_uep_supercell_choice_skips_locked_rows_in_a_multi_row_selection(qapp, m
     first_id, second_id = widget._row_id_at(0), widget._row_id_at(1)
     widget.set_runtime_states({"source_02": UepRunState(status="running")})
     monkeypatch.setattr(
-        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
     )
 
     _select_uep_rows(widget, (0, 1))

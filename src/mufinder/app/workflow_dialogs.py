@@ -6,7 +6,16 @@ from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QLabel, QHBoxLayout, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QLabel,
+    QHBoxLayout,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog

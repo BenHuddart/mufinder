@@ -219,9 +219,13 @@ class SSHConnection:
         try:
             if self._config.jump_host_enabled:
                 if not self._config.jump_hostname.strip():
-                    raise ConnectionError("Jump host name is required when jump-host access is enabled.")
+                    raise ConnectionError(
+                        "Jump host name is required when jump-host access is enabled."
+                    )
                 if not self._config.jump_username.strip():
-                    raise ConnectionError("Jump host username is required when jump-host access is enabled.")
+                    raise ConnectionError(
+                        "Jump host username is required when jump-host access is enabled."
+                    )
                 jump_client = self._connect_endpoint(
                     paramiko,
                     endpoint="jump",
@@ -301,7 +305,9 @@ class SSHConnection:
             if auth_method == "password":
                 if not secret:
                     label = "jump host" if endpoint == "jump" else "password"
-                    raise SSHAuthenticationError(f"Password is required for {label} authentication.")
+                    raise SSHAuthenticationError(
+                        f"Password is required for {label} authentication."
+                    )
                 client.connect(
                     **base_kwargs,
                     password=secret,
@@ -361,7 +367,9 @@ class SSHConnection:
                     port=port,
                     details=str(exc),
                 ) from exc
-            raise SSHTransportError(f"SSH connection failed: {_format_exception_detail(exc)}") from exc
+            raise SSHTransportError(
+                f"SSH connection failed: {_format_exception_detail(exc)}"
+            ) from exc
 
         transport = client.get_transport()
         if transport is not None:

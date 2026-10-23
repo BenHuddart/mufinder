@@ -81,7 +81,9 @@ def make_context(
         submit_jobs_locally=local_backend or RecordingBackend(),
         submit_jobs_on_cluster=cluster_backend or RecordingBackend(),
         prepare_jobs_for_resubmission=prepare_jobs_for_resubmission or (lambda _jobs: True),
-        show_info=(lambda title, text: infos.append((title, text))) if infos is not None else (lambda *_: None),
+        show_info=(lambda title, text: infos.append((title, text)))
+        if infos is not None
+        else (lambda *_: None),
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _message: None,
@@ -181,7 +183,9 @@ def pristine_sync_definition(service, document, host, rows=("row_1",), job_ids_b
         document,
         input_structure_id=host.id,
         parameters=serialize_pristine_relaxation_config(
-            PristineRelaxationConfig(rows=tuple(PristineRelaxationRow(label=label) for label in rows))
+            PristineRelaxationConfig(
+                rows=tuple(PristineRelaxationRow(label=label) for label in rows)
+            )
         ),
         output_directory=document.project_root / "files" / "pristine_relaxation",
         job_ids_by_label=job_ids_by_label,

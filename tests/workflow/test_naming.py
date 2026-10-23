@@ -42,7 +42,10 @@ def test_sanitize_remote_path_component(value: str, expected: str) -> None:
 
 
 def test_sanitize_remote_path_fragment_keeps_separators_and_drops_empty_parts() -> None:
-    assert sanitize_remote_path_fragment(" /muon relaxation//positive muon/ ") == "muon_relaxation/positive_muon"
+    assert (
+        sanitize_remote_path_fragment(" /muon relaxation//positive muon/ ")
+        == "muon_relaxation/positive_muon"
+    )
     assert sanitize_remote_path_fragment(" / ") == "workflow"
 
 
@@ -70,7 +73,10 @@ def test_cluster_workflow_directory_fragment() -> None:
 
     assert cluster_workflow_directory_fragment([positive]) == "muon_relaxation/positivemuon"
     assert cluster_workflow_directory_fragment([muonium, muonium]) == "muon_relaxation/muonium"
-    assert cluster_workflow_directory_fragment([positive, muonium]) == "muon_relaxation_mixed_charge_states"
+    assert (
+        cluster_workflow_directory_fragment([positive, muonium])
+        == "muon_relaxation_mixed_charge_states"
+    )
     assert cluster_workflow_directory_fragment([uep]) == "uep"
     assert cluster_workflow_directory_fragment([positive, uep]) == "mixed_workflows"
     assert cluster_workflow_directory_fragment([uep, pristine]) == "mixed_workflows"

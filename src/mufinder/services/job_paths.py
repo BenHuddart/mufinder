@@ -40,7 +40,11 @@ QUANTUM_SINGLEPOINT_JOB_MAPPING = "singlepoint_job_ids_by_label"
 #: ``job_seed_names_by_label``.
 QUANTUM_SINGLEPOINT_SEED_MAPPING = "singlepoint_seed_names_by_label"
 
-_QUANTUM_JOB_MAPPINGS = (QUANTUM_SINGLEPOINT_JOB_MAPPING, "phonon_job_ids_by_label", "job_ids_by_label")
+_QUANTUM_JOB_MAPPINGS = (
+    QUANTUM_SINGLEPOINT_JOB_MAPPING,
+    "phonon_job_ids_by_label",
+    "job_ids_by_label",
+)
 
 #: Standard output file suffixes, in the order :func:`job_output_files` lists them.
 #: Task farming writes the band to ``<seed>_farm001.ts``; there is no unfarmed
@@ -95,7 +99,11 @@ def _key_for_job(mapping: Mapping[object, object], job: Job) -> str:
 def _muon_relaxation_job_directory(base: Path, params: Mapping[str, object], job: Job) -> Path:
     job_ids_by_label = params.get("job_ids_by_label", {})
     matching_key = _key_for_job(job_ids_by_label, job) if isinstance(job_ids_by_label, dict) else ""
-    prefix = "positivemuon" if job.calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"] else "muonium"
+    prefix = (
+        "positivemuon"
+        if job.calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"]
+        else "muonium"
+    )
     seed_mapping = params.get("job_seed_names_by_label", {})
     seed_name = job.label
     if isinstance(seed_mapping, dict):
@@ -161,7 +169,9 @@ def job_output_directory(
                     continue
                 if mapping_name == QUANTUM_SINGLEPOINT_JOB_MAPPING:
                     legacy_seeds = params.get(QUANTUM_SINGLEPOINT_SEED_MAPPING, {})
-                    legacy_seed = legacy_seeds.get(matching_key) if isinstance(legacy_seeds, dict) else None
+                    legacy_seed = (
+                        legacy_seeds.get(matching_key) if isinstance(legacy_seeds, dict) else None
+                    )
                     if isinstance(legacy_seed, str) and legacy_seed.strip():
                         return base / legacy_seed.strip()
                 return base / quantum_seed_name(definition, matching_key)
@@ -172,8 +182,9 @@ def job_output_directory(
         }:
             base = definition_output_directory(document, definition)
             if base is not None:
-                if definition.workflow_stage == WorkflowStage.MUON_RELAXATION and is_muon_relaxation_calc_type(
-                    job.calc_type
+                if (
+                    definition.workflow_stage == WorkflowStage.MUON_RELAXATION
+                    and is_muon_relaxation_calc_type(job.calc_type)
                 ):
                     return _muon_relaxation_job_directory(base, params, job)
                 return base / job.label

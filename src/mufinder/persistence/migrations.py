@@ -68,7 +68,9 @@ def migrate_project_payloads(
     return changed
 
 
-def _sweep_values_replace_cutoff_energies(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
+def _sweep_values_replace_cutoff_energies(
+    entities: EntityPayloads, ui_state: dict[str, Any]
+) -> set[EntityKey]:
     """Schema 1 to 2: convergence definitions keep their sweep in ``sweep_values`` only.
 
     Schema 1 wrote a convergence definition's configuration with both
@@ -105,7 +107,9 @@ _LEGACY_SITE_POSITION_KEYS = {
 }
 
 
-def _site_positions_split_initial_and_relaxed(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
+def _site_positions_split_initial_and_relaxed(
+    entities: EntityPayloads, ui_state: dict[str, Any]
+) -> set[EntityKey]:
     """Schema 2 to 3: a muon site keeps its initial and relaxed positions apart.
 
     Schema 2 stored the position a site was generated at as
@@ -130,7 +134,9 @@ def _site_positions_split_initial_and_relaxed(entities: EntityPayloads, ui_state
             return None
         result = results_by_id.get(str(run.get("result_id"))) or results_by_run.get(str(run_id))
         data = result.get("data") if result is not None else None
-        position = data.get("muon_final_fractional_position_host") if isinstance(data, dict) else None
+        position = (
+            data.get("muon_final_fractional_position_host") if isinstance(data, dict) else None
+        )
         if not isinstance(position, list) or len(position) != 3:
             return None
         try:
@@ -157,13 +163,17 @@ def _site_positions_split_initial_and_relaxed(entities: EntityPayloads, ui_state
 
 
 #: Magnetic Fields form-state key, result type and how its value becomes record data.
-_MAGNETIC_FIELD_FORM_RESULTS: tuple[tuple[str, str, Callable[[object], dict[str, Any] | None]], ...] = (
+_MAGNETIC_FIELD_FORM_RESULTS: tuple[
+    tuple[str, str, Callable[[object], dict[str, Any] | None]], ...
+] = (
     (
         "magnetic_field_results",
         "magnetic_field",
         lambda value: (
             {"kind": str(value.get("kind", "")), "results": value["results"]}
-            if isinstance(value, dict) and isinstance(value.get("results"), list) and value["results"]
+            if isinstance(value, dict)
+            and isinstance(value.get("results"), list)
+            and value["results"]
             else None
         ),
     ),
@@ -180,7 +190,9 @@ _MAGNETIC_FIELD_FORM_RESULTS: tuple[tuple[str, str, Callable[[object], dict[str,
 )
 
 
-def _magnetic_field_results_become_results(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
+def _magnetic_field_results_become_results(
+    entities: EntityPayloads, ui_state: dict[str, Any]
+) -> set[EntityKey]:
     """Schema 3 to 4: Magnetic Fields results become ``results`` entities.
 
     Schema 3 kept the Magnetic Fields page's latest field, dipolar-tensor and
@@ -235,7 +247,9 @@ def _magnetic_field_results_become_results(entities: EntityPayloads, ui_state: d
 _DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = 1e-7 * 9.274_010_078_3e-24 / 1e-30
 
 
-def _dipolar_tensors_convert_to_tesla_per_mu_b(entities: EntityPayloads, ui_state: dict[str, Any]) -> set[EntityKey]:
+def _dipolar_tensors_convert_to_tesla_per_mu_b(
+    entities: EntityPayloads, ui_state: dict[str, Any]
+) -> set[EntityKey]:
     """Schema 4 to 5: saved dipolar tensors are converted from Å^-3 to T/mu_B.
 
     Schema 4 stored muesr's dipolar tensor under ``dipolar_tensor_T_per_muB``
@@ -256,7 +270,8 @@ def _dipolar_tensors_convert_to_tesla_per_mu_b(entities: EntityPayloads, ui_stat
             if not _is_numeric_3x3(tensor):
                 continue
             entry["dipolar_tensor_T_per_muB"] = [
-                [float(value) * _DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 for value in row] for row in tensor
+                [float(value) * _DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 for value in row]
+                for row in tensor
             ]
             changed.add(("results", str(payload.get("id"))))
     return changed

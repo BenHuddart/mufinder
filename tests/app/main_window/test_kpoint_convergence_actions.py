@@ -21,7 +21,9 @@ def test_main_window_kpoint_examiner_state_changed_updates_ui_state_without_savi
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "kpoint_examiner_state_update.mufinder", "KPointExaminerStateUpdate")
+    doc = service.create_project(
+        tmp_path / "kpoint_examiner_state_update.mufinder", "KPointExaminerStateUpdate"
+    )
     window._document = doc
     initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
 
@@ -64,14 +66,15 @@ def test_main_window_kpoint_examiner_state_persists_across_project_reload_after_
     service.save_project(doc)
     loaded = service.load_project(root)
 
-    assert loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["results_text"] == "Recommended grid: 2 x 2 x 2"
+    assert (
+        loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["results_text"]
+        == "Recommended grid: 2 x 2 x 2"
+    )
     assert loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [8.0, 27.0]
     window.close()
 
 
-def test_kpoint_convergence_configured_registers_snapshot(
-    main_window, tmp_path: Path
-) -> None:
+def test_kpoint_convergence_configured_registers_snapshot(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     window._document = service.create_project(tmp_path / "kpoint_ui.mufinder", "KPointUI")
@@ -111,7 +114,9 @@ def test_refresh_kpoint_simulation_cell_without_document_disables_selector(main_
     window._refresh_kpoint_convergence_simulation_cell()
 
     assert not window._kpoint_convergence_view._simulation_cell_combo.isEnabled()
-    assert "Load a host structure" in window._kpoint_convergence_view._simulation_cell_summary.text()
+    assert (
+        "Load a host structure" in window._kpoint_convergence_view._simulation_cell_summary.text()
+    )
     window.close()
 
 
@@ -128,8 +133,18 @@ def test_main_window_form_kpoint_shows_ready_before_submission(main_window, tmp_
     window._refresh_ui_after_project_change()
 
     assert window._jobs_table.rowCount() == 0
-    assert window._kpoint_convergence_view._table.item(0, window._kpoint_convergence_view._STATUS_COLUMN).text() == "ready"
-    assert window._kpoint_convergence_view._table.item(1, window._kpoint_convergence_view._STATUS_COLUMN).text() == "ready"
+    assert (
+        window._kpoint_convergence_view._table.item(
+            0, window._kpoint_convergence_view._STATUS_COLUMN
+        ).text()
+        == "ready"
+    )
+    assert (
+        window._kpoint_convergence_view._table.item(
+            1, window._kpoint_convergence_view._STATUS_COLUMN
+        ).text()
+        == "ready"
+    )
     window.close()
 
 
@@ -280,8 +295,12 @@ def test_main_window_submit_from_kpoint_dedupes_existing_ready_jobs(
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
 
-    label_a = main_window_module.convergence_job_name("kconv", (2, 2, 2), sweep_parameter="kpoint_mp_grid")
-    label_b = main_window_module.convergence_job_name("kconv", (3, 3, 2), sweep_parameter="kpoint_mp_grid")
+    label_a = main_window_module.convergence_job_name(
+        "kconv", (2, 2, 2), sweep_parameter="kpoint_mp_grid"
+    )
+    label_b = main_window_module.convergence_job_name(
+        "kconv", (3, 3, 2), sweep_parameter="kpoint_mp_grid"
+    )
     job_a = service.add_job(
         doc,
         label=label_a,
@@ -316,7 +335,9 @@ def test_main_window_submit_from_kpoint_dedupes_existing_ready_jobs(
     window._document = doc
 
     submitted_ids: list[list[object]] = []
-    monkeypatch.setattr(window, "_submit_jobs_locally", lambda jobs: submitted_ids.append([job.id for job in jobs]))
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs: submitted_ids.append([job.id for job in jobs])
+    )
 
     window._kpoint_convergence_controller.submit([(2, 2, 2), (2, 2, 2), (3, 3, 2)], target="local")
 
@@ -330,7 +351,9 @@ def test_main_window_remove_kpoint_grids_without_document_delegates_to_widget(
     window = main_window
 
     removed: list[list[tuple[int, int, int]]] = []
-    monkeypatch.setattr(window._kpoint_convergence_view, "remove_grids", lambda grids: removed.append(list(grids)))
+    monkeypatch.setattr(
+        window._kpoint_convergence_view, "remove_grids", lambda grids: removed.append(list(grids))
+    )
 
     window._on_remove_grids_from_kpoint_convergence([(2, 2, 2)])
 
@@ -380,7 +403,12 @@ def test_main_window_remove_kpoint_grids_updates_definition_configuration(
     assert configuration["sweep_values"] == [[3, 3, 2]]
     assert definition.parameters["job_ids_by_grid"] == {"3x3x2": "b"}
     assert window._kpoint_convergence_view._table.rowCount() == 1
-    assert window._kpoint_convergence_view._table.item(0, window._kpoint_convergence_view._KEY_COLUMN).text() == "3 x 3 x 2"
+    assert (
+        window._kpoint_convergence_view._table.item(
+            0, window._kpoint_convergence_view._KEY_COLUMN
+        ).text()
+        == "3 x 3 x 2"
+    )
     window.close()
 
 
@@ -402,8 +430,12 @@ def test_main_window_examine_kpoint_convergence_launches_dialog(
     window._document = doc
 
     states = {
-        (2, 2, 2): main_window_module.SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
-        (3, 3, 3): main_window_module.SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.15),
+        (2, 2, 2): main_window_module.SweepPointRunState(
+            status="completed", total_energy=-10.0, max_force=0.2
+        ),
+        (3, 3, 3): main_window_module.SweepPointRunState(
+            status="completed", total_energy=-10.02, max_force=0.15
+        ),
     }
     monkeypatch.setattr(window._kpoint_convergence_controller, "build_states", lambda: states)
 
@@ -477,7 +509,9 @@ def test_main_window_on_kpoint_default_adopted_handles_unresolvable_label(
     window.close()
 
 
-def test_main_window_on_kpoint_default_adopted_sets_project_default(main_window, tmp_path: Path) -> None:
+def test_main_window_on_kpoint_default_adopted_sets_project_default(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "kpoint_adopt_default.mufinder", "KPointAdoptDefault")
@@ -559,7 +593,9 @@ def test_main_window_kpoint_examiner_and_adoption_use_the_sweep_supercell(
 
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "kpoint_supercell_sweep.mufinder", "KPointSupercellSweep")
+    doc = service.create_project(
+        tmp_path / "kpoint_supercell_sweep.mufinder", "KPointSupercellSweep"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -572,7 +608,12 @@ def test_main_window_kpoint_examiner_and_adoption_use_the_sweep_supercell(
         label="2x1x1",
         lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
         species=["Si", "Si", "Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.125, 0.25, 0.25], [0.5, 0.0, 0.0], [0.625, 0.25, 0.25]],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.125, 0.25, 0.25],
+            [0.5, 0.0, 0.0],
+            [0.625, 0.25, 0.25],
+        ],
         parent_structure_id=host.id,
     )
     service.add_structure(doc, supercell)
@@ -592,15 +633,29 @@ def test_main_window_kpoint_examiner_and_adoption_use_the_sweep_supercell(
     window._document = doc
 
     states = {
-        (1, 2, 2): main_window_module.SweepPointRunState(status="completed", total_energy=-20.0, max_force=0.2),
-        (2, 4, 4): main_window_module.SweepPointRunState(status="completed", total_energy=-20.02, max_force=0.1),
+        (1, 2, 2): main_window_module.SweepPointRunState(
+            status="completed", total_energy=-20.0, max_force=0.2
+        ),
+        (2, 4, 4): main_window_module.SweepPointRunState(
+            status="completed", total_energy=-20.02, max_force=0.1
+        ),
     }
     monkeypatch.setattr(window._kpoint_convergence_controller, "build_states", lambda: states)
     captured: dict[str, object] = {}
 
     class _FakeDialog:
-        def __init__(self, cutoff_data, *, num_atoms, sweep_kind, point_labels, lattice_vectors=None,
-                     initial_state=None, notes=(), parent=None) -> None:
+        def __init__(
+            self,
+            cutoff_data,
+            *,
+            num_atoms,
+            sweep_kind,
+            point_labels,
+            lattice_vectors=None,
+            initial_state=None,
+            notes=(),
+            parent=None,
+        ) -> None:
             captured["num_atoms"] = num_atoms
             captured["lattice_vectors"] = lattice_vectors
             self.default_adopted = SimpleNamespace(connect=lambda _cb: None)
@@ -619,7 +674,9 @@ def test_main_window_kpoint_examiner_and_adoption_use_the_sweep_supercell(
     assert captured["lattice_vectors"] == supercell.lattice_vectors
 
     monkeypatch.setattr(window, "_confirm_adopted_xc_functional", lambda _functional: True)
-    window._on_kpoint_default_adopted(16.0, "delta-threshold", 0.001, 0.05, {16.0: "Grid: 1 x 4 x 4"})
+    window._on_kpoint_default_adopted(
+        16.0, "delta-threshold", 0.001, 0.05, {16.0: "Grid: 1 x 4 x 4"}
+    )
 
     assert doc.project.recommended_kpoint_grid == (1, 4, 4)
     assert doc.project.recommended_kpoint_cell_id == str(supercell.id)
@@ -631,7 +688,9 @@ def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -
     """Grids sharing a k-point count cannot share the examiner's axis."""
 
     lattice = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 6.0]]
-    completed = main_window_module.SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.1)
+    completed = main_window_module.SweepPointRunState(
+        status="completed", total_energy=-10.0, max_force=0.1
+    )
     pending = main_window_module.SweepPointRunState(status="ready")
     states = {
         (2, 2, 4): completed,  # oversamples the long axis
@@ -666,14 +725,18 @@ def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -
     )
 
 
-def test_main_window_kpoint_overview_recomputes_spacings_on_the_sweep_cell(main_window, tmp_path: Path) -> None:
+def test_main_window_kpoint_overview_recomputes_spacings_on_the_sweep_cell(
+    main_window, tmp_path: Path
+) -> None:
     """The overview refreshes stored spacings from the cell the snapshot was swept on."""
 
     from mufinder.science.kpoint_grids import spacing_from_grid
 
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "kpoint_overview_supercell.mufinder", "KPointOverviewSupercell")
+    doc = service.create_project(
+        tmp_path / "kpoint_overview_supercell.mufinder", "KPointOverviewSupercell"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -697,7 +760,11 @@ def test_main_window_kpoint_overview_recomputes_spacings_on_the_sweep_cell(main_
             "simulation_cell_structure_id": str(supercell.id),
             "default_value": [4, 2, 2],
             "point_labels": {"16.0": "Grid: 4 x 2 x 2"},
-            "plot_data": {"cutoffs": [16.0], "energies": [-20.0], "point_spacings": {"16.0": 999.0}},
+            "plot_data": {
+                "cutoffs": [16.0],
+                "energies": [-20.0],
+                "point_spacings": {"16.0": 999.0},
+            },
         }
     }
     window._document = doc

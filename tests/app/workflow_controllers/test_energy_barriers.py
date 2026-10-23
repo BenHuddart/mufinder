@@ -114,7 +114,10 @@ def test_energy_barriers_controller_handles_both_ts_and_neb_calc_types(tmp_path:
     neb = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
     tss = _neb_job(service, document, "barrier_tss", TRANSITION_STATE_SEARCH_CALC_TYPE)
     other = service.add_job(
-        document, label="u", workflow_stage=WorkflowStage.MUON_RELAXATION, calc_type="castep_uep_source"
+        document,
+        label="u",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_uep_source",
     )
     assert controller.handles_job(neb) is True
     assert controller.handles_job(tss) is True
@@ -257,7 +260,9 @@ def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> N
     assert result.derived_structure_ids == []
 
 
-def test_energy_barriers_controller_show_neb_preview_structures_are_in_angstrom(tmp_path: Path) -> None:
+def test_energy_barriers_controller_show_neb_preview_structures_are_in_angstrom(
+    tmp_path: Path,
+) -> None:
     """show_neb_preview hands the view one ``Structure`` per image, with the
     ``.ts`` geometry already converted from Bohr to Å: the fixture's 6.8431966 Bohr
     fcc Cu cell must reach the viewer as ~3.6213 Å, not 1.89 times too large."""
@@ -327,7 +332,10 @@ def test_energy_barriers_controller_build_result_missing_dir_is_empty(tmp_path: 
         deps,
         lambda: None,
     )
-    assert controller.build_result(job, completed_castep_result(), run, ParsedJobArtifacts()).payload == {}
+    assert (
+        controller.build_result(job, completed_castep_result(), run, ParsedJobArtifacts()).payload
+        == {}
+    )
 
 
 def test_energy_barriers_controller_pre_submit_check_blocks_on_structure_mismatch(
@@ -403,7 +411,10 @@ def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path, *, r
             species=["Si", "Si", "H:mu"],
             fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [muon, 0.25, 0.25]],
             parent_structure_id=host.id,
-            properties={"atomic_spins": [1.0, -1.0, 0.0], "source_workflow_stage": "muon_relaxation"},
+            properties={
+                "atomic_spins": [1.0, -1.0, 0.0],
+                "source_workflow_stage": "muon_relaxation",
+            },
         )
         document.structures[relaxed.id] = relaxed
         job = service.add_job(
@@ -418,15 +429,26 @@ def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path, *, r
         run.result_id = result.id
         document.runs[run.id] = run
         document.results[result.id] = result
-        site = _MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, source_structure_id=host.id)
+        site = _MuonSite(
+            label=label, status="relaxed", relaxation_run_id=run.id, source_structure_id=host.id
+        )
         document.sites[site.id] = site
-        ids[side] = {"site": str(site.id), "run": str(run.id), "job": str(job.id), "structure": str(relaxed.id)}
+        ids[side] = {
+            "site": str(site.id),
+            "run": str(run.id),
+            "job": str(job.id),
+            "structure": str(relaxed.id),
+        }
 
     source = {
         "key": "source-key",
         "label": "siteA_to_siteB_path1",
         "path_index": 1,
-        **{f"{side}_{field}_id": value for side, fields in ids.items() for field, value in fields.items()},
+        **{
+            f"{side}_{field}_id": value
+            for side, fields in ids.items()
+            for field, value in fields.items()
+        },
         "path_start_fractional": [0.25, 0.25, 0.25],
         "path_end_fractional": [0.75, 0.25, 0.25],
         "path_length_ang": 2.5,
@@ -450,7 +472,15 @@ def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path, *, r
     return document, definition, source, output_root
 
 
-def _neb_controller(service: ProjectService, document, output_root, *, deps=None, view_getter=lambda: None, **context_kwargs):
+def _neb_controller(
+    service: ProjectService,
+    document,
+    output_root,
+    *,
+    deps=None,
+    view_getter=lambda: None,
+    **context_kwargs,
+):
     import dataclasses
 
     persisted = context_kwargs.pop("persisted", None)
@@ -461,7 +491,9 @@ def _neb_controller(service: ProjectService, document, output_root, *, deps=None
         **context_kwargs,
     )
     if persisted is not None:
-        context = dataclasses.replace(context, persist_ui_state=lambda **_: persisted.append("persist"))
+        context = dataclasses.replace(
+            context, persist_ui_state=lambda **_: persisted.append("persist")
+        )
     return EnergyBarriersController(context, deps or _stub_energy_barriers_deps(), view_getter)
 
 
@@ -473,9 +505,7 @@ def test_energy_barriers_controller_materialize_source_key_provenance(tmp_path: 
     ``idpp_intermediate_structure`` / ``expand_nudged_elastic_band_jobs``)."""
 
     service = ProjectService()
-    document, definition, _source, output_root = _seed_energy_barriers_document(
-        service, tmp_path
-    )
+    document, definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
     persisted: list[str] = []
     controller = _neb_controller(service, document, output_root, persisted=persisted)
 
@@ -487,7 +517,9 @@ def test_energy_barriers_controller_materialize_source_key_provenance(tmp_path: 
     # job_ids_by_label is keyed by the SOURCE KEY, mapping to the new job id.
     assert definition.parameters["job_ids_by_label"] == {"source-key": str(created.id)}
     assert persisted == ["persist"]
-    param_text = (output_root / created.label / f"{created.label}.param").read_text(encoding="utf-8")
+    param_text = (output_root / created.label / f"{created.label}.param").read_text(
+        encoding="utf-8"
+    )
     # An unconfigured path runs the default (odd) image count.
     assert "TSSEARCH_MAX_PATH_POINTS : 11" in param_text
 
@@ -498,9 +530,7 @@ def test_energy_barriers_controller_submit_local_reaches_local_backend(tmp_path:
     lazy-view submit lambda invokes."""
 
     service = ProjectService()
-    document, _definition, _source, output_root = _seed_energy_barriers_document(
-        service, tmp_path
-    )
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
     local = RecordingBackend()
     cluster = RecordingBackend()
     controller = _neb_controller(
@@ -517,9 +547,7 @@ def test_energy_barriers_controller_submit_local_reaches_local_backend(tmp_path:
 
 def test_energy_barriers_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, _source, output_root = _seed_energy_barriers_document(
-        service, tmp_path
-    )
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
     local = RecordingBackend()
     cluster = RecordingBackend()
     controller = _neb_controller(
@@ -588,7 +616,9 @@ def test_energy_barriers_controller_generate_paths_validates_its_inputs(tmp_path
         service,
         document,
         output_root,
-        deps=_stub_energy_barriers_deps(show_warning=lambda title, text: warnings.append((title, text))),
+        deps=_stub_energy_barriers_deps(
+            show_warning=lambda title, text: warnings.append((title, text))
+        ),
         infos=infos,
     )
     reactant, product = source["reactant_site_id"], source["product_site_id"]
@@ -654,13 +684,17 @@ def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) 
     assert request.species_options == ("Si", "H:mu")
     assert request.row_values[0]["tssearch_max_path_points"] == 11
 
-    controller.apply_configuration(request.keys, configure_result({"tssearch_max_path_points": 8}), {"num_farms": 4})
+    controller.apply_configuration(
+        request.keys, configure_result({"tssearch_max_path_points": 8}), {"num_farms": 4}
+    )
 
     params, _advanced, extras = workflow_row_configuration(definition, "source-key")
     assert extras == {"num_farms": 4}
     assert params == {"tssearch_max_path_points": 8}
     # An even image count is rounded up for climbing-image NEB.
-    assert controller.row_configuration(definition, "source-key")[0]["tssearch_max_path_points"] == 9
+    assert (
+        controller.row_configuration(definition, "source-key")[0]["tssearch_max_path_points"] == 9
+    )
 
     job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
     job.status = JobStatus.RUNNING
@@ -687,7 +721,9 @@ def test_energy_barriers_row_configuration_stores_the_image_count_castep_runs(
     request = controller.configure_request(["source-key"])
     assert request is not None
 
-    controller.apply_configuration(request.keys, configure_result({"tssearch_max_path_points": entered}), {})
+    controller.apply_configuration(
+        request.keys, configure_result({"tssearch_max_path_points": entered}), {}
+    )
 
     values = controller.row_configuration(definition, "source-key")[0]
     assert values["tssearch_max_path_points"] == effective
@@ -726,17 +762,24 @@ def test_energy_barriers_controller_validate_artifacts_checks_ts(
     run = CalculationRun(job_id=job.id)
     parsed = CastepResult(completed=True, total_energy=-1.0)
 
-    assert controller.validate_artifacts(
-        job, parsed, run, ParsedJobArtifacts(ts_missing=True)
-    ) == "Expected CASTEP path output was not found: neb_path.ts"
+    assert (
+        controller.validate_artifacts(job, parsed, run, ParsedJobArtifacts(ts_missing=True))
+        == "Expected CASTEP path output was not found: neb_path.ts"
+    )
     # Under task farming the collector looked for the farmed name; report that.
-    assert controller.validate_artifacts(
-        job,
-        parsed,
-        run,
-        ParsedJobArtifacts(ts_missing=True, ts_path=tmp_path / "neb_path_farm001.ts"),
-    ) == "Expected CASTEP path output was not found: neb_path_farm001.ts"
-    assert controller.validate_artifacts(
-        job, parsed, run, ParsedJobArtifacts(ts_error="truncated band")
-    ) == "Failed to parse CASTEP path output: truncated band"
+    assert (
+        controller.validate_artifacts(
+            job,
+            parsed,
+            run,
+            ParsedJobArtifacts(ts_missing=True, ts_path=tmp_path / "neb_path_farm001.ts"),
+        )
+        == "Expected CASTEP path output was not found: neb_path_farm001.ts"
+    )
+    assert (
+        controller.validate_artifacts(
+            job, parsed, run, ParsedJobArtifacts(ts_error="truncated band")
+        )
+        == "Failed to parse CASTEP path output: truncated band"
+    )
     assert controller.validate_artifacts(job, parsed, run, no_artifacts()) is None

@@ -46,7 +46,12 @@ def test_bfgs_history_has_every_iteration_and_criterion() -> None:
     first = progress.iterations[0]
     assert first.enthalpy == pytest.approx(-340.682656)
     assert first.enthalpy_unit == "eV"
-    assert [criterion.name for criterion in first.criteria] == ["dE/ion", "|F|max", "|dR|max", "Smax"]
+    assert [criterion.name for criterion in first.criteria] == [
+        "dE/ion",
+        "|F|max",
+        "|dR|max",
+        "Smax",
+    ]
     latest = progress.latest
     assert latest is not None
     assert latest.criteria == (
@@ -71,7 +76,11 @@ def test_continued_run_reports_only_the_latest_restart() -> None:
     assert [iteration.iteration for iteration in progress.iterations] == [0, 1, 2, 3]
     assert progress.max_iterations == 30
     assert progress.converged is True
-    assert [criterion.name for criterion in progress.latest.criteria] == ["dE/ion", "|F|max", "|dR|max"]
+    assert [criterion.name for criterion in progress.latest.criteria] == [
+        "dE/ion",
+        "|F|max",
+        "|dR|max",
+    ]
     assert progress.latest.criteria_met == 3
 
 
@@ -105,7 +114,9 @@ def test_output_cut_off_inside_a_table_keeps_the_last_complete_iteration() -> No
 def test_output_before_the_parameter_echo_has_no_progress() -> None:
     text = _text(BFGS)
 
-    assert parse_geometry_progress_text(text[: text.index("Geometry Optimization Parameters")]) is None
+    assert (
+        parse_geometry_progress_text(text[: text.index("Geometry Optimization Parameters")]) is None
+    )
     assert parse_geometry_progress_text("") is None
 
 

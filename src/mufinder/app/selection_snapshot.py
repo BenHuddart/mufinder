@@ -34,7 +34,14 @@ from typing import TypeVar
 
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QObject, Qt, QTimer
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
-from PySide6.QtWidgets import QComboBox, QMessageBox, QPushButton, QTableWidget, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QToolButton,
+    QWidget,
+)
 
 KeyT = TypeVar("KeyT")
 
@@ -172,9 +179,7 @@ class _SelectionKeeper(QObject):
 
     @classmethod
     def ensure(cls, table: QTableWidget) -> "_SelectionKeeper":
-        existing = table.findChild(
-            cls, cls._OBJECT_NAME, Qt.FindChildOption.FindDirectChildrenOnly
-        )
+        existing = table.findChild(cls, cls._OBJECT_NAME, Qt.FindChildOption.FindDirectChildrenOnly)
         return existing if existing is not None else cls(table)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
@@ -229,12 +234,14 @@ class SelectionSnapshotComboBox(_SnapshotMixin, QComboBox):
     keys that can change currentIndex without opening the popup.
     """
 
-    _NAV_KEYS = frozenset((
-        Qt.Key.Key_Up,
-        Qt.Key.Key_Down,
-        Qt.Key.Key_PageUp,
-        Qt.Key.Key_PageDown,
-    ))
+    _NAV_KEYS = frozenset(
+        (
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_PageUp,
+            Qt.Key.Key_PageDown,
+        )
+    )
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

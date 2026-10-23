@@ -58,10 +58,21 @@ _HOSTS = {
         ],
         0.3,
     ),
-    "triclinic": (_triclinic_host, [(0.10, 0.10, 0.10), (0.112, 0.104, 0.100), (0.5, 0.5, 0.5), (0.8, 0.8, 0.8)], 0.2),
+    "triclinic": (
+        _triclinic_host,
+        [(0.10, 0.10, 0.10), (0.112, 0.104, 0.100), (0.5, 0.5, 0.5), (0.8, 0.8, 0.8)],
+        0.2,
+    ),
     "hcp": (
         _hcp_host,
-        [(0.01, 0.00, 0.01), (0.0, 0.0, 0.5), (1.0 / 3.0, 2.0 / 3.0, 0.62), (0.34, 0.66, 0.63), (0.5, 0.0, 0.0), (0.2, 0.1, 0.3)],
+        [
+            (0.01, 0.00, 0.01),
+            (0.0, 0.0, 0.5),
+            (1.0 / 3.0, 2.0 / 3.0, 0.62),
+            (0.34, 0.66, 0.63),
+            (0.5, 0.0, 0.0),
+            (0.2, 0.1, 0.3),
+        ],
         0.3,
     ),
     "rutile": (
@@ -69,7 +80,11 @@ _HOSTS = {
         [(0.5, 0.0, 0.0), (0.5, 0.01, 0.49), (0.0, 0.5, 0.25), (0.3, 0.0, 0.5), (0.12, 0.27, 0.41)],
         0.3,
     ),
-    "fcc": (_fcc_primitive_host, [(0.5, 0.5, 0.5), (0.25, 0.25, 0.25), (0.26, 0.25, 0.24), (0.1, 0.3, 0.2)], 0.3),
+    "fcc": (
+        _fcc_primitive_host,
+        [(0.5, 0.5, 0.5), (0.25, 0.25, 0.25), (0.26, 0.25, 0.24), (0.1, 0.3, 0.2)],
+        0.3,
+    ),
 }
 
 
@@ -116,7 +131,15 @@ def _case(host_name: str, grouping: str):
 # (cluster index, label, position, site symmetry, special, max distance Å, mean distance Å)
 _EXPECTED = {
     ("bcc", "connected"): [
-        (1, "16f", (0.10333333333333333, 0.10333333333333333, 0.10333333333333333), ".3m", True, 0.08660254037844384, 0.05773502691896254),
+        (
+            1,
+            "16f",
+            (0.10333333333333333, 0.10333333333333333, 0.10333333333333333),
+            ".3m",
+            True,
+            0.08660254037844384,
+            0.05773502691896254,
+        ),
         (2, "16f", (0.305, 0.305, 0.305), ".3m", True, 0.08291561975888508, 0.06310844497405352),
         (3, "48k", (0.6025, 0.205, 0.3975), "..m", True, 0.04677071733467394, 0.038694669559731845),
         (4, "48k", (0.8, 0.8, 0.1), "..m", True, 0.0, 0.0),
@@ -126,7 +149,15 @@ _EXPECTED = {
     ],
     ("bcc", "singles"): [
         (1, "16f", (0.1, 0.1, 0.1), ".3m", True, 0.0, 0.0),
-        (2, "16f", (0.10666666666666666, 0.10666666666666667, 0.10666666666666667), ".3m", True, 0.08164965809277262, 0.08164965809277262),
+        (
+            2,
+            "16f",
+            (0.10666666666666666, 0.10666666666666667, 0.10666666666666667),
+            ".3m",
+            True,
+            0.08164965809277262,
+            0.08164965809277262,
+        ),
         (3, "16f", (0.3, 0.3, 0.3), ".3m", True, 0.0, 0.0),
         (4, "16f", (0.31, 0.31, 0.31), ".3m", True, 0.07071067811865482, 0.07071067811865482),
         (5, "48k", (0.6, 0.2, 0.4), "..m", True, 0.0, 0.0),
@@ -150,7 +181,15 @@ _EXPECTED = {
     ],
     ("hcp", "connected"): [
         (1, "2a", (0.0, 0.0, 0.0), "-3m.", True, 0.06119493443088243, 0.030597467215441307),
-        (2, "4f", (1.0 / 3.0, 2.0 / 3.0, 0.625), "3m.", True, 0.04530433202244567, 0.03567716601122285),
+        (
+            2,
+            "4f",
+            (1.0 / 3.0, 2.0 / 3.0, 0.625),
+            "3m.",
+            True,
+            0.04530433202244567,
+            0.03567716601122285,
+        ),
         (3, "6g", (0.5, 0.0, 0.0), ".2/m.", True, 0.0, 0.0),
         (4, "12k", (0.2, 0.1, 0.3), ".m.", True, 0.0, 0.0),
     ],
@@ -158,7 +197,15 @@ _EXPECTED = {
         (1, "2a", (0.0, 0.0, 0.0), "-3m.", True, 0.06119493443088243, 0.06119493443088243),
         (2, "2a", (0.0, 0.0, 0.5), "-3m.", True, 0.0, 0.0),
         (3, "4f", (1.0 / 3.0, 2.0 / 3.0, 0.62), "3m.", True, 0.0, 0.0),
-        (4, "4f", (1.0 / 3.0, 2.0 / 3.0, 0.63), "3m.", True, 0.03706588728197406, 0.03706588728197406),
+        (
+            4,
+            "4f",
+            (1.0 / 3.0, 2.0 / 3.0, 0.63),
+            "3m.",
+            True,
+            0.03706588728197406,
+            0.03706588728197406,
+        ),
         (5, "6g", (0.5, 0.0, 0.0), ".2/m.", True, 0.0, 0.0),
         (6, "12k", (0.2, 0.1, 0.3), ".m.", True, 0.0, 0.0),
     ],
@@ -178,17 +225,39 @@ _EXPECTED = {
     ("fcc", "connected"): [
         (1, "1b", (0.5, 0.5, 0.5), "m-3m", True, 0.0, 0.0),
         (2, "2c", (0.25, 0.25, 0.25), "-43m", True, 0.025526554800834385, 0.012763277400417192),
-        (3, "12g", (1.0 / 6.0, 1.0 / 3.0, 1.0 / 6.0), "2.mm", True, 0.19026370588679758, 0.19026370588679758),
+        (
+            3,
+            "12g",
+            (1.0 / 6.0, 1.0 / 3.0, 1.0 / 6.0),
+            "2.mm",
+            True,
+            0.19026370588679758,
+            0.19026370588679758,
+        ),
     ],
     ("fcc", "singles"): [
         (1, "1b", (0.5, 0.5, 0.5), "m-3m", True, 0.0, 0.0),
         (2, "2c", (0.25, 0.25, 0.25), "-43m", True, 0.0, 0.0),
         (3, "2c", (0.25, 0.25, 0.25), "-43m", True, 0.025526554800834385, 0.025526554800834385),
-        (4, "12g", (1.0 / 6.0, 1.0 / 3.0, 1.0 / 6.0), "2.mm", True, 0.19026370588679758, 0.19026370588679758),
+        (
+            4,
+            "12g",
+            (1.0 / 6.0, 1.0 / 3.0, 1.0 / 6.0),
+            "2.mm",
+            True,
+            0.19026370588679758,
+            0.19026370588679758,
+        ),
     ],
 }
 
-_SPACE_GROUPS = {"bcc": (229, "Im-3m"), "triclinic": (1, "P1"), "hcp": (194, "P6_3/mmc"), "rutile": (136, "P4_2/mnm"), "fcc": (225, "Fm-3m")}
+_SPACE_GROUPS = {
+    "bcc": (229, "Im-3m"),
+    "triclinic": (1, "P1"),
+    "hcp": (194, "P6_3/mmc"),
+    "rutile": (136, "P4_2/mnm"),
+    "fcc": (225, "Fm-3m"),
+}
 
 
 @pytest.mark.parametrize(("host_name", "grouping"), sorted(_EXPECTED), ids=lambda value: str(value))
@@ -208,7 +277,9 @@ def test_wyckoff_assignments_match_recorded_golden_values(host_name: str, groupi
         assert match.letter == label.lstrip("0123456789")
         assert match.multiplicity == int(label.rstrip("abcdefghijklmnopqrstuvwxyz"))
         assert match.fractional_position == pytest.approx(position, abs=1e-12)
-        assert match.cartesian_position_ang == pytest.approx(lattice_frac_to_cart(position, host.lattice_vectors), abs=1e-9)
+        assert match.cartesian_position_ang == pytest.approx(
+            lattice_frac_to_cart(position, host.lattice_vectors), abs=1e-9
+        )
         assert match.site_symmetry_symbol == site_symbol
         assert (match.space_group_number, match.space_group_symbol) == _SPACE_GROUPS[host_name]
         assert match.special is special
@@ -250,14 +321,18 @@ def test_repeated_wyckoff_assignment_returns_identical_results() -> None:
 
     assert second == first
     # The tolerance participates in the result, so a different tolerance must not reuse it.
-    assert [assignment.match.matched for assignment in tighter] != [assignment.match.matched for assignment in first]
+    assert [assignment.match.matched for assignment in tighter] != [
+        assignment.match.matched for assignment in first
+    ]
 
 
 def _host_operations(host: Structure) -> tuple[list[np.ndarray], list[np.ndarray]]:
     symmetry = get_crystal_symmetry(spglib_cell(host), symprec=1e-5)
     assert symmetry is not None
     rotations = [np.asarray(rotation, dtype=float) for rotation in symmetry["rotations"]]
-    translations = [np.asarray(translation, dtype=float) for translation in symmetry["translations"]]
+    translations = [
+        np.asarray(translation, dtype=float) for translation in symmetry["translations"]
+    ]
     return rotations, translations
 
 
@@ -268,7 +343,10 @@ def _brute_force_special_candidates(reference, rotations, translations, lattice,
     operations = [
         (rotation, translation)
         for rotation, translation in zip(rotations, translations, strict=True)
-        if not (np.allclose(rotation, identity) and np.allclose(translation - np.round(translation), 0.0))
+        if not (
+            np.allclose(rotation, identity)
+            and np.allclose(translation - np.round(translation), 0.0)
+        )
     ]
     candidates = [_project_to_constraints(reference, (operation,)) for operation in operations]
     candidates += [_project_to_constraints(reference, pair) for pair in combinations(operations, 2)]
@@ -292,12 +370,18 @@ def _brute_force_special_candidates(reference, rotations, translations, lattice,
         (_fcc_primitive_host, (0.26, 0.25, 0.24)),
     ],
 )
-def test_special_candidates_match_brute_force_projection_over_all_operation_pairs(host_factory, reference) -> None:
+def test_special_candidates_match_brute_force_projection_over_all_operation_pairs(
+    host_factory, reference
+) -> None:
     host = host_factory()
     rotations, translations = _host_operations(host)
 
-    expected = _brute_force_special_candidates(reference, rotations, translations, host.lattice_vectors, tolerance_ang=0.25)
-    actual = _project_nearby_special_candidates(reference, rotations, translations, host.lattice_vectors, tolerance_ang=0.25)
+    expected = _brute_force_special_candidates(
+        reference, rotations, translations, host.lattice_vectors, tolerance_ang=0.25
+    )
+    actual = _project_nearby_special_candidates(
+        reference, rotations, translations, host.lattice_vectors, tolerance_ang=0.25
+    )
 
     assert len(expected) > 1
     assert actual == expected
@@ -310,15 +394,22 @@ def test_symmetry_orbit_matches_greedy_pairwise_deduplication(host_factory) -> N
     lattice = host.lattice_vectors
 
     for point in ((0.5, 0.0, 0.0), (0.25, 0.25, 0.25), (0.12, 0.27, 0.41), (0.0, 0.0, 0.999999999)):
-        images = [np.dot(rotation, np.asarray(point)) + translation for rotation, translation in zip(rotations, translations, strict=True)]
+        images = [
+            np.dot(rotation, np.asarray(point)) + translation
+            for rotation, translation in zip(rotations, translations, strict=True)
+        ]
         expected: list[tuple[float, float, float]] = []
         for image in images:
             # Wrapped twice, as originally: ``-1e-17 % 1.0`` is ``1.0``, and the second wrap folds it to 0.
             wrapped = _wrap_fractional(_wrap_fractional(image))
-            if not any(minimum_image_distance(wrapped, existing, lattice) <= 1e-5 for existing in expected):
+            if not any(
+                minimum_image_distance(wrapped, existing, lattice) <= 1e-5 for existing in expected
+            ):
                 expected.append(wrapped)
 
-        orbit = symmetry_orbit(point, (rotations, translations), lattice_vectors=lattice, tolerance=1e-5)
+        orbit = symmetry_orbit(
+            point, (rotations, translations), lattice_vectors=lattice, tolerance=1e-5
+        )
 
         assert len(orbit) == len(expected)
         for actual_position, expected_position in zip(orbit, expected, strict=True):
@@ -362,7 +453,9 @@ def test_wyckoff_assignment_labels_only_the_best_ranked_candidate(monkeypatch) -
 
 
 @pytest.mark.usefixtures("fresh_wyckoff_caches")
-def test_wyckoff_assignment_falls_back_to_next_ranked_candidate_when_labelling_fails(monkeypatch) -> None:
+def test_wyckoff_assignment_falls_back_to_next_ranked_candidate_when_labelling_fails(
+    monkeypatch,
+) -> None:
     host, sites, cluster = _bcc_six_b_cluster()
     original_label = wyckoff_analysis._label_candidate
 
@@ -384,7 +477,9 @@ def test_wyckoff_assignment_falls_back_to_next_ranked_candidate_when_labelling_f
 @pytest.mark.usefixtures("fresh_wyckoff_caches")
 def test_wyckoff_assignment_is_unmatched_when_no_candidate_can_be_labelled(monkeypatch) -> None:
     host, sites, cluster = _bcc_six_b_cluster()
-    monkeypatch.setattr(wyckoff_analysis, "_label_candidate", lambda host_cell, orbit, *, symprec: None)
+    monkeypatch.setattr(
+        wyckoff_analysis, "_label_candidate", lambda host_cell, orbit, *, symprec: None
+    )
 
     assignments = assign_cluster_wyckoff_sites(sites, cluster, host, match_tolerance_ang=0.25)
 

@@ -1,0 +1,6 @@
+# Commits that only reformat code. GitHub's blame view skips them; locally, run
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# once per clone. See "Code formatting" in docs/quality_and_automation.rst.
+
+# style: format the codebase with ruff format at 100 columns
+fe00d46fb54cb88d57812ff55c68dfde9931dfa3

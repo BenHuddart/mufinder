@@ -44,7 +44,11 @@ from mufinder.science.convergence_analysis import (
     recommended_value,
     unconverged_criteria,
 )
-from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count_for_spacing, spacing_from_grid
+from mufinder.science.kpoint_grids import (
+    format_kpoint_grid,
+    kpoint_count_for_spacing,
+    spacing_from_grid,
+)
 
 
 #: Smallest thresholds the fields accept. Forces and stresses cannot be compared
@@ -53,7 +57,7 @@ from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count_for_s
 #: identically. Energies are printed to 13 significant figures, so the energy
 #: threshold only has to be positive.
 _THRESHOLD_DECIMALS = 12
-_MIN_ENERGY_THRESHOLD = 10.0 ** -_THRESHOLD_DECIMALS
+_MIN_ENERGY_THRESHOLD = 10.0**-_THRESHOLD_DECIMALS
 _MIN_FORCE_THRESHOLD = CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG
 _MIN_STRESS_THRESHOLD = CASTEP_STRESS_PRINT_RESOLUTION_GPA
 
@@ -278,7 +282,9 @@ class ConvergenceExaminerDialog(QDialog):
         layout.addLayout(method_row)
 
         self._results.setMinimumHeight(220)
-        self._results.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+        self._results.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding
+        )
         layout.addWidget(self._results)
         layout.addWidget(self._canvas)
         layout.addStretch(1)
@@ -353,11 +359,7 @@ class ConvergenceExaminerDialog(QDialog):
             self._canvas.draw_idle()
 
     def _on_plot_hover(self, event) -> None:
-        if (
-            self._last_plot_data is None
-            or self._energy_ax is None
-            or self._force_ax is None
-        ):
+        if self._last_plot_data is None or self._energy_ax is None or self._force_ax is None:
             return
         if event.inaxes is None or event.xdata is None or event.ydata is None:
             self._on_plot_leave(event)
@@ -393,7 +395,11 @@ class ConvergenceExaminerDialog(QDialog):
                 ]
             else:
                 points = [
-                    (x_value, y_value, f"{self._sweep_point_tooltip(x_value)}\nEnergy: {y_value:.12g} eV")
+                    (
+                        x_value,
+                        y_value,
+                        f"{self._sweep_point_tooltip(x_value)}\nEnergy: {y_value:.12g} eV",
+                    )
                     for x_value, y_value in zip(cutoffs, energies, strict=False)
                 ]
         elif event.inaxes in force_axes:
@@ -408,13 +414,8 @@ class ConvergenceExaminerDialog(QDialog):
             )
             if on_stress_twin:
                 anchor_ax = self._stress_ax
-                for idx, (x_value, stress_y) in enumerate(
-                    zip(cutoffs, stresses, strict=False)
-                ):
-                    text = (
-                        f"{self._sweep_point_tooltip(x_value)}"
-                        f"\nMax stress: {stress_y:.6g} GPa"
-                    )
+                for idx, (x_value, stress_y) in enumerate(zip(cutoffs, stresses, strict=False)):
+                    text = f"{self._sweep_point_tooltip(x_value)}\nMax stress: {stress_y:.6g} GPa"
                     if idx < len(forces):
                         text += f"\nMax force: {forces[idx]:.12g} eV/Ang"
                     points.append((x_value, stress_y, text))
@@ -428,9 +429,7 @@ class ConvergenceExaminerDialog(QDialog):
                 else:
                     # Cutoff mode on primary force axis: surface both metrics
                     # in one tooltip.
-                    for idx, (x_value, y_value) in enumerate(
-                        zip(cutoffs, forces, strict=False)
-                    ):
+                    for idx, (x_value, y_value) in enumerate(zip(cutoffs, forces, strict=False)):
                         text = (
                             f"{self._sweep_point_tooltip(x_value)}"
                             f"\nMax force: {y_value:.12g} eV/Ang"
@@ -484,7 +483,9 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._canvas.draw_idle()
 
-    def _collect_completed(self, sweep_data: Mapping[float, SweepPointRunState]) -> list[tuple[float, SweepPointRunState]]:
+    def _collect_completed(
+        self, sweep_data: Mapping[float, SweepPointRunState]
+    ) -> list[tuple[float, SweepPointRunState]]:
         completed: list[tuple[float, SweepPointRunState]] = []
         for cutoff, state in sweep_data.items():
             if state.status.strip().lower() != "completed":
@@ -538,9 +539,7 @@ class ConvergenceExaminerDialog(QDialog):
             # axes grow. Once a plateau starts, every subsequent repeat is
             # suppressed so the annotation series stays strictly decreasing
             # and does not mislead the user about convergence status.
-            if last_spacing is not None and math.isclose(
-                spacing, last_spacing, rel_tol=1e-9
-            ):
+            if last_spacing is not None and math.isclose(spacing, last_spacing, rel_tol=1e-9):
                 continue
             spacings[float(x_value)] = spacing
             last_spacing = spacing
@@ -575,9 +574,7 @@ class ConvergenceExaminerDialog(QDialog):
 
         grids = ConvergenceExaminerDialog._parse_grids_from_labels(float_labels)
         try:
-            fresh_spacings = ConvergenceExaminerDialog._compute_spacings(
-                lattice_vectors, grids
-            )
+            fresh_spacings = ConvergenceExaminerDialog._compute_spacings(lattice_vectors, grids)
         except Exception:
             return dict(snapshot)
 
@@ -598,7 +595,7 @@ class ConvergenceExaminerDialog(QDialog):
         seen: set[float] = set()
         candidates: list[float] = []
         for decade in _SPACING_TICK_DECADES:
-            scale = 10.0 ** decade
+            scale = 10.0**decade
             for mantissa in _SPACING_TICK_MANTISSAS:
                 value = round(mantissa * scale, 12)
                 if value <= 0.0 or value in seen:
@@ -628,9 +625,7 @@ class ConvergenceExaminerDialog(QDialog):
         last_label: str | None = None
         for spacing in self._candidate_spacings():
             try:
-                position = kpoint_count_for_spacing(
-                    self._lattice_vectors, spacing
-                )
+                position = kpoint_count_for_spacing(self._lattice_vectors, spacing)
             except ValueError:
                 continue
             if not (x_min <= position <= x_max):
@@ -767,7 +762,9 @@ class ConvergenceExaminerDialog(QDialog):
         ]
 
         if len(energy_cutoffs) < 2 or len(force_cutoffs) < 2:
-            lines.append("Need at least two completed rows with both energy and max-force values to run analysis.")
+            lines.append(
+                "Need at least two completed rows with both energy and max-force values to run analysis."
+            )
         elif self._num_atoms <= 0:
             lines.append("Simulation-cell atom count must be positive before analysis can run.")
         lines.extend(self._note_lines())
@@ -789,7 +786,14 @@ class ConvergenceExaminerDialog(QDialog):
         self._stress_ax = None
 
         if energy_cutoffs:
-            energy_ax.plot(energy_cutoffs, energies, marker="o", linestyle="-", color="#1d4ed8", label="Total energy")
+            energy_ax.plot(
+                energy_cutoffs,
+                energies,
+                marker="o",
+                linestyle="-",
+                color="#1d4ed8",
+                label="Total energy",
+            )
         energy_ax.set_ylabel("Energy (eV)")
         energy_ax.tick_params(axis="x", labelbottom=False)
         energy_ax.legend(loc="best") if energy_cutoffs else None
@@ -797,7 +801,9 @@ class ConvergenceExaminerDialog(QDialog):
         self._apply_legend_theme(energy_ax)
 
         if force_cutoffs:
-            force_ax.plot(force_cutoffs, forces, marker="o", linestyle="-", color="#b91c1c", label="Max force")
+            force_ax.plot(
+                force_cutoffs, forces, marker="o", linestyle="-", color="#b91c1c", label="Max force"
+            )
         force_ax.set_xlabel(
             "Cutoff energy (eV)" if self._sweep_kind == "cutoff" else "Number of k-points",
             labelpad=8,
@@ -1010,8 +1016,12 @@ class ConvergenceExaminerDialog(QDialog):
                 forces = [float(value) for value in plot_data.get("forces", [])]
                 stresses_raw = plot_data.get("stresses", []) or []
                 stresses = [float(value) for value in stresses_raw]
-                energy_threshold = float(plot_data.get("energy_threshold", self._energy_threshold.value()))
-                force_threshold = float(plot_data.get("force_threshold", self._force_threshold.value()))
+                energy_threshold = float(
+                    plot_data.get("energy_threshold", self._energy_threshold.value())
+                )
+                force_threshold = float(
+                    plot_data.get("force_threshold", self._force_threshold.value())
+                )
                 stress_threshold_raw = plot_data.get("stress_threshold")
                 stress_threshold = (
                     float(stress_threshold_raw) if stress_threshold_raw is not None else None
@@ -1024,7 +1034,11 @@ class ConvergenceExaminerDialog(QDialog):
                 stress_threshold = None
 
             if cutoffs and len(cutoffs) == len(energies) == len(forces):
-                use_stress = bool(stresses) and len(stresses) == len(cutoffs) and stress_threshold is not None
+                use_stress = (
+                    bool(stresses)
+                    and len(stresses) == len(cutoffs)
+                    and stress_threshold is not None
+                )
                 self._last_plot_data = {
                     "cutoffs": list(cutoffs),
                     "energies": list(energies),
@@ -1116,7 +1130,9 @@ class ConvergenceExaminerDialog(QDialog):
         stresses: list[float] = []
         stress_threshold: float | None = None
         if include_stress:
-            stress_by_cutoff = {cutoff: stress for cutoff, stress in zip(*self._stress_series(), strict=False)}
+            stress_by_cutoff = {
+                cutoff: stress for cutoff, stress in zip(*self._stress_series(), strict=False)
+            }
             try:
                 stresses = [stress_by_cutoff[cutoff] for cutoff in cutoffs]
             except KeyError:
@@ -1192,7 +1208,9 @@ class ConvergenceExaminerDialog(QDialog):
             lines.extend(["", "Stress result:", stress_result.details])
 
         if energy_result.fallback_suggestion:
-            lines.extend(["", f"Energy method fallback suggestion: {energy_result.fallback_suggestion}"])
+            lines.extend(
+                ["", f"Energy method fallback suggestion: {energy_result.fallback_suggestion}"]
+            )
 
         if self._recommended_value is not None:
             if self._sweep_kind == "cutoff":
@@ -1293,7 +1311,9 @@ class ConvergenceExaminerDialog(QDialog):
         self._spacing_ax = None
         self._stress_ax = None
 
-        energy_ax.plot(cutoffs, energies, marker="o", linestyle="-", color="#1d4ed8", label="Total energy")
+        energy_ax.plot(
+            cutoffs, energies, marker="o", linestyle="-", color="#1d4ed8", label="Total energy"
+        )
         if self._energy_result and self._energy_result.fitted_curve:
             fit_x = [point[0] for point in self._energy_result.fitted_curve]
             fit_y = [point[1] for point in self._energy_result.fitted_curve]
@@ -1313,7 +1333,9 @@ class ConvergenceExaminerDialog(QDialog):
                 label="Energy convergence",
             )
         if self._recommended_value is not None:
-            energy_ax.axvline(self._recommended_value, color=recommended_line, linestyle="-", alpha=0.55)
+            energy_ax.axvline(
+                self._recommended_value, color=recommended_line, linestyle="-", alpha=0.55
+            )
 
         energy_ax.set_ylabel("Energy (eV)")
         energy_ax.tick_params(axis="x", labelbottom=False)
@@ -1350,7 +1372,7 @@ class ConvergenceExaminerDialog(QDialog):
                     # double-drawn vertical gridlines from the spacing tick positions.
                     spacing_ax.grid(False)
 
-        force_line, = force_ax.plot(
+        (force_line,) = force_ax.plot(
             cutoffs, forces, marker="o", linestyle="-", color="#b91c1c", label="Max force"
         )
         force_handles = [force_line]
@@ -1367,7 +1389,9 @@ class ConvergenceExaminerDialog(QDialog):
         )
         force_handles.append(threshold_handle)
         if self._recommended_value is not None:
-            force_ax.axvline(self._recommended_value, color=recommended_line, linestyle="-", alpha=0.55)
+            force_ax.axvline(
+                self._recommended_value, color=recommended_line, linestyle="-", alpha=0.55
+            )
 
         force_ax.set_xlabel(
             "Cutoff energy (eV)" if self._sweep_kind == "cutoff" else "Number of k-points",
@@ -1385,7 +1409,7 @@ class ConvergenceExaminerDialog(QDialog):
         if stresses:
             stress_ax = force_ax.twinx()
             self._stress_ax = stress_ax
-            stress_line, = stress_ax.plot(
+            (stress_line,) = stress_ax.plot(
                 cutoffs,
                 stresses,
                 marker="s",
@@ -1427,7 +1451,9 @@ class ConvergenceExaminerDialog(QDialog):
         self._apply_legend_theme(force_ax)
 
         # Mention the active thresholds in the axes titles for quick scanning.
-        energy_ax.set_title(f"Energy convergence (threshold {energy_threshold:.3g} eV/atom)", pad=10)
+        energy_ax.set_title(
+            f"Energy convergence (threshold {energy_threshold:.3g} eV/atom)", pad=10
+        )
         if stresses and stress_threshold is not None:
             force_ax.set_title(
                 "Force / stress convergence "
@@ -1454,9 +1480,17 @@ class ConvergenceExaminerDialog(QDialog):
         stress_threshold = self._stress_threshold_for_recommendation
         self._emit_state_changed()
         self.default_adopted.emit(
-            float(self._recommended_value), method, energy_threshold, force_threshold, stress_threshold
+            float(self._recommended_value),
+            method,
+            energy_threshold,
+            force_threshold,
+            stress_threshold,
         )
         if self._sweep_kind == "cutoff":
             self.cutoff_adopted.emit(
-                float(self._recommended_value), method, energy_threshold, force_threshold, stress_threshold
+                float(self._recommended_value),
+                method,
+                energy_threshold,
+                force_threshold,
+                stress_threshold,
             )

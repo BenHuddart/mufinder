@@ -6,11 +6,17 @@ import numpy as np
 import pytest
 
 from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
-from mufinder.persistence.migrations import UI_STATE_KEY, migrate_project_payloads, stored_schema_version
+from mufinder.persistence.migrations import (
+    UI_STATE_KEY,
+    migrate_project_payloads,
+    stored_schema_version,
+)
 from mufinder.science.magnetic_fields import DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
 
 
-def _definition(stage: str, configuration: object, definition_id: str = "def-1") -> dict[str, object]:
+def _definition(
+    stage: str, configuration: object, definition_id: str = "def-1"
+) -> dict[str, object]:
     return {
         "id": definition_id,
         "workflow_stage": stage,
@@ -87,7 +93,11 @@ def test_schema_1_kpoint_definition_drops_the_empty_cutoff_energies_key() -> Non
 def test_migration_leaves_other_payloads_alone() -> None:
     other_stage = _definition("pristine_relaxation", {"cutoff_energies": [300.0]}, "relax")
     already_current = _definition("convergence_cutoff", {"sweep_values": [300.0]}, "current")
-    malformed = {"id": "bad", "workflow_stage": "convergence_cutoff", "parameters": {"configuration": []}}
+    malformed = {
+        "id": "bad",
+        "workflow_stage": "convergence_cutoff",
+        "parameters": {"configuration": []},
+    }
     entities = {"calculations": [other_stage, already_current, malformed], "jobs": [{"id": "job"}]}
 
     changed = migrate_project_payloads({"schema_version": 1}, entities)
@@ -170,10 +180,20 @@ def test_schema_2_backfill_finds_a_result_by_its_run_when_the_run_has_no_result_
         lambda entities: entities["runs"].clear(),
         lambda entities: entities["results"].clear(),
         lambda entities: entities["results"][0]["data"].pop("muon_final_fractional_position_host"),
-        lambda entities: entities["results"][0]["data"].update(muon_final_fractional_position_host=[0.1, 0.2]),
-        lambda entities: entities["results"][0]["data"].update(muon_final_fractional_position_host=["a", 0.2, 0.3]),
+        lambda entities: entities["results"][0]["data"].update(
+            muon_final_fractional_position_host=[0.1, 0.2]
+        ),
+        lambda entities: entities["results"][0]["data"].update(
+            muon_final_fractional_position_host=["a", 0.2, 0.3]
+        ),
     ],
-    ids=["missing-run", "missing-result", "no-final-position", "short-position", "non-numeric-position"],
+    ids=[
+        "missing-run",
+        "missing-result",
+        "no-final-position",
+        "short-position",
+        "non-numeric-position",
+    ],
 )
 def test_schema_2_relaxed_site_without_a_usable_result_position_is_not_backfilled(breakage) -> None:
     entities = _relaxed_site_payloads()
@@ -188,12 +208,20 @@ def test_schema_2_relaxed_site_without_a_usable_result_position_is_not_backfille
 
 
 def test_schema_2_site_already_using_the_new_keys_is_left_alone() -> None:
-    site = {"id": "current", "initial_fractional_position": [0.1, 0.2, 0.3], "relaxation_run_id": None}
+    site = {
+        "id": "current",
+        "initial_fractional_position": [0.1, 0.2, 0.3],
+        "relaxation_run_id": None,
+    }
 
     changed = migrate_project_payloads({"schema_version": 2}, {"sites": [site]})
 
     assert changed == set()
-    assert site == {"id": "current", "initial_fractional_position": [0.1, 0.2, 0.3], "relaxation_run_id": None}
+    assert site == {
+        "id": "current",
+        "initial_fractional_position": [0.1, 0.2, 0.3],
+        "relaxation_run_id": None,
+    }
 
 
 def test_current_and_newer_projects_are_not_migrated() -> None:
@@ -224,7 +252,10 @@ def _schema_3_magnetic_ui_state() -> dict[str, object]:
     return {
         "magnetic_field_form": {
             "histogram_bins": 512,
-            "magnetic_field_results": {"kind": "commensurate", "results": [{"site_label": "a", "total_T": [0, 0, 1]}]},
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [{"site_label": "a", "total_T": [0, 0, 1]}],
+            },
             "dipolar_tensor_results": [],
             "nuclear_relaxation_results": {"mode": "zero_field_powder", "sigma_us_inv": 0.4},
         },
@@ -233,12 +264,20 @@ def _schema_3_magnetic_ui_state() -> dict[str, object]:
                 "id": "ws-1",
                 "title": "Helix",
                 "form": {
-                    "magnetic_field_results": {"kind": "distribution", "results": [{"site_label": "b"}]},
-                    "dipolar_tensor_results": [{"site_label": "b", "tensor": [[1, 0, 0], [0, 1, 0], [0, 0, -2]]}],
+                    "magnetic_field_results": {
+                        "kind": "distribution",
+                        "results": [{"site_label": "b"}],
+                    },
+                    "dipolar_tensor_results": [
+                        {"site_label": "b", "tensor": [[1, 0, 0], [0, 1, 0], [0, 0, -2]]}
+                    ],
                 },
             },
             {"id": "ws-2", "title": "Empty", "form": {"magnetic_field_results": None}},
-            {"title": "No id", "form": {"magnetic_field_results": {"kind": "commensurate", "results": [{}]}}},
+            {
+                "title": "No id",
+                "form": {"magnetic_field_results": {"kind": "commensurate", "results": [{}]}},
+            },
         ],
     }
 
@@ -251,7 +290,9 @@ def test_schema_3_magnetic_field_results_become_result_entities() -> None:
 
     results = entities["results"]
     assert changed == {UI_STATE_KEY} | {("results", str(result["id"])) for result in results}
-    by_owner_and_type = {(result["data"]["owner"], result["result_type"]): result for result in results}
+    by_owner_and_type = {
+        (result["data"]["owner"], result["result_type"]): result for result in results
+    }
     assert set(by_owner_and_type) == {
         ("magnetic_fields", "magnetic_field"),
         ("magnetic_fields", "nuclear_relaxation"),
@@ -270,7 +311,10 @@ def test_schema_3_magnetic_field_results_become_result_entities() -> None:
         "mode": "zero_field_powder",
         "sigma_us_inv": 0.4,
     }
-    assert by_owner_and_type[("ws-1", "magnetic_dipolar_tensor")]["data"]["results"][0]["site_label"] == "b"
+    assert (
+        by_owner_and_type[("ws-1", "magnetic_dipolar_tensor")]["data"]["results"][0]["site_label"]
+        == "b"
+    )
     assert ui_state["magnetic_field_form"] == {"histogram_bins": 512}
     assert ui_state["magnetic_field_workspaces"][0]["form"] == {}
     assert ui_state["magnetic_field_workspaces"][1]["form"] == {}
@@ -279,7 +323,10 @@ def test_schema_3_magnetic_field_results_become_result_entities() -> None:
 
 
 def test_schema_3_project_without_magnetic_results_changes_nothing() -> None:
-    ui_state: dict[str, object] = {"magnetic_field_form": {"histogram_bins": 512}, "other": {"x": 1}}
+    ui_state: dict[str, object] = {
+        "magnetic_field_form": {"histogram_bins": 512},
+        "other": {"x": 1},
+    }
     entities: dict[str, list[dict[str, object]]] = {"results": []}
 
     assert migrate_project_payloads({"schema_version": 3}, entities, ui_state) == set()
@@ -287,7 +334,9 @@ def test_schema_3_project_without_magnetic_results_changes_nothing() -> None:
     assert entities == {"results": []}
 
 
-def _tensor_record(record_id: str, entries: list[object], result_type: str = "magnetic_dipolar_tensor") -> dict[str, object]:
+def _tensor_record(
+    record_id: str, entries: list[object], result_type: str = "magnetic_dipolar_tensor"
+) -> dict[str, object]:
     return {
         "id": record_id,
         "calculation_run_id": None,
@@ -296,17 +345,24 @@ def _tensor_record(record_id: str, entries: list[object], result_type: str = "ma
     }
 
 
-def test_schema_4_dipolar_tensors_are_converted_from_inverse_cubic_angstrom_to_tesla_per_mu_b() -> None:
+def test_schema_4_dipolar_tensors_are_converted_from_inverse_cubic_angstrom_to_tesla_per_mu_b() -> (
+    None
+):
     raw = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]
-    tensor = _tensor_record("tensor", [{"site_label": "a", "dipolar_tensor_T_per_muB": raw}, {"site_label": "b"}])
-    field = _tensor_record("field", [{"dipolar_tensor_T_per_muB": raw}], result_type="magnetic_field")
+    tensor = _tensor_record(
+        "tensor", [{"site_label": "a", "dipolar_tensor_T_per_muB": raw}, {"site_label": "b"}]
+    )
+    field = _tensor_record(
+        "field", [{"dipolar_tensor_T_per_muB": raw}], result_type="magnetic_field"
+    )
     entities = {"results": [tensor, field]}
 
     changed = migrate_project_payloads({"schema_version": 4}, entities)
 
     assert changed == {("results", "tensor")}
     np.testing.assert_allclose(
-        tensor["data"]["results"][0]["dipolar_tensor_T_per_muB"], DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * np.asarray(raw)
+        tensor["data"]["results"][0]["dipolar_tensor_T_per_muB"],
+        DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * np.asarray(raw),
     )
     assert tensor["data"]["results"][1] == {"site_label": "b"}
     assert field["data"]["results"][0]["dipolar_tensor_T_per_muB"] == raw
@@ -314,7 +370,13 @@ def test_schema_4_dipolar_tensors_are_converted_from_inverse_cubic_angstrom_to_t
 
 @pytest.mark.parametrize(
     "tensor",
-    [None, "1 0 0", [[1.0, 0.0], [0.0, 1.0]], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, "x"]], [[True] * 3] * 3],
+    [
+        None,
+        "1 0 0",
+        [[1.0, 0.0], [0.0, 1.0]],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, "x"]],
+        [[True] * 3] * 3,
+    ],
     ids=["missing", "string", "two-by-two", "non-numeric", "boolean"],
 )
 def test_schema_4_migration_leaves_malformed_tensors_alone(tensor) -> None:
@@ -328,7 +390,9 @@ def test_schema_4_migration_leaves_malformed_tensors_alone(tensor) -> None:
 def test_schema_3_inline_dipolar_tensor_is_converted_after_becoming_a_record() -> None:
     ui_state = {
         "magnetic_field_form": {
-            "dipolar_tensor_results": [{"site_label": "a", "dipolar_tensor_T_per_muB": [[0, 0, 0], [0, 0, 0], [0, 0, 2]]}]
+            "dipolar_tensor_results": [
+                {"site_label": "a", "dipolar_tensor_T_per_muB": [[0, 0, 0], [0, 0, 0], [0, 0, 2]]}
+            ]
         }
     }
     entities: dict[str, list[dict[str, object]]] = {}

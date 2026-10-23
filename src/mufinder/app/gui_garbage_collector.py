@@ -41,7 +41,9 @@ _enabled_before_collectors = False
 class GuiGarbageCollector(QObject):
     """Collect reference cycles from a GUI-thread timer instead of automatically."""
 
-    def __init__(self, parent: QObject | None = None, *, interval_ms: int = COLLECT_INTERVAL_MS) -> None:
+    def __init__(
+        self, parent: QObject | None = None, *, interval_ms: int = COLLECT_INTERVAL_MS
+    ) -> None:
         super().__init__(parent)
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)

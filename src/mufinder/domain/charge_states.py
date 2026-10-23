@@ -74,6 +74,7 @@ def seed_muon_spins(
         spins[index] = muon_spin
     return spins
 
+
 #: Persisted ``calc_type`` for each muon charge state. These strings are written
 #: into saved projects and are matched by the job-directory resolver, so they are
 #: durable vocabulary rather than presentation detail — which is why they live in
@@ -110,7 +111,9 @@ def muon_charge_state_prefix(charge_state: str) -> str:
     """Return the filesystem-safe prefix for one muon charge state."""
 
     key = _charge_state_key(charge_state)
-    return MUON_RELAXATION_JOB_PREFIXES.get(key, MUON_RELAXATION_JOB_PREFIXES[POSITIVE_MUON_CHARGE_STATE])
+    return MUON_RELAXATION_JOB_PREFIXES.get(
+        key, MUON_RELAXATION_JOB_PREFIXES[POSITIVE_MUON_CHARGE_STATE]
+    )
 
 
 def muon_charge_for_state(charge_state: str) -> int:
@@ -124,7 +127,9 @@ def muon_relaxation_calc_type(charge_state: str) -> str:
     """Return the persisted calc type for one muon charge state."""
 
     key = _charge_state_key(charge_state)
-    return MUON_RELAXATION_CALC_TYPES.get(key, MUON_RELAXATION_CALC_TYPES[POSITIVE_MUON_CHARGE_STATE])
+    return MUON_RELAXATION_CALC_TYPES.get(
+        key, MUON_RELAXATION_CALC_TYPES[POSITIVE_MUON_CHARGE_STATE]
+    )
 
 
 def is_muon_relaxation_calc_type(calc_type: str) -> bool:

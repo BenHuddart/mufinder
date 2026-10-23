@@ -186,9 +186,7 @@ def suggest_supercell(
         raise SupercellSuggestionError("lattice_vectors must contain three vectors.")
     for row in lattice_vectors:
         if len(row) != 3:
-            raise SupercellSuggestionError(
-                "Each lattice vector must have three components."
-            )
+            raise SupercellSuggestionError("Each lattice vector must have three components.")
     if primitive_atom_count < 1:
         raise SupercellSuggestionError(
             f"primitive_atom_count must be a positive integer, got {primitive_atom_count!r}."
@@ -201,9 +199,7 @@ def suggest_supercell(
         + float(a1[2]) * (float(a2[0]) * float(a3[1]) - float(a2[1]) * float(a3[0]))
     )
     if not math.isfinite(volume) or abs(volume) <= 1e-12:
-        raise SupercellSuggestionError(
-            "Lattice vectors must define a non-zero cell volume."
-        )
+        raise SupercellSuggestionError("Lattice vectors must define a non-zero cell volume.")
 
     lattice = np.asarray(lattice_vectors, dtype=float)
     primitive_exceeds_budget = primitive_atom_count >= max_atoms

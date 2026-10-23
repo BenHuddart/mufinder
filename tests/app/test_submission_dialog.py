@@ -8,9 +8,7 @@ import mufinder.app.submission_dialog as submission_dialog_module
 from mufinder.app.submission_dialog import LocalSubmissionDialog
 
 
-def test_submission_dialog_single_job_defaults_to_sequential(
-    qapp, monkeypatch
-) -> None:
+def test_submission_dialog_single_job_defaults_to_sequential(qapp, monkeypatch) -> None:
     monkeypatch.setattr(submission_dialog_module.QThread, "idealThreadCount", lambda: 8)
 
     dialog = LocalSubmissionDialog(job_labels=["conv_ecut_300"], mpirun_configured=True)
@@ -23,9 +21,7 @@ def test_submission_dialog_single_job_defaults_to_sequential(
     dialog.close()
 
 
-def test_submission_dialog_requires_single_core_when_mpirun_missing(
-    qapp, monkeypatch
-) -> None:
+def test_submission_dialog_requires_single_core_when_mpirun_missing(qapp, monkeypatch) -> None:
     monkeypatch.setattr(submission_dialog_module.QThread, "idealThreadCount", lambda: 16)
 
     dialog = LocalSubmissionDialog(
@@ -39,9 +35,7 @@ def test_submission_dialog_requires_single_core_when_mpirun_missing(
     dialog.close()
 
 
-def test_submission_dialog_parallel_mode_reports_oversubscription(
-    qapp, monkeypatch
-) -> None:
+def test_submission_dialog_parallel_mode_reports_oversubscription(qapp, monkeypatch) -> None:
     monkeypatch.setattr(submission_dialog_module.QThread, "idealThreadCount", lambda: 4)
 
     dialog = LocalSubmissionDialog(
@@ -61,9 +55,7 @@ def test_submission_dialog_parallel_mode_reports_oversubscription(
     dialog.close()
 
 
-def test_submission_dialog_default_height_avoids_squashed_layout(
-    qapp, monkeypatch
-) -> None:
+def test_submission_dialog_default_height_avoids_squashed_layout(qapp, monkeypatch) -> None:
     monkeypatch.setattr(submission_dialog_module.QThread, "idealThreadCount", lambda: 8)
 
     dialog = LocalSubmissionDialog(

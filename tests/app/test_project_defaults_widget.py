@@ -147,9 +147,7 @@ def test_strip_requests_functional_change_only_when_accepted_and_changed(
 
 
 def test_convergence_config_xc_functional_requires_a_single_functional() -> None:
-    shared = ConvergenceConfig(
-        sweep_values=(300.0, 400.0), shared_params={"xc_functional": "pbe"}
-    )
+    shared = ConvergenceConfig(sweep_values=(300.0, 400.0), shared_params={"xc_functional": "pbe"})
     assert convergence_config_xc_functional(shared) == "PBE"
 
     mixed = ConvergenceConfig(

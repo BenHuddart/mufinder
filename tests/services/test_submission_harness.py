@@ -119,9 +119,7 @@ def test_harness_cluster_job_stopped_is_terminal(qapp, tmp_path: Path) -> None:
     assert harness.document.provenance[-1].action == "job_stopped"
 
 
-def test_harness_local_queued_status_routes_through_project_service(
-    qapp, tmp_path: Path
-) -> None:
+def test_harness_local_queued_status_routes_through_project_service(qapp, tmp_path: Path) -> None:
     # Decision 2 pin: a local runner status_changed(queued) on a SUBMITTING job
     # advances it to QUEUED via ProjectService.mark_job_queued (not by the runner
     # or controller mutating Job.status directly). The transition is validated,
@@ -140,9 +138,7 @@ def test_harness_local_queued_status_routes_through_project_service(
     assert run.status == JobStatus.QUEUED
 
 
-def test_harness_local_queued_status_is_noop_for_already_queued_job(
-    qapp, tmp_path: Path
-) -> None:
+def test_harness_local_queued_status_is_noop_for_already_queued_job(qapp, tmp_path: Path) -> None:
     # Decision 2 pin: mark_local_status_changed is QUEUED-only and gated on the
     # job being SUBMITTING. A second queued notification for an already-QUEUED
     # job (or any job that is not SUBMITTING) is an inert no-op -- it must not

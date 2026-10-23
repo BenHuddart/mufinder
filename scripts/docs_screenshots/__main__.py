@@ -45,13 +45,19 @@ def _scene_timeout(value: str) -> float:
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a number of seconds: {value!r}") from None
     if not 0 < seconds <= MAX_SCENE_TIMEOUT_S:
-        raise argparse.ArgumentTypeError(f"must be more than 0 and at most {MAX_SCENE_TIMEOUT_S:g} seconds, not {value}")
+        raise argparse.ArgumentTypeError(
+            f"must be more than 0 and at most {MAX_SCENE_TIMEOUT_S:g} seconds, not {value}"
+        )
     return seconds
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render the documentation screenshots from the running application.")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="directory to write the images to")
+    parser = argparse.ArgumentParser(
+        description="Render the documentation screenshots from the running application."
+    )
+    parser.add_argument(
+        "--output", type=Path, default=DEFAULT_OUTPUT, help="directory to write the images to"
+    )
     parser.add_argument("--list", action="store_true", help="print the screenshot names and exit")
     parser.add_argument(
         "--example",
@@ -141,7 +147,16 @@ def _shares(names: list[str], count: int) -> list[list[str]]:
 def _render_in_workers(names: list[str], output: Path, jobs: int, scene_timeout: float) -> bool:
     """Render ``names`` in ``jobs`` worker processes, one share each; ``True`` if all succeed."""
 
-    command = [sys.executable, str(SCRIPT), "--jobs", "1", "--scene-timeout", str(scene_timeout), "--output", str(output)]
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "--jobs",
+        "1",
+        "--scene-timeout",
+        str(scene_timeout),
+        "--output",
+        str(output),
+    ]
     workers = [subprocess.Popen([*command, *share]) for share in _shares(names, jobs) if share]
     codes = [worker.wait() for worker in workers]
     return all(code == 0 for code in codes)

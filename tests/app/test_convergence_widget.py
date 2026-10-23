@@ -113,7 +113,6 @@ def test_convergence_widget_uses_cutoff_standard_defaults(qapp) -> None:
     assert "continuation" not in widget._default_params
 
 
-
 def test_convergence_widget_state_roundtrip_uses_per_cutoff_rows(qapp) -> None:
     widget = CutoffConvergenceWidget()
     state = {
@@ -149,7 +148,9 @@ def test_convergence_widget_simulation_cell_selector_emits_selection_signals(qap
     widget = CutoffConvergenceWidget()
     selected: list[str] = []
     reset_requested: list[bool] = []
-    widget.simulation_cell_selection_requested.connect(lambda payload: selected.append(str(payload)))
+    widget.simulation_cell_selection_requested.connect(
+        lambda payload: selected.append(str(payload))
+    )
     widget.simulation_cell_use_unit_cell_requested.connect(lambda: reset_requested.append(True))
 
     widget.set_simulation_cell_options(
@@ -398,7 +399,11 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
     assert "cut_off_energy" in names
     assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
+    assert (
+        names.index("cut_off_energy")
+        < names.index("elec_energy_tol")
+        < names.index("kpoint_mp_grid")
+    )
 
 
 def test_convergence_widget_add_cutoff_fallback_on_invalid_previous(qapp) -> None:
@@ -463,7 +468,9 @@ def test_convergence_widget_runtime_columns_use_higher_precision(qapp) -> None:
     max_force = 0.012345678901234
     widget.set_runtime_states(
         {
-            300.0: SweepPointRunState(status="completed", total_energy=total_energy, max_force=max_force),
+            300.0: SweepPointRunState(
+                status="completed", total_energy=total_energy, max_force=max_force
+            ),
         }
     )
 
@@ -609,7 +616,9 @@ def test_convergence_widget_run_targets_selection_else_every_row(qapp) -> None:
     assert widget._selected_or_all_keys() == (300.0, 360.0)
 
 
-def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     widget = CutoffConvergenceWidget()
     widget._add_row(300.0)
     widget._add_row(360.0)
@@ -625,7 +634,9 @@ def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(qa
     )
 
     requested_rows: list[tuple[int, ...]] = []
-    monkeypatch.setattr(widget, "_request_removals", lambda rows: requested_rows.append(tuple(rows)))
+    monkeypatch.setattr(
+        widget, "_request_removals", lambda rows: requested_rows.append(tuple(rows))
+    )
 
     widget._remove_selected_or_current()
 
@@ -1002,8 +1013,6 @@ def test_convergence_widget_context_menu_has_the_shared_order(
     ]
     enabled = {action.text for action in menu.actions if action.enabled}
     assert enabled == {"Run Local", "Run on Cluster", "Configure...", "Remove"}
-
-
 
 
 def _two_cutoffs_with_different_scf_cycles() -> CutoffConvergenceWidget:

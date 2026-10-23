@@ -64,7 +64,15 @@ def test_parse_neb_path_selects_final_iteration_band() -> None:
     parsed = parse_transition_state_file(_NEB_FIXTURE)
 
     # Only the converged (final-iteration) band is returned, ordered by coordinate.
-    assert [image.label for image in parsed.images] == ["REA", "TST", "TST", "TST", "TST", "TST", "PRO"]
+    assert [image.label for image in parsed.images] == [
+        "REA",
+        "TST",
+        "TST",
+        "TST",
+        "TST",
+        "TST",
+        "PRO",
+    ]
     assert parsed.images[0].reaction_coordinate == pytest.approx(0.0)
     assert parsed.images[-1].reaction_coordinate == pytest.approx(1.0)
     # All TST images come from a single (the last) NEB iteration.
@@ -245,10 +253,7 @@ def test_invalid_energy_entry_raises() -> None:
 def test_invalid_lattice_entry_too_few_values_raises() -> None:
     # The guard counts every whitespace token including the "<-- h" marker, so a
     # bare marker line (2 tokens) is the way to trip len(values) < 3.
-    body = (
-        "              -1.00000000E+000                       <-- E\n"
-        "  <-- h\n"
-    )
+    body = "              -1.00000000E+000                       <-- E\n  <-- h\n"
     text = " TSTYPE\n" + _block(" REA    1      0.0", body)
     with pytest.raises(TransitionStateParseError, match="Invalid lattice-vector entry"):
         parse_transition_state_text(text)

@@ -13,18 +13,14 @@ from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
 
 
-def _patch_for_value(
-    sweep_parameter: str, value: float | tuple[int, int, int]
-) -> JobPatch:
+def _patch_for_value(sweep_parameter: str, value: float | tuple[int, int, int]) -> JobPatch:
     if sweep_parameter == "cut_off_energy":
         numeric_value = float(value)  # type: ignore[arg-type]
         suffix = f"ecut_{format_value_token(numeric_value)}"
         return JobPatch(
             label_suffix=suffix,
             param=ParamTemplate(
-                keywords=(
-                    KeywordAssignment("cut_off_energy", ValueWithUnit(numeric_value, "eV")),
-                )
+                keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(numeric_value, "eV")),)
             ),
         )
 
@@ -98,4 +94,3 @@ def expand_convergence_sweep_jobs(
         )
 
     return jobs
-

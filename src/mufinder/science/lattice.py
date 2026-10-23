@@ -294,7 +294,11 @@ def fractional_to_cartesian(
     points = np.asarray(fractional, dtype=float)
     if points.ndim == 0 or points.shape[-1] != 3:
         raise error("Fractional positions must be 3-vectors.")
-    return points[..., 0, None] * lattice[0] + points[..., 1, None] * lattice[1] + points[..., 2, None] * lattice[2]
+    return (
+        points[..., 0, None] * lattice[0]
+        + points[..., 1, None] * lattice[1]
+        + points[..., 2, None] * lattice[2]
+    )
 
 
 def cartesian_to_fractional(
@@ -305,11 +309,17 @@ def cartesian_to_fractional(
 ) -> np.ndarray:
     """Convert Cartesian points of shape ``(..., 3)`` to fractional, in the scalar term order."""
 
-    inverse = np.asarray(inverse_lattice(lattice_matrix(lattice_vectors, error=error).tolist(), error=error))
+    inverse = np.asarray(
+        inverse_lattice(lattice_matrix(lattice_vectors, error=error).tolist(), error=error)
+    )
     points = np.asarray(cartesian, dtype=float)
     if points.ndim == 0 or points.shape[-1] != 3:
         raise error("Cartesian positions must be 3-vectors.")
-    return points[..., 0, None] * inverse[0] + points[..., 1, None] * inverse[1] + points[..., 2, None] * inverse[2]
+    return (
+        points[..., 0, None] * inverse[0]
+        + points[..., 1, None] * inverse[1]
+        + points[..., 2, None] * inverse[2]
+    )
 
 
 def minimum_image_distance_matrix(
@@ -380,14 +390,18 @@ def deduplicate_periodic_positions(
     if tolerance >= 0.0:
         # Dropping exact repeats first cannot change the result: a repeat is always within
         # tolerance of whatever kept entry covered (or was) its first occurrence.
-        wrapped = [list(position) for position in dict.fromkeys(tuple(position) for position in wrapped)]
+        wrapped = [
+            list(position) for position in dict.fromkeys(tuple(position) for position in wrapped)
+        ]
     if not wrapped:
         return []
     distances = minimum_image_distance_matrix(wrapped, wrapped, lattice_vectors)
     within = distances <= tolerance
     for left, right in np.argwhere(np.abs(distances - tolerance) <= abs(tolerance) * NEAR_TIE_RTOL):
         # The scan compares each new position against the kept ones: ``distance(new, kept)``.
-        within[left, right] = minimum_image_distance(wrapped[right], wrapped[left], lattice_vectors) <= tolerance
+        within[left, right] = (
+            minimum_image_distance(wrapped[right], wrapped[left], lattice_vectors) <= tolerance
+        )
     return [wrapped[index] for index in greedy_unique_indexes(within)]
 
 

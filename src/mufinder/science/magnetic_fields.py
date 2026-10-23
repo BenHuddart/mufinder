@@ -10,7 +10,13 @@ from typing import Any
 
 import numpy as np
 
-from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
+from mufinder.domain.constants import (
+    BOHR_MAGNETON_J_PER_T,
+    METRES_PER_ANGSTROM,
+    MU0_OVER_4PI_T_M_PER_A,
+    MU0_T_M_PER_A,
+    MUON_GAMMA_OVER_2PI_MHZ_T,
+)
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
@@ -25,19 +31,25 @@ from mufinder.science.magnetic_structure import (
     resolve_atom_selector,
     split_muesr_model_data_into_helices,
 )
-from mufinder.science.muon_distortion import MuonDistortion, equivalent_site_distortion, map_muon_distortion
+from mufinder.science.muon_distortion import (
+    MuonDistortion,
+    equivalent_site_distortion,
+    map_muon_distortion,
+)
 
-MU0_OVER_4PI = 1e-7
-MU0 = 4.0 * np.pi * 1e-7
-MU_B = 9.274_010_078_3e-24
-ANGSTROM_TO_M = 1e-10
 MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = MUON_GAMMA_OVER_2PI_MHZ_T
-CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (2.0 * MU0 / 3.0) * MU_B / (ANGSTROM_TO_M**3)
+CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (
+    (2.0 * MU0_T_M_PER_A / 3.0) * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
+)
 # muesr returns dipolar tensors as the lattice sum of (3 r̂ r̂ - 1) / r^3 in Å^-3;
 # this factor, mu0 mu_B / (4 pi Å^3), turns that sum into T per mu_B.
-DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0_OVER_4PI * MU_B / (ANGSTROM_TO_M**3)
+DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 = (
+    MU0_OVER_4PI_T_M_PER_A * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
+)
 # mu0 M, in T, of a magnetisation of 1 mu_B per Å^3.
-MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 = MU0 * MU_B / (ANGSTROM_TO_M**3)
+MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 = (
+    MU0_T_M_PER_A * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
+)
 CONTACT_COUPLING_UNIT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("angstrom^-3", "Å⁻³"),
     ("T_per_muB", "T/μB"),
@@ -48,7 +60,9 @@ _CONTACT_COUPLING_FACTORS_TO_ANGSTROM_MINUS3 = {
     "a^-3": 1.0,
     "ang^-3": 1.0,
     "T_per_muB": 1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
-    "MHz_per_muB": (1.0 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T) / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
+    "MHz_per_muB": (
+        (1.0 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T) / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
+    ),
 }
 
 
@@ -238,7 +252,9 @@ class CommensurateApproximant:
         """Return a short human-readable description, e.g. ``q = (1/3, 0, 0)``."""
 
         vectors = "; ".join(
-            "q = (" + ", ".join(_fraction_text(value, denominator) for value, denominator in zip(q, dens)) + ")"
+            "q = ("
+            + ", ".join(_fraction_text(value, denominator) for value, denominator in zip(q, dens))
+            + ")"
             for q, dens in zip(self.approximant_rlu, self.denominators, strict=True)
         )
         a, b, c = self.periods
@@ -260,7 +276,9 @@ class DipolarTensorResult:
 
     site_label: str
     muon_position: tuple[float, float, float]
-    tensor_T_per_muB: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    tensor_T_per_muB: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -348,7 +366,9 @@ def find_commensurate_approximant(
     approximants: list[tuple[float, float, float]] = []
     denominators: list[tuple[int, int, int]] = []
     for model_data in models:
-        rational = _rational_propagation_vector(model_data.k_rlu, tolerance=tolerance, max_period=max_period)
+        rational = _rational_propagation_vector(
+            model_data.k_rlu, tolerance=tolerance, max_period=max_period
+        )
         if rational is None:
             return None
         q_vectors.append(_tuple3(model_data.k_rlu))
@@ -379,7 +399,9 @@ def find_equivalent_muon_sites(
     mu = _canonical_fractional(muon_position)
     cell = spglib_cell(structure)
     if cell is None:
-        raise MagneticFieldError("spglib could not determine symmetry operations: a species is not an element")
+        raise MagneticFieldError(
+            "spglib could not determine symmetry operations: a species is not an element"
+        )
     operations = symmetry_operations(cell, symprec=1e-5)
     if operations is None:
         raise MagneticFieldError("spglib could not determine symmetry operations")
@@ -410,13 +432,13 @@ def calculate_finite_dipolar_field(
         return (0.0, 0.0, 0.0)
     r_cart = r_cart[mask]
     moments = moments[mask]
-    r_norm_m = r_norm_ang[mask] * ANGSTROM_TO_M
+    r_norm_m = r_norm_ang[mask] * METRES_PER_ANGSTROM
     r_hat = r_cart / r_norm_ang[mask, np.newaxis]
-    m_si = moments * MU_B
+    m_si = moments * BOHR_MAGNETON_J_PER_T
     inv_r3 = 1.0 / (r_norm_m**3)
     mdotr = np.sum(m_si * r_hat, axis=1)
     terms = (3.0 * mdotr[:, np.newaxis] * r_hat - m_si) * inv_r3[:, np.newaxis]
-    return _tuple3(MU0_OVER_4PI * np.sum(terms, axis=0))
+    return _tuple3(MU0_OVER_4PI_T_M_PER_A * np.sum(terms, axis=0))
 
 
 def calculate_distortion_field_correction(
@@ -475,7 +497,11 @@ def calculate_commensurate_fields(
     locfield, find_largest_sphere, _dipten = _load_muesr_engines()
     muons = _expanded_muon_positions(structure, muon_sites, opts)
     sample = _build_muesr_sample(structure, [position for _label, position in muons])
-    radius = float(opts.radius) if opts.radius is not None else float(find_largest_sphere(sample, list(opts.supercell)))
+    radius = (
+        float(opts.radius)
+        if opts.radius is not None
+        else float(find_largest_sphere(sample, list(opts.supercell)))
+    )
 
     dipolar, lorentz, contact = _commensurate_field_terms(
         structure,
@@ -501,7 +527,9 @@ def calculate_commensurate_fields(
                 demag=_tuple3(demag),
                 applied=_tuple3(applied),
                 distortion=(
-                    None if distortion is None else calculate_distortion_field_correction(structure, model, distortion)
+                    None
+                    if distortion is None
+                    else calculate_distortion_field_correction(structure, model, distortion)
                 ),
             )
         )
@@ -568,28 +596,42 @@ def calculate_commensurate_approximant_fields(
     muons = _expanded_muon_positions(structure, muon_sites, opts)
     positions = [position for _label, position in muons]
     sample = _build_muesr_sample(structure, positions)
-    radius = float(opts.radius) if opts.radius is not None else float(find_largest_sphere(sample, list(opts.supercell)))
+    radius = (
+        float(opts.radius)
+        if opts.radius is not None
+        else float(find_largest_sphere(sample, list(opts.supercell)))
+    )
     applied = _as_vector(opts.applied_field, "applied_field")
     demag = _demag_field(structure, approximant_models, opts)
 
     terms_by_translation = []
     for translation in translations:
         shifted = [
-            replace(model_data, phi=np.asarray(model_data.phi, dtype=float) + float(np.dot(model_data.k_rlu, translation)))
+            replace(
+                model_data,
+                phi=np.asarray(model_data.phi, dtype=float)
+                + float(np.dot(model_data.k_rlu, translation)),
+            )
             for model_data in approximant_models
         ]
-        terms_by_translation.append(_commensurate_field_terms(structure, shifted, positions, opts, radius, locfield))
+        terms_by_translation.append(
+            _commensurate_field_terms(structure, shifted, positions, opts, radius, locfield)
+        )
 
     results: list[MagneticFieldResult] = []
     for index, (label, position) in enumerate(muons):
-        for translation, (dipolar, lorentz, contact) in zip(translations, terms_by_translation, strict=True):
+        for translation, (dipolar, lorentz, contact) in zip(
+            translations, terms_by_translation, strict=True
+        ):
             site_label = label
             if len(translations) > 1:
                 site_label = f"{label} + ({translation[0]}, {translation[1]}, {translation[2]})"
             results.append(
                 MagneticFieldResult(
                     site_label=site_label,
-                    muon_position=_tuple3(np.asarray(position, dtype=float) + np.asarray(translation, dtype=float)),
+                    muon_position=_tuple3(
+                        np.asarray(position, dtype=float) + np.asarray(translation, dtype=float)
+                    ),
                     dipolar=_tuple3(dipolar[index]),
                     lorentz=_tuple3(lorentz[index]),
                     contact=_tuple3(contact[index]),
@@ -619,7 +661,14 @@ def _commensurate_field_terms(
         sample.mm.k = model_data.k_rlu
         sample.mm.fc = _muesr_fourier_components(model_data, options.supercell)
         sample.mm.phi = model_data.phi
-        fields = locfield(sample, "s", list(options.supercell), radius, nnn=int(options.nnn), rcont=float(options.rcont))
+        fields = locfield(
+            sample,
+            "s",
+            list(options.supercell),
+            radius,
+            nnn=int(options.nnn),
+            rcont=float(options.rcont),
+        )
         for index, local_field in enumerate(fields):
             if options.contact_coupling is not None:
                 local_field.ACont = float(options.contact_coupling)
@@ -670,7 +719,10 @@ def _distinct_phase_translations(
     """
 
     def phases(translation: tuple[int, int, int]) -> tuple[tuple[int, int], ...]:
-        return tuple(_phase_numerator(numerators, denominators, translation) for numerators, denominators in rationals)
+        return tuple(
+            _phase_numerator(numerators, denominators, translation)
+            for numerators, denominators in rationals
+        )
 
     origin = (0, 0, 0)
     representatives = {phases(origin): origin}
@@ -691,12 +743,15 @@ def _distinct_phase_translations(
     return tuple(sorted(representatives.values()))
 
 
-def _phase_numerator(numerators: np.ndarray, denominators: np.ndarray, translation: Sequence[int]) -> tuple[int, int]:
+def _phase_numerator(
+    numerators: np.ndarray, denominators: np.ndarray, translation: Sequence[int]
+) -> tuple[int, int]:
     """Return ``q . T mod 1`` exactly, as ``(numerator, denominator)`` over the lcm of q's denominators."""
 
     common = math.lcm(*(int(value) for value in denominators))
     total = sum(
-        int(numerators[axis]) * int(translation[axis]) * (common // int(denominators[axis])) for axis in range(3)
+        int(numerators[axis]) * int(translation[axis]) * (common // int(denominators[axis]))
+        for axis in range(3)
     )
     return (total % common, common)
 
@@ -746,7 +801,11 @@ def calculate_dipolar_tensors_for_atoms(
     _locfield, find_largest_sphere, dipten = _load_muesr_engines()
     muons = _expanded_muon_positions(structure, muon_sites, opts)
     radius_sample = _build_muesr_sample(structure, [position for _label, position in muons])
-    radius = float(opts.radius) if opts.radius is not None else float(find_largest_sphere(radius_sample, list(opts.supercell)))
+    radius = (
+        float(opts.radius)
+        if opts.radius is not None
+        else float(find_largest_sphere(radius_sample, list(opts.supercell)))
+    )
     sample = _build_muesr_sample(structure, [position for _label, position in muons])
     sample.new_mm()
     sample.mm.k = np.zeros(3, dtype=float)
@@ -800,7 +859,11 @@ def calculate_incommensurate_field_distributions(
 
     muons = _expanded_muon_positions(structure, muon_sites, opts)
     radius_sample = _build_muesr_sample(structure, [position for _label, position in muons])
-    radius = float(opts.radius) if opts.radius is not None else float(find_largest_sphere(radius_sample, list(opts.supercell)))
+    radius = (
+        float(opts.radius)
+        if opts.radius is not None
+        else float(find_largest_sphere(radius_sample, list(opts.supercell)))
+    )
     calculation_parameters = _distribution_calculation_parameters(opts, radius)
     phase_basis_rlu, phase_coeffs_by_model = _active_phase_basis_and_coefficients(
         models,
@@ -840,7 +903,9 @@ def calculate_incommensurate_field_distributions(
             )
             else "i"
         )
-        model_entries = split_muesr_model_data_into_helices(model_data) if mode == "i" else (model_data,)
+        model_entries = (
+            split_muesr_model_data_into_helices(model_data) if mode == "i" else (model_data,)
+        )
         for model_entry in model_entries:
             sample = _build_muesr_sample(structure, [position for _label, position in muons])
             sample.new_mm()
@@ -850,12 +915,24 @@ def calculate_incommensurate_field_distributions(
             kwargs: dict[str, Any] = {}
             if mode == "i":
                 kwargs["nangles"] = int(opts.nangles)
-            fields = locfield(sample, mode, list(opts.supercell), radius, nnn=int(opts.nnn), rcont=float(opts.rcont), **kwargs)
+            fields = locfield(
+                sample,
+                mode,
+                list(opts.supercell),
+                radius,
+                nnn=int(opts.nnn),
+                rcont=float(opts.rcont),
+                **kwargs,
+            )
             for index, local_field in enumerate(fields):
                 if opts.contact_coupling is not None:
                     local_field.ACont = float(opts.contact_coupling)
                 dip = _field_array(local_field, "Dipolar", "D", nangles=int(opts.nangles))
-                lor = _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles)) if opts.include_lorentz else 0.0
+                lor = (
+                    _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles))
+                    if opts.include_lorentz
+                    else 0.0
+                )
                 con = _field_array(local_field, "Contact", "C", nangles=int(opts.nangles))
                 component_totals_by_site[index].append(dip + lor + con)
             component_phase_coeffs.append(tuple(float(value) for value in phase_coeff))
@@ -889,7 +966,9 @@ def calculate_incommensurate_field_distributions(
                 else None
             ),
             half_sample_magnitudes=(
-                np.linalg.norm(site_fields(half_samples), axis=1) if half_samples is not None else None
+                np.linalg.norm(site_fields(half_samples), axis=1)
+                if half_samples is not None
+                else None
             ),
             nangles=int(opts.nangles),
             lookup_limited=(
@@ -917,7 +996,9 @@ def calculate_incommensurate_field_distributions(
     return tuple(results)
 
 
-def _half_resolution_phase_samples(phase_samples_turns: np.ndarray, sampling: str) -> np.ndarray | None:
+def _half_resolution_phase_samples(
+    phase_samples_turns: np.ndarray, sampling: str
+) -> np.ndarray | None:
     """Return the phase samples at half the sample budget, or ``None`` for a single phase.
 
     Monte Carlo keeps every other sample; a grid keeps every other point along
@@ -967,7 +1048,11 @@ def _distribution_convergence_checks(
                 metric=distance,
                 message=(
                     f"Halving the lookup angles to {nangles // 2} shifts the |B| distribution by {100.0 * distance:.2g}%"
-                    + ("." if converged else f" (more than {tolerance_percent:g}%); double Lookup angles per q.")
+                    + (
+                        "."
+                        if converged
+                        else f" (more than {tolerance_percent:g}%); double Lookup angles per q."
+                    )
                 ),
             )
         )
@@ -983,7 +1068,11 @@ def _distribution_convergence_checks(
                 message=(
                     f"Halving the samples to {int(half_sample_magnitudes.size)} shifts the |B| distribution "
                     f"by {100.0 * distance:.2g}%"
-                    + ("." if converged else f" (more than {tolerance_percent:g}%); use {more_samples}.")
+                    + (
+                        "."
+                        if converged
+                        else f" (more than {tolerance_percent:g}%); use {more_samples}."
+                    )
                 ),
             )
         )
@@ -1048,23 +1137,31 @@ def _active_phase_basis_and_coefficients(
             continue
         solved, *_ = np.linalg.lstsq(basis.T, q_rlu, rcond=None)
         if not np.allclose(solved @ basis, q_rlu, atol=max(float(tolerance), 1e-10), rtol=0.0):
-            raise MagneticFieldError("could not express component q vector in the sampled phase basis")
+            raise MagneticFieldError(
+                "could not express component q vector in the sampled phase basis"
+            )
         coeffs.append(tuple(float(value) for value in solved))
     return basis, coeffs
 
 
-def _rank_increases(existing: Sequence[np.ndarray], candidate: np.ndarray, *, tolerance: float) -> bool:
+def _rank_increases(
+    existing: Sequence[np.ndarray], candidate: np.ndarray, *, tolerance: float
+) -> bool:
     candidate = np.asarray(candidate, dtype=float).reshape(3)
     if float(np.linalg.norm(candidate)) <= float(tolerance):
         return False
     if not existing:
         return True
     before = np.linalg.matrix_rank(np.asarray(existing, dtype=float), tol=float(tolerance))
-    after = np.linalg.matrix_rank(np.vstack([np.asarray(existing, dtype=float), candidate]), tol=float(tolerance))
+    after = np.linalg.matrix_rank(
+        np.vstack([np.asarray(existing, dtype=float), candidate]), tol=float(tolerance)
+    )
     return int(after) > int(before)
 
 
-def _active_component_q_indices(models: Sequence[object], *, tolerance: float = 1e-12) -> tuple[int, ...]:
+def _active_component_q_indices(
+    models: Sequence[object], *, tolerance: float = 1e-12
+) -> tuple[int, ...]:
     active: set[int] = set()
     for model_data in models:
         for q_coeff in getattr(model_data, "q_coeffs", ()) or ():
@@ -1180,10 +1277,14 @@ def _combine_component_samples(
     for fields, q_coeff in zip(component_fields, component_q_coeffs, strict=True):
         lookup = np.asarray(fields, dtype=float)
         if lookup.ndim != 2 or lookup.shape[1] != 3:
-            raise MagneticFieldError(f"component field lookup must have shape (nangles, 3), got {lookup.shape}")
+            raise MagneticFieldError(
+                f"component field lookup must have shape (nangles, 3), got {lookup.shape}"
+            )
         coeff = np.asarray(q_coeff, dtype=float)
         if coeff.shape != (phases.shape[1],):
-            raise MagneticFieldError("component phase coefficient length does not match sampled phase dimensions")
+            raise MagneticFieldError(
+                "component phase coefficient length does not match sampled phase dimensions"
+            )
         table = lookup[:: int(stride)]
         phase_turns = np.mod(phases @ coeff, 1.0)
         indices = np.rint(phase_turns * float(nangles) / float(stride)).astype(int) % table.shape[0]
@@ -1191,7 +1292,9 @@ def _combine_component_samples(
     return combined
 
 
-def _field_magnitude_histogram(magnitudes: np.ndarray, *, bins: int) -> tuple[np.ndarray, np.ndarray]:
+def _field_magnitude_histogram(
+    magnitudes: np.ndarray, *, bins: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Return a robust histogram for field magnitudes, including delta-like ranges."""
 
     bins = int(bins)
@@ -1233,7 +1336,9 @@ def _field_magnitude_histogram(magnitudes: np.ndarray, *, bins: int) -> tuple[np
     return centres, counts
 
 
-def _distribution_calculation_parameters(options: MagneticFieldOptions, radius: float) -> dict[str, object]:
+def _distribution_calculation_parameters(
+    options: MagneticFieldOptions, radius: float
+) -> dict[str, object]:
     return {
         "supercell": list(options.supercell),
         "radius": float(radius),
@@ -1241,10 +1346,14 @@ def _distribution_calculation_parameters(options: MagneticFieldOptions, radius: 
         "demag_shape": options.demag_shape,
         "plate_normal_axis": options.plate_normal_axis,
         "demag_sample": None if options.demag_sample is None else options.demag_sample.to_json(),
-        "measured_magnetization": _optional_list(_measured_magnetization_vector(options.measured_magnetization)),
+        "measured_magnetization": _optional_list(
+            _measured_magnetization_vector(options.measured_magnetization)
+        ),
         "nnn": int(options.nnn),
         "rcont": float(options.rcont),
-        "contact_coupling": None if options.contact_coupling is None else float(options.contact_coupling),
+        "contact_coupling": (
+            None if options.contact_coupling is None else float(options.contact_coupling)
+        ),
         "applied_field": list(options.applied_field),
         "find_equivalent_sites": bool(options.find_equivalent_sites),
         "equivalent_tolerance": float(options.equivalent_tolerance),
@@ -1358,12 +1467,16 @@ def _site_distortions(
         raise MagneticFieldError("distorted_structures must have one entry per muon site")
     out: list[MuonDistortion | None] = []
     for site, distorted in zip(muon_sites, distorted_structures, strict=True):
-        positions = [position for _label, position in _expanded_muon_positions(structure, [site], options)]
+        positions = [
+            position for _label, position in _expanded_muon_positions(structure, [site], options)
+        ]
         if distorted is None:
             out.extend([None] * len(positions))
             continue
         representative = site.current_fractional_position() if isinstance(site, MuonSite) else site
-        distortion = map_muon_distortion(structure, distorted, representative, error=MagneticFieldError)
+        distortion = map_muon_distortion(
+            structure, distorted, representative, error=MagneticFieldError
+        )
         out.extend(
             equivalent_site_distortion(
                 structure,
@@ -1384,7 +1497,9 @@ def _resolve_magnetic_ion_indices(
     magnetic_ion_selector: AtomSelector | None,
 ) -> tuple[int, ...]:
     if magnetic_ion_indices is not None and magnetic_ion_selector is not None:
-        raise MagneticFieldError("provide either magnetic_ion_indices or magnetic_ion_selector, not both")
+        raise MagneticFieldError(
+            "provide either magnetic_ion_indices or magnetic_ion_selector, not both"
+        )
     atom_count = len(structure.species)
     if magnetic_ion_selector is not None:
         indices = resolve_atom_selector(structure, magnetic_ion_selector)
@@ -1396,7 +1511,9 @@ def _resolve_magnetic_ion_indices(
     else:
         indices = ()
     if not indices:
-        raise MagneticFieldError("choose at least one magnetic ion for the dipolar tensor calculation")
+        raise MagneticFieldError(
+            "choose at least one magnetic ion for the dipolar tensor calculation"
+        )
     if any(index < 0 or index >= atom_count for index in indices):
         raise MagneticFieldError("magnetic ion selection contains an out-of-range atom index")
     return indices
@@ -1408,7 +1525,9 @@ def _unit_tensor_fourier_components(structure: Structure, indices: Sequence[int]
     return fc
 
 
-def _demag_field(structure: Structure, models: Sequence[MuesrModelData], options: MagneticFieldOptions) -> np.ndarray:
+def _demag_field(
+    structure: Structure, models: Sequence[MuesrModelData], options: MagneticFieldOptions
+) -> np.ndarray:
     """Return the demagnetizing field ``-mu0 N M_meas`` of the bulk magnetisation, in T.
 
     ``M_meas`` is ``options.measured_magnetization`` when it is set and the
@@ -1437,7 +1556,9 @@ def _measured_magnetization_field(
         return None
     _formula, formula_units = reduced_formula(structure.species)
     if formula_units <= 0:
-        raise MagneticFieldError("measured_magnetization needs a structure with at least one non-muon atom")
+        raise MagneticFieldError(
+            "measured_magnetization needs a structure with at least one non-muon atom"
+        )
     volume = abs(float(np.linalg.det(np.asarray(structure.lattice_vectors, dtype=float))))
     return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment * formula_units / volume
 
@@ -1450,9 +1571,13 @@ def _measured_magnetization_vector(magnetization: object) -> np.ndarray | None:
     try:
         moment = np.asarray(magnetization, dtype=float)
     except (TypeError, ValueError) as exc:
-        raise MagneticFieldError("measured_magnetization must be three numbers in mu_B per formula unit") from exc
+        raise MagneticFieldError(
+            "measured_magnetization must be three numbers in mu_B per formula unit"
+        ) from exc
     if moment.shape != (3,):
-        raise MagneticFieldError("measured_magnetization must be a three-vector in mu_B per formula unit")
+        raise MagneticFieldError(
+            "measured_magnetization must be a three-vector in mu_B per formula unit"
+        )
     if not np.all(np.isfinite(moment)):
         raise MagneticFieldError("measured_magnetization must be finite")
     return moment
@@ -1488,7 +1613,9 @@ def _demag_tensor(options: MagneticFieldOptions) -> np.ndarray | None:
     if shape == "sphere":
         tensor = np.eye(3, dtype=float) / 3.0
     elif shape in {"infinite_plate", "plate", "infinite plate"}:
-        axis = {"a": 0, "x": 0, "b": 1, "y": 1, "c": 2, "z": 2}.get(options.plate_normal_axis.lower(), 2)
+        axis = {"a": 0, "x": 0, "b": 1, "y": 1, "c": 2, "z": 2}.get(
+            options.plate_normal_axis.lower(), 2
+        )
         tensor = np.zeros((3, 3), dtype=float)
         tensor[axis, axis] = 1.0
     else:
@@ -1553,7 +1680,9 @@ def _tuple3(values: Sequence[float]) -> tuple[float, float, float]:
     return (float(arr[0]), float(arr[1]), float(arr[2]))
 
 
-def _tensor3x3(values: Sequence[Sequence[float]]) -> tuple[
+def _tensor3x3(
+    values: Sequence[Sequence[float]],
+) -> tuple[
     tuple[float, float, float],
     tuple[float, float, float],
     tuple[float, float, float],

@@ -66,7 +66,13 @@ def _pristine_job(service, doc, status: JobStatus, *, row_key: str = "unit"):
 def _job_directory(doc, seed: str = SEED) -> Path:
     directory = doc.project_root / "files" / "pristine_relaxation" / seed
     directory.mkdir(parents=True, exist_ok=True)
-    for name in (f"{seed}.cell", f"{seed}.param", f"{seed}.castep", f"{seed}-out.cell", f"{seed}.check"):
+    for name in (
+        f"{seed}.cell",
+        f"{seed}.param",
+        f"{seed}.castep",
+        f"{seed}-out.cell",
+        f"{seed}.check",
+    ):
         (directory / name).write_text("data\n", encoding="utf-8")
     return directory
 
@@ -156,13 +162,18 @@ def test_directories_not_named_after_the_job_are_refused(qapp, tmp_path: Path) -
     window._job_seed_name = lambda _job: "another_seed"
     local_refusal = window._fresh_start_refusals([job])[job.id]
 
-    assert remote_refusal == f"- {SEED}: its cluster directory is not named after the job (/remote/work)"
+    assert (
+        remote_refusal
+        == f"- {SEED}: its cluster directory is not named after the job (/remote/work)"
+    )
     assert local_refusal.startswith(f"- {SEED}: its output folder is not named after the job")
     window.close()
 
 
 @pytest.mark.parametrize("location", ["outside", "stage_root"])
-def test_directories_outside_the_job_folders_are_refused(qapp, tmp_path: Path, location: str) -> None:
+def test_directories_outside_the_job_folders_are_refused(
+    qapp, tmp_path: Path, location: str
+) -> None:
     window, service, doc = _project(tmp_path)
     job = _pristine_job(service, doc, JobStatus.STOPPED)
     directory = (
@@ -200,10 +211,14 @@ def test_dashboard_start_again_never_touches_a_running_replacements_directory(
     )
     warnings: list[str] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text)
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
     )
     submissions: list = []
-    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs, **kwargs: submissions.append(jobs))
+    monkeypatch.setattr(
+        window, "_submit_jobs_on_cluster", lambda jobs, **kwargs: submissions.append(jobs)
+    )
 
     window._on_resubmit_from_dashboard([old.id])
 
@@ -259,7 +274,9 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     failures: list[str] = []
     monkeypatch.setattr(
-        main_window_module, "show_detailed_warning", lambda _parent, _title, text, **_kw: failures.append(text)
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, _title, text, **_kw: failures.append(text),
     )
 
     window._submit_jobs_on_cluster(
@@ -270,7 +287,9 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     )
 
     assert recorded["deleted"] == []
-    assert [item["remote_directory"] for item in recorded["submitted"]] == [continuing.remote_directory]
+    assert [item["remote_directory"] for item in recorded["submitted"]] == [
+        continuing.remote_directory
+    ]
     assert "so it was not started again" in failures[0]
     window.close()
 
@@ -370,7 +389,11 @@ def test_cancelling_the_local_dialog_deletes_nothing(
 def test_clean_keeps_the_input_of_a_seed_ending_in_out(tmp_path: Path) -> None:
     directory = tmp_path / "pristine_relax_relax-out"
     directory.mkdir()
-    for name in ("pristine_relax_relax-out.cell", "pristine_relax_relax-out.param", "pristine_relax_relax-out-out.cell"):
+    for name in (
+        "pristine_relax_relax-out.cell",
+        "pristine_relax_relax-out.param",
+        "pristine_relax_relax-out-out.cell",
+    ):
         (directory / name).write_text("data", encoding="utf-8")
 
     JobFileCleanup.clear_directory_contents(directory)

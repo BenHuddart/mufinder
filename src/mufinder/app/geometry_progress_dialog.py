@@ -96,7 +96,9 @@ class GeometryProgressDialog(QDialog):
     #: Asks the window to read the job's output again now.
     refresh_requested = Signal()
 
-    def __init__(self, job_label: str, progress: GeometryProgress | None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, job_label: str, progress: GeometryProgress | None, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Geometry Progress - {job_label}")
         self.resize(clamped_size(self, 820, 640))
@@ -150,7 +152,9 @@ class GeometryProgressDialog(QDialog):
     def set_progress(self, progress: GeometryProgress | None) -> None:
         self._progress = progress
         if progress is None:
-            self._heading.setText("No geometry-optimisation progress has been read from this job's output yet.")
+            self._heading.setText(
+                "No geometry-optimisation progress has been read from this job's output yet."
+            )
         else:
             self._heading.setText(progress_heading(progress))
         self._fill_table(progress.latest if progress is not None else None)
@@ -182,11 +186,15 @@ class GeometryProgressDialog(QDialog):
         iterations = progress.iterations if progress is not None else ()
         names: list[str] = []
         for iteration in iterations:
-            names.extend(criterion.name for criterion in iteration.criteria if criterion.name not in names)
+            names.extend(
+                criterion.name for criterion in iteration.criteria if criterion.name not in names
+            )
         if not names:
             axis = self._figure.add_subplot(111)
             axis.set_axis_off()
-            axis.text(0.5, 0.5, "No iterations yet", ha="center", va="center", color=palette.text_muted)
+            axis.text(
+                0.5, 0.5, "No iterations yet", ha="center", va="center", color=palette.text_muted
+            )
             self._canvas.draw_idle()
             return
 
@@ -210,11 +218,24 @@ class GeometryProgressDialog(QDialog):
             # dE/ion is 0 at iteration 0 and a log axis cannot show it, so
             # non-positive values are masked rather than drawn at the axis edge.
             axis.set_yscale("log", nonpositive="mask")
-            axis.plot(steps, [criterion.value for _step, criterion in points], marker="o", markersize=3,
-                      linewidth=1.4, color=palette.status_running)
-            axis.plot(steps, [criterion.tolerance for _step, criterion in points], linestyle="--",
-                      linewidth=1.2, color=palette.success)
-            axis.set_title(f"{name} ({unit})" if unit else name, color=palette.text_primary, fontsize=9)
+            axis.plot(
+                steps,
+                [criterion.value for _step, criterion in points],
+                marker="o",
+                markersize=3,
+                linewidth=1.4,
+                color=palette.status_running,
+            )
+            axis.plot(
+                steps,
+                [criterion.tolerance for _step, criterion in points],
+                linestyle="--",
+                linewidth=1.2,
+                color=palette.success,
+            )
+            axis.set_title(
+                f"{name} ({unit})" if unit else name, color=palette.text_primary, fontsize=9
+            )
             if index >= len(names) - columns:
                 axis.set_xlabel("Iteration", color=palette.text_primary, fontsize=8)
             axis.xaxis.get_major_locator().set_params(integer=True)

@@ -53,7 +53,9 @@ def sanitize_remote_path_fragment(value: str) -> str:
     An empty result falls back to ``"workflow"``.
     """
 
-    parts = [sanitize_remote_path_component(part) for part in value.strip().split("/") if part.strip()]
+    parts = [
+        sanitize_remote_path_component(part) for part in value.strip().split("/") if part.strip()
+    ]
     return "/".join(parts) or "workflow"
 
 
@@ -92,7 +94,11 @@ def cluster_workflow_directory_fragment(jobs: Sequence[Job]) -> str:
     if muon_calc_types and len(muon_calc_types) == len({job.calc_type for job in jobs}):
         if len(muon_calc_types) == 1:
             calc_type = next(iter(muon_calc_types))
-            prefix = "positivemuon" if calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"] else "muonium"
+            prefix = (
+                "positivemuon"
+                if calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"]
+                else "muonium"
+            )
             return sanitize_remote_path_fragment(f"muon_relaxation/{prefix}")
         return "muon_relaxation_mixed_charge_states"
     workflow_values = {job.workflow_stage.value for job in jobs}

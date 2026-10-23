@@ -71,7 +71,10 @@ def reduced_formula(species: Iterable[object]) -> tuple[str, int]:
     if not counts:
         return "", 0
     divisor = math.gcd(*counts.values())
-    formula = "".join(f"{symbol}{count // divisor if count // divisor > 1 else ''}" for symbol, count in counts.items())
+    formula = "".join(
+        f"{symbol}{count // divisor if count // divisor > 1 else ''}"
+        for symbol, count in counts.items()
+    )
     return formula, divisor
 
 

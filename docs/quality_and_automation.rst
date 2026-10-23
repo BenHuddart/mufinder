@@ -7,6 +7,7 @@ Quality gates
 All implemented and future functionality must satisfy these gates:
 
 - Unit and integration tests must pass.
+- Lint and formatting checks must pass (``make lint``).
 - Agent-harness structural tests must pass.
 - Coverage must remain at or above 85 percent (enforced by pytest-cov).
 - Sphinx documentation must build with warnings treated as errors.
@@ -44,13 +45,65 @@ README, the pull-request template and CI refer to its targets. Pass
 - ``make docs`` renders the screenshots when they are out of date (see `When
   the renderer runs`_), then builds this Sphinx site with warnings treated as
   errors.
-- ``make lint`` runs ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``.
+- ``make lint`` runs ``ruff check`` and ``ruff format --check`` over ``src``,
+  ``tests``, ``scripts``, the API example scripts in ``docs/api/examples``,
+  ``docs/conf.py`` and ``packaging`` (see `Code formatting`_).
+- ``make format`` applies ``ruff format`` to the same files.
 - ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
 To skip the Qt widget tests while iterating, select by marker with
 ``python -m pytest --no-cov -m "not gui"``. ``tests/conftest.py`` marks every
 test under ``tests/app/`` or using the ``qapp`` fixture as ``gui`` and every
 other test as ``unit``.
+
+Code formatting
+---------------
+
+``ruff format`` owns the layout of every Python file that ``make lint`` checks.
+It runs with its defaults and a line length of 100, set in ``[tool.ruff]`` in
+``pyproject.toml``. Run ``make format`` before committing: ``make lint`` fails on
+any file the formatter would change, and CI runs ``make lint``. Layout is not
+hand-tuned and is not a review topic.
+
+The ``dev`` extra pins ruff to one minor version, because the formatter's style
+can change between minor releases and a different version would reformat files
+that CI accepts. CI installs the exact version in ``uv.lock``; the pin keeps a
+``pip`` install (``make install``) on the same minor version. Patch releases do
+not change the formatter's style, so ``uv lock --upgrade-package ruff`` within
+the pinned minor version can ride along with any change.
+
+Moving to a new minor version is a pull request of its own:
+
+1. Raise the range in the ``dev`` extra to the next minor version, for example
+   ``ruff>=0.18,<0.19``, and run ``uv lock --upgrade-package ruff``.
+2. Run ``make format``, then ``make lint``, and fix anything the new version's
+   lint rules report.
+3. Commit the version change, then the ``make format`` output alone in a
+   ``style:`` commit.
+4. If the formatter changed any file, add the ``style:`` commit's hash to
+   ``.git-blame-ignore-revs`` in a third commit, and merge the pull request with
+   a merge commit. If it changed nothing, squash as usual.
+
+Open the pull request when few others are open: every branch cut before it
+needs the update step at the end of this section.
+
+The formatter removes the indentation that every line of a docstring after the
+summary shares. An indented example keeps its indentation only when a line of
+prose at the docstring's own indentation sits beside it, such as ``Usage:``
+before an indented command.
+
+``.git-blame-ignore-revs`` lists the commits that only reformat code. GitHub's
+blame view skips them; to do the same locally, run this once per clone::
+
+    git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+A pull request that reformats code is merged with a merge commit rather than
+squashed, so the reformatting commit keeps the hash listed in
+``.git-blame-ignore-revs``.
+
+To bring a branch cut before a reformat up to date, run ``make format`` on the
+branch and commit the result, then merge ``main``. Both sides then carry the
+same layout, so the only conflicts left are real ones.
 
 PySide test shutdown note
 -------------------------
@@ -681,12 +734,34 @@ The harness tests currently verify:
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
   may appear (see :doc:`/architecture`, Shared workflow infrastructure).
+- No module in ``src/mufinder`` or ``scripts`` other than
+  ``mufinder.domain.constants`` types out a physical constant: a number within
+  1e-4 (relative) of a CODATA constant or a conversion built from them fails the
+  check, which names the constant to import. Powers of ten are skipped, because
+  they double as tolerances and SI prefixes, and
+  ``mufinder.persistence.migrations`` is allowed, because a migration must
+  reproduce the value older projects were written with. Tests keep their own
+  reference values, typed independently in ``tests/support/codata.py``.
+- No module in ``src/mufinder`` or ``scripts`` defines, at module level, a name
+  that ``mufinder.domain.constants`` defines or one of the names that held a
+  constant before the home existed (``MU0``, ``MU0_OVER_4PI``, ``MU_B``,
+  ``MU_N``, ``HBAR``, ``ANGSTROM_TO_M``, ...). This catches a redefinition the
+  value check cannot see, such as ``MU0_OVER_4PI = 1e-7``.
+- Only ``mufinder.domain.constants`` imports ``scipy.constants`` or ``ase.units``.
 - The ``*_coverage.py`` test files match a pinned list that may only shrink;
   coverage gaps are closed in the module's own test file.
 - ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
   ``AGENTS.md`` still points to it.
 - Source, test, and docs trees do not track Python bytecode artifacts that can
   confuse packaging and review.
+
+A SciPy release that adopts a newer CODATA set changes the constants, the muon
+mass and gyromagnetic ratio written to CASTEP inputs, and every result built
+from them. Moving to it is a change of its own: raise the ``scipy`` floor in
+``pyproject.toml`` to that release, update ``tests/support/codata.py`` to the
+new recommended values, regenerate the golden inputs with
+``python -m tests.support.golden_inputs``, and state in the pull request that
+rendered inputs change. Loosening the tests instead would hide the change.
 
 Automation policy
 -----------------
@@ -697,7 +772,8 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``make lint``: ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``
+  - ``make lint``: ``ruff check`` and ``ruff format --check`` (see `Code
+    formatting`_)
   - ``make test-shard SHARD=n SHARDS=4 PYTEST_WORKERS=auto`` on four runners,
     each distributed with ``pytest-xdist`` using ``--dist worksteal``, then
     ``make coverage`` in the required ``tests`` job, which combines the shards'

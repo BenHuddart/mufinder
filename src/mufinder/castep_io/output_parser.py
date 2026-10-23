@@ -50,8 +50,13 @@ _FAILURE_MARKERS = (
 )
 _WARNING_RE = re.compile(r"\bWARNING\b", re.IGNORECASE)
 _SCF_RE = re.compile(r"\bSCF(?:\s+cycle|\s+iteration)?\s*[:#=]?\s*(\d+)\b", re.IGNORECASE)
-_WALL_SECONDS_RE = re.compile(rf"(?:Total\s+time|Wall\s+time)[^\n=]*=\s*({_FLOAT_RE})\s*s(?:ec(?:onds?)?)?", re.IGNORECASE)
-_WALL_HMS_RE = re.compile(r"(?:Total\s+time|Wall\s+time)[^\n]*?([0-9]{1,2}):([0-9]{2}):([0-9]{2}(?:\.\d+)?)", re.IGNORECASE)
+_WALL_SECONDS_RE = re.compile(
+    rf"(?:Total\s+time|Wall\s+time)[^\n=]*=\s*({_FLOAT_RE})\s*s(?:ec(?:onds?)?)?", re.IGNORECASE
+)
+_WALL_HMS_RE = re.compile(
+    r"(?:Total\s+time|Wall\s+time)[^\n]*?([0-9]{1,2}):([0-9]{2}):([0-9]{2}(?:\.\d+)?)",
+    re.IGNORECASE,
+)
 _FORCE_BLOCK_HEADER_RE = re.compile(r"\**.*\bForces\b\s*\**", re.IGNORECASE)
 _FORCE_LINE_RE = re.compile(
     rf"^\s*(?:\d+\s+)?([A-Za-z][A-Za-z0-9]*)\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*$"
@@ -185,7 +190,11 @@ def parse_castep_output(path: Path) -> CastepResult:
 
     error_message = _find_error_message(final_run_lines)
     completed = _is_complete(final_run_text, error_message)
-    if completed and _stress_requested(final_run_lines) and not _parse_last_stress_block(final_run_lines):
+    if (
+        completed
+        and _stress_requested(final_run_lines)
+        and not _parse_last_stress_block(final_run_lines)
+    ):
         completed = False
 
     return CastepResult(
@@ -350,7 +359,9 @@ def _read_force_block(
     return block, index + 1 if index == start_index else index
 
 
-def _read_stress_block(lines: list[str], start_index: int) -> tuple[list[tuple[float, float, float]], int]:
+def _read_stress_block(
+    lines: list[str], start_index: int
+) -> tuple[list[tuple[float, float, float]], int]:
     block: list[tuple[float, float, float]] = []
     index = start_index
     while index < len(lines):

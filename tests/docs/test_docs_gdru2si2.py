@@ -61,7 +61,9 @@ def test_the_neb_band_from_site_1_to_site_2() -> None:
     ("number", "conventional"),
     [(1, (0.50, 0.00, 0.07)), (2, (0.21, 0.21, 0.16))],
 )
-def test_the_relaxed_muons_sit_at_the_table_si_sites(number: int, conventional: tuple[float, ...]) -> None:
+def test_the_relaxed_muons_sit_at_the_table_si_sites(
+    number: int, conventional: tuple[float, ...]
+) -> None:
     cell = parse_cell_file(FIXTURES / f"GdRu2Si2_site{number}-out.cell")
     muon = np.asarray(cell.fractional_positions[list(cell.species).index("H:mu")], dtype=float)
 
@@ -76,7 +78,9 @@ def test_the_relaxed_muons_sit_at_the_table_si_sites(number: int, conventional: 
         (2, (2129.8, 4019.8, 4396.9), 0.654, -0.0082),
     ],
 )
-def test_the_phonons_of_each_site(number: int, modes_cm: tuple[float, ...], zpe_eV: float, w1: float) -> None:
+def test_the_phonons_of_each_site(
+    number: int, modes_cm: tuple[float, ...], zpe_eV: float, w1: float
+) -> None:
     calculation = parse_phonon_path(FIXTURES / f"GdRu2Si2_site{number}.phonon")
     zpe = muon_zpe(calculation)
 

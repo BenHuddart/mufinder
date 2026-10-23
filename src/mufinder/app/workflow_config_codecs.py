@@ -125,7 +125,9 @@ def deserialize_uep_config(payload: object) -> UepConfig | None:
             UepSourceRow(
                 label=label,
                 supercell_matrix=_deserialize_supercell_matrix(entry.get("supercell_matrix")),
-                parameter_values=_restore_parameter_values(entry.get("parameter_values", entry.get("params", {}))),
+                parameter_values=_restore_parameter_values(
+                    entry.get("parameter_values", entry.get("params", {}))
+                ),
                 added_advanced=_deserialize_added_advanced(entry.get("added_advanced", [])),
             )
         )
@@ -176,7 +178,9 @@ def deserialize_pristine_relaxation_config(payload: object) -> PristineRelaxatio
                 label=label,
                 fix_all_cell=bool(entry.get("fix_all_cell", False)),
                 supercell_matrix=_deserialize_supercell_matrix(entry.get("supercell_matrix")),
-                parameter_values=_restore_parameter_values(entry.get("parameter_values", entry.get("params", {}))),
+                parameter_values=_restore_parameter_values(
+                    entry.get("parameter_values", entry.get("params", {}))
+                ),
                 added_advanced=_deserialize_added_advanced(entry.get("added_advanced", [])),
             )
         )
@@ -235,7 +239,9 @@ def deserialize_muon_relaxation_config(payload: object) -> MuonRelaxationConfig 
         label = _row_label(entry)
         if not label:
             continue
-        raw_position = entry.get("initial_fractional_position", entry.get("fractional_position", []))
+        raw_position = entry.get(
+            "initial_fractional_position", entry.get("fractional_position", [])
+        )
         if not isinstance(raw_position, (list, tuple)) or len(raw_position) != 3:
             continue
         import_batch_id: UUID | None = None
@@ -298,7 +304,9 @@ def deserialize_convergence_config(payload: object) -> ConvergenceConfig | None:
     if not isinstance(payload, dict):
         return None
 
-    sweep_parameter = str(payload.get("sweep_parameter", "cut_off_energy")).strip() or "cut_off_energy"
+    sweep_parameter = (
+        str(payload.get("sweep_parameter", "cut_off_energy")).strip() or "cut_off_energy"
+    )
     if sweep_parameter not in {"cut_off_energy", "kpoint_mp_grid"}:
         return None
 
@@ -337,7 +345,9 @@ def deserialize_convergence_config(payload: object) -> ConvergenceConfig | None:
                 continue
             overrides[cutoff_group] = _restore_parameter_values(params)
 
-    default_prefix = "kpoint_convergence" if sweep_parameter == "kpoint_mp_grid" else "cutoff_convergence"
+    default_prefix = (
+        "kpoint_convergence" if sweep_parameter == "kpoint_mp_grid" else "cutoff_convergence"
+    )
 
     return ConvergenceConfig(
         sweep_parameter=sweep_parameter,
@@ -413,7 +423,9 @@ def row_settings_payload(
     store: no parameter value, no advanced name and no extra.
     """
 
-    parameter_values = to_jsonable({str(name): value for name, value in values.items() if name != "task"})
+    parameter_values = to_jsonable(
+        {str(name): value for name, value in values.items() if name != "task"}
+    )
     payload: dict[str, object] = {
         "parameter_values": parameter_values if isinstance(parameter_values, dict) else {},
         "added_advanced": sorted(set(advanced_names)),

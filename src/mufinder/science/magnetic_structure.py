@@ -125,9 +125,7 @@ class MagneticTexture:
             return cls()
         raw_terms = payload.get("terms", ())
         terms = tuple(
-            MagneticTextureTerm.from_json(item)
-            for item in raw_terms
-            if isinstance(item, Mapping)
+            MagneticTextureTerm.from_json(item) for item in raw_terms if isinstance(item, Mapping)
         )
         return cls(terms=terms)
 
@@ -225,9 +223,7 @@ class MagneticComponent:
     def from_json(cls, payload: Mapping[str, object]) -> "MagneticComponent":
         raw_terms = payload.get("terms", ())
         terms = tuple(
-            FourierTerm.from_json(term)
-            for term in raw_terms
-            if isinstance(term, Mapping)
+            FourierTerm.from_json(term) for term in raw_terms if isinstance(term, Mapping)
         )
         return cls(
             component_id=str(payload.get("component_id", "")).strip(),
@@ -237,7 +233,9 @@ class MagneticComponent:
             terms=terms,
             phase_turns=float(payload.get("phase_turns", 0.0) or 0.0),
             enabled=bool(payload.get("enabled", True)),
-            metadata=dict(payload.get("metadata", {})) if isinstance(payload.get("metadata", {}), Mapping) else {},
+            metadata=dict(payload.get("metadata", {}))
+            if isinstance(payload.get("metadata", {}), Mapping)
+            else {},
         )
 
     def to_json(self) -> dict[str, object]:
@@ -374,7 +372,9 @@ def set_magnetic_components_enabled(
 
     selected = {str(value) for value in component_ids}
     components = tuple(
-        replace(component, enabled=bool(enabled)) if component.component_id in selected else component
+        replace(component, enabled=bool(enabled))
+        if component.component_id in selected
+        else component
         for component in model.components
     )
     return replace(model, components=components)
@@ -401,7 +401,10 @@ def move_magnetic_components(
         moved = False
         for index in indices:
             neighbour = index + step
-            if components[index].component_id in selected and components[neighbour].component_id not in selected:
+            if (
+                components[index].component_id in selected
+                and components[neighbour].component_id not in selected
+            ):
                 components[index], components[neighbour] = components[neighbour], components[index]
                 moved = True
         if not moved:
@@ -578,7 +581,9 @@ def q_basis_combination_rlu(model: MagneticStructureModel, q_coeff: Sequence[flo
     basis = model.q_basis_array
     for index in used:
         if np.allclose(basis[index], 0.0, atol=_Q_COEFF_TOLERANCE):
-            raise MagneticStructureError(f"q{index + 1} is not set; store a propagation vector in it first")
+            raise MagneticStructureError(
+                f"q{index + 1} is not set; store a propagation vector in it first"
+            )
     q_rlu = coeff @ basis
     if np.allclose(q_rlu, 0.0, atol=_Q_COEFF_TOLERANCE):
         raise MagneticStructureError(
@@ -662,10 +667,17 @@ def magnetic_builder_checklist(
     zero_moment = [
         component.label
         for component in enabled
-        if all(np.allclose(term.coefficient.to_array(), 0.0, atol=_Q_COEFF_TOLERANCE) for term in component.terms)
+        if all(
+            np.allclose(term.coefficient.to_array(), 0.0, atol=_Q_COEFF_TOLERANCE)
+            for term in component.terms
+        )
     ]
     if not has_host:
-        items.append(BuilderChecklistItem("components", components_title, CHECKLIST_TODO, "Load a host structure first."))
+        items.append(
+            BuilderChecklistItem(
+                "components", components_title, CHECKLIST_TODO, "Load a host structure first."
+            )
+        )
     elif not model.components:
         items.append(
             BuilderChecklistItem(
@@ -705,10 +717,18 @@ def magnetic_builder_checklist(
 
     basis_title = "Set the propagation-vector basis"
     basis = model.q_basis_array
-    used_rows = sorted({index for component in enabled for index in component_q_basis_indices(component)})
-    zero_rows = [index for index in used_rows if np.allclose(basis[index], 0.0, atol=_Q_COEFF_TOLERANCE)]
+    used_rows = sorted(
+        {index for component in enabled for index in component_q_basis_indices(component)}
+    )
+    zero_rows = [
+        index for index in used_rows if np.allclose(basis[index], 0.0, atol=_Q_COEFF_TOLERANCE)
+    ]
     if not enabled:
-        items.append(BuilderChecklistItem("q_basis", basis_title, CHECKLIST_TODO, "Add or enable a component first."))
+        items.append(
+            BuilderChecklistItem(
+                "q_basis", basis_title, CHECKLIST_TODO, "Add or enable a component first."
+            )
+        )
     elif zero_rows:
         rows = ", ".join(f"q{index + 1}" for index in zero_rows)
         items.append(
@@ -722,12 +742,19 @@ def magnetic_builder_checklist(
     elif not used_rows:
         items.append(
             BuilderChecklistItem(
-                "q_basis", basis_title, CHECKLIST_DONE, "Not needed: every enabled component has q = 0."
+                "q_basis",
+                basis_title,
+                CHECKLIST_DONE,
+                "Not needed: every enabled component has q = 0.",
             )
         )
     else:
         rows = ", ".join(f"q{index + 1}" for index in used_rows)
-        items.append(BuilderChecklistItem("q_basis", basis_title, CHECKLIST_DONE, f"Enabled components use {rows}."))
+        items.append(
+            BuilderChecklistItem(
+                "q_basis", basis_title, CHECKLIST_DONE, f"Enabled components use {rows}."
+            )
+        )
 
     preview_title = "Check the preview supercell"
     wavevectors = [
@@ -738,15 +765,25 @@ def magnetic_builder_checklist(
     ]
     repeat_text = "×".join(str(value) for value in repeats)
     if not wavevectors:
-        items.append(BuilderChecklistItem("preview", preview_title, CHECKLIST_TODO, "Nothing to preview yet."))
+        items.append(
+            BuilderChecklistItem(
+                "preview", preview_title, CHECKLIST_TODO, "Nothing to preview yet."
+            )
+        )
     else:
         periods = magnetic_period_along_axes(wavevectors)
-        needed = [None if period is None else min(period, int(max_preview_repeat)) for period in periods]
+        needed = [
+            None if period is None else min(period, int(max_preview_repeat)) for period in periods
+        ]
         partial = any(period is not None and period > int(max_preview_repeat) for period in periods)
         unrepeated = [
-            _CRYSTAL_AXIS_NAMES[axis] for axis, period in enumerate(periods) if period is None and repeats[axis] < 2
+            _CRYSTAL_AXIS_NAMES[axis]
+            for axis, period in enumerate(periods)
+            if period is None and repeats[axis] < 2
         ]
-        short = [axis for axis, count in enumerate(needed) if count is not None and repeats[axis] < count]
+        short = [
+            axis for axis, count in enumerate(needed) if count is not None and repeats[axis] < count
+        ]
         if unrepeated:
             axes = ", ".join(unrepeated)
             items.append(
@@ -760,7 +797,8 @@ def magnetic_builder_checklist(
             )
         elif short:
             target = "×".join(
-                str(repeats[axis] if count is None else max(repeats[axis], count)) for axis, count in enumerate(needed)
+                str(repeats[axis] if count is None else max(repeats[axis], count))
+                for axis, count in enumerate(needed)
             )
             goal = "The largest preview needs" if partial else "One magnetic cell needs"
             items.append(
@@ -802,19 +840,34 @@ def magnetic_builder_checklist(
     ready_title = "Use the structure"
     if all(item.state == CHECKLIST_DONE for item in items):
         items.append(
-            BuilderChecklistItem("ready", ready_title, CHECKLIST_DONE, "Ready: Use Structure stores it for field calculations.")
+            BuilderChecklistItem(
+                "ready",
+                ready_title,
+                CHECKLIST_DONE,
+                "Ready: Use Structure stores it for field calculations.",
+            )
         )
     elif any(item.state == CHECKLIST_PROBLEM for item in items):
-        items.append(BuilderChecklistItem("ready", ready_title, CHECKLIST_TODO, "Fix the flagged steps first."))
+        items.append(
+            BuilderChecklistItem(
+                "ready", ready_title, CHECKLIST_TODO, "Fix the flagged steps first."
+            )
+        )
     else:
-        items.append(BuilderChecklistItem("ready", ready_title, CHECKLIST_TODO, "Finish the steps above first."))
+        items.append(
+            BuilderChecklistItem(
+                "ready", ready_title, CHECKLIST_TODO, "Finish the steps above first."
+            )
+        )
     return tuple(items)
 
 
 MAGNETIC_PRESET_KINDS = ("helix", "conical", "cycloid", "spin_density_wave")
 
 
-def q_cartesian_direction(lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]) -> np.ndarray:
+def q_cartesian_direction(
+    lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]
+) -> np.ndarray:
     """Return the Cartesian unit vector along ``q_rlu`` for a lattice whose rows are a, b and c."""
 
     q = _as_float_array(q_rlu, "q_rlu")
@@ -848,14 +901,18 @@ def reciprocal_axis_q_rlu(axis: str, wavevector: float) -> tuple[float, float, f
     return (q[0], q[1], q[2])
 
 
-def default_preset_reference_axis(lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]) -> str:
+def default_preset_reference_axis(
+    lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]
+) -> str:
     """Return the crystal axis most nearly perpendicular to ``q_rlu``, the default reference for a preset."""
 
     q_direction = q_cartesian_direction(lattice_vectors, q_rlu)
     return min(
         _CRYSTAL_AXIS_NAMES,
         # Rounding lets ties between equally perpendicular axes fall to the first, a before b before c.
-        key=lambda name: round(abs(float(crystal_axis_direction(lattice_vectors, name) @ q_direction)), 9),
+        key=lambda name: round(
+            abs(float(crystal_axis_direction(lattice_vectors, name) @ q_direction)), 9
+        ),
     )
 
 
@@ -892,7 +949,9 @@ def build_magnetic_preset_component(
 
     preset = str(kind).strip().lower()
     if preset not in MAGNETIC_PRESET_KINDS:
-        raise MagneticStructureError("preset kind must be helix, conical, cycloid or spin_density_wave")
+        raise MagneticStructureError(
+            "preset kind must be helix, conical, cycloid or spin_density_wave"
+        )
     size = float(moment)
     if not np.isfinite(size) or size <= 0.0:
         raise MagneticStructureError("the moment must be positive")
@@ -958,9 +1017,7 @@ def viable_atom_selectors(
         selectors.append(AtomSelector.symmetry_equivalent(int(representative)))
 
     valid_selection = tuple(
-        int(index)
-        for index in selected_indices
-        if 0 <= int(index) < len(structure.species)
+        int(index) for index in selected_indices if 0 <= int(index) < len(structure.species)
     )
     if valid_selection:
         selectors.append(AtomSelector.indices(valid_selection))
@@ -984,12 +1041,16 @@ def resolve_atom_selector(structure: Structure, selector: AtomSelector) -> tuple
         return tuple(indices)
     if kind == "symmetry_equivalent":
         if not selector.values:
-            raise MagneticStructureError("symmetry-equivalent selector requires a representative index")
+            raise MagneticStructureError(
+                "symmetry-equivalent selector requires a representative index"
+            )
         representative = int(selector.values[0])
         equivalents = _equivalent_atoms(structure)
         if equivalents is None or representative < 0 or representative >= atom_count:
             raise MagneticStructureError("symmetry-equivalent atom groups could not be resolved")
-        return tuple(int(index) for index in np.where(equivalents == equivalents[representative])[0])
+        return tuple(
+            int(index) for index in np.where(equivalents == equivalents[representative])[0]
+        )
     raise MagneticStructureError(f"unknown atom selector kind '{selector.kind}'")
 
 
@@ -1046,7 +1107,9 @@ def moment_at_atom(
     """Evaluate the real magnetic moment for one atom and cell offset."""
 
     offset = _as_float_array(cell_offset, "cell_offset")
-    return moments_at_atoms(structure, model, [atom_index], [offset], component_ids=component_ids)[0]
+    return moments_at_atoms(structure, model, [atom_index], [offset], component_ids=component_ids)[
+        0
+    ]
 
 
 def moments_at_atoms(
@@ -1066,7 +1129,9 @@ def moments_at_atoms(
     if np.any(indices < 0) or np.any(indices >= len(structure.species)):
         raise MagneticStructureError("atom_index is out of range")
     moments = np.zeros((indices.shape[0], 3), dtype=complex)
-    for component in atom_resolved_fourier_components(structure, model, component_ids=component_ids):
+    for component in atom_resolved_fourier_components(
+        structure, model, component_ids=component_ids
+    ):
         fc = component.atom_fcs[indices]
         if np.allclose(fc, 0.0):
             continue
@@ -1088,7 +1153,12 @@ def moments_in_supercell(
     cell = np.asarray(structure.lattice_vectors, dtype=float)
     frac = np.asarray(structure.fractional_positions, dtype=float)
     offsets = np.array(
-        [(i, j, k) for i in range(repeats[0]) for j in range(repeats[1]) for k in range(repeats[2])],
+        [
+            (i, j, k)
+            for i in range(repeats[0])
+            for j in range(repeats[1])
+            for k in range(repeats[2])
+        ],
         dtype=float,
     )
     atom_count = len(structure.species)
@@ -1116,7 +1186,9 @@ def get_muesr_model_data(
     """Return magnetic model data that can be passed to muesr."""
 
     grouped: list[dict[str, object]] = []
-    for component in atom_resolved_fourier_components(structure, model, component_ids=component_ids):
+    for component in atom_resolved_fourier_components(
+        structure, model, component_ids=component_ids
+    ):
         if np.allclose(component.atom_fcs, 0.0):
             continue
         target: dict[str, object] | None = None
@@ -1187,7 +1259,9 @@ def split_muesr_model_data_into_helices(
 def _fourier_components_are_circular_helices(fc: np.ndarray, *, atol: float = 1e-10) -> bool:
     arr = np.asarray(fc, dtype=complex)
     if arr.ndim != 2 or arr.shape[1] != 3:
-        raise MagneticStructureError(f"muesr Fourier coefficients must have shape (n_atoms, 3), got {arr.shape}")
+        raise MagneticStructureError(
+            f"muesr Fourier coefficients must have shape (n_atoms, 3), got {arr.shape}"
+        )
     return all(_is_circular_helix_vector(vector, atol=atol) for vector in arr)
 
 
@@ -1219,7 +1293,9 @@ def _split_fourier_array_into_circular_helices(
 ) -> tuple[np.ndarray, ...]:
     arr = np.asarray(fc, dtype=complex)
     if arr.ndim != 2 or arr.shape[1] != 3:
-        raise MagneticStructureError(f"muesr Fourier coefficients must have shape (n_atoms, 3), got {arr.shape}")
+        raise MagneticStructureError(
+            f"muesr Fourier coefficients must have shape (n_atoms, 3), got {arr.shape}"
+        )
     if atol <= 0.0:
         raise MagneticStructureError("helical decomposition tolerance must be positive")
 
@@ -1232,13 +1308,17 @@ def _split_fourier_array_into_circular_helices(
             components[part_index][atom_index] = part
 
     scale = max(1.0, float(np.linalg.norm(arr)))
-    kept = [component for component in components if float(np.linalg.norm(component)) > atol * scale]
+    kept = [
+        component for component in components if float(np.linalg.norm(component)) > atol * scale
+    ]
     if not kept:
         kept = [np.zeros_like(arr, dtype=complex)]
 
     reconstructed = np.sum(np.asarray(kept, dtype=complex), axis=0)
     if float(np.linalg.norm(reconstructed - arr)) > 100.0 * atol * scale:
-        raise MagneticStructureError("helical decomposition failed to reconstruct Fourier coefficients")
+        raise MagneticStructureError(
+            "helical decomposition failed to reconstruct Fourier coefficients"
+        )
 
     for component in kept:
         if not _fourier_components_are_circular_helices(component, atol=atol):
@@ -1429,9 +1509,17 @@ def build_conical_component(
 
     angle = np.deg2rad(float(cone_angle_degrees))
     moment = float(total_moment)
-    static = moment * float(np.cos(angle)) * _unit_vector(static_axis_direction, "static_axis_direction")
-    rotating_real = moment * float(np.sin(angle)) * _unit_vector(real_axis_direction, "real_axis_direction")
-    rotating_imag = moment * float(np.sin(angle)) * _unit_vector(imaginary_axis_direction, "imaginary_axis_direction")
+    static = (
+        moment * float(np.cos(angle)) * _unit_vector(static_axis_direction, "static_axis_direction")
+    )
+    rotating_real = (
+        moment * float(np.sin(angle)) * _unit_vector(real_axis_direction, "real_axis_direction")
+    )
+    rotating_imag = (
+        moment
+        * float(np.sin(angle))
+        * _unit_vector(imaginary_axis_direction, "imaginary_axis_direction")
+    )
     coefficient = rotating_real.astype(complex) + 1j * rotating_imag
     return MagneticComponent(
         component_id=component_id or f"component-{uuid4()}",
@@ -1439,8 +1527,14 @@ def build_conical_component(
         kind="conical",
         selector=selector,
         terms=(
-            FourierTerm(q_coeff=(0.0, 0.0, 0.0), coefficient=ComplexVector.from_vector(static.astype(complex))),
-            FourierTerm(q_coeff=_as_float_tuple(q_coeff, "q_coeff"), coefficient=ComplexVector.from_vector(coefficient)),
+            FourierTerm(
+                q_coeff=(0.0, 0.0, 0.0),
+                coefficient=ComplexVector.from_vector(static.astype(complex)),
+            ),
+            FourierTerm(
+                q_coeff=_as_float_tuple(q_coeff, "q_coeff"),
+                coefficient=ComplexVector.from_vector(coefficient),
+            ),
         ),
         phase_turns=float(phase_turns),
         enabled=True,
@@ -1461,7 +1555,11 @@ def build_texture_component(
 
     if not texture.terms:
         raise MagneticStructureError("texture must contain at least one Fourier term")
-    transform = np.eye(3, dtype=float) if q_coeff_transform is None else np.asarray(q_coeff_transform, dtype=float)
+    transform = (
+        np.eye(3, dtype=float)
+        if q_coeff_transform is None
+        else np.asarray(q_coeff_transform, dtype=float)
+    )
     if transform.shape != (3, 3):
         raise MagneticStructureError("q_coeff_transform must have shape (3, 3)")
     terms = tuple(
@@ -1494,7 +1592,11 @@ def build_hexagonal_skyrmion_texture(
     core = _unit_vector(core_direction, "core_direction")
     if q_directions is None:
         q1 = _unit_vector((1.0, 0.0, 0.0), "q1_direction")
-        q_dirs = (q1, _rotate_vector(q1, core, 2.0 * np.pi / 3.0), _rotate_vector(q1, core, 4.0 * np.pi / 3.0))
+        q_dirs = (
+            q1,
+            _rotate_vector(q1, core, 2.0 * np.pi / 3.0),
+            _rotate_vector(q1, core, 4.0 * np.pi / 3.0),
+        )
     else:
         if len(q_directions) < 3:
             raise MagneticStructureError("hexagonal skyrmion texture requires three q directions")
@@ -1561,7 +1663,9 @@ def skyrmion_q_basis_rlu(
         raise MagneticStructureError("q1 vector must be non-zero")
     q1_dir = q1_cart / q1_norm
     if abs(float(q1_dir @ core)) > 1e-6:
-        raise MagneticStructureError("q1 must lie in the plane perpendicular to the skyrmion core direction")
+        raise MagneticStructureError(
+            "q1 must lie in the plane perpendicular to the skyrmion core direction"
+        )
     angle = np.pi / 2.0 if lattice == "square" else 2.0 * np.pi / 3.0
     q2_cart = q1_norm * _rotate_vector(q1_dir, core, angle)
     q2_rlu = q2_cart @ np.linalg.inv(reciprocal)
@@ -1584,7 +1688,9 @@ def evaluate_texture_moment(texture: MagneticTexture, q_dots: Sequence[float]) -
     return moment.real
 
 
-def evaluate_texture_grid(texture: MagneticTexture, resolution: Sequence[int] = (32, 32, 1)) -> np.ndarray:
+def evaluate_texture_grid(
+    texture: MagneticTexture, resolution: Sequence[int] = (32, 32, 1)
+) -> np.ndarray:
     """Evaluate a texture on a regular reduced-coordinate grid."""
 
     res = _texture_grid_resolution(resolution)
@@ -1595,11 +1701,16 @@ def evaluate_texture_grid(texture: MagneticTexture, resolution: Sequence[int] = 
     for term in texture.terms:
         q = np.asarray(term.q_coeff, dtype=float)
         q_dot = np.tensordot(dots, q, axes=([3], [0]))
-        moments += term.coefficient.to_array()[np.newaxis, np.newaxis, np.newaxis, :] * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
+        moments += (
+            term.coefficient.to_array()[np.newaxis, np.newaxis, np.newaxis, :]
+            * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
+        )
     return moments.real
 
 
-def texture_diagnostics(texture: MagneticTexture, resolution: Sequence[int] = (32, 32, 1)) -> MagneticTextureDiagnostics:
+def texture_diagnostics(
+    texture: MagneticTexture, resolution: Sequence[int] = (32, 32, 1)
+) -> MagneticTextureDiagnostics:
     """Return sampled moment-magnitude diagnostics for a texture."""
 
     if not texture.terms:
@@ -1646,7 +1757,9 @@ def normalize_texture_magnitude(
         for row in range(len(significant[0])):
             idx = tuple(int(values[row]) for values in significant)
             harmonic = grid_coords[:, idx[0], idx[1], idx[2]]
-            out.append(MagneticTextureTerm.from_vector(base_q + harmonic, coefficient * f_coeffs[idx]))
+            out.append(
+                MagneticTextureTerm.from_vector(base_q + harmonic, coefficient * f_coeffs[idx])
+            )
     normalized = MagneticTexture(tuple(out)).combine_terms()
     scale = float(target_magnitude)
     if np.isclose(scale, 1.0):
@@ -1669,9 +1782,15 @@ def prune_texture_terms(
 
     terms = list(texture.terms)
     if threshold is not None:
-        terms = [term for term in terms if float(np.linalg.norm(term.coefficient.to_array())) >= float(threshold)]
+        terms = [
+            term
+            for term in terms
+            if float(np.linalg.norm(term.coefficient.to_array())) >= float(threshold)
+        ]
     if top_n is not None and int(top_n) >= 0 and len(terms) > int(top_n):
-        terms = sorted(terms, key=lambda term: float(np.linalg.norm(term.coefficient.to_array())), reverse=True)[: int(top_n)]
+        terms = sorted(
+            terms, key=lambda term: float(np.linalg.norm(term.coefficient.to_array())), reverse=True
+        )[: int(top_n)]
     return MagneticTexture(tuple(terms)).combine_terms()
 
 
@@ -1680,7 +1799,9 @@ def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStruct
 
     q_basis = _legacy_q_basis_rlu(structure)
     propagation = q_basis[0]
-    q_coeff = (1.0, 0.0, 0.0) if any(abs(value) > 1e-12 for value in propagation) else (0.0, 0.0, 0.0)
+    q_coeff = (
+        (1.0, 0.0, 0.0) if any(abs(value) > 1e-12 for value in propagation) else (0.0, 0.0, 0.0)
+    )
     moment_entries = _legacy_moment_entries(structure)
     components: list[MagneticComponent] = []
     for entry in moment_entries:
@@ -1689,7 +1810,9 @@ def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStruct
         if not any(abs(value) > 1e-12 for value in vector):
             continue
         label = str(entry.get("label") or f"{structure.species[index]}{index + 1}")
-        coefficient = _legacy_fourier_coefficient(structure, atom_index=index, moment=vector, q_rlu=propagation)
+        coefficient = _legacy_fourier_coefficient(
+            structure, atom_index=index, moment=vector, q_rlu=propagation
+        )
         metadata: dict[str, object] = {}
         if entry.get("source"):
             metadata["source"] = entry["source"]
@@ -1701,7 +1824,11 @@ def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStruct
                 label=label,
                 kind="legacy_moment",
                 selector=AtomSelector.indices([index]),
-                terms=(FourierTerm(q_coeff=q_coeff, coefficient=ComplexVector.from_vector(coefficient)),),
+                terms=(
+                    FourierTerm(
+                        q_coeff=q_coeff, coefficient=ComplexVector.from_vector(coefficient)
+                    ),
+                ),
                 metadata=metadata,
             )
         )
@@ -1761,7 +1888,9 @@ def _build_skyrmion_texture(
     terms: list[MagneticTextureTerm] = []
     for q_coeff, q_dir in zip(q_coeffs, q_dirs, strict=True):
         if abs(float(q_dir @ core_direction)) > 1e-6:
-            raise MagneticStructureError("skyrmion q directions must be perpendicular to the core direction")
+            raise MagneticStructureError(
+                "skyrmion q directions must be perpendicular to the core direction"
+            )
         if kind == "bloch":
             e1 = core_direction
             e2 = helicity * _unit_vector(np.cross(core_direction, q_dir), "bloch_direction")
@@ -1771,7 +1900,11 @@ def _build_skyrmion_texture(
         terms.append(MagneticTextureTerm.from_vector(q_coeff, rot_mag * (e1 + 1j * e2)))
     static_mag = float(magnitude) * float(np.cos(angle)) + float(ferromagnetic_background)
     if abs(static_mag) > 1e-12:
-        terms.append(MagneticTextureTerm.from_vector((0.0, 0.0, 0.0), static_mag * core_direction.astype(complex)))
+        terms.append(
+            MagneticTextureTerm.from_vector(
+                (0.0, 0.0, 0.0), static_mag * core_direction.astype(complex)
+            )
+        )
     return MagneticTexture(tuple(terms)).combine_terms()
 
 
@@ -1819,14 +1952,20 @@ def _legacy_moment_entries(structure: Structure) -> list[dict[str, object]]:
             for index, moment in enumerate(moments):
                 if not isinstance(moment, Mapping):
                     continue
-                atom_index = _legacy_moment_atom_index(moment, fallback=index, atom_count=atom_count)
+                atom_index = _legacy_moment_atom_index(
+                    moment, fallback=index, atom_count=atom_count
+                )
                 if atom_index is None:
                     continue
                 try:
                     vector = _as_float_tuple(moment.get("vector", (0.0, 0.0, 0.0)), "moment vector")
                 except MagneticStructureError:
                     continue
-                label = str(moment.get("label") or moment.get("atom_label") or f"{structure.species[atom_index]}{atom_index + 1}")
+                label = str(
+                    moment.get("label")
+                    or moment.get("atom_label")
+                    or f"{structure.species[atom_index]}{atom_index + 1}"
+                )
                 entries.append(
                     {
                         "atom_index": atom_index,
@@ -1839,7 +1978,9 @@ def _legacy_moment_entries(structure: Structure) -> list[dict[str, object]]:
     if any(any(abs(value) > 1e-12 for value in entry["vector"]) for entry in entries):
         return entries
 
-    raw_spins = structure.properties.get("atomic_spins", structure.properties.get("initial_magnetic_moments"))
+    raw_spins = structure.properties.get(
+        "atomic_spins", structure.properties.get("initial_magnetic_moments")
+    )
     if isinstance(raw_spins, Sequence) and not isinstance(raw_spins, (str, bytes)):
         for index, value in enumerate(list(raw_spins)[:atom_count]):
             try:
@@ -1856,7 +1997,9 @@ def _legacy_moment_entries(structure: Structure) -> list[dict[str, object]]:
     return entries
 
 
-def _legacy_moment_atom_index(moment: Mapping[str, object], *, fallback: int, atom_count: int) -> int | None:
+def _legacy_moment_atom_index(
+    moment: Mapping[str, object], *, fallback: int, atom_count: int
+) -> int | None:
     raw_index = moment.get("atom_index", fallback)
     try:
         atom_index = int(raw_index)

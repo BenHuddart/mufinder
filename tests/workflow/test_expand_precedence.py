@@ -147,7 +147,9 @@ _WORKFLOWS: list[tuple[str, Callable[..., object], str, object]] = [
 ]
 
 
-@pytest.mark.parametrize("name, run, base_keyword, base_value", _WORKFLOWS, ids=[w[0] for w in _WORKFLOWS])
+@pytest.mark.parametrize(
+    "name, run, base_keyword, base_value", _WORKFLOWS, ids=[w[0] for w in _WORKFLOWS]
+)
 def test_structure_defaults_sits_between_workflow_defaults_and_patch(
     name: str, run: Callable[..., object], base_keyword: str, base_value: object
 ) -> None:
@@ -177,7 +179,9 @@ def test_structure_defaults_sits_between_workflow_defaults_and_patch(
     assert _param_value(job, "max_scf_cycles") == 40
 
 
-@pytest.mark.parametrize("name, run, base_keyword, base_value", _WORKFLOWS, ids=[w[0] for w in _WORKFLOWS])
+@pytest.mark.parametrize(
+    "name, run, base_keyword, base_value", _WORKFLOWS, ids=[w[0] for w in _WORKFLOWS]
+)
 def test_base_template_beats_workflow_and_structure_defaults(
     name: str, run: Callable[..., object], base_keyword: str, base_value: object
 ) -> None:
@@ -191,13 +195,19 @@ def test_base_template_beats_workflow_and_structure_defaults(
     assert _param_value(job, base_keyword) == base_value
 
 
-@pytest.mark.parametrize("name, run, base_keyword, base_value", _WORKFLOWS, ids=[w[0] for w in _WORKFLOWS])
+@pytest.mark.parametrize(
+    "name, run, base_keyword, base_value", _WORKFLOWS, ids=[w[0] for w in _WORKFLOWS]
+)
 def test_config_overrides_beat_base_template(
     name: str, run: Callable[..., object], base_keyword: str, base_value: object
 ) -> None:
     # (c) A per-config param override for the SAME base keyword wins, because the
     # base template is composed first and config overrides last within the patch.
-    job = run(param_overrides=ParamTemplate(keywords=(KeywordAssignment(base_keyword, "CONFIG_OVERRIDE"),)))
+    job = run(
+        param_overrides=ParamTemplate(
+            keywords=(KeywordAssignment(base_keyword, "CONFIG_OVERRIDE"),)
+        )
+    )
     assert _param_value(job, base_keyword) == "CONFIG_OVERRIDE"
 
 

@@ -24,10 +24,23 @@ from mufinder.science.spglib_compat import (
     symmetry_operations,
     symmetry_orbit,
 )
-from tests.support.symmetry_hosts import bcc_host, fcc_primitive_host, hcp_host, rutile_host, triclinic_host
+from tests.support.symmetry_hosts import (
+    bcc_host,
+    fcc_primitive_host,
+    hcp_host,
+    rutile_host,
+    triclinic_host,
+)
 
 _HOSTS = [bcc_host, triclinic_host, hcp_host, rutile_host, fcc_primitive_host]
-_POINTS = [(0.1, 0.1, 0.1), (0.25, 0.25, 0.25), (0.12, 0.27, 0.41), (0.5, 0.0, 0.0), (0.0, 0.0, 0.999999999), (-1e-17, 0.5, 0.25)]
+_POINTS = [
+    (0.1, 0.1, 0.1),
+    (0.25, 0.25, 0.25),
+    (0.12, 0.27, 0.41),
+    (0.5, 0.0, 0.0),
+    (0.0, 0.0, 0.999999999),
+    (-1e-17, 0.5, 0.25),
+]
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +71,9 @@ def test_spglib_cell_matches_the_ase_numbers_the_magnetic_modules_used() -> None
 
     lattice, positions, numbers = spglib_cell(host)
 
-    ase_numbers = Atoms(symbols=host.species, scaled_positions=host.fractional_positions, cell=host.lattice_vectors).numbers
+    ase_numbers = Atoms(
+        symbols=host.species, scaled_positions=host.fractional_positions, cell=host.lattice_vectors
+    ).numbers
     assert numbers.tolist() == ase_numbers.tolist()
     assert lattice.tolist() == host.lattice_vectors
     assert positions.tolist() == host.fractional_positions
@@ -67,12 +82,22 @@ def test_spglib_cell_matches_the_ase_numbers_the_magnetic_modules_used() -> None
 def test_spglib_cell_accepts_parts_and_rejects_unknown_species_or_mismatched_counts() -> None:
     lattice = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]
 
-    cell = spglib_cell(lattice_vectors=lattice, species=["si"], fractional_positions=[[0.0, 0.0, 0.0]])
+    cell = spglib_cell(
+        lattice_vectors=lattice, species=["si"], fractional_positions=[[0.0, 0.0, 0.0]]
+    )
 
     assert cell is not None
     assert cell[2].tolist() == [atomic_numbers["Si"]]
-    assert spglib_cell(lattice_vectors=lattice, species=["Xx"], fractional_positions=[[0.0, 0.0, 0.0]]) is None
-    assert spglib_cell(lattice_vectors=lattice, species=["Si", "Si"], fractional_positions=[[0.0, 0.0, 0.0]]) is None
+    assert (
+        spglib_cell(lattice_vectors=lattice, species=["Xx"], fractional_positions=[[0.0, 0.0, 0.0]])
+        is None
+    )
+    assert (
+        spglib_cell(
+            lattice_vectors=lattice, species=["Si", "Si"], fractional_positions=[[0.0, 0.0, 0.0]]
+        )
+        is None
+    )
     with pytest.raises(ValueError, match="needs lattice_vectors"):
         spglib_cell(lattice_vectors=lattice, species=["Si"])
 
@@ -80,7 +105,9 @@ def test_spglib_cell_accepts_parts_and_rejects_unknown_species_or_mismatched_cou
 # Symmetry operations
 
 
-def test_symmetry_operations_match_spglib_and_are_cached_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_symmetry_operations_match_spglib_and_are_cached_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[float] = []
     real = spglib_compat.get_crystal_symmetry
 
@@ -104,7 +131,9 @@ def test_symmetry_operations_match_spglib_and_are_cached_read_only(monkeypatch: 
     assert not rotations.flags.writeable and not translations.flags.writeable
 
 
-def test_symmetry_operations_are_none_when_spglib_finds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_symmetry_operations_are_none_when_spglib_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", lambda cell, *, symprec: None)
 
     assert symmetry_operations(spglib_cell(bcc_host()), symprec=1e-5) is None
@@ -116,7 +145,10 @@ def test_operation_images_apply_every_operation() -> None:
 
     images = operation_images(point, rotations, translations)
 
-    expected = [np.dot(rotation, point) + translation for rotation, translation in zip(rotations, translations)]
+    expected = [
+        np.dot(rotation, point) + translation
+        for rotation, translation in zip(rotations, translations)
+    ]
     assert images == pytest.approx(np.asarray(expected), abs=1e-15)
     assert operation_images(point, [], []).shape == (0, 3)
 
@@ -129,7 +161,10 @@ def _site_generation_orbit(position, rotations, translations, lattice):
 
     kept: list[list[float]] = []
     for rotation, translation in zip(rotations, translations):
-        image = [float(value) % 1.0 for value in np.dot(rotation, np.asarray(position, dtype=float)) + translation]
+        image = [
+            float(value) % 1.0
+            for value in np.dot(rotation, np.asarray(position, dtype=float)) + translation
+        ]
         image = [value % 1.0 for value in image]
         if not any(minimum_image_distance(image, existing, lattice) <= 1e-5 for existing in kept):
             kept.append(image)
@@ -178,7 +213,9 @@ def test_orbit_matches_the_site_generation_scan_bit_for_bit(host_factory) -> Non
     rotations, translations = _operations(host)
 
     for point in _POINTS:
-        orbit = symmetry_orbit(point, (rotations, translations), lattice_vectors=host.lattice_vectors, tolerance=1e-5)
+        orbit = symmetry_orbit(
+            point, (rotations, translations), lattice_vectors=host.lattice_vectors, tolerance=1e-5
+        )
         assert orbit == _site_generation_orbit(point, rotations, translations, host.lattice_vectors)
 
 
@@ -189,7 +226,12 @@ def test_orbit_matches_the_wyckoff_scan(host_factory, tolerance) -> None:
     rotations, translations = _operations(host)
 
     for point in _POINTS:
-        orbit = symmetry_orbit(point, (rotations, translations), lattice_vectors=host.lattice_vectors, tolerance=tolerance)
+        orbit = symmetry_orbit(
+            point,
+            (rotations, translations),
+            lattice_vectors=host.lattice_vectors,
+            tolerance=tolerance,
+        )
         expected = _wyckoff_orbit(point, rotations, translations, host.lattice_vectors, tolerance)
         assert len(orbit) == len(expected)
         for actual_position, expected_position in zip(orbit, expected, strict=True):
@@ -198,7 +240,9 @@ def test_orbit_matches_the_wyckoff_scan(host_factory, tolerance) -> None:
 
 @pytest.mark.parametrize("host_factory", _HOSTS)
 @pytest.mark.parametrize("tolerance", [1e-3, 0.05])
-def test_find_equivalent_muon_sites_matches_the_magnetic_fields_scan(host_factory, tolerance) -> None:
+def test_find_equivalent_muon_sites_matches_the_magnetic_fields_scan(
+    host_factory, tolerance
+) -> None:
     host = host_factory()
 
     for point in _POINTS:
@@ -210,8 +254,18 @@ def test_find_equivalent_muon_sites_matches_the_magnetic_fields_scan(host_factor
 
 
 def test_orbit_without_operations_is_the_wrapped_position() -> None:
-    assert symmetry_orbit([1.25, -0.5, 0.0], None, lattice_vectors=None, tolerance=1e-5) == [[0.25, 0.5, 0.0]]
-    assert symmetry_orbit([0.1, 0.2, 0.3], (np.empty((0, 3, 3)), np.empty((0, 3))), lattice_vectors=None, tolerance=1e-5) == []
+    assert symmetry_orbit([1.25, -0.5, 0.0], None, lattice_vectors=None, tolerance=1e-5) == [
+        [0.25, 0.5, 0.0]
+    ]
+    assert (
+        symmetry_orbit(
+            [0.1, 0.2, 0.3],
+            (np.empty((0, 3, 3)), np.empty((0, 3))),
+            lattice_vectors=None,
+            tolerance=1e-5,
+        )
+        == []
+    )
 
 
 def test_orbit_tolerance_units_follow_the_lattice_argument() -> None:
@@ -220,7 +274,9 @@ def test_orbit_tolerance_units_follow_the_lattice_argument() -> None:
     # 5e-7 off the 12d position: merged images lie within 1e-5 Å (2e-6 fractional) of each other.
     point = (0.25, 0.5000005, 0.0)
 
-    in_angstrom = symmetry_orbit(point, operations, lattice_vectors=host.lattice_vectors, tolerance=1e-5)
+    in_angstrom = symmetry_orbit(
+        point, operations, lattice_vectors=host.lattice_vectors, tolerance=1e-5
+    )
     in_fractions = symmetry_orbit(point, operations, lattice_vectors=None, tolerance=1e-7)
 
     assert len(in_angstrom) == 12

@@ -30,9 +30,7 @@ def _append_muon(
     positions = tuple(structure.positions_frac.positions) + (muon_position,)
     species = tuple(dict.fromkeys((*structure.species, muon_species_label)))
     atomic_spins = (
-        None
-        if structure.atomic_spins is None
-        else tuple(structure.atomic_spins) + (0.0,)
+        None if structure.atomic_spins is None else tuple(structure.atomic_spins) + (0.0,)
     )
     return StructureSpec(
         lattice_cart=structure.lattice_cart,
@@ -102,4 +100,3 @@ def expand_muon_site_jobs(
         )
 
     return jobs
-

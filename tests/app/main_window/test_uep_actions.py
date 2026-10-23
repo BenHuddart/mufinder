@@ -76,7 +76,9 @@ def test_uep_preserves_running_row_across_reconfiguration(main_window, tmp_path:
     old_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(
+            main_window_module.UepConfig(name_prefix="uep", rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "uep",
     )
     running_job = service.add_job(
@@ -91,7 +93,9 @@ def test_uep_preserves_running_row_across_reconfiguration(main_window, tmp_path:
     new_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(
+            main_window_module.UepConfig(name_prefix="uep", rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)
@@ -121,7 +125,9 @@ def test_uep_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: 
     old_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(
+            main_window_module.UepConfig(name_prefix="uep", rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "uep",
     )
     running_job = service.add_job(
@@ -138,7 +144,9 @@ def test_uep_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: 
     new_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(
+            main_window_module.UepConfig(name_prefix="uep", rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)

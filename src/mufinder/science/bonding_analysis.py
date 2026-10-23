@@ -40,7 +40,9 @@ def _minimum_image_vector(
     rhs_fractional: list[float],
     lattice_vectors: list[list[float]],
 ) -> np.ndarray:
-    delta_fractional = np.asarray(rhs_fractional, dtype=float) - np.asarray(lhs_fractional, dtype=float)
+    delta_fractional = np.asarray(rhs_fractional, dtype=float) - np.asarray(
+        lhs_fractional, dtype=float
+    )
     delta_fractional -= np.round(delta_fractional)
     lattice = np.asarray(lattice_vectors, dtype=float)
     return delta_fractional @ lattice
@@ -51,7 +53,9 @@ def _distance(
     rhs_fractional: list[float],
     lattice_vectors: list[list[float]],
 ) -> float:
-    return float(np.linalg.norm(_minimum_image_vector(lhs_fractional, rhs_fractional, lattice_vectors)))
+    return float(
+        np.linalg.norm(_minimum_image_vector(lhs_fractional, rhs_fractional, lattice_vectors))
+    )
 
 
 def _radius_for_species(species: str) -> float:
@@ -200,7 +204,9 @@ def compare_coordination_numbers(
             changed_sites += 1
 
     preserved_fraction = float((len(matching.pairs) - changed_sites) / len(matching.pairs))
-    return CoordinationComparison(changed_sites=changed_sites, preserved_fraction=preserved_fraction)
+    return CoordinationComparison(
+        changed_sites=changed_sites, preserved_fraction=preserved_fraction
+    )
 
 
 def connectivity_edges(structure: Structure, *, cutoff_factor: float = 1.3) -> set[tuple[int, int]]:

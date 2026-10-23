@@ -23,7 +23,8 @@ from uuid import UUID
 
 import pytest
 
-if __name__ == "__main__":  # pragma: no cover - lets the regeneration script import ``tests.support``.
+# Lets the regeneration script import ``tests.support``.
+if __name__ == "__main__":  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mufinder.domain.models import Structure
@@ -73,7 +74,13 @@ _CASES = {
     ),
     "triclinic": (
         triclinic_host,
-        [(0.10, 0.10, 0.10), (0.112, 0.104, 0.100), (0.5, 0.5, 0.5), (0.8, 0.8, 0.8), (-0.05, 1.02, 0.99)],
+        [
+            (0.10, 0.10, 0.10),
+            (0.112, 0.104, 0.100),
+            (0.5, 0.5, 0.5),
+            (0.8, 0.8, 0.8),
+            (-0.05, 1.02, 0.99),
+        ],
         0.2,
     ),
     "hcp": (
@@ -91,12 +98,25 @@ _CASES = {
     ),
     "rutile": (
         rutile_host,
-        [(0.5, 0.0, 0.0), (0.5, 0.01, 0.49), (0.0, 0.5, 0.25), (0.3, 0.0, 0.5), (0.12, 0.27, 0.41), (0.0, 0.5, 0.2500006)],
+        [
+            (0.5, 0.0, 0.0),
+            (0.5, 0.01, 0.49),
+            (0.0, 0.5, 0.25),
+            (0.3, 0.0, 0.5),
+            (0.12, 0.27, 0.41),
+            (0.0, 0.5, 0.2500006),
+        ],
         0.3,
     ),
     "fcc": (
         fcc_primitive_host,
-        [(0.5, 0.5, 0.5), (0.25, 0.25, 0.25), (0.26, 0.25, 0.24), (0.1, 0.3, 0.2), (0.7500003, 0.75, 0.75)],
+        [
+            (0.5, 0.5, 0.5),
+            (0.25, 0.25, 0.25),
+            (0.26, 0.25, 0.24),
+            (0.1, 0.3, 0.2),
+            (0.7500003, 0.75, 0.75),
+        ],
         0.3,
     ),
 }
@@ -133,13 +153,17 @@ def _collect(host_name: str) -> dict[str, Any]:
     anchors = fractions[1:] + fractions[:1]
     labels = cluster_connected_components(sites, host, tolerance_ang=tolerance).cluster_labels
     return {
-        "equivalents": [symmetry_equivalent_positions(fraction, **_host_kwargs(host)) for fraction in fractions],
+        "equivalents": [
+            symmetry_equivalent_positions(fraction, **_host_kwargs(host)) for fraction in fractions
+        ],
         "closest": [
             closest_symmetry_equivalent_position(fraction, anchor_frac=anchor, **_host_kwargs(host))
             for fraction, anchor in zip(fractions, anchors, strict=True)
         ],
         "distance_matrix": symmetry_distance_matrix(sites, host),
-        "scan": scan_connected_component_tolerances(sites, host, start_ang=0.0, stop_ang=1.0, points=_SCAN_POINTS),
+        "scan": scan_connected_component_tolerances(
+            sites, host, start_ang=0.0, stop_ang=1.0, points=_SCAN_POINTS
+        ),
         "anchored": [
             [list(site.shifted_fractional_position), site.shifted, site.cluster_index]
             for site in anchored_sites(sites, host, labels)
@@ -168,19 +192,29 @@ def test_symmetry_helpers_match_recorded_golden_values(host_name: str) -> None:
     expected = _golden()[host_name]
     actual = _as_json(_collect(host_name))
 
-    assert [len(group) for group in actual["equivalents"]] == [len(group) for group in expected["equivalents"]]
-    for actual_group, expected_group in zip(actual["equivalents"], expected["equivalents"], strict=True):
+    assert [len(group) for group in actual["equivalents"]] == [
+        len(group) for group in expected["equivalents"]
+    ]
+    for actual_group, expected_group in zip(
+        actual["equivalents"], expected["equivalents"], strict=True
+    ):
         for actual_position, expected_position in zip(actual_group, expected_group, strict=True):
             assert actual_position == pytest.approx(expected_position, abs=1e-12)
-    for actual_position, expected_position in zip(actual["closest"], expected["closest"], strict=True):
+    for actual_position, expected_position in zip(
+        actual["closest"], expected["closest"], strict=True
+    ):
         assert actual_position == pytest.approx(expected_position, abs=1e-12)
-    for actual_row, expected_row in zip(actual["distance_matrix"], expected["distance_matrix"], strict=True):
+    for actual_row, expected_row in zip(
+        actual["distance_matrix"], expected["distance_matrix"], strict=True
+    ):
         assert actual_row == pytest.approx(expected_row, abs=1e-12)
     assert [tuple(row) for row in actual["scan"]] == [tuple(row) for row in expected["scan"]]
     assert len(actual["anchored"]) == len(expected["anchored"])
-    for (position, shifted, cluster), (expected_position, expected_shifted, expected_cluster) in zip(
-        actual["anchored"], expected["anchored"], strict=True
-    ):
+    for (position, shifted, cluster), (
+        expected_position,
+        expected_shifted,
+        expected_cluster,
+    ) in zip(actual["anchored"], expected["anchored"], strict=True):
         assert position == pytest.approx(expected_position, abs=1e-12)
         assert (shifted, cluster) == (expected_shifted, expected_cluster)
 

@@ -175,7 +175,9 @@ class _FakeKey:
 
 
 class _FakeSSHClient:
-    def __init__(self, fail_key: bool = False, system_host_keys: dict[str, object] | None = None) -> None:
+    def __init__(
+        self, fail_key: bool = False, system_host_keys: dict[str, object] | None = None
+    ) -> None:
         self._transport = _FakeTransport()
         self._sftp = _FakeSFTP()
         self.fail_key = fail_key
@@ -224,7 +226,9 @@ class _FakeSSHClient:
 
 
 class _FakeParamiko:
-    def __init__(self, fail_key: bool = False, system_host_keys: dict[str, object] | None = None) -> None:
+    def __init__(
+        self, fail_key: bool = False, system_host_keys: dict[str, object] | None = None
+    ) -> None:
         self._client = _FakeSSHClient(fail_key=fail_key, system_host_keys=system_host_keys)
 
     def SSHClient(self):  # noqa: N802
@@ -403,7 +407,9 @@ def test_ssh_connection_connects_via_jump_host(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: _JumpParamiko()))
 
     connection = SSHConnection(_jump_config())
-    connection.connect(credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret"))
+    connection.connect(
+        credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret")
+    )
 
     assert connection.is_connected
     assert jump_client.connect_calls[0]["hostname"] == "bastion.physics.ox.ac.uk"
@@ -430,7 +436,9 @@ def test_ssh_connection_jump_host_unknown_key_raises_endpoint(
     connection = SSHConnection(_jump_config())
 
     with pytest.raises(SSHUnknownHostKeyError) as exc_info:
-        connection.connect(credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret"))
+        connection.connect(
+            credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret")
+        )
 
     assert exc_info.value.endpoint == "jump"
     assert exc_info.value.hostname == "bastion.physics.ox.ac.uk"
@@ -477,7 +485,9 @@ def test_ssh_connection_uses_saved_jump_host_key(
     monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: _JumpParamiko()))
 
     connection = SSHConnection(config, settings=settings)
-    connection.connect(credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret"))
+    connection.connect(
+        credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret")
+    )
 
     loaded = load_trusted_host_key(settings, config, endpoint="jump")
     assert loaded is not None
@@ -512,7 +522,9 @@ def test_ssh_connection_password_auth_requires_password(monkeypatch: pytest.Monk
         connection.connect(password=None)
 
 
-def test_ssh_connection_password_auth_sends_only_the_password(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ssh_connection_password_auth_sends_only_the_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake_paramiko = _FakeParamiko(fail_key=False, system_host_keys={"example.org": _FakeKey()})
     _patch_paramiko(monkeypatch, fake_paramiko)
 
@@ -538,7 +550,9 @@ def test_ssh_connection_key_auth_failure_without_password_is_structured(
         SSHConnection(_config("key")).connect(password=None)
 
 
-def test_ssh_connection_password_auth_failure_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ssh_connection_password_auth_failure_is_structured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _patch_paramiko(
         monkeypatch,
         _failing_connect_paramiko(_FakeParamiko.AuthenticationException("bad password")),
@@ -1223,7 +1237,9 @@ def test_ssh_connection_resolve_command_path_probes_and_falls_back(
     monkeypatch.setattr(
         connection,
         "exec_command",
-        lambda command, timeout=10: (0, "/usr/bin/sbatch\n", "") if "command -v" in command else (1, "", ""),
+        lambda command, timeout=10: (
+            (0, "/usr/bin/sbatch\n", "") if "command -v" in command else (1, "", "")
+        ),
     )
     assert connection.resolve_command_path("sbatch") == "/usr/bin/sbatch"
 

@@ -1,5 +1,7 @@
 """Generate random candidate muon sites in a silicon host.
 
+Run from the repository root:
+
     python docs/api/examples/generate_muon_sites.py
 """
 

@@ -74,7 +74,10 @@ def test_quantum_row_reset_with_cleanup_reruns_as_a_fresh_job(
     assert phonon.status == JobStatus.DEFINED
     # The remote directory is forgotten, so a cluster resubmission goes to a fresh target.
     assert phonon.remote_directory is None
-    assert sorted(path.name for path in directory.iterdir()) == ["quantum_siteA.cell", "quantum_siteA.param"]
+    assert sorted(path.name for path in directory.iterdir()) == [
+        "quantum_siteA.cell",
+        "quantum_siteA.param",
+    ]
     if singlepoint is not None:
         assert doc.jobs[singlepoint.id].status == JobStatus.COMPLETED
     controller = window._quantum_corrections_controller
@@ -197,7 +200,9 @@ def test_configuring_a_ready_row_edits_every_parameter(
     assert len(opened) == 1
     assert opened[0]["title"] == "Configure Quantum Corrections Parameters"
     assert opened[0]["read_only"] is False
-    assert not {"editable_param_names", "num_farms_editable", "pseudopotential_editable"} & set(opened[0])
+    assert not {"editable_param_names", "num_farms_editable", "pseudopotential_editable"} & set(
+        opened[0]
+    )
     assert workflow_row_configuration(definition, candidate.key)[2] == {
         "pseudopotential_family": "unknown",
         "num_farms": 4,

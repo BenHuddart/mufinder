@@ -38,12 +38,16 @@ def _add_definition(document: ProjectDocument, **fields) -> CalculationDefinitio
     return definition
 
 
-def test_definition_output_directory_resolves_relative_paths(document: ProjectDocument, tmp_path: Path) -> None:
+def test_definition_output_directory_resolves_relative_paths(
+    document: ProjectDocument, tmp_path: Path
+) -> None:
     relative = CalculationDefinition(parameters={"output_directory": "files/uep"})
     absolute = CalculationDefinition(parameters={"output_directory": str(tmp_path / "elsewhere")})
     blank = CalculationDefinition(parameters={"output_directory": "  "})
 
-    assert definition_output_directory(document, relative) == document.project_root / "files" / "uep"
+    assert (
+        definition_output_directory(document, relative) == document.project_root / "files" / "uep"
+    )
     assert definition_output_directory(document, absolute) == tmp_path / "elsewhere"
     assert definition_output_directory(document, blank) is None
     assert definition_output_directory(None, relative) is None
@@ -55,12 +59,18 @@ def test_cutoff_and_label_mappings_resolve_to_label_directories(document: Projec
     _add_definition(
         document,
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        parameters={"output_directory": "files/cutoff", "job_ids_by_cutoff": {"300": str(cutoff_job.id)}},
+        parameters={
+            "output_directory": "files/cutoff",
+            "job_ids_by_cutoff": {"300": str(cutoff_job.id)},
+        },
     )
     _add_definition(
         document,
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
-        parameters={"output_directory": "files/relax", "job_ids_by_label": {"a": str(label_job.id)}},
+        parameters={
+            "output_directory": "files/relax",
+            "job_ids_by_label": {"a": str(label_job.id)},
+        },
     )
 
     root = document.project_root
@@ -72,7 +82,9 @@ def test_cutoff_and_label_mappings_resolve_to_label_directories(document: Projec
     )
 
 
-def test_muon_relaxation_job_uses_charge_state_subdirectory_and_seed(document: ProjectDocument) -> None:
+def test_muon_relaxation_job_uses_charge_state_subdirectory_and_seed(
+    document: ProjectDocument,
+) -> None:
     stored_seed = make_job("site_1", calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"])
     remote_seed = make_job(
         "site_2",
@@ -101,7 +113,10 @@ def test_muon_relaxation_job_uses_charge_state_subdirectory_and_seed(document: P
     assert job_output_directory(document, remote_seed, quantum_seed_name=_no_quantum_seed) == (
         base / "muonium" / "muonium_site_2_x"
     )
-    assert job_output_directory(document, plain, quantum_seed_name=_no_quantum_seed) == base / "muonium" / "site_3"
+    assert (
+        job_output_directory(document, plain, quantum_seed_name=_no_quantum_seed)
+        == base / "muonium" / "site_3"
+    )
 
     inferred = base / "muonium" / job_name("muonium", "site_3")
     inferred.mkdir(parents=True)
@@ -113,7 +128,10 @@ def test_quantum_job_seed_comes_from_the_callback(document: ProjectDocument) -> 
     definition = _add_definition(
         document,
         workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-        parameters={"output_directory": "files/quantum", "phonon_job_ids_by_label": {"key_1": str(job.id)}},
+        parameters={
+            "output_directory": "files/quantum",
+            "phonon_job_ids_by_label": {"key_1": str(job.id)},
+        },
     )
     calls: list[tuple[CalculationDefinition, str]] = []
 
@@ -147,8 +165,13 @@ def test_legacy_quantum_singlepoint_keeps_its_own_recorded_seed(document: Projec
     def seed(_owner: CalculationDefinition, _key: str) -> str:
         return "quantum_site_phonon"
 
-    assert job_output_directory(document, singlepoint, quantum_seed_name=seed) == base / "quantum_site"
-    assert job_output_directory(document, phonon, quantum_seed_name=seed) == base / "quantum_site_phonon"
+    assert (
+        job_output_directory(document, singlepoint, quantum_seed_name=seed) == base / "quantum_site"
+    )
+    assert (
+        job_output_directory(document, phonon, quantum_seed_name=seed)
+        == base / "quantum_site_phonon"
+    )
 
 
 def test_legacy_quantum_singlepoint_without_a_recorded_seed_shares_the_rows_seed(
@@ -165,9 +188,9 @@ def test_legacy_quantum_singlepoint_without_a_recorded_seed_shares_the_rows_seed
         },
     )
 
-    assert job_output_directory(document, singlepoint, quantum_seed_name=lambda _owner, _key: "quantum_site") == (
-        document.project_root / "files" / "quantum" / "quantum_site"
-    )
+    assert job_output_directory(
+        document, singlepoint, quantum_seed_name=lambda _owner, _key: "quantum_site"
+    ) == (document.project_root / "files" / "quantum" / "quantum_site")
 
 
 def test_job_labels_and_fallbacks_require_an_existing_directory(document: ProjectDocument) -> None:
