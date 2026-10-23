@@ -7,6 +7,7 @@ Quality gates
 All implemented and future functionality must satisfy these gates:
 
 - Unit and integration tests must pass.
+- Lint and formatting checks must pass (``make lint``).
 - Agent-harness structural tests must pass.
 - Coverage must remain at or above 85 percent (enforced by pytest-cov).
 - Sphinx documentation must build with warnings treated as errors.
@@ -44,13 +45,48 @@ README, the pull-request template and CI refer to its targets. Pass
 - ``make docs`` renders the screenshots when they are out of date (see `When
   the renderer runs`_), then builds this Sphinx site with warnings treated as
   errors.
-- ``make lint`` runs ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``.
+- ``make lint`` runs ``ruff check`` and ``ruff format --check`` over ``src``,
+  ``tests``, ``scripts``, the API example scripts in ``docs/api/examples``,
+  ``docs/conf.py`` and ``packaging`` (see `Code formatting`_).
+- ``make format`` applies ``ruff format`` to the same files.
 - ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
 To skip the Qt widget tests while iterating, select by marker with
 ``python -m pytest --no-cov -m "not gui"``. ``tests/conftest.py`` marks every
 test under ``tests/app/`` or using the ``qapp`` fixture as ``gui`` and every
 other test as ``unit``.
+
+Code formatting
+---------------
+
+``ruff format`` owns the layout of every Python file that ``make lint`` checks.
+It runs with its defaults and a line length of 100, set in ``[tool.ruff]`` in
+``pyproject.toml``. Run ``make format`` before committing: ``make lint`` fails on
+any file the formatter would change, and CI runs ``make lint``. Layout is not
+hand-tuned and is not a review topic.
+
+The ``dev`` extra pins ruff to one minor version, because the formatter's style
+can change between minor releases and a different version would reformat files
+that CI accepts. Raising the pin is a change of its own, committed together with
+the ``make format`` output it produces.
+
+The formatter removes the indentation that every line of a docstring after the
+summary shares. An indented example keeps its indentation only when a line of
+prose at the docstring's own indentation sits beside it, such as ``Usage:``
+before an indented command.
+
+``.git-blame-ignore-revs`` lists the commits that only reformat code. GitHub's
+blame view skips them; to do the same locally, run this once per clone::
+
+    git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+A pull request that reformats code is merged with a merge commit rather than
+squashed, so the reformatting commit keeps the hash listed in
+``.git-blame-ignore-revs``.
+
+To bring a branch cut before a reformat up to date, run ``make format`` on the
+branch and commit the result, then merge ``main``. Both sides then carry the
+same layout, so the only conflicts left are real ones.
 
 PySide test shutdown note
 -------------------------
@@ -682,7 +718,8 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``make lint``: ``ruff check`` over ``src``, ``tests``, ``scripts`` and the API example scripts in ``docs/api/examples``
+  - ``make lint``: ``ruff check`` and ``ruff format --check`` (see `Code
+    formatting`_)
   - ``make test-shard SHARD=n SHARDS=4 PYTEST_WORKERS=auto`` on four runners,
     each distributed with ``pytest-xdist`` using ``--dist worksteal``, then
     ``make coverage`` in the required ``tests`` job, which combines the shards'
