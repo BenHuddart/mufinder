@@ -81,7 +81,7 @@ def test_the_collector_only_collects_once_a_threshold_is_passed(qapp) -> None:
         collector.stop()
 
 
-def test_stop_turns_automatic_collection_back_on(qapp) -> None:
+def test_stop_turns_automatic_collection_back_on(without_session_garbage_collector) -> None:
     assert gc.isenabled()
     collector = GuiGarbageCollector()
 
@@ -94,7 +94,7 @@ def test_stop_turns_automatic_collection_back_on(qapp) -> None:
     assert gc.isenabled()
 
 
-def test_stop_leaves_automatic_collection_off_when_it_was_off_before(qapp) -> None:
+def test_stop_leaves_automatic_collection_off_when_it_was_off_before(without_session_garbage_collector) -> None:
     gc.disable()
     collector = GuiGarbageCollector()
     try:
@@ -104,6 +104,26 @@ def test_stop_leaves_automatic_collection_off_when_it_was_off_before(qapp) -> No
         assert not gc.isenabled()
     finally:
         gc.enable()
+
+
+def test_automatic_collection_stays_off_until_the_last_collector_stops(without_session_garbage_collector) -> None:
+    first = GuiGarbageCollector()
+    second = GuiGarbageCollector()
+    first.start()
+    second.start()
+
+    first.stop()
+
+    assert not gc.isenabled()
+    assert second.is_running()
+
+    second.stop()
+
+    assert gc.isenabled()
+
+
+def test_the_test_session_frees_cycles_on_the_gui_thread_only(qapp) -> None:
+    assert not gc.isenabled()
 
 
 def test_install_starts_a_collector_owned_by_the_application(qapp) -> None:

@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 RENDERER = SCRIPTS / "render_docs_screenshots.py"
 SUBPROCESS_TIMEOUT_S = 60
@@ -102,9 +104,10 @@ def test_the_limit_does_not_outlive_its_scene() -> None:
     assert later.stderr == ""
 
 
-def test_a_scene_timeout_of_zero_is_refused() -> None:
+@pytest.mark.parametrize("value", ["0", "-5", "nan", "inf", "86401"])
+def test_a_scene_timeout_out_of_range_is_refused(value: str) -> None:
     completed = subprocess.run(
-        [sys.executable, str(RENDERER), "--list", "--scene-timeout", "0"],
+        [sys.executable, str(RENDERER), "--list", "--scene-timeout", value],
         capture_output=True,
         text=True,
         timeout=SUBPROCESS_TIMEOUT_S,
@@ -112,7 +115,39 @@ def test_a_scene_timeout_of_zero_is_refused() -> None:
     )
 
     assert completed.returncode == 2
-    assert "--scene-timeout: must be more than 0 seconds, not 0" in completed.stderr
+    assert f"--scene-timeout: must be more than 0 and at most 86400 seconds, not {value}" in completed.stderr
+
+
+def test_a_limit_that_runs_out_as_its_scene_finishes_does_nothing() -> None:
+    # The timer is captured so it can be fired by hand after the block has
+    # finished, which is the race a real timer can lose.
+    program = "\n".join(
+        [
+            "import sys, threading",
+            f"sys.path.insert(0, {str(SCRIPTS)!r})",
+            "from docs_screenshots import watchdog",
+            "timers = []",
+            "class CapturedTimer(threading.Timer):",
+            "    def start(self):",
+            "        timers.append(self)",
+            "watchdog.threading.Timer = CapturedTimer",
+            "with watchdog.scene_deadline('quick_scene', 60):",
+            "    pass",
+            "timers[0].function()",
+            "print('finished')",
+        ]
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "finished\n"
+    assert completed.stderr == ""
 
 
 _REMOVE_WHILE_WRITING = """

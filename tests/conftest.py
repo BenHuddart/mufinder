@@ -14,6 +14,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QSettings, QThread
 from PySide6.QtWidgets import QApplication, QWidget
 
 import mufinder.castep_io.schema as _schema_module
+from mufinder.app.gui_garbage_collector import GuiGarbageCollector, install_gui_garbage_collector
 from mufinder.app.theme import cleanup_theme_runtime
 
 
@@ -191,18 +192,42 @@ def _cleanup_qt_application(
         app.processEvents()
 
 
+_session_garbage_collector: GuiGarbageCollector | None = None
+
+
 @pytest.fixture(scope="session")
 def qapp() -> Generator[QApplication, None, None]:
-    """Provide one QApplication instance for all UI tests."""
+    """Provide one QApplication instance for all UI tests.
 
+    Like the application, the session frees reference cycles on the GUI thread
+    only (``mufinder.app.gui_garbage_collector``), so a worker thread a test
+    starts never frees a Qt object.
+    """
+
+    global _session_garbage_collector
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
+    _session_garbage_collector = install_gui_garbage_collector(app)
 
     yield app
 
+    _session_garbage_collector.stop()
+    _session_garbage_collector = None
     _cleanup_qt_application(app, quit_app=True)
+
+
+@pytest.fixture
+def without_session_garbage_collector(qapp: QApplication) -> Iterator[None]:
+    """Stop the session's garbage collector for one test, which turns automatic collection back on."""
+
+    assert _session_garbage_collector is not None
+    _session_garbage_collector.stop()
+    try:
+        yield
+    finally:
+        _session_garbage_collector.start()
 
 
 @pytest.fixture(autouse=True)

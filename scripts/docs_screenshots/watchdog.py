@@ -35,19 +35,18 @@ def scene_deadline(name: str, seconds: float, *, cleanup: Callable[[], None] | N
 
     ``cleanup`` runs after the dump and before the exit, which skips
     ``finally`` blocks; an error it raises is reported and the exit goes ahead.
+    A limit that runs out just as the block finishes does nothing: the lock
+    decides which came first.
     """
 
+    lock = threading.Lock()
+    finished = False
+
     def expire() -> None:
-        sys.stderr.write(f"Scene {name!r} did not finish within {seconds:g} s; the stack of every thread follows.\n")
-        sys.stderr.flush()
-        faulthandler.dump_traceback(all_threads=True)
-        if cleanup is not None:
-            try:
-                cleanup()
-            except Exception as exc:  # noqa: BLE001 - the exit must not depend on it
-                sys.stderr.write(f"Cleaning up after {name!r} failed: {exc}\n")
-                sys.stderr.flush()
-        os._exit(TIMEOUT_EXIT_STATUS)
+        with lock:
+            if finished:
+                return
+            _report_and_exit(name, seconds, cleanup)
 
     timer = threading.Timer(seconds, expire)
     timer.name = f"scene-deadline-{name}"
@@ -57,5 +56,20 @@ def scene_deadline(name: str, seconds: float, *, cleanup: Callable[[], None] | N
     try:
         yield
     finally:
+        with lock:
+            finished = True
         timer.cancel()
         faulthandler.cancel_dump_traceback_later()
+
+
+def _report_and_exit(name: str, seconds: float, cleanup: Callable[[], None] | None) -> None:
+    sys.stderr.write(f"Scene {name!r} did not finish within {seconds:g} s; the stack of every thread follows.\n")
+    sys.stderr.flush()
+    faulthandler.dump_traceback(all_threads=True)
+    if cleanup is not None:
+        try:
+            cleanup()
+        except Exception as exc:  # noqa: BLE001 - the exit must not depend on it
+            sys.stderr.write(f"Cleaning up after {name!r} failed: {exc}\n")
+            sys.stderr.flush()
+    os._exit(TIMEOUT_EXIT_STATUS)

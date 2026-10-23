@@ -35,15 +35,17 @@ DEFAULT_JOBS = min(4, os.cpu_count() or 1)
 # The slowest scene takes about 15 s and a worker's first scene of a project
 # also builds it; a slow CI runner takes a few times longer.
 DEFAULT_SCENE_TIMEOUT_S = 300.0
+# A day; a longer limit (or infinity) overflows the platform's timers.
+MAX_SCENE_TIMEOUT_S = 86_400.0
 
 
-def _positive_seconds(value: str) -> float:
+def _scene_timeout(value: str) -> float:
     try:
         seconds = float(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a number of seconds: {value!r}") from None
-    if not seconds > 0:
-        raise argparse.ArgumentTypeError(f"must be more than 0 seconds, not {value}")
+    if not 0 < seconds <= MAX_SCENE_TIMEOUT_S:
+        raise argparse.ArgumentTypeError(f"must be more than 0 and at most {MAX_SCENE_TIMEOUT_S:g} seconds, not {value}")
     return seconds
 
 
@@ -69,7 +71,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scene-timeout",
-        type=_positive_seconds,
+        type=_scene_timeout,
         default=DEFAULT_SCENE_TIMEOUT_S,
         metavar="SECONDS",
         help=f"fail a scene that takes longer than this (default: {DEFAULT_SCENE_TIMEOUT_S:g})",

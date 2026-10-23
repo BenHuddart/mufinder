@@ -13,7 +13,14 @@ objects, so unrelated objects collide.
 collection itself from a GUI-thread timer once the collector's own thresholds
 are passed, so cycles are only ever freed on the GUI thread. Reference counting
 still frees every other object at once, in any thread. Worker threads must not
-call ``gc.collect()``.
+call ``gc.collect()``. A PySide object whose last reference a worker thread
+drops is still freed there, so a worker must not hold the only reference to
+one.
+
+Automatic collection stays off while any collector runs and comes back, if it
+was on, when the last one stops. Cycles are collected only when the event loop
+runs the timer, so a long synchronous job on the GUI thread collects none until
+it returns.
 """
 
 from __future__ import annotations
@@ -25,6 +32,11 @@ from PySide6.QtCore import QObject, QTimer
 #: How often the GUI thread checks whether a collection is due, in milliseconds.
 COLLECT_INTERVAL_MS = 1000
 
+# How many collectors are running, and whether automatic collection was on
+# before the first of them started.
+_running_collectors = 0
+_enabled_before_collectors = False
+
 
 class GuiGarbageCollector(QObject):
     """Collect reference cycles from a GUI-thread timer instead of automatically."""
@@ -34,7 +46,6 @@ class GuiGarbageCollector(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self.collect_if_due)
-        self._was_enabled = False
 
     def is_running(self) -> bool:
         return self._timer.isActive()
@@ -42,19 +53,24 @@ class GuiGarbageCollector(QObject):
     def start(self) -> None:
         """Turn automatic collection off and start collecting from the timer."""
 
+        global _running_collectors, _enabled_before_collectors
         if self.is_running():
             return
-        self._was_enabled = gc.isenabled()
-        gc.disable()
+        if _running_collectors == 0:
+            _enabled_before_collectors = gc.isenabled()
+            gc.disable()
+        _running_collectors += 1
         self._timer.start()
 
     def stop(self) -> None:
-        """Stop the timer and turn automatic collection back on if it was on."""
+        """Stop the timer; the last collector to stop turns automatic collection back on if it was on."""
 
+        global _running_collectors
         if not self.is_running():
             return
         self._timer.stop()
-        if self._was_enabled:
+        _running_collectors -= 1
+        if _running_collectors == 0 and _enabled_before_collectors:
             gc.enable()
 
     def collect_if_due(self) -> int | None:

@@ -219,8 +219,8 @@ The package
   of its own share; ``--jobs 1`` renders in one process.
   ``--store-durations`` renders in one process and records each screenshot's
   seconds in ``durations.json``.
-  ``--scene-timeout SECONDS`` (default: 300) is each scene's time limit, its
-  project's build included; worker processes inherit it. Like the
+  ``--scene-timeout SECONDS`` (default: 300, at most 86400) is each scene's
+  time limit, its project's build included; worker processes inherit it. Like the
   application, the renderer starts ``mufinder.app.gui_garbage_collector``, so
   Qt objects are freed on the GUI thread only.
 

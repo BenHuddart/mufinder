@@ -290,8 +290,9 @@ no two workflow widgets may define the same private method.
        threshold is passed. A cycle freed on a worker thread can run
        ``QObject::~QObject`` there and deadlock against the GUI thread over
        the GIL and Qt's object locks. ``mufinder.main`` starts it with the
-       application and the screenshot renderer with its own; worker threads
-       never call ``gc.collect()``.
+       application, the screenshot renderer with its own and the test
+       session's ``qapp`` fixture with the shared one; worker threads never
+       call ``gc.collect()`` or hold the only reference to a Qt object.
    * - ``mufinder.app.pinned_sites_scope``
      - The "Show every relaxed site" check box, pinned-sites notice and
        ``Go to Muon Sites →`` link above a downstream site list
