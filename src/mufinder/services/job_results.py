@@ -5,7 +5,8 @@ here take the result of a job's latest run (highest ``run_index``) and pull
 one scalar from it: the total energy, the maximum force or the maximum stress.
 Each scalar may be stored under several keys, directly or in a nested group,
 as a number or as a ``{"value": ...}`` mapping; booleans and NaN are not
-readings.
+readings. :func:`find_job_derived_structure` finds the structure a job's
+completion derived, such as a relaxation's relaxed geometry.
 
 Layering: this lives in ``mufinder.services`` and imports ``domain`` only.
 """
@@ -16,7 +17,7 @@ from math import isnan
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from mufinder.domain.models import Result
+from mufinder.domain.models import Job, Result, Structure
 
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
@@ -126,3 +127,53 @@ def max_stress_for_job(document: ProjectDocument | None, job_id: UUID) -> float 
 
     result = latest_result_for_job(document, job_id)
     return None if result is None else extract_max_stress(result.data)
+
+
+def find_job_derived_structure(
+    document: ProjectDocument, job: Job, *, origin: str
+) -> Structure | None:
+    """Return the derived structure an earlier completion of ``job`` created.
+
+    Two job-scoped keys are tried, in order:
+
+    1. ``properties["source_job_id"]``. Both relaxation controllers have written
+       it on every derived structure since the first release, so in practice
+       every candidate carries it.
+    2. The ``derived_structure_ids`` of the :class:`~mufinder.domain.models.Result`
+       reachable from each of this job's own runs. This is the fallback for a
+       structure written before that property existed; runs are walked in
+       ``run_index`` order so the choice is deterministic.
+
+    A structure's *label* is deliberately **not** a key. A muon-relaxation job
+    is labelled with its site label alone, so one site's two charge states are
+    two jobs with the same ``job.label`` and two derived structures both called
+    ``"{label} relaxed"``; matching on that could hand the positive-muon job the
+    muonium structure.
+
+    When several structures match — the duplicate pair a continued job minted by
+    completing twice before the update-in-place behaviour existed — the first in
+    ``document.structures`` insertion order wins. That is the older one, which is
+    what any comparison table or downstream consumer built in the meantime
+    already references.
+    """
+
+    job_id = str(job.id)
+    for structure in document.structures.values():
+        if structure.origin != origin:
+            continue
+        if str(structure.properties.get("source_job_id", "")) == job_id:
+            return structure
+
+    runs = sorted(
+        (run for run in document.runs.values() if run.job_id == job.id),
+        key=lambda run: run.run_index,
+    )
+    for run in runs:
+        result = document.results.get(run.result_id) if run.result_id else None
+        if result is None:
+            continue
+        for structure_id in result.derived_structure_ids:
+            structure = document.structures.get(structure_id)
+            if structure is not None and structure.origin == origin:
+                return structure
+    return None

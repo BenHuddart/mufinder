@@ -276,6 +276,14 @@ no two workflow widgets may define the same private method.
        numbers in a results table (``format_energy_ev``,
        ``format_table_number``, ``format_vector_components``: rounding noise
        and ``-0`` show as ``0``).
+   * - ``mufinder.app.export_dialogs``
+     - Exporting a file from a results view: the save dialog with a suggested
+       name and per-format filters that guarantees an offered extension
+       (``ask_save_path``), the saved and failed messages
+       (``report_export_saved``, ``report_export_failed``), and the
+       relaxed-structure flows built on them (``export_relaxed_structure`` for
+       one file, ``export_relaxed_structures_to_folder`` for one file per
+       structure in a chosen folder).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -411,7 +419,15 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.services.job_results``
      - Scalar readings from the result of a job's latest run
        (``total_energy_for_job``, ``max_force_for_job``,
-       ``max_stress_for_job``) and the payload extractors behind them.
+       ``max_stress_for_job``) and the payload extractors behind them, and the
+       structure a job's completion derived (``find_job_derived_structure``).
+   * - ``mufinder.services.structure_export``
+     - A relaxation's relaxed structure ready to export
+       (``relaxed_structure_export_for_job``,
+       ``relaxed_structure_export_for_structure``): the structure, a default
+       file name, the provenance header (project, job, charge state, final
+       energy) and, when there is none, the reason shown to the user. The file
+       is written by ``mufinder.science.structure_io`` (``export_structure``).
    * - ``mufinder.services.quantum_results``
      - Readings from a stored quantum-phonon result payload: the ``w1``
        witness as ``P - 3``, recomputed from the stored mode participations

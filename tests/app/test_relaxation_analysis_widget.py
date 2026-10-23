@@ -11,7 +11,9 @@ from matplotlib import colors as mcolors
 from matplotlib.collections import PolyCollection
 from matplotlib.patches import Circle, PathPatch
 import numpy as np
-from PySide6.QtWidgets import QCheckBox, QFrame, QSplitter, QTabWidget, QTreeWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QPushButton, QSplitter, QTabWidget, QTreeWidget
+
+from mufinder.app import relaxation_analysis_widget as relaxation_analysis_widget_module
 
 from mufinder.app.relaxation_analysis_widget import (
     GRAPH_NODE_GID,
@@ -28,6 +30,7 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
 from mufinder.domain.models import Structure
+from mufinder.services.structure_export import RelaxedStructureExport
 from tests.support.structures import host_structure
 
 
@@ -575,11 +578,11 @@ def test_relaxation_analysis_export_cif_writes_all_relaxed_sites(
         )
         output_path = tmp_path / "sites.cif"
         monkeypatch.setattr(
-            "mufinder.app.relaxation_analysis_widget.QFileDialog.getSaveFileName",
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
             lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
         )
         monkeypatch.setattr(
-            "mufinder.app.relaxation_analysis_widget.QMessageBox.information",
+            "mufinder.app.export_dialogs.QMessageBox.information",
             lambda *args, **kwargs: None,
         )
 
@@ -626,12 +629,12 @@ def test_relaxation_analysis_export_cif_warns_when_site_coincides_with_host_atom
         )
         output_path = tmp_path / "sites.cif"
         monkeypatch.setattr(
-            "mufinder.app.relaxation_analysis_widget.QFileDialog.getSaveFileName",
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
             lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
         )
         warned: list[str] = []
         monkeypatch.setattr(
-            "mufinder.app.relaxation_analysis_widget.QMessageBox.warning",
+            "mufinder.app.export_dialogs.QMessageBox.warning",
             lambda _parent, title, message: warned.append(message),
         )
 
@@ -663,12 +666,12 @@ def test_relaxation_analysis_export_cif_reports_when_workspace_empty(qapp, monke
         )
         informed: list[str] = []
         monkeypatch.setattr(
-            "mufinder.app.relaxation_analysis_widget.QMessageBox.information",
+            "mufinder.app.export_dialogs.QMessageBox.information",
             lambda _parent, title, message: informed.append(message),
         )
         called = []
         monkeypatch.setattr(
-            "mufinder.app.relaxation_analysis_widget.QFileDialog.getSaveFileName",
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
             lambda *args, **kwargs: called.append(True) or ("", ""),
         )
 
@@ -937,3 +940,132 @@ def test_relaxation_connected_graph_makes_dense_component_edges_thin_and_translu
     assert sparse.get_alpha() in (None, 1.0)
     assert strip_width(dense) < strip_width(sparse)
     dialog.close()
+
+
+def _two_site_export_widget(monkeypatch):
+    """A workspace with two relaxed sites, an export provider and recorded export calls."""
+
+    host = host_structure()
+    sources = [
+        CompletedRelaxationAnalysisSource(
+            job_id=uuid4(),
+            job_label=label,
+            charge_state="positive_muon",
+            structure_id=uuid4(),
+            site_id=None,
+            folded_fractional_position=position,
+            total_energy_ev=energy,
+        )
+        for label, position, energy in (
+            ("Site A", (0.1, 0.1, 0.1), -10.0),
+            ("Site B", (0.2, 0.2, 0.2), -9.5),
+        )
+    ]
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source.job_id for source in sources],
+    )
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=sources,
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[],
+    )
+    exports = {
+        source.job_id: RelaxedStructureExport(None, f"export of {source.job_label}")
+        for source in sources
+    }
+    widget.set_relaxed_structure_export_provider(exports.__getitem__)
+    calls: dict[str, list] = {"single": [], "folder": []}
+    monkeypatch.setattr(
+        relaxation_analysis_widget_module,
+        "export_relaxed_structure",
+        lambda _parent, export: calls["single"].append(export),
+    )
+    monkeypatch.setattr(
+        relaxation_analysis_widget_module,
+        "export_relaxed_structures_to_folder",
+        lambda _parent, items: calls["folder"].append(list(items)),
+    )
+    return widget, workspace, sources, exports, calls
+
+
+def _site_items(widget: RelaxationAnalysisWidget) -> list:
+    table = widget._workspace_tabs.currentWidget().findChild(QTreeWidget)
+    return [table.topLevelItem(row) for row in range(table.topLevelItemCount())]
+
+
+def test_relaxation_analysis_export_relaxed_saves_the_one_selected_site(qapp, monkeypatch) -> None:
+    widget, workspace, sources, exports, calls = _two_site_export_widget(monkeypatch)
+    try:
+        _site_items(widget)[1].setSelected(True)
+        button = widget.findChild(QPushButton, "analysisExportRelaxedButton")
+        assert button is not None and button.text() == "Export Relaxed Structures..."
+
+        button.click()
+
+        assert calls == {"single": [exports[sources[1].job_id]], "folder": []}
+    finally:
+        widget.close()
+
+
+def test_relaxation_analysis_export_relaxed_without_selection_exports_every_site_to_a_folder(
+    qapp, monkeypatch
+) -> None:
+    widget, workspace, sources, exports, calls = _two_site_export_widget(monkeypatch)
+    try:
+        widget._export_relaxed_structures(str(workspace["id"]))
+
+        assert calls["single"] == []
+        assert calls["folder"] == [[exports[source.job_id] for source in sources]]
+    finally:
+        widget.close()
+
+
+def test_relaxation_analysis_export_relaxed_with_several_selected_exports_those_to_a_folder(
+    qapp, monkeypatch
+) -> None:
+    widget, workspace, sources, exports, calls = _two_site_export_widget(monkeypatch)
+    try:
+        for item in _site_items(widget):
+            item.setSelected(True)
+
+        widget._export_relaxed_structures(str(workspace["id"]))
+
+        assert calls["folder"] == [[exports[source.job_id] for source in sources]]
+    finally:
+        widget.close()
+
+
+def test_relaxation_analysis_export_relaxed_on_empty_workspace_says_so(qapp, monkeypatch) -> None:
+    host = host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    widget = RelaxationAnalysisWidget()
+    try:
+        widget.set_context(
+            workspaces=[workspace],
+            sources=[],
+            structures={host.id: host},
+            host_structure=host,
+            comparison_options=[],
+        )
+        informed: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QMessageBox.information",
+            lambda _parent, title, _message: informed.append(title),
+        )
+
+        widget._export_relaxed_structures(str(workspace["id"]))
+
+        assert informed == ["Nothing to export"]
+    finally:
+        widget.close()

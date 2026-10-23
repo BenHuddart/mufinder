@@ -42,6 +42,11 @@ from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, S
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_file_cleanup import JobFileCleanup
+from mufinder.services.job_results import find_job_derived_structure
+from mufinder.services.structure_export import (
+    RelaxedStructureExport,
+    relaxed_structure_export_for_job,
+)
 from mufinder.services.project_service import (
     ProjectDocument,
     ProjectService,
@@ -315,6 +320,18 @@ class WorkflowJobController:
 
         raise NotImplementedError
 
+    def relaxed_structure_export(self, key: object) -> RelaxedStructureExport:
+        """Return ``key``'s relaxed structure for export, or why it has none.
+
+        Resolves the row's job through :meth:`jobs_for_keys`, so only a
+        relaxation workflow's completed jobs ever have one (see
+        :func:`~mufinder.services.structure_export.relaxed_structure_export_for_job`).
+        Called live each time a row menu opens.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        return relaxed_structure_export_for_job(self._context.document(), jobs[0] if jobs else None)
+
     def materialize(self, keys: list[object]) -> list[Job]:
         """Create (and return) jobs for the ready keys that lack one."""
 
@@ -543,56 +560,6 @@ def apply_row_parameters_to_form_state(
     return updated_state
 
 
-def find_job_derived_structure(
-    document: ProjectDocument, job: Job, *, origin: str
-) -> Structure | None:
-    """Return the derived structure an earlier completion of ``job`` created.
-
-    Two job-scoped keys are tried, in order:
-
-    1. ``properties["source_job_id"]``. Both relaxation controllers have written
-       it on every derived structure since the first release, so in practice
-       every candidate carries it.
-    2. The ``derived_structure_ids`` of the :class:`~mufinder.domain.models.Result`
-       reachable from each of this job's own runs. This is the fallback for a
-       structure written before that property existed; runs are walked in
-       ``run_index`` order so the choice is deterministic.
-
-    A structure's *label* is deliberately **not** a key. A muon-relaxation job
-    is labelled with its site label alone, so one site's two charge states are
-    two jobs with the same ``job.label`` and two derived structures both called
-    ``"{label} relaxed"``; matching on that could hand the positive-muon job the
-    muonium structure.
-
-    When several structures match — the duplicate pair a continued job minted by
-    completing twice before the update-in-place behaviour existed — the first in
-    ``document.structures`` insertion order wins. That is the older one, which is
-    what any comparison table or downstream consumer built in the meantime
-    already references.
-    """
-
-    job_id = str(job.id)
-    for structure in document.structures.values():
-        if structure.origin != origin:
-            continue
-        if str(structure.properties.get("source_job_id", "")) == job_id:
-            return structure
-
-    runs = sorted(
-        (run for run in document.runs.values() if run.job_id == job.id),
-        key=lambda run: run.run_index,
-    )
-    for run in runs:
-        result = document.results.get(run.result_id) if run.result_id else None
-        if result is None:
-            continue
-        for structure_id in result.derived_structure_ids:
-            structure = document.structures.get(structure_id)
-            if structure is not None and structure.origin == origin:
-                return structure
-    return None
-
-
 def upsert_job_derived_structure(
     project_service: ProjectService,
     document: ProjectDocument,
@@ -613,7 +580,7 @@ def upsert_job_derived_structure(
     ``dft_structure_ids``, and downstream workflows (quantum corrections, energy
     barriers) consume derived structures by id.
 
-    So when :func:`find_job_derived_structure` finds one, its geometry is
+    So when :func:`~mufinder.services.job_results.find_job_derived_structure` finds one, its geometry is
     refreshed from the new ``-out.cell`` and the **same id** is returned: both
     Results then name the same structure, and every existing reference keeps
     resolving to the current geometry. Only ``id`` and ``label`` survive the
@@ -843,7 +810,6 @@ __all__ = [
     "apply_row_parameters_to_form_state",
     "confirm_active_host",
     "dedupe_jobs",
-    "find_job_derived_structure",
     "merge_controller_result",
     "output_predates_run",
     "owning_controller",

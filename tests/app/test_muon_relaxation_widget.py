@@ -15,8 +15,10 @@ from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
+from mufinder.app.workflow_table_utils import EXPORT_RELAXED_STRUCTURE_ACTION_TEXT
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE
+from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
@@ -1145,3 +1147,26 @@ def test_muonium_row_keeps_an_explicit_spin_polarized_through_normalisation(qapp
     widget._normalize_all_row_parameter_values()
 
     assert widget._row_parameter_values[row_id] == {"spin_polarized": True}
+
+
+def test_muon_relaxation_export_action_asks_with_the_charge_qualified_key(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Mu Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    seen_keys: list[object] = []
+    widget.set_relaxed_structure_export_provider(
+        lambda key: seen_keys.append(key) or RelaxedStructureExport(None, NO_STRUCTURE_REASON)
+    )
+    muonium_table = widget._tables_by_charge_state[MUONIUM_CHARGE_STATE]
+
+    install_fake_menu(monkeypatch)
+    action = open_reset_menu(muonium_table, row=0).action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+
+    assert action.enabled is False
+    assert action.tooltip == NO_STRUCTURE_REASON
+    assert seen_keys and all(str(key).endswith(":Mu Site") for key in seen_keys)
+    assert not str(seen_keys[0]).startswith("positivemuon")

@@ -1,8 +1,13 @@
-"""Structure file loading (CIF and MCIF through ASE, CASTEP CELL through ``castep_io``) and CIF export."""
+"""Structure file loading (CIF and MCIF through ASE, CASTEP CELL through ``castep_io``) and export.
+
+Export writes a host plus muon sites as CIF (:func:`export_structure_with_muon_sites`)
+and one complete structure, such as a relaxed supercell, as CIF or CASTEP CELL
+(:func:`export_structure`).
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 import io
@@ -15,8 +20,11 @@ from ase.io import read as ase_read
 from ase.io import write as ase_write
 
 from mufinder.castep_io.cell_parser import parse_cell_file
+from mufinder.castep_io.cell_writer import write_cell
+from mufinder.castep_io.types import AtomicPosition, CellFile, LatticeCart, PositionBlock
 from mufinder.domain.magnetic_properties import atomic_spins_from_magnetic_moments
 from mufinder.domain.models import Structure
+from mufinder.science.ase_bridge import element_symbol, is_muon_label
 from mufinder.science.lattice import nearest_image_distance
 
 
@@ -162,24 +170,13 @@ def export_structure_with_muon_sites(
         [float(value) for value in site.fractional_position] for site in muon_sites
     ]
 
-    atoms = Atoms(
-        symbols=species,
-        scaled_positions=positions,
-        cell=[[float(value) for value in row] for row in lattice_vectors],
-        pbc=True,
-    )
-
-    species_counts: dict[str, int] = {}
-    host_labels: list[str] = []
-    for symbol in host_species:
-        species_counts[symbol] = species_counts.get(symbol, 0) + 1
-        host_labels.append(f"{symbol}{species_counts[symbol]}")
+    host_labels = _host_atom_labels(host_species)
     labels = host_labels + [site.label for site in muon_sites]
 
     warnings: list[str] = []
     for site in muon_sites:
-        for host_index, (host_symbol, host_label, host_fractional) in enumerate(
-            zip(host_species, host_labels, host_positions, strict=True)
+        for host_symbol, host_label, host_fractional in zip(
+            host_species, host_labels, host_positions, strict=True
         ):
             distance = nearest_image_distance(
                 site.fractional_position, host_fractional, lattice_vectors
@@ -192,15 +189,7 @@ def export_structure_with_muon_sites(
                 )
 
     destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # The _atom_site loop is left as plain, standard CIF (no extra columns):
-    # mixing a MuFinder-specific column into it makes some readers (observed
-    # with VESTA) miscount that loop's column width, silently shifting every
-    # atom's fields by one and corrupting the whole file. Per-muon metadata
-    # instead goes in its own standalone loop below, keyed by
-    # _mufinder_muon_site_label, which a reader that does not recognise it can
-    # simply skip without touching atom parsing.
-    ase_write(destination, atoms, format="cif", labels=[labels])
+    _write_p1_cif(destination, lattice_vectors, species, positions, labels)
     if muon_sites:
         with destination.open("a", encoding="utf-8") as handle:
             handle.write("\nloop_\n")
@@ -214,6 +203,151 @@ def export_structure_with_muon_sites(
                 wyckoff = site.wyckoff_label or "?"
                 handle.write(f"  {site.label}  {energy}  {wyckoff}\n")
     return warnings
+
+
+#: File extensions :func:`export_structure` writes, in the order a save dialog offers them.
+STRUCTURE_EXPORT_SUFFIXES = (".cif", ".cell")
+
+
+def export_structure(
+    structure: Structure,
+    output_path: str | Path,
+    *,
+    header_lines: Sequence[str] = (),
+) -> None:
+    """Write one complete structure, such as a relaxed supercell, to CIF or CASTEP CELL.
+
+    The format follows the extension of ``output_path`` (see
+    :data:`STRUCTURE_EXPORT_SUFFIXES`); any other extension raises
+    :class:`ValueError`. ``header_lines`` are written as comments at the top of
+    the file (``#`` in CIF, ``!`` in CELL), one per line.
+
+    CIF is written in P1 with every atom listed. A muon (any label
+    :func:`~mufinder.science.ase_bridge.is_muon_label` accepts, such as ``H:mu``)
+    is written as hydrogen labelled ``Mu1``, ``Mu2``…, and host atoms are
+    labelled by element and count (``Fe1``, ``Fe2``…), as in
+    :func:`export_structure_with_muon_sites`, so the muon stays distinct from
+    any host hydrogen. CELL keeps the species labels as stored (the muon stays
+    ``H:mu``) with ``LATTICE_CART`` in Å, ``POSITIONS_FRAC`` and, when the
+    structure carries non-zero per-atom spins, their ``SPIN=`` values.
+    """
+
+    destination = Path(output_path)
+    suffix = destination.suffix.lower()
+    if suffix not in STRUCTURE_EXPORT_SUFFIXES:
+        raise ValueError(
+            f"Unsupported export extension '{destination.suffix}'. "
+            f"Expected {' or '.join(STRUCTURE_EXPORT_SUFFIXES)}."
+        )
+    lattice_vectors = [[float(value) for value in row] for row in structure.lattice_vectors]
+    positions = [[float(value) for value in row] for row in structure.fractional_positions]
+    species = [str(label) for label in structure.species]
+
+    if suffix == ".cif":
+        symbols = [
+            "H" if is_muon_label(label) else element_symbol(label, error=ValueError)
+            for label in species
+        ]
+        host_labels = iter(
+            _host_atom_labels(
+                [
+                    symbol
+                    for symbol, label in zip(symbols, species, strict=True)
+                    if not is_muon_label(label)
+                ]
+            )
+        )
+        muon_count = 0
+        labels: list[str] = []
+        for label in species:
+            if is_muon_label(label):
+                muon_count += 1
+                labels.append(f"Mu{muon_count}")
+            else:
+                labels.append(next(host_labels))
+        _write_p1_cif(
+            destination, lattice_vectors, symbols, positions, labels, header_lines=header_lines
+        )
+        return
+
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(
+            vectors=tuple(tuple(row) for row in lattice_vectors),  # type: ignore[arg-type]
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(
+            positions=tuple(
+                AtomicPosition(species=label, coordinates=tuple(position))  # type: ignore[arg-type]
+                for label, position in zip(species, positions, strict=True)
+            )
+        ),
+        atomic_spins=_structure_spins(structure),
+    )
+    body = write_cell(cell_file)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(_comment_block(header_lines, "!") + body, encoding="utf-8")
+
+
+def _host_atom_labels(species: Sequence[str]) -> list[str]:
+    """Label each atom by its element and running count (``Fe1``, ``Fe2``, ``O1``…)."""
+
+    counts: dict[str, int] = {}
+    labels: list[str] = []
+    for symbol in species:
+        counts[symbol] = counts.get(symbol, 0) + 1
+        labels.append(f"{symbol}{counts[symbol]}")
+    return labels
+
+
+def _write_p1_cif(
+    destination: Path,
+    lattice_vectors: Sequence[Sequence[float]],
+    symbols: Sequence[str],
+    fractional_positions: Sequence[Sequence[float]],
+    labels: Sequence[str],
+    *,
+    header_lines: Sequence[str] = (),
+) -> None:
+    """Write a P1 CIF with one ``_atom_site`` row per atom, preceded by ``header_lines``."""
+
+    atoms = Atoms(
+        symbols=list(symbols),
+        scaled_positions=[list(row) for row in fractional_positions],
+        cell=[[float(value) for value in row] for row in lattice_vectors],
+        pbc=True,
+    )
+    # The _atom_site loop is left as plain, standard CIF (no extra columns):
+    # mixing a MuFinder-specific column into it makes some readers (observed
+    # with VESTA) miscount that loop's column width, silently shifting every
+    # atom's fields by one and corrupting the whole file. Per-muon metadata
+    # instead goes in its own standalone loop, keyed by
+    # _mufinder_muon_site_label, which a reader that does not recognise it can
+    # simply skip without touching atom parsing.
+    buffer = io.BytesIO()
+    ase_write(buffer, atoms, format="cif", labels=[list(labels)])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        _comment_block(header_lines, "#") + buffer.getvalue().decode("utf-8"), encoding="utf-8"
+    )
+
+
+def _comment_block(lines: Sequence[str], marker: str) -> str:
+    if not lines:
+        return ""
+    return "".join(f"{marker} {line}".rstrip() + "\n" for line in lines) + "\n"
+
+
+def _structure_spins(structure: Structure) -> tuple[float, ...] | None:
+    """Return the stored per-atom spins when they cover every atom and are not all zero."""
+
+    raw = structure.properties.get("atomic_spins")
+    if not isinstance(raw, list) or len(raw) != len(structure.species):
+        return None
+    try:
+        spins = tuple(float(value) for value in raw)
+    except (TypeError, ValueError):
+        return None
+    return spins if any(abs(value) > 1e-12 for value in spins) else None
 
 
 def _resolve_ase_format(suffix: str) -> str | None:

@@ -34,10 +34,14 @@ class FakeAction:
     def __init__(self, text: str) -> None:
         self.text = text
         self.enabled = True
+        self.tooltip = ""
         self.triggered = FakeSignal()
 
     def setEnabled(self, enabled: bool) -> None:
         self.enabled = enabled
+
+    def setToolTip(self, tooltip: str) -> None:
+        self.tooltip = tooltip
 
 
 class FakeMenu:
@@ -63,6 +67,9 @@ class FakeMenu:
 
     def addSeparator(self) -> None:
         self.separators_before.append(len(self.actions))
+        return None
+
+    def setToolTipsVisible(self, _visible: bool) -> None:
         return None
 
     def exec(self, *_args, **_kwargs) -> None:

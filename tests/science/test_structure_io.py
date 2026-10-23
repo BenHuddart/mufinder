@@ -1,4 +1,4 @@
-"""Tests for CIF, MCIF and CASTEP CELL structure loading and CIF export."""
+"""Tests for CIF, MCIF and CASTEP CELL structure loading and for structure export."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from ase import Atoms
+from ase.geometry import cell_to_cellpar
 from ase.io import write as ase_write
 
 from mufinder.domain.models import Structure
@@ -13,6 +14,7 @@ from mufinder.science import structure_io as sio
 from mufinder.science.structure_io import (
     CifMuonSite,
     StructureLoadError,
+    export_structure,
     export_structure_with_muon_sites,
     load_structure_file,
 )
@@ -1253,3 +1255,105 @@ def test_export_structure_with_muon_sites_creates_parent_directory(tmp_path: Pat
     )
 
     assert output_path.exists()
+
+
+def _relaxed_muon_with_host_hydrogen() -> Structure:
+    """A sheared cell with two spin-polarised Fe, a host H and a muon 0.2 Å from it."""
+
+    return Structure(
+        label="Mu1 relaxed",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.1, 0.0], [0.2, 0.0, 5.0]],
+        species=["Fe", "Fe", "H", "H:mu"],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5],
+            [0.1, 0.2, 0.3],
+            [0.12, 0.21, 0.33],
+        ],
+        properties={"atomic_spins": [2.0, -2.0, 0.0, 0.0]},
+    )
+
+
+@pytest.mark.parametrize("suffix", [".cif", ".cell"])
+def test_export_structure_round_trips_lattice_species_and_positions(
+    tmp_path: Path, suffix: str
+) -> None:
+    structure = _relaxed_muon_with_host_hydrogen()
+    path = tmp_path / f"relaxed{suffix}"
+
+    export_structure(structure, path)
+    loaded = load_structure_file(path)
+
+    # A CIF stores lengths and angles, so compare those: the reader may orient the cell anew.
+    assert cell_to_cellpar(loaded.lattice_vectors) == pytest.approx(
+        cell_to_cellpar(structure.lattice_vectors), abs=1e-6
+    )
+    assert len(loaded.species) == len(structure.species)
+    for actual, expected in zip(
+        loaded.fractional_positions, structure.fractional_positions, strict=True
+    ):
+        assert actual == pytest.approx(expected, abs=1e-6)
+    expected_species = ["Fe", "Fe", "H", "H" if suffix == ".cif" else "H:mu"]
+    assert loaded.species == expected_species
+
+
+def test_export_structure_cif_labels_the_muon_apart_from_host_hydrogen(tmp_path: Path) -> None:
+    path = tmp_path / "relaxed.cif"
+
+    export_structure(_relaxed_muon_with_host_hydrogen(), path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "H   H1 " in text
+    assert "H   Mu1 " in text
+    assert '"P 1"' in text
+    # Each atom keeps its own full-occupancy row: four atom rows, one per atom.
+    assert text.count("1.0000\n") == 4
+
+
+def test_export_structure_writes_header_comments_in_each_format(tmp_path: Path) -> None:
+    header = ["Relaxed structure exported by MuFinder", "Final energy: -1.500000 eV"]
+    cif = tmp_path / "relaxed.cif"
+    cell = tmp_path / "relaxed.CELL"
+
+    export_structure(_relaxed_muon_with_host_hydrogen(), cif, header_lines=header)
+    export_structure(_relaxed_muon_with_host_hydrogen(), cell, header_lines=header)
+
+    assert cif.read_text(encoding="utf-8").startswith(
+        "# Relaxed structure exported by MuFinder\n# Final energy: -1.500000 eV\n\ndata_"
+    )
+    assert cell.read_text(encoding="utf-8").startswith(
+        "! Relaxed structure exported by MuFinder\n! Final energy: -1.500000 eV\n\n%BLOCK"
+    )
+    # The header is a comment to both readers.
+    assert load_structure_file(cif).species[0] == "Fe"
+
+
+def test_export_structure_cell_keeps_spins_and_the_muon_label(tmp_path: Path) -> None:
+    path = tmp_path / "relaxed.cell"
+
+    export_structure(_relaxed_muon_with_host_hydrogen(), path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "Fe 0 0 0 SPIN=2" in text
+    assert "Fe 0.5 0.5 0.5 SPIN=-2" in text
+    assert "H:mu 0.12 0.21 0.33" in text
+    assert load_structure_file(path).properties["atomic_spins"] == [2.0, -2.0, 0.0, 0.0]
+
+
+def test_export_structure_cell_omits_spins_when_all_are_zero(tmp_path: Path) -> None:
+    structure = _relaxed_muon_with_host_hydrogen()
+    structure.properties["atomic_spins"] = [0.0, 0.0, 0.0, 0.0]
+    path = tmp_path / "relaxed.cell"
+
+    export_structure(structure, path)
+
+    assert "SPIN" not in path.read_text(encoding="utf-8")
+
+
+def test_export_structure_rejects_an_unsupported_extension(tmp_path: Path) -> None:
+    path = tmp_path / "relaxed.xyz"
+
+    with pytest.raises(ValueError, match="Unsupported export extension '.xyz'"):
+        export_structure(_relaxed_muon_with_host_hydrogen(), path)
+
+    assert not path.exists()

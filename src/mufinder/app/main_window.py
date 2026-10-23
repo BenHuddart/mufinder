@@ -343,6 +343,7 @@ from mufinder.services.source_candidates import (
     quantum_seed_name_for_key,
     relaxation_sources_for_labels,
 )
+from mufinder.services.structure_export import relaxed_structure_export_for_job_id
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHCredentials,
@@ -741,6 +742,9 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.set_continuable_predicate(
             self._pristine_relaxation_controller.row_is_continuable
         )
+        self._pristine_relaxation_view.set_relaxed_structure_export_provider(
+            self._pristine_relaxation_controller.relaxed_structure_export
+        )
         self._pristine_relaxation_view.continue_relaxation_requested.connect(
             self._on_continue_relaxation_requested_from_pristine_relaxation
         )
@@ -831,6 +835,9 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.set_continuable_predicate(
             self._muon_relaxation_controller.row_is_continuable
         )
+        self._muon_relaxation_view.set_relaxed_structure_export_provider(
+            self._muon_relaxation_controller.relaxed_structure_export
+        )
         self._muon_relaxation_view.continue_relaxation_requested.connect(
             self._on_continue_relaxation_requested_from_muon_relaxation
         )
@@ -838,6 +845,9 @@ class MainWindow(QMainWindow):
             self._on_create_relaxation_analysis_workspace_requested
         )
         self._relaxation_analysis_view = RelaxationAnalysisWidget()
+        self._relaxation_analysis_view.set_relaxed_structure_export_provider(
+            lambda job_id: relaxed_structure_export_for_job_id(self._document, job_id)
+        )
         self._relaxation_analysis_view.state_changed.connect(
             self._on_relaxation_analysis_state_changed
         )

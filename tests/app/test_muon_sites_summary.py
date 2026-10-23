@@ -331,11 +331,11 @@ def test_summary_export_cif_writes_host_and_muon_sites(qapp, tmp_path: Path, mon
 
         output_path = tmp_path / "sites.cif"
         monkeypatch.setattr(
-            "mufinder.app.muon_sites_summary_widget.QFileDialog.getSaveFileName",
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
             lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
         )
         monkeypatch.setattr(
-            "mufinder.app.muon_sites_summary_widget.QMessageBox.information",
+            "mufinder.app.export_dialogs.QMessageBox.information",
             lambda *args, **kwargs: None,
         )
 
@@ -369,12 +369,12 @@ def test_summary_export_cif_warns_when_site_coincides_with_host_atom(
 
         output_path = tmp_path / "sites.cif"
         monkeypatch.setattr(
-            "mufinder.app.muon_sites_summary_widget.QFileDialog.getSaveFileName",
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
             lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
         )
         warned: list[str] = []
         monkeypatch.setattr(
-            "mufinder.app.muon_sites_summary_widget.QMessageBox.warning",
+            "mufinder.app.export_dialogs.QMessageBox.warning",
             lambda _parent, title, message: warned.append(message),
         )
 
@@ -401,7 +401,7 @@ def test_summary_export_cif_cancelled_dialog_writes_nothing(
         )
         panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
         monkeypatch.setattr(
-            "mufinder.app.muon_sites_summary_widget.QFileDialog.getSaveFileName",
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
             lambda *args, **kwargs: ("", ""),
         )
         panel._export_cif_button.click()

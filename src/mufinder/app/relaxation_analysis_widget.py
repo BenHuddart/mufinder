@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from ase.data import atomic_numbers
@@ -23,7 +22,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFrame,
     QGridLayout,
     QHeaderView,
@@ -50,6 +48,14 @@ from mufinder.app.atomic_structure_viewer import (
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
+from mufinder.app.export_dialogs import (
+    CIF_FORMAT,
+    ask_save_path,
+    export_relaxed_structure,
+    export_relaxed_structures_to_folder,
+    report_export_failed,
+    report_export_saved,
+)
 from mufinder.app.theme import (
     current_palette,
     status_brush,
@@ -79,6 +85,7 @@ from mufinder.science.relaxation_analysis import (
     uep_summary_to_relaxation_clusters,
 )
 from mufinder.services.source_candidates import CompletedRelaxationAnalysisSource
+from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
 from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
 from mufinder.science.wyckoff_analysis import (
     ClusterWyckoffAssignment,
@@ -87,6 +94,8 @@ from mufinder.science.wyckoff_analysis import (
 
 
 _WORKSPACE_SCHEMA_VERSION = 1
+#: Item data role holding a site row's relaxation job id (as a string).
+_JOB_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 _METHOD_CONNECTED = "connected"
 _METHOD_HIERARCHICAL = "hier"
 _METHOD_KMEANS = "kmeans"
@@ -1650,6 +1659,11 @@ class RelaxationAnalysisWidget(QWidget):
         self._structures_by_id: dict[UUID, Structure] = {}
         self._host_structure: Structure | None = None
         self._comparison_options: list[tuple[UUID, str, bool]] = []
+        # Injected by MainWindow: resolves a relaxation job to its relaxed
+        # structure and export header. Unwired, nothing is exportable.
+        self._relaxed_structure_export: Callable[[UUID], RelaxedStructureExport] = lambda _job_id: (
+            RelaxedStructureExport(None, NO_STRUCTURE_REASON)
+        )
         self._workspace_tabs = QTabWidget(self)
         self._workspace_tabs.setObjectName("analysisWorkspaceTabs")
         self._workspace_tabs.setTabsClosable(False)
@@ -1696,6 +1710,13 @@ class RelaxationAnalysisWidget(QWidget):
             self._rebuild_tabs()
         finally:
             self._restoring = False
+
+    def set_relaxed_structure_export_provider(
+        self, provider: Callable[[UUID], RelaxedStructureExport]
+    ) -> None:
+        """Set how a site's relaxation job resolves to its exportable relaxed structure."""
+
+        self._relaxed_structure_export = provider
 
     def focus_workspace(self, workspace_id: str, *, cluster_index: int | None = None) -> bool:
         """Switch to ``workspace_id``'s tab, optionally revealing one cluster.
@@ -1801,26 +1822,63 @@ class RelaxationAnalysisWidget(QWidget):
         ]
 
         default_stem = _workspace_name(workspace).strip().lower().replace(" ", "_") or "analysis"
-        file_path, _selected_filter = QFileDialog.getSaveFileName(
-            self, "Export Muon Sites CIF", f"{default_stem}_muon_sites.cif", "CIF Files (*.cif)"
+        file_path = ask_save_path(
+            self, "Export Muon Sites CIF", f"{default_stem}_muon_sites.cif", (CIF_FORMAT,)
         )
-        if not file_path:
+        if file_path is None:
             return
 
         try:
-            proximity_warnings = export_structure_with_muon_sites(host, muon_sites, Path(file_path))
+            proximity_warnings = export_structure_with_muon_sites(host, muon_sites, file_path)
         except OSError as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            report_export_failed(self, exc)
             return
+        report_export_saved(self, file_path, proximity_warnings)
 
-        if proximity_warnings:
-            QMessageBox.warning(
+    def _export_relaxed_structures(self, workspace_id: str) -> None:
+        """Export the selected site's relaxed structure, or several sites to a folder.
+
+        One selected site is saved to a file; several selected sites, or every
+        site in the workspace when none is selected, go to a chosen folder.
+        """
+
+        workspace = self._workspace_by_id(workspace_id)
+        if workspace is None:
+            return
+        selected = self._selected_site_job_ids(workspace_id)
+        if len(selected) == 1:
+            export_relaxed_structure(self, self._relaxed_structure_export(selected[0]))
+            return
+        job_ids = selected or [site.job_id for site in self._workspace_sites(workspace)]
+        if not job_ids:
+            QMessageBox.information(
                 self,
-                "Muon sites coincide with host atoms",
-                f"Saved CIF to:\n{file_path}\n\n" + "\n".join(proximity_warnings),
+                "Nothing to export",
+                "Add completed relaxations to this workspace before exporting.",
             )
-        else:
-            QMessageBox.information(self, "Export complete", f"Saved CIF to:\n{file_path}")
+            return
+        export_relaxed_structures_to_folder(
+            self, [self._relaxed_structure_export(job_id) for job_id in job_ids]
+        )
+
+    def _selected_site_job_ids(self, workspace_id: str) -> list[UUID]:
+        page = next(
+            (
+                self._workspace_tabs.widget(index)
+                for index in range(self._workspace_tabs.count())
+                if self._workspace_tabs.widget(index).property("workspace_id") == workspace_id
+            ),
+            None,
+        )
+        table = page.findChild(QTreeWidget) if page is not None else None
+        if table is None:
+            return []
+        job_ids: list[UUID] = []
+        for item in table.selectedItems():
+            raw = item.data(0, _JOB_ID_ROLE)
+            if raw:
+                job_ids.append(UUID(str(raw)))
+        return job_ids
 
     def _build_workspace_tab(self, workspace: Mapping[str, object]) -> QWidget:
         page = QWidget(self._workspace_tabs)
@@ -1869,6 +1927,18 @@ class RelaxationAnalysisWidget(QWidget):
         export_cif_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._export_workspace_cif(wid)
         )
+        export_relaxed_button = QPushButton("Export Relaxed Structures...", header)
+        export_relaxed_button.setObjectName("analysisExportRelaxedButton")
+        export_relaxed_button.setToolTip(
+            "Export relaxed supercells (host and muon) as CIF or CASTEP .cell: the "
+            "selected site to a file, or several selected sites (all sites when none "
+            "is selected) to a folder, one file per site."
+        )
+        export_relaxed_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self._export_relaxed_structures(
+                wid
+            )
+        )
         delete_button = QPushButton("Delete Analysis...", header)
         delete_button.setObjectName("analysisWorkspaceDeleteButton")
         delete_button.setToolTip(
@@ -1895,6 +1965,7 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.addWidget(displacement_button, 1, 3)
         header_layout.addWidget(pin_button, 1, 4)
         header_layout.addWidget(export_cif_button, 1, 5)
+        header_layout.addWidget(export_relaxed_button, 2, 5)
         header_layout.setColumnStretch(1, 1)
         layout.addWidget(header)
 
@@ -1904,6 +1975,7 @@ class RelaxationAnalysisWidget(QWidget):
         table = QTreeWidget(splitter)
         table.setHeaderLabels(["Site", "Cluster", "Relaxation", "dE (eV)", "fX", "fY", "fZ"])
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         table.header().setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -2027,6 +2099,7 @@ class RelaxationAnalysisWidget(QWidget):
                 f"{fractional[2]:.4f}",
             ]
             row_item = QTreeWidgetItem(values)
+            row_item.setData(0, _JOB_ID_ROLE, str(site.job_id))
             for column, value in enumerate(values):
                 if (
                     shifted is not None

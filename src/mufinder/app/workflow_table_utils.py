@@ -392,6 +392,9 @@ class RowMenuAction:
     #: row qualifies, receives only the qualifying rows, and shows how many
     #: ("Cancel (2 of 5)"). ``is_enabled`` is then asked about those rows.
     applies_to_row: Callable[[int], bool] | None = None
+    #: Tooltip for the action, from the same keys (or rows) ``is_enabled`` gets;
+    #: used to say why a disabled action does not apply. An empty string sets none.
+    tooltip_for: Callable[[Sequence[object]], str] | None = None
 
 
 #: Shared menu texts, so every job table names the same action identically.
@@ -401,6 +404,7 @@ CANCEL_ACTION_TEXT = "Cancel"
 INSPECT_FAILURE_ACTION_TEXT = "Inspect Failure"
 CONFIGURE_ACTION_TEXT = "Configure..."
 REMOVE_ACTION_TEXT = "Remove"
+EXPORT_RELAXED_STRUCTURE_ACTION_TEXT = "Export Relaxed Structure…"
 
 _ACTIVE_ROW_STATUSES = frozenset({"submitting", "queued", "running", "retrieving"})
 _INSPECTABLE_ROW_STATUSES = frozenset({"failed", "stopped"})
@@ -525,6 +529,9 @@ def add_row_menu_action(
         menu.addSeparator()
     qt_action = menu.addAction(text)
     qt_action.setEnabled(action.is_enabled(keys))
+    if action.tooltip_for is not None and (tooltip := action.tooltip_for(keys)):
+        qt_action.setToolTip(tooltip)
+        menu.setToolTipsVisible(True)
     qt_action.triggered.connect(
         lambda _checked=False, selected=list(keys), trigger=action.trigger: trigger(selected)
     )
