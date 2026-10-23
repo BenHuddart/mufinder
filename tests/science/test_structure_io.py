@@ -1357,3 +1357,27 @@ def test_export_structure_rejects_an_unsupported_extension(tmp_path: Path) -> No
         export_structure(_relaxed_muon_with_host_hydrogen(), path)
 
     assert not path.exists()
+
+
+def test_cif_exports_keep_non_ascii_labels_and_headers_in_one_latin1_file(tmp_path: Path) -> None:
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Fe"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    sites_path = tmp_path / "sites.cif"
+    relaxed_path = tmp_path / "relaxed.cif"
+
+    export_structure_with_muon_sites(host, [CifMuonSite("Mué", (0.25, 0.25, 0.25))], sites_path)
+    export_structure(
+        _relaxed_muon_with_host_hydrogen(), relaxed_path, header_lines=["Project: CoF₂ é"]
+    )
+
+    sites = sites_path.read_bytes()
+    # The atom row and the metadata loop both carry the label in Latin-1.
+    assert sites.count("Mué".encode("latin-1")) == 2
+    assert load_structure_file(sites_path).species == ["Fe", "H"]
+    relaxed = relaxed_path.read_bytes()
+    assert relaxed.startswith("# Project: CoF? é\n".encode("latin-1"))
+    assert load_structure_file(relaxed_path).species == ["Fe", "Fe", "H", "H"]

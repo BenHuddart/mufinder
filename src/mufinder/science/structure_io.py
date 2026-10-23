@@ -191,7 +191,7 @@ def export_structure_with_muon_sites(
     destination = Path(output_path)
     _write_p1_cif(destination, lattice_vectors, species, positions, labels)
     if muon_sites:
-        with destination.open("a", encoding="utf-8") as handle:
+        with destination.open("a", encoding=_CIF_ENCODING, errors="replace") as handle:
             handle.write("\nloop_\n")
             handle.write("  _mufinder_muon_site_label\n")
             handle.write("  _mufinder_relative_energy_eV\n")
@@ -204,6 +204,9 @@ def export_structure_with_muon_sites(
                 handle.write(f"  {site.label}  {energy}  {wyckoff}\n")
     return warnings
 
+
+#: Text encoding of every exported CIF, matching ASE's writer and :func:`load_structure_file`.
+_CIF_ENCODING = "latin-1"
 
 #: File extensions :func:`export_structure` writes, in the order a save dialog offers them.
 STRUCTURE_EXPORT_SUFFIXES = (".cif", ".cell")
@@ -308,7 +311,12 @@ def _write_p1_cif(
     *,
     header_lines: Sequence[str] = (),
 ) -> None:
-    """Write a P1 CIF with one ``_atom_site`` row per atom, preceded by ``header_lines``."""
+    """Write a P1 CIF with one ``_atom_site`` row per atom, preceded by ``header_lines``.
+
+    The file is Latin-1 throughout (:data:`_CIF_ENCODING`): ASE writes CIF in
+    Latin-1 and :func:`load_structure_file` reads it back the same way. A header
+    character outside Latin-1 (``CoF₂``) is written as ``?``.
+    """
 
     atoms = Atoms(
         symbols=list(symbols),
@@ -326,9 +334,8 @@ def _write_p1_cif(
     buffer = io.BytesIO()
     ase_write(buffer, atoms, format="cif", labels=[list(labels)])
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        _comment_block(header_lines, "#") + buffer.getvalue().decode("utf-8"), encoding="utf-8"
-    )
+    header = _comment_block(header_lines, "#").encode(_CIF_ENCODING, errors="replace")
+    destination.write_bytes(header + buffer.getvalue())
 
 
 def _comment_block(lines: Sequence[str], marker: str) -> str:
