@@ -290,9 +290,9 @@ state the site was not first relaxed in adds its prefix, as in
 - ``NONSCF_EIGENVALUE_TOL`` = the smaller of ``ELEC_ENERGY_TOL`` and
   ``1e-9 eV``;
 - ``NUM_FARMS`` when ``Farms`` is greater than 1;
-- ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``. The gyromagnetic ratio is
-  the CODATA value, twice the muon magnetic moment over ħ, ≈ 8.516155 × 10⁸ rad s⁻¹ T⁻¹
-  (γ\ :sub:`μ` / 2π ≈ 135.53881 MHz T⁻¹), taken from ``scipy.constants``;
+- ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``. The mass is the CODATA
+  muon mass, 0.1134289257 amu, and the gyromagnetic ratio is the CODATA value, twice the muon magnetic moment over ħ, ≈ 8.516155 × 10⁸ rad s⁻¹ T⁻¹
+  (γ\ :sub:`μ` / 2π ≈ 135.53881 MHz T⁻¹), both taken from ``scipy.constants``;
 - ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium).
 
 For a muonium source the job also defaults to ``SPIN_POLARIZED : TRUE`` and

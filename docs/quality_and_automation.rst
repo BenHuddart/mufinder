@@ -719,6 +719,15 @@ The harness tests currently verify:
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
   may appear (see :doc:`/architecture`, Shared workflow infrastructure).
+- No module in ``src/mufinder`` other than ``mufinder.domain.constants`` types
+  out a physical constant: a number within 1e-4 (relative) of a CODATA constant
+  or a conversion built from them fails the check, which names the constant to
+  import. Powers of ten are skipped, because they double as tolerances and SI
+  prefixes, and ``mufinder.persistence.migrations`` is allowed, because a
+  migration must reproduce the value older projects were written with. Tests
+  keep their own reference values, typed independently in
+  ``tests/support/codata.py``.
+- Only ``mufinder.domain.constants`` imports ``scipy.constants`` or ``ase.units``.
 - The ``*_coverage.py`` test files match a pinned list that may only shrink;
   coverage gaps are closed in the module's own test file.
 - ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
