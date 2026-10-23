@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.export_dialogs import export_relaxed_structure
+from mufinder.app.export_dialogs import STRUCTURE_FORMATS, export_relaxed_structure
 from mufinder.app.adapter_common import coerce_supercell_matrix
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.relaxation_types import SupercellMatrix
@@ -1252,7 +1252,7 @@ class RelaxationRowTableWidget(RowTableWidget):
         export = self._relaxed_structure_export(keys[0])
         if export.structure is None:
             return export.unavailable_reason or ""
-        return "Save the relaxed supercell as CIF or CASTEP .cell."
+        return "Save the relaxed supercell as CIF or as a CASTEP .cell file."
 
     def continue_relaxation_dialog_seed(self, key: object) -> dict[str, object] | None:
         """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
@@ -1295,10 +1295,18 @@ class RelaxationRowTableWidget(RowTableWidget):
                 is_enabled=lambda keys: (
                     len(keys) == 1 and self._relaxed_structure_export(keys[0]).structure is not None
                 ),
-                trigger=lambda keys: export_relaxed_structure(
-                    self, self._relaxed_structure_export(keys[0])
-                ),
+                trigger=lambda _keys: None,
                 tooltip_for=self._export_tooltip,
+                submenu=tuple(
+                    RowMenuAction(
+                        text=fmt.menu_text,
+                        is_enabled=lambda keys: len(keys) == 1,
+                        trigger=lambda keys, chosen=fmt: export_relaxed_structure(
+                            self, self._relaxed_structure_export(keys[0]), chosen
+                        ),
+                    )
+                    for fmt in STRUCTURE_FORMATS
+                ),
             ),
         )
 

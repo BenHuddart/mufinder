@@ -266,7 +266,8 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``), the shared right-click menu
-       (``standard_row_actions``, ``bind_reset_failed_context_menu``),
+       (``standard_row_actions``, ``bind_reset_failed_context_menu``; a
+       ``RowMenuAction`` may carry a tooltip and a submenu),
        the supercell column and its k-point suggestions (``SupercellColumn``),
        destructive confirmations (``confirm_destructive``), selection feedback
        (``SelectionFeedback``, ``selected_table_rows``), delete/backspace binding
@@ -280,10 +281,11 @@ no two workflow widgets may define the same private method.
      - Exporting a file from a results view: the save dialog with a suggested
        name and per-format filters that guarantees an offered extension
        (``ask_save_path``), the saved and failed messages
-       (``report_export_saved``, ``report_export_failed``), and the
-       relaxed-structure flows built on them (``export_relaxed_structure`` for
-       one file, ``export_relaxed_structures_to_folder`` for one file per
-       structure in a chosen folder).
+       (``report_export_saved``, ``report_export_failed``), one menu entry
+       per export format (``add_format_actions``), and the relaxed-structure
+       flows built on them (``export_relaxed_structure`` for one file,
+       ``export_relaxed_structures_to_folder`` for one file per structure in a
+       chosen folder).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an

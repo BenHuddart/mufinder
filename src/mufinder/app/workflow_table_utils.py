@@ -395,6 +395,10 @@ class RowMenuAction:
     #: Tooltip for the action, from the same keys (or rows) ``is_enabled`` gets;
     #: used to say why a disabled action does not apply. An empty string sets none.
     tooltip_for: Callable[[Sequence[object]], str] | None = None
+    #: Show the action as a submenu of these actions instead of a single entry.
+    #: ``is_enabled`` and ``tooltip_for`` then apply to the submenu entry, each
+    #: child is added with the same keys, and ``trigger`` is never called.
+    submenu: tuple[RowMenuAction, ...] = ()
 
 
 #: Shared menu texts, so every job table names the same action identically.
@@ -404,7 +408,7 @@ CANCEL_ACTION_TEXT = "Cancel"
 INSPECT_FAILURE_ACTION_TEXT = "Inspect Failure"
 CONFIGURE_ACTION_TEXT = "Configure..."
 REMOVE_ACTION_TEXT = "Remove"
-EXPORT_RELAXED_STRUCTURE_ACTION_TEXT = "Export Relaxed Structure…"
+EXPORT_RELAXED_STRUCTURE_ACTION_TEXT = "Export Relaxed Structure"
 
 _ACTIVE_ROW_STATUSES = frozenset({"submitting", "queued", "running", "retrieving"})
 _INSPECTABLE_ROW_STATUSES = frozenset({"failed", "stopped"})
@@ -527,14 +531,20 @@ def add_row_menu_action(
             text += partial_count_suffix(len(keys), len(rows))
     if action.separator_before:
         menu.addSeparator()
-    qt_action = menu.addAction(text)
+    if action.submenu:
+        submenu = menu.addMenu(text)
+        qt_action = submenu.menuAction()
+        for child in action.submenu:
+            add_row_menu_action(submenu, keys=keys, action=child, rows=rows)
+    else:
+        qt_action = menu.addAction(text)
+        qt_action.triggered.connect(
+            lambda _checked=False, selected=list(keys), trigger=action.trigger: trigger(selected)
+        )
     qt_action.setEnabled(action.is_enabled(keys))
     if action.tooltip_for is not None and (tooltip := action.tooltip_for(keys)):
         qt_action.setToolTip(tooltip)
         menu.setToolTipsVisible(True)
-    qt_action.triggered.connect(
-        lambda _checked=False, selected=list(keys), trigger=action.trigger: trigger(selected)
-    )
     return qt_action
 
 

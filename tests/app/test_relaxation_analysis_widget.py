@@ -14,6 +14,7 @@ import numpy as np
 from PySide6.QtWidgets import QCheckBox, QFrame, QPushButton, QSplitter, QTabWidget, QTreeWidget
 
 from mufinder.app import relaxation_analysis_widget as relaxation_analysis_widget_module
+from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 
 from mufinder.app.relaxation_analysis_widget import (
     GRAPH_NODE_GID,
@@ -984,12 +985,12 @@ def _two_site_export_widget(monkeypatch):
     monkeypatch.setattr(
         relaxation_analysis_widget_module,
         "export_relaxed_structure",
-        lambda _parent, export: calls["single"].append(export),
+        lambda _parent, export, fmt: calls["single"].append((export, fmt)),
     )
     monkeypatch.setattr(
         relaxation_analysis_widget_module,
         "export_relaxed_structures_to_folder",
-        lambda _parent, items: calls["folder"].append(list(items)),
+        lambda _parent, items, fmt: calls["folder"].append((list(items), fmt)),
     )
     return widget, workspace, sources, exports, calls
 
@@ -1004,11 +1005,16 @@ def test_relaxation_analysis_export_relaxed_saves_the_one_selected_site(qapp, mo
     try:
         _site_items(widget)[1].setSelected(True)
         button = widget.findChild(QPushButton, "analysisExportRelaxedButton")
-        assert button is not None and button.text() == "Export Relaxed Structures..."
+        assert button is not None and button.text() == "Export Relaxed Structures"
+        entries = {action.text(): action for action in button.menu().actions()}
+        assert list(entries) == ["CIF (.cif)…", "CASTEP cell (.cell)…"]
 
-        button.click()
+        entries["CASTEP cell (.cell)…"].trigger()
 
-        assert calls == {"single": [exports[sources[1].job_id]], "folder": []}
+        assert calls == {
+            "single": [(exports[sources[1].job_id], CASTEP_CELL_FORMAT)],
+            "folder": [],
+        }
     finally:
         widget.close()
 
@@ -1018,10 +1024,10 @@ def test_relaxation_analysis_export_relaxed_without_selection_exports_every_site
 ) -> None:
     widget, workspace, sources, exports, calls = _two_site_export_widget(monkeypatch)
     try:
-        widget._export_relaxed_structures(str(workspace["id"]))
+        widget._export_relaxed_structures(str(workspace["id"]), CIF_FORMAT)
 
         assert calls["single"] == []
-        assert calls["folder"] == [[exports[source.job_id] for source in sources]]
+        assert calls["folder"] == [([exports[source.job_id] for source in sources], CIF_FORMAT)]
     finally:
         widget.close()
 
@@ -1034,9 +1040,9 @@ def test_relaxation_analysis_export_relaxed_with_several_selected_exports_those_
         for item in _site_items(widget):
             item.setSelected(True)
 
-        widget._export_relaxed_structures(str(workspace["id"]))
+        widget._export_relaxed_structures(str(workspace["id"]), CIF_FORMAT)
 
-        assert calls["folder"] == [[exports[source.job_id] for source in sources]]
+        assert calls["folder"] == [([exports[source.job_id] for source in sources], CIF_FORMAT)]
     finally:
         widget.close()
 
@@ -1064,7 +1070,7 @@ def test_relaxation_analysis_export_relaxed_on_empty_workspace_says_so(qapp, mon
             lambda _parent, title, _message: informed.append(title),
         )
 
-        widget._export_relaxed_structures(str(workspace["id"]))
+        widget._export_relaxed_structures(str(workspace["id"]), CIF_FORMAT)
 
         assert informed == ["Nothing to export"]
     finally:

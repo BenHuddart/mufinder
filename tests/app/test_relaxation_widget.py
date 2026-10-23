@@ -12,6 +12,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint
 from mufinder.app.relaxation_types import RelaxationRunState
@@ -1412,7 +1413,7 @@ def test_relaxation_row_menu_has_shared_core_then_continue_and_export(qapp, monk
         "Configure...",
         "Remove",
         "Continue relaxation…",
-        "Export Relaxed Structure…",
+        "Export Relaxed Structure",
     ]
     assert menu.separators_before == [7]
 
@@ -1590,7 +1591,13 @@ def test_relaxation_widget_export_action_shows_why_a_completed_row_cannot_export
     assert action.tooltip == NO_STRUCTURE_REASON
 
 
-def test_relaxation_widget_export_action_exports_the_rows_structure(qapp, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("entry", "expected_format"),
+    [("CIF (.cif)…", CIF_FORMAT), ("CASTEP cell (.cell)…", CASTEP_CELL_FORMAT)],
+)
+def test_relaxation_widget_export_submenu_exports_the_rows_structure_in_the_chosen_format(
+    qapp, monkeypatch, entry, expected_format
+) -> None:
     widget = PristineRelaxationWidget()
     widget._add_row()
     label = widget._label_at_row(0)
@@ -1602,20 +1609,26 @@ def test_relaxation_widget_export_action_exports_the_rows_structure(qapp, monkey
         return export
 
     widget.set_relaxed_structure_export_provider(provider)
-    exported: list[RelaxedStructureExport] = []
+    exported: list[tuple[RelaxedStructureExport, object]] = []
     monkeypatch.setattr(
         workflow_row_widget_module,
         "export_relaxed_structure",
-        lambda _parent, payload: exported.append(payload),
+        lambda _parent, payload, fmt: exported.append((payload, fmt)),
     )
 
     install_fake_menu(monkeypatch)
-    action = open_reset_menu(widget._table, row=0).action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
-    assert action.enabled is True
-    assert action.tooltip == "Save the relaxed supercell as CIF or CASTEP .cell."
-    action.triggered.emit()
+    menu = open_reset_menu(widget._table, row=0)
+    entry_action = menu.action(EXPORT_RELAXED_STRUCTURE_ACTION_TEXT)
+    assert entry_action.enabled is True
+    assert entry_action.tooltip == "Save the relaxed supercell as CIF or as a CASTEP .cell file."
+    submenu = menu.submenus[EXPORT_RELAXED_STRUCTURE_ACTION_TEXT]
+    assert [action.text for action in submenu.actions] == [
+        "CIF (.cif)…",
+        "CASTEP cell (.cell)…",
+    ]
+    submenu.action(entry).triggered.emit()
 
-    assert exported == [export]
+    assert exported == [(export, expected_format)]
     assert set(seen_keys) == {label}
 
 

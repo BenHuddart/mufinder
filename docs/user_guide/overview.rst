@@ -198,7 +198,7 @@ A completed, failed, stopped or cancelled pristine or muon relaxation can be
 continued from its CASTEP checkpoint with ``Continue relaxation…``, which edits
 the row's parameters in place and resumes the same job in the same directory.
 A completed relaxation's relaxed supercell can be saved as CIF or CASTEP
-``.cell`` with ``Export Relaxed Structure…``.
+``.cell`` with ``Export Relaxed Structure`` in its row menu.
 
 See :doc:`/user_guide/site_generation` (Creating Relaxation Jobs),
 :ref:`continue-relaxation`, :ref:`export-relaxed-structures` and

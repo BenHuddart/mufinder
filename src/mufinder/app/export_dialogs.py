@@ -5,17 +5,18 @@ which starts from a suggested name, offers one filter per format and makes sure
 the chosen path carries one of those formats' extensions, and then reports the
 outcome through :func:`report_export_saved` or :func:`report_export_failed`.
 :func:`export_relaxed_structure` and :func:`export_relaxed_structures_to_folder`
-are the relaxed-structure flows built on them; the file itself is written by
-:func:`mufinder.science.structure_io.export_structure`.
+are the relaxed-structure flows built on them, each for one format the user
+picked from a menu (:data:`STRUCTURE_FORMATS`, :func:`add_format_actions`); the
+file itself is written by :func:`mufinder.science.structure_io.export_structure`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QWidget
 
 from mufinder.app import workflow_table_utils
 from mufinder.science.structure_io import export_structure
@@ -24,8 +25,9 @@ from mufinder.services.structure_export import RelaxedStructureExport
 
 @dataclass(frozen=True, slots=True)
 class ExportFormat:
-    """One file format a save dialog offers: ``"CIF Files"`` with suffix ``".cif"``."""
+    """One export file format: ``"CIF"``, filter ``"CIF Files"``, suffix ``".cif"``."""
 
+    name: str
     description: str
     suffix: str
 
@@ -33,11 +35,29 @@ class ExportFormat:
     def filter(self) -> str:
         return f"{self.description} (*{self.suffix})"
 
+    @property
+    def menu_text(self) -> str:
+        """The menu entry that exports in this format: ``"CIF (.cif)…"``."""
 
-CIF_FORMAT = ExportFormat("CIF Files", ".cif")
-CASTEP_CELL_FORMAT = ExportFormat("CASTEP Cell Files", ".cell")
-#: The formats a relaxed structure exports to, the default first.
+        return f"{self.name} ({self.suffix})…"
+
+
+CIF_FORMAT = ExportFormat("CIF", "CIF Files", ".cif")
+CASTEP_CELL_FORMAT = ExportFormat("CASTEP cell", "CASTEP Cell Files", ".cell")
+#: The formats a relaxed structure exports to, in menu order.
 STRUCTURE_FORMATS = (CIF_FORMAT, CASTEP_CELL_FORMAT)
+
+
+def add_format_actions(
+    menu: QMenu,
+    trigger: Callable[[ExportFormat], None],
+    formats: Sequence[ExportFormat] = STRUCTURE_FORMATS,
+) -> None:
+    """Add one entry per format to ``menu`` (``"CIF (.cif)…"``) that calls ``trigger`` with it."""
+
+    for fmt in formats:
+        action = menu.addAction(fmt.menu_text)
+        action.triggered.connect(lambda _checked=False, chosen=fmt: trigger(chosen))
 
 
 def ask_save_path(
@@ -87,8 +107,10 @@ def report_export_failed(parent: QWidget, error: Exception) -> None:
     QMessageBox.warning(parent, "Export failed", str(error))
 
 
-def export_relaxed_structure(parent: QWidget, export: RelaxedStructureExport) -> Path | None:
-    """Ask where to save one relaxed structure as CIF or CASTEP cell, write it and report.
+def export_relaxed_structure(
+    parent: QWidget, export: RelaxedStructureExport, fmt: ExportFormat
+) -> Path | None:
+    """Ask where to save one relaxed structure in ``fmt``, write it and report.
 
     Returns the written path, or ``None`` when there was nothing to export, the
     dialog was cancelled or writing failed.
@@ -101,9 +123,9 @@ def export_relaxed_structure(parent: QWidget, export: RelaxedStructureExport) ->
         return None
     path = ask_save_path(
         parent,
-        "Export Relaxed Structure",
-        export.default_stem + STRUCTURE_FORMATS[0].suffix,
-        STRUCTURE_FORMATS,
+        f"Export Relaxed Structure as {fmt.name}",
+        export.default_stem + fmt.suffix,
+        (fmt,),
         directory=export.default_directory,
     )
     if path is None:
@@ -118,11 +140,11 @@ def export_relaxed_structure(parent: QWidget, export: RelaxedStructureExport) ->
 
 
 def export_relaxed_structures_to_folder(
-    parent: QWidget, exports: Sequence[RelaxedStructureExport]
+    parent: QWidget, exports: Sequence[RelaxedStructureExport], fmt: ExportFormat
 ) -> list[Path]:
-    """Write every exportable structure in ``exports`` to a chosen folder, one file each.
+    """Write every exportable structure in ``exports`` to a chosen folder in ``fmt``, one file each.
 
-    Asks for the format, then the folder. Files are named from each export's
+    Asks for the folder. Files are named from each export's
     ``default_stem``, with ``_2``, ``_3``… added where two would share a name.
     Writing over existing files is confirmed first. Returns the written paths.
     """
@@ -133,21 +155,14 @@ def export_relaxed_structures_to_folder(
             parent, "Nothing to export", "No relaxed structures are available to export."
         )
         return []
-    labels = [fmt.filter for fmt in STRUCTURE_FORMATS]
-    label, accepted = QInputDialog.getItem(
-        parent, "Export Relaxed Structures", "File format:", labels, 0, False
-    )
-    if not accepted:
-        return []
-    chosen = STRUCTURE_FORMATS[labels.index(label)] if label in labels else STRUCTURE_FORMATS[0]
     folder = QFileDialog.getExistingDirectory(
         parent,
-        "Choose a folder for the relaxed structures",
+        f"Choose a folder for the relaxed structures ({fmt.name})",
         str(available[0].default_directory or ""),
     )
     if not folder:
         return []
-    targets = _unique_targets(Path(folder), available, chosen.suffix)
+    targets = _unique_targets(Path(folder), available, fmt.suffix)
     existing = [path for path in targets if path.exists()]
     if existing and not workflow_table_utils.confirm_destructive(
         parent,
@@ -207,6 +222,7 @@ __all__ = [
     "CIF_FORMAT",
     "STRUCTURE_FORMATS",
     "ExportFormat",
+    "add_format_actions",
     "ask_save_path",
     "export_relaxed_structure",
     "export_relaxed_structures_to_folder",

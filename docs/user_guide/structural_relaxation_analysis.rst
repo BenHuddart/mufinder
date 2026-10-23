@@ -147,7 +147,7 @@ Running the workflow
 6. **Pin the result.** Click ``Pin to Summary`` to copy the distinct sites to
    the ``Muon Sites`` summary page (see `The Muon Sites summary`_).
 7. **Export (optional).** Click ``Export CIF...`` for the host with every
-   muon position (see `Exporting to CIF`_), or ``Export Relaxed Structures...``
+   muon position (see `Exporting to CIF`_), or ``Export Relaxed Structures``
    for the relaxed supercells themselves (see `Exporting relaxed structures`_).
 
 An analysis made before every relaxation has finished goes stale once the full
@@ -180,8 +180,8 @@ The header of each workspace has:
    Removes the workspace (see `Deleting a workspace`_).
 ``Add Structure to Analysis``, ``Clustering...``, ``Analyse Displacements``, ``Pin to Summary``, ``Export CIF...``
    The steps above.
-``Export Relaxed Structures...``
-   Saves the relaxed supercells of the selected sites (see `Exporting
+``Export Relaxed Structures``
+   A drop-down that saves the relaxed supercells of the selected sites (see `Exporting
    relaxed structures`_). Select site rows in the table with Ctrl or Shift
    click.
 
@@ -402,24 +402,29 @@ supercell that CASTEP wrote to ``{seed}-out.cell``: every relaxed host atom
 plus, for a muon relaxation, the muon. Imported legacy relaxations export the
 same way.
 
+Both entry points offer the two formats as separate menu entries, ``CIF
+(.cif)…`` and ``CASTEP cell (.cell)…``, so the format is chosen before any
+dialog opens:
+
 - In the ``Pristine Relaxation`` table or the ``Muon Sites -> Relaxations``
-  table, right-click one row and choose ``Export Relaxed Structure…``.
-- In an analysis workspace, click ``Export Relaxed Structures...``. With one
-  site row selected it saves that site. With several selected it saves those
-  sites, and with none selected it saves every site in the workspace. Several
-  sites are written to a folder you choose, one file per site, after you pick
-  the format. The files are named after each relaxation (for example
-  ``site_1_muonium_relaxed.cif``), and replacing existing files is confirmed
-  first.
+  table, right-click one row and choose ``Export Relaxed Structure`` and then
+  a format.
+- In an analysis workspace, click ``Export Relaxed Structures`` and choose a
+  format from its drop-down. With one site row selected it saves that site.
+  With several selected it saves those sites, and with none selected it saves
+  every site in the workspace. Several sites are written to a folder you
+  choose, one file per site, named after each relaxation (for example
+  ``site_1_muonium_relaxed.cif``). Replacing existing files is confirmed first.
 
-The save dialog suggests a name from the relaxation and its charge state in
-the folder that holds the project. Choose the format with the file type:
+The save dialog suggests a name with the chosen extension, made from the
+relaxation and its charge state, in the folder that holds the project. A name
+typed without that extension gets it added.
 
-``CIF Files (*.cif)``
-   The default. Written in P1 with every atom listed. Host atoms are labelled
+``CIF (.cif)``
+   Written in P1 with every atom listed. Host atoms are labelled
    by element and count (``Fe1``, ``Fe2``, ...). The muon is a hydrogen atom
    labelled ``Mu1``, so it stays distinct from any hydrogen in the host.
-``CASTEP Cell Files (*.cell)``
+``CASTEP cell (.cell)``
    ``LATTICE_CART`` in Å and ``POSITIONS_FRAC``, with ``SPIN=`` values when the
    structure carries non-zero spins. The muon keeps its ``H:mu`` species
    label, so the file reopens in MuFinder and can seed a new CASTEP run.
@@ -430,7 +435,7 @@ the export time. Both read back with the relaxation's lattice and fractional
 positions, in MuFinder's structure loader or in viewers such as VESTA. A CIF
 reads the muon back as hydrogen.
 
-``Export Relaxed Structure…`` is disabled until the row's job has completed.
+``Export Relaxed Structure`` is greyed out until the row's job has completed.
 It is also disabled when the job completed without a relaxed structure, for
 example because its ``-out.cell`` was missing or could not be parsed. Hover
 over the disabled action to see which applies.

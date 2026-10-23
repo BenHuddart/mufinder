@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -50,6 +51,8 @@ from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.export_dialogs import (
     CIF_FORMAT,
+    ExportFormat,
+    add_format_actions,
     ask_save_path,
     export_relaxed_structure,
     export_relaxed_structures_to_folder,
@@ -1835,8 +1838,8 @@ class RelaxationAnalysisWidget(QWidget):
             return
         report_export_saved(self, file_path, proximity_warnings)
 
-    def _export_relaxed_structures(self, workspace_id: str) -> None:
-        """Export the selected site's relaxed structure, or several sites to a folder.
+    def _export_relaxed_structures(self, workspace_id: str, fmt: ExportFormat) -> None:
+        """Export the selected site's relaxed structure in ``fmt``, or several sites to a folder.
 
         One selected site is saved to a file; several selected sites, or every
         site in the workspace when none is selected, go to a chosen folder.
@@ -1847,7 +1850,7 @@ class RelaxationAnalysisWidget(QWidget):
             return
         selected = self._selected_site_job_ids(workspace_id)
         if len(selected) == 1:
-            export_relaxed_structure(self, self._relaxed_structure_export(selected[0]))
+            export_relaxed_structure(self, self._relaxed_structure_export(selected[0]), fmt)
             return
         job_ids = selected or [site.job_id for site in self._workspace_sites(workspace)]
         if not job_ids:
@@ -1858,7 +1861,7 @@ class RelaxationAnalysisWidget(QWidget):
             )
             return
         export_relaxed_structures_to_folder(
-            self, [self._relaxed_structure_export(job_id) for job_id in job_ids]
+            self, [self._relaxed_structure_export(job_id) for job_id in job_ids], fmt
         )
 
     def _selected_site_job_ids(self, workspace_id: str) -> list[UUID]:
@@ -1927,18 +1930,19 @@ class RelaxationAnalysisWidget(QWidget):
         export_cif_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._export_workspace_cif(wid)
         )
-        export_relaxed_button = QPushButton("Export Relaxed Structures...", header)
+        export_relaxed_button = QPushButton("Export Relaxed Structures", header)
         export_relaxed_button.setObjectName("analysisExportRelaxedButton")
         export_relaxed_button.setToolTip(
             "Export relaxed supercells (host and muon) as CIF or CASTEP .cell: the "
             "selected site to a file, or several selected sites (all sites when none "
             "is selected) to a folder, one file per site."
         )
-        export_relaxed_button.clicked.connect(
-            lambda _checked=False, wid=_workspace_id(workspace): self._export_relaxed_structures(
-                wid
-            )
+        export_relaxed_menu = QMenu(export_relaxed_button)
+        add_format_actions(
+            export_relaxed_menu,
+            lambda fmt, wid=_workspace_id(workspace): self._export_relaxed_structures(wid, fmt),
         )
+        export_relaxed_button.setMenu(export_relaxed_menu)
         delete_button = QPushButton("Delete Analysis...", header)
         delete_button.setObjectName("analysisWorkspaceDeleteButton")
         delete_button.setToolTip(
