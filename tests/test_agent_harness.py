@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import math
 import re
 import subprocess
 from pathlib import Path
@@ -119,6 +120,25 @@ NON_APP_LAYER_PACKAGES = ("domain", "castep_io", "persistence", "science", "work
 # behaviour tests in the module's own test file (AGENTS.md, Tests), so this
 # list may only shrink as the files are merged into their siblings.
 PINNED_COVERAGE_TEST_FILES = frozenset({})
+
+
+# Physical constants have one home, ``mufinder.domain.constants``, which takes
+# them from ``scipy.constants`` (AGENTS.md, Reuse before you write). It is also
+# the only module that imports ``scipy.constants`` or ``ase.units``.
+CONSTANTS_HOME = SOURCE_ROOT / "domain" / "constants.py"
+
+# A number in source within this relative distance of a physical constant is a
+# typed-out copy of it. Loose enough to catch a rounded copy such as 27.211.
+CONSTANT_LITERAL_RTOL = 1e-4
+
+# Modules that may type a constant out, each with its reason.
+CONSTANT_LITERAL_ALLOWLIST = {
+    # A saved-project migration must reproduce the factor older projects were
+    # written with, so it keeps its historical value rather than tracking CODATA.
+    SOURCE_ROOT / "persistence" / "migrations.py",
+}
+
+CONSTANT_SOURCE_MODULES = ("scipy.constants", "ase.units")
 
 
 def _python_files(package: str) -> list[Path]:
@@ -473,3 +493,110 @@ def test_coverage_companion_test_files_do_not_grow() -> None:
     )
     merged_files = sorted(PINNED_COVERAGE_TEST_FILES - actual)
     assert not merged_files, f"{merged_files} no longer exist. Shrink PINNED_COVERAGE_TEST_FILES."
+
+
+def _physical_constant_references() -> list[tuple[float, str]]:
+    """Each physical constant MuFinder uses, with the home name to import instead."""
+
+    from scipy.constants import angstrom, c, e, epsilon_0, h, hbar, k, mu_0, physical_constants
+
+    def codata(name: str) -> float:
+        return physical_constants[name][0]
+
+    muon_gamma = abs(2.0 * codata("muon mag. mom.") / hbar)
+    cm_inv_to_ev = h * c * 100.0 / e
+    return [
+        (h, "PLANCK_CONSTANT_J_S"),
+        (hbar, "HBAR_J_S"),
+        (c, "LIGHT_SPEED_M_S"),
+        (e, "ELEMENTARY_CHARGE_C"),
+        (k, "BOLTZMANN_J_K"),
+        (k / e, "BOLTZMANN_J_K / ELEMENTARY_CHARGE_C"),
+        (mu_0, "MU0_T_M_PER_A"),
+        (epsilon_0, "VACUUM_PERMITTIVITY_F_PER_M"),
+        (codata("Bohr magneton"), "BOHR_MAGNETON_J_PER_T"),
+        (codata("nuclear magneton"), "NUCLEAR_MAGNETON_J_PER_T"),
+        (codata("atomic mass constant"), "ATOMIC_MASS_KG"),
+        (codata("Bohr radius"), "BOHR_RADIUS_ANGSTROM"),
+        (codata("Bohr radius") / angstrom, "BOHR_RADIUS_ANGSTROM"),
+        (angstrom / codata("Bohr radius"), "1 / BOHR_RADIUS_ANGSTROM"),
+        (codata("Hartree energy in eV"), "HARTREE_EV"),
+        (codata("muon mass in u"), "MUON_MASS_AMU"),
+        (codata("muon mass"), "MUON_MASS_KG"),
+        (muon_gamma, "MUON_GAMMA_RAD_S_T"),
+        (muon_gamma / (2.0 * math.pi) / 1e6, "MUON_GAMMA_OVER_2PI_MHZ_T"),
+        (cm_inv_to_ev, "PLANCK_CONSTANT_J_S * LIGHT_SPEED_M_S * 100 / ELEMENTARY_CHARGE_C"),
+        (1.0 / cm_inv_to_ev, "ELEMENTARY_CHARGE_C / (PLANCK_CONSTANT_J_S * LIGHT_SPEED_M_S * 100)"),
+    ]
+
+
+def _is_power_of_ten(value: float) -> bool:
+    exponent = math.log10(abs(value))
+    return math.isclose(exponent, round(exponent), abs_tol=1e-12)
+
+
+def _typed_out_constants(path: Path, references: list[tuple[float, str]]) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or type(node.value) not in (int, float):
+            continue
+        value = float(node.value)
+        # Powers of ten (1e-7, 1e-10) double as tolerances and SI prefixes.
+        if value == 0.0 or _is_power_of_ten(value):
+            continue
+        for reference, home_name in references:
+            if math.isclose(value, reference, rel_tol=CONSTANT_LITERAL_RTOL):
+                found.append(f"line {node.lineno}: {node.value!r} is {home_name}")
+                break
+    return found
+
+
+def test_physical_constants_are_not_typed_out_outside_their_home() -> None:
+    """No module but ``mufinder.domain.constants`` types out a physical constant."""
+
+    references = _physical_constant_references()
+    violations: list[str] = []
+    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        if path == CONSTANTS_HOME or path in CONSTANT_LITERAL_ALLOWLIST:
+            continue
+        rel_path = path.relative_to(PROJECT_ROOT)
+        violations.extend(
+            f"{rel_path} {finding}" for finding in _typed_out_constants(path, references)
+        )
+    assert not violations, (
+        "Physical constants typed out outside mufinder.domain.constants. Import the "
+        "named constant from mufinder.domain.constants (or build the expression from "
+        "its constants) instead:\n" + "\n".join(violations)
+    )
+
+
+def _constant_source_imports(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            modules = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+        else:
+            continue
+        if any(module in CONSTANT_SOURCE_MODULES for module in modules):
+            found.append(f"line {node.lineno}")
+    return found
+
+
+def test_constant_libraries_are_only_imported_by_the_constants_home() -> None:
+    """``scipy.constants`` and ``ase.units`` are read in ``mufinder.domain.constants`` only."""
+
+    violations = [
+        f"{path.relative_to(PROJECT_ROOT)} {finding}"
+        for path in sorted(SOURCE_ROOT.rglob("*.py"))
+        if path != CONSTANTS_HOME
+        for finding in _constant_source_imports(path)
+    ]
+    assert not violations, (
+        "scipy.constants or ase.units imported outside mufinder.domain.constants. Add "
+        "the constant there and import it from the home instead:\n" + "\n".join(violations)
+    )
