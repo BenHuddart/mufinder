@@ -50,7 +50,9 @@ def test_rigid_drift_of_the_relaxed_cell_cancels() -> None:
         label="drifted",
         lattice_vectors=relaxed.lattice_vectors,
         species=list(relaxed.species),
-        fractional_positions=[list(np.mod(np.asarray(row) + drift, 1.0)) for row in relaxed.fractional_positions],
+        fractional_positions=[
+            list(np.mod(np.asarray(row) + drift, 1.0)) for row in relaxed.fractional_positions
+        ],
         parent_structure_id=_IRON.id,
     )
 
@@ -102,7 +104,10 @@ def test_lattice_translation_of_the_site_is_accepted() -> None:
 @pytest.mark.parametrize(
     ("species", "message"),
     [
-        (("Fe", "Fe", "Fe", "Fe", "Fe", "Fe", "Fe", "O"), "Pristine structure has no atoms of species 'O'"),
+        (
+            ("Fe", "Fe", "Fe", "Fe", "Fe", "Fe", "Fe", "O"),
+            "Pristine structure has no atoms of species 'O'",
+        ),
         (("Fe",) * 7, "has 7 Fe atom"),
     ],
     ids=["foreign-species", "missing-atom"],
@@ -114,7 +119,8 @@ def test_composition_must_match_the_pristine_supercell(species, message) -> None
         label="altered",
         lattice_vectors=relaxed.lattice_vectors,
         species=[*species, "H:mu"],
-        fractional_positions=[relaxed.fractional_positions[index] for index in host_rows] + [relaxed.fractional_positions[-1]],
+        fractional_positions=[relaxed.fractional_positions[index] for index in host_rows]
+        + [relaxed.fractional_positions[-1]],
         parent_structure_id=_IRON.id,
     )
 
@@ -171,15 +177,21 @@ def test_muon_marker_is_validated(species, message) -> None:
 
 
 def test_pristine_host_needs_host_atoms() -> None:
-    muon_only = host_structure(label="empty", lattice=3.0, species=("H:mu",), positions=((0.0, 0.0, 0.0),))
+    muon_only = host_structure(
+        label="empty", lattice=3.0, species=("H:mu",), positions=((0.0, 0.0, 0.0),)
+    )
 
-    with pytest.raises(MuonDistortionError, match="Pristine structure does not contain any host atoms"):
+    with pytest.raises(
+        MuonDistortionError, match="Pristine structure does not contain any host atoms"
+    ):
         map_muon_distortion(muon_only, relaxed_muon_supercell(_IRON, (1, 1, 1), _SITE), _SITE)
 
 
 def test_errors_use_the_callers_exception_type() -> None:
     with pytest.raises(KeyError):
-        map_muon_distortion(_IRON, relaxed_muon_supercell(_IRON, (2, 2, 2), _SITE), (0.0, 0.0, 0.0), error=KeyError)
+        map_muon_distortion(
+            _IRON, relaxed_muon_supercell(_IRON, (2, 2, 2), _SITE), (0.0, 0.0, 0.0), error=KeyError
+        )
 
 
 def test_equivalent_site_rotates_the_displacement_pattern() -> None:
@@ -189,14 +201,18 @@ def test_equivalent_site_rotates_the_displacement_pattern() -> None:
     image = equivalent_site_distortion(_IRON, distortion, (0.0, 0.5, 0.0))
     direct = map_muon_distortion(
         _IRON,
-        relaxed_muon_supercell(_IRON, (3, 3, 3), (0.0, 0.5, 0.0), {(0.0, 1.0, 0.0): (0.0, 0.1, 0.0)}),
+        relaxed_muon_supercell(
+            _IRON, (3, 3, 3), (0.0, 0.5, 0.0), {(0.0, 1.0, 0.0): (0.0, 0.1, 0.0)}
+        ),
         (0.0, 0.5, 0.0),
     )
 
     def _by_site(item):
         return sorted(
             (int(index), tuple(np.round(offset, 6)), tuple(np.round(vector, 6)))
-            for index, offset, vector in zip(item.atom_indices, item.cell_offsets, item.distorted_vectors)
+            for index, offset, vector in zip(
+                item.atom_indices, item.cell_offsets, item.distorted_vectors
+            )
         )
 
     assert image.muon_fractional == pytest.approx((0.0, 0.5, 0.0))

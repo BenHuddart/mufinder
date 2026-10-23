@@ -119,7 +119,9 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: False
+    )
     monkeypatch.setattr(
         window._cluster_runner._runner,
         "submit",
@@ -254,22 +256,34 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
     monkeypatch.setattr(
         window._cluster_runner._runner,
         "connect_to_cluster",
-        lambda config, password=None, credentials=None: connect_calls.append((config.name, credentials, password)),
+        lambda config, password=None, credentials=None: connect_calls.append(
+            (config.name, credentials, password)
+        ),
     )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: False)
-    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: False
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submit_calls.append(kwargs) or "99123",
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
     window._submit_jobs_on_cluster([job])
 
     assert len(connect_calls) == 1
     assert connect_calls[0][0] == "Redwood"
-    assert connect_calls[0][1] == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+    assert connect_calls[0][1] == SSHCredentials(
+        target_secret="glam-secret", jump_secret="physics-secret"
+    )
     assert connect_calls[0][2] is None
     assert len(submit_calls) == 1
     window.close()
@@ -413,7 +427,9 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_resubmit_resources.mufinder", "ClusterResubmit")
+    doc = service.create_project(
+        tmp_path / "cluster_resubmit_resources.mufinder", "ClusterResubmit"
+    )
 
     host = Structure(
         label="Host",
@@ -610,7 +626,9 @@ def test_main_window_submit_jobs_on_cluster_prefills_from_last_submission_defaul
             return 0
 
     monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
-    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [alpha, redwood])
+    monkeypatch.setattr(
+        main_window_module, "load_cluster_configs", lambda _settings: [alpha, redwood]
+    )
 
     window._submit_jobs_on_cluster([job])
 
@@ -630,7 +648,9 @@ def test_main_window_submit_jobs_on_cluster_prefills_same_workflow_without_reset
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_prefill_same_workflow.mufinder", "ClusterPrefillSame")
+    doc = service.create_project(
+        tmp_path / "cluster_prefill_same_workflow.mufinder", "ClusterPrefillSame"
+    )
     job = service.add_job(
         doc,
         label="conv_ecut_350",
@@ -684,7 +704,10 @@ def test_main_window_submit_jobs_on_cluster_prefills_same_workflow_without_reset
 
     initial_config = captured_kwargs["initial_config"]
     assert initial_config is not None
-    assert initial_config.working_directory == "/mnt/redwoodfs/alice/project_x/convergence_cutoff/custom"
+    assert (
+        initial_config.working_directory
+        == "/mnt/redwoodfs/alice/project_x/convergence_cutoff/custom"
+    )
     assert initial_config.job_name_prefix == "cutoff_scan"
     assert initial_config.username == "alice"
     assert initial_config.num_processes == 40
@@ -699,7 +722,9 @@ def test_main_window_submit_jobs_on_cluster_resets_workdir_and_prefix_on_workflo
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_prefill_workflow_switch.mufinder", "ClusterPrefillSwitch")
+    doc = service.create_project(
+        tmp_path / "cluster_prefill_workflow_switch.mufinder", "ClusterPrefillSwitch"
+    )
     job = service.add_job(
         doc,
         label="pristine_relax_01",
@@ -768,7 +793,9 @@ def test_main_window_submit_uep_jobs_on_cluster_resets_stale_prefix_on_workflow_
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_prefill_uep_switch.mufinder", "ClusterPrefillUepSwitch")
+    doc = service.create_project(
+        tmp_path / "cluster_prefill_uep_switch.mufinder", "ClusterPrefillUepSwitch"
+    )
     job = service.add_job(
         doc,
         label="uep_01",
@@ -1059,7 +1086,9 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_existing_dir_yes.mufinder", "ClusterExistingDirYes")
+    doc = service.create_project(
+        tmp_path / "cluster_existing_dir_yes.mufinder", "ClusterExistingDirYes"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -1130,18 +1159,26 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: True
+    )
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path)
+    )
     monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
     monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
     window._submit_jobs_on_cluster([job])
 
@@ -1154,7 +1191,9 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_quantum_continuation.mufinder", "ClusterQuantumContinuation")
+    doc = service.create_project(
+        tmp_path / "cluster_quantum_continuation.mufinder", "ClusterQuantumContinuation"
+    )
     window._document = doc
 
     relaxed_structure = Structure(
@@ -1174,7 +1213,9 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -1253,7 +1294,9 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -1268,14 +1311,22 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
         "remote_directory_exists",
         lambda path: checked_paths.append(path) or False,
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
-    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path)
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submit_calls.append(kwargs) or "99123",
+    )
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
         lambda *_args: pytest.fail("a fresh remote directory needs no overwrite prompt"),
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
     window._submit_jobs_on_cluster([phonon_job])
 
@@ -1321,7 +1372,9 @@ def test_main_window_submit_jobs_on_cluster_reuses_continued_job_remote_director
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
-        lambda *_args: pytest.fail("a continued job must never prompt to overwrite its own directory"),
+        lambda *_args: pytest.fail(
+            "a continued job must never prompt to overwrite its own directory"
+        ),
     )
 
     window._submit_jobs_on_cluster([job])
@@ -1347,7 +1400,9 @@ def test_main_window_submit_jobs_on_cluster_continuation_keeps_original_seed_nam
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_continuation_seed.mufinder", "ClusterContinuationSeed")
+    doc = service.create_project(
+        tmp_path / "cluster_continuation_seed.mufinder", "ClusterContinuationSeed"
+    )
     window._document = doc
 
     job = add_cluster_input_job(service, doc, "conv_ecut_300")
@@ -1363,7 +1418,9 @@ def test_main_window_submit_jobs_on_cluster_continuation_keeps_original_seed_nam
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
-        lambda *_args: pytest.fail("a continued job must never prompt to overwrite its own directory"),
+        lambda *_args: pytest.fail(
+            "a continued job must never prompt to overwrite its own directory"
+        ),
     )
 
     window._submit_jobs_on_cluster([job])
@@ -1436,7 +1493,9 @@ def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_director
             raise OSError("SFTP stat failed")
         return False
 
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", _directory_exists)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", _directory_exists
+    )
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
@@ -1451,7 +1510,9 @@ def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_director
 
     window._submit_jobs_on_cluster([unchecked, checked])
 
-    assert [call["remote_directory"] for call in recorded["submitted"]] == ["/remote/work/conv_ecut_400"]
+    assert [call["remote_directory"] for call in recorded["submitted"]] == [
+        "/remote/work/conv_ecut_400"
+    ]
     assert unchecked.status == JobStatus.DEFINED
     assert unchecked.remote_directory is None
     assert checked.status == JobStatus.QUEUED
@@ -1592,7 +1653,9 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "cluster_yes_all_confirm.mufinder", "ClusterYesAllConfirm")
+    doc = service.create_project(
+        tmp_path / "cluster_yes_all_confirm.mufinder", "ClusterYesAllConfirm"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -1671,15 +1734,21 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: True
+    )
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path)
+    )
     monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
 
     prompt_calls: list[str] = []
@@ -1694,7 +1763,9 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
         "_confirm_bulk_remote_delete",
         lambda paths: confirm_calls.append(list(paths)) or (len(paths) == 2),
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
     window._submit_jobs_on_cluster(jobs)
 
@@ -1775,7 +1846,9 @@ def test_main_window_refresh_ui_seeds_cluster_tracking_for_active_remote_jobs(
 
     clear_calls: list[str] = []
     track_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(window._cluster_runner, "clear_tracked_jobs", lambda: clear_calls.append("clear"))
+    monkeypatch.setattr(
+        window._cluster_runner, "clear_tracked_jobs", lambda: clear_calls.append("clear")
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "track_existing_job",
@@ -1986,19 +2059,31 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: True
+    )
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path)
+    )
     submitted: list[dict[str, object]] = []
-    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submitted.append(kwargs) or "99123",
+    )
     monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no_to_all")
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
     window._submit_jobs_on_cluster([job])
 
@@ -2084,19 +2169,31 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: True
+    )
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path)
+    )
     submitted: list[dict[str, object]] = []
-    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submitted.append(kwargs) or "99123",
+    )
     monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no")
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None
+    )
 
     window._submit_jobs_on_cluster([job])
 
@@ -2197,13 +2294,17 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
         property(lambda _self: "alice"),
     )
 
-    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "remote_directory_exists", lambda _path: False
+    )
     monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
 
     infos: list[str] = []
@@ -2294,7 +2395,9 @@ def _legacy_quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp
         status=JobStatus.COMPLETED,
     )
     doc.jobs[source_job.id] = source_job
-    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run = CalculationRun(
+        job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+    )
     result = Result(
         calculation_run_id=run.id,
         result_type=source_job.calc_type,
@@ -2328,7 +2431,9 @@ def _legacy_quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp
     )
     definition.parameters["phonon_job_ids_by_label"] = {str(site.id): str(phonon_job.id)}
     definition.parameters["job_ids_by_label"] = definition.parameters["phonon_job_ids_by_label"]
-    (doc.project_root / "files" / "quantum_corrections" / "quantum_siteA").mkdir(parents=True, exist_ok=True)
+    (doc.project_root / "files" / "quantum_corrections" / "quantum_siteA").mkdir(
+        parents=True, exist_ok=True
+    )
     return phonon_job
 
 
@@ -2369,13 +2474,19 @@ def test_main_window_cluster_submission_sends_a_legacy_phonon_job_to_any_cluster
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: beta)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda _parent, _title, text: infos.append(text))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, _title, text: infos.append(text),
+    )
 
     window._submit_jobs_on_cluster([phonon_job])
 
     assert not any("stage" in text.lower() for text in infos)
     assert recorded["checked"] == ["/remote/work/quantum_siteA"]
-    assert [call["remote_directory"] for call in recorded["submitted"]] == ["/remote/work/quantum_siteA"]
+    assert [call["remote_directory"] for call in recorded["submitted"]] == [
+        "/remote/work/quantum_siteA"
+    ]
     assert phonon_job.execution_target == "beta"
     window.close()
 
@@ -2389,12 +2500,18 @@ def test_main_window_local_submission_runs_a_legacy_phonon_job_after_a_cluster_s
     phonon_job = _legacy_quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
     setups: list[object] = []
     infos: list[str] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda _parent, _title, text: infos.append(text))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, _title, text: infos.append(text),
+    )
     monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         main_window_module,
         "load_castep_setup",
-        lambda settings: setups.append(settings) or SimpleNamespace(executable_path="", mpirun_path=""),
+        lambda settings: (
+            setups.append(settings) or SimpleNamespace(executable_path="", mpirun_path="")
+        ),
     )
 
     window._submit_jobs_locally([phonon_job])
@@ -2442,7 +2559,9 @@ def test_main_window_resumes_a_failed_job_the_scheduler_lists_again(
     window = main_window
     job = _queued_cluster_job(window, tmp_path)
     tracked: list[dict[str, object]] = []
-    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: tracked.append(kwargs))
+    monkeypatch.setattr(
+        window._cluster_runner, "track_existing_job", lambda **kwargs: tracked.append(kwargs)
+    )
     monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path / "out")
     window._on_cluster_job_failed(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
     assert job.status == JobStatus.FAILED
@@ -2473,7 +2592,9 @@ def test_main_window_batch_timeout_stops_the_worker_submitting(
     cancel_requests: list[bool] = []
     # The worker never reports progress, so the inactivity watchdog fires.
     monkeypatch.setattr(window._cluster_runner, "submit_batch", lambda _items: None)
-    monkeypatch.setattr(window._cluster_runner, "cancel_batch", lambda: cancel_requests.append(True))
+    monkeypatch.setattr(
+        window._cluster_runner, "cancel_batch", lambda: cancel_requests.append(True)
+    )
 
     class _FastTimer(main_window_module.QTimer):
         def setInterval(self, _msec: int) -> None:
@@ -2501,7 +2622,9 @@ def test_main_window_ends_watches_of_jobs_reset_since_failing(
     window._on_cluster_job_failed(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
     window._project_service.reset_failed_job(job)
     stopped: list[list[object]] = []
-    monkeypatch.setattr(window._cluster_runner, "stop_watching", lambda job_ids: stopped.append(list(job_ids)))
+    monkeypatch.setattr(
+        window._cluster_runner, "stop_watching", lambda job_ids: stopped.append(list(job_ids))
+    )
 
     window._on_cluster_queue_checked(
         SimpleNamespace(

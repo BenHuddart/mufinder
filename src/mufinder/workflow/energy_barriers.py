@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from mufinder.castep_io.types import AtomicPosition, BlockSection, KeywordAssignment, PositionBlock, ValueWithUnit
+from mufinder.castep_io.types import (
+    AtomicPosition,
+    BlockSection,
+    KeywordAssignment,
+    PositionBlock,
+    ValueWithUnit,
+)
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.magnetic_properties import has_nonzero_spins
 
@@ -19,7 +25,7 @@ from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate
 # Read-only calc types of the retired LST/QST transition-state search. Nothing
 # creates them; they remain so the jobs, results and path definitions an older
 # project stored still load. See the ledger in docs/compatibility_policy.rst.
-TRANSITION_STATE_SEARCH_CALC_TYPE ="castep_transition_state_search"
+TRANSITION_STATE_SEARCH_CALC_TYPE = "castep_transition_state_search"
 TRANSITION_STATE_SEARCH_SET_CALC_TYPE = "castep_transition_state_search_set"
 NUDGED_ELASTIC_BAND_CALC_TYPE = "castep_nudged_elastic_band"
 NUDGED_ELASTIC_BAND_SET_CALC_TYPE = "castep_nudged_elastic_band_set"
@@ -92,12 +98,14 @@ def replace_serialized_sources_for_pair(
 
 
 _LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS: frozenset[str] = frozenset({"tssearch_lst_max_iter"})
-_LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS: frozenset[str] = frozenset({
-    "fine_cut_off_energy",
-    "tssearch_force_tol",
-    "tssearch_disp_tol",
-    "tssearch_energy_tol",
-})
+_LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS: frozenset[str] = frozenset(
+    {
+        "fine_cut_off_energy",
+        "tssearch_force_tol",
+        "tssearch_disp_tol",
+        "tssearch_energy_tol",
+    }
+)
 
 
 def strip_legacy_energy_barrier_params(params: dict[str, object]) -> dict[str, object]:
@@ -182,7 +190,9 @@ def expand_nudged_elastic_band_jobs(
         if not label:
             raise ValueError("NEB path labels must not be empty.")
         patch_template = compose_patch(
-            InputTemplate(cell=_neb_cell_base_template(config), param=_neb_param_base_template(config)),
+            InputTemplate(
+                cell=_neb_cell_base_template(config), param=_neb_param_base_template(config)
+            ),
             InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
         )
         patch = JobPatch(
@@ -209,9 +219,12 @@ def expand_nudged_elastic_band_jobs(
                     "tssearch_method": config.method,
                     "num_farms": max(1, int(config.num_farms)),
                     "source_site_ids": [str(value) for value in config.source.source_site_ids],
-                    "source_relaxation_run_ids": [str(value) for value in config.source.source_relaxation_run_ids],
+                    "source_relaxation_run_ids": [
+                        str(value) for value in config.source.source_relaxation_run_ids
+                    ],
                     "source_relaxation_job_ids": [
-                        str(value) if value is not None else None for value in config.source.source_relaxation_job_ids
+                        str(value) if value is not None else None
+                        for value in config.source.source_relaxation_job_ids
                     ],
                     "path_length_ang": config.source.path_length_ang,
                     **dict(config.source.provenance),
@@ -225,7 +238,12 @@ def _neb_cell_base_template(config: NudgedElasticBandJobConfig) -> CellTemplate:
     blocks = [
         BlockSection(
             name="positions_frac_product",
-            rows=tuple(_rows_from_positions(config.source.product_positions_frac, atomic_spins=config.source.product_atomic_spins)),
+            rows=tuple(
+                _rows_from_positions(
+                    config.source.product_positions_frac,
+                    atomic_spins=config.source.product_atomic_spins,
+                )
+            ),
             unit=None,
         )
     ]
@@ -293,7 +311,11 @@ def _rows_from_positions(
     rows: list[tuple[object, ...]] = []
     for index, position in enumerate(block.positions):
         values: tuple[object, ...] = (position.species, *position.coordinates)
-        if atomic_spins is not None and index < len(atomic_spins) and abs(float(atomic_spins[index])) > 1e-12:
+        if (
+            atomic_spins is not None
+            and index < len(atomic_spins)
+            and abs(float(atomic_spins[index])) > 1e-12
+        ):
             values = (*values, f"SPIN={float(atomic_spins[index]):.12g}")
         rows.append(values)
     return rows

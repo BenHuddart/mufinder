@@ -325,9 +325,7 @@ class WorkflowJobController:
 
         return True
 
-    def submission_groups(
-        self, jobs: list[Job]
-    ) -> list[tuple[list[Job], dict[str, object]]]:
+    def submission_groups(self, jobs: list[Job]) -> list[tuple[list[Job], dict[str, object]]]:
         """Split jobs into ``(group, extra-submit-kwargs)`` tuples.
 
         Default: one group, no extras. Workflows that submit heterogeneous
@@ -337,9 +335,7 @@ class WorkflowJobController:
 
         return [(jobs, {})]
 
-    def submit(
-        self, values: list[object], *, target: Literal["local", "cluster"]
-    ) -> None:
+    def submit(self, values: list[object], *, target: Literal["local", "cluster"]) -> None:
         """Template method: plan the submission and dispatch each group.
 
         Mirrors ``MainWindow._submit_workflow_selection`` today:
@@ -376,9 +372,7 @@ class WorkflowJobController:
             self._context.show_info("No ready jobs", self.no_ready_message)
             return
 
-        dismissed_jobs = [
-            job for job in plan.jobs if job_is_resubmittable_after_dismissal(job)
-        ]
+        dismissed_jobs = [job for job in plan.jobs if job_is_resubmittable_after_dismissal(job)]
         if dismissed_jobs:
             if not self._context.prepare_jobs_for_resubmission(dismissed_jobs):
                 return

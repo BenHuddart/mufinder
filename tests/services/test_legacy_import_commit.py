@@ -305,9 +305,9 @@ class TestFiles:
         archive = item.job_directory / LEGACY_SOURCE_DIRNAME
 
         archived_cell = archive / f"{item.seed_name}.cell"
-        assert archived_cell.read_bytes() == (
-            folder / "input" / f"{item.seed_name}.cell"
-        ).read_bytes()
+        assert (
+            archived_cell.read_bytes() == (folder / "input" / f"{item.seed_name}.cell").read_bytes()
+        )
 
         manifest = json.loads((archive / LEGACY_MANIFEST_NAME).read_text())
         assert manifest["version"] == 1
@@ -410,9 +410,7 @@ class TestJournal:
         from mufinder.services.journal import build_journal
         from tests.services.test_legacy_import_scan import _legacy_param
 
-        folder = build_folder(
-            tmp_path / "legacy", sites=(1, 2), param_text=_legacy_param(xc="LDA")
-        )
+        folder = build_folder(tmp_path / "legacy", sites=(1, 2), param_text=_legacy_param(xc="LDA"))
         next(folder.glob("results/*_2-out.cell")).unlink()
 
         scan = scan_legacy_folder(folder, host_lattice=HOST_LATTICE)
@@ -541,9 +539,7 @@ class TestResolvedParameters:
         _scan, outcome = _commit(document, folder, host_structure)
         item = outcome.imported[0]
 
-        param_text = (item.job_directory / f"{item.seed_name}.param").read_text(
-            encoding="utf-8"
-        )
+        param_text = (item.job_directory / f"{item.seed_name}.param").read_text(encoding="utf-8")
         row_values = outcome.row_payloads[0]["parameter_values"]
 
         for name, value in row_values.items():

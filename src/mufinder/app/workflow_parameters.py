@@ -59,14 +59,18 @@ def structure_species_options(structure: Structure | None) -> tuple[str, ...]:
 
     if structure is None:
         return ()
-    return tuple(dict.fromkeys(species for item in structure.species if (species := str(item).strip())))
+    return tuple(
+        dict.fromkeys(species for item in structure.species if (species := str(item).strip()))
+    )
 
 
 def merge_species_options(structures: Iterable[Structure | None]) -> tuple[str, ...]:
     """Return the species labels of several structures, once each, in first-seen order."""
 
     return tuple(
-        dict.fromkeys(species for structure in structures for species in structure_species_options(structure))
+        dict.fromkeys(
+            species for structure in structures for species in structure_species_options(structure)
+        )
     )
 
 
@@ -83,7 +87,11 @@ def shared_parameter_values(
         return {}
     shared = params[0]
     for row_values in params[1:]:
-        shared = {name: value for name, value in shared.items() if name in row_values and row_values[name] == value}
+        shared = {
+            name: value
+            for name, value in shared.items()
+            if name in row_values and row_values[name] == value
+        }
     return shared
 
 
@@ -245,7 +253,9 @@ def workflow_default_params(
     for spec in specs:
         if spec.default_value is None or spec.name in skip_names:
             continue
-        if not keyword_visible_in_workflow(spec, workflow_stage=workflow_stage, include_advanced=False):
+        if not keyword_visible_in_workflow(
+            spec, workflow_stage=workflow_stage, include_advanced=False
+        ):
             continue
         if spec.name in locked_names or spec_is_blocked_by_locked(spec, locked_names):
             continue
@@ -335,7 +345,10 @@ def restore_structured_value(
                 rows=tuple(tuple(row) for row in value.get("rows", ())),
                 unit=str(value["unit"]) if value.get("unit") is not None else None,
             )
-        if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
+        if (
+            spec.value_type in {"physical", "positive_float_with_optional_unit"}
+            and {"value", "unit"} <= value.keys()
+        ):
             return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
 
     if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
@@ -472,6 +485,7 @@ def build_workflow_parameter_surface(
         )
         seen.add(name)
     return reorder_workflow_parameter_specs(specs, ordered_names=basic_names)
+
 
 #: Geometry-optimisation keywords a relaxation workflow shows in its basic view
 #: on top of the convergence surface.

@@ -33,7 +33,9 @@ class TransitionStateImage:
     reaction_coordinate: float
     energy: float  # eV (converted from the Hartree value stored in the `.ts` file)
     # Å (converted from the Bohr values stored in the `.ts` file)
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     species: tuple[str, ...]
     cartesian_positions: tuple[tuple[float, float, float], ...]  # Å (converted from Bohr)
     forces: tuple[tuple[float, float, float], ...]  # eV/Å (converted from Hartree/Bohr)
@@ -66,8 +68,12 @@ def parse_transition_state_text(text: str) -> TransitionStatePath:
     images = _parse_images(text.splitlines())
     final = _final_path(images)
     if not final:
-        raise TransitionStateParseError("No complete transition-state path could be parsed from the `.ts` file.")
-    return TransitionStatePath(images=tuple(sorted(final, key=lambda image: image.reaction_coordinate)))
+        raise TransitionStateParseError(
+            "No complete transition-state path could be parsed from the `.ts` file."
+        )
+    return TransitionStatePath(
+        images=tuple(sorted(final, key=lambda image: image.reaction_coordinate))
+    )
 
 
 def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
@@ -97,7 +103,11 @@ def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
             content = lines[index]
             stripped = content.strip()
             next_parts = stripped.split()
-            if len(next_parts) == 3 and next_parts[0] in {"REA", "TST", "PRO"} and "<--" not in content:
+            if (
+                len(next_parts) == 3
+                and next_parts[0] in {"REA", "TST", "PRO"}
+                and "<--" not in content
+            ):
                 break
             if not stripped:
                 index += 1
@@ -106,13 +116,17 @@ def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
                 try:
                     energy = float(stripped.split()[0]) * HARTREE_TO_EV
                 except ValueError as exc:
-                    raise TransitionStateParseError("Invalid energy entry in CASTEP `.ts` file.") from exc
+                    raise TransitionStateParseError(
+                        "Invalid energy entry in CASTEP `.ts` file."
+                    ) from exc
                 index += 1
                 continue
             if "<-- h" in content:
                 values = stripped.split()
                 if len(values) < 3:
-                    raise TransitionStateParseError("Invalid lattice-vector entry in CASTEP `.ts` file.")
+                    raise TransitionStateParseError(
+                        "Invalid lattice-vector entry in CASTEP `.ts` file."
+                    )
                 lattice.append(_scaled_triplet(values[0:3], BOHR_TO_ANGSTROM))
                 index += 1
                 continue

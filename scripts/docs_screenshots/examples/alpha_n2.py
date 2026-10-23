@@ -111,7 +111,12 @@ SITE = (0.0, 0.25, 0.25)  # midway between the molecules at (0, 0, 0) and (0, 1/
 # The relaxed complex: the muon to each near nitrogen, the stretched N≡N bond
 # of the two complex molecules, and how far (Å) every other molecule whose
 # centre lies within NEIGHBOUR_RADIUS of the muon moves towards it.
-COMPLEX = {"muon_bond": 1.29, "molecule_bond": 1.115, "neighbour_shift": 0.03, "neighbour_radius": 4.5}
+COMPLEX = {
+    "muon_bond": 1.29,
+    "molecule_bond": 1.115,
+    "neighbour_shift": 0.03,
+    "neighbour_radius": 4.5,
+}
 POSITIVE_ENERGY_EV = -17318.4271  # the relaxed supercell
 # The phonon bands (cm^-1) of the molecules outside the complex: the N≡N
 # stretch, the librations and the translations.
@@ -163,7 +168,9 @@ def _muon_outputs(window: MainWindow) -> Outputs:
         muon = list(cell.species).index("H:mu")
         fractional[muon] += (nearest_site(start) - start) / 2.0
         moved = SimpleNamespace(
-            lattice_vectors=cell.lattice_vectors, species=list(cell.species), fractional_positions=fractional % 1.0
+            lattice_vectors=cell.lattice_vectors,
+            species=list(cell.species),
+            fractional_positions=fractional % 1.0,
         )
         relaxed = bridged_diatomic_cell(moved, **COMPLEX)
         (job_dir / f"{seed}-out.cell").write_text(
@@ -171,7 +178,12 @@ def _muon_outputs(window: MainWindow) -> Outputs:
         )
         number = int("".join(character for character in row.label if character.isdigit()) or 1)
         energy = POSITIVE_ENERGY_EV + 0.0005 * (number - 1)
-        text = castep_text(energy=energy, species=list(cell.species), geometry=True, wall_time=31204.6 + 1213.0 * number)
+        text = castep_text(
+            energy=energy,
+            species=list(cell.species),
+            geometry=True,
+            wall_time=31204.6 + 1213.0 * number,
+        )
         (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
         return True
 
@@ -182,8 +194,15 @@ def _phonon_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
     """The phonon run of the pinned site: the chain model of the complex in the relaxed supercell."""
 
     cell = _job_cell(job_dir, seed)
-    (job_dir / f"{seed}.phonon").write_text(bridged_diatomic_phonon_text(cell, **N2_BANDS_CM), encoding="utf-8")
-    text = castep_text(energy=POSITIVE_ENERGY_EV - 0.0003, species=list(cell.species), geometry=False, wall_time=172418.9)
+    (job_dir / f"{seed}.phonon").write_text(
+        bridged_diatomic_phonon_text(cell, **N2_BANDS_CM), encoding="utf-8"
+    )
+    text = castep_text(
+        energy=POSITIVE_ENERGY_EV - 0.0003,
+        species=list(cell.species),
+        geometry=False,
+        wall_time=172418.9,
+    )
     (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
     return True
 
@@ -202,9 +221,15 @@ def _fixture(directory: Path) -> tuple[ProjectService, ProjectDocument]:
         label=SUPERCELL_LABEL,
     )
     document.project.supercell_matrix = [list(row) for row in SUPERCELL_2X2X2]
-    criteria = {"method": "delta-threshold", "cell_id": str(host.id), "xc_functional": XC_FUNCTIONAL}
+    criteria = {
+        "method": "delta-threshold",
+        "cell_id": str(host.id),
+        "xc_functional": XC_FUNCTIONAL,
+    }
     service.set_recommended_cutoff(document, CUTOFF_EV, **criteria)
-    service.set_recommended_kpoint_grid(document, UNIT_CELL_GRID, lattice_vectors=host.lattice_vectors, **criteria)
+    service.set_recommended_kpoint_grid(
+        document, UNIT_CELL_GRID, lattice_vectors=host.lattice_vectors, **criteria
+    )
     service.generate_candidate_sites(
         document,
         method="random",
@@ -255,15 +280,25 @@ def _build_results(directory: Path, *, submit_phonon: bool) -> Path:
 
     # The relaxations run in the 2x2x2 supercell, so configuring them rescales
     # the adopted unit-cell k-point grid and says so.
-    with opened(app, document.project_root) as window, refuse_message_boxes(app, expected=("K-point grids adjusted",)):
+    with (
+        opened(app, document.project_root) as window,
+        refuse_message_boxes(app, expected=("K-point grids adjusted",)),
+    ):
         document = window._document
         relaxations = window._muon_relaxation_view
-        when_modal("MuonChargeStateDialog", lambda dialog: (dialog._positive.setChecked(True), dialog.accept()))
-        sites = sorted(document.sites.values(), key=lambda site: window._natural_label_sort_key(site.label))
+        when_modal(
+            "MuonChargeStateDialog",
+            lambda dialog: (dialog._positive.setChecked(True), dialog.accept()),
+        )
+        sites = sorted(
+            document.sites.values(), key=lambda site: window._natural_label_sort_key(site.label)
+        )
         window._on_create_muon_relaxation_jobs_requested([str(site.id) for site in sites])
         for entry in list(relaxations._row_entries()):
             relaxations.set_row_supercell(entry.row_id, [list(row) for row in SUPERCELL_2X2X2])
-        relaxations._charge_tabs.setCurrentWidget(relaxations._table_for_charge_state(POSITIVE_MUON_CHARGE_STATE))
+        relaxations._charge_tabs.setCurrentWidget(
+            relaxations._table_for_charge_state(POSITIVE_MUON_CHARGE_STATE)
+        )
         relaxations._active_table().clearSelection()
         with synthetic_runs(window, _muon_outputs(window)):
             relaxations._run_local_selected_rows()
@@ -271,7 +306,10 @@ def _build_results(directory: Path, *, submit_phonon: bool) -> Path:
         # One analysis workspace, clustered and pinned.
         window._set_active_route("muon_relaxations")
         relaxations._active_table().selectAll()
-        when_modal("QInputDialog", lambda dialog: (dialog.setTextValue("Positive muon sites"), dialog.accept()))
+        when_modal(
+            "QInputDialog",
+            lambda dialog: (dialog.setTextValue("Positive muon sites"), dialog.accept()),
+        )
         relaxations._create_analysis_button.click()
         workspace_id = str(window._relaxation_analysis_workspaces()[-1]["id"])
         when_modal("RelaxationClusteringDialog", lambda dialog: dialog._apply_button.click())
@@ -316,7 +354,9 @@ def open_displacements(window: MainWindow) -> None:
     """Click ``Analyse Displacements`` in the analysis workspace."""
 
     open_workspace(window)
-    window._relaxation_analysis_view._open_displacements(str(window._relaxation_analysis_workspaces()[0]["id"]))
+    window._relaxation_analysis_view._open_displacements(
+        str(window._relaxation_analysis_workspaces()[0]["id"])
+    )
 
 
 def show_molecules(axis: str) -> Callable[[QWidget], None]:
@@ -416,17 +456,31 @@ def open_coupling_help(window: MainWindow) -> None:
 _ANALYSIS_SIZE = (1180, 780)
 
 SCENES: dict[str, Scene] = {
-    "n2_host_structure": Scene(host_project, "host_structure", Page("_host_structure_view", (1100, 700), prepare=show_molecules("a"))),
+    "n2_host_structure": Scene(
+        host_project,
+        "host_structure",
+        Page("_host_structure_view", (1100, 700), prepare=show_molecules("a")),
+    ),
     "n2_relaxation_workspace": Scene(
-        results_project, None, Page("_relaxation_analysis_view", (1100, 720), prepare=frame_viewers), setup=open_workspace
+        results_project,
+        None,
+        Page("_relaxation_analysis_view", (1100, 720), prepare=frame_viewers),
+        setup=open_workspace,
     ),
     "n2_displacement_analysis": Scene(
         results_project,
         None,
-        Dialog(open_displacements, kind="DisplacementAnalysisDialog", size=(1180, 720), prepare=show_molecules("c")),
+        Dialog(
+            open_displacements,
+            kind="DisplacementAnalysisDialog",
+            size=(1180, 720),
+            prepare=show_molecules("c"),
+        ),
     ),
     "n2_muon_sites_summary": Scene(
-        results_project, "muon_sites", Page("_muon_sites_summary_view", (1100, 800), prepare=frame_viewers)
+        results_project,
+        "muon_sites",
+        Page("_muon_sites_summary_view", (1100, 800), prepare=frame_viewers),
     ),
     "n2_quantum_corrections_page": Scene(
         results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 520))
@@ -434,20 +488,36 @@ SCENES: dict[str, Scene] = {
     "n2_quantum_configuration_dialog": Scene(
         configured_project,
         "quantum_corrections",
-        Dialog(open_configuration, kind="QuantumCorrectionsConfigDialog", size=(900, 580), prepare=hide_catalog_notice),
+        Dialog(
+            open_configuration,
+            kind="QuantumCorrectionsConfigDialog",
+            size=(900, 580),
+            prepare=hide_catalog_notice,
+        ),
     ),
     "n2_phonon_modes": Scene(
-        results_project, "quantum_corrections", Floating(open_analysis, size=_ANALYSIS_SIZE, prepare=show_muon_modes)
+        results_project,
+        "quantum_corrections",
+        Floating(open_analysis, size=_ANALYSIS_SIZE, prepare=show_muon_modes),
     ),
     "n2_mode_wells": Scene(
-        results_project, "quantum_corrections", Floating(open_analysis, size=_ANALYSIS_SIZE, prepare=show_longitudinal_well)
+        results_project,
+        "quantum_corrections",
+        Floating(open_analysis, size=_ANALYSIS_SIZE, prepare=show_longitudinal_well),
     ),
     "n2_muon_coupling": Scene(
-        results_project, "quantum_corrections", Floating(open_analysis, size=(1180, 560), prepare=show_muon_coupling)
+        results_project,
+        "quantum_corrections",
+        Floating(open_analysis, size=(1180, 560), prepare=show_muon_coupling),
     ),
     "n2_coupling_help": Scene(
         results_project,
         "quantum_corrections",
-        Dialog(open_coupling_help, kind="QuantumAnalysisHelpDialog", size=(660, 640), prepare=focus_default_button),
+        Dialog(
+            open_coupling_help,
+            kind="QuantumAnalysisHelpDialog",
+            size=(660, 640),
+            prepare=focus_default_button,
+        ),
     ),
 }

@@ -20,10 +20,15 @@ from typing import Any
 
 import pytest
 
-if __name__ == "__main__":  # pragma: no cover - lets the regeneration script import ``tests.support``.
+if (
+    __name__ == "__main__"
+):  # pragma: no cover - lets the regeneration script import ``tests.support``.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from mufinder.science.site_generation import generate_random_sites, generate_random_sites_by_distance
+from mufinder.science.site_generation import (
+    generate_random_sites,
+    generate_random_sites_by_distance,
+)
 from tests.support.symmetry_hosts import (
     bcc_host,
     diamond_si_host,
@@ -47,23 +52,68 @@ _HOST_FACTORIES = {
 # Case name -> (host, generator, keyword arguments).  The distance-mode cases use
 # the dialog's default spacings; attempts are trimmed to keep the suite fast.
 _CASES: dict[str, tuple[str, str, dict[str, Any]]] = {
-    "bcc-distance": ("bcc", "distance", {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 1500, "seed": 3}),
-    "diamond-distance": ("diamond", "distance", {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 1500, "seed": 1}),
-    "fcc-distance": ("fcc", "distance", {"min_muon_muon": 0.6, "min_muon_atom": 0.9, "max_attempts": 1500, "seed": 2}),
-    "hcp-distance": ("hcp", "distance", {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 1500, "seed": 4}),
-    "rutile-distance": ("rutile", "distance", {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 3000, "seed": 0}),
-    "triclinic-distance": ("triclinic", "distance", {"min_muon_muon": 2.0, "min_muon_atom": 1.0, "max_attempts": 600, "seed": 5}),
+    "bcc-distance": (
+        "bcc",
+        "distance",
+        {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 1500, "seed": 3},
+    ),
+    "diamond-distance": (
+        "diamond",
+        "distance",
+        {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 1500, "seed": 1},
+    ),
+    "fcc-distance": (
+        "fcc",
+        "distance",
+        {"min_muon_muon": 0.6, "min_muon_atom": 0.9, "max_attempts": 1500, "seed": 2},
+    ),
+    "hcp-distance": (
+        "hcp",
+        "distance",
+        {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 1500, "seed": 4},
+    ),
+    "rutile-distance": (
+        "rutile",
+        "distance",
+        {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 3000, "seed": 0},
+    ),
+    "triclinic-distance": (
+        "triclinic",
+        "distance",
+        {"min_muon_muon": 2.0, "min_muon_atom": 1.0, "max_attempts": 600, "seed": 5},
+    ),
     "hcp-distance-no-symmetry": (
         "hcp",
         "distance",
-        {"min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 400, "seed": 6, "include_symmetry_equivalents": False},
+        {
+            "min_muon_muon": 0.8,
+            "min_muon_atom": 1.0,
+            "max_attempts": 400,
+            "seed": 6,
+            "include_symmetry_equivalents": False,
+        },
     ),
-    "rutile-count": ("rutile", "count", {"count": 4, "min_muon_muon": 0.8, "min_muon_atom": 1.0, "seed": 7}),
-    "diamond-count": ("diamond", "count", {"count": 3, "min_muon_muon": 0.8, "min_muon_atom": 1.0, "seed": 8}),
+    "rutile-count": (
+        "rutile",
+        "count",
+        {"count": 4, "min_muon_muon": 0.8, "min_muon_atom": 1.0, "seed": 7},
+    ),
+    "diamond-count": (
+        "diamond",
+        "count",
+        {"count": 3, "min_muon_muon": 0.8, "min_muon_atom": 1.0, "seed": 8},
+    ),
     "bcc-count-partial": (
         "bcc",
         "count",
-        {"count": 5, "min_muon_muon": 0.8, "min_muon_atom": 1.0, "max_attempts": 800, "seed": 9, "allow_partial": True},
+        {
+            "count": 5,
+            "min_muon_muon": 0.8,
+            "min_muon_atom": 1.0,
+            "max_attempts": 800,
+            "seed": 9,
+            "allow_partial": True,
+        },
     ),
 }
 

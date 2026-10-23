@@ -26,7 +26,9 @@ from tests.support.main_window import window_with_host
 from tests.support.structures import host_structure
 
 
-def _snapshot(workspace_id: str, host: Structure, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE) -> dict:
+def _snapshot(
+    workspace_id: str, host: Structure, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE
+) -> dict:
     return {
         "charge_state": charge_state,
         "workspace_id": workspace_id,
@@ -49,7 +51,9 @@ def _snapshot(workspace_id: str, host: Structure, *, charge_state: str = POSITIV
     }
 
 
-def _clustered_workspace(host: Structure, job_id, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE) -> dict:
+def _clustered_workspace(
+    host: Structure, job_id, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE
+) -> dict:
     workspace = default_workspace_state(
         name="Positive muon analysis",
         charge_state=charge_state,
@@ -95,11 +99,19 @@ def _clustered_workspace(host: Structure, job_id, *, charge_state: str = POSITIV
             "wyckoff_assignments": [
                 {
                     "cluster_index": 1,
-                    "match": {"matched": True, "label": "8c", "fractional_position": [0.25, 0.25, 0.25]},
+                    "match": {
+                        "matched": True,
+                        "label": "8c",
+                        "fractional_position": [0.25, 0.25, 0.25],
+                    },
                 },
                 {
                     "cluster_index": 2,
-                    "match": {"matched": True, "label": "6b", "fractional_position": [0.5, 0.0, 0.0]},
+                    "match": {
+                        "matched": True,
+                        "label": "6b",
+                        "fractional_position": [0.5, 0.0, 0.0],
+                    },
                 },
             ],
         },
@@ -206,7 +218,10 @@ def test_summary_updates_source_label_on_workspace_rename(qapp) -> None:
         renamed = dict(snap)
         renamed["workspace_name"] = "Renamed analysis"
         widget.set_panel(
-            POSITIVE_MUON_CHARGE_STATE, snapshot=renamed, host_structure=host, placeholder_message="x"
+            POSITIVE_MUON_CHARGE_STATE,
+            snapshot=renamed,
+            host_structure=host,
+            placeholder_message="x",
         )
         assert "Renamed analysis" in panel._summary_labels["Source analysis"].text()
     finally:
@@ -292,7 +307,10 @@ def test_summary_export_cif_button_disabled_until_populated(qapp) -> None:
         )
         assert panel._export_cif_button.isEnabled()
         widget.set_panel(
-            POSITIVE_MUON_CHARGE_STATE, snapshot=None, host_structure=host, placeholder_message="cleared"
+            POSITIVE_MUON_CHARGE_STATE,
+            snapshot=None,
+            host_structure=host,
+            placeholder_message="cleared",
         )
         assert not panel._export_cif_button.isEnabled()
     finally:
@@ -332,7 +350,9 @@ def test_summary_export_cif_writes_host_and_muon_sites(qapp, tmp_path: Path, mon
         widget.deleteLater()
 
 
-def test_summary_export_cif_warns_when_site_coincides_with_host_atom(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_summary_export_cif_warns_when_site_coincides_with_host_atom(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     host = host_structure()
     snapshot = _snapshot("ws-1", host)
     # Overlay the first pinned site directly onto the host's Si atom at (0,0,0).
@@ -340,7 +360,10 @@ def test_summary_export_cif_warns_when_site_coincides_with_host_atom(qapp, tmp_p
     widget = MuonSitesSummaryWidget()
     try:
         widget.set_panel(
-            POSITIVE_MUON_CHARGE_STATE, snapshot=snapshot, host_structure=host, placeholder_message="empty"
+            POSITIVE_MUON_CHARGE_STATE,
+            snapshot=snapshot,
+            host_structure=host,
+            placeholder_message="empty",
         )
         panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
 
@@ -364,7 +387,9 @@ def test_summary_export_cif_warns_when_site_coincides_with_host_atom(qapp, tmp_p
         widget.deleteLater()
 
 
-def test_summary_export_cif_cancelled_dialog_writes_nothing(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_summary_export_cif_cancelled_dialog_writes_nothing(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
@@ -529,9 +554,7 @@ def test_pin_builds_ranked_snapshot_and_populates_panel(qapp, tmp_path: Path) ->
 def test_validated_snapshot_dropped_when_host_changes(qapp, tmp_path: Path) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
-        store_muon_sites_summary_snapshot(doc, 
-            POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host)
-        )
+        store_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host))
         assert validated_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE) is not None
         # Point the project at a different host: the decoupled snapshot is stale.
         doc.project.host_structure_id = uuid4()
@@ -543,9 +566,7 @@ def test_validated_snapshot_dropped_when_host_changes(qapp, tmp_path: Path) -> N
 def test_unpin_removes_snapshot(qapp, tmp_path: Path) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
-        store_muon_sites_summary_snapshot(doc, 
-            POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host)
-        )
+        store_muon_sites_summary_snapshot(doc, POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host))
         window._on_unpin_muon_sites_requested(POSITIVE_MUON_CHARGE_STATE)
         assert POSITIVE_MUON_CHARGE_STATE not in doc.ui_state[MUON_SITES_SUMMARY_SNAPSHOTS_KEY]
     finally:

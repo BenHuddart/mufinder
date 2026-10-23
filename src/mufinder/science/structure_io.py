@@ -152,7 +152,9 @@ def export_structure_with_muon_sites(
     even though this file assigns each atom full occupancy.
     """
     host_species = list(host_structure.species)
-    host_positions = [[float(value) for value in row] for row in host_structure.fractional_positions]
+    host_positions = [
+        [float(value) for value in row] for row in host_structure.fractional_positions
+    ]
     lattice_vectors = host_structure.lattice_vectors
 
     species = host_species + ["H"] * len(muon_sites)
@@ -249,7 +251,9 @@ def _load_castep_cell_file(source: Path) -> LoadedStructure:
     return LoadedStructure(
         lattice_vectors=[[float(value) for value in row] for row in parsed.lattice_vectors],
         species=list(parsed.species),
-        fractional_positions=[[float(value) for value in row] for row in parsed.fractional_positions],
+        fractional_positions=[
+            [float(value) for value in row] for row in parsed.fractional_positions
+        ],
         properties=properties,
     )
 
@@ -475,7 +479,9 @@ def _extract_atom_labels(tags: dict[str, str], loops: list[dict[str, Any]]) -> l
     return _dedupe_strings(labels)
 
 
-def _extract_propagation_vectors(tags: dict[str, str], loops: list[dict[str, Any]]) -> list[list[float]]:
+def _extract_propagation_vectors(
+    tags: dict[str, str], loops: list[dict[str, Any]]
+) -> list[list[float]]:
     """Extract all known MCIF propagation vectors in reciprocal-lattice units."""
     vectors: list[list[float]] = []
 
@@ -562,7 +568,11 @@ def _extract_moments_from_loops(loops: list[dict[str, Any]]) -> list[dict[str, A
             if x is None or y is None or z is None:
                 continue
 
-            label = str(row.get(label_key, f"moment_{row_index}")) if label_key else f"moment_{row_index}"
+            label = (
+                str(row.get(label_key, f"moment_{row_index}"))
+                if label_key
+                else f"moment_{row_index}"
+            )
             extracted.append(
                 {
                     "label": label,
@@ -601,7 +611,9 @@ def _find_atom_label_index(atom_labels: list[str], label: str) -> int | None:
         return None
     if label in atom_labels:
         return atom_labels.index(label)
-    prefix_matches = [index for index, candidate in enumerate(atom_labels) if candidate.startswith(f"{label}_")]
+    prefix_matches = [
+        index for index, candidate in enumerate(atom_labels) if candidate.startswith(f"{label}_")
+    ]
     if len(prefix_matches) == 1:
         return prefix_matches[0]
     return None
@@ -670,7 +682,10 @@ def _dedupe_strings(values: list[str]) -> list[str]:
 def _dedupe_vectors(vectors: list[list[float]]) -> list[list[float]]:
     out: list[list[float]] = []
     for vector in vectors:
-        if any(all(abs(float(a) - float(b)) <= 1e-12 for a, b in zip(vector, existing, strict=True)) for existing in out):
+        if any(
+            all(abs(float(a) - float(b)) <= 1e-12 for a, b in zip(vector, existing, strict=True))
+            for existing in out
+        ):
             continue
         out.append([float(value) for value in vector])
     return out

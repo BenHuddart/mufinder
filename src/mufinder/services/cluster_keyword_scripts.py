@@ -137,7 +137,9 @@ class JobTemplatePlan:
         return tuple(lines)
 
 
-def job_template_plan(config: ClusterConfig, *, working_directory: str = "") -> JobTemplatePlan | None:
+def job_template_plan(
+    config: ClusterConfig, *, working_directory: str = ""
+) -> JobTemplatePlan | None:
     """Read the cluster's job template, or return ``None`` if it has none.
 
     The run line is the last command that mentions ``$castep_command`` or
@@ -160,7 +162,8 @@ def job_template_plan(config: ClusterConfig, *, working_directory: str = "") -> 
         (
             index
             for index in range(len(raw_lines) - 1, -1, -1)
-            if not raw_lines[index].lstrip().startswith("#") and _TEMPLATE_RUN_LINE_RE.search(raw_lines[index])
+            if not raw_lines[index].lstrip().startswith("#")
+            and _TEMPLATE_RUN_LINE_RE.search(raw_lines[index])
         ),
         None,
     )
@@ -278,7 +281,9 @@ def help_loop_command(
         query_timeout=_QUERY_TIMEOUT_SECONDS,
         openmpi_settings=" ".join(f"{name}={value}" for name, value in _OPENMPI_LOCAL_SETTINGS),
         castep=castep_command,
-        timing=render_shell_template("help_loop_timing.sh", castep=castep_command) if record_timing else "",
+        timing=render_shell_template("help_loop_timing.sh", castep=castep_command)
+        if record_timing
+        else "",
         parallel_default=_DEFAULT_PARALLEL_QUERIES,
         keywords=source,
         guard="" if command_applies_guard else "$mufinder_guard ",
@@ -320,7 +325,9 @@ def _job_help_loop_script() -> str:
         mpi_job_environment_re=shlex.quote(_MPI_JOB_ENVIRONMENT_RE),
         version_begin=VERSION_BEGIN_MARKER,
         version_end=VERSION_END_MARKER,
-        help_loop=help_loop_command("mufinder_castep", record_timing=True, command_applies_guard=True),
+        help_loop=help_loop_command(
+            "mufinder_castep", record_timing=True, command_applies_guard=True
+        ),
         dump_complete=DUMP_COMPLETE_MARKER,
     )
 

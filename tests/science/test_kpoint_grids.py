@@ -148,9 +148,7 @@ def test_supercell_lattice_vectors_rejects_wrong_lattice_vector_count() -> None:
 def test_supercell_lattice_vectors_rejects_wrong_lattice_component_count() -> None:
     identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
     with pytest.raises(ValueError, match="three components"):
-        supercell_lattice_vectors(
-            [[4.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]], identity
-        )
+        supercell_lattice_vectors([[4.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]], identity)
 
 
 # Spacing to grid (CASTEP's floor + 1 formula)
@@ -222,7 +220,7 @@ def test_generate_kpoint_grids_emits_only_castep_reachable_grids() -> None:
     grids = generate_kpoint_grids(lattice, 0.02)
 
     magnitudes = tuple(
-        _math.sqrt(sum(component ** 2 for component in vector))
+        _math.sqrt(sum(component**2 for component in vector))
         for vector in reciprocal_lattice_vectors(lattice)
     )
     two_pi = 2.0 * _math.pi
@@ -230,9 +228,7 @@ def test_generate_kpoint_grids_emits_only_castep_reachable_grids() -> None:
     for grid in grids:
         lo = max(magnitude / (two_pi * n) for magnitude, n in zip(magnitudes, grid))
         hi_candidates = [
-            magnitude / (two_pi * (n - 1))
-            for magnitude, n in zip(magnitudes, grid)
-            if n > 1
+            magnitude / (two_pi * (n - 1)) for magnitude, n in zip(magnitudes, grid) if n > 1
         ]
         hi = min(hi_candidates) if hi_candidates else _math.inf
         assert lo < hi, f"grid {grid} not reachable from any CASTEP spacing"
@@ -330,7 +326,7 @@ def test_spacing_from_grid_strictly_decreasing_along_castep_reachable_sweep() ->
     for i in range(1, len(spacings)):
         assert spacings[i] < spacings[i - 1], (
             f"spacing not strictly decreasing: {reachable_grids[i]} gives {spacings[i]:.6f} "
-            f"but {reachable_grids[i-1]} gives {spacings[i-1]:.6f}"
+            f"but {reachable_grids[i - 1]} gives {spacings[i - 1]:.6f}"
         )
 
 

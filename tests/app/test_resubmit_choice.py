@@ -84,7 +84,10 @@ def test_cause_summary_counts_each_cause() -> None:
         ([FOUND], "The job has a checkpoint to resume from."),
         ([FOUND, FOUND], "Every job has a checkpoint to resume from."),
         ([ABSENT], "No checkpoint was found, so the run will start from its initial structure."),
-        ([ABSENT, ABSENT], "No checkpoints were found, so the runs will start from their initial structures."),
+        (
+            [ABSENT, ABSENT],
+            "No checkpoints were found, so the runs will start from their initial structures.",
+        ),
         (
             [UNAVAILABLE],
             "Checkpoints could not be checked; a run without one starts from its initial structure.",
@@ -96,7 +99,9 @@ def test_cause_summary_counts_each_cause() -> None:
     ],
 )
 def test_checkpoint_summary(checkpoints: list[CheckpointProbeStatus], expected: str) -> None:
-    candidates = [_candidate(FailureReason.WALLTIME, checkpoint=checkpoint) for checkpoint in checkpoints]
+    candidates = [
+        _candidate(FailureReason.WALLTIME, checkpoint=checkpoint) for checkpoint in checkpoints
+    ]
 
     assert checkpoint_summary(candidates) == expected
 
@@ -157,7 +162,9 @@ def _record_cluster_submissions(monkeypatch: pytest.MonkeyPatch, window: MainWin
     return calls
 
 
-def _fake_choice_dialog(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, mode: ResubmitMode) -> list:
+def _fake_choice_dialog(
+    monkeypatch: pytest.MonkeyPatch, *, accepted: bool, mode: ResubmitMode
+) -> list:
     shown: list = []
 
     class _FakeDialog:
@@ -174,7 +181,9 @@ def _fake_choice_dialog(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, mode
     return shown
 
 
-def test_resubmitting_only_other_jobs_asks_nothing(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resubmitting_only_other_jobs_asks_nothing(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window, jobs = _window_with_jobs(tmp_path, [("conv_300", WorkflowStage.CONVERGENCE_CUTOFF)])
     shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.START_AGAIN)
     calls = _record_cluster_submissions(monkeypatch, window)
@@ -186,7 +195,9 @@ def test_resubmitting_only_other_jobs_asks_nothing(qapp, tmp_path: Path, monkeyp
     window.close()
 
 
-def test_start_again_marks_only_the_relaxations(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_again_marks_only_the_relaxations(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window, jobs = _window_with_jobs(
         tmp_path,
         [
@@ -221,7 +232,9 @@ def test_continue_resubmits_in_place(qapp, tmp_path: Path, monkeypatch: pytest.M
     window.close()
 
 
-def test_cancelling_the_choice_resubmits_nothing(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cancelling_the_choice_resubmits_nothing(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
     _fake_choice_dialog(monkeypatch, accepted=False, mode=ResubmitMode.START_AGAIN)
     calls = _record_cluster_submissions(monkeypatch, window)
@@ -266,7 +279,10 @@ def test_local_checkpoint_probe(qapp, tmp_path: Path) -> None:
 def test_walltime_tooltip_offers_the_choice_for_relaxations(qapp, tmp_path: Path) -> None:
     window, jobs = _window_with_jobs(
         tmp_path,
-        [("relax_a", WorkflowStage.MUON_RELAXATION), ("conv_300", WorkflowStage.CONVERGENCE_CUTOFF)],
+        [
+            ("relax_a", WorkflowStage.MUON_RELAXATION),
+            ("conv_300", WorkflowStage.CONVERGENCE_CUTOFF),
+        ],
     )
 
     assert window._failure_tooltip(jobs[0]).endswith(MainWindow._RELAXATION_WALLTIME_NEXT_STEP)

@@ -286,7 +286,9 @@ class ComparisonTableWidget(QWidget):
 
         deltas = [abs(value - experimental_value) for _item, value in comparable]
         best_delta = min(deltas)
-        best_indices = [index for index, delta in enumerate(deltas) if abs(delta - best_delta) <= 1e-12]
+        best_indices = [
+            index for index, delta in enumerate(deltas) if abs(delta - best_delta) <= 1e-12
+        ]
         if len(best_indices) != 1:
             return
 

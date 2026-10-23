@@ -51,7 +51,9 @@ def _marked_help(names: list[str], *, failing: frozenset[str] = frozenset()) -> 
             body, status = "mpirun: could not start castep.mpi", 1
         else:
             body, status = help_keyword_text(name), 0
-        chunks.append(f"@@MUFINDER_HELP_BEGIN {name}@@\n{body}\n@@MUFINDER_HELP_END {name} {status}@@\n")
+        chunks.append(
+            f"@@MUFINDER_HELP_BEGIN {name}@@\n{body}\n@@MUFINDER_HELP_END {name} {status}@@\n"
+        )
     return "".join(chunks)
 
 
@@ -240,7 +242,9 @@ def _use_scheduler(monkeypatch: pytest.MonkeyPatch, scheduler: _Scheduler) -> No
 
 
 def test_validate_reports_missing_core_fields() -> None:
-    issues = validate_cluster_keyword_config(ClusterConfig(name="Empty", hostname="", username="", castep_executable=""))
+    issues = validate_cluster_keyword_config(
+        ClusterConfig(name="Empty", hostname="", username="", castep_executable="")
+    )
 
     assert "Cluster hostname is required." in issues
     assert "Cluster username is required." in issues
@@ -273,7 +277,9 @@ def test_generate_raises_on_validation_issues(tmp_path: Path) -> None:
 
 def test_generate_rejects_non_json_output_path(tmp_path: Path) -> None:
     with pytest.raises(ClusterKeywordGenerationError, match="must end with .json"):
-        generate_cluster_castep_keywords_json(config=_direct_config(), output_path=tmp_path / "keywords.txt")
+        generate_cluster_castep_keywords_json(
+            config=_direct_config(), output_path=tmp_path / "keywords.txt"
+        )
 
 
 # --- direct mode --------------------------------------------------------------
@@ -327,7 +333,9 @@ def test_direct_mode_batches_help_calls_into_a_few_round_trips(
     assert [path.name for path in output_path.parent.iterdir()] == ["castep_keywords.json"]
 
 
-def test_direct_mode_applies_launcher_and_shell_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_mode_applies_launcher_and_shell_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(generator_module, "SSHConnection", _DirectSSH)
     monkeypatch.setattr(_DirectSSH, "failing", frozenset())
     monkeypatch.setattr(generator_module, "_effective_keyword_mode", lambda _config: "direct")
@@ -337,9 +345,14 @@ def test_direct_mode_applies_launcher_and_shell_init(tmp_path: Path, monkeypatch
         output_path=tmp_path / "castep_keywords.json",
     )
 
-    loop_command = next(command for command in _DirectSSH.last.commands if _LOOP_NAMES_RE.search(command))
+    loop_command = next(
+        command for command in _DirectSSH.last.commands if _LOOP_NAMES_RE.search(command)
+    )
     assert "module load CASTEP" in loop_command
-    assert 'mpirun -np 1 castep.mpi -help "$keyword" > "$mufinder_scratch/$keyword.out" 2>&1 || status=$?' in loop_command
+    assert (
+        'mpirun -np 1 castep.mpi -help "$keyword" > "$mufinder_scratch/$keyword.out" 2>&1 || status=$?'
+        in loop_command
+    )
 
 
 def test_direct_mode_refuses_to_write_an_incomplete_catalog(
@@ -349,7 +362,9 @@ def test_direct_mode_refuses_to_write_an_incomplete_catalog(
     """A run that lost most of its -help calls must not replace a good catalog."""
 
     monkeypatch.setattr(generator_module, "SSHConnection", _DirectSSH)
-    monkeypatch.setattr(_DirectSSH, "failing", frozenset(name for name in _ALL_NAMES if "FILLER" in name))
+    monkeypatch.setattr(
+        _DirectSSH, "failing", frozenset(name for name in _ALL_NAMES if "FILLER" in name)
+    )
     output_path = tmp_path / "castep_keywords.json"
     output_path.write_text("existing catalog", encoding="utf-8")
 
@@ -358,12 +373,17 @@ def test_direct_mode_refuses_to_write_an_incomplete_catalog(
 
     message = str(excinfo.value)
     assert "CASTEP on Redwood described only 6 of 211 keywords" in message
-    assert "First failing query:\ncastep -help CELL_FILLER_0:\nmpirun: could not start castep.mpi" in message
+    assert (
+        "First failing query:\ncastep -help CELL_FILLER_0:\nmpirun: could not start castep.mpi"
+        in message
+    )
     assert output_path.read_text(encoding="utf-8") == "existing catalog"
     assert _DirectSSH.last.disconnected is True
 
 
-def test_direct_mode_tolerates_a_few_failed_help_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_mode_tolerates_a_few_failed_help_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(generator_module, "SSHConnection", _DirectSSH)
     monkeypatch.setattr(_DirectSSH, "failing", frozenset({"CELL_FILLER_3", "PARAM_FILLER_7"}))
     output_path = tmp_path / "castep_keywords.json"
@@ -376,15 +396,21 @@ def test_direct_mode_tolerates_a_few_failed_help_calls(tmp_path: Path, monkeypat
     assert len(payload["cell"]) + len(payload["param"]) == 209
 
 
-def test_direct_mode_raises_when_castep_lists_no_keywords(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_mode_raises_when_castep_lists_no_keywords(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(generator_module, "SSHConnection", _DirectSSH)
     monkeypatch.setattr(_DirectSSH, "help_all", "no keywords here\n")
 
     with pytest.raises(ClusterKeywordGenerationError, match="did not contain any keywords"):
-        generate_cluster_castep_keywords_json(config=_direct_config(), output_path=tmp_path / "castep_keywords.json")
+        generate_cluster_castep_keywords_json(
+            config=_direct_config(), output_path=tmp_path / "castep_keywords.json"
+        )
 
 
-def test_direct_mode_surfaces_remote_command_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_mode_surfaces_remote_command_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class _BrokenSSH(_DirectSSH):
         def exec_command(self, command: str, timeout: int = 30):
             return 127, "", "castep.mpi: command not found"
@@ -392,10 +418,14 @@ def test_direct_mode_surfaces_remote_command_failure(tmp_path: Path, monkeypatch
     monkeypatch.setattr(generator_module, "SSHConnection", _BrokenSSH)
 
     with pytest.raises(ClusterKeywordGenerationError, match="castep.mpi: command not found"):
-        generate_cluster_castep_keywords_json(config=_direct_config(), output_path=tmp_path / "castep_keywords.json")
+        generate_cluster_castep_keywords_json(
+            config=_direct_config(), output_path=tmp_path / "castep_keywords.json"
+        )
 
 
-def test_direct_mode_cancel_between_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_mode_cancel_between_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(generator_module, "SSHConnection", _DirectSSH)
     monkeypatch.setattr(_DirectSSH, "failing", frozenset())
     output_path = tmp_path / "castep_keywords.json"
@@ -414,7 +444,9 @@ def test_direct_mode_cancel_between_batches(tmp_path: Path, monkeypatch: pytest.
     assert _DirectSSH.last.disconnected is True
 
 
-def test_jump_host_connection_uses_full_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_jump_host_connection_uses_full_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen: list[object] = []
 
     class _JumpSSH(_DirectSSH):
@@ -467,8 +499,14 @@ def test_scheduler_mode_parses_the_remote_dump_and_cleans_up(
         "#!/bin/bash\n\n#SBATCH -J mufinder-keywords\n#SBATCH -n 1\n#SBATCH -p scarf\n#SBATCH -t 01:00:00\n\n"
         "module load CASTEP\n"
     )
-    assert "mufinder_try 'a single job step' srun -n 1 bash mufinder_help_loop.sh castep.mpi; then" in runner
-    assert "mufinder_try 'the launcher for every query' env MUFINDER_PARALLEL=1 bash mufinder_help_loop.sh srun -n 1" in runner
+    assert (
+        "mufinder_try 'a single job step' srun -n 1 bash mufinder_help_loop.sh castep.mpi; then"
+        in runner
+    )
+    assert (
+        "mufinder_try 'the launcher for every query' env MUFINDER_PARALLEL=1 bash mufinder_help_loop.sh srun -n 1"
+        in runner
+    )
     assert "srun -n 1 castep.mpi keywords" not in runner
     assert "python" not in runner.lower()
     # Nothing but the runner script is uploaded.
@@ -538,7 +576,9 @@ def test_scheduler_keyword_job_keeps_a_template_partition(
     assert "devel" not in runner
 
 
-@pytest.mark.parametrize("grep_result", [(1, "0\n", ""), (2, "", "No such file"), (0, "garbage", "")])
+@pytest.mark.parametrize(
+    "grep_result", [(1, "0\n", ""), (2, "", "No such file"), (0, "garbage", "")]
+)
 def test_running_job_progress_detail_is_best_effort(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -559,7 +599,9 @@ def test_running_job_progress_detail_is_best_effort(
     assert "Keyword job 42 is running..." in progress
 
 
-def test_scheduler_polling_backs_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+def test_scheduler_polling_backs_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]
+) -> None:
     scheduler = _Scheduler([JobStatus.QUEUED] * 6, dump=_scheduler_dump(_ALL_NAMES))
     _use_scheduler(monkeypatch, scheduler)
 
@@ -636,14 +678,21 @@ def test_scheduler_mode_reports_a_truncated_dump(
     ssh = _SchedulerSSH.last
     working_dir = scheduler.submit_requests[0].working_dir
     assert ssh.deleted == []
-    assert f"The job's files were left in {working_dir} on SCARF for inspection (scheduler job 42)." in message
+    assert (
+        f"The job's files were left in {working_dir} on SCARF for inspection (scheduler job 42)."
+        in message
+    )
     assert ssh.disconnected is True
 
 
-def test_scheduler_mode_reports_missing_dump(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep) -> None:
+def test_scheduler_mode_reports_missing_dump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep
+) -> None:
     _use_scheduler(monkeypatch, _Scheduler())
 
-    with pytest.raises(ClusterKeywordGenerationError, match="ended before it had described every keyword"):
+    with pytest.raises(
+        ClusterKeywordGenerationError, match="ended before it had described every keyword"
+    ):
         generate_cluster_castep_keywords_json(
             config=_scheduler_config(),
             output_path=tmp_path / "castep_keywords.json",
@@ -670,7 +719,9 @@ def test_scheduler_mode_explains_a_castep_that_never_started(
         )
 
     message = str(excinfo.value)
-    assert message.startswith("CASTEP on SCARF did not list any keywords, so no keyword catalog was written.")
+    assert message.startswith(
+        "CASTEP on SCARF did not list any keywords, so no keyword catalog was written."
+    )
     assert "usually means CASTEP could not start" in message
     assert "0 of 0" not in message
     assert "--- keyword_help.txt ---\n*** An error occurred in MPI_Init" in message
@@ -690,7 +741,10 @@ _ADDQUEUE_SCENARIOS = {
     # works, so the proven path takes over: one launch per query.
     "standalone_fails": {
         "may_start": 'in_job && [ -n "$DIRECT" ]',
-        "tried": ["standalone CASTEP processes inside one launcher", "the launcher for every query"],
+        "tried": [
+            "standalone CASTEP processes inside one launcher",
+            "the launcher for every query",
+        ],
         # The container, then 211 queries, the listing, the version and the timed query.
         "launches": 215,
     },
@@ -699,7 +753,9 @@ _ADDQUEUE_SCENARIOS = {
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the scheduler runner is a POSIX shell script")
 @pytest.mark.parametrize("scenario", sorted(_ADDQUEUE_SCENARIOS))
-def test_addqueue_job_never_starts_castep_bare_in_the_job_step(tmp_path: Path, monkeypatch, scenario: str) -> None:
+def test_addqueue_job_never_starts_castep_bare_in_the_job_step(
+    tmp_path: Path, monkeypatch, scenario: str
+) -> None:
     """Inside addqueue's job step a failed bare start would cancel the whole job."""
 
     spec = _ADDQUEUE_SCENARIOS[scenario]
@@ -713,7 +769,7 @@ def test_addqueue_job_never_starts_castep_bare_in_the_job_step(tmp_path: Path, m
         'in_job() { [ -n "$PMIX_NAMESPACE" ] || [ -n "$SLURM_STEP_ID" ]; }\n'
         # Started straight from the job script, without any launcher.
         f'if [ -z "$UNDER_LAUNCHER" ]; then echo bare >> {str(bare_starts)!r}; exit 1; fi\n'
-        f"if {spec['may_start']}; then exec {str(real)!r} \"$@\"; fi\n"
+        f'if {spec["may_start"]}; then exec {str(real)!r} "$@"; fi\n'
         'echo "MPI_Init failed" >&2; exit 1\n',
         encoding="utf-8",
     )
@@ -747,7 +803,11 @@ def test_addqueue_job_never_starts_castep_bare_in_the_job_step(tmp_path: Path, m
     _assert_complete_dump(dump)
     assert not bare_starts.exists()
     job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8")
-    tried = [line.removeprefix("mufinder: trying ") for line in job_log.splitlines() if line.startswith("mufinder: trying ")]
+    tried = [
+        line.removeprefix("mufinder: trying ")
+        for line in job_log.splitlines()
+        if line.startswith("mufinder: trying ")
+    ]
     assert tried == spec["tried"]
     assert len(log.read_text(encoding="utf-8").splitlines()) == spec["launches"]
 
@@ -771,12 +831,23 @@ def test_mpi_job_environment_pattern_selects_only_job_bound_variables() -> None:
         assert pattern.match(name), name
     # The allocation itself, the user's environment and the site's transport
     # choice (Redwood sets OMPI_MCA_pml) must survive.
-    for name in ("SLURM_JOB_ID", "SLURM_JOB_NODELIST", "PATH", "LD_LIBRARY_PATH", "OMPI_MCA_pml", "OMPI_MCA_btl"):
+    for name in (
+        "SLURM_JOB_ID",
+        "SLURM_JOB_NODELIST",
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "OMPI_MCA_pml",
+        "OMPI_MCA_btl",
+    ):
         assert not pattern.match(name), name
 
 
-def test_scheduler_failed_state_raises_with_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep) -> None:
-    scheduler = _Scheduler([JobStatus.FAILED], log=b"castep.mpi: error while loading shared libraries\n")
+def test_scheduler_failed_state_raises_with_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep
+) -> None:
+    scheduler = _Scheduler(
+        [JobStatus.FAILED], log=b"castep.mpi: error while loading shared libraries\n"
+    )
     _use_scheduler(monkeypatch, scheduler)
 
     with pytest.raises(ClusterKeywordGenerationError) as excinfo:
@@ -827,7 +898,9 @@ def test_failure_report_quotes_the_scheduler_output_files(
     class _SchedulerWithOutput(_Scheduler):
         def submit(self, ssh: _SchedulerSSH, request) -> str:
             job_id = super().submit(ssh, request)
-            ssh.remote_files[f"{request.working_dir}/slurm-42.out"] = b"/bin/bash: module: command not found\n"
+            ssh.remote_files[f"{request.working_dir}/slurm-42.out"] = (
+                b"/bin/bash: module: command not found\n"
+            )
             ssh.remote_files[f"{request.working_dir}/empty.err"] = b""
             return job_id
 
@@ -858,7 +931,9 @@ def test_failure_report_survives_an_unlistable_directory(
             raise OSError("sftp session lost")
 
     monkeypatch.setattr(generator_module, "SSHConnection", _NoListSSH)
-    monkeypatch.setattr(generator_module, "create_scheduler", lambda *_args, **_kwargs: _Scheduler())
+    monkeypatch.setattr(
+        generator_module, "create_scheduler", lambda *_args, **_kwargs: _Scheduler()
+    )
 
     with pytest.raises(ClusterKeywordGenerationError, match="The job's files were left in"):
         generate_cluster_castep_keywords_json(
@@ -867,7 +942,9 @@ def test_failure_report_survives_an_unlistable_directory(
         )
 
 
-def test_scheduler_cancelled_state_raises_cancelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep) -> None:
+def test_scheduler_cancelled_state_raises_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_sleep
+) -> None:
     scheduler = _Scheduler([JobStatus.CANCELLED])
     _use_scheduler(monkeypatch, scheduler)
 
@@ -938,7 +1015,7 @@ def _write_fake_castep(directory: Path, *, broken: tuple[str, ...] = ()) -> Path
     executable = directory / "fake castep"  # the space proves the quoting
     executable.write_text(
         "#!/bin/bash\n"
-        f'root={str(directory)!r}\n'
+        f"root={str(directory)!r}\n"
         'if [ "$1" = "--version" ]; then echo " CASTEP version: 25.12 "; exit 0; fi\n'
         'if [ "$2" = "all" ]; then cat "$root/all.txt"; exit 0; fi\n'
         'if [ -f "$root/help/$2.txt" ]; then cat "$root/help/$2.txt"; exit 0; fi\n'
@@ -958,13 +1035,20 @@ def test_help_loop_command_runs_under_real_bash(tmp_path: Path) -> None:
         ["TASK", "LATTICE_CART", "PARAM_FILLER_2"],
     )
 
-    completed = subprocess.run(["/bin/bash", "-c", f"set -e\n{command}"], capture_output=True, text=True, check=True)
+    completed = subprocess.run(
+        ["/bin/bash", "-c", f"set -e\n{command}"], capture_output=True, text=True, check=True
+    )
 
     dump = generator_module._HelpDump(cell={}, param={})
     dump.add(completed.stdout)
     assert dump.requested == 3
     assert dump.param == {
-        "task": {"keyword": "task", "option_type": "String", "level": "Basic", "docstring": "Help for task."}
+        "task": {
+            "keyword": "task",
+            "option_type": "String",
+            "level": "Basic",
+            "docstring": "Help for task.",
+        }
     }
     assert list(dump.cell) == ["lattice_cart"]
     # stderr is folded into the dump so a failing call explains itself.
@@ -989,10 +1073,10 @@ def test_help_loop_runs_queries_side_by_side_and_prints_them_in_order(
         "#!/bin/bash\n"
         'if [ "$1" = "--version" ]; then echo " CASTEP version: 25.12 "; exit 0; fi\n'
         f'echo "$OMPI_MCA_pml/$OMPI_MCA_btl/$OMPI_MCA_mpi_yield_when_idle" >> {str(env_log)!r}\n'
-        f'touch {str(active)!r}/$2\n'
+        f"touch {str(active)!r}/$2\n"
         "sleep 0.3\n"
-        f'ls {str(active)!r} | wc -l >> {str(peak)!r}\n'
-        f'rm {str(active)!r}/$2\n'
+        f"ls {str(active)!r} | wc -l >> {str(peak)!r}\n"
+        f"rm {str(active)!r}/$2\n"
         'echo "help for $2"\n',
         encoding="utf-8",
     )
@@ -1028,7 +1112,11 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
     installed.
     """
 
-    if not subprocess.run(["date", "+%s%N"], capture_output=True, text=True).stdout.strip().isdigit():
+    if (
+        not subprocess.run(["date", "+%s%N"], capture_output=True, text=True)
+        .stdout.strip()
+        .isdigit()
+    ):
         pytest.skip("this platform's date has no nanosecond clock, so the loop does not calibrate")
 
     active = tmp_path / "active"
@@ -1040,12 +1128,12 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
     executable.write_text(
         "#!/bin/bash\n"
         'if [ "$1" = "--version" ]; then echo " CASTEP version: 25.12 "; exit 0; fi\n'
-        f'marker={str(active)!r}/$2\n'
+        f"marker={str(active)!r}/$2\n"
         'touch "$marker"\n'
         # Exit promptly when the loop abandons the group, as a real process would.
         'trap \'rm -f "$marker"; kill "$nap" 2>/dev/null; exit 143\' TERM\n'
         "sleep 0.05 & nap=$!; wait $nap\n"
-        f'busy=$(ls {str(active)!r} | wc -l)\n'
+        f"busy=$(ls {str(active)!r} | wc -l)\n"
         f'echo "$busy" >> {str(peak)!r}\n'
         'sleep "$(awk "BEGIN { print 0.1 * $busy * $busy }")" & nap=$!; wait $nap\n'
         'rm -f "$marker"\n'
@@ -1065,7 +1153,19 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
             (tools / "pkill").chmod(0o755)
             env["PATH"] = f"{tools}:{env['PATH']}"
         else:
-            for name in ("bash", "cat", "date", "sleep", "mktemp", "rm", "ls", "wc", "awk", "touch", "grep"):
+            for name in (
+                "bash",
+                "cat",
+                "date",
+                "sleep",
+                "mktemp",
+                "rm",
+                "ls",
+                "wc",
+                "awk",
+                "touch",
+                "grep",
+            ):
                 (tools / name).symlink_to(shutil.which(name))
             env["PATH"] = str(tools)
 
@@ -1154,7 +1254,10 @@ def test_help_loop_gives_up_on_a_castep_that_stops_responding(tmp_path: Path) ->
     )
 
     assert completed.returncode == 75
-    assert "mufinder: CASTEP stopped responding: 3 queries were cut off after 0.3 s each" in completed.stderr
+    assert (
+        "mufinder: CASTEP stopped responding: 3 queries were cut off after 0.3 s each"
+        in completed.stderr
+    )
     # It stopped after three hung queries instead of working through all forty.
     assert started.read_text(encoding="utf-8").split() == ["KEY_0", "KEY_1", "KEY_2", "KEY_3"]
     statuses = [status for _name, _doc, _tail, status in _sections(completed.stdout)]
@@ -1162,7 +1265,9 @@ def test_help_loop_gives_up_on_a_castep_that_stops_responding(tmp_path: Path) ->
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the scheduler runner is a POSIX shell script")
-def test_scheduler_job_moves_on_from_a_strategy_that_stops_responding(tmp_path: Path, monkeypatch) -> None:
+def test_scheduler_job_moves_on_from_a_strategy_that_stops_responding(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Bare CASTEP passes the probe, then hangs; the launcher path still delivers."""
 
     real = _write_fake_castep(tmp_path / "castep")
@@ -1187,13 +1292,19 @@ def test_scheduler_job_moves_on_from_a_strategy_that_stops_responding(tmp_path: 
         "#!/bin/bash\n#SBATCH -p short\n\nsite_launch -n $num_processes castep.mpi $seed_name\n",
         encoding="utf-8",
     )
-    config = _scheduler_config(castep_executable="castep.mpi", template_script_path=str(template), keyword_shell_init="")
+    config = _scheduler_config(
+        castep_executable="castep.mpi", template_script_path=str(template), keyword_shell_init=""
+    )
 
     _script, dump = _run_scheduler_script(tmp_path, config)
 
     _assert_complete_dump(dump)
     job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8")
-    tried = [line.removeprefix("mufinder: trying ") for line in job_log.splitlines() if line.startswith("mufinder: trying ")]
+    tried = [
+        line.removeprefix("mufinder: trying ")
+        for line in job_log.splitlines()
+        if line.startswith("mufinder: trying ")
+    ]
     assert tried == ["the bare CASTEP executable", "a single job step"]
     # The hung listing was cut off, leaving the bare strategy nothing to describe.
     assert "mufinder: CASTEP listed no keywords" in job_log
@@ -1221,7 +1332,9 @@ def test_fast_start_settings_are_dropped_when_castep_rejects_them(tmp_path: Path
     command = scripts_module.help_loop_command(shlex.quote(str(executable)), ["TASK"])
 
     env = {name: value for name, value in os.environ.items() if not name.startswith("OMPI_MCA_")}
-    subprocess.run(["/bin/bash", "-c", command], capture_output=True, text=True, check=True, env=env)
+    subprocess.run(
+        ["/bin/bash", "-c", command], capture_output=True, text=True, check=True, env=env
+    )
 
     assert env_log.read_text(encoding="utf-8").split() == ["[]"]
 
@@ -1280,7 +1393,9 @@ def _write_timeout(directory: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the scheduler runner is a POSIX shell script")
-def test_scheduler_job_follows_a_template_that_uses_castep_command(tmp_path: Path, monkeypatch) -> None:
+def test_scheduler_job_follows_a_template_that_uses_castep_command(
+    tmp_path: Path, monkeypatch
+) -> None:
     """The job script comes from the cluster's own template, launcher included."""
 
     executable = _write_fake_castep(tmp_path / "castep")
@@ -1321,11 +1436,17 @@ def test_scheduler_job_follows_a_template_that_uses_castep_command(tmp_path: Pat
     # A bare binary answered inside the "allocation", so no job step was
     # started at all.
     assert not launcher_log.exists()
-    job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8").splitlines()
+    job_log = (
+        (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8").splitlines()
+    )
     assert job_log[0] == "mufinder: trying the bare CASTEP executable"
     # The log records what a query costs on the node, for diagnosing a slow run.
-    assert re.fullmatch(r"mufinder: \S+ cpu\(s\) available, Open MPI fast start applied", job_log[1])
-    assert re.fullmatch(r"mufinder: one query took [\d.]+ s \([\d.]+ s user, [\d.]+ s system\)", job_log[2])
+    assert re.fullmatch(
+        r"mufinder: \S+ cpu\(s\) available, Open MPI fast start applied", job_log[1]
+    )
+    assert re.fullmatch(
+        r"mufinder: one query took [\d.]+ s \([\d.]+ s user, [\d.]+ s system\)", job_log[2]
+    )
     # ... and whether running queries side by side paid off on this node.
     assert re.fullmatch(
         # A slow runner can hit the side-by-side time limit, which the script
@@ -1396,7 +1517,7 @@ def test_scheduler_job_uses_the_launcher_as_little_as_the_cluster_allows(
     picky = bin_dir / "castep.mpi"
     picky.write_text(
         "#!/bin/bash\n"
-        f"if {spec['may_start']}; then exec {str(real)!r} \"$@\"; fi\n"
+        f'if {spec["may_start"]}; then exec {str(real)!r} "$@"; fi\n'
         'echo "MPI_Init failed" >&2; exit 1\n',
         encoding="utf-8",
     )
@@ -1435,10 +1556,17 @@ def test_scheduler_job_uses_the_launcher_as_little_as_the_cluster_allows(
     script, dump = _run_scheduler_script(tmp_path, config)
 
     # Launcher and executable are both read off the template's hard-coded line.
-    assert "env MUFINDER_PARALLEL=1 bash mufinder_help_loop.sh site_launch -n 1 castep.mpi || true" in script
+    assert (
+        "env MUFINDER_PARALLEL=1 bash mufinder_help_loop.sh site_launch -n 1 castep.mpi || true"
+        in script
+    )
     _assert_complete_dump(dump)
     job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8")
-    tried = [line.removeprefix("mufinder: trying ") for line in job_log.splitlines() if line.startswith("mufinder: trying ")]
+    tried = [
+        line.removeprefix("mufinder: trying ")
+        for line in job_log.splitlines()
+        if line.startswith("mufinder: trying ")
+    ]
     assert tried == spec["tried"]
     assert len(log.read_text(encoding="utf-8").splitlines()) == spec["launches"]
 
@@ -1492,7 +1620,10 @@ def test_scheduler_job_without_a_usable_template_falls_back_to_a_generic_script(
         keyword_shell_init="",
     )
     script, dump = _run_scheduler_script(tmp_path, config)
-    assert "mufinder_try 'a single job step' srun -n 1 bash mufinder_help_loop.sh castep.mpi; then" in script
+    assert (
+        "mufinder_try 'a single job step' srun -n 1 bash mufinder_help_loop.sh castep.mpi; then"
+        in script
+    )
     _assert_complete_dump(dump)
     job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8")
     assert "mufinder: trying a single job step" in job_log
@@ -1509,14 +1640,19 @@ def test_login_node_setup_is_inferred_from_the_job_template(tmp_path: Path) -> N
     assert plan.setup_lines == ("module load CASTEP",)
     assert scripts_module.login_shell_init(scarf) == "module load CASTEP"
     # On the login node the job launcher is not used.
-    assert scripts_module.build_castep_command_with_launcher(scarf, "-help", "all") == "castep.mpi -help all"
+    assert (
+        scripts_module.build_castep_command_with_launcher(scarf, "-help", "all")
+        == "castep.mpi -help all"
+    )
 
     # An explicit shell init always wins over the inferred one.
     explicit = _scheduler_config(keyword_shell_init="module load CASTEP/25")
     assert scripts_module.login_shell_init(explicit) == "module load CASTEP/25"
 
     # No template at all (addqueue): nothing to infer, the config is used as is.
-    redwood = _direct_config(queue_system="addqueue", castep_executable="/mnt/redwoodfs/muon/castep.mpi")
+    redwood = _direct_config(
+        queue_system="addqueue", castep_executable="/mnt/redwoodfs/muon/castep.mpi"
+    )
     assert scripts_module.job_template_plan(redwood) is None
     assert scripts_module.login_shell_init(redwood) == ""
     assert scripts_module.build_castep_command_with_launcher(redwood, "--version") == (
@@ -1535,7 +1671,9 @@ def test_login_node_setup_is_inferred_from_the_job_template(tmp_path: Path) -> N
         assert plan.setup_lines == ("module load X",)
 
 
-def test_direct_mode_runs_inferred_setup_on_the_login_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_mode_runs_inferred_setup_on_the_login_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(generator_module, "SSHConnection", _DirectSSH)
     monkeypatch.setattr(_DirectSSH, "failing", frozenset())
 
@@ -1573,9 +1711,7 @@ def test_build_shell_command_drops_unset_working_directory_and_shell_init() -> N
     ]
 
 
-_SYNTAX_CHECK_TEMPLATE = (
-    "#!/bin/bash\n#SBATCH -J $job_name\n#SBATCH -A muons\n\nexport SITE_SETUP=1\ncd $working_directory\n$castep_command\n"
-)
+_SYNTAX_CHECK_TEMPLATE = "#!/bin/bash\n#SBATCH -J $job_name\n#SBATCH -A muons\n\nexport SITE_SETUP=1\ncd $working_directory\n$castep_command\n"
 
 
 def _rendered_keyword_scripts(tmp_path: Path) -> dict[str, str]:
@@ -1585,9 +1721,15 @@ def _rendered_keyword_scripts(tmp_path: Path) -> dict[str, str]:
     template.write_text(_SYNTAX_CHECK_TEMPLATE, encoding="utf-8")
     configs = {
         "scarf": _scheduler_config(),
-        "site-template": _scheduler_config(template_script_path=str(template), castep_executable="/opt/it's/castep"),
-        "no-template": _scheduler_config(template_script_path=str(tmp_path / "missing.sh"), keyword_shell_init=""),
-        "addqueue": _scheduler_config(queue_system="addqueue", keyword_shell_init="module load mpi\n"),
+        "site-template": _scheduler_config(
+            template_script_path=str(template), castep_executable="/opt/it's/castep"
+        ),
+        "no-template": _scheduler_config(
+            template_script_path=str(tmp_path / "missing.sh"), keyword_shell_init=""
+        ),
+        "addqueue": _scheduler_config(
+            queue_system="addqueue", keyword_shell_init="module load mpi\n"
+        ),
         "no-launcher": _scheduler_config(queue_system="pbs"),
         "direct": _direct_config(),
         "direct-addqueue": _direct_config(queue_system="addqueue"),
@@ -1680,9 +1822,14 @@ def test_parse_keyword_doc_edge_cases() -> None:
 def test_remote_log_excerpt_skips_markers_and_falls_through_empty_files() -> None:
     ssh = _SchedulerSSH(None)
     ssh.remote_files["/job/log"] = b"\n\n"
-    ssh.remote_files["/job/dump"] = b"@@MUFINDER_VERSION_BEGIN@@\nmpirun: not found\r\n@@MUFINDER_VERSION_END@@\n"
+    ssh.remote_files["/job/dump"] = (
+        b"@@MUFINDER_VERSION_BEGIN@@\nmpirun: not found\r\n@@MUFINDER_VERSION_END@@\n"
+    )
 
-    assert generator_module._remote_log_excerpt(ssh, "/job/missing", "/job/log", "/job/dump") == "mpirun: not found"
+    assert (
+        generator_module._remote_log_excerpt(ssh, "/job/missing", "/job/log", "/job/dump")
+        == "mpirun: not found"
+    )
     assert generator_module._remote_log_excerpt(ssh, "/job/missing") == ""
 
 
@@ -1692,7 +1839,10 @@ def test_keyword_job_walltime_is_short_whatever_the_cluster_default() -> None:
     assert walltime(_scheduler_config(default_walltime="12:00:00")) == "01:00:00"
     assert walltime(_scheduler_config(default_walltime="")) == "01:00:00"
     assert walltime(_scheduler_config(default_walltime="", queue_system="addqueue")) == ""
-    assert walltime(_scheduler_config(default_walltime="02:00:00", queue_system="addqueue")) == "02:00:00"
+    assert (
+        walltime(_scheduler_config(default_walltime="02:00:00", queue_system="addqueue"))
+        == "02:00:00"
+    )
 
 
 def test_keyword_job_walltime_respects_a_shorter_default_queue(tmp_path: Path) -> None:
@@ -1750,7 +1900,9 @@ def _worker(tmp_path: Path) -> tuple[ClusterKeywordGenerationWorker, dict[str, l
     worker.finished.connect(events["finished"].append)
     worker.failed.connect(events["failed"].append)
     worker.cancelled.connect(lambda: events["cancelled"].append(True))
-    worker.progress_changed.connect(lambda message, percent: events["progress"].append((message, percent)))
+    worker.progress_changed.connect(
+        lambda message, percent: events["progress"].append((message, percent))
+    )
     return worker, events
 
 
@@ -1770,7 +1922,9 @@ def test_worker_run_success_emits_finished(tmp_path: Path, monkeypatch: pytest.M
     assert events["failed"] == [] and events["cancelled"] == []
 
 
-def test_worker_run_cancelled_emits_cancelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_run_cancelled_emits_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def fake_generate(*, cancel_check, **_kwargs):
         assert cancel_check() is True
         raise ClusterKeywordGenerationCancelled("cancelled")

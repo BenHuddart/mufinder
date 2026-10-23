@@ -21,7 +21,10 @@ def test_help_menu_follows_view_and_lists_user_guide_then_about(main_window) -> 
 
     assert titles[-1] == "Help"
     assert titles[titles.index("Help") - 1] == "View"
-    assert [action.text() for action in _help_actions(main_window)] == ["User Guide", "About MuFinder"]
+    assert [action.text() for action in _help_actions(main_window)] == [
+        "User Guide",
+        "About MuFinder",
+    ]
 
 
 def test_user_guide_opens_documentation_url_in_system_browser(main_window, monkeypatch) -> None:

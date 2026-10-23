@@ -62,4 +62,7 @@ def test_boundary_images_add_far_faces_for_corner_and_face_atoms() -> None:
 
 
 def test_boundary_images_wrap_positions_into_the_cell_first() -> None:
-    assert sorted(periodic_boundary_images([1.25, -0.5, 0.9999999])) == [[0.25, 0.5, 0.0], [0.25, 0.5, 1.0]]
+    assert sorted(periodic_boundary_images([1.25, -0.5, 0.9999999])) == [
+        [0.25, 0.5, 0.0],
+        [0.25, 0.5, 1.0],
+    ]

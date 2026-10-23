@@ -22,7 +22,10 @@ from mufinder.services.project_summary import (
     structure_formula,
     summarize_project,
 )
-from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
+from mufinder.workflow.energy_barriers import (
+    NUDGED_ELASTIC_BAND_CALC_TYPE,
+    TRANSITION_STATE_SEARCH_CALC_TYPE,
+)
 from tests.support.project_home import muon_project, perovskite_host
 from tests.support.structures import host_structure
 
@@ -55,8 +58,13 @@ def test_downstream_stages_require_the_distinct_sites_from_analysis() -> None:
         if dependency.kind == DependencyKind.REQUIRED
     }
 
-    assert {("muon_analysis", target) for target in ("magnetic_fields", "quantum_corrections", "energy_barriers")} <= required
-    uep_to_fields = next(d for d in STAGE_DEPENDENCIES if (d.source, d.target) == ("uep", "magnetic_fields"))
+    assert {
+        ("muon_analysis", target)
+        for target in ("magnetic_fields", "quantum_corrections", "energy_barriers")
+    } <= required
+    uep_to_fields = next(
+        d for d in STAGE_DEPENDENCIES if (d.source, d.target) == ("uep", "magnetic_fields")
+    )
     assert uep_to_fields.kind == DependencyKind.OPTIONAL
 
 
@@ -142,7 +150,9 @@ def test_relaxations_complete_once_every_row_converged(tmp_path: Path) -> None:
     project.running_job.status = JobStatus.COMPLETED
 
     assert muon_relaxations_complete(project.document) is True
-    assert summarize_project(project.document).stage("muon_relaxations").status == StageStatus.COMPLETE
+    assert (
+        summarize_project(project.document).stage("muon_relaxations").status == StageStatus.COMPLETE
+    )
 
 
 def test_saved_stage_is_shown_first_and_an_unknown_one_is_ignored(tmp_path: Path) -> None:
@@ -157,10 +167,16 @@ def test_saved_stage_is_shown_first_and_an_unknown_one_is_ignored(tmp_path: Path
 
 def test_barrier_facts_count_neb_results(tmp_path: Path) -> None:
     document = _empty_project(tmp_path)
-    job = Job(workflow_stage=WorkflowStage.ENERGY_BARRIERS, calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE, status=JobStatus.COMPLETED)
+    job = Job(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+        status=JobStatus.COMPLETED,
+    )
     document.jobs[job.id] = job
     for height in (0.42, 0.18):
-        result = Result(result_type=NUDGED_ELASTIC_BAND_CALC_TYPE, data={"barrier_height_eV": height})
+        result = Result(
+            result_type=NUDGED_ELASTIC_BAND_CALC_TYPE, data={"barrier_height_eV": height}
+        )
         document.results[result.id] = result
 
     barriers = summarize_project(document).stage("energy_barriers")
@@ -171,7 +187,9 @@ def test_barrier_facts_count_neb_results(tmp_path: Path) -> None:
 def test_energy_barriers_complete_once_an_neb_result_exists(tmp_path: Path) -> None:
     document = _empty_project(tmp_path)
     assert energy_barriers_complete(document) is False
-    assert summarize_project(document).stage("energy_barriers").facts == ("No barrier calculations yet",)
+    assert summarize_project(document).stage("energy_barriers").facts == (
+        "No barrier calculations yet",
+    )
 
     result = Result(result_type=NUDGED_ELASTIC_BAND_CALC_TYPE, data={"barrier_height_eV": 0.3})
     document.results[result.id] = result

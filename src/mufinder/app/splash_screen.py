@@ -5,7 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QGuiApplication, QLinearGradient, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QLinearGradient,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QSplashScreen
 
 from mufinder.app.theme import ensure_fonts_loaded
@@ -60,7 +70,9 @@ class MuFinderSplashScreen(QSplashScreen):
 
         logo_scaled = self._scaled_logo(dpr)
         if logo_scaled is not None:
-            logo_x = (self._WIDTH - int(logo_scaled.width() / max(0.1, logo_scaled.devicePixelRatio()))) // 2
+            logo_x = (
+                self._WIDTH - int(logo_scaled.width() / max(0.1, logo_scaled.devicePixelRatio()))
+            ) // 2
             painter.drawPixmap(logo_x, 50, logo_scaled)
 
         title_font = QFont(self._title_font_family)
@@ -76,7 +88,9 @@ class MuFinderSplashScreen(QSplashScreen):
         subtitle_font.setPixelSize(12)
         painter.setFont(subtitle_font)
         painter.setPen(QPen(QColor("#7A6B59")))
-        painter.drawText(0, 246, self._WIDTH, 24, int(Qt.AlignmentFlag.AlignHCenter), "Preparing your expedition")
+        painter.drawText(
+            0, 246, self._WIDTH, 24, int(Qt.AlignmentFlag.AlignHCenter), "Preparing your expedition"
+        )
 
         bar_x = 84
         bar_y = 294
@@ -88,7 +102,9 @@ class MuFinderSplashScreen(QSplashScreen):
 
         fill_w = int((bar_w - 2) * (self._progress / 100.0))
         painter.setPen(QPen(QColor("#2C2418"), 2))
-        painter.drawLine(bar_x + 1, bar_y + (bar_h // 2), bar_x + max(1, fill_w), bar_y + (bar_h // 2))
+        painter.drawLine(
+            bar_x + 1, bar_y + (bar_h // 2), bar_x + max(1, fill_w), bar_y + (bar_h // 2)
+        )
 
         message_font = QFont(self._body_font_family)
         message_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)

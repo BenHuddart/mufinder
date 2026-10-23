@@ -200,7 +200,9 @@ def test_slurm_state_mapping() -> None:
     assert scheduler.is_terminal("running") is False
 
 
-@pytest.mark.parametrize("state", ["CF", "S", "ST", "RH", "RQ", "RF", "RD", "SE", "SUSPENDED", "REQUEUE_HOLD"])
+@pytest.mark.parametrize(
+    "state", ["CF", "S", "ST", "RH", "RQ", "RF", "RD", "SE", "SUSPENDED", "REQUEUE_HOLD"]
+)
 def test_slurm_waiting_and_held_states_map_to_queued(state: str) -> None:
     scheduler = SlurmScheduler()
 
@@ -216,7 +218,9 @@ def test_slurm_executing_states_map_to_running(state: str) -> None:
     assert scheduler.is_terminal(state) is False
 
 
-@pytest.mark.parametrize("state", ["BF", "DL", "PR", "RV", "BOOT_FAIL", "PREEMPTED", "OUT_OF_MEMORY"])
+@pytest.mark.parametrize(
+    "state", ["BF", "DL", "PR", "RV", "BOOT_FAIL", "PREEMPTED", "OUT_OF_MEMORY"]
+)
 def test_slurm_terminal_failure_states_map_to_failed(state: str) -> None:
     scheduler = SlurmScheduler()
 
@@ -342,7 +346,9 @@ def test_scheduler_command_resolution_uses_probe_then_fallback() -> None:
 def test_scheduler_command_resolution_delegates_to_the_connection_once() -> None:
     class _ResolvingSSH(_FakeSSH):
         def __init__(self) -> None:
-            super().__init__([(0, "Submitted batch job 1\n", ""), (0, "Submitted batch job 2\n", "")])
+            super().__init__(
+                [(0, "Submitted batch job 1\n", ""), (0, "Submitted batch job 2\n", "")]
+            )
             self.resolved: list[tuple[str, str]] = []
 
         def resolve_command_path(self, command_name: str, configured: str) -> str:
@@ -381,7 +387,15 @@ def test_create_scheduler_factory() -> None:
 
 @pytest.mark.parametrize(
     ("state", "name"),
-    [("OOM", "OUT_OF_MEMORY"), ("TO", "TIMEOUT"), ("NF", "NODE_FAIL"), ("F", "FAILED"), ("timeout", "TIMEOUT"), ("BF", "BOOT_FAIL"), ("XX", "XX")],
+    [
+        ("OOM", "OUT_OF_MEMORY"),
+        ("TO", "TIMEOUT"),
+        ("NF", "NODE_FAIL"),
+        ("F", "FAILED"),
+        ("timeout", "TIMEOUT"),
+        ("BF", "BOOT_FAIL"),
+        ("XX", "XX"),
+    ],
 )
 def test_slurm_state_name_expands_short_codes(state: str, name: str) -> None:
     assert SlurmScheduler().state_name(state) == name

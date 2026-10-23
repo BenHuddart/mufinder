@@ -22,7 +22,9 @@ from tests.support.qt import find_tree_item_by_route
 from tests.support.structures import QUARTER_DIAGONAL, host_structure
 
 
-_host_structure = partial(host_structure, positions=QUARTER_DIAGONAL, properties={"atomic_spins": [2.0, -2.0]})
+_host_structure = partial(
+    host_structure, positions=QUARTER_DIAGONAL, properties={"atomic_spins": [2.0, -2.0]}
+)
 
 
 def test_main_window_workflow_tree_contains_uep_stage(main_window, tmp_path: Path) -> None:
@@ -56,13 +58,19 @@ def test_main_window_on_uep_configured_registers_definition(main_window, tmp_pat
         )
     )
 
-    definitions = [definition for definition in doc.calculations.values() if definition.workflow_stage == WorkflowStage.UEP]
+    definitions = [
+        definition
+        for definition in doc.calculations.values()
+        if definition.workflow_stage == WorkflowStage.UEP
+    ]
     assert len(definitions) == 1
     assert definitions[0].calc_type == "castep_uep_source"
     assert definitions[0].input_structure_ids == [host.id]
 
 
-def test_main_window_local_finish_uep_source_marks_density_available(main_window, tmp_path: Path) -> None:
+def test_main_window_local_finish_uep_source_marks_density_available(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_finish.mufinder", "UEPFinish")
@@ -100,7 +108,9 @@ def test_main_window_local_finish_uep_source_marks_density_available(main_window
     assert any(path.endswith(f"{job.label}.den_fmt") for path in result.output_files)
 
 
-def test_main_window_open_uep_analysis_launches_dialog(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_window_open_uep_analysis_launches_dialog(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_launch.mufinder", "UEPLaunch")
@@ -111,7 +121,10 @@ def test_main_window_open_uep_analysis_launches_dialog(main_window, tmp_path: Pa
     definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
@@ -193,7 +206,10 @@ def _completed_uep_job_with_grid(window: MainWindow, tmp_path: Path):
     definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
@@ -260,7 +276,9 @@ def _capture_uep_analysis_dialog(monkeypatch: pytest.MonkeyPatch) -> dict[str, o
     return captured
 
 
-def test_main_window_open_uep_analysis_loads_persisted_potential_grid(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_window_open_uep_analysis_loads_persisted_potential_grid(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     doc, _job, run, grid = _completed_uep_job_with_grid(window, tmp_path)
     result = Result(
@@ -292,13 +310,17 @@ def test_main_window_open_uep_analysis_moves_legacy_state_grid_into_result(
             data=payload,
         )
         doc.results[existing.id] = existing
-    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {str(job.id): {"gw_factor": 5.0, "potential_grid": payload}}
+    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {
+        str(job.id): {"gw_factor": 5.0, "potential_grid": payload}
+    }
     captured = _capture_uep_analysis_dialog(monkeypatch)
 
     window._on_open_uep_analysis_requested("row_1")
 
     grid_results = [
-        result for result in doc.results.values() if result.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
+        result
+        for result in doc.results.values()
+        if result.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
     ]
     assert len(grid_results) == 1
     assert grid_results[0].calculation_run_id == run.id
@@ -316,7 +338,9 @@ def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_sh
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_no_post_exec_snapshot.mufinder", "UEPNoPostExecSnapshot")
+    doc = service.create_project(
+        tmp_path / "uep_no_post_exec_snapshot.mufinder", "UEPNoPostExecSnapshot"
+    )
     host = _host_structure()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
@@ -324,7 +348,10 @@ def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_sh
     definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
@@ -374,8 +401,9 @@ def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_sh
     window._on_open_uep_analysis_requested("row_1")
 
 
-
-def test_main_window_open_uep_analysis_reuses_existing_window(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_window_open_uep_analysis_reuses_existing_window(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_reuse_window.mufinder", "UEPReuseWindow")
@@ -386,7 +414,10 @@ def test_main_window_open_uep_analysis_reuses_existing_window(main_window, tmp_p
     definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
@@ -442,10 +473,14 @@ def test_main_window_open_uep_analysis_reuses_existing_window(main_window, tmp_p
     assert captured["activated"] == 2
 
 
-def test_main_window_open_uep_analysis_recreates_closed_window(qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_window_open_uep_analysis_recreates_closed_window(
+    qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_recreate_closed_window.mufinder", "UEPRecreateClosedWindow")
+    doc = service.create_project(
+        tmp_path / "uep_recreate_closed_window.mufinder", "UEPRecreateClosedWindow"
+    )
     host = _host_structure()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
@@ -453,7 +488,10 @@ def test_main_window_open_uep_analysis_recreates_closed_window(qapp, main_window
     definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
@@ -498,7 +536,9 @@ def test_main_window_open_uep_analysis_recreates_closed_window(qapp, main_window
     assert window._uep_analysis_dialogs[job.id] is constructed[1]
 
 
-def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_window_close_closes_open_uep_dialogs_before_saving(
+    qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_close_before_save.mufinder", "UEPCloseBeforeSave")
@@ -536,7 +576,9 @@ def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, main_wind
     assert events[:2] == ["dialog.close", "save_project"]
 
 
-def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_until_save(main_window, tmp_path: Path) -> None:
+def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_until_save(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_state.mufinder", "UEPState")
@@ -574,7 +616,8 @@ def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_un
 
 
 def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_table_refresh(
-    qapp, main_window,
+    qapp,
+    main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -591,7 +634,9 @@ def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_tabl
     }
     doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {str(job_id): dict(cluster_state)}
     refresh_calls: list[str] = []
-    monkeypatch.setattr(window, "_refresh_muon_generation_table", lambda: refresh_calls.append("refresh"))
+    monkeypatch.setattr(
+        window, "_refresh_muon_generation_table", lambda: refresh_calls.append("refresh")
+    )
 
     class _FakeDialog:
         def __init__(self) -> None:
@@ -622,13 +667,15 @@ def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_tabl
 
     assert refresh_calls == []
     assert dialog.calls == ["show", "raise", "activate"]
-    assert doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job_id)]["isosurface_layers"] == updated_state[
-        "isosurface_layers"
-    ]
+    assert (
+        doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job_id)]["isosurface_layers"]
+        == updated_state["isosurface_layers"]
+    )
 
 
 def test_main_window_uep_analysis_state_change_refreshes_muon_sources_for_batch_updates(
-    qapp, main_window,
+    qapp,
+    main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -639,7 +686,9 @@ def test_main_window_uep_analysis_state_change_refreshes_muon_sources_for_batch_
 
     job_id = UUID("11111111-1111-1111-1111-111111111111")
     refresh_calls: list[str] = []
-    monkeypatch.setattr(window, "_refresh_muon_generation_table", lambda: refresh_calls.append("refresh"))
+    monkeypatch.setattr(
+        window, "_refresh_muon_generation_table", lambda: refresh_calls.append("refresh")
+    )
 
     window._on_uep_analysis_state_changed(
         job_id,
@@ -653,7 +702,9 @@ def test_main_window_uep_analysis_state_change_refreshes_muon_sources_for_batch_
     assert refresh_calls == ["refresh"]
 
 
-def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_until_save(main_window, tmp_path: Path) -> None:
+def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_until_save(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_grid_state.mufinder", "UEPGridState")
@@ -708,7 +759,8 @@ def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_unti
 
 
 def test_main_window_uep_potential_grid_ready_keeps_active_dialog_visible(
-    qapp, main_window,
+    qapp,
+    main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -774,13 +826,16 @@ def test_main_window_uep_potential_grid_ready_keeps_active_dialog_visible(
 
 
 def test_main_window_uep_potential_grid_ready_keeps_visible_dialog_when_not_active(
-    qapp, main_window,
+    qapp,
+    main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_grid_visible_focus.mufinder", "UEPGridVisibleFocus")
+    doc = service.create_project(
+        tmp_path / "uep_grid_visible_focus.mufinder", "UEPGridVisibleFocus"
+    )
     host = _host_structure()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
@@ -841,14 +896,19 @@ def test_main_window_uep_potential_grid_ready_keeps_visible_dialog_when_not_acti
 def test_main_window_exposes_uep_cluster_rows_for_generation(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
+    doc = service.create_project(
+        tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration"
+    )
     host = _host_structure()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
     definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     job = service.add_job(
@@ -858,7 +918,9 @@ def test_main_window_exposes_uep_cluster_rows_for_generation(main_window, tmp_pa
         calc_type="castep_uep_source",
     )
     definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
-    run = CalculationRun(definition_id=definition.id, job_id=job.id, run_index=1, status=JobStatus.COMPLETED)
+    run = CalculationRun(
+        definition_id=definition.id, job_id=job.id, run_index=1, status=JobStatus.COMPLETED
+    )
     doc.runs[run.id] = run
     doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {
         str(job.id): {
@@ -919,11 +981,14 @@ def test_main_window_exposes_uep_cluster_rows_for_generation(main_window, tmp_pa
     assert site.properties["classification"] == "minimum"
 
 
-
-def test_main_window_ignores_stale_uep_cluster_states_for_generation(main_window, tmp_path: Path) -> None:
+def test_main_window_ignores_stale_uep_cluster_states_for_generation(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_stale_cluster_generation.mufinder", "UEPStaleClusterGeneration")
+    doc = service.create_project(
+        tmp_path / "uep_stale_cluster_generation.mufinder", "UEPStaleClusterGeneration"
+    )
     host = _host_structure()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
@@ -931,7 +996,10 @@ def test_main_window_ignores_stale_uep_cluster_states_for_generation(main_window
     stale_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep_old",
     )
     stale_job = service.add_job(
@@ -952,7 +1020,10 @@ def test_main_window_ignores_stale_uep_cluster_states_for_generation(main_window
     active_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        parameters={
+            "name_prefix": "uep",
+            "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}],
+        },
         output_directory=doc.project_root / "files" / "uep",
     )
     active_job = service.add_job(
@@ -962,7 +1033,12 @@ def test_main_window_ignores_stale_uep_cluster_states_for_generation(main_window
         calc_type="castep_uep_source",
     )
     active_definition.parameters["job_ids_by_label"] = {"row_1": str(active_job.id)}
-    active_run = CalculationRun(definition_id=active_definition.id, job_id=active_job.id, run_index=1, status=JobStatus.COMPLETED)
+    active_run = CalculationRun(
+        definition_id=active_definition.id,
+        job_id=active_job.id,
+        run_index=1,
+        status=JobStatus.COMPLETED,
+    )
     doc.runs[active_run.id] = active_run
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(active_definition.id)
 
@@ -1001,7 +1077,6 @@ def test_main_window_ignores_stale_uep_cluster_states_for_generation(main_window
     assert rows
     assert {row["source_job_id"] for row in rows} == {str(active_job.id)}
     assert {row["cluster_index"] for row in rows} == {1}
-
 
 
 class _SignalStub:

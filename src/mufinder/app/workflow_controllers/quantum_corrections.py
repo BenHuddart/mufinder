@@ -60,7 +60,10 @@ from mufinder.services.quantum_results import (
     mode_widths_from_result_data,
     w1_from_result_data,
 )
-from mufinder.services.job_paths import QUANTUM_SINGLEPOINT_JOB_MAPPING, QUANTUM_SINGLEPOINT_SEED_MAPPING
+from mufinder.services.job_paths import (
+    QUANTUM_SINGLEPOINT_JOB_MAPPING,
+    QUANTUM_SINGLEPOINT_SEED_MAPPING,
+)
 from mufinder.services.muon_sites_summary import (
     QUANTUM_CORRECTIONS_SCOPE,
     downstream_site_scope,
@@ -312,14 +315,10 @@ class QuantumConfigureRequest(SourceConfigureRequest):
 class QuantumCorrectionsController(WorkflowJobController):
     """Controller for the quantum-corrections workflow: one phonon job per row."""
 
-    calc_types = frozenset(
-        {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE}
-    )
+    calc_types = frozenset({QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE})
     stage = WorkflowStage.QUANTUM_CORRECTIONS
     definition_calc_type = QUANTUM_PHONON_SET_CALC_TYPE
-    no_ready_message = (
-        "Only eligible muon sites that have not yet been submitted can be submitted."
-    )
+    no_ready_message = "Only eligible muon sites that have not yet been submitted can be submitted."
 
     def __init__(
         self,
@@ -394,7 +393,11 @@ class QuantumCorrectionsController(WorkflowJobController):
         """Return the definition and row key whose job mappings bind ``job``."""
 
         for definition in self.definitions():
-            for mapping_name in (QUANTUM_SINGLEPOINT_JOB_MAPPING, _PHONON_JOB_MAPPING, "job_ids_by_label"):
+            for mapping_name in (
+                QUANTUM_SINGLEPOINT_JOB_MAPPING,
+                _PHONON_JOB_MAPPING,
+                "job_ids_by_label",
+            ):
                 mapping = definition.parameters.get(mapping_name, {})
                 if not isinstance(mapping, dict):
                     continue
@@ -478,12 +481,15 @@ class QuantumCorrectionsController(WorkflowJobController):
         if isinstance(config, dict):
             legacy_method = str(config.get("method", legacy_method)).strip() or legacy_method
             legacy_pseudopotential = (
-                str(config.get("pseudopotential_family", legacy_pseudopotential)).strip() or legacy_pseudopotential
+                str(config.get("pseudopotential_family", legacy_pseudopotential)).strip()
+                or legacy_pseudopotential
             )
         values = dict(params)
         values.setdefault("phonon_method", _method_to_gui_value(legacy_method))
         values.setdefault("elec_energy_tol", _DEFAULT_ELEC_ENERGY_TOL)
-        pseudopotential_family = str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
+        pseudopotential_family = (
+            str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
+        )
         return values, pseudopotential_family
 
     def ensure_definition(self, source_keys: Sequence[str]) -> CalculationDefinition | None:
@@ -497,7 +503,9 @@ class QuantumCorrectionsController(WorkflowJobController):
         if document is None:
             return None
         candidates = [
-            candidate for key in source_keys if (candidate := self.candidate_by_key(key)) is not None
+            candidate
+            for key in source_keys
+            if (candidate := self.candidate_by_key(key)) is not None
         ]
         if not candidates:
             return None
@@ -514,17 +522,24 @@ class QuantumCorrectionsController(WorkflowJobController):
                 config.setdefault("pseudopotential_family", "unknown")
                 config["sources"] = serialize_quantum_sources(
                     document,
-                    [*_stored_source_keys(config, definition), *(candidate.key for candidate in candidates)],
+                    [
+                        *_stored_source_keys(config, definition),
+                        *(candidate.key for candidate in candidates),
+                    ],
                 )
         else:
             definition = self._context.project_service.register_quantum_phonon_definition(
                 document,
-                input_structure_ids=list(dict.fromkeys(candidate.structure.id for candidate in candidates)),
+                input_structure_ids=list(
+                    dict.fromkeys(candidate.structure.id for candidate in candidates)
+                ),
                 input_site_ids=list(dict.fromkeys(candidate.site.id for candidate in candidates)),
                 parameters={
                     "method": "finite_displacement",
                     "pseudopotential_family": "unknown",
-                    "sources": serialize_quantum_sources(document, [candidate.key for candidate in candidates]),
+                    "sources": serialize_quantum_sources(
+                        document, [candidate.key for candidate in candidates]
+                    ),
                     "phonon_job_ids_by_label": {},
                     "job_seed_names_by_label": {},
                 },
@@ -555,16 +570,23 @@ class QuantumCorrectionsController(WorkflowJobController):
         num_farms_values: list[int] = []
         for candidate in candidates:
             values, pseudopotential_family = self.runtime_configuration(definition, candidate.key)
-            _params, row_advanced_names, extras = workflow_row_configuration(definition, candidate.key)
+            _params, row_advanced_names, extras = workflow_row_configuration(
+                definition, candidate.key
+            )
             values_by_key.append(values)
             advanced_names.update(row_advanced_names)
             pseudopotential_families.append(pseudopotential_family)
             num_farms_values.append(num_farms_from_extras(extras))
-        read_only = any(not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates)
+        read_only = any(
+            not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates
+        )
         locked_reason = (
             _locked_reason(
                 [self.row_job(definition, candidate.key) for candidate in candidates],
-                [str(getattr(states.get(candidate.key), "status", "ready")) for candidate in candidates],
+                [
+                    str(getattr(states.get(candidate.key), "status", "ready"))
+                    for candidate in candidates
+                ],
             )
             if read_only
             else ""
@@ -574,7 +596,9 @@ class QuantumCorrectionsController(WorkflowJobController):
             row_values=tuple(values_by_key),
             advanced_names=frozenset(advanced_names),
             title=(
-                "Inspect Quantum Corrections Parameters" if read_only else "Configure Quantum Corrections Parameters"
+                "Inspect Quantum Corrections Parameters"
+                if read_only
+                else "Configure Quantum Corrections Parameters"
             ),
             intro_text=(
                 f"Selected sources: {len(candidates)}\n"
@@ -666,8 +690,16 @@ class QuantumCorrectionsController(WorkflowJobController):
             raise ValueError(f"Could not find phonon file:\n{phonon_path}")
         job_label = "Quantum phonon"
         if document is not None:
-            run = document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
-            job = document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
+            run = (
+                document.runs.get(result.calculation_run_id)
+                if result.calculation_run_id is not None
+                else None
+            )
+            job = (
+                document.jobs.get(run.job_id)
+                if run is not None and run.job_id is not None
+                else None
+            )
             if job is not None:
                 job_label = job.label
         return phonon_path, job_label
@@ -909,7 +941,9 @@ class QuantumCorrectionsController(WorkflowJobController):
             if existing is not None:
                 if existing.status == JobStatus.DEFINED:
                     existing.label = spec.name
-                    _write_job_directory(spec, output_root, seed_name=self.seed_name_for_key(definition, key))
+                    _write_job_directory(
+                        spec, output_root, seed_name=self.seed_name_for_key(definition, key)
+                    )
                 created.append(existing)
                 continue
             seed_name = self._seed_for_new_job(definition, key, output_root=output_root)
@@ -928,13 +962,13 @@ class QuantumCorrectionsController(WorkflowJobController):
         if jobs:
             self.refresh_view()
             self._context.persist_ui_state(
-                failure_message=(
-                    "Quantum Corrections jobs were generated, but autosave failed."
-                )
+                failure_message=("Quantum Corrections jobs were generated, but autosave failed.")
             )
         return jobs
 
-    def _seed_for_new_job(self, definition: CalculationDefinition, key: str, *, output_root: Path) -> str:
+    def _seed_for_new_job(
+        self, definition: CalculationDefinition, key: str, *, output_root: Path
+    ) -> str:
         """Return the seed a row's new phonon job is written under.
 
         The row's seed, unless its directory already exists: then a fresh seed,
@@ -1013,9 +1047,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         if phonon_path is None:
             output_dir = self._context.job_output_directory(job)
             seed_name = self._context.job_seed_name(job)
-            phonon_path = (
-                None if output_dir is None else output_dir / f"{seed_name}.phonon"
-            )
+            phonon_path = None if output_dir is None else output_dir / f"{seed_name}.phonon"
 
         zpe = muon_zpe(phonon)
         payload: dict[str, object] = {
@@ -1103,9 +1135,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                     key=candidate.key,
                     label=candidate.site.label or candidate.job.label,
                     charge_state=charge_state_label_for_job(candidate.job),
-                    relative_energy=_format_relative_energy(
-                        relative_energies.get(candidate.key)
-                    ),
+                    relative_energy=_format_relative_energy(relative_energies.get(candidate.key)),
                     displacements=str(3 * len(candidate.structure.species)),
                     source_job=candidate.job.label,
                     num_farms_display=str(num_farms_from_extras(extras)),
@@ -1150,7 +1180,6 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         self._view.set_sources(source_rows)
         self._view.set_results(result_rows)
-
 
 
 def _stored_source_keys(config: dict, definition: CalculationDefinition) -> list[str]:

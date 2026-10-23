@@ -439,8 +439,12 @@ class SweepConvergenceWidget(QWidget):
             selection_buttons=(self._remove_selected_button,),
         )
 
-        self._simulation_cell_combo.currentIndexChanged.connect(self._on_simulation_cell_combo_changed)
-        self._simulation_cell_create_button.clicked.connect(self.simulation_cell_create_requested.emit)
+        self._simulation_cell_combo.currentIndexChanged.connect(
+            self._on_simulation_cell_combo_changed
+        )
+        self._simulation_cell_create_button.clicked.connect(
+            self.simulation_cell_create_requested.emit
+        )
         self._simulation_cell_use_unit_button.clicked.connect(
             self.simulation_cell_use_unit_cell_requested.emit
         )
@@ -555,7 +559,9 @@ class SweepConvergenceWidget(QWidget):
 
     def _rows_for_keys(self, keys: Sequence[Any]) -> tuple[int, ...]:
         return tuple(
-            row for row in range(self._table.rowCount()) if self._key_at_row(row, strict=False) in keys
+            row
+            for row in range(self._table.rowCount())
+            if self._key_at_row(row, strict=False) in keys
         )
 
     def _selected_rows(self) -> tuple[int, ...]:
@@ -592,8 +598,12 @@ class SweepConvergenceWidget(QWidget):
     def _insert_row(self, key: Any) -> None:
         row = self._table.rowCount()
         self._table.insertRow(row)
-        self._table.setItem(row, self._KEY_COLUMN, self._make_item(self._CODEC.format(key), editable=True))
-        self._table.setItem(row, self._STATUS_COLUMN, self._make_item(_EMPTY_STATUS, editable=False))
+        self._table.setItem(
+            row, self._KEY_COLUMN, self._make_item(self._CODEC.format(key), editable=True)
+        )
+        self._table.setItem(
+            row, self._STATUS_COLUMN, self._make_item(_EMPTY_STATUS, editable=False)
+        )
         self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, self._make_item("", editable=False))
         self._table.setItem(row, self._MAX_FORCE_COLUMN, self._make_item("", editable=False))
 
@@ -601,8 +611,8 @@ class SweepConvergenceWidget(QWidget):
         configure_button.selection_snapshot_key = key
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, clicked=key, btn=configure_button: self._configure_button_clicked(
-                btn, clicked
+            lambda _checked=False, clicked=key, btn=configure_button: (
+                self._configure_button_clicked(btn, clicked)
             )
         )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
@@ -613,7 +623,9 @@ class SweepConvergenceWidget(QWidget):
         remove_button.setAutoRaise(True)
         remove_button.setToolTip(self._REMOVE_ROW_TOOLTIP)
         remove_button.clicked.connect(
-            lambda _checked=False, clicked=key, btn=remove_button: self._remove_button_clicked(btn, clicked)
+            lambda _checked=False, clicked=key, btn=remove_button: self._remove_button_clicked(
+                btn, clicked
+            )
         )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_row(row)
@@ -658,7 +670,11 @@ class SweepConvergenceWidget(QWidget):
         if generated is None:
             return
         keys, replace_existing = generated
-        merged = keys if replace_existing else tuple(dict.fromkeys(self._collect_keys(strict=False) + keys))
+        merged = (
+            keys
+            if replace_existing
+            else tuple(dict.fromkeys(self._collect_keys(strict=False) + keys))
+        )
         self._set_keys(merged)
         self._emit_state()
 
@@ -767,7 +783,9 @@ class SweepConvergenceWidget(QWidget):
         values = self._parameter_values.get(key)
         return dict(self._default_params) if values is None else dict(values)
 
-    def _set_parameter_values(self, key: Any, values: Mapping[str, Any], advanced_names: set[str]) -> None:
+    def _set_parameter_values(
+        self, key: Any, values: Mapping[str, Any], advanced_names: set[str]
+    ) -> None:
         normalized = self._sanitize(values)
         if self._is_default_parameter_set(normalized) and not advanced_names:
             self._parameter_values.pop(key, None)
@@ -795,12 +813,16 @@ class SweepConvergenceWidget(QWidget):
     def _parameters_locked(self, keys: tuple[Any, ...]) -> bool:
         return any(
             workflow_row_is_locked(
-                "" if (runtime := self._runtime_states.get(key)) is None else runtime.status.strip().lower()
+                ""
+                if (runtime := self._runtime_states.get(key)) is None
+                else runtime.status.strip().lower()
             )
             for key in keys
         )
 
-    def _configure_button_clicked(self, button: SelectionSnapshotPushButton, clicked_key: Any) -> None:
+    def _configure_button_clicked(
+        self, button: SelectionSnapshotPushButton, clicked_key: Any
+    ) -> None:
         keys = resolve_target_keys(
             button,
             clicked_key=clicked_key,
@@ -857,7 +879,9 @@ class SweepConvergenceWidget(QWidget):
         ]
 
     def _confirm_removal(self, rows: Sequence[int]) -> bool:
-        submitted = sum(1 for row in rows if self._runtime_status_at_row(row) in _PROGRESSED_JOB_STATUSES)
+        submitted = sum(
+            1 for row in rows if self._runtime_status_at_row(row) in _PROGRESSED_JOB_STATUSES
+        )
         return confirm_row_removal(
             self,
             len(rows),
@@ -875,15 +899,19 @@ class SweepConvergenceWidget(QWidget):
             eligibility=lambda _key: True,
             parent=self,
             action="Remove",
-            confirm_unprompted=lambda: asked_single.append(True)
-            or self._confirm_removal(self._rows_for_keys((clicked_key,))),
+            confirm_unprompted=lambda: (
+                asked_single.append(True)
+                or self._confirm_removal(self._rows_for_keys((clicked_key,)))
+            ),
         )
         rows = self._rows_for_keys(keys)
         if rows:
             # The three-way prompt is the confirmation for a multi-row removal,
             # but it says nothing about running jobs, so it is not consent to
             # cancel them: those rows are confirmed again with that spelled out.
-            self._request_removals(rows, confirmed=bool(asked_single) or not self._active_keys(rows))
+            self._request_removals(
+                rows, confirmed=bool(asked_single) or not self._active_keys(rows)
+            )
 
     def _request_removals(self, rows: tuple[int, ...], *, confirmed: bool = False) -> None:
         """Remove ``rows`` after one confirmation covering the whole batch.
@@ -970,7 +998,8 @@ class SweepConvergenceWidget(QWidget):
                 QMessageBox.warning(
                     self,
                     "Invalid parameters",
-                    f"{self._INVALID_PARAMETERS_PREFIX} {self._CODEC.describe(key)}:\n" + "\n".join(errors),
+                    f"{self._INVALID_PARAMETERS_PREFIX} {self._CODEC.describe(key)}:\n"
+                    + "\n".join(errors),
                 )
                 return None
 
@@ -993,7 +1022,9 @@ class SweepConvergenceWidget(QWidget):
 
         grouped: list[tuple[set[Any], dict[str, object]]] = []
         for key in keys:
-            diff = {name: value for name, value in effective[key].items() if shared.get(name) != value}
+            diff = {
+                name: value for name, value in effective[key].items() if shared.get(name) != value
+            }
             if not diff:
                 continue
             for members, payload in grouped:
@@ -1086,8 +1117,14 @@ class SweepConvergenceWidget(QWidget):
 
             raw_keys = state.get(self._KEYS_STATE_FIELD, [])
             raw_rows = state.get(self._ROWS_STATE_FIELD, [])
-            rows = [entry for entry in raw_rows if isinstance(entry, dict)] if isinstance(raw_rows, list) else []
-            listed = [self._CODEC.coerce(raw) for raw in raw_keys] if isinstance(raw_keys, list) else []
+            rows = (
+                [entry for entry in raw_rows if isinstance(entry, dict)]
+                if isinstance(raw_rows, list)
+                else []
+            )
+            listed = (
+                [self._CODEC.coerce(raw) for raw in raw_keys] if isinstance(raw_keys, list) else []
+            )
             configured = [self._CODEC.coerce(entry.get(self._ROW_KEY_FIELD)) for entry in rows]
             keys = tuple(dict.fromkeys(key for key in (*listed, *configured) if key is not None))
             self._set_keys(keys)
@@ -1100,7 +1137,9 @@ class SweepConvergenceWidget(QWidget):
                         {str(name): raw for name, raw in dict(entry.get("params", {})).items()}
                     )
                     advanced_names = {
-                        str(name) for name in entry.get("added_advanced", []) if isinstance(name, str)
+                        str(name)
+                        for name in entry.get("added_advanced", [])
+                        if isinstance(name, str)
                     }
                     self._set_parameter_values(key, params, advanced_names)
             elif "shared_params" in state or "overrides" in state:

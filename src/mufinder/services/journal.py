@@ -65,7 +65,11 @@ _STAMP_LABELS = {
 def build_journal(project_name: str, records: Iterable[ProvenanceRecord]) -> JournalDocument:
     """Convert structured provenance into a curated journal view model."""
 
-    entries = [entry for record in sorted(records, key=lambda item: item.timestamp) if (entry := _entry_from_record(record))]
+    entries = [
+        entry
+        for record in sorted(records, key=lambda item: item.timestamp)
+        if (entry := _entry_from_record(record))
+    ]
     grouped: dict[str, list[JournalEntry]] = {}
     day_order: list[str] = []
     for entry in entries:
@@ -77,7 +81,9 @@ def build_journal(project_name: str, records: Iterable[ProvenanceRecord]) -> Jou
 
     return JournalDocument(
         project_name=project_name,
-        days=tuple(JournalDay(date_label=day_key, entries=tuple(grouped[day_key])) for day_key in day_order),
+        days=tuple(
+            JournalDay(date_label=day_key, entries=tuple(grouped[day_key])) for day_key in day_order
+        ),
     )
 
 
@@ -279,10 +285,7 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
     count = len(labels) if isinstance(labels, list) else 0
     body = f"Removed {count} imported muon relaxation(s) from the project."
     if record.parameters.get("deleted_files"):
-        body += (
-            " Their job directories were deleted, including the archived original "
-            "input files."
-        )
+        body += " Their job directories were deleted, including the archived original input files."
     return _entry(
         record,
         stamp_kind="warning",
@@ -308,7 +311,9 @@ def _configure_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
 
 
 def _configure_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
-    count = _int_param(record, "configuration_count") or _count_sequence(record, "configuration", "sweep_values")
+    count = _int_param(record, "configuration_count") or _count_sequence(
+        record, "configuration", "sweep_values"
+    )
     return _entry(
         record,
         stamp_kind="milestone",
@@ -318,7 +323,9 @@ def _configure_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
 
 
 def _configure_pristine_relaxation_entry(record: ProvenanceRecord) -> JournalEntry:
-    count = _int_param(record, "configuration_count") or _count_sequence(record, "configuration", "rows")
+    count = _int_param(record, "configuration_count") or _count_sequence(
+        record, "configuration", "rows"
+    )
     return _entry(
         record,
         stamp_kind="milestone",
@@ -328,7 +335,9 @@ def _configure_pristine_relaxation_entry(record: ProvenanceRecord) -> JournalEnt
 
 
 def _configure_uep_entry(record: ProvenanceRecord) -> JournalEntry:
-    count = _int_param(record, "configuration_count") or _count_sequence(record, "configuration", "rows")
+    count = _int_param(record, "configuration_count") or _count_sequence(
+        record, "configuration", "rows"
+    )
     return _entry(
         record,
         stamp_kind="milestone",
@@ -361,7 +370,11 @@ def _recommended_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
 
 def _recommended_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
     grid = record.parameters.get("recommended_kpoint_grid")
-    grid_text = "x".join(str(int(component)) for component in grid) if isinstance(grid, list) and len(grid) == 3 else "unknown"
+    grid_text = (
+        "x".join(str(int(component)) for component in grid)
+        if isinstance(grid, list) and len(grid) == 3
+        else "unknown"
+    )
     method = _text_param(record, "recommended_kpoint_method")
     if method == MANUAL_DEFAULT_METHOD:
         return _entry(
@@ -489,7 +502,11 @@ def _job_cancelled_entry(record: ProvenanceRecord) -> JournalEntry:
 
 def _job_reset_entry(record: ProvenanceRecord) -> JournalEntry:
     job_label = _text_param(record, "job_label") or "job"
-    clean_text = " and cleaned its directory" if bool(record.parameters.get("cleaned_output_directory")) else ""
+    clean_text = (
+        " and cleaned its directory"
+        if bool(record.parameters.get("cleaned_output_directory"))
+        else ""
+    )
     return _entry(
         record,
         stamp_kind="milestone",

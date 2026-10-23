@@ -10,7 +10,16 @@ from uuid import UUID
 
 import numpy as np
 from matplotlib.ticker import ScalarFormatter
-from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelection,
+    QItemSelectionModel,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QDoubleValidator, QKeySequence, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -78,7 +87,11 @@ from mufinder.app.workflow_table_utils import (
 from mufinder.domain.models import Structure
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.ase_bridge import reduced_formula
-from mufinder.science.demagnetization import DemagnetizationError, DemagnetizingSample, demagnetizing_tensor
+from mufinder.science.demagnetization import (
+    DemagnetizationError,
+    DemagnetizingSample,
+    demagnetizing_tensor,
+)
 from mufinder.science.magnetic_fields import (
     CONTACT_COUPLING_UNIT_OPTIONS,
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
@@ -230,14 +243,25 @@ class MagneticComponentDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit Magnetic Component" if component is not None else "Add Magnetic Component")
+        self.setWindowTitle(
+            "Edit Magnetic Component" if component is not None else "Add Magnetic Component"
+        )
         self.resize(clamped_size(self, 760, 820))
         self._structure = structure
         self._model = model if model is not None else MagneticStructureModel()
         if component is not None and component.selector.kind == "indices":
-            selected_indices = (*selected_indices, *(int(value) for value in component.selector.values))
+            selected_indices = (
+                *selected_indices,
+                *(int(value) for value in component.selector.values),
+            )
         self._selected_indices = tuple(
-            sorted({int(index) for index in selected_indices if 0 <= int(index) < len(structure.species)})
+            sorted(
+                {
+                    int(index)
+                    for index in selected_indices
+                    if 0 <= int(index) < len(structure.species)
+                }
+            )
         )
         self._editing_component_id = component.component_id if component is not None else None
         self._selector_rows: list[tuple[QRadioButton, QFrame, QLabel]] = []
@@ -252,7 +276,9 @@ class MagneticComponentDialog(QDialog):
         style_help_button(self._component_info_button)
         self._component_info_button.setIcon(icon("help"))
         self._component_info_button.setIconSize(QSize(22, 22))
-        self._component_info_button.setToolTip("Explain this component in the propagation-vector formalism")
+        self._component_info_button.setToolTip(
+            "Explain this component in the propagation-vector formalism"
+        )
         self._component_info_button.clicked.connect(self._show_component_info)
 
         self._amplitude = self._decimal_input("1.0", minimum=0.0, maximum=1000.0, placeholder="1.0")
@@ -291,21 +317,32 @@ class MagneticComponentDialog(QDialog):
         self._q_z = self._decimal_input("0.0", minimum=-4.0, maximum=4.0, placeholder="qz")
         self._q_source_combo = QComboBox()
         self._q_source_combo.addItem("Enter a vector (r.l.u.)", self._Q_SOURCE_VECTOR)
-        stored_rows = [slot for slot in q_basis_slots(self._model) if not np.allclose(slot.q_rlu, 0.0, atol=1e-12)]
+        stored_rows = [
+            slot
+            for slot in q_basis_slots(self._model)
+            if not np.allclose(slot.q_rlu, 0.0, atol=1e-12)
+        ]
         for slot in stored_rows:
-            self._q_source_combo.addItem(f"{slot.label} = ({_q_vector_text(slot.q_rlu)})", slot.index)
+            self._q_source_combo.addItem(
+                f"{slot.label} = ({_q_vector_text(slot.q_rlu)})", slot.index
+            )
         if stored_rows:
             self._q_source_combo.addItem("Combination of basis rows", self._Q_SOURCE_COMBINATION)
         else:
-            self._q_source_combo.setToolTip("No propagation vector is stored yet; enter q as a vector")
+            self._q_source_combo.setToolTip(
+                "No propagation vector is stored yet; enter q as a vector"
+            )
         self._q_coeff_inputs = tuple(
-            self._decimal_input("0", minimum=-4.0, maximum=4.0, placeholder=f"n{index + 1}") for index in range(3)
+            self._decimal_input("0", minimum=-4.0, maximum=4.0, placeholder=f"n{index + 1}")
+            for index in range(3)
         )
         for index, edit in enumerate(self._q_coeff_inputs):
             stored = any(slot.index == index for slot in stored_rows)
             edit.setEnabled(stored)
             edit.setToolTip(
-                f"Multiple of q{index + 1}" if stored else f"q{index + 1} holds no propagation vector"
+                f"Multiple of q{index + 1}"
+                if stored
+                else f"q{index + 1} holds no propagation vector"
             )
         self._q_expression = QLabel("")
         self._q_expression.setWordWrap(True)
@@ -327,7 +364,9 @@ class MagneticComponentDialog(QDialog):
         for edit in self._q_coeff_inputs:
             edit.textChanged.connect(lambda *_: self._sync_q_from_basis())
         self._kind_combo.currentTextChanged.connect(self._refresh_texture_controls)
-        self._handedness_combo.currentIndexChanged.connect(lambda *_: self._sync_constrained_direction_inputs())
+        self._handedness_combo.currentIndexChanged.connect(
+            lambda *_: self._sync_constrained_direction_inputs()
+        )
         for edit in (*self._primary_direction, self._q_x, self._q_y, self._q_z):
             edit.textChanged.connect(lambda *_: self._sync_constrained_direction_inputs())
         if component is not None:
@@ -450,7 +489,9 @@ class MagneticComponentDialog(QDialog):
         target_layout.setColumnStretch(1, 1)
         layout.addWidget(target_group)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -472,9 +513,13 @@ class MagneticComponentDialog(QDialog):
         edit.setValidator(validator)
         return edit
 
-    def _direction_inputs(self, values: tuple[float, float, float]) -> tuple[QLineEdit, QLineEdit, QLineEdit]:
+    def _direction_inputs(
+        self, values: tuple[float, float, float]
+    ) -> tuple[QLineEdit, QLineEdit, QLineEdit]:
         return tuple(
-            self._decimal_input(f"{value:g}", minimum=-100.0, maximum=100.0, placeholder=placeholder)
+            self._decimal_input(
+                f"{value:g}", minimum=-100.0, maximum=100.0, placeholder=placeholder
+            )
             for value, placeholder in zip(values, ("x", "y", "z"), strict=True)
         )
 
@@ -488,7 +533,9 @@ class MagneticComponentDialog(QDialog):
             layout.addWidget(edit)
         return group
 
-    def _build_target_card(self, button: QRadioButton, hint_text: str, editor: QWidget | None = None) -> QFrame:
+    def _build_target_card(
+        self, button: QRadioButton, hint_text: str, editor: QWidget | None = None
+    ) -> QFrame:
         card = QFrame(self)
         style_option_card(card)
         card_layout = QVBoxLayout(card)
@@ -546,7 +593,9 @@ class MagneticComponentDialog(QDialog):
 
     def _refresh_target_card_styles(self, *_args) -> None:
         for button, card, hint in self._selector_rows:
-            set_option_card_state(card, selected=button.isChecked(), unavailable=not button.isEnabled())
+            set_option_card_state(
+                card, selected=button.isChecked(), unavailable=not button.isEnabled()
+            )
             hint.setEnabled(button.isEnabled())
 
     def _refresh_texture_controls(self) -> None:
@@ -588,9 +637,14 @@ class MagneticComponentDialog(QDialog):
         self._cone_angle_row_label.setVisible(conical)
         self._sync_constrained_direction_inputs()
 
-    def _load_component(self, component: MagneticComponent, q_vector: tuple[float, float, float]) -> None:
+    def _load_component(
+        self, component: MagneticComponent, q_vector: tuple[float, float, float]
+    ) -> None:
         self._label_edit.setText(component.label)
-        kind_label = next((label for label, kind in self._TEXTURE_KINDS.items() if kind == component.kind), "Collinear")
+        kind_label = next(
+            (label for label, kind in self._TEXTURE_KINDS.items() if kind == component.kind),
+            "Collinear",
+        )
         self._kind_combo.setCurrentText(kind_label)
         self._set_selector(component.selector)
         for edit, value in zip((self._q_x, self._q_y, self._q_z), q_vector, strict=True):
@@ -640,7 +694,9 @@ class MagneticComponentDialog(QDialog):
             signed_static = float(static @ axis)
             rotating_norm = 0.5 * (float(np.linalg.norm(real)) + float(np.linalg.norm(imag)))
             self._amplitude.setText(f"{float(np.hypot(signed_static, rotating_norm)):.8g}")
-            self._cone_angle.setText(f"{float(np.degrees(np.arctan2(rotating_norm, signed_static))):.8g}")
+            self._cone_angle.setText(
+                f"{float(np.degrees(np.arctan2(rotating_norm, signed_static))):.8g}"
+            )
             self._set_direction_inputs(self._primary_direction, real_direction)
             self._set_handedness_from_axes(real_direction, imag_direction, axis)
             self._sync_constrained_direction_inputs()
@@ -652,7 +708,9 @@ class MagneticComponentDialog(QDialog):
         imag_norm = float(np.linalg.norm(imag))
         if component.kind in {"helix", "cycloid"}:
             self._amplitude.setText(f"{(0.5 * (real_norm + imag_norm)):.8g}")
-            self._set_direction_inputs(self._primary_direction, _fallback_direction(real, (0.0, 0.0, 1.0)))
+            self._set_direction_inputs(
+                self._primary_direction, _fallback_direction(real, (0.0, 0.0, 1.0))
+            )
             q_direction = self._q_cartesian_direction(allow_fallback=True)
             if q_direction is not None:
                 if component.kind == "cycloid":
@@ -666,11 +724,15 @@ class MagneticComponentDialog(QDialog):
             self._sync_constrained_direction_inputs()
             return
         self._amplitude.setText(f"{real_norm:.8g}")
-        self._set_direction_inputs(self._primary_direction, _fallback_direction(real, (0.0, 0.0, 1.0)))
+        self._set_direction_inputs(
+            self._primary_direction, _fallback_direction(real, (0.0, 0.0, 1.0))
+        )
         self._set_direction_inputs(self._secondary_direction, (1.0, 0.0, 0.0))
 
     @staticmethod
-    def _set_direction_inputs(inputs: tuple[QLineEdit, QLineEdit, QLineEdit], values: Sequence[float]) -> None:
+    def _set_direction_inputs(
+        inputs: tuple[QLineEdit, QLineEdit, QLineEdit], values: Sequence[float]
+    ) -> None:
         for edit, value in zip(inputs, values, strict=True):
             text = f"{float(value):.8g}"
             if edit.text() != text:
@@ -720,7 +782,10 @@ class MagneticComponentDialog(QDialog):
     def _projected_reference_direction(self, q_direction: np.ndarray) -> np.ndarray:
         try:
             raw = np.asarray(
-                [self._decimal_value(edit, "reference direction component") for edit in self._primary_direction],
+                [
+                    self._decimal_value(edit, "reference direction component")
+                    for edit in self._primary_direction
+                ],
                 dtype=float,
             )
         except ValueError:
@@ -731,7 +796,9 @@ class MagneticComponentDialog(QDialog):
             return _orthogonal_unit(q_direction)
         return projected / norm
 
-    def _constrained_component_directions(self, kind: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _constrained_component_directions(
+        self, kind: str
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         q_direction = self._q_cartesian_direction()
         if q_direction is None:
             raise ValueError("q must be valid for helical, cycloidal, and conical components")
@@ -791,7 +858,9 @@ class MagneticComponentDialog(QDialog):
         amplitude = escape(self._amplitude.text().strip() or "A")
         primary = escape(self._direction_display(self._primary_direction))
         secondary = escape(self._direction_display(self._secondary_direction))
-        q = tuple(escape(field.text().strip() or "0") for field in (self._q_x, self._q_y, self._q_z))
+        q = tuple(
+            escape(field.text().strip() or "0") for field in (self._q_x, self._q_y, self._q_z)
+        )
         phase = escape(self._phase.text().strip() or "0")
         selector = escape(_selector_label(self.selector(), self._structure))
 
@@ -1008,7 +1077,9 @@ class MagneticComponentDialog(QDialog):
         selector = self.selector()
         kind = self._TEXTURE_KINDS.get(self._kind_combo.currentText(), "collinear")
         if kind in {"helix", "cycloid", "conical"}:
-            primary_direction, secondary_direction, propagation_direction = self._constrained_component_directions(kind)
+            primary_direction, secondary_direction, propagation_direction = (
+                self._constrained_component_directions(kind)
+            )
             self._set_direction_inputs(self._primary_direction, primary_direction)
             self._set_direction_inputs(self._secondary_direction, secondary_direction)
         else:
@@ -1027,9 +1098,13 @@ class MagneticComponentDialog(QDialog):
         if kind == "spin_density_wave":
             return build_spin_density_wave_component(amplitude_vector=primary, **kwargs)
         if kind == "helix":
-            return build_helix_component(real_axis_vector=primary, imaginary_axis_vector=secondary, **kwargs)
+            return build_helix_component(
+                real_axis_vector=primary, imaginary_axis_vector=secondary, **kwargs
+            )
         if kind == "cycloid":
-            return build_cycloid_component(real_axis_vector=primary, imaginary_axis_vector=secondary, **kwargs)
+            return build_cycloid_component(
+                real_axis_vector=primary, imaginary_axis_vector=secondary, **kwargs
+            )
         if kind == "conical":
             return build_conical_component(
                 total_moment=amplitude,
@@ -1056,7 +1131,9 @@ class MagneticComponentDialog(QDialog):
             raise ValueError(f"{label} must be between {minimum:g} and {maximum:g}")
         return value
 
-    def _unit_direction(self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str) -> np.ndarray:
+    def _unit_direction(
+        self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str
+    ) -> np.ndarray:
         vector = np.asarray(
             [self._decimal_value(edit, f"{label} component") for edit in inputs],
             dtype=float,
@@ -1133,7 +1210,9 @@ class MagneticPresetDialog(QDialog):
             self._propagation_combo.addItem(f"Along {axis}*", f"{axis}*")
         for slot in q_basis_slots(self._model):
             if not np.allclose(slot.q_rlu, 0.0, atol=1e-12):
-                self._propagation_combo.addItem(f"Basis row {slot.label} = ({_q_vector_text(slot.q_rlu)})", slot.index)
+                self._propagation_combo.addItem(
+                    f"Basis row {slot.label} = ({_q_vector_text(slot.q_rlu)})", slot.index
+                )
         self._propagation_combo.setCurrentIndex(2)
         self._wavevector = MagneticComponentDialog._decimal_input(
             "0.25", minimum=-4.0, maximum=4.0, placeholder="δ"
@@ -1151,7 +1230,9 @@ class MagneticPresetDialog(QDialog):
             "45.0", minimum=0.0, maximum=180.0, placeholder="45"
         )
         self._cone_angle_row_label = QLabel("Cone angle (degrees)")
-        self._moment = MagneticComponentDialog._decimal_input("1.0", minimum=0.0, maximum=1000.0, placeholder="1.0")
+        self._moment = MagneticComponentDialog._decimal_input(
+            "1.0", minimum=0.0, maximum=1000.0, placeholder="1.0"
+        )
         self._selector_combo = QComboBox()
         for selector in viable_atom_selectors(structure, selected_indices=selected_indices):
             self._selector_combo.addItem(_selector_label(selector, structure), selector)
@@ -1166,7 +1247,9 @@ class MagneticPresetDialog(QDialog):
 
         self._build_layout()
         self._kind_combo.currentIndexChanged.connect(lambda *_: self._refresh())
-        self._propagation_combo.currentIndexChanged.connect(lambda *_: self._refresh(reset_reference=True))
+        self._propagation_combo.currentIndexChanged.connect(
+            lambda *_: self._refresh(reset_reference=True)
+        )
         # δ only rescales q along the same axis, so it keeps the reference axis the user chose.
         self._wavevector.textChanged.connect(lambda *_: self._refresh())
         for widget in (self._reference_combo, self._handedness_combo):
@@ -1216,7 +1299,9 @@ class MagneticPresetDialog(QDialog):
         layout.addWidget(self._summary)
         layout.addStretch(1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add Component")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -1239,7 +1324,9 @@ class MagneticPresetDialog(QDialog):
         if isinstance(source, int):
             return _tuple3_float(self._model.q_basis_rlu[source])
         try:
-            return reciprocal_axis_q_rlu(str(source), MagneticComponentDialog._decimal_value(self._wavevector, "δ"))
+            return reciprocal_axis_q_rlu(
+                str(source), MagneticComponentDialog._decimal_value(self._wavevector, "δ")
+            )
         except MagneticStructureError as exc:
             raise ValueError(str(exc)) from None
 
@@ -1261,7 +1348,9 @@ class MagneticPresetDialog(QDialog):
             label=label,
             handedness=int(self._handedness_combo.currentData()),
             cone_angle_degrees=(
-                MagneticComponentDialog._decimal_value(self._cone_angle, "cone angle") if kind == "conical" else 45.0
+                MagneticComponentDialog._decimal_value(self._cone_angle, "cone angle")
+                if kind == "conical"
+                else 45.0
             ),
         )
 
@@ -1342,7 +1431,9 @@ class MagneticTexturePreview(QWidget):
         self._canvas_mode = "dark" if mode == "dark" else "light"
         self.update()
 
-    def set_moments(self, moments: np.ndarray | None, *, initial_view_fraction: float | None = None) -> None:
+    def set_moments(
+        self, moments: np.ndarray | None, *, initial_view_fraction: float | None = None
+    ) -> None:
         if moments is None:
             self._moments = np.empty((0, 0, 3), dtype=float)
             self.reset_view()
@@ -1405,7 +1496,9 @@ class MagneticTexturePreview(QWidget):
         j1 = max(j0 + 1, min(ny, int(np.ceil(high_y * ny))))
         return i0, i1, j0, j1
 
-    def _point_to_view_fraction(self, point: QPointF, plot_rect: QRectF | None = None) -> np.ndarray:
+    def _point_to_view_fraction(
+        self, point: QPointF, plot_rect: QRectF | None = None
+    ) -> np.ndarray:
         rect = self._plot_rect() if plot_rect is None else plot_rect
         if rect.width() <= 0.0 or rect.height() <= 0.0:
             return self._view_center.copy()
@@ -1505,7 +1598,11 @@ class MagneticTexturePreview(QWidget):
                 return self._mix_color(QColor("#1F6F78"), QColor("#3F2D5C"), abs(t))
             return self._mix_color(QColor("#5D9A57"), QColor(palette.seal_gold), t)
         t = (value - minimum) / max(maximum - minimum, 1e-12)
-        return self._mix_color(QColor("#1F6F78"), QColor(palette.accent if palette.mode == "light" else palette.seal_gold), t)
+        return self._mix_color(
+            QColor("#1F6F78"),
+            QColor(palette.accent if palette.mode == "light" else palette.seal_gold),
+            t,
+        )
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         painter = QPainter(self)
@@ -1563,13 +1660,25 @@ class MagneticTexturePreview(QWidget):
                 painter.drawLine(start, end)
                 if length > 1e-6:
                     ux, uy = dx / length, dy / length
-                    left = QPointF(end.x() - head * (ux + 0.55 * uy), end.y() - head * (uy - 0.55 * ux))
-                    right = QPointF(end.x() - head * (ux - 0.55 * uy), end.y() - head * (uy + 0.55 * ux))
+                    left = QPointF(
+                        end.x() - head * (ux + 0.55 * uy), end.y() - head * (uy - 0.55 * ux)
+                    )
+                    right = QPointF(
+                        end.x() - head * (ux - 0.55 * uy), end.y() - head * (uy + 0.55 * ux)
+                    )
                     painter.drawPolygon(QPolygonF([end, left, right]))
         if self._box_start is not None and self._box_end is not None:
-            painter.setPen(QPen(QColor("#FFFFFF" if self._canvas_mode == "dark" else palette.accent), 1.3, Qt.PenStyle.DashLine))
+            painter.setPen(
+                QPen(
+                    QColor("#FFFFFF" if self._canvas_mode == "dark" else palette.accent),
+                    1.3,
+                    Qt.PenStyle.DashLine,
+                )
+            )
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(QRectF(self._box_start, self._box_end).normalized().intersected(plot_rect))
+            painter.drawRect(
+                QRectF(self._box_start, self._box_end).normalized().intersected(plot_rect)
+            )
 
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         delta = event.angleDelta().y()
@@ -1677,7 +1786,10 @@ def _evaluate_texture_preview_grid(
         q = np.asarray(term.q_coeff, dtype=float)
         q_xy = q[:3] @ preview_q_basis
         q_dot = q_xy[0] * xx + q_xy[1] * yy
-        moments += term.coefficient.to_array()[np.newaxis, np.newaxis, :] * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
+        moments += (
+            term.coefficient.to_array()[np.newaxis, np.newaxis, :]
+            * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
+        )
     return moments.real
 
 
@@ -1726,14 +1838,25 @@ class MagneticTextureDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit Magnetic Texture" if component is not None else "Add Magnetic Texture")
+        self.setWindowTitle(
+            "Edit Magnetic Texture" if component is not None else "Add Magnetic Texture"
+        )
         self.resize(1040, 680)
         self.setMinimumSize(860, 560)
         self._structure = structure
         if component is not None and component.selector.kind == "indices":
-            selected_indices = (*selected_indices, *(int(value) for value in component.selector.values))
+            selected_indices = (
+                *selected_indices,
+                *(int(value) for value in component.selector.values),
+            )
         self._selected_indices = tuple(
-            sorted({int(index) for index in selected_indices if 0 <= int(index) < len(structure.species)})
+            sorted(
+                {
+                    int(index)
+                    for index in selected_indices
+                    if 0 <= int(index) < len(structure.species)
+                }
+            )
         )
         self._editing_component_id = component.component_id if component is not None else None
         self._selector_rows: list[tuple[QRadioButton, QFrame, QLabel]] = []
@@ -1755,7 +1878,9 @@ class MagneticTextureDialog(QDialog):
         self._q3 = self._direction_inputs((0.0, 0.0, 0.0), minimum=-10.0, maximum=10.0)
         self._core_direction = self._direction_inputs((0.0, 0.0, -1.0))
         self._cone_angle = self._decimal_input("90.0", minimum=0.0, maximum=180.0, placeholder="90")
-        self._background = self._decimal_input("0.0", minimum=-1000.0, maximum=1000.0, placeholder="0")
+        self._background = self._decimal_input(
+            "0.0", minimum=-1000.0, maximum=1000.0, placeholder="0"
+        )
         self._skyrmion_type = QComboBox()
         self._skyrmion_type.addItems(["Bloch", "Neel"])
         self._helicity = QComboBox()
@@ -1763,14 +1888,20 @@ class MagneticTextureDialog(QDialog):
         self._helicity.addItem("-1", -1)
 
         self._normalise_check = QCheckBox("Normalize moment magnitude")
-        self._normalise_check.setToolTip("Use Fourier modulation to reduce spatial variation in |m|.")
+        self._normalise_check.setToolTip(
+            "Use Fourier modulation to reduce spatial variation in |m|."
+        )
         self._grid_u = self._integer_input(32, 4, 128)
         self._grid_v = self._integer_input(32, 4, 128)
         self._grid_w = self._integer_input(1, 1, 64)
-        self._normalise_threshold = self._decimal_input("0.001", minimum=1e-8, maximum=1.0, placeholder="0.001")
+        self._normalise_threshold = self._decimal_input(
+            "0.001", minimum=1e-8, maximum=1.0, placeholder="0.001"
+        )
         self._prune_mode = QComboBox()
         self._prune_mode.addItems(["No pruning", "Coefficient threshold", "Keep strongest N"])
-        self._prune_threshold = self._decimal_input("0.001", minimum=0.0, maximum=1000.0, placeholder="0.001")
+        self._prune_threshold = self._decimal_input(
+            "0.001", minimum=0.0, maximum=1000.0, placeholder="0.001"
+        )
         self._prune_top_n = self._integer_input(32, 1, 10000)
         self._magnitude_info_button = QToolButton()
         style_help_button(self._magnitude_info_button)
@@ -1779,8 +1910,12 @@ class MagneticTextureDialog(QDialog):
         self._magnitude_info_button.setToolTip("Explain magnitude normalization and pruning")
         self._magnitude_info_button.clicked.connect(self._show_magnitude_pruning_info)
 
-        self._custom_table = MagneticComponentTable(0, 9, delete_callback=self._remove_selected_texture_terms)
-        self._custom_table.setHorizontalHeaderLabels(["q1", "q2", "q3", "Re x", "Re y", "Re z", "Im x", "Im y", "Im z"])
+        self._custom_table = MagneticComponentTable(
+            0, 9, delete_callback=self._remove_selected_texture_terms
+        )
+        self._custom_table.setHorizontalHeaderLabels(
+            ["q1", "q2", "q3", "Re x", "Re y", "Re z", "Im x", "Im y", "Im z"]
+        )
         self._custom_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._custom_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._custom_table.itemChanged.connect(lambda *_: self._refresh_preview())
@@ -1794,7 +1929,12 @@ class MagneticTextureDialog(QDialog):
         self._species_radio = QRadioButton("Element")
         self._equivalent_radio = QRadioButton("Equivalent site")
         self._selected_radio = QRadioButton("Current selection")
-        for button in (self._all_atoms_radio, self._species_radio, self._equivalent_radio, self._selected_radio):
+        for button in (
+            self._all_atoms_radio,
+            self._species_radio,
+            self._equivalent_radio,
+            self._selected_radio,
+        ):
             self._target_group.addButton(button)
         self._species_combo = QComboBox()
         for species in sorted(set(str(symbol) for symbol in structure.species)):
@@ -1856,7 +1996,9 @@ class MagneticTextureDialog(QDialog):
         mode_group = QGroupBox("Texture Type")
         mode_layout = QGridLayout(mode_group)
         for column, (label, key) in enumerate(self._MODES):
-            mode_layout.addWidget(self._build_mode_card(self._mode_buttons[key], self._mode_hint(key)), 0, column)
+            mode_layout.addWidget(
+                self._build_mode_card(self._mode_buttons[key], self._mode_hint(key)), 0, column
+            )
         controls_layout.addWidget(mode_group)
 
         parameter_row = QGridLayout()
@@ -1924,10 +2066,32 @@ class MagneticTextureDialog(QDialog):
 
         target_group = QGroupBox("Apply Texture To")
         target_layout = QGridLayout(target_group)
-        target_layout.addWidget(self._build_target_card(self._all_atoms_radio, "Apply the texture to every atom."), 0, 0)
-        target_layout.addWidget(self._build_target_card(self._species_radio, "Apply to all atoms of one element.", self._species_combo), 0, 1)
-        target_layout.addWidget(self._build_target_card(self._equivalent_radio, "Apply to one symmetry-equivalent atom site.", self._equivalent_combo), 1, 0)
-        target_layout.addWidget(self._build_target_card(self._selected_radio, "Apply to atoms selected in the builder preview."), 1, 1)
+        target_layout.addWidget(
+            self._build_target_card(self._all_atoms_radio, "Apply the texture to every atom."), 0, 0
+        )
+        target_layout.addWidget(
+            self._build_target_card(
+                self._species_radio, "Apply to all atoms of one element.", self._species_combo
+            ),
+            0,
+            1,
+        )
+        target_layout.addWidget(
+            self._build_target_card(
+                self._equivalent_radio,
+                "Apply to one symmetry-equivalent atom site.",
+                self._equivalent_combo,
+            ),
+            1,
+            0,
+        )
+        target_layout.addWidget(
+            self._build_target_card(
+                self._selected_radio, "Apply to atoms selected in the builder preview."
+            ),
+            1,
+            1,
+        )
         controls_layout.addWidget(target_group)
         controls_layout.addStretch(1)
 
@@ -1945,7 +2109,9 @@ class MagneticTextureDialog(QDialog):
         preview_header.addWidget(self._preview_light_button)
         preview_header.addWidget(self._preview_dark_button)
         preview_layout.addLayout(preview_header)
-        preview_legend = QLabel("Colour shows the out-of-plane moment; arrows show the in-plane moment.")
+        preview_legend = QLabel(
+            "Colour shows the out-of-plane moment; arrows show the in-plane moment."
+        )
         preview_legend.setWordWrap(True)
         style_hint_text(preview_legend)
         preview_layout.addWidget(preview_legend)
@@ -1957,7 +2123,9 @@ class MagneticTextureDialog(QDialog):
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -1987,7 +2155,9 @@ class MagneticTextureDialog(QDialog):
         button.toggled.connect(self._refresh_mode_controls)
         return card
 
-    def _build_target_card(self, button: QRadioButton, hint_text: str, editor: QWidget | None = None) -> QFrame:
+    def _build_target_card(
+        self, button: QRadioButton, hint_text: str, editor: QWidget | None = None
+    ) -> QFrame:
         card = QFrame(self)
         style_option_card(card)
         card_layout = QVBoxLayout(card)
@@ -2017,8 +2187,12 @@ class MagneticTextureDialog(QDialog):
         return button
 
     @staticmethod
-    def _decimal_input(value: str, *, minimum: float, maximum: float, placeholder: str) -> QLineEdit:
-        return MagneticComponentDialog._decimal_input(value, minimum=minimum, maximum=maximum, placeholder=placeholder)
+    def _decimal_input(
+        value: str, *, minimum: float, maximum: float, placeholder: str
+    ) -> QLineEdit:
+        return MagneticComponentDialog._decimal_input(
+            value, minimum=minimum, maximum=maximum, placeholder=placeholder
+        )
 
     @staticmethod
     def _integer_input(value: int, minimum: int, maximum: int) -> QSpinBox:
@@ -2036,7 +2210,9 @@ class MagneticTextureDialog(QDialog):
         maximum: float = 100.0,
     ) -> tuple[QLineEdit, QLineEdit, QLineEdit]:
         return tuple(
-            self._decimal_input(f"{value:g}", minimum=minimum, maximum=maximum, placeholder=placeholder)
+            self._decimal_input(
+                f"{value:g}", minimum=minimum, maximum=maximum, placeholder=placeholder
+            )
             for value, placeholder in zip(values, ("x", "y", "z"), strict=True)
         )
 
@@ -2102,7 +2278,15 @@ class MagneticTextureDialog(QDialog):
         self._species_radio.setEnabled(self._species_combo.count() > 0)
         self._equivalent_radio.setEnabled(self._equivalent_combo.count() > 0)
         self._selected_radio.setEnabled(bool(self._selected_indices))
-        if not any(button.isChecked() for button in (self._all_atoms_radio, self._species_radio, self._equivalent_radio, self._selected_radio)):
+        if not any(
+            button.isChecked()
+            for button in (
+                self._all_atoms_radio,
+                self._species_radio,
+                self._equivalent_radio,
+                self._selected_radio,
+            )
+        ):
             if self._selected_radio.isEnabled():
                 self._selected_radio.setChecked(True)
             elif self._species_radio.isEnabled():
@@ -2113,7 +2297,9 @@ class MagneticTextureDialog(QDialog):
 
     def _refresh_target_card_styles(self, *_args) -> None:
         for button, card, hint in self._selector_rows:
-            set_option_card_state(card, selected=button.isChecked(), unavailable=not button.isEnabled())
+            set_option_card_state(
+                card, selected=button.isChecked(), unavailable=not button.isEnabled()
+            )
             hint.setEnabled(button.isEnabled())
 
     def _refresh_mode_controls(self, *_args) -> None:
@@ -2147,7 +2333,9 @@ class MagneticTextureDialog(QDialog):
         layout = QVBoxLayout(dialog)
         title = QLabel("Magnitude Normalization and Pruning", dialog)
         style_section_title(title)
-        subtitle = QLabel("Advanced Fourier-texture controls for reducing moment-length variation.", dialog)
+        subtitle = QLabel(
+            "Advanced Fourier-texture controls for reducing moment-length variation.", dialog
+        )
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
         layout.addWidget(title)
@@ -2288,7 +2476,9 @@ class MagneticTextureDialog(QDialog):
             )
         mode = self._prune_mode.currentText()
         if mode == "Coefficient threshold":
-            base = prune_texture_terms(base, threshold=self._decimal_value(self._prune_threshold, "prune threshold"))
+            base = prune_texture_terms(
+                base, threshold=self._decimal_value(self._prune_threshold, "prune threshold")
+            )
         elif mode == "Keep strongest N":
             base = prune_texture_terms(base, top_n=int(self._prune_top_n.value()))
         return base
@@ -2329,9 +2519,13 @@ class MagneticTextureDialog(QDialog):
                 ferromagnetic_background=self._decimal_value(self._background, "square background"),
                 **kwargs,
             )
-        return build_hexagonal_skyrmion_texture(q_directions=(q_dirs[0], q_dirs[1], -(q_dirs[0] + q_dirs[1])), **kwargs)
+        return build_hexagonal_skyrmion_texture(
+            q_directions=(q_dirs[0], q_dirs[1], -(q_dirs[0] + q_dirs[1])), **kwargs
+        )
 
-    def _q_basis_directions(self, q_basis: Sequence[Sequence[float]]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _q_basis_directions(
+        self, q_basis: Sequence[Sequence[float]]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         reciprocal = np.linalg.inv(np.asarray(self._structure.lattice_vectors, dtype=float)).T
         dirs = []
         for row in q_basis:
@@ -2340,7 +2534,9 @@ class MagneticTextureDialog(QDialog):
             dirs.append(cart / norm if norm > 1e-12 else np.zeros(3, dtype=float))
         return (dirs[0], dirs[1], dirs[2])
 
-    def _texture_metadata(self, texture: MagneticTexture, q_basis_rlu: Sequence[Sequence[float]]) -> dict[str, object]:
+    def _texture_metadata(
+        self, texture: MagneticTexture, q_basis_rlu: Sequence[Sequence[float]]
+    ) -> dict[str, object]:
         before = texture_diagnostics(self._base_texture(), self._grid_resolution())
         after = texture_diagnostics(texture, self._grid_resolution())
         return {
@@ -2363,7 +2559,9 @@ class MagneticTextureDialog(QDialog):
             "normalization": {
                 "enabled": bool(self._normalise_check.isChecked()),
                 "grid_resolution": list(self._grid_resolution()),
-                "threshold": self._decimal_value(self._normalise_threshold, "normalization threshold"),
+                "threshold": self._decimal_value(
+                    self._normalise_threshold, "normalization threshold"
+                ),
             },
             "pruning": {
                 "mode": self._prune_mode.currentText(),
@@ -2377,7 +2575,9 @@ class MagneticTextureDialog(QDialog):
         terms: list[MagneticTextureTerm] = []
         for row in range(self._custom_table.rowCount()):
             values = [self._table_decimal(row, column) for column in range(9)]
-            coefficient = np.asarray(values[3:6], dtype=float) + 1j * np.asarray(values[6:9], dtype=float)
+            coefficient = np.asarray(values[3:6], dtype=float) + 1j * np.asarray(
+                values[6:9], dtype=float
+            )
             if np.allclose(coefficient, 0.0):
                 continue
             terms.append(MagneticTextureTerm.from_vector(values[:3], coefficient))
@@ -2395,7 +2595,10 @@ class MagneticTextureDialog(QDialog):
         self._refresh_preview()
 
     def _remove_selected_texture_terms(self) -> None:
-        rows = sorted({index.row() for index in self._custom_table.selectionModel().selectedRows()}, reverse=True)
+        rows = sorted(
+            {index.row() for index in self._custom_table.selectionModel().selectedRows()},
+            reverse=True,
+        )
         for row in rows:
             self._custom_table.removeRow(row)
         self._refresh_preview()
@@ -2443,7 +2646,9 @@ class MagneticTextureDialog(QDialog):
                 self._grid_u.setValue(int(grid[0]))
                 self._grid_v.setValue(int(grid[1]))
                 self._grid_w.setValue(int(grid[2]))
-            self._set_line_edit_from_metadata(self._normalise_threshold, normalization.get("threshold"))
+            self._set_line_edit_from_metadata(
+                self._normalise_threshold, normalization.get("threshold")
+            )
         pruning = metadata.get("pruning")
         if has_builder and isinstance(pruning, Mapping):
             mode_text = str(pruning.get("mode", "No pruning"))
@@ -2470,8 +2675,14 @@ class MagneticTextureDialog(QDialog):
             if index >= 0:
                 self._helicity.setCurrentIndex(index)
 
-    def _set_direction_from_metadata(self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], values: object) -> None:
-        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)) and len(values) >= 3:
+    def _set_direction_from_metadata(
+        self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], values: object
+    ) -> None:
+        if (
+            isinstance(values, Sequence)
+            and not isinstance(values, (str, bytes))
+            and len(values) >= 3
+        ):
             self._set_direction_inputs(inputs, values[:3])
 
     @staticmethod
@@ -2541,10 +2752,14 @@ class MagneticTextureDialog(QDialog):
     def _grid_resolution(self) -> tuple[int, int, int]:
         return (int(self._grid_u.value()), int(self._grid_v.value()), int(self._grid_w.value()))
 
-    def _direction_value(self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str) -> tuple[float, float, float]:
+    def _direction_value(
+        self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str
+    ) -> tuple[float, float, float]:
         return tuple(self._decimal_value(edit, f"{label} component") for edit in inputs)  # type: ignore[return-value]
 
-    def _unit_direction(self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str) -> np.ndarray:
+    def _unit_direction(
+        self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str
+    ) -> np.ndarray:
         vector = np.asarray(self._direction_value(inputs, label), dtype=float)
         norm = float(np.linalg.norm(vector))
         if norm <= _DIRECTION_TOLERANCE:
@@ -2562,7 +2777,9 @@ class MagneticTextureDialog(QDialog):
         return MagneticComponentDialog._decimal_value(edit, label)
 
     @staticmethod
-    def _set_direction_inputs(inputs: tuple[QLineEdit, QLineEdit, QLineEdit], values: Sequence[float]) -> None:
+    def _set_direction_inputs(
+        inputs: tuple[QLineEdit, QLineEdit, QLineEdit], values: Sequence[float]
+    ) -> None:
         MagneticComponentDialog._set_direction_inputs(inputs, values)
 
 
@@ -2594,7 +2811,9 @@ class MagneticComponentTable(QTableWidget):
         super().keyPressEvent(event)
 
     def _handle_delete_key(self, event) -> bool:
-        if not (event.matches(QKeySequence.StandardKey.Delete) or event.key() == Qt.Key.Key_Backspace):
+        if not (
+            event.matches(QKeySequence.StandardKey.Delete) or event.key() == Qt.Key.Key_Backspace
+        ):
             return False
         if self.state() == QAbstractItemView.State.EditingState:
             return False
@@ -2642,7 +2861,8 @@ class MagneticStructureBuilderDialog(QDialog):
         self._component_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._component_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._component_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
         )
         self._component_table.itemSelectionChanged.connect(self._on_component_selection_changed)
         self._component_table.itemChanged.connect(self._on_component_item_changed)
@@ -2670,7 +2890,9 @@ class MagneticStructureBuilderDialog(QDialog):
         self._edit_button = QPushButton("Edit...")
         self._edit_button.clicked.connect(self._edit_selected_component)
         self._duplicate_button = QPushButton("Duplicate")
-        self._duplicate_button.setToolTip("Add a copy of each selected component below its original")
+        self._duplicate_button.setToolTip(
+            "Add a copy of each selected component below its original"
+        )
         self._duplicate_button.clicked.connect(self._duplicate_selected_components)
         self._remove_button = QPushButton("Remove")
         self._remove_button.clicked.connect(self._remove_selected_components)
@@ -2708,7 +2930,11 @@ class MagneticStructureBuilderDialog(QDialog):
         self._sync_enabled_state()
 
     def _style_viewer_toggles(self) -> None:
-        for checkbox in (self._viewer._show_cell, self._viewer._show_bonds, self._viewer._show_spins):
+        for checkbox in (
+            self._viewer._show_cell,
+            self._viewer._show_bonds,
+            self._viewer._show_spins,
+        ):
             checkbox.setObjectName("magneticBuilderViewerCheckBox")
             checkbox.setStyleSheet(
                 "QCheckBox#magneticBuilderViewerCheckBox {"
@@ -2772,7 +2998,9 @@ class MagneticStructureBuilderDialog(QDialog):
         splitter.setSizes([620, 560])
         layout.addWidget(splitter, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Close)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Close
+        )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Use Structure")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -2874,9 +3102,14 @@ class MagneticStructureBuilderDialog(QDialog):
         self._duplicate_button.setEnabled(has_host and bool(selected_ids))
         self._remove_button.setEnabled(has_host and bool(selected_ids))
         # A selection can move while it is not already packed against that end of the table.
-        self._move_up_button.setEnabled(any(row != index for index, row in enumerate(selected_rows)))
+        self._move_up_button.setEnabled(
+            any(row != index for index, row in enumerate(selected_rows))
+        )
         self._move_down_button.setEnabled(
-            any(row != row_count - len(selected_rows) + index for index, row in enumerate(selected_rows))
+            any(
+                row != row_count - len(selected_rows) + index
+                for index, row in enumerate(selected_rows)
+            )
         )
         self._component_table.setEnabled(has_host)
         self._q_basis_table.setEnabled(has_host)
@@ -2900,10 +3133,14 @@ class MagneticStructureBuilderDialog(QDialog):
             enabled_item = QTableWidgetItem()
             enabled_item.setData(self._COMPONENT_ID_ROLE, component.component_id)
             enabled_item.setFlags(
-                Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
             )
             self._component_table.setItem(row, self._ENABLED_COLUMN, enabled_item)
-            self._set_item(row, self._LABEL_COLUMN, component.label, component.component_id, editable=True)
+            self._set_item(
+                row, self._LABEL_COLUMN, component.label, component.component_id, editable=True
+            )
             self._set_item(row, 2, component.kind.replace("_", " ").title())
             self._set_item(row, 3, _selector_label(component.selector, self._host_structure))
             self._set_item(row, 4, _component_q_label(self._model, component))
@@ -3006,7 +3243,9 @@ class MagneticStructureBuilderDialog(QDialog):
 
         enabled_item = self._component_table.item(row, self._ENABLED_COLUMN)
         if enabled_item is not None:
-            enabled_item.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
+            enabled_item.setCheckState(
+                Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked
+            )
             enabled_item.setToolTip(
                 "Included in the magnetic structure"
                 if enabled
@@ -3045,10 +3284,19 @@ class MagneticStructureBuilderDialog(QDialog):
         if not isinstance(component_id, str):
             return
         if item.column() == self._ENABLED_COLUMN:
-            self._set_component_enabled(item.row(), component_id, item.checkState() == Qt.CheckState.Checked)
+            self._set_component_enabled(
+                item.row(), component_id, item.checkState() == Qt.CheckState.Checked
+            )
             return
         label = item.text().strip()
-        existing = next((component for component in self._model.components if component.component_id == component_id), None)
+        existing = next(
+            (
+                component
+                for component in self._model.components
+                if component.component_id == component_id
+            ),
+            None,
+        )
         if existing is None:
             return
         if not label:
@@ -3108,7 +3356,9 @@ class MagneticStructureBuilderDialog(QDialog):
             return
         self._append_dialog_component(dialog)
 
-    def _append_dialog_component(self, dialog: MagneticComponentDialog | MagneticPresetDialog) -> None:
+    def _append_dialog_component(
+        self, dialog: MagneticComponentDialog | MagneticPresetDialog
+    ) -> None:
         resolved = self._dialog_q_coefficients(dialog)
         if resolved is None:
             return
@@ -3118,7 +3368,11 @@ class MagneticStructureBuilderDialog(QDialog):
         except (MagneticStructureError, ValueError) as exc:
             QMessageBox.warning(self, "Invalid magnetic component", str(exc))
             return
-        self._set_model(replace(self._model, q_basis_rlu=q_basis, components=(*self._model.components, component)))
+        self._set_model(
+            replace(
+                self._model, q_basis_rlu=q_basis, components=(*self._model.components, component)
+            )
+        )
 
     def _dialog_q_coefficients(
         self,
@@ -3131,7 +3385,9 @@ class MagneticStructureBuilderDialog(QDialog):
         coeff = dialog.q_basis_coefficients()
         if coeff is not None:
             return tuple(self._model.q_basis_rlu), coeff
-        q_basis, q_coeff = self._q_basis_for(dialog.q_vector(), ignored_component_ids=ignored_component_ids)
+        q_basis, q_coeff = self._q_basis_for(
+            dialog.q_vector(), ignored_component_ids=ignored_component_ids
+        )
         if q_coeff is None:
             QMessageBox.warning(
                 self,
@@ -3160,7 +3416,11 @@ class MagneticStructureBuilderDialog(QDialog):
             )
             return
         component = dialog.component(transform, q_basis)
-        self._set_model(replace(self._model, q_basis_rlu=q_basis, components=(*self._model.components, component)))
+        self._set_model(
+            replace(
+                self._model, q_basis_rlu=q_basis, components=(*self._model.components, component)
+            )
+        )
 
     def _edit_selected_component(self) -> None:
         if self._host_structure is None:
@@ -3169,7 +3429,14 @@ class MagneticStructureBuilderDialog(QDialog):
         if len(selected_ids) != 1:
             return
         component_id = selected_ids[0]
-        component = next((candidate for candidate in self._model.components if candidate.component_id == component_id), None)
+        component = next(
+            (
+                candidate
+                for candidate in self._model.components
+                if candidate.component_id == component_id
+            ),
+            None,
+        )
         if component is None:
             return
         if is_texture_component(component):
@@ -3191,7 +3458,10 @@ class MagneticStructureBuilderDialog(QDialog):
             return
         q_basis, q_coeff = resolved
         updated = replace(dialog.component(q_coeff), enabled=component.enabled)
-        components = tuple(updated if candidate.component_id == component_id else candidate for candidate in self._model.components)
+        components = tuple(
+            updated if candidate.component_id == component_id else candidate
+            for candidate in self._model.components
+        )
         self._set_model(replace(self._model, q_basis_rlu=q_basis, components=components))
 
     def _edit_selected_texture_component(self, component: MagneticComponent) -> None:
@@ -3217,7 +3487,10 @@ class MagneticStructureBuilderDialog(QDialog):
             )
             return
         updated = replace(dialog.component(transform, q_basis), enabled=component.enabled)
-        components = tuple(updated if candidate.component_id == component.component_id else candidate for candidate in self._model.components)
+        components = tuple(
+            updated if candidate.component_id == component.component_id else candidate
+            for candidate in self._model.components
+        )
         self._set_model(replace(self._model, q_basis_rlu=q_basis, components=components))
 
     def _q_basis_for(
@@ -3248,7 +3521,9 @@ class MagneticStructureBuilderDialog(QDialog):
         q_vectors: Sequence[Sequence[float]],
         *,
         ignored_component_ids: set[str] | None = None,
-    ) -> tuple[tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float], ...] | None]:
+    ) -> tuple[
+        tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float], ...] | None
+    ]:
         basis = [tuple(float(value) for value in row) for row in self._model.q_basis_rlu]
         used_indices = self._used_q_basis_indices(ignored_component_ids=ignored_component_ids)
         transform_rows: list[tuple[float, float, float]] = []
@@ -3280,7 +3555,10 @@ class MagneticStructureBuilderDialog(QDialog):
     def _used_q_basis_indices(self, *, ignored_component_ids: set[str] | None = None) -> set[int]:
         used: set[int] = set()
         for component in self._model.components:
-            if ignored_component_ids is not None and component.component_id in ignored_component_ids:
+            if (
+                ignored_component_ids is not None
+                and component.component_id in ignored_component_ids
+            ):
                 continue
             used.update(component_q_basis_indices(component))
         return used
@@ -3305,9 +3583,15 @@ class MagneticStructureBuilderDialog(QDialog):
         selected_ids = self._selected_component_ids()
         if not selected_ids:
             return
-        if not workflow_table_utils.confirm_row_removal(self, len(selected_ids), noun=("component", "components")):
+        if not workflow_table_utils.confirm_row_removal(
+            self, len(selected_ids), noun=("component", "components")
+        ):
             return
-        components = tuple(component for component in self._model.components if component.component_id not in selected_ids)
+        components = tuple(
+            component
+            for component in self._model.components
+            if component.component_id not in selected_ids
+        )
         self._set_model(replace(self._model, components=components))
 
     def _duplicate_selected_components(self) -> None:
@@ -3321,10 +3605,14 @@ class MagneticStructureBuilderDialog(QDialog):
         selected_ids = self._selected_component_ids()
         if not selected_ids:
             return
-        self._set_model(move_magnetic_components(self._model, selected_ids, offset), selected_ids=selected_ids)
+        self._set_model(
+            move_magnetic_components(self._model, selected_ids, offset), selected_ids=selected_ids
+        )
 
     def _selected_component_rows(self) -> tuple[int, ...]:
-        return tuple(sorted(index.row() for index in self._component_table.selectionModel().selectedRows()))
+        return tuple(
+            sorted(index.row() for index in self._component_table.selectionModel().selectedRows())
+        )
 
     def _selected_component_ids(self) -> tuple[str, ...]:
         ids: list[str] = []
@@ -3344,10 +3632,14 @@ class MagneticStructureBuilderDialog(QDialog):
         for row in range(table.rowCount()):
             item = table.item(row, self._LABEL_COLUMN)
             if item is not None and item.data(self._COMPONENT_ID_ROLE) in wanted:
-                selection.select(table.model().index(row, 0), table.model().index(row, table.columnCount() - 1))
+                selection.select(
+                    table.model().index(row, 0), table.model().index(row, table.columnCount() - 1)
+                )
         table.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
-    def _set_model(self, model: MagneticStructureModel, *, selected_ids: Sequence[str] = ()) -> None:
+    def _set_model(
+        self, model: MagneticStructureModel, *, selected_ids: Sequence[str] = ()
+    ) -> None:
         self._model = model
         self._populate_components()
         if selected_ids:
@@ -3358,7 +3650,11 @@ class MagneticStructureBuilderDialog(QDialog):
         self._refresh_preview()
 
     def _supercell_repeats(self) -> tuple[int, int, int]:
-        return (int(self._repeat_a.value()), int(self._repeat_b.value()), int(self._repeat_c.value()))
+        return (
+            int(self._repeat_a.value()),
+            int(self._repeat_b.value()),
+            int(self._repeat_c.value()),
+        )
 
     def _selected_base_atom_indices(self) -> tuple[int, ...]:
         selected: list[int] = []
@@ -3404,7 +3700,9 @@ class MagneticStructureBuilderDialog(QDialog):
         component_ids = self._selected_component_ids() or None
         try:
             repeats = self._supercell_repeats()
-            preview_structure, preview_atom_indices = _preview_supercell_structure(self._host_structure, repeats)
+            preview_structure, preview_atom_indices = _preview_supercell_structure(
+                self._host_structure, repeats
+            )
             self._preview_atom_indices = preview_atom_indices
             self._viewer.set_structure(preview_structure)
             if not self._model.components:
@@ -3412,7 +3710,9 @@ class MagneticStructureBuilderDialog(QDialog):
                 self._preview_status.setText("Preview: empty magnetic structure")
                 self._classification.setText("Structure type: -")
                 return
-            enabled_ids = {component.component_id for component in enabled_magnetic_components(self._model)}
+            enabled_ids = {
+                component.component_id for component in enabled_magnetic_components(self._model)
+            }
             if not enabled_ids:
                 self._viewer.set_moment_vectors(None)
                 self._preview_status.setText("Preview: every component is disabled")
@@ -3429,8 +3729,14 @@ class MagneticStructureBuilderDialog(QDialog):
                     component_ids=component_ids,
                 )
                 self._viewer.set_moment_vectors(moments)
-                mode = "selected components" if component_ids is not None else "full magnetic structure"
-                self._preview_status.setText(f"Preview: {mode} ({repeats[0]}x{repeats[1]}x{repeats[2]})")
+                mode = (
+                    "selected components"
+                    if component_ids is not None
+                    else "full magnetic structure"
+                )
+                self._preview_status.setText(
+                    f"Preview: {mode} ({repeats[0]}x{repeats[1]}x{repeats[2]})"
+                )
             classification = classify_magnetic_model(self._host_structure, self._model)
             self._classification.setText(f"Structure type: {classification.replace('_', ' ')}")
         except Exception as exc:  # pragma: no cover - defensive UI guard
@@ -3494,13 +3800,17 @@ class MuonSiteSelectionDialog(QDialog):
         self._site_status = QLabel("Muon site: -")
         self._site_status.setWordWrap(True)
         style_hint_text(self._site_status)
-        self._distortion_checkbox = QCheckBox("Correct the dipolar field for muon-induced displacements")
+        self._distortion_checkbox = QCheckBox(
+            "Correct the dipolar field for muon-induced displacements"
+        )
         self._distortion_checkbox.setToolTip(
             "Adds the finite-cell change in the dipolar field from the host-ion displacements in the "
             "representative relaxed structure. Available for structural-relaxation clusters whose relaxed "
             "structure is present, for commensurate magnetic structures."
         )
-        self._distortion_requested = bool(current_site is not None and current_site.include_distortion)
+        self._distortion_requested = bool(
+            current_site is not None and current_site.include_distortion
+        )
         self._distortion_checkbox.toggled.connect(self._on_distortion_toggled)
 
         self._apply_dialog_styles()
@@ -3581,7 +3891,9 @@ class MuonSiteSelectionDialog(QDialog):
         layout.addWidget(self._distortion_checkbox)
         layout.addWidget(self._site_status)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -3609,7 +3921,11 @@ class MuonSiteSelectionDialog(QDialog):
     def _set_current_site(self, site: MagneticMuonSiteOption | None) -> None:
         if site is None:
             # Relaxed sites come before unrelaxed UEP estimates once the relaxation list has any.
-            source = "relaxation_clustering" if self._site_options_for_source("relaxation_clustering") else UEP_SITE_SOURCE
+            source = (
+                "relaxation_clustering"
+                if self._site_options_for_source("relaxation_clustering")
+                else UEP_SITE_SOURCE
+            )
             self._site_source_combo.setCurrentIndex(self._site_source_combo.findData(source))
             return
         index = self._site_source_combo.findData(site.source)
@@ -3699,7 +4015,11 @@ class MuonSiteSelectionDialog(QDialog):
 
     def _sync_distortion_controls(self) -> None:
         option = self._selected_site_option()
-        enabled = self._site_source() == "relaxation_clustering" and option is not None and option.distortion_structure_id is not None
+        enabled = (
+            self._site_source() == "relaxation_clustering"
+            and option is not None
+            and option.distortion_structure_id is not None
+        )
         self._distortion_checkbox.setEnabled(enabled)
         blocked = self._distortion_checkbox.blockSignals(True)
         self._distortion_checkbox.setChecked(enabled and self._distortion_requested)
@@ -3718,11 +4038,15 @@ class MuonSiteSelectionDialog(QDialog):
             return
         source = self._site_source()
         if source == "custom":
-            self._site_status.setText("Muon site: custom fractional coordinate in the active host cell.")
+            self._site_status.setText(
+                "Muon site: custom fractional coordinate in the active host cell."
+            )
             return
         option = self._selected_site_option()
         if option is None:
-            self._site_status.setText(f"Muon site: no {_site_source_label(source).lower()} sites available.")
+            self._site_status.setText(
+                f"Muon site: no {_site_source_label(source).lower()} sites available."
+            )
             return
         distortion_text = (
             " Distortion corrections are available for this representative."
@@ -3775,7 +4099,9 @@ class MagneticFieldDistributionDialog(QDialog):
         )
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        self._export_button = buttons.addButton("Export Data...", QDialogButtonBox.ButtonRole.ActionRole)
+        self._export_button = buttons.addButton(
+            "Export Data...", QDialogButtonBox.ButtonRole.ActionRole
+        )
         self._export_button.clicked.connect(self._export_data)
         buttons.rejected.connect(self.reject)
 
@@ -3818,9 +4144,13 @@ class MagneticFieldDistributionDialog(QDialog):
             high = max(limit[1] for limit in x_limits)
             for centres, probabilities, magnitudes, label in series:
                 if common_edges is None:
-                    plot_x, plot_y = self._probability_steps_with_zero_baseline(centres, probabilities, low, high)
+                    plot_x, plot_y = self._probability_steps_with_zero_baseline(
+                        centres, probabilities, low, high
+                    )
                 else:
-                    plot_x, plot_y = self._interval_steps_with_zero_baseline(common_edges, probabilities, low, high)
+                    plot_x, plot_y = self._interval_steps_with_zero_baseline(
+                        common_edges, probabilities, low, high
+                    )
                 line = axis.plot(plot_x, plot_y, linewidth=1.8, label=label)[0]
                 fill_alpha = 0.24 if len(series) == 1 else 0.06
                 axis.fill_between(plot_x, plot_y, color=line.get_color(), alpha=fill_alpha)
@@ -3828,9 +4158,16 @@ class MagneticFieldDistributionDialog(QDialog):
                 if common_edges is None:
                     sum_x, sum_y, sum_values = self._summed_probability_steps(series, low, high)
                 else:
-                    sum_values = np.sum([probabilities for _centres, probabilities, _magnitudes, _label in series], axis=0)
-                    sum_x, sum_y = self._interval_steps_with_zero_baseline(common_edges, sum_values, low, high)
-                sum_line = axis.plot(sum_x, sum_y, linewidth=2.4, color=palette.text_primary, label="sum")[0]
+                    sum_values = np.sum(
+                        [probabilities for _centres, probabilities, _magnitudes, _label in series],
+                        axis=0,
+                    )
+                    sum_x, sum_y = self._interval_steps_with_zero_baseline(
+                        common_edges, sum_values, low, high
+                    )
+                sum_line = axis.plot(
+                    sum_x, sum_y, linewidth=2.4, color=palette.text_primary, label="sum"
+                )[0]
                 axis.fill_between(sum_x, sum_y, color=sum_line.get_color(), alpha=0.16)
                 if sum_values.size:
                     y_max = max(y_max, float(np.max(sum_values)))
@@ -3933,20 +4270,32 @@ class MagneticFieldDistributionDialog(QDialog):
         lines = self._export_header(series)
         if not series:
             return "\n".join(lines) + "\n"
-        low = min(self._field_axis_limits(centres, magnitudes)[0] for centres, _probabilities, magnitudes, _label in series)
-        high = max(self._field_axis_limits(centres, magnitudes)[1] for centres, _probabilities, magnitudes, _label in series)
+        low = min(
+            self._field_axis_limits(centres, magnitudes)[0]
+            for centres, _probabilities, magnitudes, _label in series
+        )
+        high = max(
+            self._field_axis_limits(centres, magnitudes)[1]
+            for centres, _probabilities, magnitudes, _label in series
+        )
         if common_edges is None:
-            interval_edges, values_by_label, sum_values = self._summed_probability_intervals(series, low, high)
+            interval_edges, values_by_label, sum_values = self._summed_probability_intervals(
+                series, low, high
+            )
         else:
             interval_edges = common_edges
-            values_by_label = {label: probabilities for _centres, probabilities, _magnitudes, label in series}
+            values_by_label = {
+                label: probabilities for _centres, probabilities, _magnitudes, label in series
+            }
             sum_values = np.sum(tuple(values_by_label.values()), axis=0)
         centres = 0.5 * (interval_edges[:-1] + interval_edges[1:])
         labels = [label for _centres, _probabilities, _magnitudes, label in series]
         column_labels = ["B_T", *(f"p_{label}" for label in labels)]
         if len(series) > 1:
             column_labels.append("p_sum")
-        lines.append("# Columns: " + " ".join(self._safe_column_label(label) for label in column_labels))
+        lines.append(
+            "# Columns: " + " ".join(self._safe_column_label(label) for label in column_labels)
+        )
         for row_index, centre in enumerate(centres):
             row = [float(centre)]
             row.extend(float(values_by_label[label][row_index]) for label in labels)
@@ -3955,7 +4304,9 @@ class MagneticFieldDistributionDialog(QDialog):
             lines.append(" ".join(f"{value:.12g}" for value in row))
         return "\n".join(lines) + "\n"
 
-    def _export_header(self, series: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray, str]]) -> list[str]:
+    def _export_header(
+        self, series: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray, str]]
+    ) -> list[str]:
         lines = [
             "# MuFinder field distribution export",
             f"# Distributions: {len(series)}",
@@ -4019,7 +4370,9 @@ class MagneticFieldDistributionDialog(QDialog):
         if centres.size == 0 or probabilities.size != centres.size or high <= low:
             return centres, probabilities
         edges = MagneticFieldDistributionDialog._histogram_edges_from_centres(centres, low, high)
-        return MagneticFieldDistributionDialog._interval_steps_with_zero_baseline(edges, probabilities, low, high)
+        return MagneticFieldDistributionDialog._interval_steps_with_zero_baseline(
+            edges, probabilities, low, high
+        )
 
     @staticmethod
     def _interval_steps_with_zero_baseline(
@@ -4073,7 +4426,13 @@ class MagneticFieldDistributionDialog(QDialog):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         x_values = np.unique(
             np.concatenate(
-                ([low, high], *(np.asarray(centres, dtype=float) for centres, _probabilities, _magnitudes, _label in series))
+                (
+                    [low, high],
+                    *(
+                        np.asarray(centres, dtype=float)
+                        for centres, _probabilities, _magnitudes, _label in series
+                    ),
+                )
             )
         )
         x_values = x_values[np.isfinite(x_values)]
@@ -4082,7 +4441,9 @@ class MagneticFieldDistributionDialog(QDialog):
             x_values = np.asarray([low, high], dtype=float)
         sum_values = np.zeros_like(x_values, dtype=float)
         for centres, probabilities, _magnitudes, _label in series:
-            edges = MagneticFieldDistributionDialog._histogram_edges_from_centres(np.asarray(centres, dtype=float), low, high)
+            edges = MagneticFieldDistributionDialog._histogram_edges_from_centres(
+                np.asarray(centres, dtype=float), low, high
+            )
             for index, probability in enumerate(probabilities):
                 left = edges[index]
                 right = edges[index + 1]
@@ -4103,14 +4464,18 @@ class MagneticFieldDistributionDialog(QDialog):
             MagneticFieldDistributionDialog._histogram_edges_from_centres(centres, low, high)
             for centres, _probabilities, _magnitudes, _label in series
         ]
-        raw_edges = np.concatenate(([low, high], *(np.clip(edges, low, high) for edges in source_edges)))
+        raw_edges = np.concatenate(
+            ([low, high], *(np.clip(edges, low, high) for edges in source_edges))
+        )
         edges = np.unique(raw_edges[np.isfinite(raw_edges)])
         edges.sort()
         if edges.size < 2:
             edges = np.asarray([low, high], dtype=float)
         midpoints = 0.5 * (edges[:-1] + edges[1:])
         values_by_label: dict[str, np.ndarray] = {}
-        for (centres, probabilities, _magnitudes, label), edges_for_series in zip(series, source_edges, strict=True):
+        for (centres, probabilities, _magnitudes, label), edges_for_series in zip(
+            series, source_edges, strict=True
+        ):
             values = np.zeros_like(midpoints, dtype=float)
             for index, probability in enumerate(probabilities):
                 left = edges_for_series[index]
@@ -4120,7 +4485,11 @@ class MagneticFieldDistributionDialog(QDialog):
                     mask = mask | np.isclose(midpoints, right)
                 values[mask] = float(probability)
             values_by_label[label] = values
-        sum_values = np.sum(tuple(values_by_label.values()), axis=0) if values_by_label else np.zeros_like(midpoints)
+        sum_values = (
+            np.sum(tuple(values_by_label.values()), axis=0)
+            if values_by_label
+            else np.zeros_like(midpoints)
+        )
         return edges, values_by_label, sum_values
 
     @staticmethod
@@ -4205,7 +4574,9 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
 
         approximant_group = QGroupBox("Commensurate Approximants", self)
         approximant_form = QFormLayout(approximant_group)
-        self._use_approximants = QCheckBox("Report finite fields for near-commensurate q", approximant_group)
+        self._use_approximants = QCheckBox(
+            "Report finite fields for near-commensurate q", approximant_group
+        )
         self._use_approximants.setChecked(bool(use_approximants))
         self._use_approximants.setToolTip(
             "Replace each incommensurate wavevector by its nearest short-period fraction and list the fields "
@@ -4223,13 +4594,17 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         self._approximant_max_period = QSpinBox(approximant_group)
         self._approximant_max_period.setRange(1, MAX_APPROXIMANT_PERIOD)
         self._approximant_max_period.setValue(int(approximant_max_period))
-        self._approximant_max_period.setToolTip("Largest denominator n allowed for each wavevector component.")
+        self._approximant_max_period.setToolTip(
+            "Largest denominator n allowed for each wavevector component."
+        )
         approximant_form.addRow(self._use_approximants)
         approximant_form.addRow("Tolerance", self._approximant_tolerance)
         approximant_form.addRow("Longest period", self._approximant_max_period)
         layout.addWidget(approximant_group)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -4319,7 +4694,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         super().__init__(parent)
         self._pv, qt_interactor = _pyvista_modules()
         if self._pv is None or qt_interactor is None:
-            raise RuntimeError("PyVista and pyvistaqt are required for demagnetizing-field visualisation.")
+            raise RuntimeError(
+                "PyVista and pyvistaqt are required for demagnetizing-field visualisation."
+            )
         self._sample: DemagnetizingSample | None = None
         self._refreshing_theme = False
         self._style_signature = self._style_signature_for_current_palette()
@@ -4378,7 +4755,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         self._add_arrow((0.0, 0.0, 0.0), (1.25 * extent, 0.0, 0.0), axis_colors[0], "a")
         self._add_arrow((0.0, 0.0, 0.0), (0.0, 1.25 * extent, 0.0), axis_colors[1], "b")
         self._add_arrow((0.0, 0.0, 0.0), (0.0, 0.0, 1.25 * extent), axis_colors[2], "c")
-        self._add_arrow((0.0, 0.0, -0.18 * extent), (0.0, 0.0, 1.65 * extent), palette.text_primary, "M")
+        self._add_arrow(
+            (0.0, 0.0, -0.18 * extent), (0.0, 0.0, 1.65 * extent), palette.text_primary, "M"
+        )
         plotter.reset_camera()
         plotter.render()
 
@@ -4390,7 +4769,8 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             self._refreshing_theme
             or plotter is None
             or signature == getattr(self, "_style_signature", None)
-            or event.type() not in {
+            or event.type()
+            not in {
                 QEvent.Type.StyleChange,
                 QEvent.Type.PaletteChange,
                 QEvent.Type.ApplicationPaletteChange,
@@ -4433,7 +4813,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
                 faces.extend([4, a, b, c, d])
         return self._pv.PolyData(points, np.asarray(faces, dtype=int))
 
-    def _add_arrow(self, start: Sequence[float], vector: Sequence[float], color: str, label: str) -> None:
+    def _add_arrow(
+        self, start: Sequence[float], vector: Sequence[float], color: str, label: str
+    ) -> None:
         pv = self._pv
         start_arr = np.asarray(start, dtype=float)
         vector_arr = np.asarray(vector, dtype=float)
@@ -4462,14 +4844,18 @@ class _DemagnetizingPyVistaCanvas(QWidget):
 class DemagnetizingFieldAdvancedDialog(QDialog):
     """Advanced demagnetizing-field shape and tensor settings."""
 
-    def __init__(self, sample: DemagnetizingSample | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, sample: DemagnetizingSample | None = None, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Advanced Demagnetizing Field")
         self.resize(860, 520)
         self._preview: _DemagnetizingPyVistaCanvas | QLabel
 
         sample = sample or DemagnetizingSample(shape="ellipsoid")
-        if str(sample.shape).strip().lower() not in {key for key, _label in ADVANCED_DEMAG_SHAPE_OPTIONS}:
+        if str(sample.shape).strip().lower() not in {
+            key for key, _label in ADVANCED_DEMAG_SHAPE_OPTIONS
+        }:
             sample = DemagnetizingSample(shape="ellipsoid")
 
         self._shape = QComboBox(self)
@@ -4488,7 +4874,9 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._fourier_grid.setRange(16, 160)
         self._fourier_grid.setSingleStep(8)
         self._fourier_grid.setValue(int(sample.fourier_grid))
-        self._fourier_grid.setToolTip("Voxel grid used for the rectangular-prism Fourier tensor estimate.")
+        self._fourier_grid.setToolTip(
+            "Voxel grid used for the rectangular-prism Fourier tensor estimate."
+        )
         self._padding = QDoubleSpinBox(self)
         self._padding.setRange(1.1, 8.0)
         self._padding.setDecimals(2)
@@ -4535,7 +4923,9 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         body.addLayout(left, 0)
         body.addWidget(self._preview, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
+        )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Use Shape")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -4656,7 +5046,9 @@ class NuclearRelaxationDialog(QDialog):
         self._muon_site = muon_site
         self._distortion_available = bool(distortion_available)
         self._calculate_callback = calculate_callback
-        self._results_state: dict[str, object] = dict(results_state) if isinstance(results_state, Mapping) else {}
+        self._results_state: dict[str, object] = (
+            dict(results_state) if isinstance(results_state, Mapping) else {}
+        )
 
         self._regime_combo = QComboBox(self)
         self._regime_combo.addItem("Zero field", "zf")
@@ -4678,7 +5070,9 @@ class NuclearRelaxationDialog(QDialog):
         self._distortion.setToolTip(
             "Available when the selected relaxation-cluster site has a derived distorted structure."
         )
-        self._status = QLabel("Ready." if muon_site is not None else "Select a muon site before calculating.", self)
+        self._status = QLabel(
+            "Ready." if muon_site is not None else "Select a muon site before calculating.", self
+        )
         self._status.setWordWrap(True)
         style_hint_text(self._status)
         self._calculate_button = QPushButton("Calculate", self)
@@ -4809,7 +5203,9 @@ class NuclearRelaxationDialog(QDialog):
         self._populate_results(self._results_state)
         mode = str(self._results_state.get("mode", self.options().mode))
         suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
-        self._status.setText(f"Calculated {self._MODE_LABELS.get(mode, mode)} nuclear relaxation.{suffix}")
+        self._status.setText(
+            f"Calculated {self._MODE_LABELS.get(mode, mode)} nuclear relaxation.{suffix}"
+        )
 
     def _restore_options(self, state: Mapping[str, object] | None) -> None:
         if not isinstance(state, Mapping):
@@ -4820,7 +5216,9 @@ class NuclearRelaxationDialog(QDialog):
         else:
             self._regime_combo.setCurrentIndex(self._regime_combo.findData("zf"))
         self._sample_combo.setCurrentIndex(
-            self._sample_combo.findData("single_crystal" if mode.endswith("single_crystal") else "polycrystal")
+            self._sample_combo.findData(
+                "single_crystal" if mode.endswith("single_crystal") else "polycrystal"
+            )
         )
         direction = MagneticFieldWidget._state_float_triplet(state.get("direction"))
         if direction is not None:
@@ -4832,7 +5230,9 @@ class NuclearRelaxationDialog(QDialog):
         if state.get("convergence_rtol") not in {None, ""}:
             self._rtol.setText(str(state.get("convergence_rtol")))
         self._quadrupolar.setChecked(bool(state.get("include_quadrupolar", False)))
-        self._distortion.setChecked(bool(state.get("use_distortion_correction", False)) and self._distortion_available)
+        self._distortion.setChecked(
+            bool(state.get("use_distortion_correction", False)) and self._distortion_available
+        )
 
     def _sync_mode_controls(self) -> None:
         single = str(self._sample_combo.currentData()) == "single_crystal"
@@ -4850,7 +5250,10 @@ class NuclearRelaxationDialog(QDialog):
         if not result:
             return
         rows = [
-            ("Mode", self._MODE_LABELS.get(str(result.get("mode", "")), str(result.get("mode", "")))),
+            (
+                "Mode",
+                self._MODE_LABELS.get(str(result.get("mode", "")), str(result.get("mode", ""))),
+            ),
             ("σ (μs⁻¹)", _format_float(result.get("sigma"))),
             ("σ² (μs⁻²)", _format_float(result.get("sigma_squared"))),
             ("M₂ (μs⁻²)", _format_float(result.get("m2"))),
@@ -4866,7 +5269,10 @@ class NuclearRelaxationDialog(QDialog):
         if isinstance(correction, Mapping):
             rows.extend(
                 [
-                    ("Correction Δσ²", _format_float(correction.get("distortion_correction_sigma_squared"))),
+                    (
+                        "Correction Δσ²",
+                        _format_float(correction.get("distortion_correction_sigma_squared")),
+                    ),
                     ("Atoms unwrapped", str(correction.get("n_atoms_unwrapped", ""))),
                 ]
             )
@@ -5215,7 +5621,12 @@ class DipolarTensorDialog(QDialog):
             return self._assigned_indices
         if not any(
             button.isChecked()
-            for button in (self._all_atoms_radio, self._species_radio, self._equivalent_radio, self._indices_radio)
+            for button in (
+                self._all_atoms_radio,
+                self._species_radio,
+                self._equivalent_radio,
+                self._indices_radio,
+            )
         ):
             return ()
         return resolve_atom_selector(self._structure, self.selector())
@@ -5246,7 +5657,13 @@ class DipolarTensorDialog(QDialog):
 
     def _restore_selector_state(self, state: Mapping[str, object] | None) -> None:
         if isinstance(state, Mapping):
-            self._include_equivalent_sites.setChecked(bool(state.get("include_equivalent_sites", self._include_equivalent_sites.isChecked())))
+            self._include_equivalent_sites.setChecked(
+                bool(
+                    state.get(
+                        "include_equivalent_sites", self._include_equivalent_sites.isChecked()
+                    )
+                )
+            )
             if str(state.get("mode", "")).strip() == "assigned" and self._assigned_indices:
                 self._assigned_radio.setChecked(True)
                 return
@@ -5323,7 +5740,9 @@ class DipolarTensorDialog(QDialog):
                 widget.deleteLater()
         self._result_tables = []
         self._result_tensors = []
-        self._estimate_note.setVisible(any(is_unrelaxed_site_source(result.get("site_source")) for result in results))
+        self._estimate_note.setVisible(
+            any(is_unrelaxed_site_source(result.get("site_source")) for result in results)
+        )
         if not results:
             empty = QLabel("No tensor calculated yet.")
             style_hint_text(empty)
@@ -5445,7 +5864,9 @@ class MagneticFieldWidget(QWidget):
         self._field_results_state: dict[str, object] | None = None
         self._dipolar_tensor_selector_state: dict[str, object] = {"mode": "assigned"}
         self._dipolar_tensor_results_state: list[dict[str, object]] = []
-        self._nuclear_relaxation_options_state: dict[str, object] = NuclearRelaxationOptions().to_json()
+        self._nuclear_relaxation_options_state: dict[str, object] = (
+            NuclearRelaxationOptions().to_json()
+        )
         self._nuclear_relaxation_results_state: dict[str, object] = {}
         self._restoring_form_state = False
         self._restoring_title = False
@@ -5472,7 +5893,9 @@ class MagneticFieldWidget(QWidget):
         self._structure_summary = QLabel("Magnetic structure: -")
         self._structure_summary.setWordWrap(True)
         self._classification = QLabel("Structure type: -")
-        self._component_summary_table = self._summary_table(self._COMPONENT_SUMMARY_HEADERS, stretch_column=4)
+        self._component_summary_table = self._summary_table(
+            self._COMPONENT_SUMMARY_HEADERS, stretch_column=4
+        )
         self._component_summary_table.setVisible(False)
         self._edit_structure_button = QPushButton("Edit Magnetic Structure...")
         self._edit_structure_button.clicked.connect(self._open_structure_builder)
@@ -5523,7 +5946,9 @@ class MagneticFieldWidget(QWidget):
         self._calc_cells_b = self._calculation_cell_input(default_supercell[1])
         self._calc_cells_c = self._calculation_cell_input(default_supercell[2])
         self._lookup_angles = self._lookup_angle_input(MagneticFieldOptions().nangles)
-        self._phase_samples = self._incommensurate_sampling_input(MagneticFieldOptions().phase_sample_count)
+        self._phase_samples = self._incommensurate_sampling_input(
+            MagneticFieldOptions().phase_sample_count
+        )
         self._phase_sampling_method = MagneticFieldOptions().phase_sampling
         self._histogram_bins = self._histogram_bin_input(MagneticFieldOptions().histogram_bins)
         self._use_approximants = False
@@ -5633,7 +6058,12 @@ class MagneticFieldWidget(QWidget):
         results_layout = QVBoxLayout(results_group)
         demag_row = QHBoxLayout()
         demag_row.addWidget(QLabel("Demagnetizing field"))
-        for button in (self._sphere_radio, self._plate_radio, self._none_radio, self._advanced_demag_radio):
+        for button in (
+            self._sphere_radio,
+            self._plate_radio,
+            self._none_radio,
+            self._advanced_demag_radio,
+        ):
             demag_row.addWidget(button)
         demag_row.addWidget(self._advanced_demag_button)
         demag_row.addStretch(1)
@@ -5703,7 +6133,9 @@ class MagneticFieldWidget(QWidget):
         self._document = document
         self._host_structure = _active_host_structure(document)
         self.set_workspace_title(title, editable=title_editable, deletable=deletable)
-        self._model = self._model_from_document(document, self._host_structure, magnetic_structure=magnetic_structure)
+        self._model = self._model_from_document(
+            document, self._host_structure, magnetic_structure=magnetic_structure
+        )
         self._selected_muon_site = self._default_muon_site()
         self._refresh_measured_magnetization_unit()
         self._sync_enabled_state()
@@ -5717,7 +6149,8 @@ class MagneticFieldWidget(QWidget):
             "demag_sample": self._demag_sample.to_json(),
             "use_measured_magnetization": self._measured_magnetization_check.isChecked(),
             "measured_magnetization": [
-                self._measured_magnetization_component(edit) for edit in self._measured_magnetization_inputs
+                self._measured_magnetization_component(edit)
+                for edit in self._measured_magnetization_inputs
             ],
             "supercell": [
                 int(self._calc_cells_a.value()),
@@ -5735,9 +6168,13 @@ class MagneticFieldWidget(QWidget):
             "hyperfine_coupling": self._hyperfine_coupling.text().strip(),
             "hyperfine_coupling_unit": self._current_hyperfine_unit(),
             "selected_muon_site": self._muon_site_to_state(self._selected_muon_site),
-            "magnetic_field_results": dict(self._field_results_state) if isinstance(self._field_results_state, dict) else None,
+            "magnetic_field_results": dict(self._field_results_state)
+            if isinstance(self._field_results_state, dict)
+            else None,
             "dipolar_tensor_selector": dict(self._dipolar_tensor_selector_state),
-            "dipolar_tensor_results": [dict(result) for result in self._dipolar_tensor_results_state],
+            "dipolar_tensor_results": [
+                dict(result) for result in self._dipolar_tensor_results_state
+            ],
             "nuclear_relaxation_options": dict(self._nuclear_relaxation_options_state),
             "nuclear_relaxation_results": dict(self._nuclear_relaxation_results_state),
         }
@@ -5806,31 +6243,43 @@ class MagneticFieldWidget(QWidget):
                 self._calc_cells_b.setValue(supercell[1])
                 self._calc_cells_c.setValue(supercell[2])
 
-            self._include_equivalent_sites.setChecked(bool(state.get("include_equivalent_sites", False)))
+            self._include_equivalent_sites.setChecked(
+                bool(state.get("include_equivalent_sites", False))
+            )
             self._set_spinbox_from_state(
                 self._lookup_angles,
                 state.get("phase_lookup_angles", state.get("nangles")),
             )
             self._set_spinbox_from_state(
                 self._phase_samples,
-                state.get("incommensurate_samples", state.get("phase_sample_count", state.get("nangles"))),
+                state.get(
+                    "incommensurate_samples", state.get("phase_sample_count", state.get("nangles"))
+                ),
             )
             self._phase_sampling_method = self._normalize_phase_sampling_method(
                 state.get("phase_sampling", self._phase_sampling_method)
             )
             self._set_spinbox_from_state(self._histogram_bins, state.get("histogram_bins"))
             self._use_approximants = bool(state.get("use_commensurate_approximants", False))
-            self._approximant_tolerance = self._state_approximant_tolerance(state.get("approximant_tolerance"))
-            self._approximant_max_period = self._state_approximant_max_period(state.get("approximant_max_period"))
+            self._approximant_tolerance = self._state_approximant_tolerance(
+                state.get("approximant_tolerance")
+            )
+            self._approximant_max_period = self._state_approximant_max_period(
+                state.get("approximant_max_period")
+            )
             raw_hyperfine = state.get("hyperfine_coupling")
             if raw_hyperfine is not None:
                 self._hyperfine_coupling.setText(str(raw_hyperfine))
-            self._set_hyperfine_unit(str(state.get("hyperfine_coupling_unit", self._current_hyperfine_unit())))
+            self._set_hyperfine_unit(
+                str(state.get("hyperfine_coupling_unit", self._current_hyperfine_unit()))
+            )
             tensor_selector = state.get("dipolar_tensor_selector")
             if isinstance(tensor_selector, Mapping):
                 self._dipolar_tensor_selector_state = dict(tensor_selector)
             tensor_results = state.get("dipolar_tensor_results")
-            if isinstance(tensor_results, Sequence) and not isinstance(tensor_results, (str, bytes)):
+            if isinstance(tensor_results, Sequence) and not isinstance(
+                tensor_results, (str, bytes)
+            ):
                 self._dipolar_tensor_results_state = [
                     dict(result) for result in tensor_results if isinstance(result, Mapping)
                 ]
@@ -5841,7 +6290,9 @@ class MagneticFieldWidget(QWidget):
             if isinstance(nuclear_results, Mapping):
                 self._nuclear_relaxation_results_state = dict(nuclear_results)
             field_results = state.get("magnetic_field_results")
-            self._field_results_state = dict(field_results) if isinstance(field_results, Mapping) else None
+            self._field_results_state = (
+                dict(field_results) if isinstance(field_results, Mapping) else None
+            )
 
             if selected_site is not None:
                 self._selected_muon_site = selected_site
@@ -5897,7 +6348,11 @@ class MagneticFieldWidget(QWidget):
     ) -> MagneticStructureModel:
         if document is None or host is None:
             return MagneticStructureModel()
-        payload = magnetic_structure if magnetic_structure is not None else document.project.magnetic_structure
+        payload = (
+            magnetic_structure
+            if magnetic_structure is not None
+            else document.project.magnetic_structure
+        )
         if not isinstance(payload, dict):
             payload = host.properties.get("magnetic_structure")
         if isinstance(payload, dict) and "components" in payload:
@@ -5909,7 +6364,9 @@ class MagneticFieldWidget(QWidget):
         self._edit_structure_button.setEnabled(has_host)
         self._select_site_button.setEnabled(has_host)
         self._include_equivalent_sites.setEnabled(has_host)
-        self._calculate_button.setEnabled(has_host and bool(enabled_magnetic_components(self._model)))
+        self._calculate_button.setEnabled(
+            has_host and bool(enabled_magnetic_components(self._model))
+        )
         self._dipolar_tensor_button.setEnabled(has_host)
         self._nuclear_relaxation_button.setEnabled(has_host)
         self._calculation_settings_button.setEnabled(has_host)
@@ -5985,7 +6442,9 @@ class MagneticFieldWidget(QWidget):
         return self._selected_muon_site
 
     def _open_muon_site_dialog(self) -> None:
-        dialog = MuonSiteSelectionDialog(self._document, self._host_structure, self._selected_muon_site, self)
+        dialog = MuonSiteSelectionDialog(
+            self._document, self._host_structure, self._selected_muon_site, self
+        )
         dialog.open_muon_sites_requested.connect(self.open_muon_sites_requested)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -5999,7 +6458,9 @@ class MagneticFieldWidget(QWidget):
             return None
         # The lowest-energy site pinned to the Muon Sites summary comes first.
         for options in (
-            _relaxation_cluster_muon_site_options(self._document, self._host_structure, pinned_only=True),
+            _relaxation_cluster_muon_site_options(
+                self._document, self._host_structure, pinned_only=True
+            ),
             _relaxation_cluster_muon_site_options(self._document, self._host_structure),
             _uep_cluster_muon_site_options(self._document, self._host_structure),
         ):
@@ -6023,7 +6484,11 @@ class MagneticFieldWidget(QWidget):
         site = self._selected_muon_site
         source = site.source_label or _site_source_label(site.source)
         cluster = f" ({site.cluster_label})" if site.cluster_label else ""
-        distortion = " Dipolar field corrected for muon-induced displacements." if site.include_distortion else ""
+        distortion = (
+            " Dipolar field corrected for muon-induced displacements."
+            if site.include_distortion
+            else ""
+        )
         estimate = f" {_UNRELAXED_ESTIMATE_NOTE}" if is_unrelaxed_site_source(site.source) else ""
         self._site_summary.setText(
             f"Muon site: {site.label}{cluster} from {source} at "
@@ -6091,7 +6556,9 @@ class MagneticFieldWidget(QWidget):
     def _measured_magnetization_input(axis: str) -> QLineEdit:
         edit = QLineEdit("0.0")
         edit.setValidator(QDoubleValidator(-1_000.0, 1_000.0, 6, edit))
-        edit.setToolTip(f"Cartesian {axis} component of the measured bulk magnetisation, in μB per formula unit.")
+        edit.setToolTip(
+            f"Cartesian {axis} component of the measured bulk magnetisation, in μB per formula unit."
+        )
         edit.setMaximumWidth(80)
         edit.setEnabled(False)
         return edit
@@ -6110,7 +6577,9 @@ class MagneticFieldWidget(QWidget):
 
         table = create_workflow_table(
             headers,
-            resize_to_contents_columns=tuple(column for column in range(len(headers)) if column != stretch_column),
+            resize_to_contents_columns=tuple(
+                column for column in range(len(headers)) if column != stretch_column
+            ),
             selection_mode=QAbstractItemView.SelectionMode.NoSelection,
             stretch_last_section=stretch_column == len(headers) - 1,
         )
@@ -6152,7 +6621,9 @@ class MagneticFieldWidget(QWidget):
             self._calculation_status.setText("Results: build or import a magnetic structure first.")
             return
         if not enabled_magnetic_components(self._model):
-            self._calculation_status.setText("Results: enable at least one magnetic-structure component first.")
+            self._calculation_status.setText(
+                "Results: enable at least one magnetic-structure component first."
+            )
             return
         try:
             site = self.selected_muon_site()
@@ -6180,7 +6651,9 @@ class MagneticFieldWidget(QWidget):
                     distorted_structures=distorted_structures,
                 )
                 self._populate_commensurate_results(results, site_source=site.source)
-                corrected = " with muon-induced distortion corrections" if site.include_distortion else ""
+                corrected = (
+                    " with muon-induced distortion corrections" if site.include_distortion else ""
+                )
                 self._calculation_status.setText(
                     f"Results: calculated {len(results)} commensurate field value(s){corrected}."
                     + self._estimate_status_suffix()
@@ -6218,7 +6691,10 @@ class MagneticFieldWidget(QWidget):
                     self._populate_distribution_results(results, site_source=site.source)
                     status = f"Results: sampled {len(results)} incommensurate field distribution(s)"
                     flagged = sum(
-                        1 for result in results for check in getattr(result, "convergence", ()) if not check.converged
+                        1
+                        for result in results
+                        for check in getattr(result, "convergence", ())
+                        if not check.converged
                     )
                     if flagged:
                         status += f"; {flagged} convergence check(s) need attention, select a row for advice"
@@ -6246,7 +6722,9 @@ class MagneticFieldWidget(QWidget):
         if self._document is not None and structure_id is not None:
             distorted = self._document.structures.get(structure_id)
         if distorted is None:
-            raise MagneticFieldError("the relaxed structure for the muon-induced distortion correction is no longer available")
+            raise MagneticFieldError(
+                "the relaxed structure for the muon-induced distortion correction is no longer available"
+            )
         return distorted
 
     def _open_calculation_settings_dialog(self) -> None:
@@ -6276,11 +6754,15 @@ class MagneticFieldWidget(QWidget):
                 self._calc_cells_b.setValue(int(supercell[1]))
                 self._calc_cells_c.setValue(int(supercell[2]))
             self._lookup_angles.setValue(int(values.get("nangles", self._lookup_angles.value())))
-            self._phase_samples.setValue(int(values.get("phase_sample_count", self._phase_samples.value())))
+            self._phase_samples.setValue(
+                int(values.get("phase_sample_count", self._phase_samples.value()))
+            )
             self._phase_sampling_method = self._normalize_phase_sampling_method(
                 values.get("phase_sampling", self._phase_sampling_method)
             )
-            self._histogram_bins.setValue(int(values.get("histogram_bins", self._histogram_bins.value())))
+            self._histogram_bins.setValue(
+                int(values.get("histogram_bins", self._histogram_bins.value()))
+            )
             self._use_approximants = bool(values.get("use_approximants", self._use_approximants))
             self._approximant_tolerance = self._state_approximant_tolerance(
                 values.get("approximant_tolerance", self._approximant_tolerance)
@@ -6326,7 +6808,9 @@ class MagneticFieldWidget(QWidget):
         self._dipolar_tensor_results_state = dialog.results_state()
         self._emit_form_state_changed()
 
-    def _calculate_dipolar_tensors_from_dialog(self, dialog: DipolarTensorDialog) -> Sequence[object]:
+    def _calculate_dipolar_tensors_from_dialog(
+        self, dialog: DipolarTensorDialog
+    ) -> Sequence[object]:
         if self._host_structure is None:
             raise MagneticFieldError("load a host structure first")
         site = self.selected_muon_site()
@@ -6513,7 +6997,10 @@ class MagneticFieldWidget(QWidget):
     def _measured_magnetization(self) -> tuple[float, float, float] | None:
         if not self._measured_magnetization_check.isChecked():
             return None
-        x, y, z = (self._parse_measured_magnetization(edit.text()) for edit in self._measured_magnetization_inputs)
+        x, y, z = (
+            self._parse_measured_magnetization(edit.text())
+            for edit in self._measured_magnetization_inputs
+        )
         return (x, y, z)
 
     @staticmethod
@@ -6537,7 +7024,11 @@ class MagneticFieldWidget(QWidget):
 
     def _set_measured_magnetization_from_state(self, enabled: object, values: object) -> None:
         components = (0.0, 0.0, 0.0)
-        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)) and len(values) == 3:
+        if (
+            isinstance(values, Sequence)
+            and not isinstance(values, (str, bytes))
+            and len(values) == 3
+        ):
             try:
                 parsed = tuple(float(value) for value in values)  # type: ignore[arg-type]
             except (TypeError, ValueError):
@@ -6549,9 +7040,13 @@ class MagneticFieldWidget(QWidget):
         self._measured_magnetization_check.setChecked(bool(enabled))
 
     def _refresh_measured_magnetization_unit(self) -> None:
-        formula = "" if self._host_structure is None else reduced_formula(self._host_structure.species)[0]
+        formula = (
+            "" if self._host_structure is None else reduced_formula(self._host_structure.species)[0]
+        )
         self._measured_magnetization_unit.setText(
-            f"μB per {formula} (Cartesian x, y, z)" if formula else "μB per formula unit (Cartesian x, y, z)"
+            f"μB per {formula} (Cartesian x, y, z)"
+            if formula
+            else "μB per formula unit (Cartesian x, y, z)"
         )
 
     def _on_measured_magnetization_toggled(self, _checked: bool) -> None:
@@ -6681,7 +7176,8 @@ class MagneticFieldWidget(QWidget):
             source_label=str(value["source_label"]) if value.get("source_label") else None,
             distortion_structure_id=distortion_structure_id,
             properties=dict(properties) if isinstance(properties, Mapping) else None,
-            include_distortion=bool(value.get("include_distortion", False)) and distortion_structure_id is not None,
+            include_distortion=bool(value.get("include_distortion", False))
+            and distortion_structure_id is not None,
         )
 
     def _clear_results(self, *, clear_state: bool = False) -> None:
@@ -6701,8 +7197,16 @@ class MagneticFieldWidget(QWidget):
         selected_rows = sorted({item.row() for item in self._result_table.selectedItems()})
         state = self._field_results_state
         results = state.get("results") if isinstance(state, Mapping) else None
-        if not selected_rows or not isinstance(results, Sequence) or isinstance(results, (str, bytes)):
-            hint = "Select a result row to see its field terms." if self._result_table.rowCount() else ""
+        if (
+            not selected_rows
+            or not isinstance(results, Sequence)
+            or isinstance(results, (str, bytes))
+        ):
+            hint = (
+                "Select a result row to see its field terms."
+                if self._result_table.rowCount()
+                else ""
+            )
         elif state.get("kind") != "commensurate":
             hint = (
                 "Incommensurate distributions are sampled as a combined field; "
@@ -6719,12 +7223,24 @@ class MagneticFieldWidget(QWidget):
             for label, key in self._BREAKDOWN_TERMS:
                 vector = np.asarray(payload.get(key, ()), dtype=float)
                 if vector.shape == (3,):
-                    rows.append((label, *format_vector_components(vector), format_table_number(np.linalg.norm(vector))))
+                    rows.append(
+                        (
+                            label,
+                            *format_vector_components(vector),
+                            format_table_number(np.linalg.norm(vector)),
+                        )
+                    )
             if not rows:
                 hint = "This saved result has no term breakdown; recalculate to see it."
             else:
                 total = np.asarray(payload.get("total_T", (0.0, 0.0, 0.0)), dtype=float)
-                rows.append(("Total", *format_vector_components(total), format_table_number(np.linalg.norm(total))))
+                rows.append(
+                    (
+                        "Total",
+                        *format_vector_components(total),
+                        format_table_number(np.linalg.norm(total)),
+                    )
+                )
                 if len(selected_rows) > 1:
                     hint = f"Showing {payload.get('site_label', 'the first selected site')}."
         self._set_summary_rows(self._breakdown_table, rows)
@@ -6744,12 +7260,16 @@ class MagneticFieldWidget(QWidget):
             if not isinstance(check, Mapping):
                 continue
             verdict = "OK" if check.get("converged") else "Needs attention"
-            lines.append(f"{check.get('label', check.get('setting', 'Check'))}: {verdict}. {check.get('message', '')}".strip())
+            lines.append(
+                f"{check.get('label', check.get('setting', 'Check'))}: {verdict}. {check.get('message', '')}".strip()
+            )
         return lines
 
     def _populate_commensurate_results(self, results: object, *, site_source: str) -> None:
         self._distribution_results = []
-        self._field_results_state = self._field_results_to_state("commensurate", results, site_source=site_source)
+        self._field_results_state = self._field_results_to_state(
+            "commensurate", results, site_source=site_source
+        )
         self._result_table.setRowCount(0)
         for result in results:
             total = np.asarray(result.total, dtype=float)
@@ -6757,7 +7277,9 @@ class MagneticFieldWidget(QWidget):
                 result.site_label,
                 total,
                 float(result.magnitude),
-                self._result_type_label("field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD),
+                self._result_type_label(
+                    "field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD
+                ),
             )
         if self._result_table.rowCount() > 0:
             self._result_table.selectRow(0)
@@ -6806,7 +7328,9 @@ class MagneticFieldWidget(QWidget):
                 result_type = self._result_type_label(
                     _DISTORTION_CORRECTED_FIELD if "distortion_T" in result else "field"
                 )
-                self._append_result_row(str(result.get("site_label", "site")), total, magnitude, result_type)
+                self._append_result_row(
+                    str(result.get("site_label", "site")), total, magnitude, result_type
+                )
             if self._result_table.rowCount() > 0:
                 self._result_table.selectRow(0)
             self._calculation_status.setText(
@@ -6845,12 +7369,16 @@ class MagneticFieldWidget(QWidget):
         return isinstance(state, Mapping) and is_unrelaxed_site_source(state.get("site_source"))
 
     def _result_type_label(self, result_type: str) -> str:
-        return f"{result_type}, unrelaxed estimate" if self._results_are_estimates() else result_type
+        return (
+            f"{result_type}, unrelaxed estimate" if self._results_are_estimates() else result_type
+        )
 
     def _estimate_status_suffix(self) -> str:
         return _UNRELAXED_ESTIMATE_SUFFIX if self._results_are_estimates() else ""
 
-    def _field_results_to_state(self, kind: str, results: object, *, site_source: str) -> dict[str, object]:
+    def _field_results_to_state(
+        self, kind: str, results: object, *, site_source: str
+    ) -> dict[str, object]:
         payloads: list[dict[str, object]] = []
         for result in results:
             if hasattr(result, "to_json"):
@@ -6872,8 +7400,12 @@ class MagneticFieldWidget(QWidget):
                 "site_label": str(getattr(result, "site_label", "site")),
                 "muon_position": list(getattr(result, "muon_position", (0.0, 0.0, 0.0))),
                 "fields_T": fields.tolist(),
-                "histogram_centres_T": np.asarray(getattr(result, "histogram_centres_T", []), dtype=float).tolist(),
-                "histogram_counts": np.asarray(getattr(result, "histogram_counts", []), dtype=float).tolist(),
+                "histogram_centres_T": np.asarray(
+                    getattr(result, "histogram_centres_T", []), dtype=float
+                ).tolist(),
+                "histogram_counts": np.asarray(
+                    getattr(result, "histogram_counts", []), dtype=float
+                ).tolist(),
                 "calculation_parameters": dict(getattr(result, "calculation_parameters", {})),
             }
         total = np.asarray(getattr(result, "total", (0.0, 0.0, 0.0)), dtype=float)
@@ -6935,9 +7467,13 @@ class MagneticFieldWidget(QWidget):
     def _open_distribution_plot(self) -> None:
         results = self._selected_distribution_results()
         if not results:
-            QMessageBox.information(self, "Field Distribution", "Select an incommensurate distribution result first.")
+            QMessageBox.information(
+                self, "Field Distribution", "Select an incommensurate distribution result first."
+            )
             return
-        dialog = MagneticFieldDistributionDialog(results, self, estimate=self._results_are_estimates())
+        dialog = MagneticFieldDistributionDialog(
+            results, self, estimate=self._results_are_estimates()
+        )
         dialog.exec()
 
 
@@ -6989,7 +7525,9 @@ def _uep_cluster_muon_site_options(
                     continue
                 representative_index = _optional_int(cluster.get("representative_index"))
                 cluster_index = _optional_int(cluster.get("cluster_index"))
-                if representative_index is None or not (0 <= representative_index < len(batch_results)):
+                if representative_index is None or not (
+                    0 <= representative_index < len(batch_results)
+                ):
                     continue
                 result = batch_results[representative_index]
                 if not isinstance(result, dict):
@@ -7000,7 +7538,9 @@ def _uep_cluster_muon_site_options(
                 )
                 if fractional is None:
                     continue
-                cartesian = _triplet_or_none(result.get("optimized_position_ang")) or _fractional_to_cartesian(fractional, host_structure)
+                cartesian = _triplet_or_none(
+                    result.get("optimized_position_ang")
+                ) or _fractional_to_cartesian(fractional, host_structure)
                 key = f"uep:{raw_job_id}:{cluster_index}:{representative_index}"
                 if key in seen:
                     continue
@@ -7020,7 +7560,10 @@ def _uep_cluster_muon_site_options(
                         },
                     )
                 )
-    return sorted(options, key=lambda option: (option.source_label or "", option.cluster_label or "", option.label))
+    return sorted(
+        options,
+        key=lambda option: (option.source_label or "", option.cluster_label or "", option.label),
+    )
 
 
 def _relaxation_cluster_muon_site_options(
@@ -7048,7 +7591,9 @@ def _relaxation_cluster_muon_site_options(
     for workspace in workspaces:
         if not isinstance(workspace, dict):
             continue
-        workspace_name = str(workspace.get("name", "Relaxation analysis")).strip() or "Relaxation analysis"
+        workspace_name = (
+            str(workspace.get("name", "Relaxation analysis")).strip() or "Relaxation analysis"
+        )
         clustering = workspace.get("clustering")
         result = clustering.get("result") if isinstance(clustering, dict) else None
         if not isinstance(result, dict):
@@ -7070,7 +7615,9 @@ def _relaxation_cluster_muon_site_options(
             if pinned_only and pinned_key not in pinned:
                 continue
             structure_id = _distorted_structure_id_for_job(document, job_id)
-            cartesian = _triplet_or_none(cluster.get("representative_cartesian_position_ang")) or _fractional_to_cartesian(
+            cartesian = _triplet_or_none(
+                cluster.get("representative_cartesian_position_ang")
+            ) or _fractional_to_cartesian(
                 fractional,
                 host_structure,
             )
@@ -7092,7 +7639,10 @@ def _relaxation_cluster_muon_site_options(
             options.append(option)
     if pinned_only:
         return [option for _rank, option in sorted(pinned_options, key=lambda item: item[0])]
-    return sorted(options, key=lambda option: (option.source_label or "", option.cluster_label or "", option.label))
+    return sorted(
+        options,
+        key=lambda option: (option.source_label or "", option.cluster_label or "", option.label),
+    )
 
 
 def _unrelaxed_results_note(parent: QWidget) -> QLabel:
@@ -7204,11 +7754,18 @@ def _preview_supercell_structure(
     repeat_array = np.asarray(repeats, dtype=float)
     base_frac = np.asarray(structure.fractional_positions, dtype=float)
     offsets = np.array(
-        [(i, j, k) for i in range(repeats[0]) for j in range(repeats[1]) for k in range(repeats[2])],
+        [
+            (i, j, k)
+            for i in range(repeats[0])
+            for j in range(repeats[1])
+            for k in range(repeats[2])
+        ],
         dtype=float,
     )
     atom_count = len(structure.species)
-    positions_frac = ((base_frac[np.newaxis, :, :] + offsets[:, np.newaxis, :]) / repeat_array).reshape(-1, 3)
+    positions_frac = (
+        (base_frac[np.newaxis, :, :] + offsets[:, np.newaxis, :]) / repeat_array
+    ).reshape(-1, 3)
     atom_indices = np.tile(np.arange(atom_count, dtype=int), len(offsets))
     lattice = np.asarray(structure.lattice_vectors, dtype=float).copy()
     lattice[0] *= repeats[0]
@@ -7222,7 +7779,10 @@ def _preview_supercell_structure(
         fractional_positions=positions_frac.tolist(),
         source_file=structure.source_file,
         parent_structure_id=structure.id,
-        properties={**structure.properties, "pbc": structure.properties.get("pbc", [True, True, True])},
+        properties={
+            **structure.properties,
+            "pbc": structure.properties.get("pbc", [True, True, True]),
+        },
     )
     return preview, atom_indices
 
@@ -7308,20 +7868,26 @@ def _fill_q_basis_table(table: QTableWidget, model: MagneticStructureModel) -> N
     components = {component.component_id: component for component in model.components}
     for slot in q_basis_slots(model):
         users = [
-            components[component_id].label + ("" if components[component_id].enabled else " (disabled)")
+            components[component_id].label
+            + ("" if components[component_id].enabled else " (disabled)")
             for component_id in slot.component_ids
         ]
         users_item = QTableWidgetItem(", ".join(users) if users else "Unused")
         users_item.setToolTip("\n".join(users) if users else "No component references this row")
         if not users:
             users_item.setForeground(QColor(current_palette().text_muted))
-        for column, item in enumerate((QTableWidgetItem(slot.label), QTableWidgetItem(_q_vector_text(slot.q_rlu)), users_item)):
+        for column, item in enumerate(
+            (QTableWidgetItem(slot.label), QTableWidgetItem(_q_vector_text(slot.q_rlu)), users_item)
+        ):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(slot.index, column, item)
 
 
 def _q_vector_text(values: Sequence[float]) -> str:
-    return ", ".join(format_table_number(value, absolute_tolerance=5e-13, relative_tolerance=0.0) for value in values)
+    return ", ".join(
+        format_table_number(value, absolute_tolerance=5e-13, relative_tolerance=0.0)
+        for value in values
+    )
 
 
 def _parse_q_vector_text(text: str) -> tuple[float, float, float]:
@@ -7329,7 +7895,9 @@ def _parse_q_vector_text(text: str) -> tuple[float, float, float]:
 
     parts = text.strip().strip("()[]").replace(",", " ").split()
     if len(parts) != 3:
-        raise ValueError("Enter three numbers h, k, l in reciprocal-lattice units, for example 0.25, 0, 0.")
+        raise ValueError(
+            "Enter three numbers h, k, l in reciprocal-lattice units, for example 0.25, 0, 0."
+        )
     try:
         return (float(parts[0]), float(parts[1]), float(parts[2]))
     except ValueError:
@@ -7340,13 +7908,17 @@ def _component_moment_label(component: MagneticComponent) -> str:
     if not component.terms:
         return "-"
     if is_texture_component(component):
-        magnitudes = [float(np.linalg.norm(term.coefficient.to_array())) for term in component.terms]
+        magnitudes = [
+            float(np.linalg.norm(term.coefficient.to_array())) for term in component.terms
+        ]
         mode = str(component.metadata.get("texture_mode", "texture")).replace("_", " ")
         return f"{mode.title()}\n{len(component.terms)} Fourier term(s)\nmax {_format_moment_magnitude(max(magnitudes))}"
     if component.kind == "conical" and len(component.terms) >= 2:
         static = np.linalg.norm(np.asarray(component.terms[0].coefficient.real, dtype=float))
         rotating_real = np.linalg.norm(np.asarray(component.terms[1].coefficient.real, dtype=float))
-        rotating_imag = np.linalg.norm(np.asarray(component.terms[1].coefficient.imaginary, dtype=float))
+        rotating_imag = np.linalg.norm(
+            np.asarray(component.terms[1].coefficient.imaginary, dtype=float)
+        )
         rotating = 0.5 * (rotating_real + rotating_imag)
         angle = np.degrees(np.arctan2(rotating, static))
         return (
@@ -7373,7 +7945,9 @@ def _format_float(value: object) -> str:
         return ""
 
 
-def _component_edit_q_vector(model: MagneticStructureModel, component: MagneticComponent) -> tuple[float, float, float]:
+def _component_edit_q_vector(
+    model: MagneticStructureModel, component: MagneticComponent
+) -> tuple[float, float, float]:
     for term in component.terms:
         if any(abs(float(value)) > 1e-12 for value in term.q_coeff):
             return _tuple3_float(model.q_coeff_to_rlu(term.q_coeff))
@@ -7396,7 +7970,9 @@ def _tuple3_float(values: Sequence[float]) -> tuple[float, float, float]:
     return (float(arr[0]), float(arr[1]), float(arr[2]))
 
 
-def _fallback_direction(vector: Sequence[float], fallback: tuple[float, float, float]) -> tuple[float, float, float]:
+def _fallback_direction(
+    vector: Sequence[float], fallback: tuple[float, float, float]
+) -> tuple[float, float, float]:
     arr = np.asarray(vector, dtype=float)
     norm = float(np.linalg.norm(arr))
     if norm <= _DIRECTION_TOLERANCE:

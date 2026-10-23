@@ -309,9 +309,7 @@ class LegacyImportDialog(QDialog):
             item = self._table.item(row, self._SELECT_COLUMN)
             if item is None or not run.importable:
                 continue
-            item.setCheckState(
-                Qt.CheckState.Checked if predicate(run) else Qt.CheckState.Unchecked
-            )
+            item.setCheckState(Qt.CheckState.Checked if predicate(run) else Qt.CheckState.Unchecked)
 
     def _on_item_changed(self, _item: QTableWidgetItem) -> None:
         self._refresh_ok_state()
@@ -335,12 +333,7 @@ class LegacyImportDialog(QDialog):
 
 
 def _is_diagonal(matrix) -> bool:
-    return all(
-        matrix[i][j] == 0
-        for i in range(3)
-        for j in range(3)
-        if i != j
-    )
+    return all(matrix[i][j] == 0 for i in range(3) for j in range(3) if i != j)
 
 
 __all__ = [

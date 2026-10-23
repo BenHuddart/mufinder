@@ -15,7 +15,10 @@ def single_point(
 ) -> ParamFile:
     """Build a conservative single-point parameter file preset."""
 
-    keywords = [KeywordAssignment("task", "SINGLEPOINT"), KeywordAssignment("xc_functional", xc_functional)]
+    keywords = [
+        KeywordAssignment("task", "SINGLEPOINT"),
+        KeywordAssignment("xc_functional", xc_functional),
+    ]
     if basis_precision is not None:
         keywords.append(KeywordAssignment("basis_precision", basis_precision))
     if cut_off_energy is not None:
@@ -87,4 +90,3 @@ def _unitized(name: str, value: float | ValueWithUnit, default_unit: str) -> Key
     if isinstance(value, ValueWithUnit):
         return KeywordAssignment(name, value)
     return KeywordAssignment(name, ValueWithUnit(value, default_unit))
-

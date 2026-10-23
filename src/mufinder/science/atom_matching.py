@@ -147,9 +147,7 @@ def match_structures(
 
     mean_displacement = float(np.mean([pair.displacement for pair in pairs]))
     if mean_displacement > options.max_reasonable_displacement:
-        warnings.append(
-            "Mean matched-atom displacement is large; atom mapping may be unreliable."
-        )
+        warnings.append("Mean matched-atom displacement is large; atom mapping may be unreliable.")
 
     if unmatched_experimental or unmatched_dft:
         warnings.append(

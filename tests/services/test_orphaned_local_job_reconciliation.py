@@ -87,8 +87,7 @@ def test_active_local_job_is_stopped_with_exact_message(tmp_path, status) -> Non
 
 def test_exact_message_text() -> None:
     assert ORPHANED_LOCAL_JOB_STOP_MESSAGE == (
-        "MuFinder was closed while this job was in progress locally; "
-        "reset or resubmit it."
+        "MuFinder was closed while this job was in progress locally; reset or resubmit it."
     )
 
 
@@ -104,7 +103,9 @@ def test_blank_execution_target_is_treated_as_local(tmp_path) -> None:
 
 def test_local_target_matches_case_insensitively(tmp_path) -> None:
     service, document = _service_and_document(tmp_path)
-    job = _add_job(service, document, label="LOCAL", status=JobStatus.RUNNING, execution_target="Local")
+    job = _add_job(
+        service, document, label="LOCAL", status=JobStatus.RUNNING, execution_target="Local"
+    )
 
     reconciled = service.reconcile_orphaned_local_jobs(document)
 
@@ -179,7 +180,13 @@ def test_reconciliation_records_job_stopped_provenance(tmp_path) -> None:
 def test_mixed_document_only_reconciles_active_local_jobs(tmp_path) -> None:
     service, document = _service_and_document(tmp_path)
     local_active = _add_job(service, document, label="local_active", status=JobStatus.RUNNING)
-    _add_job(service, document, label="cluster_active", status=JobStatus.RUNNING, execution_target="SCARF")
+    _add_job(
+        service,
+        document,
+        label="cluster_active",
+        status=JobStatus.RUNNING,
+        execution_target="SCARF",
+    )
     _add_job(service, document, label="local_done", status=JobStatus.COMPLETED)
     blank_active = _add_job(
         service, document, label="blank_active", status=JobStatus.QUEUED, execution_target=""

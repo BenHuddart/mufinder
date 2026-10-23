@@ -12,7 +12,10 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton
 
 import mufinder.app.quantum_analysis_dialog as quantum_analysis_dialog_module
 from mufinder.app.math_label import MathLabel
-from mufinder.app.quantum_analysis_dialog import QuantumAnalysisHelpDialog, QuantumPhononAnalysisDialog
+from mufinder.app.quantum_analysis_dialog import (
+    QuantumAnalysisHelpDialog,
+    QuantumPhononAnalysisDialog,
+)
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import current_palette
 
@@ -65,7 +68,9 @@ def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_
 
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_splitters")
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_splitters"
+    )
 
     phonon_splitter = dialog._phonon_mode_table.parentWidget()
     assert isinstance(phonon_splitter, QSplitter)
@@ -79,8 +84,7 @@ def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_
     # Correlation-tab matrices are capped (setMaximumSize), never locked
     # (setFixedSize), so they can shrink and scroll on a narrow dialog.
     assert (
-        dialog._covariance_table.horizontalScrollBarPolicy()
-        == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        dialog._covariance_table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     )
     assert dialog._covariance_table.maximumWidth() < 16_777_215
     assert dialog._covariance_table.maximumHeight() < 16_777_215
@@ -88,7 +92,9 @@ def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_
     dialog.close()
 
 
-def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp, tmp_path: Path) -> None:
+def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(
+    qapp, tmp_path: Path
+) -> None:
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
 
@@ -118,9 +124,15 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert dominant_participation_item is not None
     assert ordinary_participation_item is not None
     assert dominant_participation_item.foreground().color() == QColor(current_palette().success)
-    assert dominant_participation_item.foreground().color() != ordinary_participation_item.foreground().color()
+    assert (
+        dominant_participation_item.foreground().color()
+        != ordinary_participation_item.foreground().color()
+    )
     assert dialog._selected_phonon_mode_row() == 1
-    assert dialog._phonon_mode_table.selectionMode() == dialog._phonon_mode_table.SelectionMode.SingleSelection
+    assert (
+        dialog._phonon_mode_table.selectionMode()
+        == dialog._phonon_mode_table.SelectionMode.SingleSelection
+    )
     # The default 1320x760 size is routed through clamped_size, which shrinks
     # it to fit the test environment's (possibly small, e.g. offscreen-
     # platform) screen; compare against the same clamp rather than a raw
@@ -133,7 +145,10 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert dialog._phonon_play_button.text() == "Play animation"
     assert dialog._phonon_animation_status_label.text() == "Animation paused"
     assert dialog._phonon_play_button.styleSheet() == ""
-    assert dialog._phonon_play_button.minimumWidth() >= dialog._phonon_play_button.fontMetrics().horizontalAdvance("Pause animation")
+    assert (
+        dialog._phonon_play_button.minimumWidth()
+        >= dialog._phonon_play_button.fontMetrics().horizontalAdvance("Pause animation")
+    )
     assert dialog._phonon_play_button.minimumHeight() == dialog._phonon_play_button.maximumHeight()
     assert dialog._phonon_play_button.height() == dialog._phonon_play_button.maximumHeight()
     assert dialog._phonon_viewer.selected_atom_indices() == (1,)
@@ -141,15 +156,25 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert dialog._phonon_mode_table.width() <= 620
     assert dialog._phonon_mode_table.minimumWidth() == 320
     assert dialog._phonon_mode_table.maximumWidth() <= 620
-    assert dialog._phonon_mode_table.horizontalHeader().sectionResizeMode(3) == dialog._phonon_mode_table.horizontalHeader().ResizeMode.Stretch
+    assert (
+        dialog._phonon_mode_table.horizontalHeader().sectionResizeMode(3)
+        == dialog._phonon_mode_table.horizontalHeader().ResizeMode.Stretch
+    )
 
     tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
     assert tabs is not None
-    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Phonon Modes", "Mode wells and widths", "Muon Coupling"]
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Phonon Modes",
+        "Mode wells and widths",
+        "Muon Coupling",
+    ]
     assert tabs.widget(0).objectName() == "quantumAnalysisTabPage"
     assert tabs.widget(1).objectName() == "quantumAnalysisTabPage"
     assert tabs.widget(2).objectName() == "quantumAnalysisTabPage"
-    assert any(label.text() == "Harmonic muon wells (weakly-bound limit)" for label in dialog.findChildren(QLabel))
+    assert any(
+        label.text() == "Harmonic muon wells (weakly-bound limit)"
+        for label in dialog.findChildren(QLabel)
+    )
     assert dialog._single_particle_table.minimumWidth() == 320
     assert dialog._single_particle_table.item(0, 0).text() == "2"
     direction_item = dialog._single_particle_table.item(0, 1)
@@ -160,11 +185,18 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert "." in direction_item.text()
     assert "[1 0 0]" not in direction_item.text()
     assert direction_item.toolTip() == ""
-    assert dialog._single_particle_table.horizontalHeader().sectionResizeMode(1) == dialog._single_particle_table.horizontalHeader().ResizeMode.Stretch
+    assert (
+        dialog._single_particle_table.horizontalHeader().sectionResizeMode(1)
+        == dialog._single_particle_table.horizontalHeader().ResizeMode.Stretch
+    )
     assert dialog._covariance_table.width() > 0
     assert dialog._correlation_table.width() > 0
-    covariance_box = next(box for box in dialog.findChildren(QGroupBox) if box.title() == "Covariance")
-    correlation_box = next(box for box in dialog.findChildren(QGroupBox) if box.title() == "Correlation")
+    covariance_box = next(
+        box for box in dialog.findChildren(QGroupBox) if box.title() == "Covariance"
+    )
+    correlation_box = next(
+        box for box in dialog.findChildren(QGroupBox) if box.title() == "Correlation"
+    )
     covariance_layout = covariance_box.layout()
     correlation_layout = correlation_box.layout()
     assert covariance_layout.spacing() == 10
@@ -180,7 +212,9 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert r"C_{ab}\;(\AA^2)" in rendered_math
     assert r"\rho_{ab}" in rendered_math
 
-    hint_texts = [label.text() for label in dialog.findChildren(QLabel) if label.objectName() == "hintText"]
+    hint_texts = [
+        label.text() for label in dialog.findChildren(QLabel) if label.objectName() == "hintText"
+    ]
     assert any("embedded viewer" in text for text in hint_texts)
     assert any("harmonic potential" in text and "line-scan" in text for text in hint_texts)
     assert any("zero-point motion" in text for text in hint_texts)
@@ -191,7 +225,9 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
 def test_quantum_analysis_plot_follows_selected_direction_rows(qapp, tmp_path: Path) -> None:
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_site")
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+    )
 
     assert len(dialog._figure.axes[0].lines) == 9
 
@@ -208,16 +244,22 @@ def test_quantum_analysis_plot_follows_selected_direction_rows(qapp, tmp_path: P
     dialog.close()
 
 
-def test_quantum_analysis_phonon_mode_viewer_animates_and_resets(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_quantum_analysis_phonon_mode_viewer_animates_and_resets(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_site")
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+    )
 
     equilibrium = np.asarray(dialog._phonon_structure.fractional_positions, dtype=float)
     current = np.asarray(dialog._phonon_viewer._structure.fractional_positions, dtype=float)
     assert np.allclose(current, equilibrium)
     dialog._phonon_show_vectors_checkbox.setChecked(True)
-    dialog._phonon_viewer._camera_state = dialog._phonon_viewer._camera_state.__class__(23.0, 61.0, -6.0)
+    dialog._phonon_viewer._camera_state = dialog._phonon_viewer._camera_state.__class__(
+        23.0, 61.0, -6.0
+    )
     dialog._phonon_viewer._axis.set_from_state(dialog._phonon_viewer._camera_state)
     dialog._phonon_viewer._view = (23.0, 61.0)
     dialog._phonon_viewer._view_roll = -6.0
@@ -234,7 +276,9 @@ def test_quantum_analysis_phonon_mode_viewer_animates_and_resets(qapp, tmp_path:
     assert np.isclose(dialog._phonon_phase_radians, pi / 2.0)
     displaced = np.asarray(dialog._phonon_viewer._structure.fractional_positions, dtype=float)
     assert not np.allclose(displaced, equilibrium)
-    assert dialog._phonon_viewer._camera_state == dialog._phonon_viewer._camera_state.__class__(23.0, 61.0, -6.0)
+    assert dialog._phonon_viewer._camera_state == dialog._phonon_viewer._camera_state.__class__(
+        23.0, 61.0, -6.0
+    )
 
     dialog._phonon_mode_table.selectRow(3)
     qapp.processEvents()
@@ -260,7 +304,9 @@ def test_quantum_analysis_phonon_mode_viewer_animates_and_resets(qapp, tmp_path:
     dialog.close()
 
 
-def _open_help_dialog_from_tab(qapp, dialog, monkeypatch, tab_index: int) -> QuantumAnalysisHelpDialog:
+def _open_help_dialog_from_tab(
+    qapp, dialog, monkeypatch, tab_index: int
+) -> QuantumAnalysisHelpDialog:
     tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
     tab = tabs.widget(tab_index)
     opened: list[QuantumAnalysisHelpDialog] = []
@@ -275,10 +321,14 @@ def _open_help_dialog_from_tab(qapp, dialog, monkeypatch, tab_index: int) -> Qua
     return opened[0]
 
 
-def test_mode_wells_help_states_harmonic_limit_and_width_equation(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_mode_wells_help_states_harmonic_limit_and_width_equation(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_site")
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+    )
 
     tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
     assert tabs.tabText(1) == "Mode wells and widths"
@@ -295,10 +345,14 @@ def test_mode_wells_help_states_harmonic_limit_and_width_equation(qapp, tmp_path
     dialog.close()
 
 
-def test_muon_coupling_help_describes_w2_as_harmonic_witness_estimate(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_muon_coupling_help_describes_w2_as_harmonic_witness_estimate(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
-    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_site")
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+    )
 
     help_dialog = _open_help_dialog_from_tab(qapp, dialog, monkeypatch, 2)
 
@@ -322,7 +376,9 @@ def test_quantum_analysis_help_dialog_renders_equations(qapp) -> None:
 
     assert dialog.windowTitle() == "Equation help"
     assert len(dialog.findChildren(MathLabel)) >= 3
-    assert any(label.math() == r"E_0=\frac{1}{2}\hbar\omega" for label in dialog.findChildren(MathLabel))
+    assert any(
+        label.math() == r"E_0=\frac{1}{2}\hbar\omega" for label in dialog.findChildren(MathLabel)
+    )
 
     dialog.close()
 

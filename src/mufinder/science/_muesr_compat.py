@@ -43,13 +43,17 @@ def muesr_imports() -> Iterator[None]:
     """
     patch_numpy_aliases_for_muesr()
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=_CGI_DEPRECATION_MESSAGE, category=DeprecationWarning)
+        warnings.filterwarnings(
+            "ignore", message=_CGI_DEPRECATION_MESSAGE, category=DeprecationWarning
+        )
         if _cgi_importable():
             yield
             return
         missing = object()
         previous = sys.modules.get("cgi", missing)
-        stand_in = ModuleType("cgi", "Empty stand-in for the removed cgi module, installed for muesr imports.")
+        stand_in = ModuleType(
+            "cgi", "Empty stand-in for the removed cgi module, installed for muesr imports."
+        )
         sys.modules["cgi"] = stand_in
         try:
             yield

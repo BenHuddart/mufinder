@@ -83,7 +83,10 @@ def test_too_few_grid_points_raises() -> None:
 @pytest.mark.parametrize(
     ("potential", "message"),
     [
-        (_potential(displacement_A=(-1.0, 0.0, 1.0), energy_eV=(0.0, 1.0)), "one-dimensional and equal length"),
+        (
+            _potential(displacement_A=(-1.0, 0.0, 1.0), energy_eV=(0.0, 1.0)),
+            "one-dimensional and equal length",
+        ),
         (
             # A 2D array trips the ndim guard before the length check.
             DirectionalPotential(
@@ -98,9 +101,17 @@ def test_too_few_grid_points_raises() -> None:
         (_potential(effective_mass_amu=0.0), "Effective mass must be positive"),
         (_potential(displacement_A=(0.0, 0.0, 1.0), energy_eV=(0.0, 1.0, 2.0)), "must be unique"),
     ],
-    ids=["mismatched-lengths", "two-dimensional", "too-few-points", "zero-mass", "duplicate-points"],
+    ids=[
+        "mismatched-lengths",
+        "two-dimensional",
+        "too-few-points",
+        "zero-mass",
+        "duplicate-points",
+    ],
 )
-def test_single_particle_solver_rejects_invalid_scan(potential: DirectionalPotential, message: str) -> None:
+def test_single_particle_solver_rejects_invalid_scan(
+    potential: DirectionalPotential, message: str
+) -> None:
     with pytest.raises(AdiabaticApproximationError, match=message):
         solve_single_particle_ground_state(potential)
 

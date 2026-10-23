@@ -154,13 +154,17 @@ class JournalWidget(QWidget):
 
     def _export_journal(self) -> None:
         if not self._journal.project_name:
-            QMessageBox.information(self, "No journal", "Open a project before exporting the Journal.")
+            QMessageBox.information(
+                self, "No journal", "Open a project before exporting the Journal."
+            )
             return
 
         format_name = str(self._format_combo.currentData() or "text")
         extension = ".md" if format_name == "markdown" else ".txt"
         suggested_name = f"{self._safe_name(self._journal.project_name)}-journal{extension}"
-        selected_filter = "Markdown Files (*.md)" if format_name == "markdown" else "Text Files (*.txt)"
+        selected_filter = (
+            "Markdown Files (*.md)" if format_name == "markdown" else "Text Files (*.txt)"
+        )
         file_path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             "Export Journal",
@@ -181,7 +185,10 @@ class JournalWidget(QWidget):
 
     @staticmethod
     def _safe_name(project_name: str) -> str:
-        cleaned = "".join(character if character.isalnum() or character in {"-", "_"} else "_" for character in project_name.strip())
+        cleaned = "".join(
+            character if character.isalnum() or character in {"-", "_"} else "_"
+            for character in project_name.strip()
+        )
         return cleaned.strip("_") or "project"
 
     @staticmethod

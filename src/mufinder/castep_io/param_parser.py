@@ -465,7 +465,11 @@ def run_is_spin_polarized(
     if isinstance(explicit, bool):
         return explicit
     net_spin = param_assignments.get("spin")
-    if isinstance(net_spin, (int, float)) and not isinstance(net_spin, bool) and abs(float(net_spin)) > 1e-12:
+    if (
+        isinstance(net_spin, (int, float))
+        and not isinstance(net_spin, bool)
+        and abs(float(net_spin)) > 1e-12
+    ):
         return True
     return any(abs(float(value)) > 1e-12 for value in atomic_spins or ())
 

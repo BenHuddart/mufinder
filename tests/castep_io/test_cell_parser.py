@@ -43,7 +43,9 @@ FIX_ALL_CELL TRUE
     assert parsed.species == ("Si", "Si")
     assert parsed.fractional_positions[1] == pytest.approx((0.25, 0.25, 0.25))
     assert parsed.cell_file.kpoint_mp_grid == (4, 4, 4)
-    assert any(item.name == "fix_all_cell" and item.value is True for item in parsed.cell_file.scalars)
+    assert any(
+        item.name == "fix_all_cell" and item.value is True for item in parsed.cell_file.scalars
+    )
 
 
 def test_parse_cell_file_reads_from_disk(tmp_path: Path) -> None:
@@ -265,7 +267,9 @@ def test_parse_cell_text_strips_comments_and_keeps_generic_blocks() -> None:
         )
     )
 
-    assert parsed.cell_file.blocks == (BlockSection(name="species_mass", rows=((1, 2, 3),), unit="bohr"),)
+    assert parsed.cell_file.blocks == (
+        BlockSection(name="species_mass", rows=((1, 2, 3),), unit="bohr"),
+    )
     assert parsed.cell_file.kpoint_mp_grid == (2, 2, 2)
 
 
@@ -303,9 +307,18 @@ def test_lattice_blocks_scale_by_their_length_unit() -> None:
 @pytest.mark.parametrize(
     ("lattice", "message"),
     [
-        ("%BLOCK LATTICE_CART\n1 0 0\n0 1 0\n%ENDBLOCK LATTICE_CART", "must contain three lattice vectors"),
-        ("%BLOCK LATTICE_CART\n1 0\n0 1 0\n0 0 1\n%ENDBLOCK LATTICE_CART", "must contain three values"),
-        ("%BLOCK LATTICE_ABC\n1 1 1\n%ENDBLOCK LATTICE_ABC", "must contain lengths and angles rows"),
+        (
+            "%BLOCK LATTICE_CART\n1 0 0\n0 1 0\n%ENDBLOCK LATTICE_CART",
+            "must contain three lattice vectors",
+        ),
+        (
+            "%BLOCK LATTICE_CART\n1 0\n0 1 0\n0 0 1\n%ENDBLOCK LATTICE_CART",
+            "must contain three values",
+        ),
+        (
+            "%BLOCK LATTICE_ABC\n1 1 1\n%ENDBLOCK LATTICE_ABC",
+            "must contain lengths and angles rows",
+        ),
         ("%BLOCK LATTICE_ABC\n1 1\n90 90 90\n%ENDBLOCK LATTICE_ABC", "must contain three values"),
         ("", "must contain LATTICE_CART or LATTICE_ABC"),
     ],
@@ -323,7 +336,9 @@ def test_lattice_from_abc_requires_a_definition() -> None:
 
 def test_positions_frac_reads_explicit_spins() -> None:
     parsed = parse_cell_text(
-        _cell(positions="%BLOCK POSITIONS_FRAC\nFe 0 0 0 spin= 1.5\nFe 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC")
+        _cell(
+            positions="%BLOCK POSITIONS_FRAC\nFe 0 0 0 spin= 1.5\nFe 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC"
+        )
     )
 
     assert parsed.cell_file.positions_abs is None
@@ -351,7 +366,10 @@ def test_positions_abs_scales_by_its_length_unit() -> None:
             "may not contain both POSITIONS_FRAC and POSITIONS_ABS",
         ),
         ("", "must contain POSITIONS_FRAC or POSITIONS_ABS"),
-        ("%BLOCK POSITIONS_FRAC\nFe 0 0 0 spin=not-a-number\n%ENDBLOCK POSITIONS_FRAC", "Invalid SPIN value"),
+        (
+            "%BLOCK POSITIONS_FRAC\nFe 0 0 0 spin=not-a-number\n%ENDBLOCK POSITIONS_FRAC",
+            "Invalid SPIN value",
+        ),
         (
             "%BLOCK POSITIONS_FRAC\nFe 0 0\n%ENDBLOCK POSITIONS_FRAC",
             "POSITIONS_FRAC rows must contain species and three coordinates",
@@ -382,8 +400,14 @@ def test_species_pot_and_kpoints_list_rows_are_parsed() -> None:
 @pytest.mark.parametrize(
     ("section", "message"),
     [
-        ("%BLOCK SPECIES_POT\nSi\n%ENDBLOCK SPECIES_POT", "SPECIES_POT rows must contain species and potential"),
-        ("%BLOCK KPOINTS_LIST\n0 0 0\n%ENDBLOCK KPOINTS_LIST", "KPOINTS_LIST rows must contain kx ky kz and weight"),
+        (
+            "%BLOCK SPECIES_POT\nSi\n%ENDBLOCK SPECIES_POT",
+            "SPECIES_POT rows must contain species and potential",
+        ),
+        (
+            "%BLOCK KPOINTS_LIST\n0 0 0\n%ENDBLOCK KPOINTS_LIST",
+            "KPOINTS_LIST rows must contain kx ky kz and weight",
+        ),
         ("FIX_ALL_CELL MAYBE", "Invalid boolean value"),
         ("KPOINT_MP_GRID 1 2", "requires three integer values"),
     ],
@@ -427,7 +451,9 @@ def test_scalar_values_follow_numeric_keyword_types() -> None:
 # one an ulp away (macOS libm). Either converts to a fractional x a rounding
 # error below zero, which must land on 0.0 rather than on or just under 1.0.
 HEXAGONAL_FACE_X = pytest.mark.parametrize(
-    "minus_b_x", ["1.4999999999999993", "1.4999999999999996"], ids=["correctly-rounded-cos", "one-ulp-cos"]
+    "minus_b_x",
+    ["1.4999999999999993", "1.4999999999999996"],
+    ids=["correctly-rounded-cos", "one-ulp-cos"],
 )
 
 
@@ -476,7 +502,9 @@ Si {x} 2.0 0.0
     parsed = parse_cell_text(text)
 
     assert all(0.0 <= value < 1.0 for value in parsed.fractional_positions[0])
-    assert parsed.fractional_positions[0] == pytest.approx((expected_fractional_x, 0.5, 0.0), abs=1e-15)
+    assert parsed.fractional_positions[0] == pytest.approx(
+        (expected_fractional_x, 0.5, 0.0), abs=1e-15
+    )
 
 
 @pytest.mark.parametrize(
@@ -552,7 +580,9 @@ def test_geometry_only_parse_skips_every_non_geometry_keyword() -> None:
 
 def test_geometry_only_parse_still_checks_geometry_and_block_delimiters(tmp_path: Path) -> None:
     with pytest.raises(CellParseError, match="Unterminated block"):
-        parse_cell_text(_GEOMETRY_WITH_SETTINGS + "%BLOCK SPECIES_MASS\nSi 28.0\n", geometry_only=True)
+        parse_cell_text(
+            _GEOMETRY_WITH_SETTINGS + "%BLOCK SPECIES_MASS\nSi 28.0\n", geometry_only=True
+        )
 
     with pytest.raises(CellParseError, match="must contain POSITIONS_FRAC or POSITIONS_ABS"):
         parse_cell_text(

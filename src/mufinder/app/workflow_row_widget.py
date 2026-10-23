@@ -65,7 +65,12 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
-from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    status_brush,
+    style_hint_text,
+    style_section_subtitle,
+    style_section_title,
+)
 from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
 from mufinder.app.workflow_parameters import (
     drop_default_conflicts,
@@ -164,7 +169,9 @@ class RowTableWidget(QWidget):
     _NAME_PREFIX_DEFAULT: str | None = None
     _ADD_ROW_TEXT: str | None = "Add Job"
     _NO_ROWS_MESSAGE = "Add one or more rows first."
-    _TABLE_TOOLTIP = "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
+    _TABLE_TOOLTIP = (
+        "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
+    )
     _READ_ONLY_ROW_TOOLTIP = ""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -353,7 +360,9 @@ class RowTableWidget(QWidget):
             stretch = column in (self._LABEL_COLUMN, self._SUPERCELL_COLUMN)
             header.setSectionResizeMode(
                 column,
-                QHeaderView.ResizeMode.Stretch if stretch else QHeaderView.ResizeMode.ResizeToContents,
+                QHeaderView.ResizeMode.Stretch
+                if stretch
+                else QHeaderView.ResizeMode.ResizeToContents,
             )
         header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(self._REMOVE_COLUMN, 34)
@@ -494,7 +503,9 @@ class RowTableWidget(QWidget):
             )
             selection_model = table.selectionModel()
             if selection_model is not None:
-                selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
+                selection_model.selectionChanged.connect(
+                    lambda *_: self._refresh_batch_button_state()
+                )
 
         if self._add_row_button is not None:
             self._add_row_button.clicked.connect(lambda: self._add_row())
@@ -572,7 +583,10 @@ class RowTableWidget(QWidget):
     def _row_location_for_key(self, key: str) -> tuple[QTableWidget, int] | None:
         for table in self._all_tables():
             for row in range(table.rowCount()):
-                if self._label_at_row(row, table=table) and self._submission_key_at_row(row, table=table) == key:
+                if (
+                    self._label_at_row(row, table=table)
+                    and self._submission_key_at_row(row, table=table) == key
+                ):
                     return table, row
         return None
 
@@ -632,7 +646,8 @@ class RowTableWidget(QWidget):
 
     def _row_parameters_locked(self, row_ids: tuple[int, ...]) -> bool:
         return any(
-            self._row_is_read_only(row_id) or workflow_row_is_locked(self._row_status_for_id(row_id))
+            self._row_is_read_only(row_id)
+            or workflow_row_is_locked(self._row_status_for_id(row_id))
             for row_id in row_ids
         )
 
@@ -657,13 +672,17 @@ class RowTableWidget(QWidget):
             label_item = QTableWidgetItem(label)
             label_item.setData(Qt.ItemDataRole.UserRole, row_id)
             target.setItem(row, self._LABEL_COLUMN, label_item)
-            target.setCellWidget(row, self._SUPERCELL_COLUMN, self._supercells.create_combo(target, row_id))
+            target.setCellWidget(
+                row, self._SUPERCELL_COLUMN, self._supercells.create_combo(target, row_id)
+            )
             set_workflow_table_item(target, row, self._STATUS_COLUMN, self._EMPTY_STATUS)
             self.create_row_cells(target, row, row_id)
 
             configure_button = SelectionSnapshotPushButton("Configure...", target)
             configure_button.selection_snapshot_key = row_id
-            configure_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
+            configure_button.setSizePolicy(
+                QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed
+            )
             configure_button.clicked.connect(
                 lambda _checked=False, btn=configure_button: self._dispatch_row_action(
                     btn, row_id, "configure", target
@@ -850,7 +869,9 @@ class RowTableWidget(QWidget):
             self._open_parameter_dialog(row_ids)
 
     def _confirm_removal(self, row_ids: tuple[int, ...]) -> bool:
-        submitted = sum(1 for row_id in row_ids if workflow_row_is_locked(self._row_status_for_id(row_id)))
+        submitted = sum(
+            1 for row_id in row_ids if workflow_row_is_locked(self._row_status_for_id(row_id))
+        )
         return confirm_row_removal(self, len(row_ids), submitted_count=submitted)
 
     def _delete_selected_rows(self, table: QTableWidget | None = None) -> None:
@@ -895,7 +916,9 @@ class RowTableWidget(QWidget):
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         if not row_ids:
             return dict(self._default_params)
-        common = shared_parameter_values(self._effective_params_for_row(row_id) for row_id in row_ids)
+        common = shared_parameter_values(
+            self._effective_params_for_row(row_id) for row_id in row_ids
+        )
         common.update(self._pinned_params())
         if any(self._row_is_read_only(row_id) for row_id in row_ids):
             # No pre-fill for a read-only row: the suggested spacing comes from
@@ -937,7 +960,9 @@ class RowTableWidget(QWidget):
                 subject=self._DIALOG_SUBJECT,
                 values=self._common_params_for_rows(row_ids),
                 row_values={row_id: self._effective_params_for_row(row_id) for row_id in row_ids},
-                row_advanced={row_id: self._row_added_advanced.get(row_id, set()) for row_id in row_ids},
+                row_advanced={
+                    row_id: self._row_added_advanced.get(row_id, set()) for row_id in row_ids
+                },
                 sanitize=lambda values: sanitize_parameter_mapping(values, self._specs_by_name),
                 locked_values=self._dialog_locked_values(row_ids),
                 read_only=self._row_parameters_locked(row_ids),
@@ -1118,7 +1143,10 @@ class RelaxationRowTableWidget(RowTableWidget):
 
     _EXCLUDED_PARAMETER_NAMES: frozenset[str] = frozenset({"task", "fix_all_cell"})
     # Starting values that differ from the schema default in this workflow.
-    _PARAMETER_DEFAULT_OVERRIDES: Mapping[str, object] = {"geom_max_iter": 300, "continuation": "DEFAULT"}
+    _PARAMETER_DEFAULT_OVERRIDES: Mapping[str, object] = {
+        "geom_max_iter": 300,
+        "continuation": "DEFAULT",
+    }
     _TABLE_TOOLTIP = (
         "Right-click selected rows to run, cancel, inspect, reset, configure, or remove "
         "them, or a completed/failed/stopped/cancelled row to continue its relaxation."
@@ -1446,7 +1474,9 @@ class SourceTableWidget(QWidget):
             run_local=lambda _rows: self._emit_submit_local(),
             run_cluster=lambda _rows: self._emit_submit_cluster(),
             cancel=lambda rows: self.cancel_requested.emit(self._source_keys_at_rows(rows)),
-            inspect=lambda rows: self.inspect_failed_requested.emit(self._source_keys_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(
+                self._source_keys_at_rows(rows)
+            ),
             configure=lambda _rows: self._emit_batch_configure(),
             remove=remove,
             confirm_parent=self,

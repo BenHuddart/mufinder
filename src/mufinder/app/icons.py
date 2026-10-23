@@ -122,7 +122,9 @@ def _semantic_icon(name: str) -> QIcon:
     muted = palette.mid().color()
     paper = palette.base().color()
 
-    painter.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
 
     if name == "new_project":
         _draw_document_icon(painter, ink, paper)
@@ -205,7 +207,9 @@ def _draw_project_home_icon(painter: QPainter, ink: QColor, paper: QColor, accen
     roof.lineTo(4.1, 8.4)
     roof.closeSubpath()
 
-    painter.setPen(QPen(ink, 1.25, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.25, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.setBrush(paper)
     painter.drawPath(roof)
 
@@ -221,13 +225,19 @@ def _draw_project_home_icon(painter: QPainter, ink: QColor, paper: QColor, accen
     accent_roof.closeSubpath()
     painter.drawPath(accent_roof)
 
-    painter.setPen(QPen(ink, 1.1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.setBrush(ink.lighter(170))
     painter.drawRoundedRect(QRectF(7.1, 10.0, 3.8, 4.8), 0.8, 0.8)
 
 
-def _draw_save_workspace_icon(painter: QPainter, ink: QColor, paper: QColor, accent: QColor) -> None:
-    painter.setPen(QPen(ink, 1.25, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+def _draw_save_workspace_icon(
+    painter: QPainter, ink: QColor, paper: QColor, accent: QColor
+) -> None:
+    painter.setPen(
+        QPen(ink, 1.25, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.setBrush(paper)
     painter.drawRoundedRect(4.4, 2.8, 10.2, 11.8, 1.8, 1.8)
     painter.setBrush(ink.lighter(180))
@@ -242,7 +252,9 @@ def _draw_save_workspace_icon(painter: QPainter, ink: QColor, paper: QColor, acc
 
 
 def _draw_pin_icon(painter: QPainter, ink: QColor, accent: QColor) -> None:
-    painter.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.setBrush(accent.lighter(150))
     head = QPainterPath()
     head.moveTo(6.0, 3.0)
@@ -261,7 +273,9 @@ def _draw_pin_icon(painter: QPainter, ink: QColor, accent: QColor) -> None:
 def _draw_pop_out_icon(painter: QPainter, ink: QColor, accent: QColor) -> None:
     """A window corner with an arrow leaving it: "open in a separate window"."""
 
-    painter.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.setBrush(Qt.BrushStyle.NoBrush)
     frame = QPainterPath()
     frame.moveTo(8.0, 3.5)
@@ -273,14 +287,18 @@ def _draw_pop_out_icon(painter: QPainter, ink: QColor, accent: QColor) -> None:
     frame.quadTo(14.5, 14.5, 14.5, 13.5)
     frame.lineTo(14.5, 10.0)
     painter.drawPath(frame)
-    painter.setPen(QPen(accent, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(accent, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.drawLine(8.5, 9.5, 14.5, 3.5)
     painter.drawLine(10.5, 3.5, 14.5, 3.5)
     painter.drawLine(14.5, 3.5, 14.5, 7.5)
 
 
 def _draw_delete_icon(painter: QPainter, ink: QColor, paper: QColor) -> None:
-    painter.setPen(QPen(ink, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
     painter.setBrush(paper)
     painter.drawRoundedRect(5.0, 6.0, 8.0, 9.0, 1.3, 1.3)
     painter.drawLine(4.0, 5.0, 14.0, 5.0)
@@ -350,7 +368,9 @@ def _draw_moon_icon(painter: QPainter, ink: QColor, paper: QColor) -> None:
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(paper)
     painter.drawEllipse(7.5, 2.5, 8.0, 10.5)
-    painter.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+    )
 
 
 def _draw_system_icon(painter: QPainter, ink: QColor, accent: QColor, paper: QColor) -> None:
@@ -365,7 +385,11 @@ def _draw_system_icon(painter: QPainter, ink: QColor, accent: QColor, paper: QCo
 
 
 def _draw_help_icon(painter: QPainter, ink: QColor, accent: QColor, paper: QColor) -> None:
-    painter.setPen(QPen(accent, 2.45, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setPen(
+        QPen(
+            accent, 2.45, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin
+        )
+    )
     question = QPainterPath()
     question.moveTo(7.4, 7.4)
     question.cubicTo(7.8, 5.1, 9.5, 4.0, 11.3, 4.2)

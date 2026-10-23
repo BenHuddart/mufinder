@@ -47,7 +47,7 @@ def _three_candidate_suggestion() -> SupercellSuggestion:
     return _suggestion(
         candidates=[
             _cand((3, 3, 3), 27, 9.0, False),
-            _cand((4, 4, 4), 64, 12.0, True),   # recommended (satisfies criterion, < 200)
+            _cand((4, 4, 4), 64, 12.0, True),  # recommended (satisfies criterion, < 200)
             _cand((5, 5, 5), 125, 15.0, True),
         ],
         recommended_index=1,
@@ -58,7 +58,7 @@ def _three_candidate_suggestion() -> SupercellSuggestion:
 def _affordable_recommended_suggestion() -> SupercellSuggestion:
     return _suggestion(
         candidates=[
-            _cand((3, 3, 3), 27, 9.0, False),   # recommended (best affordable, not criterion)
+            _cand((3, 3, 3), 27, 9.0, False),  # recommended (best affordable, not criterion)
             _cand((10, 10, 10), 1000, 10.0, True),
         ],
         recommended_index=0,
@@ -249,5 +249,5 @@ def test_intro_mentions_distance_target(qapp) -> None:
     labels = dialog.findChildren(QLabel)
     texts = " ".join(label.text() for label in labels)
     assert "10" in texts  # distance_target = 10.0
-    assert "8" in texts   # display_threshold = 8.0
+    assert "8" in texts  # display_threshold = 8.0
     dialog.close()

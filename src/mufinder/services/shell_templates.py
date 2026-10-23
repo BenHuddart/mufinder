@@ -59,7 +59,9 @@ def render_shell_template(name: str, /, **values: object) -> str:
     if placeholders != set(mapping):
         missing = ", ".join(sorted(placeholders - set(mapping))) or "none"
         unused = ", ".join(sorted(set(mapping) - placeholders)) or "none"
-        raise ValueError(f"Shell template {name}: missing values for {missing}; unused values {unused}.")
+        raise ValueError(
+            f"Shell template {name}: missing values for {missing}; unused values {unused}."
+        )
     text = _STANDALONE_PLACEHOLDER_RE.sub(
         lambda match: "" if mapping[match.group(1)] == "" else match.group(0),
         template.template,

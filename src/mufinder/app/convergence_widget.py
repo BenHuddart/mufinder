@@ -34,7 +34,9 @@ _CUTOFF_STEP = 20.0
 class CutoffRangeDialog(QDialog):
     """Compact dialog for generating multiple cutoff rows from a numeric range."""
 
-    def __init__(self, defaults: Mapping[str, object] | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, defaults: Mapping[str, object] | None = None, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Generate Cutoffs From Range")
 
@@ -111,7 +113,9 @@ class CutoffRangeDialog(QDialog):
             QMessageBox.warning(self, "Invalid range", "Step must be positive.")
             return
         if self._stop.value() < self._start.value():
-            QMessageBox.warning(self, "Invalid range", "Stop must be greater than or equal to start.")
+            QMessageBox.warning(
+                self, "Invalid range", "Stop must be greater than or equal to start."
+            )
             return
         try:
             self.values()
@@ -219,8 +223,12 @@ class CutoffConvergenceWidget(SweepConvergenceWidget):
         for entry in state.get("overrides", []):
             if not isinstance(entry, dict):
                 continue
-            params = self._sanitize({str(name): raw for name, raw in dict(entry.get("params", {})).items()})
-            advanced = {name for name in params if name in self._specs_by_name and params[name] is not None}
+            params = self._sanitize(
+                {str(name): raw for name, raw in dict(entry.get("params", {})).items()}
+            )
+            advanced = {
+                name for name in params if name in self._specs_by_name and params[name] is not None
+            }
             for raw_cutoff in entry.get("cutoffs", []):
                 cutoff = self._CODEC.coerce(raw_cutoff)
                 if cutoff is None:

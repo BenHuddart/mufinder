@@ -40,7 +40,9 @@ def test_parse_numeric(candidate: object, expected: float | None) -> None:
 
 def test_extractors_read_direct_keys_before_nested_groups() -> None:
     assert extract_total_energy({"final_energy": -10.0, "energies": {"total": -1.0}}) == -10.0
-    assert extract_total_energy({"total_energy": None, "energies": {"final": {"value": -2.0}}}) == -2.0
+    assert (
+        extract_total_energy({"total_energy": None, "energies": {"final": {"value": -2.0}}}) == -2.0
+    )
     assert extract_max_force({"max_force_eva": 0.05}) == 0.05
     assert extract_max_force({"forces": {"maximum": 0.1}}) == 0.1
     assert extract_max_stress({"max_stress": float("nan"), "stress": {"max": 0.2}}) == 0.2

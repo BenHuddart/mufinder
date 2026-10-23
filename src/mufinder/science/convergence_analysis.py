@@ -24,7 +24,9 @@ class ConvergenceResult:
     fallback_suggestion: str | None = None
 
 
-def _clean_series(cutoffs: Sequence[float], values: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, ...]]:
+def _clean_series(
+    cutoffs: Sequence[float], values: Sequence[float]
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
     pairs: list[tuple[float, float]] = []
     for cutoff, value in zip(cutoffs, values, strict=False):
         try:
@@ -127,7 +129,9 @@ def derivative_energy(
             details="Host atom count must be positive for per-atom normalization.",
         )
 
-    steps = [x[index + 1] - x[index] for index in range(len(x) - 1) if (x[index + 1] - x[index]) > 0.0]
+    steps = [
+        x[index + 1] - x[index] for index in range(len(x) - 1) if (x[index + 1] - x[index]) > 0.0
+    ]
     if not steps:
         return ConvergenceResult(
             converged=False,
@@ -177,7 +181,9 @@ def derivative_energy(
     )
 
 
-def _exponential_model(cutoff: np.ndarray, e_inf: float, a_param: float, b_param: float) -> np.ndarray:
+def _exponential_model(
+    cutoff: np.ndarray, e_inf: float, a_param: float, b_param: float
+) -> np.ndarray:
     return e_inf + a_param * np.exp(-b_param * cutoff)
 
 
@@ -333,10 +339,7 @@ def delta_threshold_force(
         return ConvergenceResult(
             converged=False,
             method="force-delta-threshold",
-            details=(
-                "Force variation did not reach the threshold "
-                f"({threshold:.6g} eV/Ang)."
-            ),
+            details=(f"Force variation did not reach the threshold ({threshold:.6g} eV/Ang)."),
             deltas=tuple(deltas),
         )
 
@@ -386,10 +389,7 @@ def delta_threshold_stress(
         return ConvergenceResult(
             converged=False,
             method="stress-delta-threshold",
-            details=(
-                "Stress variation did not reach the threshold "
-                f"({threshold:.6g} GPa)."
-            ),
+            details=(f"Stress variation did not reach the threshold ({threshold:.6g} GPa)."),
             deltas=tuple(deltas),
         )
 
@@ -552,11 +552,17 @@ def analyze_convergence(
     """Run selected energy convergence method and force delta-threshold method."""
     method_key = method.strip().lower()
     if method_key == "delta-threshold":
-        energy = delta_threshold_energy(cutoffs, energies, num_atoms=num_atoms, threshold=energy_threshold)
+        energy = delta_threshold_energy(
+            cutoffs, energies, num_atoms=num_atoms, threshold=energy_threshold
+        )
     elif method_key == "derivative":
-        energy = derivative_energy(cutoffs, energies, num_atoms=num_atoms, threshold=energy_threshold)
+        energy = derivative_energy(
+            cutoffs, energies, num_atoms=num_atoms, threshold=energy_threshold
+        )
     elif method_key == "asymptotic":
-        energy = asymptotic_extrapolation_energy(cutoffs, energies, num_atoms=num_atoms, threshold=energy_threshold)
+        energy = asymptotic_extrapolation_energy(
+            cutoffs, energies, num_atoms=num_atoms, threshold=energy_threshold
+        )
     else:
         raise ValueError(f"Unsupported energy convergence method: {method}")
 

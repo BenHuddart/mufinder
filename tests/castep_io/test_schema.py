@@ -175,7 +175,8 @@ def test_setup_catalog_is_used_but_exported_env_var_overrides_it(
         path = tmp_path / name
         path.write_text(
             '{"castep_version": "%s", "cell": {}, '
-            '"param": {"task": {"option_type": "String", "level": "Basic", "docstring": "Example"}}}' % version,
+            '"param": {"task": {"option_type": "String", "level": "Basic", "docstring": "Example"}}}'
+            % version,
             encoding="utf-8",
         )
         return path
@@ -245,13 +246,7 @@ def _stub_param_catalog(order: tuple[str, ...]) -> str:
         f'"{name}": {{"option_type": "String", "level": "Basic", "docstring": "Example"}}'
         for name in order
     )
-    return (
-        "{\n"
-        '  "castep_version": "test",\n'
-        '  "cell": {},\n'
-        f'  "param": {{{entries}}}\n'
-        "}\n"
-    )
+    return f'{{\n  "castep_version": "test",\n  "cell": {{}},\n  "param": {{{entries}}}\n}}\n'
 
 
 def test_param_writer_follows_serialization_order_after_runtime_refresh(
@@ -307,8 +302,12 @@ def test_cell_writer_follows_serialization_order_after_runtime_refresh(
     )
 
     default_lines = write_cell(cell_file).splitlines()
-    default_lattice = next(i for i, line in enumerate(default_lines) if line == "%BLOCK LATTICE_CART")
-    default_grid = next(i for i, line in enumerate(default_lines) if line.startswith("KPOINT_MP_GRID"))
+    default_lattice = next(
+        i for i, line in enumerate(default_lines) if line == "%BLOCK LATTICE_CART"
+    )
+    default_grid = next(
+        i for i, line in enumerate(default_lines) if line.startswith("KPOINT_MP_GRID")
+    )
     assert default_lattice < default_grid
 
     # Simulate the module-global reassignment that refresh_keyword_catalog performs, moving
@@ -320,13 +319,21 @@ def test_cell_writer_follows_serialization_order_after_runtime_refresh(
     monkeypatch.setattr(schema_module, "CELL_SERIALIZATION_ORDER", reordered)
 
     reordered_lines = write_cell(cell_file).splitlines()
-    reordered_lattice = next(i for i, line in enumerate(reordered_lines) if line == "%BLOCK LATTICE_CART")
-    reordered_grid = next(i for i, line in enumerate(reordered_lines) if line.startswith("KPOINT_MP_GRID"))
+    reordered_lattice = next(
+        i for i, line in enumerate(reordered_lines) if line == "%BLOCK LATTICE_CART"
+    )
+    reordered_grid = next(
+        i for i, line in enumerate(reordered_lines) if line.startswith("KPOINT_MP_GRID")
+    )
     assert reordered_grid < reordered_lattice
 
 
 def test_starter_catalog_offers_spin_polarized_but_not_net_spin_in_every_workflow() -> None:
-    from mufinder.castep_io.catalog_overrides import ALL_WORKFLOWS, KEYWORD_OVERRIDES, KNOWN_WORKFLOWS
+    from mufinder.castep_io.catalog_overrides import (
+        ALL_WORKFLOWS,
+        KEYWORD_OVERRIDES,
+        KNOWN_WORKFLOWS,
+    )
     from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
 
     _cell, param_specs, _source_names = schema_module._build_starter_schema()
@@ -391,7 +398,9 @@ def test_catalog_docstrings_populate_labels_examples_and_allowed_values(
         cell={},
         param={
             "xc_test_flag": _entry("String", docstring),
-            "test_free_text": _entry("String", "Allowed values: libxc-backed supported values; see docs"),
+            "test_free_text": _entry(
+                "String", "Allowed values: libxc-backed supported values; see docs"
+            ),
         },
     )
 
@@ -464,8 +473,16 @@ def test_catalog_keyword_names_set_value_types_categories_and_tasks(
     grid = get_keyword_spec("cell", "test_kpoint_grid")
     flag = get_keyword_spec("cell", "symmetry_test")
     block = get_keyword_spec("cell", "species_test")
-    assert grid is not None and (grid.kind, grid.value_type, grid.category) == ("scalar", "int_triplet", "kpoints")
-    assert flag is not None and (flag.kind, flag.value_type, flag.category) == ("flag", "bool", "symmetry")
+    assert grid is not None and (grid.kind, grid.value_type, grid.category) == (
+        "scalar",
+        "int_triplet",
+        "kpoints",
+    )
+    assert flag is not None and (flag.kind, flag.value_type, flag.category) == (
+        "flag",
+        "bool",
+        "symmetry",
+    )
     assert block is not None and (block.kind, block.category) == ("block", "pseudopotentials")
     # A block with no curated layout keeps raw rows.
     assert block.block_schema is None
@@ -488,7 +505,9 @@ def test_catalog_blocks_pick_up_curated_layouts_and_aliases_resolve(
         monkeypatch,
         cell={"positions_frac": _entry("Block"), "lattice_abc": _entry("Block")},
         param={
-            "test_polarisation": _entry("String", "Default value: Determined from TEST_POLARIZATION"),
+            "test_polarisation": _entry(
+                "String", "Default value: Determined from TEST_POLARIZATION"
+            ),
             "test_polarization": _entry("String"),
             "test_isation": _entry("String"),
             "test_ization": _entry("String"),

@@ -49,7 +49,9 @@ def test_structure_to_spec_rejects_fractional_position_with_wrong_component_coun
     structure = si_pair_host(5.43)
     structure.fractional_positions = [[0.0, 0.0, 0.0], [0.25, 0.25]]
 
-    with pytest.raises(StructureBridgeError, match="Fractional position 2 must contain exactly three"):
+    with pytest.raises(
+        StructureBridgeError, match="Fractional position 2 must contain exactly three"
+    ):
         structure_to_spec(structure)
 
 
@@ -88,7 +90,9 @@ def test_structure_to_spec_rejects_spin_count_mismatch() -> None:
     ],
     ids=["not-a-list", "non-numeric"],
 )
-def test_structure_to_spec_rejects_malformed_atomic_spins(atomic_spins: object, message: str) -> None:
+def test_structure_to_spec_rejects_malformed_atomic_spins(
+    atomic_spins: object, message: str
+) -> None:
     structure = si_pair_host(5.43)
     structure.properties["atomic_spins"] = atomic_spins
 

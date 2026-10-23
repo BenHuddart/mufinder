@@ -88,7 +88,9 @@ def test_expand_uep_jobs_forces_formatted_density_even_when_disabled_in_row() ->
         project_kpoint_reference_lattice=None,
     )
 
-    param_values = {keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords}
+    param_values = {
+        keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords
+    }
     assert param_values["task"] == "SINGLEPOINT"
     assert param_values["write_formatted_density"] is True
 

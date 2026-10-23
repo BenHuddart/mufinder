@@ -334,9 +334,7 @@ class TestMergingABatch:
             assert definition.parameters["job_seed_names_by_label"][key] == item.seed_name
             assert item.site_id in definition.input_site_ids
 
-    def test_the_merged_rows_are_marked_imported(
-        self, window: MainWindow, tmp_path: Path
-    ) -> None:
+    def test_the_merged_rows_are_marked_imported(self, window: MainWindow, tmp_path: Path) -> None:
         _document, _outcome, _merged = self._import_into(window, tmp_path)
 
         config = deserialize_muon_relaxation_config(
@@ -383,13 +381,10 @@ class TestMergingABatch:
 
         form_rows = window._muon_relaxation_form_config().rows
         assert all(
-            any(abs(value) > 1e-9 for value in row.initial_fractional_position)
-            for row in form_rows
+            any(abs(value) > 1e-9 for value in row.initial_fractional_position) for row in form_rows
         )
 
-    def test_merging_preserves_existing_rows(
-        self, window: MainWindow, tmp_path: Path
-    ) -> None:
+    def test_merging_preserves_existing_rows(self, window: MainWindow, tmp_path: Path) -> None:
         """Re-registering the definition would arrive with an empty job mapping
         and sever every existing row's binding."""
 
@@ -416,7 +411,9 @@ class TestMergingABatch:
             outcome, output_directory=document.project_root / "files" / "muon_relaxation"
         )
 
-        after = window._muon_relaxation_controller.active_definition().parameters["job_ids_by_label"]
+        after = window._muon_relaxation_controller.active_definition().parameters[
+            "job_ids_by_label"
+        ]
         assert before.items() <= after.items()
         assert len(after) == 3
 
@@ -437,9 +434,7 @@ class TestImportedRowParameters:
         config = window._muon_relaxation_form_config()
         return next(row for row in config.rows if row.label == label)
 
-    def test_the_row_carries_what_the_run_used(
-        self, window: MainWindow, tmp_path: Path
-    ) -> None:
+    def test_the_row_carries_what_the_run_used(self, window: MainWindow, tmp_path: Path) -> None:
         _document, outcome, _merged = self._import_into(window, tmp_path)
 
         row = self._row_for(window, outcome.imported[0].label)
@@ -592,9 +587,7 @@ class TestSignatureStability:
         assert form_after == definition_after
         assert form_after == form_before
 
-    def test_signatures_survive_a_save_and_reload(
-        self, window: MainWindow, tmp_path: Path
-    ) -> None:
+    def test_signatures_survive_a_save_and_reload(self, window: MainWindow, tmp_path: Path) -> None:
         """The stored values are structured (units, triplets); a round trip
         through the persisted form must coerce them back identically."""
 
@@ -607,9 +600,7 @@ class TestSignatureStability:
         from mufinder.persistence.codec import to_jsonable
 
         # The real save path: encoded, written as JSON, read back.
-        reloaded = json.loads(
-            json.dumps(to_jsonable(document.ui_state["muon_relaxation_form"]))
-        )
+        reloaded = json.loads(json.dumps(to_jsonable(document.ui_state["muon_relaxation_form"])))
         window._muon_relaxation_view.set_form_state(reloaded)
 
         _definition_after, form_after = self._signatures(window)
@@ -649,9 +640,7 @@ class TestNativeRowsAreUnaffected:
     def _import_into(self, window: MainWindow, tmp_path: Path):
         return TestMergingABatch()._import_into(window, tmp_path)
 
-    def test_expansion_ignores_imported_rows(
-        self, window: MainWindow, tmp_path: Path
-    ) -> None:
+    def test_expansion_ignores_imported_rows(self, window: MainWindow, tmp_path: Path) -> None:
         from mufinder.app.workflow_controllers.muon_relaxation import (
             _without_imported_rows,
         )

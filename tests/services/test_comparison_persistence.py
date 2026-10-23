@@ -121,7 +121,9 @@ def test_renamed_comparison_table_roundtrips(tmp_path: Path) -> None:
 
 def test_rename_comparison_table_falls_back_to_the_default_label(tmp_path: Path) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "comparison_rename_blank.mufinder", "ComparisonRenameBlank")
+    doc = service.create_project(
+        tmp_path / "comparison_rename_blank.mufinder", "ComparisonRenameBlank"
+    )
     table = ComparisonTable(label="Original")
     service.add_comparison_table(doc, table)
 

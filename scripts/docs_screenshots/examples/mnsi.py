@@ -121,7 +121,9 @@ def mnsi_magnetic_model() -> MagneticStructureModel:
     return MagneticStructureModel(q_basis_rlu=model.q_basis_rlu, components=(helix,))
 
 
-def mnsi_project(name: str, form: dict[str, object], model: MagneticStructureModel | None = None) -> ProjectBuilder:
+def mnsi_project(
+    name: str, form: dict[str, object], model: MagneticStructureModel | None = None
+) -> ProjectBuilder:
     """A builder for the MnSi host, its helix (or ``model``) and a Magnetic Fields ``form``.
 
     ``form`` extends the common one: the muon site at 4a, every equivalent
@@ -232,7 +234,9 @@ def open_distribution_plot(window: MainWindow) -> None:
     page = window._magnetic_field_view
     page._calculate_button.click()
     if page._result_table.rowCount() == 0:
-        raise RuntimeError(f"The field calculation gave no result: {page._calculation_status.text()}")
+        raise RuntimeError(
+            f"The field calculation gave no result: {page._calculation_status.text()}"
+        )
     page._result_table.selectAll()
     page._open_distribution_button.click()
 
@@ -243,11 +247,20 @@ _APPROXIMANT_PERIOD = {"approximant_max_period": APPROXIMANT_PERIOD}
 helix_project = mnsi_project("MnSi", _APPROXIMANT_PERIOD)
 
 SCENES: dict[str, Scene] = {
-    "mnsi_host_structure": Scene(helix_project, "host_structure", Page("_host_structure_view", (1100, 760), prepare=widen_atom_table)),
+    "mnsi_host_structure": Scene(
+        helix_project,
+        "host_structure",
+        Page("_host_structure_view", (1100, 760), prepare=widen_atom_table),
+    ),
     "mnsi_magnetic_structure_builder": Scene(
         helix_project,
         "magnetic_fields",
-        Dialog(open_builder, kind="MagneticStructureBuilderDialog", size=(1180, 900), prepare=preview_two_cells),
+        Dialog(
+            open_builder,
+            kind="MagneticStructureBuilderDialog",
+            size=(1180, 900),
+            prepare=preview_two_cells,
+        ),
     ),
     "mnsi_q_basis": Scene(
         helix_project,
@@ -271,14 +284,23 @@ SCENES: dict[str, Scene] = {
         Dialog(open_preset_helper, kind="MagneticPresetDialog", prepare=choose_helix),
     ),
     "mnsi_magnetic_fields_page": Scene(
-        helix_project, "magnetic_fields", Page("_magnetic_field_view", (1100, 920)), setup=list_and_select_continuum
+        helix_project,
+        "magnetic_fields",
+        Page("_magnetic_field_view", (1100, 920)),
+        setup=list_and_select_continuum,
     ),
     "mnsi_calculation_settings": Scene(
         helix_project,
         "magnetic_fields",
-        Dialog(open_settings, kind="MagneticFieldCalculationSettingsDialog", prepare=show_approximant_settings),
+        Dialog(
+            open_settings,
+            kind="MagneticFieldCalculationSettingsDialog",
+            prepare=show_approximant_settings,
+        ),
     ),
-    "mnsi_field_distribution": Scene(helix_project, "magnetic_fields", Dialog(open_distribution_plot)),
+    "mnsi_field_distribution": Scene(
+        helix_project, "magnetic_fields", Dialog(open_distribution_plot)
+    ),
     "mnsi_approximant_fields": Scene(
         mnsi_project(
             "MnSi approximant",

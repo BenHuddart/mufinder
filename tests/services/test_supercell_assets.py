@@ -20,7 +20,9 @@ _DOUBLE_A = [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 def _document_with_host(tmp_path: Path) -> tuple[ProjectDocument, Structure]:
     host = silicon_oxide_host()
-    document = ProjectDocument(project_root=tmp_path, project=Project(name="Assets", host_structure_id=host.id))
+    document = ProjectDocument(
+        project_root=tmp_path, project=Project(name="Assets", host_structure_id=host.id)
+    )
     document.structures[host.id] = host
     return document, host
 
@@ -51,7 +53,10 @@ def test_create_asset_labels_diagonal_and_general_matrices(tmp_path: Path) -> No
         document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A
     )
     general = supercell_assets.create_workflow_supercell_asset(
-        document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=[[1, 1, 0], [0, 1, 0], [0, 0, 1]]
+        document,
+        workflow_stage=_STAGE,
+        host_structure_id=host.id,
+        matrix=[[1, 1, 0], [0, 1, 0], [0, 0, 1]],
     )
 
     assert diagonal.label == "convergence_cutoff 2x1x1"
@@ -70,7 +75,11 @@ def test_create_asset_reuses_a_matching_asset_unless_told_not_to(tmp_path: Path)
         document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A
     )
     fresh = supercell_assets.create_workflow_supercell_asset(
-        document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A, reuse_existing=False
+        document,
+        workflow_stage=_STAGE,
+        host_structure_id=host.id,
+        matrix=_DOUBLE_A,
+        reuse_existing=False,
     )
 
     assert again is first
@@ -102,7 +111,9 @@ def test_supercell_asset_ignores_invalid_metadata() -> None:
         properties={"supercell_asset": {"matrix": "bad", "owner_workflow_stage": "bad"}},
     )
     unknown_stage = silicon_oxide_host(
-        properties={"supercell_asset": {"matrix": _DOUBLE_A, "owner_workflow_stage": "not_a_stage"}},
+        properties={
+            "supercell_asset": {"matrix": _DOUBLE_A, "owner_workflow_stage": "not_a_stage"}
+        },
     )
 
     assert supercell_assets.supercell_asset(structure) is None
@@ -117,7 +128,9 @@ def test_list_assets_needs_a_host_and_skips_other_hosts(tmp_path: Path) -> None:
     )
 
     assert supercell_assets.list_workflow_supercell_assets(document, host_structure_id=None) == []
-    assert supercell_assets.list_workflow_supercell_assets(document, host_structure_id=uuid4()) == []
+    assert (
+        supercell_assets.list_workflow_supercell_assets(document, host_structure_id=uuid4()) == []
+    )
     listed = supercell_assets.list_workflow_supercell_assets(document, host_structure_id=host.id)
     assert [item.structure_id for item in listed] == [asset.id]
 
@@ -145,7 +158,9 @@ def test_frozen_asset_cannot_be_regenerated_or_deleted(tmp_path: Path) -> None:
     asset = supercell_assets.create_workflow_supercell_asset(
         document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A
     )
-    definition = CalculationDefinition(workflow_stage=_STAGE, calc_type="castep_cutoff", input_structure_ids=[asset.id])
+    definition = CalculationDefinition(
+        workflow_stage=_STAGE, calc_type="castep_cutoff", input_structure_ids=[asset.id]
+    )
     document.calculations[definition.id] = definition
 
     assert supercell_assets.supercell_asset_is_frozen(document, asset_structure_id=asset.id)
@@ -165,19 +180,27 @@ def test_delete_asset_resets_selections_that_pointed_at_it(tmp_path: Path) -> No
     asset = supercell_assets.create_workflow_supercell_asset(
         document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A
     )
-    supercell_assets.use_workflow_supercell_asset(document, workflow_stage=_STAGE, asset_structure_id=asset.id)
+    supercell_assets.use_workflow_supercell_asset(
+        document, workflow_stage=_STAGE, asset_structure_id=asset.id
+    )
 
     supercell_assets.delete_workflow_supercell_asset(document, asset_structure_id=asset.id)
 
     assert asset.id not in document.structures
-    assert supercell_assets.get_workflow_supercell_selection(document, _STAGE) == WorkflowSupercellSelection()
+    assert (
+        supercell_assets.get_workflow_supercell_selection(document, _STAGE)
+        == WorkflowSupercellSelection()
+    )
 
 
 def test_structure_atomic_spins_prefers_moments_over_stale_zero_spins() -> None:
     stale = host_structure(
         species=("Fe",),
         positions=((0.0, 0.0, 0.0),),
-        properties={"atomic_spins": [0.0], "magnetic_structure": {"moments": [{"vector": [0.0, 0.0, 1.75]}]}},
+        properties={
+            "atomic_spins": [0.0],
+            "magnetic_structure": {"moments": [{"vector": [0.0, 0.0, 1.75]}]},
+        },
     )
 
     assert supercell_assets.structure_atomic_spins(stale) == pytest.approx([1.75])

@@ -96,7 +96,9 @@ def _build_metric_info_sections(definition: MetricDefinition) -> list[tuple[str,
 def metric_info_text(definition: MetricDefinition) -> str:
     """Build the info-dialog content for a metric."""
 
-    return "\n\n".join(f"{title}:\n{body}" for title, body in _build_metric_info_sections(definition))
+    return "\n\n".join(
+        f"{title}:\n{body}" for title, body in _build_metric_info_sections(definition)
+    )
 
 
 _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
@@ -131,7 +133,10 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         equation=r"b = \lVert \mathbf{b} \rVert_2",
         symbols=(
             (r"b", "Length of the second direct-lattice basis vector."),
-            (r"\mathbf{b}", "Second direct-lattice basis vector of the normalized comparison cell."),
+            (
+                r"\mathbf{b}",
+                "Second direct-lattice basis vector of the normalized comparison cell.",
+            ),
         ),
     ),
     MetricDefinition(
@@ -315,15 +320,26 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         physics="Measures the characteristic amplitude of atomic relaxation after periodic wrapping and species-resolved atom correspondence have been accounted for.",
         method=_MATCHING_METHOD,
         equation=(
-            r"\Delta \mathbf{f}_i = \mathbf{f}^{\mathrm{DFT}}_{m(i)} - \mathbf{f}^{\mathrm{exp}}_i" "\n"
-            r"d_i = \left\lVert \left(\Delta \mathbf{f}_i - \mathrm{round}(\Delta \mathbf{f}_i)\right) L_{\mathrm{DFT}} \right\rVert_2" "\n"
+            r"\Delta \mathbf{f}_i = \mathbf{f}^{\mathrm{DFT}}_{m(i)} - \mathbf{f}^{\mathrm{exp}}_i"
+            "\n"
+            r"d_i = \left\lVert \left(\Delta \mathbf{f}_i - \mathrm{round}(\Delta \mathbf{f}_i)\right) L_{\mathrm{DFT}} \right\rVert_2"
+            "\n"
             r"\mathrm{RMSD} = \sqrt{\frac{1}{N_{\mathrm{match}}}\sum_{i=1}^{N_{\mathrm{match}}} d_i^2}"
         ),
         symbols=(
             (r"\mathbf{f}^{\mathrm{exp}}_i", "Fractional position of experimental atom i."),
-            (r"\mathbf{f}^{\mathrm{DFT}}_{m(i)}", "Fractional position of the DFT atom matched to experimental atom i."),
-            (r"m(i)", "Species-preserving Hungarian assignment map from experimental to DFT atoms."),
-            (r"L_{\mathrm{DFT}}", "DFT lattice matrix used to convert minimum-image fractional displacements to Cartesian vectors."),
+            (
+                r"\mathbf{f}^{\mathrm{DFT}}_{m(i)}",
+                "Fractional position of the DFT atom matched to experimental atom i.",
+            ),
+            (
+                r"m(i)",
+                "Species-preserving Hungarian assignment map from experimental to DFT atoms.",
+            ),
+            (
+                r"L_{\mathrm{DFT}}",
+                "DFT lattice matrix used to convert minimum-image fractional displacements to Cartesian vectors.",
+            ),
             (r"d_i", "Minimum-image Cartesian displacement of matched atom pair i."),
             (r"N_{\mathrm{match}}", "Number of matched atom pairs."),
         ),
@@ -379,7 +395,8 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
             + " The nearest-neighbour length for one atom is the smallest non-zero periodic distance to any other atom in the same structure."
         ),
         equation=(
-            r"r_i^{\mathrm{NN}} = \min_{j \ne i} r_{ij}" "\n"
+            r"r_i^{\mathrm{NN}} = \min_{j \ne i} r_{ij}"
+            "\n"
             r"\Delta r_{\mathrm{mean}} = \frac{1}{N_{\mathrm{match}}}\sum_{i=1}^{N_{\mathrm{match}}} "
             r"\left| r_{m(i)}^{\mathrm{NN,DFT}} - r_i^{\mathrm{NN,exp}} \right|"
         ),
@@ -387,7 +404,10 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
             (r"r_{ij}", "Periodic minimum-image distance between atoms i and j."),
             (r"r_i^{\mathrm{NN}}", "Nearest-neighbour distance associated with atom i."),
             (r"m(i)", "Matched DFT atom for experimental atom i."),
-            (r"\Delta r_{\mathrm{mean}}", "Mean absolute nearest-neighbour bond-length change over matched sites."),
+            (
+                r"\Delta r_{\mathrm{mean}}",
+                "Mean absolute nearest-neighbour bond-length change over matched sites.",
+            ),
         ),
     ),
     MetricDefinition(
@@ -411,7 +431,10 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         symbols=(
             (r"r_i^{\mathrm{NN}}", "Nearest-neighbour distance associated with atom i."),
             (r"m(i)", "Matched DFT atom for experimental atom i."),
-            (r"\Delta r_{\max}", "Largest absolute nearest-neighbour bond-length change over matched sites."),
+            (
+                r"\Delta r_{\max}",
+                "Largest absolute nearest-neighbour bond-length change over matched sites.",
+            ),
         ),
     ),
     MetricDefinition(
@@ -430,7 +453,8 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         ),
         equation=(
             r"\bar{\theta}_i = \frac{1}{M_i}\sum_{(j,k) \in \mathcal{P}_i} "
-            r"\cos^{-1}\left(\frac{\mathbf{r}_{ij}\cdot\mathbf{r}_{ik}}{\lVert \mathbf{r}_{ij} \rVert_2 \lVert \mathbf{r}_{ik} \rVert_2}\right)" "\n"
+            r"\cos^{-1}\left(\frac{\mathbf{r}_{ij}\cdot\mathbf{r}_{ik}}{\lVert \mathbf{r}_{ij} \rVert_2 \lVert \mathbf{r}_{ik} \rVert_2}\right)"
+            "\n"
             r"\Delta \theta_{\mathrm{mean}} = \frac{1}{N_{\theta}}\sum_i \left| \bar{\theta}_{m(i)}^{\mathrm{DFT}} - \bar{\theta}_i^{\mathrm{exp}} \right|"
         ),
         symbols=(
@@ -438,7 +462,10 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
             (r"\mathcal{P}_i", "Set of unique neighbour pairs around site i."),
             (r"M_i", "Number of neighbour-pair angles included around site i."),
             (r"\bar{\theta}_i", "Mean local bond angle around site i."),
-            (r"N_{\theta}", "Number of matched sites that contribute a valid local mean angle in both structures."),
+            (
+                r"N_{\theta}",
+                "Number of matched sites that contribute a valid local mean angle in both structures.",
+            ),
         ),
     ),
     MetricDefinition(
@@ -453,15 +480,25 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         physics="Counts local coordination-shell changes, which are often the clearest signal of bond breaking, bond formation, or major local reconstruction.",
         method=_BONDING_METHOD,
         equation=(
-            r"\mathrm{CN}_i = \sum_{j \ne i} \mathbf{1}\left[r_{ij} \le 1.3\,(R_i + R_j)\right]" "\n"
+            r"\mathrm{CN}_i = \sum_{j \ne i} \mathbf{1}\left[r_{ij} \le 1.3\,(R_i + R_j)\right]"
+            "\n"
             r"N_{\Delta \mathrm{CN}} = \sum_{i=1}^{N_{\mathrm{match}}} \mathbf{1}\left["
             r"\mathrm{CN}_i^{\mathrm{exp}} \ne \mathrm{CN}_{m(i)}^{\mathrm{DFT}}\right]"
         ),
         symbols=(
-            (r"\mathrm{CN}_i", "Coordination number of site i under the radius-based neighbour rule."),
+            (
+                r"\mathrm{CN}_i",
+                "Coordination number of site i under the radius-based neighbour rule.",
+            ),
             (r"R_i", "ASE covalent radius for the species on site i."),
-            (r"\mathbf{1}[\cdot]", "Indicator function equal to 1 when the condition is true and 0 otherwise."),
-            (r"N_{\Delta \mathrm{CN}}", "Number of matched sites whose coordination number changes."),
+            (
+                r"\mathbf{1}[\cdot]",
+                "Indicator function equal to 1 when the condition is true and 0 otherwise.",
+            ),
+            (
+                r"N_{\Delta \mathrm{CN}}",
+                "Number of matched sites whose coordination number changes.",
+            ),
         ),
     ),
     MetricDefinition(
@@ -474,7 +511,8 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         interpretation="Matching groups suggest symmetry retention.",
         caveats="Requires spglib and tolerance tuning.",
         physics="Captures whether the relaxed periodic crystal retains the same crystallographic symmetry class as the experimental reference.",
-        method=_SYMMETRY_METHOD + " The current implementation compares international space-group numbers with spglib using symprec = 1e-2.",
+        method=_SYMMETRY_METHOD
+        + " The current implementation compares international space-group numbers with spglib using symprec = 1e-2.",
         equation=r"\mathrm{match}_{\mathrm{SG}} = \mathbf{1}\left[n_{\mathrm{exp}} = n_{\mathrm{DFT}}\right]",
         symbols=(
             (r"n_{\mathrm{exp}}", "Experimental space-group number reported by spglib."),
@@ -494,14 +532,24 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         physics="Tests whether the bond network implied by the chosen neighbour rule survives relaxation after mapped atom identities are taken into account.",
         method=_SYMMETRY_METHOD,
         equation=(
-            r"E = \{(i,j): r_{ij} \le 1.3\,(R_i + R_j)\}" "\n"
+            r"E = \{(i,j): r_{ij} \le 1.3\,(R_i + R_j)\}"
+            "\n"
             r"\mathrm{preserved}_{\mathrm{topo}} = \mathbf{1}\left[E_{\mathrm{exp}}^{\mathrm{mapped}} = E_{\mathrm{DFT}}^{\mathrm{matched}}\right]"
         ),
         symbols=(
             (r"E", "Undirected bond-edge set implied by the radius-based neighbour criterion."),
-            (r"E_{\mathrm{exp}}^{\mathrm{mapped}}", "Experimental bond-edge set after mapping matched experimental indices into DFT index space."),
-            (r"E_{\mathrm{DFT}}^{\mathrm{matched}}", "DFT bond-edge set restricted to matched atoms."),
-            (r"\mathrm{preserved}_{\mathrm{topo}}", "Boolean indicator of exact connectivity preservation under the matched mapping."),
+            (
+                r"E_{\mathrm{exp}}^{\mathrm{mapped}}",
+                "Experimental bond-edge set after mapping matched experimental indices into DFT index space.",
+            ),
+            (
+                r"E_{\mathrm{DFT}}^{\mathrm{matched}}",
+                "DFT bond-edge set restricted to matched atoms.",
+            ),
+            (
+                r"\mathrm{preserved}_{\mathrm{topo}}",
+                "Boolean indicator of exact connectivity preservation under the matched mapping.",
+            ),
         ),
     ),
     MetricDefinition(
@@ -520,20 +568,35 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         ),
         equation=(
             r"\Delta_{\mathrm{lat}} = \frac{1}{3}\sum_{x \in \{a,b,c\}} \left|\Delta x_{\%}\right|, "
-            r"\quad S_{\mathrm{lat}} = \max\left(0, 1 - \frac{\Delta_{\mathrm{lat}}}{100}\right)" "\n"
+            r"\quad S_{\mathrm{lat}} = \max\left(0, 1 - \frac{\Delta_{\mathrm{lat}}}{100}\right)"
+            "\n"
             r"\sigma = \left\langle r_i^{\mathrm{NN,exp}} \right\rangle, "
-            r"\quad S_{\mathrm{disp}} = \exp\left(-\frac{\mathrm{RMSD}}{\max(\sigma, 10^{-8})}\right)" "\n"
-            r"S_{\mathrm{bond}} = f_{\mathrm{coord}}" "\n"
+            r"\quad S_{\mathrm{disp}} = \exp\left(-\frac{\mathrm{RMSD}}{\max(\sigma, 10^{-8})}\right)"
+            "\n"
+            r"S_{\mathrm{bond}} = f_{\mathrm{coord}}"
+            "\n"
             r"S = \min\left(1, \max\left(0, S_{\mathrm{lat}}^{0.35} S_{\mathrm{disp}}^{0.35} S_{\mathrm{bond}}^{0.30} + 0.1\,\mathbf{1}[n_{\mathrm{exp}} = n_{\mathrm{DFT}}]\right)\right)"
         ),
         symbols=(
-            (r"\Delta x_{\%}", "Percent change in lattice parameter x relative to experiment, for x in {a, b, c}."),
+            (
+                r"\Delta x_{\%}",
+                "Percent change in lattice parameter x relative to experiment, for x in {a, b, c}.",
+            ),
             (r"\Delta_{\mathrm{lat}}", "Mean absolute lattice percent change across a, b, and c."),
             (r"S_{\mathrm{lat}}", "Normalized lattice-similarity factor."),
-            (r"\sigma", "Mean experimental nearest-neighbour distance, used as a characteristic length scale."),
+            (
+                r"\sigma",
+                "Mean experimental nearest-neighbour distance, used as a characteristic length scale.",
+            ),
             (r"S_{\mathrm{disp}}", "Displacement-similarity factor derived from RMSD."),
-            (r"f_{\mathrm{coord}}", "Fraction of matched sites whose coordination numbers are preserved."),
-            (r"S_{\mathrm{bond}}", "Bonding-similarity factor, equal to the preserved coordination fraction."),
+            (
+                r"f_{\mathrm{coord}}",
+                "Fraction of matched sites whose coordination numbers are preserved.",
+            ),
+            (
+                r"S_{\mathrm{bond}}",
+                "Bonding-similarity factor, equal to the preserved coordination fraction.",
+            ),
             (r"S", "Final similarity score clipped to the interval [0, 1]."),
         ),
     ),
@@ -590,7 +653,9 @@ def experimental_metric_values(experimental: Structure) -> dict[str, MetricValue
         "alpha": MetricValue(lattice_values["alpha"], _format_number(lattice_values["alpha"])),
         "beta": MetricValue(lattice_values["beta"], _format_number(lattice_values["beta"])),
         "gamma": MetricValue(lattice_values["gamma"], _format_number(lattice_values["gamma"])),
-        "cell_volume": MetricValue(lattice_values["cell_volume"], _format_number(lattice_values["cell_volume"])),
+        "cell_volume": MetricValue(
+            lattice_values["cell_volume"], _format_number(lattice_values["cell_volume"])
+        ),
         "delta_a_pct": MetricValue(0.0, "0%"),
         "delta_b_pct": MetricValue(0.0, "0%"),
         "delta_c_pct": MetricValue(0.0, "0%"),
@@ -630,7 +695,9 @@ def dft_metric_values(
     exp_sg, dft_sg, sg_match = compare_space_group(experimental, dft)
     topology = compare_topology(experimental, dft, matching)
 
-    reference_nn = [value for value in nearest_neighbour_distances(experimental) if value is not None]
+    reference_nn = [
+        value for value in nearest_neighbour_distances(experimental) if value is not None
+    ]
     sigma = float(np.mean(reference_nn)) if reference_nn else 1.0
 
     lattice_delta = np.mean(
@@ -641,7 +708,9 @@ def dft_metric_values(
     )
     lattice_similarity = max(0.0, 1.0 - (float(lattice_delta) / 100.0))
     displacement_similarity = exp(-(rmsd or 0.0) / max(sigma, 1e-8)) if rmsd is not None else 0.0
-    bonding_similarity = coordination.preserved_fraction if coordination.preserved_fraction is not None else 0.0
+    bonding_similarity = (
+        coordination.preserved_fraction if coordination.preserved_fraction is not None else 0.0
+    )
     symmetry_bonus = 0.1 if sg_match else 0.0
 
     weighted_product = (
@@ -674,9 +743,15 @@ def dft_metric_values(
         "a": MetricValue(dft_lattice["a"], _format_number(dft_lattice["a"]), warning=warning),
         "b": MetricValue(dft_lattice["b"], _format_number(dft_lattice["b"]), warning=warning),
         "c": MetricValue(dft_lattice["c"], _format_number(dft_lattice["c"]), warning=warning),
-        "alpha": MetricValue(dft_lattice["alpha"], _format_number(dft_lattice["alpha"]), warning=warning),
-        "beta": MetricValue(dft_lattice["beta"], _format_number(dft_lattice["beta"]), warning=warning),
-        "gamma": MetricValue(dft_lattice["gamma"], _format_number(dft_lattice["gamma"]), warning=warning),
+        "alpha": MetricValue(
+            dft_lattice["alpha"], _format_number(dft_lattice["alpha"]), warning=warning
+        ),
+        "beta": MetricValue(
+            dft_lattice["beta"], _format_number(dft_lattice["beta"]), warning=warning
+        ),
+        "gamma": MetricValue(
+            dft_lattice["gamma"], _format_number(dft_lattice["gamma"]), warning=warning
+        ),
         "cell_volume": MetricValue(
             dft_lattice["cell_volume"],
             _format_number(dft_lattice["cell_volume"]),
@@ -700,13 +775,19 @@ def dft_metric_values(
         "delta_volume_pct": MetricValue(
             _safe_percent_change(experimental_lattice["cell_volume"], dft_lattice["cell_volume"]),
             _format_percent(
-                _safe_percent_change(experimental_lattice["cell_volume"], dft_lattice["cell_volume"])
+                _safe_percent_change(
+                    experimental_lattice["cell_volume"], dft_lattice["cell_volume"]
+                )
             ),
             warning=warning,
         ),
         "rmsd": MetricValue(rmsd, _format_number(rmsd), warning=warning),
-        "max_displacement": MetricValue(max_displacement, _format_number(max_displacement), warning=warning),
-        "mean_displacement": MetricValue(mean_displacement, _format_number(mean_displacement), warning=warning),
+        "max_displacement": MetricValue(
+            max_displacement, _format_number(max_displacement), warning=warning
+        ),
+        "mean_displacement": MetricValue(
+            mean_displacement, _format_number(mean_displacement), warning=warning
+        ),
         "mean_bond_length_diff": MetricValue(
             bond_lengths.mean_difference,
             _format_number(bond_lengths.mean_difference),
@@ -729,7 +810,9 @@ def dft_metric_values(
         ),
         "space_group": MetricValue(sg_display, sg_display, warning=None),
         "topology_preserved": MetricValue(topology.preserved, topology_display, warning=None),
-        "similarity_score": MetricValue(similarity_score, _format_number(similarity_score, digits=4), warning=warning),
+        "similarity_score": MetricValue(
+            similarity_score, _format_number(similarity_score, digits=4), warning=warning
+        ),
     }
 
     return values

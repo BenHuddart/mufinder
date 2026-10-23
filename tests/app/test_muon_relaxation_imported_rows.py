@@ -112,14 +112,10 @@ class TestSerializerRoundTrip:
         assert restored.rows[0].import_batch_id == BATCH_ID
         assert restored.rows[1].import_batch_id is None
 
-    def test_a_payload_predating_the_feature_deserializes_as_native(
-        self, main_window
-    ) -> None:
+    def test_a_payload_predating_the_feature_deserializes_as_native(self, main_window) -> None:
         """Older project files carry no marker at all."""
 
-        payload = serialize_muon_relaxation_config(
-            MuonRelaxationConfig(rows=(_native_row(),))
-        )
+        payload = serialize_muon_relaxation_config(MuonRelaxationConfig(rows=(_native_row(),)))
         for entry in payload["rows"]:
             entry.pop("imported", None)
             entry.pop("import_batch_id", None)
@@ -132,9 +128,7 @@ class TestSerializerRoundTrip:
     def test_a_malformed_batch_id_does_not_unlock_the_row(self, main_window) -> None:
         """Losing the grouping is recoverable; losing read-only enforcement is not."""
 
-        payload = serialize_muon_relaxation_config(
-            MuonRelaxationConfig(rows=(_imported_row(),))
-        )
+        payload = serialize_muon_relaxation_config(MuonRelaxationConfig(rows=(_imported_row(),)))
         payload["rows"][0]["import_batch_id"] = "not-a-uuid"
 
         restored = deserialize_muon_relaxation_config(payload)
@@ -145,9 +139,7 @@ class TestSerializerRoundTrip:
 
 
 class TestWidgetStateRoundTrip:
-    def test_the_marker_survives_set_form_state_then_collect_state(
-        self, main_window
-    ) -> None:
+    def test_the_marker_survives_set_form_state_then_collect_state(self, main_window) -> None:
         widget = main_window._muon_relaxation_view
         imported, native = _imported_row(), _native_row()
         widget.set_form_state(_widget_state(imported, native))
@@ -160,9 +152,7 @@ class TestWidgetStateRoundTrip:
         assert by_label["Site 1"]["imported"] is False
         assert by_label["Site 1"]["import_batch_id"] is None
 
-    def test_a_malformed_batch_id_in_widget_state_keeps_the_row_imported(
-        self, main_window
-    ) -> None:
+    def test_a_malformed_batch_id_in_widget_state_keeps_the_row_imported(self, main_window) -> None:
         widget = main_window._muon_relaxation_view
         state = _widget_state(_imported_row())
         state["rows"][0]["import_batch_id"] = "not-a-uuid"
@@ -254,9 +244,7 @@ class TestRowSignature:
             row
         ) == main_window._muon_relaxation_row_signature(same)
 
-    def test_rows_from_different_batches_do_not_share_a_signature(
-        self, main_window
-    ) -> None:
+    def test_rows_from_different_batches_do_not_share_a_signature(self, main_window) -> None:
         row = _imported_row()
         other = _imported_row(site_id=row.site_id, label=row.label, import_batch_id=uuid4())
 

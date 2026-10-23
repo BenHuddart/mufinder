@@ -15,7 +15,12 @@ from dataclasses import dataclass
 import itertools
 import math
 
-from mufinder.science.lattice import LatticeError, lattice_frac_to_cart, lattice_rows, wrap_fractional
+from mufinder.science.lattice import (
+    LatticeError,
+    lattice_frac_to_cart,
+    lattice_rows,
+    wrap_fractional,
+)
 
 #: The lattice vectors a projection can look down, in order.
 PROJECTION_AXES = ("a", "b", "c")
@@ -111,7 +116,9 @@ def cell_projection(lattice_vectors: Sequence[Sequence[float]], axis: str = "c")
     )
 
 
-def periodic_boundary_images(fractional: Sequence[float], *, tolerance: float = 1e-3) -> list[list[float]]:
+def periodic_boundary_images(
+    fractional: Sequence[float], *, tolerance: float = 1e-3
+) -> list[list[float]]:
     """Return a position wrapped into the cell plus its images on the far faces.
 
     An atom at ``x = 0`` also sits at ``x = 1``; a drawing of one cell shows

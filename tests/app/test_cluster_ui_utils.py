@@ -333,7 +333,9 @@ def test_prompt_for_cluster_credentials_reads_keyring_off_the_gui_thread(monkeyp
     assert calls[0]["title"] == "System keyring passwords"
 
 
-def test_prompt_for_cluster_credentials_returns_none_when_keyring_lookup_cancelled(monkeypatch) -> None:
+def test_prompt_for_cluster_credentials_returns_none_when_keyring_lookup_cancelled(
+    monkeypatch,
+) -> None:
     prompts: list[str] = []
     warnings: list[str] = []
 
@@ -347,7 +349,9 @@ def test_prompt_for_cluster_credentials_returns_none_when_keyring_lookup_cancell
         "getText",
         lambda *_args, **_kwargs: prompts.append("prompt") or ("", False),
     )
-    monkeypatch.setattr(ui_module, "show_detailed_warning", lambda *_args, **_kwargs: warnings.append("warning"))
+    monkeypatch.setattr(
+        ui_module, "show_detailed_warning", lambda *_args, **_kwargs: warnings.append("warning")
+    )
 
     assert ui_module.prompt_for_cluster_credentials(None, _keychain_config()) is None
     assert prompts == []
@@ -356,19 +360,27 @@ def test_prompt_for_cluster_credentials_returns_none_when_keyring_lookup_cancell
 
 def test_prompt_for_cluster_credentials_reports_missing_linux_keyring_entry(monkeypatch) -> None:
     warnings: list[tuple[str, str, str]] = []
-    command = "secret-tool store --label='MuFinder bastion (phys-user)' service bastion account phys-user"
+    command = (
+        "secret-tool store --label='MuFinder bastion (phys-user)' service bastion account phys-user"
+    )
     monkeypatch.setattr(keychain_module.sys, "platform", "linux")
 
     def _raise_missing(_config):
         raise KeychainCredentialError(
-            [KeychainCredentialIssue(endpoint="jump", service="bastion", account="phys-user", command=command)]
+            [
+                KeychainCredentialIssue(
+                    endpoint="jump", service="bastion", account="phys-user", command=command
+                )
+            ]
         )
 
     monkeypatch.setattr(ui_module, "load_keychain_credentials", _raise_missing)
     monkeypatch.setattr(
         ui_module,
         "show_detailed_warning",
-        lambda _parent, title, message, **kwargs: warnings.append((title, message, kwargs["informative_text"])),
+        lambda _parent, title, message, **kwargs: warnings.append(
+            (title, message, kwargs["informative_text"])
+        ),
     )
 
     credentials = ui_module.prompt_for_cluster_credentials(None, _keychain_config())
@@ -376,7 +388,9 @@ def test_prompt_for_cluster_credentials_reports_missing_linux_keyring_entry(monk
     assert credentials is None
     title, message, informative = warnings[0]
     assert title == "Missing keyring passwords"
-    assert message.startswith("MuFinder could not read the required system keyring password entries.")
+    assert message.startswith(
+        "MuFinder could not read the required system keyring password entries."
+    )
     assert command in message
     assert "sudo apt install libsecret-tools" in message
     assert informative == "Open Details for the exact system keyring setup commands."

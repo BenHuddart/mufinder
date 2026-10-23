@@ -58,7 +58,9 @@ def test_invalid_queue_names(name: str) -> None:
 def test_queue_issues_accepts_valid_queues() -> None:
     queues = [
         ClusterQueue(name="hourly", default_walltime="00:59:00", max_walltime="01:00:00"),
-        ClusterQueue(name="daily", max_walltime="1-00:00:00", cores_per_node=88, default_mem_per_cpu_gb=8.0),
+        ClusterQueue(
+            name="daily", max_walltime="1-00:00:00", cores_per_node=88, default_mem_per_cpu_gb=8.0
+        ),
     ]
 
     assert queue_issues(queues, profile_walltime="12:00:00") == []
@@ -75,10 +77,22 @@ def test_queue_issues_accepts_valid_queues() -> None:
             ClusterQueue(name="q", default_walltime="2-00:00:00", max_walltime="1-00:00:00"),
             "Queue 'q': The walltime 2-00:00:00 is longer than the 1-00:00:00 maximum for queue 'q'.",
         ),
-        (ClusterQueue(name="q", max_walltime="06:00:00"), "The queue uses the cluster's default walltime"),
-        (ClusterQueue(name="q", cores_per_node=0), "Queue 'q': cores per node must be a positive whole number."),
-        (ClusterQueue(name="q", default_memory_gb=-1.0), "Queue 'q': memory must be a positive number of GB."),
-        (ClusterQueue(name="q", default_mem_per_cpu_gb=0.0), "Queue 'q': memory must be a positive number of GB."),
+        (
+            ClusterQueue(name="q", max_walltime="06:00:00"),
+            "The queue uses the cluster's default walltime",
+        ),
+        (
+            ClusterQueue(name="q", cores_per_node=0),
+            "Queue 'q': cores per node must be a positive whole number.",
+        ),
+        (
+            ClusterQueue(name="q", default_memory_gb=-1.0),
+            "Queue 'q': memory must be a positive number of GB.",
+        ),
+        (
+            ClusterQueue(name="q", default_mem_per_cpu_gb=0.0),
+            "Queue 'q': memory must be a positive number of GB.",
+        ),
     ],
 )
 def test_queue_issues_reports_each_problem(queue: ClusterQueue, expected: str) -> None:
@@ -88,4 +102,6 @@ def test_queue_issues_reports_each_problem(queue: ClusterQueue, expected: str) -
 
 
 def test_queue_issues_reports_duplicate_names() -> None:
-    assert queue_issues([ClusterQueue(name="q"), ClusterQueue(name="q")]) == ["The queue 'q' is listed twice."]
+    assert queue_issues([ClusterQueue(name="q"), ClusterQueue(name="q")]) == [
+        "The queue 'q' is listed twice."
+    ]

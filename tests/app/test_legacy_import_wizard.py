@@ -66,9 +66,7 @@ class TestSelection:
 
         assert len(dialog.selected_runs()) == 2
 
-    def test_an_unconverged_run_is_offered_but_not_preselected(
-        self, qapp, tmp_path: Path
-    ) -> None:
+    def test_an_unconverged_run_is_offered_but_not_preselected(self, qapp, tmp_path: Path) -> None:
         scan = _scan(build_folder(tmp_path, sites=(1,), castep_kwargs={"converged": False}))
         dialog = LegacyImportDialog(scan)
 
@@ -314,7 +312,10 @@ class TestRemovalAction:
         return outcome
 
     def test_it_reports_when_nothing_is_imported(
-        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         window._document = _document(tmp_path, host_structure)
@@ -341,7 +342,10 @@ class TestRemovalAction:
         assert label == "legacy"
 
     def test_removal_refuses_while_something_still_uses_the_sites(
-        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from uuid import uuid4
@@ -379,7 +383,10 @@ class TestRemovalAction:
         assert outcome.imported[0].site_id in window._document.sites
 
     def test_removal_drops_the_rows_and_the_entities(
-        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -407,7 +414,10 @@ class TestRemovalAction:
         assert window._muon_relaxation_view.collect_state()["rows"] == []
 
     def test_declining_the_confirmation_changes_nothing(
-        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -529,9 +539,7 @@ class TestScanRunsOnAThread:
         scan = next(item[1] for item in events if item[0] == "completed")
         assert len(scan.runs) == 2
 
-    def test_progress_is_delivered_across_the_thread_boundary(
-        self, qapp, tmp_path: Path
-    ) -> None:
+    def test_progress_is_delivered_across_the_thread_boundary(self, qapp, tmp_path: Path) -> None:
         """Queued delivery onto the main thread, asserted rather than assumed.
 
         The thread-identity check is the point of this test. Without it the
@@ -573,9 +581,7 @@ class TestScanRunsOnAThread:
         assert events[0][1] == "disk on fire"
         assert threads["failed"] == main_thread
 
-    def test_the_registry_is_emptied_once_the_thread_exits(
-        self, qapp, tmp_path: Path
-    ) -> None:
+    def test_the_registry_is_emptied_once_the_thread_exits(self, qapp, tmp_path: Path) -> None:
         """A registry that never drains would leak a thread per import."""
 
         from mufinder.app.legacy_import_dialog import _LIVE_SCANS
@@ -588,9 +594,7 @@ class TestScanRunsOnAThread:
 
         assert _LIVE_SCANS == set(), "a scan leaked its thread and worker"
 
-    def test_back_to_back_scans_never_leak_a_registry_entry(
-        self, qapp, tmp_path: Path
-    ) -> None:
+    def test_back_to_back_scans_never_leak_a_registry_entry(self, qapp, tmp_path: Path) -> None:
         """Deleting the thread must not overtake dropping its registry entry.
 
         The worker thread posts each queued ``finished`` connection to the GUI
@@ -706,9 +710,7 @@ class TestProvenanceReachesDisk:
         )
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
-        monkeypatch.setattr(
-            window, "merge_imported_relaxation_rows", lambda *args, **kwargs: False
-        )
+        monkeypatch.setattr(window, "merge_imported_relaxation_rows", lambda *args, **kwargs: False)
 
         scan = _scan(build_folder(tmp_path / "legacy", sites=(1,)))
         window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
@@ -798,9 +800,7 @@ class TestRemoveThenReimport:
 
         self._import(window, tmp_path, host_structure, folder)
         first_rows = window._muon_relaxation_view.collect_state()["rows"]
-        first_values = sorted(
-            (row["label"], sorted(row["parameter_values"])) for row in first_rows
-        )
+        first_values = sorted((row["label"], sorted(row["parameter_values"])) for row in first_rows)
 
         self._remove(window, monkeypatch)
 

@@ -18,7 +18,11 @@ from mufinder.app.energy_barriers_widget import (
     EnergyBarrierSourceRow,
     EnergyBarriersWidget,
 )
-from mufinder.app.quantum_corrections_widget import QuantumCorrectionsWidget, QuantumResultRow, QuantumSourceRow
+from mufinder.app.quantum_corrections_widget import (
+    QuantumCorrectionsWidget,
+    QuantumResultRow,
+    QuantumSourceRow,
+)
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from tests.support.structures import host_structure
 
@@ -141,7 +145,16 @@ def test_quantum_widget_shows_the_farm_count_without_a_stage_column(qapp) -> Non
         widget._sources_table.horizontalHeaderItem(column).text()
         for column in range(widget._sources_table.columnCount())
     ]
-    assert headers == ["Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Farms", "Status", "Parameters"]
+    assert headers == [
+        "Site",
+        "Charge",
+        "dE (eV)",
+        "Displacements",
+        "Source Job",
+        "Farms",
+        "Status",
+        "Parameters",
+    ]
     assert widget._sources_table.item(0, 5).text() == "4"
 
 
@@ -171,10 +184,7 @@ def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
     status_item = widget._results_table.item(0, 5)
     assert status_item is not None
     assert status_item.text() == "completed"
-    assert (
-        status_item.foreground().color().name()
-        == status_brush("completed").color().name()
-    )
+    assert status_item.foreground().color().name() == status_brush("completed").color().name()
 
     button = widget._results_table.cellWidget(0, 6)
     assert isinstance(button, QPushButton)
@@ -285,7 +295,9 @@ def test_energy_barriers_widget_emits_generate_paths_with_max_length(qapp) -> No
     widget._max_path_length_input.setText("2.5")
 
     generated: list[tuple[str, str, str]] = []
-    widget.generate_paths_requested.connect(lambda reactant, product, max_length: generated.append((reactant, product, max_length)))
+    widget.generate_paths_requested.connect(
+        lambda reactant, product, max_length: generated.append((reactant, product, max_length))
+    )
 
     widget._emit_generate_paths()
 
@@ -443,7 +455,16 @@ def test_energy_barriers_widget_neb_results_show_barriers_not_trajectory_paths(q
     widget = EnergyBarriersWidget()
     table = widget._neb_results_table
     headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
-    assert headers == ["Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images", "Status"]
+    assert headers == [
+        "Path",
+        "Charge",
+        "Length",
+        "Barrier (fwd)",
+        "Barrier (rev)",
+        "ΔE",
+        "Images",
+        "Status",
+    ]
     assert not table.wordWrap()
 
     selected: list[str] = []
@@ -473,10 +494,7 @@ def test_energy_barriers_widget_neb_results_show_barriers_not_trajectory_paths(q
     assert table.item(0, 4).text() == "0.1 eV"
     # Status is the last column; it uses the shared per-status palette.
     assert table.item(0, 7).text() == "completed"
-    assert (
-        table.item(0, 7).foreground().color().name()
-        == status_brush("completed").color().name()
-    )
+    assert table.item(0, 7).foreground().color().name() == status_brush("completed").color().name()
     row_texts = [table.item(0, column).text() for column in range(table.columnCount())]
     assert trajectory not in row_texts
     assert trajectory in table.item(0, 0).toolTip()
@@ -626,13 +644,31 @@ def test_energy_barriers_source_configure_applies_to_snapshot_rows(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", status="ready"),
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="M",
+                path_length="1.0",
+                status="ready",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="B",
+                product="C",
+                charge_state="M",
+                path_length="1.2",
+                status="ready",
+            ),
         ]
     )
     configured: list[object] = []
     widget.configure_result_requested.connect(configured.append)
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
+    )
 
     btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -650,12 +686,25 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
 
     widget = EnergyBarriersWidget()
     widget.set_sources(
-        [EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready")]
+        [
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="M",
+                path_length="1.0",
+                status="ready",
+            )
+        ]
     )
     configured: list[object] = []
     widget.configure_result_requested.connect(configured.append)
     prompted: list[bool] = []
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompted.append(True) or SelectionScope.ALL_SELECTED)
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: prompted.append(True) or SelectionScope.ALL_SELECTED,
+    )
 
     btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -672,8 +721,22 @@ def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", status="ready"),
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="M",
+                path_length="1.0",
+                status="ready",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="B",
+                product="C",
+                charge_state="M",
+                path_length="1.2",
+                status="ready",
+            ),
         ]
     )
     viewed: list[str] = []
@@ -702,13 +765,35 @@ def test_quantum_source_configure_applies_to_snapshot_rows(
     widget = QuantumCorrectionsWidget()
     widget.set_sources(
         [
-            QuantumSourceRow(key="site-a", label="A", charge_state="M", relative_energy="0 eV", displacements="9", source_job="j", num_farms_display="", status="ready"),
-            QuantumSourceRow(key="site-b", label="B", charge_state="M", relative_energy="0.1 eV", displacements="9", source_job="j", num_farms_display="", status="ready"),
+            QuantumSourceRow(
+                key="site-a",
+                label="A",
+                charge_state="M",
+                relative_energy="0 eV",
+                displacements="9",
+                source_job="j",
+                num_farms_display="",
+                status="ready",
+            ),
+            QuantumSourceRow(
+                key="site-b",
+                label="B",
+                charge_state="M",
+                relative_energy="0.1 eV",
+                displacements="9",
+                source_job="j",
+                num_farms_display="",
+                status="ready",
+            ),
         ]
     )
     configured: list[object] = []
     widget.configure_requested.connect(configured.append)
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
+    )
 
     btn = widget._sources_table.cellWidget(0, 7)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -764,7 +849,9 @@ def _neb_source(key: str, status: str) -> EnergyBarrierSourceRow:
     )
 
 
-def test_energy_barriers_widget_context_menu_emits_reset_for_failed_source(qapp, monkeypatch) -> None:
+def test_energy_barriers_widget_context_menu_emits_reset_for_failed_source(
+    qapp, monkeypatch
+) -> None:
     widget = EnergyBarriersWidget()
     widget.set_sources([_neb_source("path-a", "failed")])
 
@@ -793,7 +880,9 @@ def test_energy_barriers_widget_context_menu_disables_reset_for_running_source(
     assert payloads == []
 
 
-def test_energy_barriers_widget_context_menu_resets_a_multi_row_selection(qapp, monkeypatch) -> None:
+def test_energy_barriers_widget_context_menu_resets_a_multi_row_selection(
+    qapp, monkeypatch
+) -> None:
     widget = EnergyBarriersWidget()
     widget.set_sources([_neb_source("path-a", "failed"), _neb_source("path-b", "cancelled")])
     widget._sources_table.selectAll()
@@ -813,8 +902,22 @@ def test_energy_barriers_remove_selected_confirms_with_path_wording(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="A", product="C", charge_state="M", path_length="1.0", status="completed"),
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="M",
+                path_length="1.0",
+                status="ready",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="A",
+                product="C",
+                charge_state="M",
+                path_length="1.0",
+                status="completed",
+            ),
         ]
     )
     removed: list[list[str]] = []
@@ -912,7 +1015,9 @@ def test_quantum_row_menu_offers_the_shared_failed_job_reset_and_no_remove(
     assert reset == [["site-0", "site-2"]]
 
 
-def test_quantum_reset_failed_button_follows_the_selection(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_quantum_reset_failed_button_follows_the_selection(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
     widget = QuantumCorrectionsWidget()
@@ -943,8 +1048,22 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="failed"),
-            EnergyBarrierSourceRow(key="path-b", reactant="A", product="C", charge_state="M", path_length="1.0", status="failed"),
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="M",
+                path_length="1.0",
+                status="failed",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="A",
+                product="C",
+                charge_state="M",
+                path_length="1.0",
+                status="failed",
+            ),
         ]
     )
     submitted: list[list[str]] = []

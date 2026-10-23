@@ -124,9 +124,11 @@ def validate_param_file(param_file: ParamFile) -> None:
     normalized_task = str(task_name).strip().lower()
     for name in present_names:
         spec = get_keyword_spec("param", name)
-        if spec and spec.allowed_tasks and normalized_task.upper() not in {
-            task.upper() for task in spec.allowed_tasks
-        }:
+        if (
+            spec
+            and spec.allowed_tasks
+            and normalized_task.upper() not in {task.upper() for task in spec.allowed_tasks}
+        ):
             raise CastepValidationError(
                 f"{name.upper()} is only supported by this starter implementation for "
                 f"task(s) {', '.join(task.upper() for task in spec.allowed_tasks)}; "
@@ -145,7 +147,9 @@ def validate_keyword_value(file: FileKind, name: str, value: object) -> None:
         if not isinstance(value, BlockSection):
             raise CastepValidationError(f"{spec.name.upper()} requires a block value.")
         block_name = value.name.strip().lower() or spec.name
-        block = value if block_name == spec.name else BlockSection(spec.name, value.rows, value.unit)
+        block = (
+            value if block_name == spec.name else BlockSection(spec.name, value.rows, value.unit)
+        )
         _validate_block_section(file, block)
         return
 
@@ -258,10 +262,10 @@ def _validate_requirements(file: FileKind, names: Iterable[str]) -> None:
             continue
         for required in spec.requires:
             if required not in present:
-                raise MissingRequiredKeywordError(
-                    f"{name.upper()} requires {required.upper()}."
-                )
-        if spec.requires_any_of and not any(required in present for required in spec.requires_any_of):
+                raise MissingRequiredKeywordError(f"{name.upper()} requires {required.upper()}.")
+        if spec.requires_any_of and not any(
+            required in present for required in spec.requires_any_of
+        ):
             joined = " or ".join(required.upper() for required in spec.requires_any_of)
             raise MissingRequiredKeywordError(f"{name.upper()} requires {joined}.")
 
@@ -271,7 +275,9 @@ def _validate_lattice_cart(lattice: LatticeCart) -> None:
         raise CastepValidationError("LATTICE_CART requires exactly three lattice vectors.")
     for index, vector in enumerate(lattice.vectors, start=1):
         if len(vector) != 3:
-            raise CastepValidationError(f"LATTICE_CART vector {index} must contain three components.")
+            raise CastepValidationError(
+                f"LATTICE_CART vector {index} must contain three components."
+            )
         _validate_numeric_tuple(vector, f"LATTICE_CART vector {index}")
 
 
@@ -301,15 +307,11 @@ def _validate_atomic_spins(cell_file: CellFile) -> None:
         )
 
     if len(cell_file.atomic_spins) != len(cell_file.positions_frac.positions):
-        raise CastepValidationError(
-            "Atomic spin count must match POSITIONS_FRAC row count."
-        )
+        raise CastepValidationError("Atomic spin count must match POSITIONS_FRAC row count.")
 
     for index, value in enumerate(cell_file.atomic_spins, start=1):
         if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise CastepValidationError(
-                f"Atomic spin value at row {index} must be numeric."
-            )
+            raise CastepValidationError(f"Atomic spin value at row {index} must be numeric.")
 
 
 def _validate_atomic_position(position: AtomicPosition, block_name: str) -> None:
@@ -323,7 +325,9 @@ def _validate_atomic_position(position: AtomicPosition, block_name: str) -> None
 def _validate_species_pot(rows: tuple[SpeciesPotential, ...]) -> None:
     for row in rows:
         if not row.species.strip() or not row.potential.strip():
-            raise CastepValidationError("SPECIES_POT entries require both species and pseudopotential name.")
+            raise CastepValidationError(
+                "SPECIES_POT entries require both species and pseudopotential name."
+            )
 
 
 def _validate_kpoints_list(rows: tuple[KPoint, ...]) -> None:
@@ -363,7 +367,11 @@ def _validate_block_section(file: FileKind, block: BlockSection) -> None:
             raise CastepValidationError(
                 f"{spec.name.upper()} row count must be a multiple of {schema.row_group_size}."
             )
-    if spec.name == "hubbard_u" and block.unit is not None and block.unit.strip().lower() not in {"ev", "ha"}:
+    if (
+        spec.name == "hubbard_u"
+        and block.unit is not None
+        and block.unit.strip().lower() not in {"ev", "ha"}
+    ):
         raise CastepValidationError("HUBBARD_U units must be eV or Ha.")
     for row in block.rows:
         if not row:
@@ -402,13 +410,17 @@ def _validate_hubbard_u_row(row: tuple[ScalarPrimitive, ...]) -> None:
     while index < len(row):
         token = row[index]
         if not isinstance(token, str) or ":" not in token:
-            raise CastepValidationError("HUBBARD_U orbital entries must use tokens such as 'd: 2.4'.")
+            raise CastepValidationError(
+                "HUBBARD_U orbital entries must use tokens such as 'd: 2.4'."
+            )
         orbital, inline_value = token.split(":", maxsplit=1)
         orbital = orbital.strip().lower()
         if orbital not in {"s", "p", "d", "f"}:
             raise CastepValidationError("HUBBARD_U orbitals must be one of s, p, d, or f.")
         if orbital in seen_orbitals:
-            raise CastepValidationError(f"HUBBARD_U orbital '{orbital}' is defined more than once in a row.")
+            raise CastepValidationError(
+                f"HUBBARD_U orbital '{orbital}' is defined more than once in a row."
+            )
         seen_orbitals.add(orbital)
 
         if inline_value.strip():
@@ -429,17 +441,22 @@ def _validate_hubbard_u_row(row: tuple[ScalarPrimitive, ...]) -> None:
     if not seen_orbitals:
         raise CastepValidationError("HUBBARD_U rows must define at least one orbital U value.")
 
+
 def _validate_scalar_value(file: FileKind, assignment: KeywordAssignment) -> None:
     spec = get_keyword_spec(file, assignment.name)
     if spec is None:
         raise UnknownKeywordError(f"Unsupported CASTEP {file} keyword '{assignment.name}'.")
     if spec.kind == "block":
-        raise CastepValidationError(f"{spec.name.upper()} must be provided as a block, not a scalar.")
+        raise CastepValidationError(
+            f"{spec.name.upper()} must be provided as a block, not a scalar."
+        )
 
     value = assignment.value
     if spec.kind == "flag":
         if value not in (None, True):
-            raise CastepValidationError(f"{spec.name.upper()} is a presence-only flag and may not take a value.")
+            raise CastepValidationError(
+                f"{spec.name.upper()} is a presence-only flag and may not take a value."
+            )
         return
 
     if value is None:
@@ -476,12 +493,16 @@ def _validate_scalar_value(file: FileKind, assignment: KeywordAssignment) -> Non
         return
     if spec.value_type == "positive_int":
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            raise CastepValidationError(f"{spec.name.upper()} expects an integer greater than zero.")
+            raise CastepValidationError(
+                f"{spec.name.upper()} expects an integer greater than zero."
+            )
         _validate_bounds(spec, float(value))
         return
     if spec.value_type == "non_negative_int":
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise CastepValidationError(f"{spec.name.upper()} expects an integer greater than or equal to zero.")
+            raise CastepValidationError(
+                f"{spec.name.upper()} expects an integer greater than or equal to zero."
+            )
         _validate_bounds(spec, float(value))
         return
     if spec.value_type in {"float", "number"}:
@@ -496,7 +517,9 @@ def _validate_scalar_value(file: FileKind, assignment: KeywordAssignment) -> Non
         if not isinstance(numeric, (int, float)) or isinstance(numeric, bool):
             raise CastepValidationError(f"{spec.name.upper()} expects a numeric value.")
         if spec.value_type == "positive_float_with_optional_unit" and numeric <= 0:
-            raise CastepValidationError(f"{spec.name.upper()} expects a numeric value greater than zero.")
+            raise CastepValidationError(
+                f"{spec.name.upper()} expects a numeric value greater than zero."
+            )
         _validate_bounds(spec, float(numeric))
         if isinstance(value, ValueWithUnit) and not value.unit.strip():
             raise CastepValidationError(f"{spec.name.upper()} units may not be empty.")
@@ -513,10 +536,14 @@ def _validate_scalar_value(file: FileKind, assignment: KeywordAssignment) -> Non
             raise CastepValidationError(f"{spec.name.upper()} expects a numeric vector value.")
         expected = spec.vector_length or 3
         if len(value) != expected:
-            raise CastepValidationError(f"{spec.name.upper()} expects exactly {expected} components.")
+            raise CastepValidationError(
+                f"{spec.name.upper()} expects exactly {expected} components."
+            )
         for item in value:
             if not isinstance(item, (int, float)) or isinstance(item, bool):
-                raise CastepValidationError(f"{spec.name.upper()} expects numeric vector components.")
+                raise CastepValidationError(
+                    f"{spec.name.upper()} expects numeric vector components."
+                )
         return
     if spec.value_type == "text":
         if not isinstance(value, str):

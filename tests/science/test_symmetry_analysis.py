@@ -7,7 +7,11 @@ from unittest.mock import patch
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import AtomMatching, match_structures
 import mufinder.science.symmetry_analysis as symmetry_module
-from mufinder.science.symmetry_analysis import compare_space_group, compare_topology, detect_space_group
+from mufinder.science.symmetry_analysis import (
+    compare_space_group,
+    compare_topology,
+    detect_space_group,
+)
 from tests.support.structures import host_structure
 
 
@@ -102,8 +106,12 @@ def test_compare_topology_no_pairs_returns_unknown() -> None:
 
 
 def test_compare_topology_detects_removed_bond() -> None:
-    bonded = host_structure(label="bonded", lattice=10.0, positions=((0.0, 0.0, 0.0), (0.15, 0.0, 0.0)))
-    stretched = host_structure(label="stretched", lattice=10.0, positions=((0.0, 0.0, 0.0), (0.5, 0.0, 0.0)))
+    bonded = host_structure(
+        label="bonded", lattice=10.0, positions=((0.0, 0.0, 0.0), (0.15, 0.0, 0.0))
+    )
+    stretched = host_structure(
+        label="stretched", lattice=10.0, positions=((0.0, 0.0, 0.0), (0.5, 0.0, 0.0))
+    )
     matching = match_structures(bonded, stretched)
 
     result = compare_topology(bonded, stretched, matching)

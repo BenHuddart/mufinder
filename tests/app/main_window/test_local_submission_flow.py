@@ -156,7 +156,9 @@ def test_main_window_submit_jobs_locally_uses_definition_output_for_non_converge
     monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
 
     submit_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs))
+    monkeypatch.setattr(
+        window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
+    )
 
     window._submit_jobs_locally([job])
 
@@ -170,7 +172,9 @@ def test_main_window_submit_jobs_locally_resets_execution_target_after_cluster_r
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "local_submit_resets_target.mufinder", "LocalSubmitResetsTarget")
+    doc = service.create_project(
+        tmp_path / "local_submit_resets_target.mufinder", "LocalSubmitResetsTarget"
+    )
 
     job = service.add_job(
         doc,
@@ -334,9 +338,7 @@ def test_main_window_submit_jobs_locally_warns_missing_output_paths(
     window.close()
 
 
-def test_main_window_local_status_handlers_update_job_and_run(
-    main_window, tmp_path: Path
-) -> None:
+def test_main_window_local_status_handlers_update_job_and_run(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "local_statuses.mufinder", "LocalStatuses")
@@ -491,7 +493,9 @@ def test_main_window_submit_jobs_locally_dialog_rejected(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
-    (doc.project_root / "files" / "convergence_cutoff" / job.label).mkdir(parents=True, exist_ok=True)
+    (doc.project_root / "files" / "convergence_cutoff" / job.label).mkdir(
+        parents=True, exist_ok=True
+    )
     window._document = doc
 
     monkeypatch.setattr(
@@ -512,7 +516,9 @@ def test_main_window_submit_jobs_locally_dialog_rejected(
     monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
 
     submit_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs))
+    monkeypatch.setattr(
+        window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
+    )
 
     window._submit_jobs_locally([job])
 

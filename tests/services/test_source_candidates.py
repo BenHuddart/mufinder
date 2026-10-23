@@ -95,7 +95,9 @@ def _add_relaxed_source(
 ) -> MuonSite:
     host = _host(doc)
     species = ["Si", "Si", *extra_species, "H:mu"]
-    positions = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]] + [[0.1, 0.1, 0.1]] * len(extra_species) + [list(muon)]
+    positions = (
+        [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]] + [[0.1, 0.1, 0.1]] * len(extra_species) + [list(muon)]
+    )
     relaxed = Structure(
         label=f"{label} relaxed",
         origin="muon_relaxation",
@@ -154,12 +156,14 @@ def test_float_from_source_and_coerce_fractional_triplet() -> None:
 
 def test_charge_state_for_job_reads_muon_relaxation_calc_types() -> None:
     assert charge_state_for_job(None) is None
-    assert charge_state_for_job(
-        Job(calc_type=muon_relaxation_calc_type(MUONIUM_CHARGE_STATE))
-    ) == MUONIUM_CHARGE_STATE
-    assert charge_state_for_job(
-        Job(calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE))
-    ) == POSITIVE_MUON_CHARGE_STATE
+    assert (
+        charge_state_for_job(Job(calc_type=muon_relaxation_calc_type(MUONIUM_CHARGE_STATE)))
+        == MUONIUM_CHARGE_STATE
+    )
+    assert (
+        charge_state_for_job(Job(calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE)))
+        == POSITIVE_MUON_CHARGE_STATE
+    )
     assert charge_state_for_job(Job(calc_type="castep_cutoff")) is None
 
 
@@ -174,9 +178,12 @@ def test_queries_return_nothing_without_a_document() -> None:
     assert enumerate_energy_barrier_source_candidates(None, "a", "b") == []
     assert energy_barrier_neb_source_candidates(None) == []
     assert completed_energy_barrier_neb_candidates(None) == []
-    assert completed_muon_relaxation_sources(
-        None, [], run_for_job=lambda _id: None, total_energy_for_job=lambda _id: None
-    ) == []
+    assert (
+        completed_muon_relaxation_sources(
+            None, [], run_for_job=lambda _id: None, total_energy_for_job=lambda _id: None
+        )
+        == []
+    )
     assert completed_pristine_relaxation_jobs(None, [], {}, run_for_job=lambda _id: None) == []
 
 
@@ -240,17 +247,22 @@ def test_quantum_source_labels_deduplicate_in_candidate_order(document: ProjectD
 
 
 def test_charge_state_label_for_job_names_muon_relaxations_only() -> None:
-    assert charge_state_label_for_job(Job(calc_type=muon_relaxation_calc_type(MUONIUM_CHARGE_STATE))) == "muonium"
-    assert charge_state_label_for_job(Job(calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE))) == (
-        "positive muon"
+    assert (
+        charge_state_label_for_job(Job(calc_type=muon_relaxation_calc_type(MUONIUM_CHARGE_STATE)))
+        == "muonium"
     )
+    assert charge_state_label_for_job(
+        Job(calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE))
+    ) == ("positive muon")
     assert charge_state_label_for_job(Job(calc_type="castep_uep_source")) == ""
     assert charge_state_label_for_job(None) == ""
 
 
 def test_quantum_source_labels_seed_names_and_stored_sources(document: ProjectDocument) -> None:
     first = _add_relaxed_source(document, "site", energy=-10.0)
-    second = _add_relaxed_source(document, "site", energy=-9.0, charge_state=POSITIVE_MUON_CHARGE_STATE)
+    second = _add_relaxed_source(
+        document, "site", energy=-9.0, charge_state=POSITIVE_MUON_CHARGE_STATE
+    )
     second_candidate = quantum_source_candidate_by_key(document, str(second.id))
     assert second_candidate is not None
     definition = CalculationDefinition(
@@ -277,7 +289,9 @@ def test_quantum_source_labels_seed_names_and_stored_sources(document: ProjectDo
     ]
 
 
-def _relaxation_job_with_inputs(tmp_path: Path, *, param: str | None, cell: str | None = None, **job_fields) -> Job:
+def _relaxation_job_with_inputs(
+    tmp_path: Path, *, param: str | None, cell: str | None = None, **job_fields
+) -> Job:
     job = Job(label="relax_site_1", **job_fields)
     output_dir = tmp_path / job.label
     output_dir.mkdir()
@@ -290,7 +304,8 @@ def _relaxation_job_with_inputs(tmp_path: Path, *, param: str | None, cell: str 
 
 def test_follow_on_rows_inherit_the_source_relaxation_functional(tmp_path: Path) -> None:
     job = _relaxation_job_with_inputs(
-        tmp_path, param="TASK : GEOMETRYOPTIMIZATION\nXC_FUNCTIONAL : PBESOL\nCUT_OFF_ENERGY : 650 eV\n"
+        tmp_path,
+        param="TASK : GEOMETRYOPTIMIZATION\nXC_FUNCTIONAL : PBESOL\nCUT_OFF_ENERGY : 650 eV\n",
     )
 
     values = source_relaxation_parameter_values(job, lambda _job: tmp_path / job.label)
@@ -338,7 +353,9 @@ def test_follow_on_rows_inherit_the_source_relaxation_spin_treatment(
 def test_unreadable_source_param_defaults_only_muonium_to_spin_polarised(
     tmp_path: Path, charge_state: str, expected: dict[str, object]
 ) -> None:
-    job = _relaxation_job_with_inputs(tmp_path, param=None, calc_type=muon_relaxation_calc_type(charge_state))
+    job = _relaxation_job_with_inputs(
+        tmp_path, param=None, calc_type=muon_relaxation_calc_type(charge_state)
+    )
 
     assert source_relaxation_parameter_values(job, lambda _job: tmp_path / job.label) == expected
     assert source_relaxation_parameter_values(job, lambda _job: None) == {}
@@ -347,7 +364,9 @@ def test_unreadable_source_param_defaults_only_muonium_to_spin_polarised(
 # --- energy-barrier sources ---------------------------------------------------
 
 
-def _serialized_path(reactant: MuonSite, product: MuonSite, doc: ProjectDocument, **overrides) -> dict:
+def _serialized_path(
+    reactant: MuonSite, product: MuonSite, doc: ProjectDocument, **overrides
+) -> dict:
     def ids(site: MuonSite) -> tuple[str, str, str]:
         run = doc.runs[site.relaxation_run_id]
         structure_id = doc.results[run.result_id].derived_structure_ids[0]
@@ -381,7 +400,9 @@ def test_generated_sources_merge_form_state_and_definitions(document: ProjectDoc
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.ENERGY_BARRIERS,
         calc_type=TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
-        parameters={"configuration": {"sources": [{"key": "a", "label": "definition"}, {"key": "c"}]}},
+        parameters={
+            "configuration": {"sources": [{"key": "a", "label": "definition"}, {"key": "c"}]}
+        },
     )
     other = CalculationDefinition(
         workflow_stage=WorkflowStage.ENERGY_BARRIERS,
@@ -395,14 +416,20 @@ def test_generated_sources_merge_form_state_and_definitions(document: ProjectDoc
 
     assert [source["key"] for source in sources] == ["a", "b", "c"]
     assert sources[0]["label"] == "definition"
-    assert [candidate.key for candidate in energy_barrier_neb_source_candidates(document)] == ["a", "b", "c"]
+    assert [candidate.key for candidate in energy_barrier_neb_source_candidates(document)] == [
+        "a",
+        "b",
+        "c",
+    ]
 
 
 def test_eligible_energy_barrier_sources_rebuild_endpoints(document: ProjectDocument) -> None:
     reactant = _add_relaxed_source(document, "A", energy=-10.0)
     product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
     valid = _serialized_path(reactant, product, document)
-    missing_site = _serialized_path(reactant, product, document, key="gone", product_site_id=str(uuid4()))
+    missing_site = _serialized_path(
+        reactant, product, document, key="gone", product_site_id=str(uuid4())
+    )
     bad_id = _serialized_path(reactant, product, document, key="bad", reactant_run_id="nope")
     bad_path = _serialized_path(reactant, product, document, key="path", path_end_fractional=[1, 2])
     document.ui_state["energy_barriers_form"] = {
@@ -426,13 +453,18 @@ def test_enumerate_energy_barrier_paths_between_two_sources(document: ProjectDoc
     product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
     muonium = _add_relaxed_source(document, "M", energy=-9.0, charge_state=MUONIUM_CHARGE_STATE)
 
-    candidates = enumerate_energy_barrier_source_candidates(document, str(reactant.id), str(product.id))
+    candidates = enumerate_energy_barrier_source_candidates(
+        document, str(reactant.id), str(product.id)
+    )
 
     assert candidates
     assert [candidate.path_index for candidate in candidates] == list(range(1, len(candidates) + 1))
     assert candidates[0].key == f"{reactant.id}:{product.id}:1"
     assert candidates[0].reactant.site is reactant
-    assert enumerate_energy_barrier_source_candidates(document, str(reactant.id), str(muonium.id)) == []
+    assert (
+        enumerate_energy_barrier_source_candidates(document, str(reactant.id), str(muonium.id))
+        == []
+    )
     assert enumerate_energy_barrier_source_candidates(document, str(reactant.id), "missing") == []
 
 
@@ -444,7 +476,10 @@ def test_energy_barrier_form_state_readers(document: ProjectDocument) -> None:
     assert energy_barrier_max_path_length_text(document) == ""
     assert selected_energy_barrier_endpoint_keys(document) == (str(first.id), str(second.id))
 
-    document.ui_state["energy_barriers_form"] = {"max_path_length_ang": 4.25, "selected_product_key": str(first.id)}
+    document.ui_state["energy_barriers_form"] = {
+        "max_path_length_ang": 4.25,
+        "selected_product_key": str(first.id),
+    }
     state = energy_barrier_form_state(document)
     state["changed"] = True
     assert "changed" not in document.ui_state["energy_barriers_form"]  # a copy
@@ -455,7 +490,10 @@ def test_energy_barrier_form_state_readers(document: ProjectDocument) -> None:
         "selected_reactant_key": str(first.id),
         "selected_product_key": str(second.id),
     }
-    assert selected_energy_barrier_endpoint_keys(document, [str(second.id)]) == (str(second.id), str(second.id))
+    assert selected_energy_barrier_endpoint_keys(document, [str(second.id)]) == (
+        str(second.id),
+        str(second.id),
+    )
     assert selected_energy_barrier_endpoint_keys(document, [str(second.id), str(first.id)]) == (
         str(first.id),
         str(second.id),
@@ -469,7 +507,9 @@ def test_energy_barrier_form_state_readers(document: ProjectDocument) -> None:
 def test_generated_paths_serialize_label_and_preview(document: ProjectDocument) -> None:
     reactant = _add_relaxed_source(document, "A", energy=-10.0)
     product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
-    candidates = enumerate_energy_barrier_source_candidates(document, str(reactant.id), str(product.id))
+    candidates = enumerate_energy_barrier_source_candidates(
+        document, str(reactant.id), str(product.id)
+    )
     first = candidates[0]
 
     assert energy_barrier_source_label(first) == "A_to_B_path1"
@@ -499,7 +539,13 @@ def test_neb_sources_map_jobs_back_to_their_paths(document: ProjectDocument) -> 
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.ENERGY_BARRIERS,
         calc_type="castep_nudged_elastic_band_set",
-        parameters={"job_ids_by_label": {path["key"]: str(job.id), "other": "not-a-uuid", "gone": str(uuid4())}},
+        parameters={
+            "job_ids_by_label": {
+                path["key"]: str(job.id),
+                "other": "not-a-uuid",
+                "gone": str(uuid4()),
+            }
+        },
     )
 
     assert serialize_energy_barrier_neb_sources(document, ["missing", path["key"]]) == [path]
@@ -557,7 +603,9 @@ def _completed_relaxation(
     doc.structures[structure.id] = structure
     job = Job(label="job", status=status)
     run = CalculationRun(job_id=job.id, convergence_achieved=converged)
-    result = Result(calculation_run_id=run.id, data=data or {}, derived_structure_ids=[structure.id])
+    result = Result(
+        calculation_run_id=run.id, data=data or {}, derived_structure_ids=[structure.id]
+    )
     run.result_id = result.id
     doc.jobs[job.id] = job
     doc.runs[run.id] = run
@@ -635,7 +683,9 @@ class _State:
     lattice_c: float | None = None
 
 
-def test_completed_pristine_relaxation_jobs_describe_completed_rows(document: ProjectDocument) -> None:
+def test_completed_pristine_relaxation_jobs_describe_completed_rows(
+    document: ProjectDocument,
+) -> None:
     job_unit, run_unit = _completed_relaxation(document, muon=None)
     job_super, run_super = _completed_relaxation(document, muon=None)
     runs = {job_unit.id: run_unit, job_super.id: run_super}
@@ -676,7 +726,9 @@ def _relax_in_other_charge_state(
 ) -> Job:
     """Relax ``site`` again in ``charge_state`` and bind the job to it by a muon-relaxation row."""
 
-    scratch = _add_relaxed_source(doc, site.label, energy=energy, muon=muon, charge_state=charge_state)
+    scratch = _add_relaxed_source(
+        doc, site.label, energy=energy, muon=muon, charge_state=charge_state
+    )
     run = doc.runs[scratch.relaxation_run_id]
     doc.results[run.result_id].data = {"total_energy": energy}
     del doc.sites[scratch.id]
@@ -685,7 +737,9 @@ def _relax_in_other_charge_state(
     return job
 
 
-def test_a_site_relaxed_in_both_charge_states_is_a_source_in_each(document: ProjectDocument) -> None:
+def test_a_site_relaxed_in_both_charge_states_is_a_source_in_each(
+    document: ProjectDocument,
+) -> None:
     site = _add_relaxed_source(document, "O1", energy=-10.0)
     muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
 
@@ -707,7 +761,9 @@ def test_a_site_relaxed_in_both_charge_states_is_a_source_in_each(document: Proj
         (muonium.key, MUONIUM_CHARGE_STATE),
         (str(site.id), POSITIVE_MUON_CHARGE_STATE),
     ]
-    assert site_charge_state_relaxation_jobs(document) == {site.id: {MUONIUM_CHARGE_STATE: muonium_job}}
+    assert site_charge_state_relaxation_jobs(document) == {
+        site.id: {MUONIUM_CHARGE_STATE: muonium_job}
+    }
 
 
 def test_the_other_charge_state_needs_a_completed_relaxation(document: ProjectDocument) -> None:
@@ -715,12 +771,16 @@ def test_the_other_charge_state_needs_a_completed_relaxation(document: ProjectDo
     muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
 
     muonium_job.status = JobStatus.RUNNING
-    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [str(site.id)]
+    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [
+        str(site.id)
+    ]
 
     muonium_job.status = JobStatus.COMPLETED
     for run in [run for run in document.runs.values() if run.job_id == muonium_job.id]:
         del document.runs[run.id]
-    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [str(site.id)]
+    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [
+        str(site.id)
+    ]
 
 
 def test_the_other_charge_state_stays_a_source_when_the_site_link_is_cleared(
@@ -740,8 +800,12 @@ def test_the_other_charge_state_stays_a_source_when_the_site_link_is_cleared(
 def test_paths_between_two_sites_are_kept_apart_per_charge_state(document: ProjectDocument) -> None:
     first = _add_relaxed_source(document, "A", energy=-10.0, muon=(0.25, 0.25, 0.25))
     second = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
-    _relax_in_other_charge_state(document, first, MUONIUM_CHARGE_STATE, energy=-12.0, muon=(0.25, 0.25, 0.25))
-    _relax_in_other_charge_state(document, second, MUONIUM_CHARGE_STATE, energy=-11.0, muon=(0.75, 0.25, 0.25))
+    _relax_in_other_charge_state(
+        document, first, MUONIUM_CHARGE_STATE, energy=-12.0, muon=(0.25, 0.25, 0.25)
+    )
+    _relax_in_other_charge_state(
+        document, second, MUONIUM_CHARGE_STATE, energy=-11.0, muon=(0.75, 0.25, 0.25)
+    )
 
     positive = enumerate_energy_barrier_source_candidates(document, str(first.id), str(second.id))
     muonium = enumerate_energy_barrier_source_candidates(
@@ -756,7 +820,10 @@ def test_paths_between_two_sites_are_kept_apart_per_charge_state(document: Proje
     document.ui_state["energy_barriers_form"] = {
         "generated_sources": serialize_energy_barrier_source_candidates([*positive, *muonium])
     }
-    rebuilt = {candidate.key: candidate for candidate in eligible_energy_barrier_source_candidates(document)}
+    rebuilt = {
+        candidate.key: candidate
+        for candidate in eligible_energy_barrier_source_candidates(document)
+    }
     assert rebuilt[muonium[0].key].reactant.key == f"{first.id}:muonium"
     assert rebuilt[muonium[0].key].reactant.total_energy_eV == -12.0
     assert rebuilt[positive[0].key].reactant.key == str(first.id)
@@ -768,7 +835,12 @@ def test_the_bare_key_stays_with_its_charge_state_after_a_reset(document: Projec
     site = _add_relaxed_source(document, "O1", energy=-10.0)
     linked_run = document.runs[site.relaxation_run_id]
     record_site_relaxation(
-        document, site, linked_run, document.jobs[linked_run.job_id], total_energy_eV=-10.0, fractional_position=None
+        document,
+        site,
+        linked_run,
+        document.jobs[linked_run.job_id],
+        total_energy_eV=-10.0,
+        fractional_position=None,
     )
     muonium_job = _relax_in_other_charge_state(document, site, MUONIUM_CHARGE_STATE, energy=-12.5)
 
@@ -778,4 +850,6 @@ def test_the_bare_key_stays_with_its_charge_state_after_a_reset(document: Projec
         document, site, muonium_run, muonium_job, total_energy_eV=-12.5, fractional_position=None
     )
 
-    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [f"{site.id}:muonium"]
+    assert [candidate.key for candidate in eligible_quantum_source_candidates(document)] == [
+        f"{site.id}:muonium"
+    ]

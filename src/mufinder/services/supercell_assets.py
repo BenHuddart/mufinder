@@ -253,11 +253,7 @@ def structure_atomic_spins(structure: Structure) -> list[float]:
     if saw_numeric:
         if isinstance(structure.properties.get("supercell_asset"), dict):
             return spins
-        if (
-            fallback is not None
-            and not has_nonzero_spins(spins)
-            and has_nonzero_spins(fallback)
-        ):
+        if fallback is not None and not has_nonzero_spins(spins) and has_nonzero_spins(fallback):
             return fallback
         return spins
 
@@ -310,7 +306,9 @@ def _repair_legacy_supercell_asset_spins(
         "matrix": [list(row) for row in asset.matrix],
         "owner_workflow_stage": asset.owner_workflow_stage.value,
         "source_asset_structure_id": (
-            str(asset.source_asset_structure_id) if asset.source_asset_structure_id is not None else None
+            str(asset.source_asset_structure_id)
+            if asset.source_asset_structure_id is not None
+            else None
         ),
     }
     structure.properties = repaired_properties
@@ -389,7 +387,9 @@ def create_workflow_supercell_asset(
         atomic_spins=structure_atomic_spins(host),
         propagation_vector=list(propagation_vector_from_structure(host)),
     )
-    structure.label = str(label or "").strip() or _supercell_asset_label(workflow_stage, parsed_matrix)
+    structure.label = str(label or "").strip() or _supercell_asset_label(
+        workflow_stage, parsed_matrix
+    )
     structure.parent_structure_id = host_structure_id
     structure.properties["supercell_asset"] = {
         "matrix": [list(row) for row in parsed_matrix],
@@ -433,7 +433,10 @@ def supercell_asset_is_frozen(
 ) -> bool:
     """Return whether the asset is frozen into a calculation definition."""
 
-    return any(asset_structure_id in definition.input_structure_ids for definition in document.calculations.values())
+    return any(
+        asset_structure_id in definition.input_structure_ids
+        for definition in document.calculations.values()
+    )
 
 
 def rename_workflow_supercell_asset(
@@ -470,7 +473,9 @@ def update_workflow_supercell_asset_matrix(
     if asset is None:
         raise ValueError("Selected structure is not a saved supercell asset.")
     if supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
-        raise ValueError("This supercell is already used by configured calculations; save a new copy instead.")
+        raise ValueError(
+            "This supercell is already used by configured calculations; save a new copy instead."
+        )
     if structure.parent_structure_id is None:
         raise ValueError("Saved supercell is missing its source structure.")
     host = document.structures.get(structure.parent_structure_id)
@@ -489,17 +494,25 @@ def update_workflow_supercell_asset_matrix(
     )
     structure.lattice_vectors = [list(vector) for vector in regenerated.lattice_vectors]
     structure.species = list(regenerated.species)
-    structure.fractional_positions = [list(position) for position in regenerated.fractional_positions]
-    structure.label = str(label or "").strip() or structure.label or _supercell_asset_label(
-        asset.owner_workflow_stage,
-        parsed_matrix,
+    structure.fractional_positions = [
+        list(position) for position in regenerated.fractional_positions
+    ]
+    structure.label = (
+        str(label or "").strip()
+        or structure.label
+        or _supercell_asset_label(
+            asset.owner_workflow_stage,
+            parsed_matrix,
+        )
     )
     structure.properties = dict(regenerated.properties)
     structure.properties["supercell_asset"] = {
         "matrix": [list(row) for row in parsed_matrix],
         "owner_workflow_stage": asset.owner_workflow_stage.value,
         "source_asset_structure_id": (
-            str(asset.source_asset_structure_id) if asset.source_asset_structure_id is not None else None
+            str(asset.source_asset_structure_id)
+            if asset.source_asset_structure_id is not None
+            else None
         ),
     }
     structure.parent_structure_id = host.id
@@ -517,7 +530,9 @@ def delete_workflow_supercell_asset(
     if structure is None or supercell_asset(structure) is None:
         raise ValueError("Selected structure is not a saved supercell asset.")
     if supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
-        raise ValueError("This supercell is already used by configured calculations and cannot be deleted.")
+        raise ValueError(
+            "This supercell is already used by configured calculations and cannot be deleted."
+        )
 
     removed = document.structures.pop(asset_structure_id)
     state = _workflow_supercells_state(document)
@@ -626,9 +641,7 @@ def resolve_workflow_structure(
     if selection.mode == WORKFLOW_SUPERCELL_SAVED and selection.structure_id is not None:
         selected_structure = document.structures.get(selection.structure_id)
         selected_asset = (
-            supercell_asset(selected_structure)
-            if selected_structure is not None
-            else None
+            supercell_asset(selected_structure) if selected_structure is not None else None
         )
         if (
             selected_structure is not None
@@ -652,9 +665,7 @@ def resolve_workflow_structure(
             if selected_asset.source_asset_structure_id is not None:
                 source_structure = document.structures.get(selected_asset.source_asset_structure_id)
                 source_asset = (
-                    supercell_asset(source_structure)
-                    if source_structure is not None
-                    else None
+                    supercell_asset(source_structure) if source_structure is not None else None
                 )
                 if source_asset is not None:
                     source_workflow_stage = source_asset.owner_workflow_stage

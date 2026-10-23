@@ -106,7 +106,9 @@ def _fake_optimization(
     """An optimization endpoint; the classical energy defaults to the total energy."""
 
     lattice = np.asarray(_CUBE_LATTICE, dtype=float)
-    cartesian = tuple(float(value) for value in (np.asarray(fractional, dtype=float) @ lattice).tolist())
+    cartesian = tuple(
+        float(value) for value in (np.asarray(fractional, dtype=float) @ lattice).tolist()
+    )
     return UepOptimizationResult(
         start_position_ang=cartesian,
         optimized_position_ang=cartesian,
@@ -136,7 +138,9 @@ def _prepared_dataset(
     return UepPreparedClusteringDataset(
         config=UepClusteringConfig(),
         optimizations=optimizations,
-        asymmetric_fractional_positions=tuple(entry.optimized_fractional_position for entry in optimizations),
+        asymmetric_fractional_positions=tuple(
+            entry.optimized_fractional_position for entry in optimizations
+        ),
         genome_vectors=genome_vectors,
         normalized_genome_vectors=genome_vectors,
         linkage_method="single",
@@ -245,7 +249,9 @@ def test_parse_formatted_density_rejects_bad_nspins(tmp_path: Path) -> None:
 
 
 def test_parse_formatted_density_rejects_index_out_of_range(tmp_path: Path) -> None:
-    text = _GOOD_DEN_FMT.replace("     2     2     2           1.0", "     9     1     1           1.0")
+    text = _GOOD_DEN_FMT.replace(
+        "     2     2     2           1.0", "     9     1     1           1.0"
+    )
     path = tmp_path / "oor.den_fmt"
     path.write_text(text, encoding="utf-8")
     with pytest.raises(UepError, match="out of range"):
@@ -253,7 +259,9 @@ def test_parse_formatted_density_rejects_index_out_of_range(tmp_path: Path) -> N
 
 
 def test_parse_formatted_density_rejects_non_numeric_row(tmp_path: Path) -> None:
-    text = _GOOD_DEN_FMT.replace("     2     2     2           1.0", "     2     2     2           bad")
+    text = _GOOD_DEN_FMT.replace(
+        "     2     2     2           1.0", "     2     2     2           bad"
+    )
     path = tmp_path / "nonnum.den_fmt"
     path.write_text(text, encoding="utf-8")
     with pytest.raises(UepError, match="Invalid density row"):
@@ -327,11 +335,15 @@ def test_load_uep_source_reads_neutral_fixture() -> None:
 
     assert source.structure.species == ("Si", "Si")
     assert source.gw_factor == pytest.approx(5.0)
-    assert source.neutrality_warning is None or "assuming a neutral host" in source.neutrality_warning
+    assert (
+        source.neutrality_warning is None or "assuming a neutral host" in source.neutrality_warning
+    )
 
 
 def test_load_uep_source_uses_shared_mulliken_spin_parser(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("mufinder.science.uep.parse_castep_mulliken_atomic_spins", lambda _path: (1.2, -1.2))
+    monkeypatch.setattr(
+        "mufinder.science.uep.parse_castep_mulliken_atomic_spins", lambda _path: (1.2, -1.2)
+    )
 
     source = load_uep_source(
         den_fmt_path=_fixture_path("Si2.den_fmt"),
@@ -393,7 +405,9 @@ def test_uep_field_respects_periodicity_for_equivalent_points() -> None:
     translated_probe = probe_point(field, translated)
 
     assert translated_probe.fractional_position == pytest.approx(origin_probe.fractional_position)
-    assert translated_probe.potential_total_ev == pytest.approx(origin_probe.potential_total_ev, rel=1e-9)
+    assert translated_probe.potential_total_ev == pytest.approx(
+        origin_probe.potential_total_ev, rel=1e-9
+    )
 
 
 def test_uep_field_gradient_matches_potential_finite_difference() -> None:
@@ -507,7 +521,9 @@ def test_uep_field_rejects_non_positive_ionic_charge() -> None:
         cell_path=_fixture_path("Si2.cell"),
     )
     zero_pps = tuple(
-        IonicPseudopotential(species=pp.species, ionic_charge=0.0, core_radius_ang=pp.core_radius_ang)
+        IonicPseudopotential(
+            species=pp.species, ionic_charge=0.0, core_radius_ang=pp.core_radius_ang
+        )
         for pp in source.pseudopotentials
     )
     broken = UepSourceData(
@@ -647,7 +663,9 @@ def test_potential_grid_serialization_round_trips_gw_factor(gw_factor: float | N
 
 def test_preview_potential_grid_keeps_axes_already_under_the_cap() -> None:
     values = np.arange(8 * 8 * 2, dtype=float).reshape((8, 8, 2))
-    grid = UepPotentialGrid(lattice_vectors=_CUBE_LATTICE, grid=(8, 8, 2), potential_total_ev=values)
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(8, 8, 2), potential_total_ev=values
+    )
 
     preview = preview_potential_grid(grid, max_grid_points=4)
 
@@ -661,7 +679,11 @@ def test_preview_potential_grid_keeps_axes_already_under_the_cap() -> None:
     [
         "not-a-dict",
         {"lattice_vectors": [[1, 0, 0], [0, 1, 0]], "grid": [2, 2, 2], "potential_total_ev": []},
-        {"lattice_vectors": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "grid": [2, 2], "potential_total_ev": []},
+        {
+            "lattice_vectors": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            "grid": [2, 2],
+            "potential_total_ev": [],
+        },
     ],
 )
 def test_deserialize_potential_grid_rejects_malformed_payloads(payload: object) -> None:
@@ -721,13 +743,19 @@ def test_preview_potential_grid_caps_resolution_and_preserves_range() -> None:
 
     assert preview.grid == (12, 12, 12)
     assert preview.potential_total_ev.shape == (12, 12, 12)
-    assert float(preview.potential_total_ev.min()) == pytest.approx(float(grid.potential_total_ev.min()))
-    assert float(preview.potential_total_ev.max()) == pytest.approx(float(grid.potential_total_ev.max()))
+    assert float(preview.potential_total_ev.min()) == pytest.approx(
+        float(grid.potential_total_ev.min())
+    )
+    assert float(preview.potential_total_ev.max()) == pytest.approx(
+        float(grid.potential_total_ev.max())
+    )
 
 
 def test_preview_potential_grid_returns_unchanged_when_below_cap() -> None:
     values = np.arange(8, dtype=float).reshape((2, 2, 2))
-    grid = UepPotentialGrid(lattice_vectors=_CUBE_LATTICE, grid=(2, 2, 2), potential_total_ev=values)
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(2, 2, 2), potential_total_ev=values
+    )
     preview = preview_potential_grid(grid, max_grid_points=12)
     assert preview.grid == (2, 2, 2)
     assert preview.potential_total_ev is not values
@@ -736,7 +764,9 @@ def test_preview_potential_grid_returns_unchanged_when_below_cap() -> None:
 
 def test_preview_potential_grid_handles_flat_resample() -> None:
     values = np.full((8, 8, 8), 3.0, dtype=float)
-    grid = UepPotentialGrid(lattice_vectors=_CUBE_LATTICE, grid=(8, 8, 8), potential_total_ev=values)
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(8, 8, 8), potential_total_ev=values
+    )
     preview = preview_potential_grid(grid, max_grid_points=4)
     assert preview.grid == (4, 4, 4)
     assert np.allclose(preview.potential_total_ev, 3.0)
@@ -765,7 +795,9 @@ def test_write_potential_grid_xsf_includes_structure_and_grid(tmp_path) -> None:
     written_path = write_potential_grid_xsf(output_path, structure=source.structure, potential=grid)
     content = written_path.read_text(encoding="utf-8")
     lines = content.splitlines()
-    dimension_line = next(line for line in lines if line.strip() == "BEGIN_DATAGRID_3D_UEP_POTENTIAL")
+    dimension_line = next(
+        line for line in lines if line.strip() == "BEGIN_DATAGRID_3D_UEP_POTENTIAL"
+    )
     dimensions = lines[lines.index(dimension_line) + 1].strip()
 
     assert written_path == output_path
@@ -810,7 +842,9 @@ def test_write_potential_grid_xsf_rejects_non_3d_grid(tmp_path: Path) -> None:
         potential_total_ev=np.zeros(4, dtype=float),
     )
     with pytest.raises(UepError, match="3D electrostatic-potential grid"):
-        write_potential_grid_xsf(tmp_path / "out.xsf", structure=_simple_cubic_host(), potential=grid)
+        write_potential_grid_xsf(
+            tmp_path / "out.xsf", structure=_simple_cubic_host(), potential=grid
+        )
 
 
 def test_write_potential_grid_xsf_rejects_bad_lattice(tmp_path: Path) -> None:
@@ -820,7 +854,9 @@ def test_write_potential_grid_xsf_rejects_bad_lattice(tmp_path: Path) -> None:
         potential_total_ev=np.zeros((2, 2, 2), dtype=float),
     )
     with pytest.raises(UepError, match="three lattice vectors"):
-        write_potential_grid_xsf(tmp_path / "out.xsf", structure=_simple_cubic_host(), potential=grid)
+        write_potential_grid_xsf(
+            tmp_path / "out.xsf", structure=_simple_cubic_host(), potential=grid
+        )
 
 
 def test_write_potential_grid_xsf_rejects_species_position_mismatch(tmp_path: Path) -> None:
@@ -843,7 +879,9 @@ def test_write_potential_grid_xsf_rejects_species_position_mismatch(tmp_path: Pa
 
 
 def test_fractional_point_to_cartesian_scales_by_the_lattice() -> None:
-    assert fractional_point_to_cartesian(_CUBE_LATTICE, (0.25, 0.5, 0.375)) == pytest.approx((1.0, 2.0, 1.5))
+    assert fractional_point_to_cartesian(_CUBE_LATTICE, (0.25, 0.5, 0.375)) == pytest.approx(
+        (1.0, 2.0, 1.5)
+    )
 
 
 def test_fractional_point_to_cartesian_rejects_bad_lattice() -> None:
@@ -935,7 +973,13 @@ def test_plane_from_best_fit_uses_selected_points() -> None:
     )
 
     assert plane.anchor_ang == pytest.approx((0.5, 0.5, 0.0))
-    assert abs(float(np.dot(np.asarray(plane.normal_ang, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)))) == pytest.approx(1.0)
+    assert abs(
+        float(
+            np.dot(
+                np.asarray(plane.normal_ang, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)
+            )
+        )
+    ) == pytest.approx(1.0)
 
 
 def test_plane_from_best_fit_rejects_too_few_points() -> None:
@@ -975,10 +1019,18 @@ def test_plane_from_fractional_anchor_and_miller_uses_hexagonal_lattice_coordina
     )
 
     normal = np.asarray(plane.normal_ang, dtype=float)
-    assert plane.anchor_ang == pytest.approx(fractional_point_to_cartesian(lattice_vectors, (0.25, 0.5, 0.75)))
-    assert plane.normal_ang == pytest.approx(miller_indices_to_cartesian_normal(lattice_vectors, (1.0, 0.0, 0.0)))
-    assert float(np.dot(normal, np.asarray(lattice_vectors[1], dtype=float))) == pytest.approx(0.0, abs=1e-9)
-    assert float(np.dot(normal, np.asarray(lattice_vectors[2], dtype=float))) == pytest.approx(0.0, abs=1e-9)
+    assert plane.anchor_ang == pytest.approx(
+        fractional_point_to_cartesian(lattice_vectors, (0.25, 0.5, 0.75))
+    )
+    assert plane.normal_ang == pytest.approx(
+        miller_indices_to_cartesian_normal(lattice_vectors, (1.0, 0.0, 0.0))
+    )
+    assert float(np.dot(normal, np.asarray(lattice_vectors[1], dtype=float))) == pytest.approx(
+        0.0, abs=1e-9
+    )
+    assert float(np.dot(normal, np.asarray(lattice_vectors[2], dtype=float))) == pytest.approx(
+        0.0, abs=1e-9
+    )
 
 
 # Grid slices
@@ -1044,7 +1096,8 @@ def test_zero_shifted_grid_slice_preserves_shifted_bounds() -> None:
     shifted = UepPotentialGrid(
         lattice_vectors=grid.lattice_vectors,
         grid=grid.grid,
-        potential_total_ev=np.asarray(grid.potential_total_ev, dtype=float) - float(np.min(grid.potential_total_ev)),
+        potential_total_ev=np.asarray(grid.potential_total_ev, dtype=float)
+        - float(np.min(grid.potential_total_ev)),
     )
     plane = plane_from_point_and_normal(
         anchor_ang=(0.5, 0.5, 0.5),
@@ -1119,7 +1172,9 @@ def test_extract_isosurface_fallback_builds_mesh(monkeypatch: pytest.MonkeyPatch
     assert len(mesh.faces) >= 1
 
 
-def test_extract_isosurface_can_use_pyvista_contour_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_isosurface_can_use_pyvista_contour_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _FakePolyData:
         def __init__(self) -> None:
             self.n_cells = 1
@@ -1167,11 +1222,15 @@ def test_extract_isosurface_can_use_pyvista_contour_backend(monkeypatch: pytest.
     assert mesh.faces == ((0, 1, 2),)
 
 
-def test_extract_isosurface_fallback_wraps_a_single_peak_in_triangles(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_isosurface_fallback_wraps_a_single_peak_in_triangles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(uep_module, "_pyvista_modules", lambda: None)
     values = np.zeros((4, 4, 4), dtype=float)
     values[1, 1, 1] = 1.0
-    grid = UepPotentialGrid(lattice_vectors=_CUBE_LATTICE, grid=(4, 4, 4), potential_total_ev=values)
+    grid = UepPotentialGrid(
+        lattice_vectors=_CUBE_LATTICE, grid=(4, 4, 4), potential_total_ev=values
+    )
 
     mesh = extract_isosurface(grid, level_ev=0.5)
 
@@ -1182,7 +1241,9 @@ def test_extract_isosurface_fallback_wraps_a_single_peak_in_triangles(monkeypatc
     assert np.all(distances <= 0.5 * math.sqrt(3.0) + 1e-9)
 
 
-def test_extract_isosurface_pyvista_returns_none_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_isosurface_pyvista_returns_none_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _EmptyContour:
         n_cells = 0
 
@@ -1245,9 +1306,13 @@ def _fake_pyvista(points: np.ndarray, faces: np.ndarray) -> object:
     ],
     ids=["fans-polygons-into-triangles", "stops-at-truncated-buffer"],
 )
-def test_extract_isosurface_reads_pyvista_face_buffers(monkeypatch: pytest.MonkeyPatch, faces, expected) -> None:
+def test_extract_isosurface_reads_pyvista_face_buffers(
+    monkeypatch: pytest.MonkeyPatch, faces, expected
+) -> None:
     points = np.arange(21, dtype=float).reshape((7, 3))
-    monkeypatch.setattr(uep_module, "_pyvista_modules", lambda: _fake_pyvista(points, np.array(faces, dtype=int)))
+    monkeypatch.setattr(
+        uep_module, "_pyvista_modules", lambda: _fake_pyvista(points, np.array(faces, dtype=int))
+    )
 
     mesh = extract_isosurface(_linear_ramp_grid(), level_ev=0.5)
 
@@ -1329,8 +1394,18 @@ def test_optimize_muon_position_and_cluster_summary() -> None:
     assert second.success is True
     assert first.classification.label == "minimum"
     assert second.classification.label == "minimum"
-    assert np.linalg.norm(np.asarray(first.optimized_position_ang) - np.array((1.0, 1.0, 1.0), dtype=float)) > 0.1
-    assert np.linalg.norm(np.asarray(second.optimized_position_ang) - np.array((1.05, 1.0, 1.0), dtype=float)) > 0.1
+    assert (
+        np.linalg.norm(
+            np.asarray(first.optimized_position_ang) - np.array((1.0, 1.0, 1.0), dtype=float)
+        )
+        > 0.1
+    )
+    assert (
+        np.linalg.norm(
+            np.asarray(second.optimized_position_ang) - np.array((1.05, 1.0, 1.0), dtype=float)
+        )
+        > 0.1
+    )
 
     summary = cluster_optimized_positions([first, second], threshold_ang=0.3)
     assert len(summary.clusters) >= 1
@@ -1376,7 +1451,9 @@ def test_legacy_cluster_summary_numbers_clusters_by_average_classical_energy() -
 
     assert len(summary.clusters) == 2
     member_average_classical = [
-        float(np.mean([optimizations[index].classical_energy_ev for index in cluster.member_indexes]))
+        float(
+            np.mean([optimizations[index].classical_energy_ev for index in cluster.member_indexes])
+        )
         for cluster in summary.clusters
     ]
     assert member_average_classical == sorted(member_average_classical)
@@ -1409,7 +1486,9 @@ def test_cluster_energy_prefers_total_then_classical_energy() -> None:
     with_total = cluster_optimized_positions(
         [_fake_optimization((0.1, 0.1, 0.1), classical=2.0, total=-1.0)], threshold_ang=0.2
     )
-    classical_only = cluster_optimized_positions([_fake_optimization((0.1, 0.1, 0.1), classical=3.0)], threshold_ang=0.2)
+    classical_only = cluster_optimized_positions(
+        [_fake_optimization((0.1, 0.1, 0.1), classical=3.0)], threshold_ang=0.2
+    )
 
     assert with_total.clusters[0].minimum_energy_ev == pytest.approx(-1.0)
     assert classical_only.clusters[0].minimum_energy_ev == pytest.approx(3.0)
@@ -1417,7 +1496,9 @@ def test_cluster_energy_prefers_total_then_classical_energy() -> None:
 
 def test_cluster_optimized_positions_rejects_non_finite_energies() -> None:
     with pytest.raises(UepError, match="finite classical or total energy"):
-        cluster_optimized_positions([_fake_optimization((0.1, 0.1, 0.1), classical=float("nan"))], threshold_ang=0.2)
+        cluster_optimized_positions(
+            [_fake_optimization((0.1, 0.1, 0.1), classical=float("nan"))], threshold_ang=0.2
+        )
 
 
 def test_cluster_numbering_breaks_average_ties_on_minimum_classical_energy() -> None:
@@ -1477,7 +1558,9 @@ def test_soprano_backed_clustering_collapses_symmetry_equivalent_sites() -> None
     assert result.summary.clusters[0].member_indexes == (0, 1)
     assert result.summary.clusters[0].representative_index == 0
     assert result.summary.clusters[0].representative_asymmetric_fractional_position is not None
-    assert result.asymmetric_fractional_positions[0] == pytest.approx(result.asymmetric_fractional_positions[1])
+    assert result.asymmetric_fractional_positions[0] == pytest.approx(
+        result.asymmetric_fractional_positions[1]
+    )
 
 
 @_soprano_required
@@ -1492,7 +1575,9 @@ def test_soprano_backed_clustering_merges_periodic_boundary_equivalents() -> Non
     )
 
     assert len(result.summary.clusters) == 1
-    assert result.asymmetric_fractional_positions[0] == pytest.approx(result.asymmetric_fractional_positions[1])
+    assert result.asymmetric_fractional_positions[0] == pytest.approx(
+        result.asymmetric_fractional_positions[1]
+    )
 
 
 @_soprano_required
@@ -1511,7 +1596,9 @@ def test_soprano_backed_hierarchical_clustering_and_stats() -> None:
 
     assert result.summary.clustering_method == "hier"
     assert len(result.summary.clusters) == 2
-    member_sets = sorted(tuple(sorted(cluster.member_indexes)) for cluster in result.summary.clusters)
+    member_sets = sorted(
+        tuple(sorted(cluster.member_indexes)) for cluster in result.summary.clusters
+    )
     assert member_sets == [(0, 1), (2, 3)]
     first = next(cluster for cluster in result.summary.clusters if cluster.member_indexes == (0, 1))
     assert first.representative_index == 0
@@ -1519,7 +1606,9 @@ def test_soprano_backed_hierarchical_clustering_and_stats() -> None:
     assert first.average_energy_ev == pytest.approx(-0.9)
     assert first.standard_deviation_ev == pytest.approx(0.1)
     member_average_classical = [
-        float(np.mean([optimizations[index].classical_energy_ev for index in cluster.member_indexes]))
+        float(
+            np.mean([optimizations[index].classical_energy_ev for index in cluster.member_indexes])
+        )
         for cluster in result.summary.clusters
     ]
     assert member_average_classical == sorted(member_average_classical)
@@ -1545,7 +1634,9 @@ def test_soprano_backed_kmeans_clustering_uses_same_features() -> None:
 
     assert result.summary.clustering_method == "kmeans"
     assert len(result.summary.clusters) == 2
-    member_sets = sorted(tuple(sorted(cluster.member_indexes)) for cluster in result.summary.clusters)
+    member_sets = sorted(
+        tuple(sorted(cluster.member_indexes)) for cluster in result.summary.clusters
+    )
     assert member_sets == [(0, 1), (2, 3)]
     assert len(result.genome_vectors) == 4
     assert len(result.normalized_genome_vectors) == 4
@@ -1596,7 +1687,9 @@ def test_cluster_prepared_uep_dataset_empty_returns_empty_result() -> None:
         linkage_method="single",
         linkage_matrix=(),
     )
-    result = cluster_prepared_uep_dataset(prepared, config=UepClusteringConfig(clustering_method="hier"))
+    result = cluster_prepared_uep_dataset(
+        prepared, config=UepClusteringConfig(clustering_method="hier")
+    )
     assert result.cluster_labels == ()
     assert result.summary.clusters == ()
     assert result.summary.clustering_method == "hier"
@@ -1689,7 +1782,9 @@ def test_cluster_prepared_uep_dataset_ranks_cluster_similarities_after_renumberi
     ],
     ids=["unknown-method", "non-positive-hier-t", "non-positive-kmeans-k"],
 )
-def test_cluster_prepared_uep_dataset_validates_config(config: UepClusteringConfig, message: str) -> None:
+def test_cluster_prepared_uep_dataset_validates_config(
+    config: UepClusteringConfig, message: str
+) -> None:
     with pytest.raises(UepError, match=message):
         cluster_prepared_uep_dataset(_prepared_dataset(), config=config)
 
@@ -1698,7 +1793,9 @@ def test_cluster_prepared_uep_dataset_validates_config(config: UepClusteringConf
     ("method", "linkage", "expected_linkage"),
     [("HIER", "  Single  ", "single"), ("hier", "   ", "single"), ("Hier", "Average", "average")],
 )
-def test_cluster_prepared_uep_dataset_normalizes_config(method: str, linkage: str, expected_linkage: str) -> None:
+def test_cluster_prepared_uep_dataset_normalizes_config(
+    method: str, linkage: str, expected_linkage: str
+) -> None:
     result = cluster_prepared_uep_dataset(
         _prepared_dataset(),
         config=UepClusteringConfig(clustering_method=method, clustering_linkage_method=linkage),
@@ -1712,17 +1809,38 @@ def test_cluster_prepared_uep_dataset_normalizes_config(method: str, linkage: st
 @pytest.mark.parametrize(
     ("host", "message"),
     [
-        (type("_Partial", (), {"lattice_vectors": _CUBE_LATTICE, "species": ("Si",), "fractional_positions": None})(),
-         "must define lattice_vectors, species"),
-        (type("_Mismatched", (), {"lattice_vectors": _CUBE_LATTICE, "species": ("Si", "Si"),
-                                  "fractional_positions": ((0.0, 0.0, 0.0),)})(),
-         "matching lengths"),
+        (
+            type(
+                "_Partial",
+                (),
+                {
+                    "lattice_vectors": _CUBE_LATTICE,
+                    "species": ("Si",),
+                    "fractional_positions": None,
+                },
+            )(),
+            "must define lattice_vectors, species",
+        ),
+        (
+            type(
+                "_Mismatched",
+                (),
+                {
+                    "lattice_vectors": _CUBE_LATTICE,
+                    "species": ("Si", "Si"),
+                    "fractional_positions": ((0.0, 0.0, 0.0),),
+                },
+            )(),
+            "matching lengths",
+        ),
     ],
     ids=["missing-positions", "mismatched-lengths"],
 )
 def test_prepare_uep_clustering_dataset_rejects_incomplete_host(host: object, message: str) -> None:
     with pytest.raises(UepError, match=message):
-        prepare_uep_clustering_dataset([_fake_optimization((0.1, 0.1, 0.1), total=-1.0)], source_structure=host)
+        prepare_uep_clustering_dataset(
+            [_fake_optimization((0.1, 0.1, 0.1), total=-1.0)], source_structure=host
+        )
 
 
 # Internal guards the public entry points never reach
@@ -1746,7 +1864,9 @@ def test_isosurface_vertex_on_a_flat_edge_is_the_midpoint() -> None:
     # Private helper: an edge only crosses the level when its end values differ.
     a = np.array([0.0, 0.0, 0.0])
     b = np.array([2.0, 0.0, 0.0])
-    assert np.allclose(uep_module._interpolate_isosurface_vertex(a, b, 1.0, 1.0, level_ev=1.0), [1.0, 0.0, 0.0])
+    assert np.allclose(
+        uep_module._interpolate_isosurface_vertex(a, b, 1.0, 1.0, level_ev=1.0), [1.0, 0.0, 0.0]
+    )
 
 
 def test_asymmetric_images_centre_jitters_the_lowest_energy_site() -> None:

@@ -102,7 +102,9 @@ def _set_site_source(widget, source: str) -> None:
     widget._site_source_combo.setCurrentIndex(index)
 
 
-def _custom_muon_site(position: tuple[float, float, float]) -> magnetic_field_widget_module.MagneticMuonSiteOption:
+def _custom_muon_site(
+    position: tuple[float, float, float],
+) -> magnetic_field_widget_module.MagneticMuonSiteOption:
     return magnetic_field_widget_module.MagneticMuonSiteOption(
         source="custom",
         label="Custom site",
@@ -193,7 +195,9 @@ def test_magnetic_structure_builder_label_column_is_editable(qapp, tmp_path) -> 
     dialog.close()
 
 
-def _builder_with_components(tmp_path, *components: MagneticComponent) -> MagneticStructureBuilderDialog:
+def _builder_with_components(
+    tmp_path, *components: MagneticComponent
+) -> MagneticStructureBuilderDialog:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-builder.mufinder", "Magnetic Builder")
     service.add_structure(document, _host_structure())
@@ -204,7 +208,10 @@ def _builder_with_components(tmp_path, *components: MagneticComponent) -> Magnet
 
 
 def _builder_labels(dialog: MagneticStructureBuilderDialog) -> list[str]:
-    return [dialog._component_table.item(row, 1).text() for row in range(dialog._component_table.rowCount())]
+    return [
+        dialog._component_table.item(row, 1).text()
+        for row in range(dialog._component_table.rowCount())
+    ]
 
 
 def _select_builder_rows(dialog: MagneticStructureBuilderDialog, *rows: int) -> None:
@@ -218,7 +225,9 @@ def _select_builder_rows(dialog: MagneticStructureBuilderDialog, *rows: int) -> 
 
 
 def test_magnetic_structure_builder_enabled_column_toggles_components(qapp, tmp_path) -> None:
-    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), _component("two", "Two", 1))
+    dialog = _builder_with_components(
+        tmp_path, _component("one", "One", 0), _component("two", "Two", 1)
+    )
     table = dialog._component_table
     enabled_item = table.item(1, 0)
 
@@ -234,7 +243,9 @@ def test_magnetic_structure_builder_enabled_column_toggles_components(qapp, tmp_
     assert [component.enabled for component in dialog.model().components] == [True, False]
     assert table.rowCount() == 2
     assert "Disabled" in enabled_item.toolTip()
-    assert table.item(1, 1).foreground().color() == QColor(theme_module.current_palette().text_muted)
+    assert table.item(1, 1).foreground().color() == QColor(
+        theme_module.current_palette().text_muted
+    )
     assert dialog._preview_status.text() == "Preview: full magnetic structure (1x1x1)"
     assert np.count_nonzero(np.linalg.norm(dialog._viewer._spins, axis=1)) == 1
 
@@ -283,7 +294,10 @@ def test_magnetic_structure_builder_duplicates_selected_components(qapp, tmp_pat
     assert components[1].terms == components[0].terms
     assert [component.enabled for component in components] == [True, True, False, False]
     assert dialog._component_table.item(3, 0).checkState() == Qt.CheckState.Unchecked
-    assert dialog._selected_component_ids() == (components[1].component_id, components[3].component_id)
+    assert dialog._selected_component_ids() == (
+        components[1].component_id,
+        components[3].component_id,
+    )
     assert dialog._preview_status.text() == "Preview: selected components (1x1x1)"
     dialog.close()
 
@@ -328,7 +342,9 @@ def test_magnetic_structure_builder_moves_selected_components(qapp, tmp_path) ->
 def test_magnetic_structure_builder_remove_asks_for_confirmation(
     qapp, tmp_path, monkeypatch, confirmed_destructive_actions
 ) -> None:
-    dialog = _builder_with_components(tmp_path, _component("one", "One", 0), _component("two", "Two", 1))
+    dialog = _builder_with_components(
+        tmp_path, _component("one", "One", 0), _component("two", "Two", 1)
+    )
 
     _select_builder_rows(dialog, 0, 1)
     dialog._remove_button.click()
@@ -336,7 +352,9 @@ def test_magnetic_structure_builder_remove_asks_for_confirmation(
     assert dialog._component_table.rowCount() == 0
 
     dialog._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False
+    )
     dialog._component_table.selectRow(0)
     for key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
         event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
@@ -355,7 +373,9 @@ def test_magnetic_structure_builder_confirms_replacing_components_from_host_spin
     assert dialog._component_table.rowCount() == 2
 
     dialog._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        workflow_table_utils, "confirm_destructive", lambda *_args, **_kwargs: False
+    )
     dialog._build_from_host_spins()
     assert _builder_labels(dialog) == ["One"]
     dialog.close()
@@ -386,7 +406,10 @@ def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tm
 
     widget._set_model(
         MagneticStructureModel(
-            components=(_component("one", "One", 0), replace(_component("two", "Two", 1), enabled=False))
+            components=(
+                _component("one", "One", 0),
+                replace(_component("two", "Two", 1), enabled=False),
+            )
         )
     )
     assert widget._structure_summary.text() == "Magnetic structure: 2 components (1 disabled)"
@@ -397,7 +420,9 @@ def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tm
     summary = widget._component_summary_table
     assert not summary.isHidden()
     assert summary.rowCount() == 1
-    assert [summary.horizontalHeaderItem(column).text() for column in range(summary.columnCount())] == [
+    assert [
+        summary.horizontalHeaderItem(column).text() for column in range(summary.columnCount())
+    ] == [
         "Component",
         "Type",
         "Apply to",
@@ -407,7 +432,9 @@ def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tm
     assert summary.item(0, 0).text() == "One"
     assert summary.item(0, 2).text() == "Selected atoms: 1"
 
-    widget._set_model(MagneticStructureModel(components=(replace(_component("one", "One", 0), enabled=False),)))
+    widget._set_model(
+        MagneticStructureModel(components=(replace(_component("one", "One", 0), enabled=False),))
+    )
     assert widget._structure_summary.text() == "Magnetic structure: 1 component (1 disabled)"
     assert summary.isHidden()
     assert summary.rowCount() == 0
@@ -415,7 +442,10 @@ def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tm
     assert not widget._calculate_button.isEnabled()
     widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._calculate_fields()
-    assert widget._calculation_status.text() == "Results: enable at least one magnetic-structure component first."
+    assert (
+        widget._calculation_status.text()
+        == "Results: enable at least one magnetic-structure component first."
+    )
     widget.close()
 
 
@@ -434,7 +464,9 @@ def test_component_dialog_loads_existing_component_for_editing(qapp) -> None:
         phase_turns=0.25,
     )
 
-    dialog = MagneticComponentDialog(_multi_species_structure(), component=component, q_vector=(0.0, 0.0, 0.5))
+    dialog = MagneticComponentDialog(
+        _multi_species_structure(), component=component, q_vector=(0.0, 0.0, 0.5)
+    )
 
     assert dialog.windowTitle() == "Edit Magnetic Component"
     assert dialog._label_edit.text() == "Existing helix"
@@ -499,7 +531,11 @@ def test_magnetic_structure_builder_edits_selected_component(qapp, tmp_path, mon
 
     dialog = MagneticStructureBuilderDialog()
     dialog.set_document(document)
-    dialog._set_model(MagneticStructureModel(q_basis_rlu=((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(original,)))
+    dialog._set_model(
+        MagneticStructureModel(
+            q_basis_rlu=((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(original,)
+        )
+    )
     dialog._component_table.selectRow(0)
 
     dialog._edit_selected_component()
@@ -605,7 +641,9 @@ def test_magnetic_texture_dialog_legacy_preset_opens_as_exact_custom_terms(qapp)
         selector=AtomSelector.all(),
         terms=(
             FourierTerm((0.0, 1.0, 0.0), ComplexVector.from_vector([0.0, 1.0, 0.0])),
-            FourierTerm((1.0, 0.0, 0.0), ComplexVector(real=(0.0, 0.0, 1.0), imaginary=(0.5, 0.0, 0.0))),
+            FourierTerm(
+                (1.0, 0.0, 0.0), ComplexVector(real=(0.0, 0.0, 1.0), imaginary=(0.5, 0.0, 0.0))
+            ),
         ),
         metadata={
             "type": "texture",
@@ -626,7 +664,9 @@ def test_magnetic_texture_dialog_legacy_preset_opens_as_exact_custom_terms(qapp)
     assert dialog._custom_table.item(0, 0).text() == "0"
     assert dialog._custom_table.item(0, 1).text() == "1"
     assert dialog._custom_table.item(1, 6).text() == "0.5"
-    round_trip = dialog.component(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0)), dialog.q_basis_vectors())
+    round_trip = dialog.component(
+        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0)), dialog.q_basis_vectors()
+    )
     assert round_trip.terms == component.terms
     dialog.close()
 
@@ -695,8 +735,12 @@ def test_magnetic_texture_preview_supports_zoom_pan_and_box_view(qapp) -> None:
 
     plot_rect = preview._plot_rect()
     preview._zoom_to_box(
-        QPointF(plot_rect.left() + 0.25 * plot_rect.width(), plot_rect.top() + 0.25 * plot_rect.height()),
-        QPointF(plot_rect.left() + 0.75 * plot_rect.width(), plot_rect.top() + 0.75 * plot_rect.height()),
+        QPointF(
+            plot_rect.left() + 0.25 * plot_rect.width(), plot_rect.top() + 0.25 * plot_rect.height()
+        ),
+        QPointF(
+            plot_rect.left() + 0.75 * plot_rect.width(), plot_rect.top() + 0.75 * plot_rect.height()
+        ),
     )
     assert preview._view_fraction == pytest.approx(0.125, rel=0.05)
     preview.close()
@@ -738,8 +782,12 @@ def test_magnetic_texture_dialog_magnitude_pruning_help_uses_current_values(qapp
 def test_magnetic_texture_preview_uses_hexagonal_q_basis() -> None:
     texture = MagneticTexture((MagneticTextureTerm.from_vector((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),))
 
-    square = _evaluate_texture_preview_grid(texture, mode="square_skyrmion", resolution=3, repeats=1.0)
-    hexagonal = _evaluate_texture_preview_grid(texture, mode="hexagonal_skyrmion", resolution=3, repeats=1.0)
+    square = _evaluate_texture_preview_grid(
+        texture, mode="square_skyrmion", resolution=3, repeats=1.0
+    )
+    hexagonal = _evaluate_texture_preview_grid(
+        texture, mode="hexagonal_skyrmion", resolution=3, repeats=1.0
+    )
 
     assert np.isclose(square[2, 1, 2], 1.0)
     assert abs(hexagonal[2, 1, 2]) < 1e-12
@@ -803,7 +851,9 @@ def test_magnetic_texture_dialog_normalization_and_pruning_update_diagnostics(qa
     dialog.close()
 
 
-def test_magnetic_structure_builder_adds_texture_as_single_grouped_row(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_structure_builder_adds_texture_as_single_grouped_row(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-texture.mufinder", "Magnetic Texture")
     service.add_structure(document, _host_structure())
@@ -850,7 +900,9 @@ def test_magnetic_structure_builder_adds_texture_as_single_grouped_row(qapp, tmp
 
 def test_magnetic_structure_builder_edits_texture_component(qapp, tmp_path, monkeypatch) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-texture-edit.mufinder", "Magnetic Texture Edit")
+    document = service.create_project(
+        tmp_path / "magnetic-texture-edit.mufinder", "Magnetic Texture Edit"
+    )
     service.add_structure(document, _host_structure())
     original = MagneticComponent(
         component_id="texture",
@@ -880,7 +932,11 @@ def test_magnetic_structure_builder_edits_texture_component(qapp, tmp_path, monk
 
     dialog = MagneticStructureBuilderDialog()
     dialog.set_document(document)
-    dialog._set_model(MagneticStructureModel(q_basis_rlu=((0.25, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(original,)))
+    dialog._set_model(
+        MagneticStructureModel(
+            q_basis_rlu=((0.25, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(original,)
+        )
+    )
     dialog._component_table.selectRow(0)
 
     dialog._edit_selected_component()
@@ -890,12 +946,15 @@ def test_magnetic_structure_builder_edits_texture_component(qapp, tmp_path, monk
     dialog.close()
 
 
-
 @pytest.mark.parametrize("texture", [False, True])
-def test_magnetic_structure_builder_edit_keeps_disabled_state(qapp, tmp_path, monkeypatch, texture) -> None:
+def test_magnetic_structure_builder_edit_keeps_disabled_state(
+    qapp, tmp_path, monkeypatch, texture
+) -> None:
     original = replace(_component("one", "One", 0), enabled=False)
     if texture:
-        original = replace(original, kind="texture", metadata={"type": "texture", "texture_mode": "custom"})
+        original = replace(
+            original, kind="texture", metadata={"type": "texture", "texture_mode": "custom"}
+        )
 
     class _Dialog:
         def __init__(self, *args, **kwargs):
@@ -928,6 +987,7 @@ def test_magnetic_structure_builder_edit_keeps_disabled_state(qapp, tmp_path, mo
     assert dialog.model().components[0].enabled is False
     assert dialog._component_table.item(0, 0).checkState() == Qt.CheckState.Unchecked
     dialog.close()
+
 
 def test_magnetic_structure_builder_shutdowns_viewer_once(qapp) -> None:
     dialog = MagneticStructureBuilderDialog()
@@ -1026,7 +1086,9 @@ def test_component_dialog_presets_create_expected_components(qapp) -> None:
     conical = dialog.component((1.0, 0.0, 0.0))
     assert conical.kind == "conical"
     assert len(conical.terms) == 2
-    np.testing.assert_allclose(conical.terms[0].coefficient.to_array(), [0.0, 0.0, 1.25], atol=1e-12)
+    np.testing.assert_allclose(
+        conical.terms[0].coefficient.to_array(), [0.0, 0.0, 1.25], atol=1e-12
+    )
     np.testing.assert_allclose(
         conical.terms[1].coefficient.to_array(),
         [2.5 * np.sqrt(3.0) / 2.0, 2.5j * np.sqrt(3.0) / 2.0, 0.0],
@@ -1048,7 +1110,9 @@ def test_component_dialog_loads_signed_conical_static_component(qapp) -> None:
         component_id="signed-cone",
     )
 
-    dialog = MagneticComponentDialog(_multi_species_structure(), component=component, q_vector=(0.0, 0.0, 0.25))
+    dialog = MagneticComponentDialog(
+        _multi_species_structure(), component=component, q_vector=(0.0, 0.0, 0.25)
+    )
 
     assert float(dialog._cone_angle.text()) == pytest.approx(120.0)
     round_trip = dialog.component((1.0, 0.0, 0.0))
@@ -1110,7 +1174,9 @@ def test_component_dialog_constrains_rotating_directions_from_q_and_handedness(q
 
     dialog._handedness_combo.setCurrentIndex(dialog._handedness_combo.findData(-1))
     left_handed = dialog.component((1.0, 0.0, 0.0))
-    np.testing.assert_allclose(left_handed.terms[0].coefficient.real, helix.terms[0].coefficient.real)
+    np.testing.assert_allclose(
+        left_handed.terms[0].coefficient.real, helix.terms[0].coefficient.real
+    )
     np.testing.assert_allclose(left_handed.terms[0].coefficient.imaginary, -imag)
 
     dialog._kind_combo.setCurrentText("Conical")
@@ -1166,7 +1232,9 @@ def test_component_dialog_help_documents_current_preset_parameters(qapp) -> None
     dialog.close()
 
 
-def test_magnetic_structure_builder_zero_q_component_does_not_consume_q_basis(qapp, tmp_path) -> None:
+def test_magnetic_structure_builder_zero_q_component_does_not_consume_q_basis(
+    qapp, tmp_path
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-zero-q.mufinder", "Magnetic Zero Q")
     service.add_structure(document, _host_structure())
@@ -1183,9 +1251,13 @@ def test_magnetic_structure_builder_zero_q_component_does_not_consume_q_basis(qa
     dialog.close()
 
 
-def test_magnetic_structure_builder_finite_q_after_zero_q_component_uses_free_basis_row(qapp, tmp_path) -> None:
+def test_magnetic_structure_builder_finite_q_after_zero_q_component_uses_free_basis_row(
+    qapp, tmp_path
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-fm-then-helix.mufinder", "Magnetic FM Then Helix")
+    document = service.create_project(
+        tmp_path / "magnetic-fm-then-helix.mufinder", "Magnetic FM Then Helix"
+    )
     service.add_structure(document, _host_structure())
 
     dialog = MagneticStructureBuilderDialog()
@@ -1198,7 +1270,9 @@ def test_magnetic_structure_builder_finite_q_after_zero_q_component_uses_free_ba
         selector=AtomSelector.all(),
         terms=(FourierTerm((0.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
     )
-    dialog._set_model(MagneticStructureModel(q_basis_rlu=stale_full_basis, components=(zero_q_component,)))
+    dialog._set_model(
+        MagneticStructureModel(q_basis_rlu=stale_full_basis, components=(zero_q_component,))
+    )
 
     q_basis, q_coeff = dialog._q_basis_for((0.0, 0.0, 0.5))
 
@@ -1207,7 +1281,9 @@ def test_magnetic_structure_builder_finite_q_after_zero_q_component_uses_free_ba
     dialog.close()
 
 
-def _q_component(component_id: str, label: str, q_coeff, kind: str = "spin_density_wave", **kwargs) -> MagneticComponent:
+def _q_component(
+    component_id: str, label: str, q_coeff, kind: str = "spin_density_wave", **kwargs
+) -> MagneticComponent:
     return MagneticComponent(
         component_id=component_id,
         label=label,
@@ -1218,7 +1294,9 @@ def _q_component(component_id: str, label: str, q_coeff, kind: str = "spin_densi
     )
 
 
-def _builder_with_q_basis(tmp_path, q_basis, *components: MagneticComponent) -> MagneticStructureBuilderDialog:
+def _builder_with_q_basis(
+    tmp_path, q_basis, *components: MagneticComponent
+) -> MagneticStructureBuilderDialog:
     dialog = _builder_with_components(tmp_path)
     dialog._set_model(MagneticStructureModel(q_basis_rlu=q_basis, components=components))
     return dialog
@@ -1228,7 +1306,9 @@ def _q_basis_texts(dialog: MagneticStructureBuilderDialog, column: int) -> list[
     return [dialog._q_basis_table.item(row, column).text() for row in range(3)]
 
 
-def test_magnetic_structure_builder_q_basis_panel_shows_rows_and_their_users(qapp, tmp_path) -> None:
+def test_magnetic_structure_builder_q_basis_panel_shows_rows_and_their_users(
+    qapp, tmp_path
+) -> None:
     texture = _q_component(
         "texture", "Skyrmion", (1.0, -1.0, 0.0), kind="texture", metadata={"type": "texture"}
     )
@@ -1240,10 +1320,18 @@ def test_magnetic_structure_builder_q_basis_panel_shows_rows_and_their_users(qap
     )
     table = dialog._q_basis_table
 
-    assert [table.horizontalHeaderItem(column).text() for column in range(3)] == ["Row", "q (r.l.u.)", "Used by"]
+    assert [table.horizontalHeaderItem(column).text() for column in range(3)] == [
+        "Row",
+        "q (r.l.u.)",
+        "Used by",
+    ]
     assert _q_basis_texts(dialog, 0) == ["q1", "q2", "q3"]
     assert _q_basis_texts(dialog, 1) == ["0.25, 0, 0", "0, 0.25, 0", "0, 0, 0"]
-    assert _q_basis_texts(dialog, 2) == ["SDW, Skyrmion (disabled)", "Skyrmion (disabled)", "Unused"]
+    assert _q_basis_texts(dialog, 2) == [
+        "SDW, Skyrmion (disabled)",
+        "Skyrmion (disabled)",
+        "Unused",
+    ]
     assert table.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable == Qt.ItemFlag.NoItemFlags
     assert "texture" in table.item(0, 1).toolTip()
     assert table.item(2, 1).flags() & Qt.ItemFlag.ItemIsEditable
@@ -1252,7 +1340,9 @@ def test_magnetic_structure_builder_q_basis_panel_shows_rows_and_their_users(qap
     dialog.close()
 
 
-def test_magnetic_structure_builder_q_basis_panel_highlights_selected_components_rows(qapp, tmp_path) -> None:
+def test_magnetic_structure_builder_q_basis_panel_highlights_selected_components_rows(
+    qapp, tmp_path
+) -> None:
     dialog = _builder_with_q_basis(
         tmp_path,
         ((0.25, 0.0, 0.0), (0.0, 0.25, 0.0), (0.0, 0.0, 0.0)),
@@ -1271,7 +1361,9 @@ def test_magnetic_structure_builder_q_basis_panel_highlights_selected_components
     dialog.close()
 
 
-def test_magnetic_structure_builder_q_basis_users_follow_renames_and_enable_toggles(qapp, tmp_path) -> None:
+def test_magnetic_structure_builder_q_basis_users_follow_renames_and_enable_toggles(
+    qapp, tmp_path
+) -> None:
     dialog = _builder_with_q_basis(
         tmp_path,
         ((0.25, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
@@ -1292,7 +1384,9 @@ def test_magnetic_structure_builder_q_basis_users_follow_renames_and_enable_togg
     dialog.close()
 
 
-def test_magnetic_structure_builder_q_basis_edit_moves_every_component_on_the_row(qapp, tmp_path) -> None:
+def test_magnetic_structure_builder_q_basis_edit_moves_every_component_on_the_row(
+    qapp, tmp_path
+) -> None:
     dialog = _builder_with_q_basis(
         tmp_path,
         ((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
@@ -1305,7 +1399,9 @@ def test_magnetic_structure_builder_q_basis_edit_moves_every_component_on_the_ro
 
     assert dialog.model().q_basis_rlu[0] == (0.0, 0.0, 0.25)
     assert _q_basis_texts(dialog, 1)[0] == "0, 0, 0.25"
-    assert [dialog._component_table.item(row, 4).text() for row in range(2)] == ["q1 = (0, 0, 0.25)"] * 2
+    assert [dialog._component_table.item(row, 4).text() for row in range(2)] == [
+        "q1 = (0, 0, 0.25)"
+    ] * 2
     assert dialog._selected_component_ids() == ("one",)
     assert dialog._q_basis_table.item(0, 0).font().bold()
     assert dialog._viewer._spins is not None
@@ -1350,7 +1446,9 @@ def test_magnetic_structure_builder_q_basis_edit_rejects_invalid_vectors(
 
 
 @pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter])
-def test_magnetic_structure_builder_enter_in_preview_repeats_keeps_dialog_open(qapp, tmp_path, key) -> None:
+def test_magnetic_structure_builder_enter_in_preview_repeats_keeps_dialog_open(
+    qapp, tmp_path, key
+) -> None:
     dialog = _builder_with_components(tmp_path, _component("one", "One", 0))
     finished: list[int] = []
     dialog.finished.connect(finished.append)
@@ -1372,7 +1470,9 @@ def test_magnetic_structure_builder_enter_in_preview_repeats_keeps_dialog_open(q
 
 def test_magnetic_structure_builder_supercell_preview_propagates_moments(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-supercell.mufinder", "Magnetic Supercell")
+    document = service.create_project(
+        tmp_path / "magnetic-supercell.mufinder", "Magnetic Supercell"
+    )
     host = Structure(
         label="Fe",
         lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
@@ -1433,7 +1533,9 @@ def _add_uep_cluster(document) -> None:
 
 def _uep_cluster_document(tmp_path):
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-uep-sites.mufinder", "Magnetic UEP Sites")
+    document = service.create_project(
+        tmp_path / "magnetic-uep-sites.mufinder", "Magnetic UEP Sites"
+    )
     service.add_structure(document, _host_structure())
     _add_uep_cluster(document)
     return document
@@ -1463,7 +1565,9 @@ def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
     """A project whose relaxation-analysis workspace has one cluster represented by ``relaxed_structure``."""
 
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-relax-sites.mufinder", "Magnetic Relax Sites")
+    document = service.create_project(
+        tmp_path / "magnetic-relax-sites.mufinder", "Magnetic Relax Sites"
+    )
     service.add_structure(document, _host_structure())
     document.structures[relaxed_structure.id] = relaxed_structure
     job_id = uuid4()
@@ -1495,10 +1599,14 @@ def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
 def _displaced_iron_supercell() -> Structure:
     """The FeO host relaxed around the muon, with the Fe one cell along +x pushed 0.1 Å away."""
 
-    return relaxed_muon_supercell(_host_structure(), (2, 2, 2), _RELAXED_SITE, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+    return relaxed_muon_supercell(
+        _host_structure(), (2, 2, 2), _RELAXED_SITE, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)}
+    )
 
 
-def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(qapp, tmp_path) -> None:
+def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(
+    qapp, tmp_path
+) -> None:
     relaxed_structure = _displaced_iron_supercell()
     document = _relaxation_cluster_document(tmp_path, relaxed_structure)
     set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
@@ -1542,7 +1650,9 @@ def test_muon_site_selection_dialog_restores_the_distortion_choice(qapp, tmp_pat
 
 def test_muon_site_selection_dialog_custom_muon_site(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-custom-site.mufinder", "Magnetic Custom Site")
+    document = service.create_project(
+        tmp_path / "magnetic-custom-site.mufinder", "Magnetic Custom Site"
+    )
     service.add_structure(document, _host_structure())
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
@@ -1585,7 +1695,11 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
         )
         return (_Result(),)
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
     monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
 
     widget = MagneticFieldWidget()
@@ -1606,7 +1720,9 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
     assert widget._result_table.item(0, 1).text() == "0.1"
     assert widget._result_table.item(0, 5).text() == "field"
     assert widget.collect_state()["magnetic_field_results"]["kind"] == "commensurate"
-    assert widget.collect_state()["magnetic_field_results"]["results"][0]["total_T"] == pytest.approx([0.1, 0.2, 0.3])
+    assert widget.collect_state()["magnetic_field_results"]["results"][0][
+        "total_T"
+    ] == pytest.approx([0.1, 0.2, 0.3])
     assert "commensurate" in widget._calculation_status.text()
     widget.close()
 
@@ -1634,20 +1750,26 @@ def _fake_muesr_without_lattice_field(monkeypatch) -> None:
         return [type("_Field", (), {"Dipolar": np.zeros(3)})() for _ in sample.muons]
 
     monkeypatch.setattr(magnetic_fields_module, "_build_muesr_sample", _build_sample)
-    monkeypatch.setattr(magnetic_fields_module, "_load_muesr_engines", lambda: (_locfield, lambda *_args: 1.0, None))
+    monkeypatch.setattr(
+        magnetic_fields_module, "_load_muesr_engines", lambda: (_locfield, lambda *_args: 1.0, None)
+    )
 
 
 def _distortion_widget(document, *, include_distortion: bool) -> MagneticFieldWidget:
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
-    (site,) = magnetic_field_widget_module._relaxation_cluster_muon_site_options(document, _host_structure())
+    (site,) = magnetic_field_widget_module._relaxation_cluster_muon_site_options(
+        document, _host_structure()
+    )
     widget._selected_muon_site = replace(site, include_distortion=include_distortion)
     widget._refresh_site_summary()
     return widget
 
 
-def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(
+    qapp, tmp_path, monkeypatch
+) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
     document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=True)
@@ -1674,7 +1796,9 @@ def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(qa
     widget.close()
 
 
-def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(
+    qapp, tmp_path, monkeypatch
+) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
     document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=False)
@@ -1686,7 +1810,9 @@ def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(q
     widget.close()
 
 
-def test_magnetic_field_widget_reports_a_missing_relaxed_structure(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_reports_a_missing_relaxed_structure(
+    qapp, tmp_path, monkeypatch
+) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
     relaxed = _displaced_iron_supercell()
     document = _relaxation_cluster_document(tmp_path, relaxed)
@@ -1695,8 +1821,9 @@ def test_magnetic_field_widget_reports_a_missing_relaxed_structure(qapp, tmp_pat
 
     widget._calculate_fields()
 
-    assert "relaxed structure for the muon-induced distortion correction is no longer available" in (
-        widget._calculation_status.text()
+    assert (
+        "relaxed structure for the muon-induced distortion correction is no longer available"
+        in (widget._calculation_status.text())
     )
     assert widget._result_table.rowCount() == 0
     widget.close()
@@ -1717,7 +1844,9 @@ def test_muon_site_selection_dialog_labels_uep_sites_as_unrelaxed_estimates(qapp
     dialog.close()
 
 
-def test_muon_site_selection_dialog_offers_relaxation_clusters_first_once_they_exist(qapp, tmp_path) -> None:
+def test_muon_site_selection_dialog_offers_relaxation_clusters_first_once_they_exist(
+    qapp, tmp_path
+) -> None:
     uep_only = MuonSiteSelectionDialog(_uep_cluster_document(tmp_path / "uep"), _host_structure())
     assert uep_only._site_source_combo.currentData() == "uep_clustering"
     uep_only.close()
@@ -1736,7 +1865,9 @@ def test_muon_site_selection_dialog_offers_relaxation_clusters_first_once_they_e
     both.close()
 
 
-def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(qapp, tmp_path) -> None:
+def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(
+    qapp, tmp_path
+) -> None:
     uep_widget = MagneticFieldWidget()
     uep_widget.set_document(_uep_cluster_document(tmp_path / "uep"))
     assert uep_widget.selected_muon_site().source == "uep_clustering"
@@ -1778,14 +1909,18 @@ def test_magnetic_field_widget_marks_fields_at_a_uep_site_as_estimates_across_a_
     restored = MagneticFieldWidget()
     restored.set_document(reloaded)
     restored.set_form_state(
-        attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"])
+        attach_magnetic_field_results(
+            reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
+        )
     )
     assert restored._result_table.item(0, 5).text() == "field, unrelaxed estimate"
     assert "unrelaxed UEP site" in restored._calculation_status.text()
     restored.close()
 
 
-def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(
+    qapp, tmp_path, monkeypatch
+) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
     document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=False)
@@ -1794,7 +1929,9 @@ def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(qapp
 
     assert widget._result_table.item(0, 5).text() == "field"
     assert "estimate" not in widget._calculation_status.text()
-    assert widget.collect_state()["magnetic_field_results"]["site_source"] == "relaxation_clustering"
+    assert (
+        widget.collect_state()["magnetic_field_results"]["site_source"] == "relaxation_clustering"
+    )
     widget.close()
 
 
@@ -1823,7 +1960,11 @@ def _nuclear_dialog(site, results_state=None) -> NuclearRelaxationDialog:
         muon_site=site,
         distortion_available=False,
         results_state=results_state,
-        calculate_callback=lambda _dialog: {"site_label": "site 1", "mode": "zf_polycrystal", "sigma": 0.2},
+        calculate_callback=lambda _dialog: {
+            "site_label": "site 1",
+            "mode": "zf_polycrystal",
+            "sigma": 0.2,
+        },
     )
 
 
@@ -1831,13 +1972,17 @@ def _nuclear_dialog(site, results_state=None) -> NuclearRelaxationDialog:
     ("source", "estimate"),
     [("uep_clustering", True), ("relaxation_clustering", False), ("custom", False)],
 )
-def test_tensor_and_nuclear_dialogs_mark_results_at_a_uep_site_as_estimates(qapp, source, estimate) -> None:
+def test_tensor_and_nuclear_dialogs_mark_results_at_a_uep_site_as_estimates(
+    qapp, source, estimate
+) -> None:
     tensor_dialog = _tensor_dialog(_site_from(source))
     tensor_dialog._calculate()
 
     assert tensor_dialog.results_state()[0]["site_source"] == source
     assert (not tensor_dialog._estimate_note.isHidden()) is estimate
-    title = tensor_dialog._result_content.findChildren(magnetic_field_widget_module.QGroupBox)[0].title()
+    title = tensor_dialog._result_content.findChildren(magnetic_field_widget_module.QGroupBox)[
+        0
+    ].title()
     assert title == ("site 1 (unrelaxed estimate)" if estimate else "site 1")
     assert ("unrelaxed UEP site" in tensor_dialog._status.text()) is estimate
     tensor_dialog.close()
@@ -1851,7 +1996,9 @@ def test_tensor_and_nuclear_dialogs_mark_results_at_a_uep_site_as_estimates(qapp
     nuclear_dialog.close()
 
 
-def test_tensor_and_nuclear_estimates_survive_a_reload_whatever_site_is_selected(qapp, tmp_path) -> None:
+def test_tensor_and_nuclear_estimates_survive_a_reload_whatever_site_is_selected(
+    qapp, tmp_path
+) -> None:
     service = ProjectService()
     document = _uep_cluster_document(tmp_path)
     widget = MagneticFieldWidget()
@@ -1875,7 +2022,9 @@ def test_tensor_and_nuclear_estimates_survive_a_reload_whatever_site_is_selected
     restored = MagneticFieldWidget()
     restored.set_document(reloaded)
     restored.set_form_state(
-        attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"])
+        attach_magnetic_field_results(
+            reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
+        )
     )
     # The results keep their own source after another site is chosen.
     other_site = _site_from("custom")
@@ -1891,7 +2040,12 @@ def test_tensor_and_nuclear_results_without_a_source_show_no_estimate(qapp) -> N
     uep_site = _site_from("uep_clustering")
     tensor_dialog = _tensor_dialog(
         uep_site,
-        [{"site_label": "site 1", "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]]}],
+        [
+            {
+                "site_label": "site 1",
+                "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -2.0]],
+            }
+        ],
     )
     nuclear_dialog = _nuclear_dialog(uep_site, {"mode": "zf_polycrystal", "sigma": 0.2})
 
@@ -1901,7 +2055,9 @@ def test_tensor_and_nuclear_results_without_a_source_show_no_estimate(qapp) -> N
     nuclear_dialog.close()
 
 
-def test_magnetic_field_widget_enables_nuclear_relaxation_without_magnetic_model(qapp, tmp_path) -> None:
+def test_magnetic_field_widget_enables_nuclear_relaxation_without_magnetic_model(
+    qapp, tmp_path
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "nuclear-no-model.mufinder", "Nuclear No Model")
     service.add_structure(
@@ -1975,7 +2131,9 @@ def test_magnetic_field_widget_opens_nuclear_relaxation_dialog(qapp, tmp_path, m
     widget.close()
 
 
-def test_magnetic_field_widget_calculates_nuclear_relaxation_from_dialog(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_calculates_nuclear_relaxation_from_dialog(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "nuclear-calc.mufinder", "Nuclear Calc")
     service.add_structure(document, _host_structure())
@@ -1990,7 +2148,14 @@ def test_magnetic_field_widget_calculates_nuclear_relaxation_from_dialog(qapp, t
             return magnetic_field_widget_module.NuclearRelaxationOptions(mode="zf_polycrystal")
 
     def _calculate(structure, muon_position, *, site_label, options):
-        calls.append({"structure": structure, "muon_position": muon_position, "site_label": site_label, "options": options})
+        calls.append(
+            {
+                "structure": structure,
+                "muon_position": muon_position,
+                "site_label": site_label,
+                "options": options,
+            }
+        )
         return _Result()
 
     monkeypatch.setattr(magnetic_field_widget_module, "calculate_nuclear_relaxation", _calculate)
@@ -2015,10 +2180,16 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
     calls: list[dict[str, object]] = []
 
     def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
-        calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
+        calls.append(
+            {"structure": structure, "model": model, "muon_sites": muon_sites, "options": options}
+        )
         return ()
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
     monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
 
     widget = MagneticFieldWidget()
@@ -2040,7 +2211,9 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
 
 def test_magnetic_field_widget_defaults_demag_shape_to_none(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-default-demag.mufinder", "Magnetic Default Demag")
+    document = service.create_project(
+        tmp_path / "magnetic-default-demag.mufinder", "Magnetic Default Demag"
+    )
     service.add_structure(document, _host_structure())
 
     widget = MagneticFieldWidget()
@@ -2139,7 +2312,9 @@ def test_demagnetizing_pyvista_axis_triad_uses_active_theme(qapp, monkeypatch) -
         def render(self):
             self.render_calls += 1
 
-    monkeypatch.setattr(magnetic_field_widget_module, "_pyvista_modules", lambda: (_FakePv, _FakePlotter))
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "_pyvista_modules", lambda: (_FakePv, _FakePlotter)
+    )
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
     try:
         canvas = magnetic_field_widget_module._DemagnetizingPyVistaCanvas()
@@ -2165,7 +2340,10 @@ def test_demagnetizing_pyvista_axis_triad_uses_active_theme(qapp, monkeypatch) -
 
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
         canvas.changeEvent(QEvent(QEvent.Type.ApplicationPaletteChange))
-        assert canvas._plotter.backgrounds[-1] == magnetic_field_widget_module.current_palette().bg_primary
+        assert (
+            canvas._plotter.backgrounds[-1]
+            == magnetic_field_widget_module.current_palette().bg_primary
+        )
         assert canvas._plotter.clear_calls >= 2
         clear_calls = canvas._plotter.clear_calls
         canvas.changeEvent(QEvent(QEvent.Type.StyleChange))
@@ -2213,7 +2391,9 @@ def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monke
 
 def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "advanced-demag-restore.mufinder", "Advanced Demag Restore")
+    document = service.create_project(
+        tmp_path / "advanced-demag-restore.mufinder", "Advanced Demag Restore"
+    )
     service.add_structure(document, _host_structure())
 
     widget = MagneticFieldWidget()
@@ -2239,9 +2419,13 @@ def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> 
     widget.close()
 
 
-def test_magnetic_field_widget_measured_magnetisation_reaches_the_options_and_round_trips(qapp, tmp_path) -> None:
+def test_magnetic_field_widget_measured_magnetisation_reaches_the_options_and_round_trips(
+    qapp, tmp_path
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "measured-magnetisation.mufinder", "Measured Magnetisation")
+    document = service.create_project(
+        tmp_path / "measured-magnetisation.mufinder", "Measured Magnetisation"
+    )
     service.add_structure(document, _host_structure())
 
     widget = MagneticFieldWidget()
@@ -2291,19 +2475,31 @@ def test_magnetic_field_widget_ignores_a_malformed_saved_magnetisation(qapp, tmp
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget.set_form_state(
-        {"demag_shape": "sphere", "use_measured_magnetization": True, "measured_magnetization": ["a", 1.0]}
+        {
+            "demag_shape": "sphere",
+            "use_measured_magnetization": True,
+            "measured_magnetization": ["a", 1.0],
+        }
     )
 
     assert widget._field_options().measured_magnetization == (0.0, 0.0, 0.0)
     widget.close()
 
 
-def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "unfinished-magnetisation.mufinder", "Unfinished Magnetisation")
+    document = service.create_project(
+        tmp_path / "unfinished-magnetisation.mufinder", "Unfinished Magnetisation"
+    )
     service.add_structure(document, _host_structure())
     calls: list[object] = []
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *args, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_fields",
+        lambda *args, **kwargs: calls.append(kwargs),
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -2315,13 +2511,20 @@ def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(qapp
     widget._calculate_fields()
 
     assert calls == []
-    assert "measured magnetisation components must be decimal numbers" in widget._calculation_status.text()
+    assert (
+        "measured magnetisation components must be decimal numbers"
+        in widget._calculation_status.text()
+    )
     widget.close()
 
 
-def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(qapp, tmp_path) -> None:
+def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(
+    qapp, tmp_path
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-empty-state.mufinder", "Magnetic Empty State")
+    document = service.create_project(
+        tmp_path / "magnetic-empty-state.mufinder", "Magnetic Empty State"
+    )
     service.add_structure(document, _host_structure())
 
     widget = MagneticFieldWidget()
@@ -2410,13 +2613,20 @@ def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> Non
         "approximant_tolerance": 0.002,
         "approximant_max_period": 8,
     }
-    assert dialog._phase_samples.maximum() == magnetic_field_widget_module.MAX_INCOMMENSURATE_PHASE_SAMPLES
+    assert (
+        dialog._phase_samples.maximum()
+        == magnetic_field_widget_module.MAX_INCOMMENSURATE_PHASE_SAMPLES
+    )
     dialog.close()
 
 
-def test_magnetic_field_widget_opens_calculation_settings_dialog(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_opens_calculation_settings_dialog(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-settings-dialog.mufinder", "Magnetic Settings Dialog")
+    document = service.create_project(
+        tmp_path / "magnetic-settings-dialog.mufinder", "Magnetic Settings Dialog"
+    )
     service.add_structure(document, _host_structure())
 
     class _Dialog:
@@ -2457,7 +2667,9 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(qapp, tmp_path,
                 "approximant_max_period": 8,
             }
 
-    monkeypatch.setattr(magnetic_field_widget_module, "MagneticFieldCalculationSettingsDialog", _Dialog)
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "MagneticFieldCalculationSettingsDialog", _Dialog
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -2644,7 +2856,9 @@ def test_dipolar_tensor_results_dialog_converts_to_angstrom_units(qapp) -> None:
 
 def test_magnetic_field_widget_opens_dipolar_tensor_dialog(qapp, tmp_path, monkeypatch) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-tensor-dialog.mufinder", "Magnetic Tensor Dialog")
+    document = service.create_project(
+        tmp_path / "magnetic-tensor-dialog.mufinder", "Magnetic Tensor Dialog"
+    )
     service.add_structure(document, _host_structure())
 
     opened: list[object] = []
@@ -2683,7 +2897,9 @@ def test_magnetic_field_widget_opens_dipolar_tensor_dialog(qapp, tmp_path, monke
                 {
                     "site_label": result.site_label,
                     "muon_position": list(result.muon_position),
-                    "dipolar_tensor_T_per_muB": np.asarray(result.tensor_T_per_muB, dtype=float).tolist(),
+                    "dipolar_tensor_T_per_muB": np.asarray(
+                        result.tensor_T_per_muB, dtype=float
+                    ).tolist(),
                 }
                 for result in self._calculate_callback(self)
             ]
@@ -2722,7 +2938,9 @@ def test_magnetic_field_widget_opens_dipolar_tensor_dialog(qapp, tmp_path, monke
         return (_Result(),)
 
     monkeypatch.setattr(magnetic_field_widget_module, "DipolarTensorDialog", _Dialog)
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_dipolar_tensors_for_atoms", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "calculate_dipolar_tensors_for_atoms", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -2740,12 +2958,17 @@ def test_magnetic_field_widget_opens_dipolar_tensor_dialog(qapp, tmp_path, monke
     assert calculated[0]["options"].find_equivalent_sites is True
     assert calculated[0]["options"].demag_shape == "none"
     assert calculated[0]["options"].contact_coupling is None
-    assert widget.collect_state()["dipolar_tensor_selector"]["selector"] == AtomSelector.indices([0]).to_json()
+    assert (
+        widget.collect_state()["dipolar_tensor_selector"]["selector"]
+        == AtomSelector.indices([0]).to_json()
+    )
     assert widget.collect_state()["dipolar_tensor_results"][0]["site_label"] == "site 1"
     widget.close()
 
 
-def test_magnetic_field_widget_passes_incommensurate_sampling_controls(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_passes_incommensurate_sampling_controls(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-sampling.mufinder", "Magnetic Sampling")
     service.add_structure(document, _host_structure())
@@ -2753,11 +2976,19 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(qapp, tmp
     calls: list[dict[str, object]] = []
 
     def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
-        calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
+        calls.append(
+            {"structure": structure, "model": model, "muon_sites": muon_sites, "options": options}
+        )
         return ()
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "incommensurate")
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_incommensurate_field_distributions", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "incommensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "calculate_incommensurate_field_distributions", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -2777,18 +3008,28 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(qapp, tmp
     widget.close()
 
 
-def test_magnetic_field_widget_converts_hyperfine_coupling_units(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_converts_hyperfine_coupling_units(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-hyperfine.mufinder", "Magnetic Hyperfine")
+    document = service.create_project(
+        tmp_path / "magnetic-hyperfine.mufinder", "Magnetic Hyperfine"
+    )
     service.add_structure(document, _host_structure())
 
     calls: list[dict[str, object]] = []
 
     def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
-        calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
+        calls.append(
+            {"structure": structure, "model": model, "muon_sites": muon_sites, "options": options}
+        )
         return ()
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
     monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
 
     widget = MagneticFieldWidget()
@@ -2804,7 +3045,9 @@ def test_magnetic_field_widget_converts_hyperfine_coupling_units(qapp, tmp_path,
     assert calls[0]["options"].contact_coupling == pytest.approx(
         magnetic_field_widget_module.contact_coupling_to_angstrom_minus3(12.5, "T_per_muB")
     )
-    assert [widget._hyperfine_units.itemData(index) for index in range(widget._hyperfine_units.count())] == [
+    assert [
+        widget._hyperfine_units.itemData(index) for index in range(widget._hyperfine_units.count())
+    ] == [
         "angstrom^-3",
         "T_per_muB",
         "MHz_per_muB",
@@ -2814,16 +3057,24 @@ def test_magnetic_field_widget_converts_hyperfine_coupling_units(qapp, tmp_path,
 
 def test_magnetic_field_widget_passes_equivalent_site_option(qapp, tmp_path, monkeypatch) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-equivalent-sites.mufinder", "Magnetic Equivalent Sites")
+    document = service.create_project(
+        tmp_path / "magnetic-equivalent-sites.mufinder", "Magnetic Equivalent Sites"
+    )
     service.add_structure(document, _host_structure())
 
     calls: list[dict[str, object]] = []
 
     def _calculate(structure, model, muon_sites, *, options, distorted_structures=None):
-        calls.append({"structure": structure, "model": model, "muon_sites": muon_sites, "options": options})
+        calls.append(
+            {"structure": structure, "model": model, "muon_sites": muon_sites, "options": options}
+        )
         return ()
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
     monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
 
     widget = MagneticFieldWidget()
@@ -2841,7 +3092,9 @@ def test_magnetic_field_widget_passes_equivalent_site_option(qapp, tmp_path, mon
 
 def test_magnetic_field_widget_collects_and_restores_form_state(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-form-state.mufinder", "Magnetic Form State")
+    document = service.create_project(
+        tmp_path / "magnetic-form-state.mufinder", "Magnetic Form State"
+    )
     service.add_structure(document, _host_structure())
 
     distortion_id = uuid4()
@@ -2943,7 +3196,9 @@ def test_magnetic_field_widget_collects_and_restores_form_state(qapp, tmp_path) 
 
 def test_magnetic_field_widget_restores_distribution_results(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-restore-dist.mufinder", "Magnetic Restore Dist")
+    document = service.create_project(
+        tmp_path / "magnetic-restore-dist.mufinder", "Magnetic Restore Dist"
+    )
     service.add_structure(document, _host_structure())
 
     state = {
@@ -2975,7 +3230,9 @@ def test_magnetic_field_widget_restores_distribution_results(qapp, tmp_path) -> 
 
 def test_magnetic_field_widget_scrolls_a_long_component_summary(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-long-summary.mufinder", "Magnetic Long Summary")
+    document = service.create_project(
+        tmp_path / "magnetic-long-summary.mufinder", "Magnetic Long Summary"
+    )
     service.add_structure(document, _host_structure())
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -2986,7 +3243,9 @@ def test_magnetic_field_widget_scrolls_a_long_component_summary(qapp, tmp_path) 
     assert summary.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
 
     limit = MagneticFieldWidget._SUMMARY_MAX_VISIBLE_ROWS
-    components = tuple(_component(f"c{index}", f"C{index}", index % 2) for index in range(limit + 4))
+    components = tuple(
+        _component(f"c{index}", f"C{index}", index % 2) for index in range(limit + 4)
+    )
     widget._set_model(MagneticStructureModel(components=components))
     assert summary.rowCount() == limit + 4
     capped_height = summary.maximumHeight()
@@ -3019,12 +3278,19 @@ def test_magnetic_field_widget_places_demagnetizing_controls_in_the_calculation_
 
 def _breakdown_rows(widget: MagneticFieldWidget) -> list[list[str]]:
     table = widget._breakdown_table
-    return [[table.item(row, column).text() for column in range(table.columnCount())] for row in range(table.rowCount())]
+    return [
+        [table.item(row, column).text() for column in range(table.columnCount())]
+        for row in range(table.rowCount())
+    ]
 
 
-def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-breakdown.mufinder", "Magnetic Breakdown")
+    document = service.create_project(
+        tmp_path / "magnetic-breakdown.mufinder", "Magnetic Breakdown"
+    )
     service.add_structure(document, _host_structure())
     result = magnetic_fields_module.MagneticFieldResult(
         site_label="muon 1",
@@ -3035,8 +3301,16 @@ def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(qapp, 
         demag=(0.0, -0.4, 0.0),
         applied=(0.0, 0.0, 0.0),
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *_args, **_kwargs: (result,))
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_fields",
+        lambda *_args, **_kwargs: (result,),
+    )
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
@@ -3069,9 +3343,13 @@ def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(qapp, 
     widget.close()
 
 
-def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-zero-display.mufinder", "Magnetic Zero Display")
+    document = service.create_project(
+        tmp_path / "magnetic-zero-display.mufinder", "Magnetic Zero Display"
+    )
     service.add_structure(document, _host_structure())
     result = magnetic_fields_module.MagneticFieldResult(
         site_label="muon 1",
@@ -3082,8 +3360,16 @@ def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(q
         demag=(-0.0, -0.0, 0.0),
         applied=(0.0, 0.0, 0.0),
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "commensurate")
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", lambda *_args, **_kwargs: (result,))
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_fields",
+        lambda *_args, **_kwargs: (result,),
+    )
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
@@ -3092,7 +3378,9 @@ def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(q
     widget._calculate_fields()
 
     expected_result_row = ["muon 1", "0", "0", "-0.153881", "0.153881", "field"]
-    assert [widget._result_table.item(0, column).text() for column in range(6)] == expected_result_row
+    assert [
+        widget._result_table.item(0, column).text() for column in range(6)
+    ] == expected_result_row
     expected_breakdown = [
         ["Dipolar", "0", "0", "-0.297712", "0.297712"],
         ["Lorentz", "0", "0", "0.143831", "0.143831"],
@@ -3110,7 +3398,9 @@ def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(q
     restored = MagneticFieldWidget()
     restored.set_document(document)
     restored.set_form_state(widget.collect_state())
-    assert [restored._result_table.item(0, column).text() for column in range(6)] == expected_result_row
+    assert [
+        restored._result_table.item(0, column).text() for column in range(6)
+    ] == expected_result_row
     assert _breakdown_rows(restored) == expected_breakdown
     restored.close()
     widget.close()
@@ -3118,7 +3408,9 @@ def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(q
 
 def test_magnetic_field_widget_explains_results_without_a_term_breakdown(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-no-breakdown.mufinder", "Magnetic No Breakdown")
+    document = service.create_project(
+        tmp_path / "magnetic-no-breakdown.mufinder", "Magnetic No Breakdown"
+    )
     service.add_structure(document, _host_structure())
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -3127,12 +3419,17 @@ def test_magnetic_field_widget_explains_results_without_a_term_breakdown(qapp, t
         {
             "magnetic_field_results": {
                 "kind": "commensurate",
-                "results": [{"site_label": "site 1", "total_T": [0.0, 0.0, 1.0], "magnitude_T": 1.0}],
+                "results": [
+                    {"site_label": "site 1", "total_T": [0.0, 0.0, 1.0], "magnitude_T": 1.0}
+                ],
             }
         }
     )
     assert widget._breakdown_table.isHidden()
-    assert widget._breakdown_hint.text() == "This saved result has no term breakdown; recalculate to see it."
+    assert (
+        widget._breakdown_hint.text()
+        == "This saved result has no term breakdown; recalculate to see it."
+    )
 
     widget.set_form_state(
         {
@@ -3157,7 +3454,9 @@ def test_magnetic_field_widget_explains_results_without_a_term_breakdown(qapp, t
 
 def test_magnetic_field_widget_emits_form_state_for_setting_changes(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-form-emits.mufinder", "Magnetic Form Emits")
+    document = service.create_project(
+        tmp_path / "magnetic-form-emits.mufinder", "Magnetic Form Emits"
+    )
     service.add_structure(document, _host_structure())
 
     widget = MagneticFieldWidget()
@@ -3178,7 +3477,9 @@ def test_magnetic_field_widget_emits_form_state_for_setting_changes(qapp, tmp_pa
 
 def test_magnetic_field_widget_emits_pin_title_and_delete_signals(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-workspace-signals.mufinder", "Magnetic Workspace")
+    document = service.create_project(
+        tmp_path / "magnetic-workspace-signals.mufinder", "Magnetic Workspace"
+    )
     service.add_structure(document, _host_structure())
 
     widget = MagneticFieldWidget()
@@ -3205,7 +3506,9 @@ def test_magnetic_field_widget_emits_pin_title_and_delete_signals(qapp, tmp_path
     widget.close()
 
 
-def test_magnetic_field_widget_calculates_incommensurate_distribution(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_calculates_incommensurate_distribution(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-dist.mufinder", "Magnetic Dist")
     service.add_structure(document, _host_structure())
@@ -3214,7 +3517,11 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(qapp, tmp_
         site_label = "site 1"
         fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "incommensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "incommensurate",
+    )
     monkeypatch.setattr(
         magnetic_field_widget_module,
         "calculate_incommensurate_field_distributions",
@@ -3234,7 +3541,10 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(qapp, tmp_
     assert widget._result_table.item(0, 5).text() == "distribution mean"
     assert widget._open_distribution_button.isEnabled()
     assert widget.collect_state()["magnetic_field_results"]["kind"] == "distribution"
-    assert widget.collect_state()["magnetic_field_results"]["results"][0]["fields_T"] == [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]]
+    assert widget.collect_state()["magnetic_field_results"]["results"][0]["fields_T"] == [
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 3.0],
+    ]
     widget.close()
 
 
@@ -3261,8 +3571,16 @@ def _approximant_field(label: str, bz: float) -> magnetic_fields_module.Magnetic
 
 
 def _incommensurate_widget(document, monkeypatch, *, approximant) -> MagneticFieldWidget:
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "incommensurate")
-    monkeypatch.setattr(magnetic_field_widget_module, "find_commensurate_approximant", lambda *_args, **_kwargs: approximant)
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "incommensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "find_commensurate_approximant",
+        lambda *_args, **_kwargs: approximant,
+    )
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
@@ -3270,17 +3588,28 @@ def _incommensurate_widget(document, monkeypatch, *, approximant) -> MagneticFie
     return widget
 
 
-def test_magnetic_field_widget_lists_commensurate_approximant_fields(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_lists_commensurate_approximant_fields(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-approximant.mufinder", "Magnetic Approximant")
+    document = service.create_project(
+        tmp_path / "magnetic-approximant.mufinder", "Magnetic Approximant"
+    )
     service.add_structure(document, _host_structure())
     calls: list[object] = []
 
     def _approximant_fields(*_args, options, distorted_structures=None):
         calls.append(options)
-        return (_approximant_field("site 1 + (0, 0, 0)", 1.0), _approximant_field("site 1 + (1, 0, 0)", -0.5))
+        return (
+            _approximant_field("site 1 + (0, 0, 0)", 1.0),
+            _approximant_field("site 1 + (1, 0, 0)", -0.5),
+        )
 
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_approximant_fields", _approximant_fields)
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_approximant_fields",
+        _approximant_fields,
+    )
     monkeypatch.setattr(
         magnetic_field_widget_module,
         "calculate_incommensurate_field_distributions",
@@ -3311,7 +3640,9 @@ def test_magnetic_field_widget_lists_commensurate_approximant_fields(qapp, tmp_p
     widget.close()
 
 
-def test_magnetic_field_widget_suggests_an_available_approximant(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_suggests_an_available_approximant(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-suggest.mufinder", "Magnetic Suggest")
     service.add_structure(document, _host_structure())
@@ -3348,13 +3679,19 @@ def test_magnetic_field_widget_suggests_an_available_approximant(qapp, tmp_path,
         "1 convergence check(s) need attention, select a row for advice."
     )
     assert "within 6.7e-05 r.l.u. of the commensurate approximant q = (1/3, 0, 0)" in status
-    assert status.endswith("turn on commensurate approximants in Calculation Settings to list its finite fields.")
+    assert status.endswith(
+        "turn on commensurate approximants in Calculation Settings to list its finite fields."
+    )
     widget.close()
 
 
-def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-converged.mufinder", "Magnetic Converged")
+    document = service.create_project(
+        tmp_path / "magnetic-converged.mufinder", "Magnetic Converged"
+    )
     service.add_structure(document, _host_structure())
 
     class _Distribution:
@@ -3372,13 +3709,18 @@ def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(q
 
     widget._calculate_fields()
 
-    assert widget._calculation_status.text() == "Results: sampled 1 incommensurate field distribution(s)."
+    assert (
+        widget._calculation_status.text()
+        == "Results: sampled 1 incommensurate field distribution(s)."
+    )
     widget.close()
 
 
 def test_magnetic_field_widget_shows_distribution_convergence_checks(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-convergence.mufinder", "Magnetic Convergence")
+    document = service.create_project(
+        tmp_path / "magnetic-convergence.mufinder", "Magnetic Convergence"
+    )
     service.add_structure(document, _host_structure())
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -3424,13 +3766,19 @@ def test_magnetic_field_widget_shows_distribution_convergence_checks(qapp, tmp_p
 
 def test_magnetic_field_widget_saves_and_restores_approximant_settings(qapp, tmp_path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-approximant-state.mufinder", "Approximant State")
+    document = service.create_project(
+        tmp_path / "magnetic-approximant-state.mufinder", "Approximant State"
+    )
     service.add_structure(document, _host_structure())
     widget = MagneticFieldWidget()
     widget.set_document(document)
 
     widget.set_form_state(
-        {"use_commensurate_approximants": True, "approximant_tolerance": 0.004, "approximant_max_period": 20}
+        {
+            "use_commensurate_approximants": True,
+            "approximant_tolerance": 0.004,
+            "approximant_max_period": 20,
+        }
     )
 
     state = widget.collect_state()
@@ -3453,9 +3801,13 @@ def test_magnetic_field_widget_saves_and_restores_approximant_settings(qapp, tmp
     widget.close()
 
 
-def test_magnetic_field_widget_opens_incommensurate_distribution_plot(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_opens_incommensurate_distribution_plot(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-dist-plot.mufinder", "Magnetic Dist Plot")
+    document = service.create_project(
+        tmp_path / "magnetic-dist-plot.mufinder", "Magnetic Dist Plot"
+    )
     service.add_structure(document, _host_structure())
 
     class _Distribution:
@@ -3464,7 +3816,11 @@ def test_magnetic_field_widget_opens_incommensurate_distribution_plot(qapp, tmp_
         histogram_centres_T = np.asarray([1.0, 3.0], dtype=float)
         histogram_counts = np.asarray([1, 1], dtype=float)
 
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "incommensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "incommensurate",
+    )
     monkeypatch.setattr(
         magnetic_field_widget_module,
         "calculate_incommensurate_field_distributions",
@@ -3494,9 +3850,13 @@ def test_magnetic_field_widget_opens_incommensurate_distribution_plot(qapp, tmp_
     widget.close()
 
 
-def test_magnetic_field_widget_opens_selected_distribution_plots_together(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_field_widget_opens_selected_distribution_plots_together(
+    qapp, tmp_path, monkeypatch
+) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-multi-dist-plot.mufinder", "Magnetic Multi Dist Plot")
+    document = service.create_project(
+        tmp_path / "magnetic-multi-dist-plot.mufinder", "Magnetic Multi Dist Plot"
+    )
     service.add_structure(document, _host_structure())
 
     class _Distribution:
@@ -3510,7 +3870,11 @@ def test_magnetic_field_widget_opens_selected_distribution_plots_together(qapp, 
         _Distribution("site 1", [1.0, 2.0]),
         _Distribution("site 2", [1.5, 2.5]),
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", lambda *_args, **_kwargs: "incommensurate")
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "incommensurate",
+    )
     monkeypatch.setattr(
         magnetic_field_widget_module,
         "calculate_incommensurate_field_distributions",
@@ -3614,7 +3978,9 @@ def test_magnetic_field_distribution_dialog_overlays_multiple_histograms(qapp) -
     assert axis.get_title() == "2 field distributions"
     assert legend is not None
     assert [text.get_text() for text in legend.get_texts()] == ["site 1", "site 2", "sum"]
-    distribution_lines = [line for line in axis.lines if line.get_label() in {"site 1", "site 2", "sum"}]
+    distribution_lines = [
+        line for line in axis.lines if line.get_label() in {"site 1", "site 2", "sum"}
+    ]
     assert len(distribution_lines) == 3
     assert axis.get_ylim()[1] > 1.0
     dialog.close()
@@ -3689,7 +4055,9 @@ def test_magnetic_field_distribution_dialog_expands_near_delta_axis(qapp) -> Non
             ],
             dtype=float,
         )
-        histogram_centres_T = np.asarray([0.1907378470999, 0.1907378471, 0.1907378471001], dtype=float)
+        histogram_centres_T = np.asarray(
+            [0.1907378470999, 0.1907378471, 0.1907378471001], dtype=float
+        )
         histogram_counts = np.asarray([1, 3, 1], dtype=float)
 
     dialog = MagneticFieldDistributionDialog(_Distribution())
@@ -3786,7 +4154,9 @@ def test_component_dialog_combines_basis_rows(qapp) -> None:
 def test_component_dialog_rejects_an_empty_basis_combination(qapp, monkeypatch) -> None:
     warnings: list[str] = []
     monkeypatch.setattr(
-        magnetic_field_widget_module.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text)
+        magnetic_field_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
     )
     dialog = MagneticComponentDialog(_host_structure(), model=_two_row_helix_model())
     _select_combo_data(dialog._q_source_combo, MagneticComponentDialog._Q_SOURCE_COMBINATION)
@@ -3823,7 +4193,11 @@ def test_component_dialog_reopens_a_component_on_its_basis_rows(
     component = model.components[0]
 
     dialog = MagneticComponentDialog(
-        _host_structure(), component=component, q_vector=(0.0, 0.0, 0.25), model=model, q_coeff=q_coeff
+        _host_structure(),
+        component=component,
+        q_vector=(0.0, 0.0, 0.25),
+        model=model,
+        q_coeff=q_coeff,
     )
 
     assert dialog._q_source_combo.currentData() == expected_source
@@ -3831,12 +4205,16 @@ def test_component_dialog_reopens_a_component_on_its_basis_rows(
     dialog.close()
 
 
-def test_magnetic_structure_builder_adds_a_component_on_a_basis_combination(qapp, tmp_path, monkeypatch) -> None:
+def test_magnetic_structure_builder_adds_a_component_on_a_basis_combination(
+    qapp, tmp_path, monkeypatch
+) -> None:
     dialog = _builder_with_components(tmp_path)
     dialog._set_model(_two_row_helix_model())
 
     def _accept_combination(component_dialog):
-        _select_combo_data(component_dialog._q_source_combo, MagneticComponentDialog._Q_SOURCE_COMBINATION)
+        _select_combo_data(
+            component_dialog._q_source_combo, MagneticComponentDialog._Q_SOURCE_COMBINATION
+        )
         component_dialog._q_coeff_inputs[0].setText("1")
         component_dialog._q_coeff_inputs[1].setText("1")
         component_dialog._label_edit.setText("Sum")
@@ -3856,27 +4234,46 @@ def test_magnetic_structure_builder_adds_a_component_on_a_basis_combination(qapp
 
 
 def _checklist_states(dialog: MagneticStructureBuilderDialog) -> dict[str, str]:
-    return {key: label.property("checklistState") for key, label in dialog._checklist_labels.items()}
+    return {
+        key: label.property("checklistState") for key, label in dialog._checklist_labels.items()
+    }
 
 
 def test_magnetic_structure_builder_checklist_ticks_off_from_model_state(qapp, tmp_path) -> None:
     dialog = _builder_with_components(tmp_path)
 
-    assert _checklist_states(dialog) == {"components": "todo", "q_basis": "todo", "preview": "todo", "ready": "todo"}
+    assert _checklist_states(dialog) == {
+        "components": "todo",
+        "q_basis": "todo",
+        "preview": "todo",
+        "ready": "todo",
+    }
     assert "Add Preset" in dialog._checklist_labels["components"].text()
 
     dialog._set_model(_two_row_helix_model())
-    assert _checklist_states(dialog) == {"components": "done", "q_basis": "done", "preview": "todo", "ready": "todo"}
+    assert _checklist_states(dialog) == {
+        "components": "done",
+        "q_basis": "done",
+        "preview": "todo",
+        "ready": "todo",
+    }
     assert "1×1×4" in dialog._checklist_labels["preview"].text()
 
     dialog._repeat_c.setValue(4)
-    assert _checklist_states(dialog) == {"components": "done", "q_basis": "done", "preview": "done", "ready": "done"}
+    assert _checklist_states(dialog) == {
+        "components": "done",
+        "q_basis": "done",
+        "preview": "done",
+        "ready": "done",
+    }
     dialog.close()
 
 
 def test_magnetic_structure_builder_checklist_flags_problems(qapp, tmp_path) -> None:
     model = _two_row_helix_model()
-    incommensurate = replace(model, q_basis_rlu=((0.0, 0.0, 0.123456789), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+    incommensurate = replace(
+        model, q_basis_rlu=((0.0, 0.0, 0.123456789), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    )
     zero = build_collinear_component(
         label="Zero", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0.0, 0.0, 0.0)
     )
@@ -3937,7 +4334,9 @@ def test_magnetic_preset_dialog_builds_a_conical_component_on_a_stored_row(qapp)
 
     component = dialog.component((0.0, 1.0, 0.0))
     assert component.kind == "conical"
-    assert np.allclose(component.terms[0].coefficient.real, (2.0 * np.cos(np.deg2rad(30.0)), 0.0, 0.0))
+    assert np.allclose(
+        component.terms[0].coefficient.real, (2.0 * np.cos(np.deg2rad(30.0)), 0.0, 0.0)
+    )
     dialog.close()
 
 
@@ -3955,7 +4354,9 @@ def test_magnetic_preset_dialog_keeps_an_edited_label(qapp) -> None:
 def test_magnetic_preset_dialog_rejects_a_reference_axis_parallel_to_q(qapp, monkeypatch) -> None:
     warnings: list[str] = []
     monkeypatch.setattr(
-        magnetic_field_widget_module.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text)
+        magnetic_field_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
     )
     dialog = MagneticPresetDialog(_host_structure())
     _select_combo_data(dialog._reference_combo, "c")

@@ -14,7 +14,13 @@ import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, MuonSite, Result, Structure
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    MuonSite,
+    Result,
+    Structure,
+)
 from mufinder.services.project_service import ProjectService
 from mufinder.app.workflow_config_codecs import (
     deserialize_muon_relaxation_config,
@@ -22,7 +28,9 @@ from mufinder.app.workflow_config_codecs import (
 )
 
 
-def test_main_window_muon_job_uses_row_label_and_charge_seed_directory(main_window, tmp_path: Path) -> None:
+def test_main_window_muon_job_uses_row_label_and_charge_seed_directory(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_seed_dir.mufinder", "MuonSeedDir")
@@ -52,7 +60,13 @@ def test_main_window_muon_job_uses_row_label_and_charge_seed_directory(main_wind
     doc.calculations[definition.id] = definition
     window._document = doc
 
-    output_dir = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "positivemuon_Random_Site_1"
+    output_dir = (
+        doc.project_root
+        / "files"
+        / "muon_relaxation"
+        / "positivemuon"
+        / "positivemuon_Random_Site_1"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     assert job.label == "Random Site 1"
@@ -76,7 +90,9 @@ def test_main_window_muon_cluster_job_recovers_seed_from_remote_directory(
         calc_type="castep_positivemuon_relaxation",
     )
     job.remote_job_id = "703535"
-    job.remote_directory = "/mnt/redwoodfs/bmh/CoF2/muon_relaxation/positivemuon/positivemuon_Random_Site_20"
+    job.remote_directory = (
+        "/mnt/redwoodfs/bmh/CoF2/muon_relaxation/positivemuon/positivemuon_Random_Site_20"
+    )
     definition = CalculationDefinition(
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
         calc_type="castep_muon_relaxation",
@@ -96,10 +112,14 @@ def test_main_window_muon_cluster_job_recovers_seed_from_remote_directory(
         / "positivemuon"
         / "positivemuon_Random_Site_20"
     )
-    stale_label_dir = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "Random Site 20"
+    stale_label_dir = (
+        doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "Random Site 20"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     stale_label_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "positivemuon_Random_Site_20.0001.err").write_text("rank error\n", encoding="utf-8")
+    (output_dir / "positivemuon_Random_Site_20.0001.err").write_text(
+        "rank error\n", encoding="utf-8"
+    )
     (output_dir / "castep.mpi-703535.out").write_text("scheduler error\n", encoding="utf-8")
 
     candidates = window._error_file_candidates(job, output_dir)
@@ -153,7 +173,9 @@ def test_main_window_muon_job_recovers_legacy_sanitized_seed_directory(
     window.close()
 
 
-def test_materialize_muon_relaxation_filters_charge_qualified_selection(main_window, tmp_path: Path) -> None:
+def test_materialize_muon_relaxation_filters_charge_qualified_selection(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_charge_selection.mufinder", "MuonChargeSelection")
@@ -210,13 +232,20 @@ def test_materialize_muon_relaxation_filters_charge_qualified_selection(main_win
     assert definition.parameters["job_ids_by_label"] == {"muonium:Shared Site": str(jobs[0].id)}
     assert "positivemuon:Shared Site" not in definition.parameters["job_ids_by_label"]
     assert (
-        doc.project_root / "files" / "muon_relaxation" / "muonium" / "muonium_Shared_Site" / "muonium_Shared_Site.cell"
+        doc.project_root
+        / "files"
+        / "muon_relaxation"
+        / "muonium"
+        / "muonium_Shared_Site"
+        / "muonium_Shared_Site.cell"
     ).exists()
     assert not (doc.project_root / "files" / "muon_relaxation" / "positivemuon").exists()
     window.close()
 
 
-def test_muon_relaxation_staging_updates_memory_without_autosave(main_window, tmp_path: Path) -> None:
+def test_muon_relaxation_staging_updates_memory_without_autosave(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_stage_autosave.mufinder", "MuonStageAutosave")
@@ -262,7 +291,9 @@ def test_muon_relaxation_staging_updates_memory_without_autosave(main_window, tm
     window.close()
 
 
-def test_muon_relaxation_staging_rejected_charge_dialog_leaves_site_generated(main_window, tmp_path: Path) -> None:
+def test_muon_relaxation_staging_rejected_charge_dialog_leaves_site_generated(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_stage_rejected.mufinder", "MuonStageRejected")
@@ -298,7 +329,9 @@ def test_muon_relaxation_row_removal_returns_staged_site_to_generated_without_au
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "muon_remove_unsaved_stage.mufinder", "MuonRemoveUnsavedStage")
+    doc = service.create_project(
+        tmp_path / "muon_remove_unsaved_stage.mufinder", "MuonRemoveUnsavedStage"
+    )
     site = MuonSite(
         label="Random Site 1",
         status="staged",
@@ -337,7 +370,9 @@ def test_muon_relaxation_row_removal_autosaves_persisted_staged_site_revert(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "muon_remove_saved_stage.mufinder", "MuonRemoveSavedStage")
+    doc = service.create_project(
+        tmp_path / "muon_remove_saved_stage.mufinder", "MuonRemoveSavedStage"
+    )
     site = MuonSite(
         label="Random Site 1",
         status="staged",
@@ -381,7 +416,9 @@ def test_muon_relaxation_row_removal_keeps_site_staged_when_other_jobs_share_sit
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "muon_remove_shared_site.mufinder", "MuonRemoveSharedSite")
+    doc = service.create_project(
+        tmp_path / "muon_remove_shared_site.mufinder", "MuonRemoveSharedSite"
+    )
     site = MuonSite(
         label="Random Site 1",
         status="staged",
@@ -417,7 +454,9 @@ def test_muon_relaxation_row_removal_keeps_site_staged_when_other_jobs_share_sit
     window.close()
 
 
-def test_muon_relaxation_staging_can_create_both_charge_state_tabs(main_window, tmp_path: Path) -> None:
+def test_muon_relaxation_staging_can_create_both_charge_state_tabs(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_stage_both.mufinder", "MuonStageBoth")
@@ -455,7 +494,9 @@ def test_muon_relaxation_staging_can_create_both_charge_state_tabs(main_window, 
     window.close()
 
 
-def test_muon_relaxation_configuration_updates_memory_without_autosave(main_window, tmp_path: Path) -> None:
+def test_muon_relaxation_configuration_updates_memory_without_autosave(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_config_autosave.mufinder", "MuonConfigAutosave")
@@ -499,7 +540,9 @@ def test_muon_relaxation_configuration_updates_memory_without_autosave(main_wind
     window.close()
 
 
-def test_muon_relaxation_form_state_change_remains_manual_save_state(main_window, tmp_path: Path) -> None:
+def test_muon_relaxation_form_state_change_remains_manual_save_state(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_form_manual_save.mufinder", "MuonFormManualSave")
@@ -520,7 +563,9 @@ def test_muon_relaxation_form_state_change_remains_manual_save_state(main_window
     window.close()
 
 
-def test_main_window_jobs_table_refresh_syncs_muon_relaxation_status(main_window, tmp_path: Path) -> None:
+def test_main_window_jobs_table_refresh_syncs_muon_relaxation_status(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_status_sync.mufinder", "MuonStatusSync")
@@ -565,7 +610,9 @@ def test_main_window_jobs_table_refresh_syncs_muon_relaxation_status(main_window
         input_structure_ids=[host.id],
     )
     doc.calculations[definition.id] = definition
-    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(
+        definition.id
+    )
     window._document = doc
     window._muon_relaxation_view.set_form_state(
         {
@@ -664,7 +711,9 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
         input_structure_ids=[host.id],
     )
     doc.calculations[newer_definition.id] = newer_definition
-    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(newer_definition.id)
+    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(
+        newer_definition.id
+    )
     window._document = doc
     window._active_run_by_job[job.id] = run.id
     window._muon_relaxation_view.set_form_state(
@@ -721,19 +770,27 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     assert site.initial_fractional_position == pytest.approx([0.1, 0.2, 0.3])
     assert site.relaxed_fractional_position == pytest.approx([0.6, 0.8, 0.5])
     assert site.current_fractional_position() == pytest.approx([0.6, 0.8, 0.5])
-    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(
+        definition.id
+    )
     states = window._muon_relaxation_controller.build_states()
     assert states["muonium:Shared Site"].final_fractional_position == pytest.approx((0.6, 0.8, 0.5))
     window._refresh_muon_relaxation_rows()
     muonium_table = window._muon_relaxation_view._tables_by_charge_state["muonium"]
-    assert muonium_table.item(
-        0,
-        window._muon_relaxation_view._FINAL_FX_COLUMN,
-    ).text() == "0.600"
-    assert muonium_table.item(
-        0,
-        window._muon_relaxation_view._TOTAL_ENERGY_COLUMN,
-    ).text() == "-12"
+    assert (
+        muonium_table.item(
+            0,
+            window._muon_relaxation_view._FINAL_FX_COLUMN,
+        ).text()
+        == "0.600"
+    )
+    assert (
+        muonium_table.item(
+            0,
+            window._muon_relaxation_view._TOTAL_ENERGY_COLUMN,
+        ).text()
+        == "-12"
+    )
     window.close()
 
 
@@ -793,7 +850,9 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     job = service.add_job(
@@ -813,7 +872,9 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
 
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
     assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "defined"
-    assert window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].status == "defined"
+    assert (
+        window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].status == "defined"
+    )
     window.close()
 
 
@@ -822,7 +883,9 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "muon_defined_beats_cancelled.mufinder", "MuonDefinedBeatsCancelled")
+    doc = service.create_project(
+        tmp_path / "muon_defined_beats_cancelled.mufinder", "MuonDefinedBeatsCancelled"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -946,7 +1009,9 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "muon_dashboard_recover.mufinder", "MuonDashboardRecover")
+    doc = service.create_project(
+        tmp_path / "muon_dashboard_recover.mufinder", "MuonDashboardRecover"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -1007,7 +1072,9 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "muon_add_rows_preserve_status.mufinder", "MuonAddRowsPreserveStatus")
+    doc = service.create_project(
+        tmp_path / "muon_add_rows_preserve_status.mufinder", "MuonAddRowsPreserveStatus"
+    )
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -1100,7 +1167,9 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
     old_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     running_job = service.add_job(
@@ -1117,7 +1186,9 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
     new_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
@@ -1186,10 +1257,7 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     job.status = JobStatus.FAILED
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
     window._restore_muon_relaxation_form_from_definition()
-    assert (
-        window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].job_id
-        == job.id
-    )
+    assert window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].job_id == job.id
 
     updated = window._muon_relaxation_controller.update_row_parameters(
         "positivemuon:Site 1", {"geom_max_iter": 500}
@@ -1206,9 +1274,7 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     assert states["positivemuon:Site 1"].job_id == job.id
     assert states["positivemuon:Site 1"].status == JobStatus.FAILED.value
 
-    config = deserialize_muon_relaxation_config(
-        definition.parameters["configuration"]
-    )
+    config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values["geom_max_iter"] == 500
     assert by_charge["muonium"].parameter_values["geom_max_iter"] == 400
@@ -1221,7 +1287,9 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     window.close()
 
 
-def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: Path) -> None:
+def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_deleted_stale.mufinder", "MuonDeletedStale")
@@ -1245,7 +1313,9 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(main_window
     old_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     running_job = service.add_job(
@@ -1262,7 +1332,9 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(main_window
     new_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
@@ -1301,7 +1373,9 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     job = service.add_job(
@@ -1311,14 +1385,20 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
     )
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
-    definition.parameters["job_seed_names_by_label"] = {"positivemuon:Site 1": "positivemuon_Site_1"}
+    definition.parameters["job_seed_names_by_label"] = {
+        "positivemuon:Site 1": "positivemuon_Site_1"
+    }
     run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED, run_index=1)
-    result = Result(calculation_run_id=run.id, result_type=job.calc_type, data={"total_energy": -1.0})
+    result = Result(
+        calculation_run_id=run.id, result_type=job.calc_type, data={"total_energy": -1.0}
+    )
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
     site.record_relaxation(run.id, total_energy_eV=-1.0, fractional_position=[0.3, 0.3, 0.3])
-    job_dir = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "positivemuon_Site_1"
+    job_dir = (
+        doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "positivemuon_Site_1"
+    )
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "positivemuon_Site_1.cell").write_text("cell", encoding="utf-8")
     save_calls: list[str] = []
@@ -1334,7 +1414,14 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     window._on_remove_muon_relaxation_rows(["positivemuon:Site 1"])
 
     assert save_calls == ["save"]
-    archived = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "removed_from_workflow" / "positivemuon_Site_1"
+    archived = (
+        doc.project_root
+        / "files"
+        / "muon_relaxation"
+        / "positivemuon"
+        / "removed_from_workflow"
+        / "positivemuon_Site_1"
+    )
     assert archived.exists()
     assert not job_dir.exists()
     assert job.id not in doc.jobs

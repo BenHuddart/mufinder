@@ -234,7 +234,9 @@ class TestMergeParameters:
 
 class TestScanLegacyFolder:
     def test_detects_every_site(self, tmp_path: Path) -> None:
-        scan = scan_legacy_folder(build_folder(tmp_path, sites=(1, 2, 3)), host_lattice=HOST_LATTICE)
+        scan = scan_legacy_folder(
+            build_folder(tmp_path, sites=(1, 2, 3)), host_lattice=HOST_LATTICE
+        )
 
         assert [run.site_index for run in scan.runs] == [1, 2, 3]
         assert all(run.importable for run in scan.runs)
@@ -455,9 +457,7 @@ class TestHostCompositionChecks:
 
         root = build_folder(tmp_path, sites=(1,))
 
-        run = scan_legacy_folder(
-            root, host_lattice=HOST_LATTICE, host_species=["Si", "Si"]
-        ).runs[0]
+        run = scan_legacy_folder(root, host_lattice=HOST_LATTICE, host_species=["Si", "Si"]).runs[0]
 
         assert not run.importable
         assert any("host atom(s)" in item for item in run.blockers)

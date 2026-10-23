@@ -43,7 +43,9 @@ class BlockSection:
 class LatticeCart:
     """A ``LATTICE_CART`` block."""
 
-    vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
+    vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ]
     unit: str | None = None
 
 
@@ -115,4 +117,3 @@ class ParamFile:
 
     keywords: tuple[KeywordAssignment, ...] = field(default_factory=tuple)
     blocks: tuple[BlockSection, ...] = field(default_factory=tuple)
-

@@ -156,7 +156,10 @@ def test_load_keychain_credentials_rejects_empty_password() -> None:
     with pytest.raises(KeychainCredentialError) as exc_info:
         load_keychain_credentials(_config(), runner=_runner, platform="linux")
 
-    assert all(issue.detail == "The entry exists but its password is empty." for issue in exc_info.value.issues)
+    assert all(
+        issue.detail == "The entry exists but its password is empty."
+        for issue in exc_info.value.issues
+    )
 
 
 def test_load_keychain_credentials_handles_security_command_launch_failure() -> None:
@@ -196,7 +199,9 @@ def test_load_keychain_credentials_requires_usernames() -> None:
     config = ClusterConfig(name="Redwood", hostname="glamdring.physics.ox.ac.uk")
 
     with pytest.raises(KeychainCredentialError) as exc_info:
-        load_keychain_credentials(config, runner=lambda args, **_kw: calls.append(args), platform="linux")
+        load_keychain_credentials(
+            config, runner=lambda args, **_kw: calls.append(args), platform="linux"
+        )
 
     assert calls == []
     assert all(issue.detail == "Missing username." for issue in exc_info.value.issues)
@@ -205,8 +210,14 @@ def test_load_keychain_credentials_requires_usernames() -> None:
 def test_keychain_setup_help_uses_glamdring_tools_service_names() -> None:
     help_text = keychain_setup_help(_config(), platform="darwin")
 
-    assert keychain_setup_command(endpoint="jump", account="physics-user", platform="darwin") in help_text
-    assert keychain_setup_command(endpoint="target", account="glam-user", platform="darwin") in help_text
+    assert (
+        keychain_setup_command(endpoint="jump", account="physics-user", platform="darwin")
+        in help_text
+    )
+    assert (
+        keychain_setup_command(endpoint="target", account="glam-user", platform="darwin")
+        in help_text
+    )
     assert "-s bastion" in help_text
     assert "-s glamdring" in help_text
 
@@ -215,12 +226,21 @@ def test_keychain_setup_help_on_linux_uses_secret_tool() -> None:
     help_text = keychain_setup_help(_config(), platform="linux")
 
     assert "sudo apt install libsecret-tools" in help_text
-    assert "secret-tool store --label='MuFinder bastion (physics-user)' service bastion account physics-user" in help_text
-    assert "secret-tool store --label='MuFinder glamdring (glam-user)' service glamdring account glam-user" in help_text
+    assert (
+        "secret-tool store --label='MuFinder bastion (physics-user)' service bastion account physics-user"
+        in help_text
+    )
+    assert (
+        "secret-tool store --label='MuFinder glamdring (glam-user)' service glamdring account glam-user"
+        in help_text
+    )
     assert "security add-generic-password" not in help_text
 
 
 def test_keychain_setup_command_quotes_unsafe_account_names() -> None:
     command = keychain_setup_command(endpoint="target", account="a b;rm", platform="linux")
 
-    assert command == "secret-tool store --label='MuFinder glamdring (a b;rm)' service glamdring account 'a b;rm'"
+    assert (
+        command
+        == "secret-tool store --label='MuFinder glamdring (a b;rm)' service glamdring account 'a b;rm'"
+    )

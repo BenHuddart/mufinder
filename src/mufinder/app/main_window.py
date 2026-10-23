@@ -173,6 +173,7 @@ from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip, ProjectDefaultsSummary
+
 # MainWindow uses these, and they stay importable from this module as public
 # aliases for one minor release; see docs/compatibility_policy.rst.
 from mufinder.app.muon_generation_support import MuonChargeStateDialog
@@ -281,7 +282,11 @@ from mufinder.services.failure_diagnosis import (
     find_failure_log_files,
     read_log_tail,
 )
-from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags, collect_job_artifacts
+from mufinder.services.job_artifacts import (
+    ParsedJobArtifacts,
+    RetrievalFlags,
+    collect_job_artifacts,
+)
 from mufinder.services.job_file_cleanup import JobCleanupItem, JobFileCleanup
 from mufinder.services.job_paths import (
     definition_output_directory,
@@ -289,7 +294,11 @@ from mufinder.services.job_paths import (
     job_output_files,
     job_seed_name,
 )
-from mufinder.services.job_results import max_force_for_job, max_stress_for_job, total_energy_for_job
+from mufinder.services.job_results import (
+    max_force_for_job,
+    max_stress_for_job,
+    total_energy_for_job,
+)
 from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_progress import JobProgressMonitor, job_reports_geometry_progress
 from mufinder.services.job_watchdog import StuckJobWatchdog
@@ -343,7 +352,12 @@ from mufinder.services.ssh_client import (
 from mufinder.science.kpoint_grids import kpoint_count, most_uniform_grid
 from mufinder.science.quantum_phonons import PhononParseError
 from mufinder.science.site_generation import SiteGenerationError
-from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
+from mufinder.science.uep import (
+    UepError,
+    UepPotentialGrid,
+    deserialize_potential_grid,
+    serialize_potential_grid,
+)
 from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError, structure_to_spec
@@ -367,7 +381,12 @@ _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANC
 _VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
-_STRUCTURE_CONTROLLED_CELL_KEYWORDS = {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"}
+_STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
+    "lattice_cart",
+    "lattice_abc",
+    "positions_frac",
+    "positions_abs",
+}
 
 
 def job_is_imported(job: Job) -> bool:
@@ -478,7 +497,9 @@ class MainWindow(QMainWindow):
             request_remote_progress=self._cluster_runner.read_geometry_progress,
             parent=self,
         )
-        self._cluster_runner.geometry_progress_read.connect(self._job_progress.accept_remote_progress)
+        self._cluster_runner.geometry_progress_read.connect(
+            self._job_progress.accept_remote_progress
+        )
         self._job_progress.progress_changed.connect(self._on_job_progress_changed)
         self._geometry_progress_dialogs: dict[UUID, GeometryProgressDialog] = {}
         self._active_run_by_job: dict[UUID, UUID] = {}
@@ -496,7 +517,9 @@ class MainWindow(QMainWindow):
             job_output_directory=lambda job: self._job_output_directory(job),
             job_seed_name=lambda job: self._job_seed_name(job),
             active_run_by_job=self._active_run_by_job,
-            run_file_op=lambda op, description: self._run_blocking_file_op(op, description=description),
+            run_file_op=lambda op, description: self._run_blocking_file_op(
+                op, description=description
+            ),
         )
         self._workflow_submission = WorkflowSubmissionCoordinator(dedupe_jobs=self._dedupe_jobs)
         self._job_runtime_timer = QTimer(self)
@@ -560,7 +583,11 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(clamped_size(self, 1280, 840))
         saved_geometry = self._settings.value(self._MAIN_WINDOW_GEOMETRY_KEY, QByteArray())
-        if isinstance(saved_geometry, QByteArray) and not saved_geometry.isEmpty() and self.restoreGeometry(saved_geometry):
+        if (
+            isinstance(saved_geometry, QByteArray)
+            and not saved_geometry.isEmpty()
+            and self.restoreGeometry(saved_geometry)
+        ):
             clamp_to_screen(self)
 
         self._project_tree = QTreeWidget()
@@ -589,8 +616,12 @@ class MainWindow(QMainWindow):
         self._host_structure_view.magnetic_configuration_changed.connect(
             self._on_host_magnetic_configuration_changed
         )
-        self._host_structure_view.supercell_editor_requested.connect(self._on_host_supercell_editor_requested)
-        self._host_structure_view.active_host_change_requested.connect(self._on_active_host_change_requested)
+        self._host_structure_view.supercell_editor_requested.connect(
+            self._on_host_supercell_editor_requested
+        )
+        self._host_structure_view.active_host_change_requested.connect(
+            self._on_active_host_change_requested
+        )
         self._supercell_editor_page = self._build_supercell_editor_page()
         self._convergence_overview_view = ConvergenceOverviewWidget()
         self._convergence_overview_view.open_cutoff_requested.connect(
@@ -632,9 +663,13 @@ class MainWindow(QMainWindow):
             lambda values: self._convergence_controller.submit(values, target="cluster")
         )
         self._connect_workflow_row_actions(self._convergence_view, self._convergence_controller)
-        self._convergence_view.remove_cutoff_requested.connect(self._on_remove_cutoffs_from_convergence)
+        self._convergence_view.remove_cutoff_requested.connect(
+            self._on_remove_cutoffs_from_convergence
+        )
         self._kpoint_convergence_view = KPointConvergenceWidget()
-        self._kpoint_convergence_view.configure_requested.connect(self._on_kpoint_convergence_configured)
+        self._kpoint_convergence_view.configure_requested.connect(
+            self._on_kpoint_convergence_configured
+        )
         self._kpoint_convergence_view.examine_requested.connect(self._on_examine_kpoint_convergence)
         self._kpoint_convergence_view.form_state_changed.connect(self._on_kpoint_form_state_changed)
         self._kpoint_convergence_view.simulation_cell_create_requested.connect(
@@ -739,9 +774,15 @@ class MainWindow(QMainWindow):
         self._uep_view.remove_requested.connect(self._on_remove_uep_rows)
         self._muon_generation_view = MuonGenerationWidget()
         self._muon_generation_view.generate_requested.connect(self._on_generate_requested)
-        self._muon_generation_view.cluster_positions_requested.connect(self._on_cluster_muon_positions_requested)
-        self._muon_generation_view.delete_candidates_requested.connect(self._on_delete_muon_candidates_requested)
-        self._muon_generation_view.create_jobs_requested.connect(self._on_create_muon_relaxation_jobs_requested)
+        self._muon_generation_view.cluster_positions_requested.connect(
+            self._on_cluster_muon_positions_requested
+        )
+        self._muon_generation_view.delete_candidates_requested.connect(
+            self._on_delete_muon_candidates_requested
+        )
+        self._muon_generation_view.create_jobs_requested.connect(
+            self._on_create_muon_relaxation_jobs_requested
+        )
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
         self._import_legacy_action = None
         self._remove_imported_action = None
@@ -749,14 +790,14 @@ class MainWindow(QMainWindow):
         self._legacy_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
-        self._muon_relaxation_view.form_state_changed.connect(self._on_muon_relaxation_form_state_changed)
+        self._muon_relaxation_view.form_state_changed.connect(
+            self._on_muon_relaxation_form_state_changed
+        )
         for strip in self._project_defaults_strips():
             strip.xc_functional_change_requested.connect(
                 self._on_project_xc_functional_change_requested
             )
-            strip.cutoff_energy_change_requested.connect(
-                self._on_project_cutoff_change_requested
-            )
+            strip.cutoff_energy_change_requested.connect(self._on_project_cutoff_change_requested)
             strip.kpoint_grid_change_requested.connect(
                 self._on_project_kpoint_grid_change_requested
             )
@@ -797,29 +838,47 @@ class MainWindow(QMainWindow):
             self._on_create_relaxation_analysis_workspace_requested
         )
         self._relaxation_analysis_view = RelaxationAnalysisWidget()
-        self._relaxation_analysis_view.state_changed.connect(self._on_relaxation_analysis_state_changed)
-        self._relaxation_analysis_view.add_sites_requested.connect(self._on_relaxation_analysis_add_sites_requested)
-        self._relaxation_analysis_view.pin_summary_requested.connect(self._on_muon_sites_pin_requested)
-        self._relaxation_analysis_view.delete_requested.connect(self._delete_relaxation_analysis_workspace)
+        self._relaxation_analysis_view.state_changed.connect(
+            self._on_relaxation_analysis_state_changed
+        )
+        self._relaxation_analysis_view.add_sites_requested.connect(
+            self._on_relaxation_analysis_add_sites_requested
+        )
+        self._relaxation_analysis_view.pin_summary_requested.connect(
+            self._on_muon_sites_pin_requested
+        )
+        self._relaxation_analysis_view.delete_requested.connect(
+            self._delete_relaxation_analysis_workspace
+        )
         self._relaxation_analysis_view.current_workspace_changed.connect(
             self._on_relaxation_analysis_current_workspace_changed
         )
         self._muon_sites_summary_view = MuonSitesSummaryWidget()
-        self._muon_sites_summary_view.open_analysis_requested.connect(self._on_open_muon_analysis_requested)
+        self._muon_sites_summary_view.open_analysis_requested.connect(
+            self._on_open_muon_analysis_requested
+        )
         self._muon_sites_summary_view.open_analysis_root_requested.connect(
             lambda: self._set_active_route("muon_analysis")
         )
-        self._muon_sites_summary_view.focus_site_requested.connect(self._on_focus_muon_site_requested)
+        self._muon_sites_summary_view.focus_site_requested.connect(
+            self._on_focus_muon_site_requested
+        )
         self._muon_sites_summary_view.unpin_requested.connect(self._on_unpin_muon_sites_requested)
         self._magnetic_field_view = MagneticFieldWidget()
         self._magnetic_field_view.magnetic_structure_changed.connect(
             self._on_magnetic_field_structure_changed
         )
-        self._magnetic_field_view.form_state_changed.connect(self._on_magnetic_field_form_state_changed)
+        self._magnetic_field_view.form_state_changed.connect(
+            self._on_magnetic_field_form_state_changed
+        )
         self._magnetic_field_view.pin_requested.connect(self._on_magnetic_field_pin_requested)
-        self._magnetic_field_view.open_muon_sites_requested.connect(lambda: self._set_active_route("muon_sites"))
+        self._magnetic_field_view.open_muon_sites_requested.connect(
+            lambda: self._set_active_route("muon_sites")
+        )
         self._quantum_corrections_view = QuantumCorrectionsWidget()
-        self._quantum_corrections_view.configure_requested.connect(self._on_configure_quantum_corrections_source)
+        self._quantum_corrections_view.configure_requested.connect(
+            self._on_configure_quantum_corrections_source
+        )
         self._quantum_corrections_view.source_label_renamed.connect(
             self._on_quantum_corrections_source_label_renamed
         )
@@ -835,14 +894,10 @@ class MainWindow(QMainWindow):
         )
         self._workflow_controllers.append(self._quantum_corrections_controller)
         self._quantum_corrections_view.submit_local_requested.connect(
-            lambda values: self._quantum_corrections_controller.submit(
-                values, target="local"
-            )
+            lambda values: self._quantum_corrections_controller.submit(values, target="local")
         )
         self._quantum_corrections_view.submit_cluster_requested.connect(
-            lambda values: self._quantum_corrections_controller.submit(
-                values, target="cluster"
-            )
+            lambda values: self._quantum_corrections_controller.submit(values, target="cluster")
         )
         self._quantum_corrections_view.show_every_site_toggled.connect(
             self._quantum_corrections_controller.set_show_every_site
@@ -909,7 +964,9 @@ class MainWindow(QMainWindow):
                 "Dismiss",
             ]
         )
-        self._jobs_table.horizontalHeaderItem(self._JOB_PROGRESS_COLUMN).setToolTip(PROGRESS_COLUMN_TOOLTIP)
+        self._jobs_table.horizontalHeaderItem(self._JOB_PROGRESS_COLUMN).setToolTip(
+            PROGRESS_COLUMN_TOOLTIP
+        )
         use_square_top_table_corners(self._jobs_table)
         self._jobs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._jobs_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -942,7 +999,9 @@ class MainWindow(QMainWindow):
         self._cluster_runner.job_cancelled.connect(self._on_cluster_job_cancelled)
         self._cluster_runner.status_changed.connect(self._on_cluster_job_status_changed)
         self._cluster_runner.job_reappeared.connect(self._on_cluster_job_reappeared)
-        self._cluster_runner.connection_status_changed.connect(self._on_cluster_connection_status_changed)
+        self._cluster_runner.connection_status_changed.connect(
+            self._on_cluster_connection_status_changed
+        )
         self._cluster_runner.queue_checked.connect(self._on_cluster_queue_checked)
         self._cluster_runner.poll_failed.connect(self._on_cluster_poll_failed)
 
@@ -995,7 +1054,9 @@ class MainWindow(QMainWindow):
 
         self._project_tree_title = QLabel("Project", project_tree_header)
         self._project_tree_title.setObjectName("projectTreePanelTitle")
-        self._project_tree_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._project_tree_title.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         project_tree_header_layout.addWidget(self._project_tree_title, 1)
         project_tree_layout.addWidget(project_tree_header)
 
@@ -1349,7 +1410,9 @@ class MainWindow(QMainWindow):
             button = QPushButton(project_path, self)
             button.setIcon(icon("open_project"))
             button.clicked.connect(
-                lambda _checked=False, project_path=project_path: self._open_recent_project(project_path)
+                lambda _checked=False, project_path=project_path: self._open_recent_project(
+                    project_path
+                )
             )
             self._home_recent_projects_layout.addWidget(button)
 
@@ -1394,7 +1457,9 @@ class MainWindow(QMainWindow):
 
         light_action = appearance_menu.addAction(icon("appearance_light"), "Light")
         light_action.setCheckable(True)
-        light_action.triggered.connect(lambda _checked=False: self._set_appearance_mode(THEME_LIGHT))
+        light_action.triggered.connect(
+            lambda _checked=False: self._set_appearance_mode(THEME_LIGHT)
+        )
         appearance_group.addAction(light_action)
 
         dark_action = appearance_menu.addAction(icon("appearance_dark"), "Dark")
@@ -1404,7 +1469,9 @@ class MainWindow(QMainWindow):
 
         system_action = appearance_menu.addAction(icon("appearance_system"), "System")
         system_action.setCheckable(True)
-        system_action.triggered.connect(lambda _checked=False: self._set_appearance_mode(THEME_SYSTEM))
+        system_action.triggered.connect(
+            lambda _checked=False: self._set_appearance_mode(THEME_SYSTEM)
+        )
         appearance_group.addAction(system_action)
 
         if self._appearance_mode == THEME_DARK:
@@ -1467,7 +1534,9 @@ class MainWindow(QMainWindow):
         # Persist any coalesced flush for the outgoing project before swapping.
         self._flush_dashboard()
         try:
-            self._document = self._project_service.create_project(project_root, project_name.strip())
+            self._document = self._project_service.create_project(
+                project_root, project_name.strip()
+            )
         except ValueError as exc:
             QMessageBox.critical(self, "Project error", str(exc))
             return
@@ -1606,7 +1675,9 @@ class MainWindow(QMainWindow):
         for project_path in recent:
             action = menu.addAction(project_path)
             action.triggered.connect(
-                lambda _checked=False, project_path=project_path: self._open_recent_project(project_path)
+                lambda _checked=False, project_path=project_path: self._open_recent_project(
+                    project_path
+                )
             )
 
         menu.addSeparator()
@@ -1741,14 +1812,12 @@ class MainWindow(QMainWindow):
         # Reconcile local jobs that were still in progress when MuFinder closed.
         # This must run BEFORE the jobs table is rebuilt below so the user never
         # sees phantom "running" rows for local jobs with no live process.
-        self._reconciled_orphaned_local_jobs = (
-            self._project_service.reconcile_orphaned_local_jobs(self._document)
+        self._reconciled_orphaned_local_jobs = self._project_service.reconcile_orphaned_local_jobs(
+            self._document
         )
         if self._reconciled_orphaned_local_jobs:
             self._request_dashboard_flush(
-                failure_message=(
-                    "Reconciled orphaned local jobs, but saving the project failed."
-                )
+                failure_message=("Reconciled orphaned local jobs, but saving the project failed.")
             )
 
         if self._document.project.recommended_cutoff_energy is not None:
@@ -1938,7 +2007,10 @@ class MainWindow(QMainWindow):
                 ("Criteria", "Not set"),
             ]
         return [
-            ("Project default", format_cutoff_energy(self._document.project.recommended_cutoff_energy)),
+            (
+                "Project default",
+                format_cutoff_energy(self._document.project.recommended_cutoff_energy),
+            ),
             (
                 "Functional",
                 self._document.project.recommended_cutoff_xc_functional or "Not recorded",
@@ -1965,7 +2037,10 @@ class MainWindow(QMainWindow):
             ]
         return [
             ("Project default", format_kpoint_grid(self._document.project.recommended_kpoint_grid)),
-            ("Cutoff default", format_cutoff_energy(self._document.project.recommended_cutoff_energy)),
+            (
+                "Cutoff default",
+                format_cutoff_energy(self._document.project.recommended_cutoff_energy),
+            ),
             (
                 "Functional",
                 self._document.project.recommended_kpoint_xc_functional or "Not recorded",
@@ -2071,7 +2146,9 @@ class MainWindow(QMainWindow):
         return f"{self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX}{workspace_id}"
 
     def _magnetic_field_workspace_id_from_route(self, route: object) -> str | None:
-        if not isinstance(route, str) or not route.startswith(self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX):
+        if not isinstance(route, str) or not route.startswith(
+            self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX
+        ):
             return None
         workspace_id = route[len(self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX) :].strip()
         return workspace_id or None
@@ -2080,13 +2157,17 @@ class MainWindow(QMainWindow):
         return f"{self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX}{workspace_id}"
 
     def _relaxation_analysis_workspace_id_from_route(self, route: object) -> str | None:
-        if not isinstance(route, str) or not route.startswith(self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX):
+        if not isinstance(route, str) or not route.startswith(
+            self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX
+        ):
             return None
         workspace_id = route[len(self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX) :].strip()
         return workspace_id or None
 
     def _workflow_definitions(self) -> tuple[WorkflowDefinition, ...]:
-        def stage(key: str, subtitle: str = "", children: tuple[WorkflowDefinition, ...] = ()) -> WorkflowDefinition:
+        def stage(
+            key: str, subtitle: str = "", children: tuple[WorkflowDefinition, ...] = ()
+        ) -> WorkflowDefinition:
             info = stage_info(key)
             return WorkflowDefinition(
                 key=key,
@@ -2098,7 +2179,9 @@ class MainWindow(QMainWindow):
                 children=children,
             )
 
-        def group(key: str, subtitle: str, children: tuple[WorkflowDefinition, ...]) -> WorkflowDefinition:
+        def group(
+            key: str, subtitle: str, children: tuple[WorkflowDefinition, ...]
+        ) -> WorkflowDefinition:
             info = stage_group(key)
             return WorkflowDefinition(
                 key=key,
@@ -2147,7 +2230,10 @@ class MainWindow(QMainWindow):
             group(
                 "convergence",
                 "Find stable settings",
-                (stage("convergence_cutoff", "Accuracy check"), stage("convergence_kpoint", "Sampling check")),
+                (
+                    stage("convergence_cutoff", "Accuracy check"),
+                    stage("convergence_kpoint", "Sampling check"),
+                ),
             ),
             stage("pristine_relaxation", "Optional cleanup"),
             stage("uep", "Electrostatic screening"),
@@ -2331,7 +2417,12 @@ class MainWindow(QMainWindow):
         """
 
         return (
-            (self._JOB_SUBMIT_COLUMN, "Resubmit", "resubmit", job.status in _RESUBMITTABLE_JOB_STATES),
+            (
+                self._JOB_SUBMIT_COLUMN,
+                "Resubmit",
+                "resubmit",
+                job.status in _RESUBMITTABLE_JOB_STATES,
+            ),
             (
                 self._JOB_RETRY_RETRIEVAL_COLUMN,
                 "Retry retrieval",
@@ -2339,7 +2430,12 @@ class MainWindow(QMainWindow):
                 self._can_retry_retrieval(job),
             ),
             (self._JOB_CANCEL_COLUMN, "Cancel", "cancel", job.status in ACTIVE_JOB_STATUSES),
-            (self._JOB_INSPECT_COLUMN, "Inspect", "inspect", self._dashboard_action_applies("inspect", job)),
+            (
+                self._JOB_INSPECT_COLUMN,
+                "Inspect",
+                "inspect",
+                self._dashboard_action_applies("inspect", job),
+            ),
             (
                 self._JOB_RESET_COLUMN,
                 "Reset",
@@ -2440,7 +2536,9 @@ class MainWindow(QMainWindow):
         label_item = QTableWidgetItem(job.label)
         label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
         self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
-        self._jobs_table.setItem(row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value))
+        self._jobs_table.setItem(
+            row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value)
+        )
         self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
 
         status_item = QTableWidgetItem()
@@ -2463,7 +2561,9 @@ class MainWindow(QMainWindow):
             self._JOB_REMOTE_ID_COLUMN,
             QTableWidgetItem(job.remote_job_id or ""),
         )
-        self._jobs_table.setItem(row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job)))
+        self._jobs_table.setItem(
+            row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job))
+        )
         self._jobs_table.setItem(
             row,
             self._JOB_PROCESSES_COLUMN,
@@ -2473,8 +2573,8 @@ class MainWindow(QMainWindow):
         for column, text, kind, enabled in self._job_button_specs(job):
             button = self._make_job_action_button(text, job_id=job.id, enabled=enabled)
             button.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=button, action=kind: self._dispatch_dashboard_action(
-                    btn, jid, action
+                lambda _checked=False, jid=job.id, btn=button, action=kind: (
+                    self._dispatch_dashboard_action(btn, jid, action)
                 )
             )
             self._jobs_table.setCellWidget(row, column, button)
@@ -2550,11 +2650,11 @@ class MainWindow(QMainWindow):
             job = self._document.jobs.get(job_id)
             if job is None:
                 continue
-            if (
-                job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
-                and (
-                    job.started_at is not None
-                    or (job.execution_target != "local" and job.id in self._cluster_elapsed_seconds_by_job)
+            if job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING} and (
+                job.started_at is not None
+                or (
+                    job.execution_target != "local"
+                    and job.id in self._cluster_elapsed_seconds_by_job
                 )
             ):
                 has_live_runtime = True
@@ -2571,7 +2671,10 @@ class MainWindow(QMainWindow):
             job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
             and (
                 job.started_at is not None
-                or (job.execution_target != "local" and job.id in self._cluster_elapsed_seconds_by_job)
+                or (
+                    job.execution_target != "local"
+                    and job.id in self._cluster_elapsed_seconds_by_job
+                )
             )
             for job in self._document.jobs.values()
             if job.status in _VISIBLE_DASHBOARD_STATES
@@ -2626,7 +2729,9 @@ class MainWindow(QMainWindow):
             self._jobs_table.resizeColumnToContents(column)
 
     @staticmethod
-    def _make_job_action_button(text: str, *, job_id: UUID, enabled: bool) -> SelectionSnapshotPushButton:
+    def _make_job_action_button(
+        text: str, *, job_id: UUID, enabled: bool
+    ) -> SelectionSnapshotPushButton:
         button = SelectionSnapshotPushButton(text)
         button.selection_snapshot_key = job_id
         button.setEnabled(enabled)
@@ -2660,8 +2765,7 @@ class MainWindow(QMainWindow):
 
     _WALLTIME_NEXT_STEP = "Resubmit to run it again, with a longer walltime if needed."
     _RELAXATION_WALLTIME_NEXT_STEP = (
-        "Resubmit to continue from its checkpoint or start again, with a longer "
-        "walltime if needed."
+        "Resubmit to continue from its checkpoint or start again, with a longer walltime if needed."
     )
 
     @classmethod
@@ -2905,10 +3009,14 @@ class MainWindow(QMainWindow):
         with trace.stage("_refresh_energy_barriers_view"):
             self._refresh_energy_barriers_view()
         with trace.stage("_persist_document_ui_state"):
-            self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
+            self._persist_document_ui_state(
+                failure_message=self._dashboard_autosave_failure_message
+            )
         trace.log_summary()
 
-    def _store_convergence_overview_snapshot(self, kind: str, snapshot: Mapping[str, object] | None) -> None:
+    def _store_convergence_overview_snapshot(
+        self, kind: str, snapshot: Mapping[str, object] | None
+    ) -> None:
         if self._document is None:
             return
 
@@ -3023,7 +3131,9 @@ class MainWindow(QMainWindow):
             target = self._muon_relaxation_view
         elif route == "muon_analysis":
             target = self._relaxation_analysis_view
-        elif (analysis_workspace_id := self._relaxation_analysis_workspace_id_from_route(route)) is not None:
+        elif (
+            analysis_workspace_id := self._relaxation_analysis_workspace_id_from_route(route)
+        ) is not None:
             self._relaxation_analysis_view.focus_workspace(analysis_workspace_id)
             target = self._relaxation_analysis_view
         elif route == "muon_sites":
@@ -3031,10 +3141,15 @@ class MainWindow(QMainWindow):
             target = self._muon_sites_summary_view
         elif route == "magnetic_fields":
             target = self._magnetic_field_view
-        elif isinstance(route, str) and self._magnetic_field_workspace_id_from_route(route) is not None:
+        elif (
+            isinstance(route, str)
+            and self._magnetic_field_workspace_id_from_route(route) is not None
+        ):
             workspace_id = self._magnetic_field_workspace_id_from_route(route)
             if workspace_id is not None:
-                target = self._magnetic_field_workspace_widgets.get(workspace_id, self._magnetic_field_view)
+                target = self._magnetic_field_workspace_widgets.get(
+                    workspace_id, self._magnetic_field_view
+                )
         elif route == "quantum_corrections":
             self._refresh_quantum_corrections_view()
             target = self._quantum_corrections_view
@@ -3062,7 +3177,10 @@ class MainWindow(QMainWindow):
             return
         if route in self._HOME_STAGE_KEYS:
             stage_key: str | None = route
-        elif route == "muon_sites" or self._relaxation_analysis_workspace_id_from_route(route) is not None:
+        elif (
+            route == "muon_sites"
+            or self._relaxation_analysis_workspace_id_from_route(route) is not None
+        ):
             stage_key = "muon_analysis"
         elif self._magnetic_field_workspace_id_from_route(route) is not None:
             stage_key = "magnetic_fields"
@@ -3070,7 +3188,10 @@ class MainWindow(QMainWindow):
             stage_key = "pristine_relaxation"
         else:
             stage_key = None
-        if stage_key is not None and self._document.ui_state.get(PROJECT_HOME_STAGE_KEY) != stage_key:
+        if (
+            stage_key is not None
+            and self._document.ui_state.get(PROJECT_HOME_STAGE_KEY) != stage_key
+        ):
             self._document.ui_state[PROJECT_HOME_STAGE_KEY] = stage_key
 
     def _comparison_route(self, table_id: UUID) -> str:
@@ -3128,34 +3249,46 @@ class MainWindow(QMainWindow):
             widget = MagneticFieldWidget(parent=self)
             widget.set_document(
                 self._document,
-                magnetic_structure=magnetic_structure if isinstance(magnetic_structure, Mapping) else None,
+                magnetic_structure=magnetic_structure
+                if isinstance(magnetic_structure, Mapping)
+                else None,
                 title=title,
                 title_editable=True,
                 deletable=True,
             )
-            widget.set_form_state(attach_magnetic_field_results(self._document, workspace_id, form_state))
+            widget.set_form_state(
+                attach_magnetic_field_results(self._document, workspace_id, form_state)
+            )
             widget.magnetic_structure_changed.connect(
-                lambda payload, workspace_id=workspace_id: self._on_magnetic_field_workspace_structure_changed(
-                    workspace_id,
-                    payload,
+                lambda payload, workspace_id=workspace_id: (
+                    self._on_magnetic_field_workspace_structure_changed(
+                        workspace_id,
+                        payload,
+                    )
                 )
             )
             widget.form_state_changed.connect(
-                lambda state, workspace_id=workspace_id: self._on_magnetic_field_workspace_form_state_changed(
-                    workspace_id,
-                    state,
+                lambda state, workspace_id=workspace_id: (
+                    self._on_magnetic_field_workspace_form_state_changed(
+                        workspace_id,
+                        state,
+                    )
                 )
             )
             widget.workspace_title_changed.connect(
-                lambda title, workspace_id=workspace_id: self._on_magnetic_field_workspace_title_changed(
-                    workspace_id,
-                    title,
+                lambda title, workspace_id=workspace_id: (
+                    self._on_magnetic_field_workspace_title_changed(
+                        workspace_id,
+                        title,
+                    )
                 )
             )
             widget.pin_requested.connect(self._on_magnetic_field_pin_requested)
             widget.open_muon_sites_requested.connect(lambda: self._set_active_route("muon_sites"))
             widget.delete_requested.connect(
-                lambda workspace_id=workspace_id: self._delete_magnetic_field_workspace(workspace_id)
+                lambda workspace_id=workspace_id: self._delete_magnetic_field_workspace(
+                    workspace_id
+                )
             )
             self._main_stack.addWidget(widget)
             self._magnetic_field_workspace_widgets[workspace_id] = widget
@@ -3173,12 +3306,16 @@ class MainWindow(QMainWindow):
             form_state = workspace.get("form", {})
             widget.set_document(
                 self._document,
-                magnetic_structure=magnetic_structure if isinstance(magnetic_structure, Mapping) else None,
+                magnetic_structure=magnetic_structure
+                if isinstance(magnetic_structure, Mapping)
+                else None,
                 title=title,
                 title_editable=True,
                 deletable=True,
             )
-            widget.set_form_state(attach_magnetic_field_results(self._document, workspace_id, form_state))
+            widget.set_form_state(
+                attach_magnetic_field_results(self._document, workspace_id, form_state)
+            )
 
     def _on_delete_comparison_table_requested(self, payload: object) -> None:
         if isinstance(payload, UUID):
@@ -3347,7 +3484,9 @@ class MainWindow(QMainWindow):
             return
 
         jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
-        selected = [job for job in jobs if job is not None and job.status in _RESUBMITTABLE_JOB_STATES]
+        selected = [
+            job for job in jobs if job is not None and job.status in _RESUBMITTABLE_JOB_STATES
+        ]
         if not selected:
             QMessageBox.information(
                 self,
@@ -3408,7 +3547,9 @@ class MainWindow(QMainWindow):
                 ),
                 reuse_existing_remote_files=True,
                 fresh_start_job_ids=fresh_start_job_ids,
-                success_message=lambda count, cluster: f"Resubmitted {count} cluster job(s) on {cluster}",
+                success_message=lambda count, cluster: (
+                    f"Resubmitted {count} cluster job(s) on {cluster}"
+                ),
             )
 
     @staticmethod
@@ -3714,7 +3855,9 @@ class MainWindow(QMainWindow):
             action = menu.addAction(text + partial_count_suffix(len(eligible_ids), len(jobs)))
             action.setEnabled(bool(eligible_ids))
             action.triggered.connect(
-                lambda _checked=False, k=kind, ids=eligible_ids: self._run_dashboard_menu_action(k, ids)
+                lambda _checked=False, k=kind, ids=eligible_ids: self._run_dashboard_menu_action(
+                    k, ids
+                )
             )
         menu.addSeparator()
         delete_action = menu.addAction("Delete...")
@@ -3755,7 +3898,11 @@ class MainWindow(QMainWindow):
 
         if self._document is None:
             return
-        jobs = [job for job in (self._document.jobs.get(job_id) for job_id in job_ids) if job is not None]
+        jobs = [
+            job
+            for job in (self._document.jobs.get(job_id) for job_id in job_ids)
+            if job is not None
+        ]
         for job in jobs:
             if job.status == JobStatus.RUNNING:
                 self._show_geometry_progress(job)
@@ -3774,10 +3921,14 @@ class MainWindow(QMainWindow):
 
         dialog = self._geometry_progress_dialogs.get(job.id)
         if dialog is None:
-            dialog = GeometryProgressDialog(job.label, self._job_progress.progress_for(job.id), self)
+            dialog = GeometryProgressDialog(
+                job.label, self._job_progress.progress_for(job.id), self
+            )
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             dialog.refresh_requested.connect(lambda jid=job.id: self._job_progress.refresh([jid]))
-            dialog.destroyed.connect(lambda _obj=None, jid=job.id: self._geometry_progress_dialogs.pop(jid, None))
+            dialog.destroyed.connect(
+                lambda _obj=None, jid=job.id: self._geometry_progress_dialogs.pop(jid, None)
+            )
             self._geometry_progress_dialogs[job.id] = dialog
         self._job_progress.refresh([job.id])
         dialog.show()
@@ -3793,7 +3944,10 @@ class MainWindow(QMainWindow):
         if job is None:
             return
         for row in range(self._jobs_table.rowCount()):
-            if self._jobs_table_row_job_id(self._jobs_table.item(row, self._JOB_LABEL_COLUMN)) == job_id:
+            if (
+                self._jobs_table_row_job_id(self._jobs_table.item(row, self._JOB_LABEL_COLUMN))
+                == job_id
+            ):
                 item = self._jobs_table.item(row, self._JOB_PROGRESS_COLUMN)
                 if item is not None:
                     self._apply_job_progress_cell(item, job)
@@ -3801,7 +3955,9 @@ class MainWindow(QMainWindow):
                 break
 
     def _apply_job_progress_cell(self, item: QTableWidgetItem, job: Job) -> None:
-        progress = self._job_progress.progress_for(job.id) if job.status == JobStatus.RUNNING else None
+        progress = (
+            self._job_progress.progress_for(job.id) if job.status == JobStatus.RUNNING else None
+        )
         text = progress_cell_text(progress)
         tooltip = progress_tooltip(progress)
         if item.text() != text:
@@ -3880,7 +4036,9 @@ class MainWindow(QMainWindow):
         if cancel_count:
             lines.append(f"Cancel {count_phrase(cancel_count, ('running job', 'running jobs'))}")
         if reset_count:
-            lines.append(f"Reset {count_phrase(reset_count, ('failed job', 'failed jobs'))} to ready")
+            lines.append(
+                f"Reset {count_phrase(reset_count, ('failed job', 'failed jobs'))} to ready"
+            )
         if delete_count:
             lines.append(
                 f"Delete {count_phrase(delete_count, ('finished job record', 'finished job records'))} "
@@ -3903,7 +4061,11 @@ class MainWindow(QMainWindow):
         if reset_count:
             cleanup_box = QCheckBox(
                 "Also clean the output "
-                + ("directory of the job being reset" if reset_count == 1 else "directories of the jobs being reset"),
+                + (
+                    "directory of the job being reset"
+                    if reset_count == 1
+                    else "directories of the jobs being reset"
+                ),
                 message,
             )
             message.setCheckBox(cleanup_box)
@@ -3962,7 +4124,9 @@ class MainWindow(QMainWindow):
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Delete jobs")
         message.setText(f"Delete {len(deletable_jobs)} selected job(s)?")
-        message.setInformativeText("This removes the selected job records and any linked run/result records.")
+        message.setInformativeText(
+            "This removes the selected job records and any linked run/result records."
+        )
         message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         message.setDefaultButton(QMessageBox.StandardButton.No)
         if not confirmed and message.exec() != QMessageBox.StandardButton.Yes:
@@ -3990,11 +4154,17 @@ class MainWindow(QMainWindow):
         energy_barriers_view.endpoint_selection_changed.connect(controller.select_endpoints)
         energy_barriers_view.generate_paths_requested.connect(controller.generate_paths)
         energy_barriers_view.show_every_site_toggled.connect(controller.set_show_every_site)
-        energy_barriers_view.open_muon_sites_requested.connect(lambda: self._set_active_route("muon_sites"))
-        energy_barriers_view.remove_sources_requested.connect(self._on_remove_energy_barrier_sources)
+        energy_barriers_view.open_muon_sites_requested.connect(
+            lambda: self._set_active_route("muon_sites")
+        )
+        energy_barriers_view.remove_sources_requested.connect(
+            self._on_remove_energy_barrier_sources
+        )
         self._connect_workflow_row_actions(energy_barriers_view, controller)
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
-        energy_barriers_view.configure_result_requested.connect(self._on_configure_energy_barrier_result)
+        energy_barriers_view.configure_result_requested.connect(
+            self._on_configure_energy_barrier_result
+        )
         # The controller was built and registered in ``__init__``; its view's
         # signals are wired here, when the view is first created.
         energy_barriers_view.submit_neb_local_requested.connect(
@@ -4005,7 +4175,9 @@ class MainWindow(QMainWindow):
         )
         energy_barriers_view.neb_result_selected.connect(controller.show_neb_preview)
         self._energy_barriers_view = energy_barriers_view
-        self._main_stack.insertWidget(self._main_stack.indexOf(self._journal_view), energy_barriers_view)
+        self._main_stack.insertWidget(
+            self._main_stack.indexOf(self._journal_view), energy_barriers_view
+        )
         return energy_barriers_view
 
     def _convergence_cutoff_definition_matches(
@@ -4022,7 +4194,8 @@ class MainWindow(QMainWindow):
             definition.input_structure_ids == [input_structure_id]
             and definition.parameters.get("configuration") == parameters
             and definition_output_directory(self._document, definition) == output_directory
-            and str(definition.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
+            and str(definition.parameters.get("simulation_cell_mode", "unit_cell"))
+            == simulation_cell_mode
             and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
         )
 
@@ -4038,7 +4211,8 @@ class MainWindow(QMainWindow):
         return (
             definition.input_structure_ids == [input_structure_id]
             and definition_output_directory(self._document, definition) == output_directory
-            and str(definition.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
+            and str(definition.parameters.get("simulation_cell_mode", "unit_cell"))
+            == simulation_cell_mode
             and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
         )
 
@@ -4099,7 +4273,9 @@ class MainWindow(QMainWindow):
         if not isinstance(persisted_state, dict):
             persisted_state = {}
 
-        cell = self._convergence_sweep_cell(self._convergence_controller.active_definition()) or host
+        cell = (
+            self._convergence_sweep_cell(self._convergence_controller.active_definition()) or host
+        )
         dialog = ConvergenceExaminerDialog(
             self._convergence_controller.build_states(),
             num_atoms=len(cell.species),
@@ -4148,7 +4324,11 @@ class MainWindow(QMainWindow):
             cell_id=(
                 definition_cell_id
                 if definition_cell_id is not None
-                else (str(self._document.project.host_structure_id) if self._document.project.host_structure_id else None)
+                else (
+                    str(self._document.project.host_structure_id)
+                    if self._document.project.host_structure_id
+                    else None
+                )
             ),
             xc_functional=xc_functional,
         )
@@ -4232,7 +4412,11 @@ class MainWindow(QMainWindow):
         """
 
         definition, config = self._convergence_controller.definition_for_sweep_key(cutoff)
-        job = self._convergence_controller.job_for_cutoff(definition, cutoff) if definition is not None else None
+        job = (
+            self._convergence_controller.job_for_cutoff(definition, cutoff)
+            if definition is not None
+            else None
+        )
 
         job_label = None
         if job is not None:
@@ -4244,7 +4428,11 @@ class MainWindow(QMainWindow):
                 sweep_parameter="cut_off_energy",
             )
 
-        output_root = definition_output_directory(self._document, definition) if definition is not None else None
+        output_root = (
+            definition_output_directory(self._document, definition)
+            if definition is not None
+            else None
+        )
         job_dir = output_root / job_label if output_root is not None and job_label else None
         return JobCleanupItem(
             label=job_label or f"{cutoff:.8g} eV",
@@ -4268,7 +4456,9 @@ class MainWindow(QMainWindow):
             self._convergence_controller.remove_cutoff_from_definition(source_definition, cutoff)
             return
 
-        simulation_cell_mode = str(source_definition.parameters.get("simulation_cell_mode", "unit_cell"))
+        simulation_cell_mode = str(
+            source_definition.parameters.get("simulation_cell_mode", "unit_cell")
+        )
         supercell_source_workflow = source_definition.parameters.get("supercell_source_workflow")
         for definition in self._convergence_controller.definitions():
             if not self._convergence_cutoff_definition_context_matches(
@@ -4554,11 +4744,15 @@ class MainWindow(QMainWindow):
             reuse_existing_remote_files=reuse_existing_remote_files,
         )
         failed_submit = list(plan.failed)
-        submit_items, prepared_by_job = plan.prepare_batch(self._job_execution.prepare_cluster_submission)
+        submit_items, prepared_by_job = plan.prepare_batch(
+            self._job_execution.prepare_cluster_submission
+        )
 
         submitted_jobs: list[Job] = []
         if submit_items:
-            submitted_jobs, batch_failed = self._run_cluster_submit_batch(submit_items, prepared_by_job)
+            submitted_jobs, batch_failed = self._run_cluster_submit_batch(
+                submit_items, prepared_by_job
+            )
             failed_submit.extend(batch_failed)
 
         self._refresh_jobs_table()
@@ -4624,7 +4818,9 @@ class MainWindow(QMainWindow):
             dialog_credentials = SSHCredentials(target_secret=dialog.password().strip() or None)
         selected_cluster = load_cluster_config(self._settings, submission.cluster_name)
         if selected_cluster is None:
-            QMessageBox.warning(self, "Cluster not found", "Selected cluster is no longer configured.")
+            QMessageBox.warning(
+                self, "Cluster not found", "Selected cluster is no longer configured."
+            )
             return None
         runtime_username = submission.username.strip()
         if runtime_username and runtime_username != selected_cluster.username:
@@ -4642,7 +4838,9 @@ class MainWindow(QMainWindow):
         """
 
         seed_name_by_job = {job.id: self._job_seed_name(job) for job in eligible_jobs}
-        invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))
+        invalid_labels = self._cluster_runner.invalid_remote_job_labels(
+            list(seed_name_by_job.values())
+        )
         if invalid_labels:
             show_detailed_warning(
                 self,
@@ -4694,7 +4892,9 @@ class MainWindow(QMainWindow):
         if submitted_jobs:
             if self._job_execution.record_submission(submitted_jobs, cluster_name):
                 self._refresh_journal_view()
-            self._persist_document_ui_state(failure_message="Submitted cluster jobs, but autosave failed.")
+            self._persist_document_ui_state(
+                failure_message="Submitted cluster jobs, but autosave failed."
+            )
             submitted = len(submitted_jobs)
             message = (
                 success_message(submitted, cluster_name)
@@ -4720,7 +4920,9 @@ class MainWindow(QMainWindow):
         )
         credentials = SSHCredentials() if reusing_connection else dialog_credentials
         if credentials is None:
-            QMessageBox.warning(self, "Missing credentials", "Credentials are required for cluster submission.")
+            QMessageBox.warning(
+                self, "Missing credentials", "Credentials are required for cluster submission."
+            )
             return False
         try:
             self._connect_to_cluster_with_trust(cluster, credentials=credentials)
@@ -4787,7 +4989,9 @@ class MainWindow(QMainWindow):
 
         return ClusterSubmissionConfig(
             cluster_name=cluster_name,
-            working_directory=str(payload.get("working_directory", "")).strip() if same_workflow else "",
+            working_directory=str(payload.get("working_directory", "")).strip()
+            if same_workflow
+            else "",
             username=str(payload.get("username", "")).strip(),
             job_name_prefix=(
                 str(payload.get("job_name_prefix", default_job_name_prefix)).strip()
@@ -4987,7 +5191,9 @@ class MainWindow(QMainWindow):
             if prepared is None:
                 return
             if remote_job_id:
-                outcome = self._job_execution.finalize_cluster_submission(prepared, str(remote_job_id))
+                outcome = self._job_execution.finalize_cluster_submission(
+                    prepared, str(remote_job_id)
+                )
             else:
                 outcome = self._job_execution.fail_cluster_submission(prepared, error)
             if outcome.submitted_job is not None:
@@ -5036,9 +5242,7 @@ class MainWindow(QMainWindow):
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Remote directory exists")
         message.setText(f"Remote directory already exists for {job_label}.")
-        message.setInformativeText(
-            f"Directory: {remote_dir}\n\nDelete it before submission?"
-        )
+        message.setInformativeText(f"Directory: {remote_dir}\n\nDelete it before submission?")
         message.setStandardButtons(
             QMessageBox.StandardButton.Yes
             | QMessageBox.StandardButton.YesToAll
@@ -5068,9 +5272,7 @@ class MainWindow(QMainWindow):
             "The following remote directories will be deleted before submission."
         )
         message.setDetailedText(details)
-        message.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         message.setDefaultButton(QMessageBox.StandardButton.No)
         return message.exec() == QMessageBox.StandardButton.Yes
 
@@ -5148,7 +5350,9 @@ class MainWindow(QMainWindow):
             return
 
         terminal_jobs = [
-            job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+            job
+            for job in jobs
+            if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         ]
         resettable_jobs = [job for job in terminal_jobs if not job_is_imported(job)]
         imported_count = len(terminal_jobs) - len(resettable_jobs)
@@ -5196,7 +5400,9 @@ class MainWindow(QMainWindow):
                 failure_message="Reset job state was recorded, but autosave failed.",
             )
             if cleanup_choice:
-                self.statusBar().showMessage(f"Reset {reset_count} failed job(s) and cleaned directories")
+                self.statusBar().showMessage(
+                    f"Reset {reset_count} failed job(s) and cleaned directories"
+                )
             else:
                 self.statusBar().showMessage(f"Reset {reset_count} failed job(s)")
 
@@ -5260,7 +5466,8 @@ class MainWindow(QMainWindow):
                 | {
                     companion.id
                     for job in cleanable_jobs
-                    if (controller := owning_controller(self._workflow_controllers, job)) is not None
+                    if (controller := owning_controller(self._workflow_controllers, job))
+                    is not None
                     for companion in controller.directory_companions(job)
                 },
                 check_remote=False,
@@ -5386,18 +5593,24 @@ class MainWindow(QMainWindow):
             if (job.execution_target or "").strip().casefold() == "local":
                 output_dir = self._job_output_directory(job)
                 if output_dir is None:
-                    probes[job.id] = CheckpointProbeResult.unavailable("The job's output directory is unknown")
+                    probes[job.id] = CheckpointProbeResult.unavailable(
+                        "The job's output directory is unknown"
+                    )
                 elif (output_dir / f"{seed_name}.check").exists():
                     probes[job.id] = CheckpointProbeResult.found()
                 else:
                     probes[job.id] = CheckpointProbeResult.absent()
                 continue
             if not self._is_cluster_connected_for_job(job):
-                probes[job.id] = CheckpointProbeResult.unavailable(f"Not connected to {job.execution_target}")
+                probes[job.id] = CheckpointProbeResult.unavailable(
+                    f"Not connected to {job.execution_target}"
+                )
                 continue
             remote_directory = (job.remote_directory or "").strip()
             if not remote_directory:
-                probes[job.id] = CheckpointProbeResult.unavailable("No remote directory recorded for this job")
+                probes[job.id] = CheckpointProbeResult.unavailable(
+                    "No remote directory recorded for this job"
+                )
                 continue
             remote_paths[job.id] = posixpath.join(remote_directory, f"{seed_name}.check")
 
@@ -5507,9 +5720,7 @@ class MainWindow(QMainWindow):
 
         checkpoint_probe = self._continue_relaxation_checkpoint_probe(job)
 
-        def render_param_text(
-            values: Mapping[str, object], advanced: tuple[str, ...]
-        ) -> str:
+        def render_param_text(values: Mapping[str, object], advanced: tuple[str, ...]) -> str:
             return controller.render_row_param_text(key, values, advanced)
 
         resolved_values, resolved_advanced = self._resolve_continue_relaxation_seed_values(seed)
@@ -5593,13 +5804,17 @@ class MainWindow(QMainWindow):
             job_execution=self._job_execution,
             submission_coordinator=self._workflow_submission,
             submit_jobs_locally=lambda *args, **kwargs: self._submit_jobs_locally(*args, **kwargs),
-            submit_jobs_on_cluster=lambda *args, **kwargs: self._submit_jobs_on_cluster(*args, **kwargs),
+            submit_jobs_on_cluster=lambda *args, **kwargs: self._submit_jobs_on_cluster(
+                *args, **kwargs
+            ),
             prepare_jobs_for_resubmission=lambda jobs: self._prepare_jobs_for_resubmission(jobs),
             show_info=lambda title, text: QMessageBox.information(self, title, text),
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
-            definition_output_directory=lambda definition: definition_output_directory(self._document, definition),
+            definition_output_directory=lambda definition: definition_output_directory(
+                self._document, definition
+            ),
             job_output_directory=lambda job: self._job_output_directory(job),
             job_seed_name=lambda job: self._job_seed_name(job),
             job_file_cleanup=self._job_file_cleanup,
@@ -5712,13 +5927,9 @@ class MainWindow(QMainWindow):
                 lambda definition: self._sync_active_muon_relaxation_dashboard_jobs(definition)
             ),
             muon_relaxation_form_config=lambda: self._muon_relaxation_form_config(),
-            muon_relaxation_row_signature=(
-                lambda row: self._muon_relaxation_row_signature(row)
-            ),
+            muon_relaxation_row_signature=(lambda row: self._muon_relaxation_row_signature(row)),
             muon_relaxation_row_key=lambda row: self._muon_relaxation_row_key(row),
-            handle_site_host_mismatch=(
-                lambda mismatch: self._handle_site_host_mismatch(mismatch)
-            ),
+            handle_site_host_mismatch=(lambda mismatch: self._handle_site_host_mismatch(mismatch)),
             muon_relaxation_definition_and_row_for_job=(
                 lambda job: self._muon_relaxation_definition_and_row_for_job(job)
             ),
@@ -5752,7 +5963,9 @@ class MainWindow(QMainWindow):
         """Build the quantum-corrections controller's deps: its window dialogs."""
 
         return QuantumCorrectionsDeps(
-            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
+            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(
+                mismatch
+            ),
             handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
             confirm=lambda title, text: (
                 QMessageBox.question(
@@ -5770,7 +5983,9 @@ class MainWindow(QMainWindow):
         """Build the energy-barriers (NEB) controller's deps: its window dialogs."""
 
         return EnergyBarriersDeps(
-            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
+            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(
+                mismatch
+            ),
             handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
             show_warning=lambda title, text: QMessageBox.warning(self, title, text),
         )
@@ -5826,7 +6041,9 @@ class MainWindow(QMainWindow):
             lines.append(f"…and {hidden} more job(s).")
         return "\n".join(lines)
 
-    def _failure_diagnostics_for_job(self, job: Job, diagnosis: FailureDiagnosis | None = None) -> str:
+    def _failure_diagnostics_for_job(
+        self, job: Job, diagnosis: FailureDiagnosis | None = None
+    ) -> str:
         if diagnosis is None:
             diagnosis = self._job_failure_diagnosis(job)
         lines = [
@@ -5883,7 +6100,9 @@ class MainWindow(QMainWindow):
         return read_log_tail(path, limit)
 
     @classmethod
-    def _read_error_contexts(cls, path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
+    def _read_error_contexts(
+        cls, path: Path, *, context_lines: int = 2, max_matches: int = 8
+    ) -> str:
         try:
             lines = cls._read_bounded_tail(path).splitlines()
         except OSError as exc:
@@ -5895,7 +6114,7 @@ class MainWindow(QMainWindow):
         marker_re = re.compile(r"error|failed|exception|traceback|warning", re.IGNORECASE)
         matched_indexes = [index for index, line in enumerate(lines) if marker_re.search(line)]
         if not matched_indexes:
-            tail = lines[-min(len(lines), 20):]
+            tail = lines[-min(len(lines), 20) :]
             start_line = len(lines) - len(tail) + 1
             return "\n".join(
                 f"{index}: {line}" for index, line in enumerate(tail, start=start_line)
@@ -5909,9 +6128,7 @@ class MainWindow(QMainWindow):
             if any(index in covered for index in range(start, stop)):
                 continue
             covered.update(range(start, stop))
-            excerpt = "\n".join(
-                f"{index + 1}: {lines[index]}" for index in range(start, stop)
-            )
+            excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, stop))
             excerpts.append(excerpt)
 
         return "\n\n...\n\n".join(excerpts)
@@ -5956,7 +6173,11 @@ class MainWindow(QMainWindow):
     def _results_for_run(self, run_id: UUID) -> list[Result]:
         if self._document is None:
             return []
-        return [result for result in self._document.results.values() if result.calculation_run_id == run_id]
+        return [
+            result
+            for result in self._document.results.values()
+            if result.calculation_run_id == run_id
+        ]
 
     def _refresh_quantum_corrections_view(self) -> None:
         """Re-render the quantum-corrections view via its controller.
@@ -6001,7 +6222,9 @@ class MainWindow(QMainWindow):
         return job_output_directory(
             self._document,
             job,
-            quantum_seed_name=lambda definition, key: quantum_seed_name_for_key(self._document, definition, key),
+            quantum_seed_name=lambda definition, key: quantum_seed_name_for_key(
+                self._document, definition, key
+            ),
         )
 
     def _job_seed_name(self, job: Job) -> str:
@@ -6285,10 +6508,14 @@ class MainWindow(QMainWindow):
                     parsed[normalized_job_id] = seconds
             self._cluster_elapsed_seconds_by_job = parsed
         stamp_source = getattr(checked_at, "checked_at", checked_at)
-        self._cluster_elapsed_checked_at = stamp_source if isinstance(stamp_source, datetime) else None
+        self._cluster_elapsed_checked_at = (
+            stamp_source if isinstance(stamp_source, datetime) else None
+        )
         if hasattr(stamp_source, "strftime"):
             localized = stamp_source
-            if getattr(stamp_source, "tzinfo", None) is not None and hasattr(stamp_source, "astimezone"):
+            if getattr(stamp_source, "tzinfo", None) is not None and hasattr(
+                stamp_source, "astimezone"
+            ):
                 try:
                     localized = stamp_source.astimezone()
                 except Exception:
@@ -6313,7 +6540,9 @@ class MainWindow(QMainWindow):
             informative_text="Open Details to inspect the full polling failure.",
         )
 
-    def _connect_to_cluster_with_trust(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
+    def _connect_to_cluster_with_trust(
+        self, config: ClusterConfig, *, credentials: SSHCredentials
+    ) -> None:
         trusted_endpoints: set[str] = set()
         while True:
             error = self._await_cluster_connect(config, credentials=credentials)
@@ -6380,7 +6609,9 @@ class MainWindow(QMainWindow):
                 refreshed.append(config.name)
             except Exception as exc:  # noqa: BLE001
                 auth_method = config.auth_method.strip().lower()
-                needs_credentials = auth_method == "password" or isinstance(exc, SSHAuthenticationError)
+                needs_credentials = auth_method == "password" or isinstance(
+                    exc, SSHAuthenticationError
+                )
                 if needs_credentials:
                     credentials = prompt_for_cluster_credentials(self, config)
                     if credentials is None:
@@ -6621,7 +6852,9 @@ class MainWindow(QMainWindow):
         )
         if matching_definition is not None:
             self._convergence_controller.sync_mappings(matching_definition)
-            self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(matching_definition.id)
+            self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(
+                matching_definition.id
+            )
             self._refresh_jobs_table()
             self._convergence_controller.refresh_view()
             self._refresh_journal_view()
@@ -6696,7 +6929,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
         if self._muon_generation_thread is not None:
-            QMessageBox.information(self, "Generation in progress", "Wait for the current generation task to finish.")
+            QMessageBox.information(
+                self, "Generation in progress", "Wait for the current generation task to finish."
+            )
             return
 
         if method in {"random", "near_element"}:
@@ -6730,30 +6965,44 @@ class MainWindow(QMainWindow):
         self._muon_generation_thread = thread
         self._muon_generation_failed = False
         thread.generated.connect(
-            lambda created, current_method=method, params=dict(parameters): self._on_threaded_generation_finished(
-                current_method,
-                params,
-                created,
+            lambda created, current_method=method, params=dict(parameters): (
+                self._on_threaded_generation_finished(
+                    current_method,
+                    params,
+                    created,
+                )
             )
         )
-        thread.failed.connect(lambda message, current_method=method: self._on_threaded_generation_failed(current_method, message))
-        random_mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        thread.failed.connect(
+            lambda message, current_method=method: self._on_threaded_generation_failed(
+                current_method, message
+            )
+        )
+        random_mode = (
+            str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        )
         thread.progress_changed.connect(
-            lambda generated, expected, current_method=method, mode=random_mode: self._on_generation_progress_changed(
-                current_method,
-                generated,
-                expected,
-                mode,
+            lambda generated, expected, current_method=method, mode=random_mode: (
+                self._on_generation_progress_changed(
+                    current_method,
+                    generated,
+                    expected,
+                    mode,
+                )
             )
         )
         thread.finished.connect(self._on_muon_generation_thread_finished)
         thread.finished.connect(thread.deleteLater)
         method_label = "random" if method == "random" else "near-element"
-        self._muon_generation_view.set_generation_busy(True, f"Preparing {method_label} generation...")
+        self._muon_generation_view.set_generation_busy(
+            True, f"Preparing {method_label} generation..."
+        )
         self.statusBar().showMessage(f"Generating {method_label} muon sites...")
         thread.start()
 
-    def _on_generation_progress_changed(self, method: str, generated: int, expected: int, mode: str) -> None:
+    def _on_generation_progress_changed(
+        self, method: str, generated: int, expected: int, mode: str
+    ) -> None:
         if method == "random" and mode in {"separation", "distance", "spacing"}:
             message = "Generated %v sites"
         else:
@@ -6764,7 +7013,9 @@ class MainWindow(QMainWindow):
             message,
         )
 
-    def _on_threaded_generation_finished(self, method: str, parameters: dict, created: object) -> None:
+    def _on_threaded_generation_finished(
+        self, method: str, parameters: dict, created: object
+    ) -> None:
         sites = list(created) if isinstance(created, list) else []
         used_spacing: object | None = None
         if method == "random" and sites:
@@ -6795,8 +7046,12 @@ class MainWindow(QMainWindow):
         if not self._muon_generation_failed:
             self._muon_generation_view.set_generation_controls_enabled(True)
 
-    def _finish_generation_status(self, method: str, parameters: dict, created: list[MuonSite]) -> None:
-        random_mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+    def _finish_generation_status(
+        self, method: str, parameters: dict, created: list[MuonSite]
+    ) -> None:
+        random_mode = (
+            str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        )
         if method == "random" and random_mode in {"separation", "distance", "spacing"}:
             requested = None
         elif method == "uep_clusters" and isinstance(parameters.get("selections"), list):
@@ -6809,7 +7064,9 @@ class MainWindow(QMainWindow):
                 if host is not None and target
                 else 0
             )
-            requested = matching_atoms * max(1, int(parameters.get("muons_per_atom", parameters.get("count", 1))))
+            requested = matching_atoms * max(
+                1, int(parameters.get("muons_per_atom", parameters.get("count", 1)))
+            )
         elif method != "manual":
             requested = int(parameters.get("count", 1))
         else:
@@ -6817,7 +7074,11 @@ class MainWindow(QMainWindow):
         suffix = ""
         if requested is not None and len(created) < requested:
             suffix = f" (requested {requested}; constraints prevented full count)"
-        if method == "random" and created and created[0].properties.get("estimated_min_muon_muon") is not None:
+        if (
+            method == "random"
+            and created
+            and created[0].properties.get("estimated_min_muon_muon") is not None
+        ):
             estimated = float(created[0].properties["estimated_min_muon_muon"])
             used = float(created[0].properties.get("min_muon_muon", estimated))
             if abs(used - estimated) > 1e-9:
@@ -6900,7 +7161,9 @@ class MainWindow(QMainWindow):
         if mismatch is not None:
             if not self._handle_site_host_mismatch(mismatch):
                 return
-            mismatch = self._project_service.validate_sites_match_active_host(self._document, site_ids)
+            mismatch = self._project_service.validate_sites_match_active_host(
+                self._document, site_ids
+            )
             if mismatch is not None:
                 return
         dialog = MuonChargeStateDialog(site_count=len(site_ids), parent=self)
@@ -6930,8 +7193,12 @@ class MainWindow(QMainWindow):
         self._refresh_muon_relaxation_rows()
         self._refresh_journal_view()
         self._set_active_route("muon_relaxations")
-        charge_label = " and ".join(muon_charge_state_label(charge_state) for charge_state in charge_states)
-        self.statusBar().showMessage(f"Staged {len(staged)} muon relaxation position(s) for {charge_label}")
+        charge_label = " and ".join(
+            muon_charge_state_label(charge_state) for charge_state in charge_states
+        )
+        self.statusBar().showMessage(
+            f"Staged {len(staged)} muon relaxation position(s) for {charge_label}"
+        )
 
     def _on_muon_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
@@ -6950,10 +7217,16 @@ class MainWindow(QMainWindow):
             return
         host = self._project_service.active_host_structure(self._document)
         if host is None:
-            QMessageBox.warning(self, "No host structure", "Load a host structure before creating an analysis workspace.")
+            QMessageBox.warning(
+                self,
+                "No host structure",
+                "Load a host structure before creating an analysis workspace.",
+            )
             return
         label_list = [str(label) for label in labels] if isinstance(labels, list) else [str(labels)]
-        sources = relaxation_sources_for_labels(self._completed_muon_relaxation_sources(), label_list)
+        sources = relaxation_sources_for_labels(
+            self._completed_muon_relaxation_sources(), label_list
+        )
         if not sources:
             QMessageBox.information(
                 self,
@@ -7000,7 +7273,9 @@ class MainWindow(QMainWindow):
         if self._document is None or self._shutting_down:
             return
         cleaned = [dict(workspace) for workspace in workspaces if isinstance(workspace, dict)]
-        previous_nodes = [(w.get("id"), w.get("name")) for w in self._relaxation_analysis_workspaces()]
+        previous_nodes = [
+            (w.get("id"), w.get("name")) for w in self._relaxation_analysis_workspaces()
+        ]
         self._set_relaxation_analysis_workspaces(cleaned)
         if [(w.get("id"), w.get("name")) for w in cleaned] != previous_nodes:
             # A rename changes the workspace's project-tree label.
@@ -7041,7 +7316,9 @@ class MainWindow(QMainWindow):
         if (analysis_id := self._relaxation_analysis_workspace_id_from_route(route)) is not None:
             action = menu.addAction("Delete Analysis...")
             action.triggered.connect(
-                lambda _checked=False, wid=analysis_id: self._delete_relaxation_analysis_workspace(wid)
+                lambda _checked=False, wid=analysis_id: self._delete_relaxation_analysis_workspace(
+                    wid
+                )
             )
         elif (magnetic_id := self._magnetic_field_workspace_id_from_route(route)) is not None:
             action = menu.addAction("Delete Workspace...")
@@ -7066,7 +7343,11 @@ class MainWindow(QMainWindow):
             return
         workspaces = self._relaxation_analysis_workspaces()
         target = next(
-            (workspace for workspace in workspaces if str(workspace.get("id", "")) == str(workspace_id)),
+            (
+                workspace
+                for workspace in workspaces
+                if str(workspace.get("id", "")) == str(workspace_id)
+            ),
             None,
         )
         if target is None:
@@ -7075,7 +7356,8 @@ class MainWindow(QMainWindow):
         pinned_charge_states = [
             str(charge_state)
             for charge_state, snapshot in muon_sites_summary_snapshots(self._document).items()
-            if isinstance(snapshot, dict) and str(snapshot.get("workspace_id", "")) == str(workspace_id)
+            if isinstance(snapshot, dict)
+            and str(snapshot.get("workspace_id", "")) == str(workspace_id)
         ]
         detail = (
             "Its clustering results are discarded. The structural relaxations it "
@@ -7114,7 +7396,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
         workspace = next(
-            (entry for entry in self._relaxation_analysis_workspaces() if str(entry.get("id", "")) == str(workspace_id)),
+            (
+                entry
+                for entry in self._relaxation_analysis_workspaces()
+                if str(entry.get("id", "")) == str(workspace_id)
+            ),
             None,
         )
         if workspace is None:
@@ -7154,7 +7440,9 @@ class MainWindow(QMainWindow):
             return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
         self._refresh_relaxation_analysis_context()
-        self.statusBar().showMessage(f"Added {len(selected)} relaxation result(s) to the analysis workspace")
+        self.statusBar().showMessage(
+            f"Added {len(selected)} relaxation result(s) to the analysis workspace"
+        )
 
     # --- Muon Sites summary (pinned analyses) -------------------------------
 
@@ -7371,7 +7659,9 @@ class MainWindow(QMainWindow):
         result = dialog.exec()
         self._refresh_all_supercell_options()
         self._populate_project_tree()
-        self._persist_document_ui_state(failure_message="Supercells were updated, but autosave failed.")
+        self._persist_document_ui_state(
+            failure_message="Supercells were updated, but autosave failed."
+        )
         if select_mode and result != dialog.DialogCode.Accepted:
             return None
         return dialog
@@ -7382,7 +7672,9 @@ class MainWindow(QMainWindow):
             return
         host = self._project_service.active_host_structure(self._document)
         if host is None:
-            QMessageBox.warning(self, "No host structure", "Load a host structure before editing supercells.")
+            QMessageBox.warning(
+                self, "No host structure", "Load a host structure before editing supercells."
+            )
             return
         dialog = self._open_supercell_editor(
             source_structure=host,
@@ -7535,7 +7827,9 @@ class MainWindow(QMainWindow):
                 enabled=False,
             )
             self._kpoint_convergence_view.set_parameter_species_options(())
-            self._kpoint_convergence_view.set_generation_context(structure_id=None, lattice_vectors=None)
+            self._kpoint_convergence_view.set_generation_context(
+                structure_id=None, lattice_vectors=None
+            )
             return
 
         resolution = self._project_service.resolve_workflow_structure(
@@ -7565,8 +7859,12 @@ class MainWindow(QMainWindow):
             structure_species_options(resolution.structure)
         )
         self._kpoint_convergence_view.set_generation_context(
-            structure_id=(str(resolution.structure.id) if resolution.structure is not None else None),
-            lattice_vectors=(resolution.structure.lattice_vectors if resolution.structure is not None else None),
+            structure_id=(
+                str(resolution.structure.id) if resolution.structure is not None else None
+            ),
+            lattice_vectors=(
+                resolution.structure.lattice_vectors if resolution.structure is not None else None
+            ),
         )
 
     def _kpoint_supercell_initial_matrix(self) -> list[list[int]]:
@@ -7680,7 +7978,10 @@ class MainWindow(QMainWindow):
             )
             return
 
-        cell = self._convergence_sweep_cell(self._kpoint_convergence_controller.active_definition()) or host
+        cell = (
+            self._convergence_sweep_cell(self._kpoint_convergence_controller.active_definition())
+            or host
+        )
         states = self._kpoint_convergence_controller.build_states()
         counts_map, labels, notes = self._kpoint_examiner_points(states, cell.lattice_vectors)
 
@@ -7699,7 +8000,9 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.default_adopted.connect(
-            lambda value, method, et, ft, st: self._on_kpoint_default_adopted(value, method, et, ft, labels, st)
+            lambda value, method, et, ft, st: self._on_kpoint_default_adopted(
+                value, method, et, ft, labels, st
+            )
         )
         dialog.state_changed.connect(self._on_kpoint_examiner_state_changed)
         dialog.exec()
@@ -7748,7 +8051,9 @@ class MainWindow(QMainWindow):
                 else:
                     kept = most_uniform_grid(lattice_vectors, completed or grids)
                     reason = "it samples the cell most uniformly" + (
-                        " of those with a completed result" if completed and len(completed) < len(grids) else ""
+                        " of those with a completed result"
+                        if completed and len(completed) < len(grids)
+                        else ""
                     )
                 excluded = ", ".join(format_kpoint_grid(grid) for grid in grids if grid != kept)
                 notes.append(
@@ -7814,7 +8119,9 @@ class MainWindow(QMainWindow):
             self._document,
             grid,
             lattice_vectors=(
-                [list(row) for row in reference_cell.lattice_vectors] if reference_cell is not None else None
+                [list(row) for row in reference_cell.lattice_vectors]
+                if reference_cell is not None
+                else None
             ),
             method=method,
             energy_threshold=energy_threshold,
@@ -7823,7 +8130,11 @@ class MainWindow(QMainWindow):
             cell_id=(
                 definition_cell_id
                 if definition_cell_id is not None
-                else (str(self._document.project.host_structure_id) if self._document.project.host_structure_id else None)
+                else (
+                    str(self._document.project.host_structure_id)
+                    if self._document.project.host_structure_id
+                    else None
+                )
             ),
             xc_functional=xc_functional,
         )
@@ -7888,9 +8199,7 @@ class MainWindow(QMainWindow):
 
         if definition is None:
             return None
-        config = deserialize_convergence_config(
-            definition.parameters.get("configuration", {})
-        )
+        config = deserialize_convergence_config(definition.parameters.get("configuration", {}))
         if config is None:
             return None
         return convergence_config_xc_functional(config)
@@ -8063,7 +8372,10 @@ class MainWindow(QMainWindow):
             host_structure_id=structure.id,
         )
         view.set_supercell_options(
-            [{"label": asset.label, "matrix": [list(row) for row in asset.matrix]} for asset in assets]
+            [
+                {"label": asset.label, "matrix": [list(row) for row in asset.matrix]}
+                for asset in assets
+            ]
         )
 
     def _on_pristine_relaxation_form_state_changed(self, state: dict) -> None:
@@ -8081,7 +8393,8 @@ class MainWindow(QMainWindow):
         derived = [
             structure
             for structure in self._document.structures.values()
-            if structure.origin == "pristine_relaxation" and structure.parent_structure_id == host.id
+            if structure.origin == "pristine_relaxation"
+            and structure.parent_structure_id == host.id
         ]
         derived.sort(key=lambda structure: (structure.label.casefold(), str(structure.id)))
         return [host, *derived]
@@ -8107,7 +8420,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_uep_source_structures(self) -> None:
         if self._document is None:
-            self._uep_view.set_source_structure_options([], selected_id=None, summary="Create or open a project first.")
+            self._uep_view.set_source_structure_options(
+                [], selected_id=None, summary="Create or open a project first."
+            )
             self._uep_view.set_parameter_species_options(())
             return
 
@@ -8196,7 +8511,11 @@ class MainWindow(QMainWindow):
         for row in config.rows:
             key = self._muon_relaxation_row_key(row)
             existing = mapping.get(key)
-            if isinstance(existing, str) and self._muon_relaxation_controller.job_for_mapping_value(key, existing) is not None:
+            if (
+                isinstance(existing, str)
+                and self._muon_relaxation_controller.job_for_mapping_value(key, existing)
+                is not None
+            ):
                 continue
 
             expected_calc_type = muon_relaxation_calc_type(row.charge_state)
@@ -8233,7 +8552,10 @@ class MainWindow(QMainWindow):
             mapping = definition.parameters.get("job_ids_by_label", {})
             if not isinstance(mapping, dict):
                 continue
-            if str(job_id) in {str(value) for value in mapping.values()} and definition.input_structure_ids:
+            if (
+                str(job_id) in {str(value) for value in mapping.values()}
+                and definition.input_structure_ids
+            ):
                 return definition.input_structure_ids[0]
         return None
 
@@ -8310,6 +8632,7 @@ class MainWindow(QMainWindow):
                     representative_index = int(cluster.get("representative_index"))
                 except (TypeError, ValueError):
                     continue
+
                 def _representative_row(result_index: int) -> dict[str, object] | None:
                     if not (0 <= result_index < len(batch_results)):
                         return None
@@ -8341,7 +8664,9 @@ class MainWindow(QMainWindow):
                         "source_key": f"{job_id}:cluster:{cluster_index}:cluster:{result_index}",
                         "source_job_id": str(job_id),
                         "source_job_label": source_job_label,
-                        "source_structure_id": "" if source_structure_id is None else str(source_structure_id),
+                        "source_structure_id": ""
+                        if source_structure_id is None
+                        else str(source_structure_id),
                         "cluster_index": cluster_index,
                         "cluster_size": cluster_size,
                         "selection_kind": "cluster",
@@ -8448,7 +8773,9 @@ class MainWindow(QMainWindow):
         self._remove_muon_relaxation_labels_from_ui_state(labels)
         site_status_changed = self._restore_removed_muon_relaxation_sites(removed_site_ids)
         self._refresh_muon_relaxation_rows()
-        if should_autosave or self._site_status_revert_touches_project_files(removed_site_ids, site_status_changed):
+        if should_autosave or self._site_status_revert_touches_project_files(
+            removed_site_ids, site_status_changed
+        ):
             self._persist_document_ui_state(
                 failure_message="Muon relaxation rows were removed, but autosave failed."
             )
@@ -8502,7 +8829,11 @@ class MainWindow(QMainWindow):
         changed = False
         for site_id in site_ids:
             site = self._document.sites.get(site_id)
-            if site is None or site.status != "staged" or self._site_has_muon_relaxation_rows(site_id):
+            if (
+                site is None
+                or site.status != "staged"
+                or self._site_has_muon_relaxation_rows(site_id)
+            ):
                 continue
             site.status = "generated"
             changed = True
@@ -8558,9 +8889,7 @@ class MainWindow(QMainWindow):
             label = str(row.get("label", "")).strip()
             charge_state = str(row.get("charge_state", "")).strip()
             keys = (
-                [f"{muon_charge_state_prefix(charge_state)}:{label}"]
-                if charge_state
-                else [label]
+                [f"{muon_charge_state_prefix(charge_state)}:{label}"] if charge_state else [label]
             )
             if any(key_matches(key) for key in keys):
                 continue
@@ -8645,12 +8974,16 @@ class MainWindow(QMainWindow):
         plan = []
         for job in jobs:
             job_dir = self._job_output_directory(job)
-            archive_root = self._relaxation_archive_root_for_job(job, job_dir) if job_dir is not None else None
+            archive_root = (
+                self._relaxation_archive_root_for_job(job, job_dir) if job_dir is not None else None
+            )
             plan.append(self._job_file_cleanup.plan_item([job], archive_root=archive_root))
         return self._clean_up_removed_jobs(
             plan,
             title="Remove relaxation job with files",
-            describe=lambda item: f"Relaxation job '{item.label}' has associated files.\n\n{item.directory}",
+            describe=lambda item: (
+                f"Relaxation job '{item.label}' has associated files.\n\n{item.directory}"
+            ),
             keep_text="or Cancel to keep the relaxation row.",
         )
 
@@ -8693,15 +9026,21 @@ class MainWindow(QMainWindow):
 
         for definition in self._document.calculations.values():
             mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict) or str(job.id) not in {str(value) for value in mapping.values()}:
+            if not isinstance(mapping, dict) or str(job.id) not in {
+                str(value) for value in mapping.values()
+            }:
                 continue
             base = definition_output_directory(self._document, definition)
             if base is None:
                 continue
-            if definition.workflow_stage == WorkflowStage.MUON_RELAXATION and job_dir.parent.name in {
-                "positivemuon",
-                "muonium",
-            }:
+            if (
+                definition.workflow_stage == WorkflowStage.MUON_RELAXATION
+                and job_dir.parent.name
+                in {
+                    "positivemuon",
+                    "muonium",
+                }
+            ):
                 return job_dir.parent
             return base
         return job_dir.parent
@@ -8710,7 +9049,9 @@ class MainWindow(QMainWindow):
         definition = self._pristine_relaxation_controller.active_definition()
         if definition is None:
             return
-        config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
         if config is None:
             return
         state = serialize_pristine_relaxation_config(config)
@@ -8732,7 +9073,9 @@ class MainWindow(QMainWindow):
         state = serialize_muon_relaxation_config(config)
         for row in state.get("rows", []):
             if isinstance(row, dict) and "fractional_position" not in row:
-                row["fractional_position"] = list(row.get("initial_fractional_position", (0.0, 0.0, 0.0)))
+                row["fractional_position"] = list(
+                    row.get("initial_fractional_position", (0.0, 0.0, 0.0))
+                )
         self._muon_relaxation_view.set_form_state(state)
         if self._document is not None:
             self._document.ui_state["muon_relaxation_form"] = state
@@ -8820,8 +9163,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Nothing to import",
-                "No muon relaxations were found in that folder.\n\n"
-                + "\n".join(scan.warnings),
+                "No muon relaxations were found in that folder.\n\n" + "\n".join(scan.warnings),
             )
             return
 
@@ -8839,9 +9181,7 @@ class MainWindow(QMainWindow):
             self._import_legacy_action.setEnabled(True)
         self.statusBar().clearMessage()
 
-    def _commit_legacy_import(
-        self, scan: LegacyFolderScan, runs: list, host: Structure
-    ) -> None:
+    def _commit_legacy_import(self, scan: LegacyFolderScan, runs: list, host: Structure) -> None:
         """Build entities and files, attach the rows, and save."""
 
         document = self._document
@@ -8877,8 +9217,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Import incomplete",
-                "The relaxations were imported but could not be attached to the "
-                "relaxations table.",
+                "The relaxations were imported but could not be attached to the relaxations table.",
             )
             return
 
@@ -8928,9 +9267,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        labels = [
-            f"{label} ({count} relaxation(s))" for label, count, _batch_id in batches
-        ]
+        labels = [f"{label} ({count} relaxation(s))" for label, count, _batch_id in batches]
         choice, accepted = QInputDialog.getItem(
             self, "Remove Imported Relaxations", "Import batch", labels, 0, False
         )
@@ -8977,9 +9314,7 @@ class MainWindow(QMainWindow):
             self._muon_relaxation_view.set_form_state(
                 self._muon_relaxation_form_state_without(plan.targets)
             )
-            document.ui_state["muon_relaxation_form"] = (
-                self._muon_relaxation_view.collect_state()
-            )
+            document.ui_state["muon_relaxation_form"] = self._muon_relaxation_view.collect_state()
 
         # Appended once the document edits are done, because append_provenance
         # writes straight to provenance.jsonl: recording the removal before the
@@ -9005,9 +9340,7 @@ class MainWindow(QMainWindow):
         state = self._muon_relaxation_view.collect_state()
         rows = state.get("rows", []) if isinstance(state, dict) else []
         removed = {str(ref.site_id) for ref in targets}
-        return {
-            "rows": [row for row in rows if str(row.get("site_id", "")) not in removed]
-        }
+        return {"rows": [row for row in rows if str(row.get("site_id", "")) not in removed]}
 
     def _imported_relaxation_batches(self) -> list[tuple[str, int, UUID]]:
         """Return ``(label, count, batch_id)`` for every import batch present."""
@@ -9184,7 +9517,9 @@ class MainWindow(QMainWindow):
             return None, None
 
         self._pristine_relaxation_controller.sync_mappings(definition)
-        config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
         if config is None:
             return None, None
         labels = {row.label for row in config.rows}
@@ -9238,11 +9573,15 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return None, None
         for definition in self._muon_relaxation_controller.definitions():
-            config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+            config = deserialize_muon_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
             if config is None:
                 continue
             for row in config.rows:
-                candidate = self._muon_relaxation_controller.job_for_label(definition, row.label, row.charge_state)
+                candidate = self._muon_relaxation_controller.job_for_label(
+                    definition, row.label, row.charge_state
+                )
                 if candidate is not None and candidate.id == job.id:
                     return definition, row
         return None, None
@@ -9262,7 +9601,9 @@ class MainWindow(QMainWindow):
     def _set_relaxation_analysis_workspaces(self, workspaces: list[dict[str, object]]) -> None:
         if self._document is None:
             return
-        self._document.ui_state[_RELAXATION_ANALYSIS_STATE_KEY] = [dict(workspace) for workspace in workspaces]
+        self._document.ui_state[_RELAXATION_ANALYSIS_STATE_KEY] = [
+            dict(workspace) for workspace in workspaces
+        ]
 
     def _completed_muon_relaxation_sources(self) -> list[CompletedRelaxationAnalysisSource]:
         if self._document is None:
@@ -9275,7 +9616,9 @@ class MainWindow(QMainWindow):
         for definition in controller.definitions():
             if host.id not in definition.input_structure_ids:
                 continue
-            config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+            config = deserialize_muon_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
             if config is None:
                 continue
             rows.extend(
@@ -9306,7 +9649,9 @@ class MainWindow(QMainWindow):
         definition = self._pristine_relaxation_controller.active_definition()
         fix_all_cell_by_label: dict[str, bool] = {}
         if definition is not None:
-            config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+            config = deserialize_pristine_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
             if config is not None:
                 fix_all_cell_by_label = {row.label: bool(row.fix_all_cell) for row in config.rows}
 
@@ -9487,7 +9832,9 @@ class MainWindow(QMainWindow):
             output_directory=output_root,
         )
         self._pristine_relaxation_controller.sync_mappings(definition)
-        self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+        self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(
+            definition.id
+        )
 
         self._pristine_relaxation_controller.refresh_view()
         self._refresh_journal_view()
@@ -9542,7 +9889,9 @@ class MainWindow(QMainWindow):
         definition = controller.active_definition()
         if definition is None:
             return []
-        config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
         if config is None:
             return []
         return completed_pristine_relaxation_jobs(
@@ -9574,13 +9923,7 @@ class MainWindow(QMainWindow):
         if len(selected_jobs) < 2:
             return []
 
-        names = sorted(
-            {
-                name
-                for job in selected_jobs
-                for name in job.parameter_values
-            }
-        )
+        names = sorted({name for job in selected_jobs for name in job.parameter_values})
         rows: list[dict[str, object]] = []
         for name in names:
             displays = [
@@ -9750,7 +10093,9 @@ class MainWindow(QMainWindow):
         return self._clean_up_removed_jobs(
             plan,
             title="Remove energy-barrier path with files",
-            describe=lambda item: f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}",
+            describe=lambda item: (
+                f"Energy-barrier job '{item.label}' has associated files.\n\n{item.directory}"
+            ),
             keep_text="or Cancel to keep the generated path.",
         )
 
@@ -9773,7 +10118,10 @@ class MainWindow(QMainWindow):
             controller.apply_configuration(
                 request.keys,
                 result,
-                {"pseudopotential_family": dialog.pseudopotential_family(), "num_farms": dialog.num_farms()},
+                {
+                    "pseudopotential_family": dialog.pseudopotential_family(),
+                    "num_farms": dialog.num_farms(),
+                },
             )
 
     def _on_quantum_corrections_source_label_renamed(self, key: str, label: str) -> None:
@@ -9851,10 +10199,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Phonon analysis unavailable", str(exc))
             return
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Phonon analysis unavailable", f"Could not open the analysis window: {exc}")
+            QMessageBox.warning(
+                self, "Phonon analysis unavailable", f"Could not open the analysis window: {exc}"
+            )
             return
 
-        dialog.destroyed.connect(lambda *_args, result_id=result.id: self._quantum_analysis_dialogs.pop(result_id, None))
+        dialog.destroyed.connect(
+            lambda *_args, result_id=result.id: self._quantum_analysis_dialogs.pop(result_id, None)
+        )
         self._quantum_analysis_dialogs[result.id] = dialog
         dialog.show()
         dialog.raise_()
@@ -9983,7 +10335,9 @@ class MainWindow(QMainWindow):
 
         definition = self._uep_controller.active_definition()
         if definition is None:
-            QMessageBox.information(self, "No UEP workflow", "Configure and complete a UEP source job first.")
+            QMessageBox.information(
+                self, "No UEP workflow", "Configure and complete a UEP source job first."
+            )
             return
 
         job = self._uep_controller.job_for_key(definition, row_label)
@@ -9997,7 +10351,9 @@ class MainWindow(QMainWindow):
 
         output_dir = self._job_output_directory(job)
         if output_dir is None:
-            QMessageBox.warning(self, "UEP files unavailable", "Could not locate the UEP job output directory.")
+            QMessageBox.warning(
+                self, "UEP files unavailable", "Could not locate the UEP job output directory."
+            )
             return
 
         seed_name = self._job_seed_name(job)
@@ -10012,9 +10368,13 @@ class MainWindow(QMainWindow):
             )
             return
 
-        source_structure_id = definition.input_structure_ids[0] if definition.input_structure_ids else None
+        source_structure_id = (
+            definition.input_structure_ids[0] if definition.input_structure_ids else None
+        )
         if source_structure_id is None:
-            QMessageBox.warning(self, "UEP source unavailable", "The source structure reference is missing.")
+            QMessageBox.warning(
+                self, "UEP source unavailable", "The source structure reference is missing."
+            )
             return
 
         existing_dialog = self._uep_analysis_dialogs.get(job.id)
@@ -10054,12 +10414,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "UEP analysis unavailable", str(exc))
             return
 
-        dialog.state_changed.connect(lambda state, job_id=job.id: self._on_uep_analysis_state_changed(job_id, state))
+        dialog.state_changed.connect(
+            lambda state, job_id=job.id: self._on_uep_analysis_state_changed(job_id, state)
+        )
         dialog.potential_grid_ready.connect(
             lambda payload, job_id=job.id: self._on_uep_potential_grid_ready(job_id, payload)
         )
         dialog.setModal(False)
-        dialog.destroyed.connect(lambda *_args, job_id=job.id: self._drop_uep_analysis_dialog(job_id))
+        dialog.destroyed.connect(
+            lambda *_args, job_id=job.id: self._drop_uep_analysis_dialog(job_id)
+        )
         self._uep_analysis_dialogs[job.id] = dialog
         dialog.show()
         dialog.raise_()
@@ -10082,7 +10446,10 @@ class MainWindow(QMainWindow):
         migrated = {key: value for key, value in state.items() if key != "potential_grid"}
         states = self._document.ui_state.get(self._UEP_ANALYSIS_STATES_KEY, {})
         if isinstance(states, dict) and str(job_id) in states:
-            self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = {**states, str(job_id): migrated}
+            self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = {
+                **states,
+                str(job_id): migrated,
+            }
         return migrated
 
     def _on_uep_potential_grid_ready(self, job_id: UUID, payload: object) -> None:
@@ -10112,10 +10479,9 @@ class MainWindow(QMainWindow):
     def _uep_analysis_state_affects_muon_generation(previous: object, updated: dict) -> bool:
         if not isinstance(previous, dict):
             previous = {}
-        return (
-            previous.get("batch_results") != updated.get("batch_results")
-            or previous.get("batch_summary_data") != updated.get("batch_summary_data")
-        )
+        return previous.get("batch_results") != updated.get("batch_results") or previous.get(
+            "batch_summary_data"
+        ) != updated.get("batch_summary_data")
 
     @staticmethod
     def _raise_existing_uep_analysis_dialog(dialog: object) -> None:
@@ -10174,7 +10540,9 @@ class MainWindow(QMainWindow):
         )
         self._muon_generation_view.set_host_structure(host)
         candidates = [
-            site for site in self._document.sites.values() if site.status in {"generated", "candidate", "staged"}
+            site
+            for site in self._document.sites.values()
+            if site.status in {"generated", "candidate", "staged"}
         ]
         candidates.sort(key=lambda item: self._natural_label_sort_key(item.label))
         rows = [
@@ -10185,7 +10553,9 @@ class MainWindow(QMainWindow):
                 "status": site.status,
                 "fractional": site.initial_fractional_position,
                 "cartesian": site.initial_cartesian_position,
-                "source_structure_id": str(site.source_structure_id) if site.source_structure_id else "",
+                "source_structure_id": str(site.source_structure_id)
+                if site.source_structure_id
+                else "",
             }
             for site in candidates
         ]
@@ -10217,7 +10587,9 @@ class MainWindow(QMainWindow):
 
         host_id = self._document.project.host_structure_id
         host: Structure | None = self._document.structures.get(host_id) if host_id else None
-        self._host_structure_view.set_project_supercell_matrix(self._document.project.supercell_matrix)
+        self._host_structure_view.set_project_supercell_matrix(
+            self._document.project.supercell_matrix
+        )
         promotable = self._project_service.list_promotable_host_structures(self._document)
         self._host_structure_view.set_promotable_hosts(promotable, host_id)
         self._host_structure_view.set_structure(host)
@@ -10262,6 +10634,7 @@ class MainWindow(QMainWindow):
         False if the user cancelled.
         """
         from mufinder.services.project_service import SiteHostMismatch
+
         if not isinstance(mismatch, SiteHostMismatch):
             return False
 
@@ -10285,7 +10658,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
-            if result == QMessageBox.StandardButton.Yes and source_id is not None and self._document is not None:
+            if (
+                result == QMessageBox.StandardButton.Yes
+                and source_id is not None
+                and self._document is not None
+            ):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
@@ -10311,6 +10688,7 @@ class MainWindow(QMainWindow):
     def _handle_structure_host_mismatch(self, mismatch: object) -> bool:
         """Show a dialog when structures resolve to a different host via their provenance chain."""
         from mufinder.services.project_service import StructureHostMismatch
+
         if not isinstance(mismatch, StructureHostMismatch):
             return False
 
@@ -10333,7 +10711,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
-            if result == QMessageBox.StandardButton.Yes and source_id is not None and self._document is not None:
+            if (
+                result == QMessageBox.StandardButton.Yes
+                and source_id is not None
+                and self._document is not None
+            ):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
@@ -10383,7 +10765,11 @@ class MainWindow(QMainWindow):
 
         raw_propagation = payload.get("propagation_vector", [0.0, 0.0, 0.0])
         if isinstance(raw_propagation, list) and len(raw_propagation) == 3:
-            propagation = [float(raw_propagation[0]), float(raw_propagation[1]), float(raw_propagation[2])]
+            propagation = [
+                float(raw_propagation[0]),
+                float(raw_propagation[1]),
+                float(raw_propagation[2]),
+            ]
             host.properties["propagation_vector"] = propagation
         else:
             propagation = [0.0, 0.0, 0.0]
@@ -10403,12 +10789,13 @@ class MainWindow(QMainWindow):
                 self._document.project.magnetic_structure = None
 
         raw_matrix = payload.get("supercell_matrix")
-        if isinstance(raw_matrix, list) and len(raw_matrix) == 3 and all(
-            isinstance(row, list) and len(row) == 3 for row in raw_matrix
+        if (
+            isinstance(raw_matrix, list)
+            and len(raw_matrix) == 3
+            and all(isinstance(row, list) and len(row) == 3 for row in raw_matrix)
         ):
             self._document.project.supercell_matrix = [
-                [int(row[0]), int(row[1]), int(row[2])]
-                for row in raw_matrix
+                [int(row[0]), int(row[1]), int(row[2])] for row in raw_matrix
             ]
 
         self._refresh_magnetic_field_view()
@@ -10435,7 +10822,9 @@ class MainWindow(QMainWindow):
         normalized = str(title).strip()
         return normalized or "Magnetic Field Workspace"
 
-    def _replace_magnetic_field_workspace(self, workspace_id: str, updates: Mapping[str, object]) -> bool:
+    def _replace_magnetic_field_workspace(
+        self, workspace_id: str, updates: Mapping[str, object]
+    ) -> bool:
         if self._document is None:
             return False
         workspaces = list(self._magnetic_field_workspaces_state())
@@ -10453,21 +10842,27 @@ class MainWindow(QMainWindow):
         self._document.ui_state[self._MAGNETIC_FIELD_WORKSPACES_KEY] = workspaces
         return True
 
-    def _on_magnetic_field_workspace_structure_changed(self, workspace_id: str, payload: object) -> None:
+    def _on_magnetic_field_workspace_structure_changed(
+        self, workspace_id: str, payload: object
+    ) -> None:
         if self._document is None or not isinstance(payload, dict):
             return
         self._replace_magnetic_field_workspace(workspace_id, {"magnetic_structure": payload})
         self._refresh_workflow_stage_icons()
 
-    def _on_magnetic_field_workspace_form_state_changed(self, workspace_id: str, state: dict) -> None:
+    def _on_magnetic_field_workspace_form_state_changed(
+        self, workspace_id: str, state: dict
+    ) -> None:
         if self._document is None or self._shutting_down:
             return
         if not any(
-            str(workspace.get("id", "")).strip() == workspace_id for workspace in self._magnetic_field_workspaces_state()
+            str(workspace.get("id", "")).strip() == workspace_id
+            for workspace in self._magnetic_field_workspaces_state()
         ):
             return
         self._replace_magnetic_field_workspace(
-            workspace_id, {"form": store_magnetic_field_results(self._document, workspace_id, state)}
+            workspace_id,
+            {"form": store_magnetic_field_results(self._document, workspace_id, state)},
         )
 
     def _on_magnetic_field_workspace_title_changed(self, workspace_id: str, title: str) -> None:
@@ -10488,7 +10883,9 @@ class MainWindow(QMainWindow):
     def _on_magnetic_field_pin_requested(self, snapshot: dict) -> None:
         if self._document is None or self._shutting_down:
             return
-        default_title = self._normalize_magnetic_field_workspace_title(snapshot.get("title", "Magnetic Field Workspace"))
+        default_title = self._normalize_magnetic_field_workspace_title(
+            snapshot.get("title", "Magnetic Field Workspace")
+        )
         title, accepted = QInputDialog.getText(
             self,
             "Save Magnetic Field Workspace",
@@ -10505,7 +10902,9 @@ class MainWindow(QMainWindow):
         workspace = {
             "id": workspace_id,
             "title": normalized,
-            "magnetic_structure": magnetic_structure if isinstance(magnetic_structure, dict) else None,
+            "magnetic_structure": magnetic_structure
+            if isinstance(magnetic_structure, dict)
+            else None,
             "form": store_magnetic_field_results(
                 self._document, workspace_id, form_state if isinstance(form_state, dict) else {}
             ),
@@ -10526,12 +10925,18 @@ class MainWindow(QMainWindow):
             return
         workspaces = list(self._magnetic_field_workspaces_state())
         target = next(
-            (workspace for workspace in workspaces if str(workspace.get("id", "")).strip() == workspace_id),
+            (
+                workspace
+                for workspace in workspaces
+                if str(workspace.get("id", "")).strip() == workspace_id
+            ),
             None,
         )
         if target is None:
             return
-        title = self._normalize_magnetic_field_workspace_title(target.get("title", "Magnetic Field Workspace"))
+        title = self._normalize_magnetic_field_workspace_title(
+            target.get("title", "Magnetic Field Workspace")
+        )
         if confirm:
             answer = QMessageBox.question(
                 self,

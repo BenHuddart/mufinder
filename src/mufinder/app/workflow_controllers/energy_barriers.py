@@ -198,14 +198,10 @@ class PathPreview:
 class EnergyBarriersController(WorkflowJobController):
     """Controller for the energy-barriers (NEB) diffusion-path workflow."""
 
-    calc_types = frozenset(
-        {NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE}
-    )
+    calc_types = frozenset({NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE})
     stage = WorkflowStage.ENERGY_BARRIERS
     definition_calc_type = NUDGED_ELASTIC_BAND_SET_CALC_TYPE
-    no_ready_message = (
-        "Only NEB paths that have not yet been submitted can be submitted."
-    )
+    no_ready_message = "Only NEB paths that have not yet been submitted can be submitted."
 
     def __init__(
         self,
@@ -252,7 +248,9 @@ class EnergyBarriersController(WorkflowJobController):
 
         return downstream_site_scope(self._context.document(), ENERGY_BARRIERS_SCOPE)
 
-    def endpoint_rows(self, scope: DownstreamSiteScope | None = None) -> list[EnergyBarrierEndpointRow]:
+    def endpoint_rows(
+        self, scope: DownstreamSiteScope | None = None
+    ) -> list[EnergyBarrierEndpointRow]:
         """Return the relaxed sites offered as initial and final endpoints.
 
         By default these are the sites pinned to the Muon Sites summary, labelled
@@ -262,7 +260,9 @@ class EnergyBarriersController(WorkflowJobController):
 
         candidates = eligible_quantum_source_candidates(self._context.document())
         if scope is None:
-            scope = downstream_site_scope(self._context.document(), ENERGY_BARRIERS_SCOPE, candidates)
+            scope = downstream_site_scope(
+                self._context.document(), ENERGY_BARRIERS_SCOPE, candidates
+            )
         relative = quantum_source_relative_energies(candidates)
         return [
             EnergyBarrierEndpointRow(
@@ -302,7 +302,9 @@ class EnergyBarriersController(WorkflowJobController):
         document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY] = state
         self.refresh_view()
 
-    def generate_paths(self, reactant_key: str, product_key: str, max_path_length_text: str = "") -> None:
+    def generate_paths(
+        self, reactant_key: str, product_key: str, max_path_length_text: str = ""
+    ) -> None:
         """Generate the distinct paths between two relaxed sites into the form state.
 
         The endpoints must both be chosen and share a charge state, and a
@@ -367,7 +369,9 @@ class EnergyBarriersController(WorkflowJobController):
         reason when the pristine supercell cannot be built.
         """
 
-        candidate = next((candidate for candidate in self.candidates() if candidate.key == key), None)
+        candidate = next(
+            (candidate for candidate in self.candidates() if candidate.key == key), None
+        )
         if candidate is None:
             return None
         return PathPreview(
@@ -420,7 +424,10 @@ class EnergyBarriersController(WorkflowJobController):
                 )
                 for image in transition_state.images
             ],
-            structures=[self._image_structure(candidate.job.label, image) for image in transition_state.images],
+            structures=[
+                self._image_structure(candidate.job.label, image)
+                for image in transition_state.images
+            ],
         )
 
     def _image_structure(self, job_label: str, image: TransitionStateImage) -> Structure:
@@ -434,9 +441,12 @@ class EnergyBarriersController(WorkflowJobController):
             lattice_vectors=lattice,
             species=list(image.species),
             fractional_positions=[
-                list(lattice_cart_to_frac(position, lattice)) for position in image.cartesian_positions
+                list(lattice_cart_to_frac(position, lattice))
+                for position in image.cartesian_positions
             ],
-            parent_structure_id=document.project.host_structure_id if document is not None else None,
+            parent_structure_id=document.project.host_structure_id
+            if document is not None
+            else None,
             properties={
                 "pbc": [True, True, True],
                 "source_image_label": image.label,
@@ -557,7 +567,9 @@ class EnergyBarriersController(WorkflowJobController):
             for spec in specs
         ]
 
-    def _project_parameter_values(self, *, target_lattice: list[list[float]] | None = None) -> dict[str, object]:
+    def _project_parameter_values(
+        self, *, target_lattice: list[list[float]] | None = None
+    ) -> dict[str, object]:
         document = self._context.document()
         if document is None:
             return {}
@@ -657,7 +669,9 @@ class EnergyBarriersController(WorkflowJobController):
             values, row_advanced_names, extras = self.row_configuration(
                 definition,
                 candidate.key,
-                target_lattice=reactant_structure.lattice_vectors if reactant_structure is not None else None,
+                target_lattice=reactant_structure.lattice_vectors
+                if reactant_structure is not None
+                else None,
                 source_candidate=source_candidates.get(candidate.key),
                 source_defaults_cache=source_defaults_cache,
             )
@@ -665,7 +679,9 @@ class EnergyBarriersController(WorkflowJobController):
             advanced_names.update(row_advanced_names)
             num_farms_values.append(num_farms_from_extras(extras))
         states = self.build_states()
-        read_only = any(not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates)
+        read_only = any(
+            not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates
+        )
         first = candidates[0]
         return SourceConfigureRequest(
             keys=tuple(candidate.key for candidate in candidates),
@@ -733,7 +749,9 @@ class EnergyBarriersController(WorkflowJobController):
             return True
         candidates_by_key = {candidate.key: candidate for candidate in self.neb_candidates()}
         selected = [
-            candidate for key in keys if (candidate := candidates_by_key.get(str(key).strip())) is not None
+            candidate
+            for key in keys
+            if (candidate := candidates_by_key.get(str(key).strip())) is not None
         ]
         return confirm_active_host(
             self._context.project_service,
@@ -769,7 +787,9 @@ class EnergyBarriersController(WorkflowJobController):
 
         return self.job_for_key(definition, key, calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE)
 
-    def jobs_for_removed_sources(self, keys: Collection[str]) -> list[tuple[CalculationDefinition, Job]]:
+    def jobs_for_removed_sources(
+        self, keys: Collection[str]
+    ) -> list[tuple[CalculationDefinition, Job]]:
         """Return ``(definition, job)`` for each job a removed source ``keys`` name is bound to.
 
         Walks every one of :meth:`path_definitions`, so paths an older
@@ -839,30 +859,14 @@ class EnergyBarriersController(WorkflowJobController):
             candidate = candidates_by_key.get(key)
             if candidate is None:
                 continue
-            reactant_id = uuid_from_source(
-                candidate.source, "reactant_structure_id"
-            )
-            product_id = uuid_from_source(
-                candidate.source, "product_structure_id"
-            )
-            reactant_site_id = uuid_from_source(
-                candidate.source, "reactant_site_id"
-            )
-            product_site_id = uuid_from_source(
-                candidate.source, "product_site_id"
-            )
-            reactant_run_id = uuid_from_source(
-                candidate.source, "reactant_run_id"
-            )
-            product_run_id = uuid_from_source(
-                candidate.source, "product_run_id"
-            )
-            reactant_job_id = uuid_from_source(
-                candidate.source, "reactant_job_id"
-            )
-            product_job_id = uuid_from_source(
-                candidate.source, "product_job_id"
-            )
+            reactant_id = uuid_from_source(candidate.source, "reactant_structure_id")
+            product_id = uuid_from_source(candidate.source, "product_structure_id")
+            reactant_site_id = uuid_from_source(candidate.source, "reactant_site_id")
+            product_site_id = uuid_from_source(candidate.source, "product_site_id")
+            reactant_run_id = uuid_from_source(candidate.source, "reactant_run_id")
+            product_run_id = uuid_from_source(candidate.source, "product_run_id")
+            reactant_job_id = uuid_from_source(candidate.source, "reactant_job_id")
+            product_job_id = uuid_from_source(candidate.source, "product_job_id")
             reactant_structure = (
                 document.structures.get(reactant_id) if reactant_id is not None else None
             )
@@ -884,15 +888,11 @@ class EnergyBarriersController(WorkflowJobController):
                     ),
                 )
                 reactant_spec = structure_to_spec(prepared.reactant)
-                product_block = _fractional_position_block(
-                    prepared.product
-                )
+                product_block = _fractional_position_block(prepared.product)
                 intermediate_structure = idpp_intermediate_structure(
                     prepared.reactant, prepared.product
                 )
-                intermediate_block = _fractional_position_block(
-                    intermediate_structure
-                )
+                intermediate_block = _fractional_position_block(intermediate_structure)
             except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
             values, _advanced_names, extras = self.row_configuration(
@@ -909,9 +909,7 @@ class EnergyBarriersController(WorkflowJobController):
             # disagree with both. The configure dialog blocks the row, so this
             # only bites on configurations persisted by other paths.
             values = {
-                name: value
-                for name, value in values.items()
-                if name not in {"task", "num_farms"}
+                name: value for name, value in values.items() if name not in {"task", "num_farms"}
             }
             try:
                 overrides = build_workflow_settings_template(values)
@@ -937,9 +935,7 @@ class EnergyBarriersController(WorkflowJobController):
                             if value is not None
                         ),
                         source_relaxation_job_ids=(reactant_job_id, product_job_id),
-                        path_length_ang=float_from_source(
-                            candidate.source, "path_length_ang"
-                        ),
+                        path_length_ang=float_from_source(candidate.source, "path_length_ang"),
                         provenance={"source_key": key},
                     ),
                     num_farms=num_farms_from_extras(extras),
@@ -963,9 +959,7 @@ class EnergyBarriersController(WorkflowJobController):
             mapping = {}
             definition.parameters["job_ids_by_label"] = mapping
 
-        spec_by_key = {
-            str(spec.provenance.get("source_key", "")): spec for spec in specs
-        }
+        spec_by_key = {str(spec.provenance.get("source_key", "")): spec for spec in specs}
         created: list[Job] = []
         for key in str_keys:
             spec = spec_by_key.get(key)
@@ -991,9 +985,7 @@ class EnergyBarriersController(WorkflowJobController):
         if jobs:
             self.refresh_view()
             self._context.persist_ui_state(
-                failure_message=(
-                    "Energy Barriers NEB jobs were generated, but autosave failed."
-                )
+                failure_message=("Energy Barriers NEB jobs were generated, but autosave failed.")
             )
         return jobs
 
@@ -1122,13 +1114,11 @@ class EnergyBarriersController(WorkflowJobController):
             source_rows.append(
                 EnergyBarrierSourceRow(
                     key=candidate.key,
-                    reactant=candidate.reactant.site.label
-                    or candidate.reactant.job.label,
+                    reactant=candidate.reactant.site.label or candidate.reactant.job.label,
                     product=candidate.product.site.label or candidate.product.job.label,
                     charge_state=charge_state_label_for_job(candidate.reactant.job),
                     path_length=f"{candidate.path.length_ang:.4g} Å",
-                    status=getattr(neb_states.get(candidate.key), "status", "ready")
-                    or "ready",
+                    status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
                     farms=_farm_count_label(num_farms_from_extras(extras)),
                     configured=workflow_row_configuration_exists(neb_definition, candidate.key),
                 )
@@ -1143,13 +1133,9 @@ class EnergyBarriersController(WorkflowJobController):
             forward, reverse, delta = _neb_barrier_summaries(data)
             source = neb_sources_by_job_id.get(candidate.job.id)
             path_length_ang = (
-                float_from_source(source, "path_length_ang")
-                if source is not None
-                else None
+                float_from_source(source, "path_length_ang") if source is not None else None
             )
-            raw_charge = (
-                str(source.get("charge_state", "")).strip() if source is not None else ""
-            )
+            raw_charge = str(source.get("charge_state", "")).strip() if source is not None else ""
             neb_result_rows.append(
                 EnergyBarrierNebResultRow(
                     key=candidate.key,
@@ -1167,7 +1153,9 @@ class EnergyBarriersController(WorkflowJobController):
         view.set_neb_results(neb_result_rows)
 
 
-def _source_ids(candidates: Sequence[EnergyBarrierNebCandidate], fields: Sequence[str]) -> list[UUID]:
+def _source_ids(
+    candidates: Sequence[EnergyBarrierNebCandidate], fields: Sequence[str]
+) -> list[UUID]:
     """Return the ids ``fields`` hold across ``candidates``' sources, once each, in order."""
 
     return list(
@@ -1190,7 +1178,9 @@ def _fractional_position_block(structure: Structure) -> PositionBlock:
 
     rows = [
         AtomicPosition(str(species), tuple(float(value) for value in fractional))
-        for species, fractional in zip(structure.species, structure.fractional_positions, strict=True)
+        for species, fractional in zip(
+            structure.species, structure.fractional_positions, strict=True
+        )
     ]
     return PositionBlock(positions=tuple(rows), unit="frac")
 

@@ -70,6 +70,7 @@ def _make_connection_class(connect_behaviour):
 
     return _Connection
 
+
 def test_connection_check_success(qapp) -> None:
     parent = QWidget()
 
@@ -150,8 +151,7 @@ def test_connection_check_retries_after_trusting_host_key(qapp) -> None:
     assert attempts["count"] == 2
     assert prompts == ["target"]
     assert (
-        settings.value("trusted_host_keys/alpha/alpha.example/algorithm", "", str)
-        == "ssh-ed25519"
+        settings.value("trusted_host_keys/alpha/alpha.example/algorithm", "", str) == "ssh-ed25519"
     )
     parent.close()
 

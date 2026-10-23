@@ -40,7 +40,9 @@ def test_placeholders_are_filled_and_the_shell_keeps_its_own_dollars(template_di
     assert rendered == "echo 'a b' \"$HOME\" ${MUFINDER_X:-4} $((1 + 2)) $TIMEFORMAT x"
 
 
-def test_documentation_lines_and_empty_standalone_placeholders_are_removed(template_dir: Path) -> None:
+def test_documentation_lines_and_empty_standalone_placeholders_are_removed(
+    template_dir: Path,
+) -> None:
     (template_dir / "t.sh").write_text(
         "## About this template.\nfirst\n  ## Indented note.\n${tpl_optional}\n  ${tpl_indented}\n"
         "inline ${tpl_optional}end\n${tpl_block}\nlast\n",

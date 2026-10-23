@@ -148,7 +148,9 @@ def test_normalize_gui_value_coerces_each_value_type_and_builds_assignments() ->
     physical_spec = get_keyword_spec("param", "cut_off_energy")
     assert physical_spec is not None
     assert normalize_gui_value(physical_spec, 450.0) == ValueWithUnit(450.0, "eV")
-    assert normalize_gui_value(physical_spec, ValueWithUnit(400.0, "eV")) == ValueWithUnit(400.0, "eV")
+    assert normalize_gui_value(physical_spec, ValueWithUnit(400.0, "eV")) == ValueWithUnit(
+        400.0, "eV"
+    )
 
     triplet_spec = get_keyword_spec("cell", "kpoint_mp_grid")
     assert triplet_spec is not None
@@ -166,7 +168,12 @@ def test_normalize_gui_value_coerces_each_value_type_and_builds_assignments() ->
     number_spec = get_keyword_spec("param", "spin")
     bool_spec = get_keyword_spec("param", "spin_polarized")
     enum_spec = get_keyword_spec("param", "basis_precision")
-    assert int_spec is not None and number_spec is not None and bool_spec is not None and enum_spec is not None
+    assert (
+        int_spec is not None
+        and number_spec is not None
+        and bool_spec is not None
+        and enum_spec is not None
+    )
     assert normalize_gui_value(int_spec, "12") == 12
     assert normalize_gui_value(number_spec, "1.5") == pytest.approx(1.5)
     assert normalize_gui_value(bool_spec, 1) is True
@@ -174,7 +181,9 @@ def test_normalize_gui_value_coerces_each_value_type_and_builds_assignments() ->
 
     flag_spec = get_keyword_spec("cell", "symmetry_generate")
     assert flag_spec is not None
-    assert make_keyword_assignment(flag_spec, True) == KeywordAssignment(name="symmetry_generate", value=None)
+    assert make_keyword_assignment(flag_spec, True) == KeywordAssignment(
+        name="symmetry_generate", value=None
+    )
     assert make_keyword_assignment(flag_spec, False) is None
     with pytest.raises(ValueError, match="block keyword"):
         make_keyword_assignment(block_spec, "bad")
@@ -202,8 +211,7 @@ def test_gui_values_report_activity_task_and_conflict_errors_and_defaults() -> N
     assert gui_value_is_active(enum_spec, "") is False
 
     specs_by_name = {
-        spec.name: spec
-        for spec in (flag_spec, bool_spec, enum_spec, requires_spec, conflict_spec)
+        spec.name: spec for spec in (flag_spec, bool_spec, enum_spec, requires_spec, conflict_spec)
     }
     errors = validate_gui_values(
         {

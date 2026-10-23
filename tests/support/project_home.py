@@ -15,7 +15,14 @@ from mufinder.domain.charge_states import (
     muon_relaxation_calc_type,
 )
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    Job,
+    MuonSite,
+    Result,
+    Structure,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 from tests.support.structures import host_structure
@@ -114,7 +121,9 @@ def muon_project(tmp_path: Path) -> MuonProject:
     result.calculation_run_id = run.id
     document.runs[run.id] = run
     document.results[result.id] = result
-    relaxed_site.record_relaxation(run.id, total_energy_eV=-1000.0, fractional_position=[0.5, 0.25, 0.25])
+    relaxed_site.record_relaxation(
+        run.id, total_energy_eV=-1000.0, fractional_position=[0.5, 0.25, 0.25]
+    )
 
     prefix = muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE)
     definition = CalculationDefinition(
@@ -124,12 +133,25 @@ def muon_project(tmp_path: Path) -> MuonProject:
         parameters={
             "configuration": {
                 "rows": [
-                    {"label": "mu1", "charge_state": POSITIVE_MUON_CHARGE_STATE, "site_id": str(relaxed_site.id)},
-                    {"label": "mu2", "charge_state": POSITIVE_MUON_CHARGE_STATE, "site_id": str(running_site.id)},
+                    {
+                        "label": "mu1",
+                        "charge_state": POSITIVE_MUON_CHARGE_STATE,
+                        "site_id": str(relaxed_site.id),
+                    },
+                    {
+                        "label": "mu2",
+                        "charge_state": POSITIVE_MUON_CHARGE_STATE,
+                        "site_id": str(running_site.id),
+                    },
                 ]
             },
-            "job_ids_by_label": {f"{prefix}:mu1": str(relaxed_job.id), f"{prefix}:mu2": str(running_job.id)},
+            "job_ids_by_label": {
+                f"{prefix}:mu1": str(relaxed_job.id),
+                f"{prefix}:mu2": str(running_job.id),
+            },
         },
     )
     document.calculations[definition.id] = definition
-    return MuonProject(document, host, relaxed_site, running_site, relaxed_job, running_job, definition)
+    return MuonProject(
+        document, host, relaxed_site, running_site, relaxed_job, running_job, definition
+    )

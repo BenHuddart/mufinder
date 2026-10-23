@@ -20,14 +20,18 @@ from mufinder.science.demagnetization import (
 
 
 def _prism(shape: str) -> DemagnetizingSample:
-    return DemagnetizingSample(shape=shape, prism_lengths=(1.0, 1.0, 2.0), fourier_grid=8, padding=2.5)
+    return DemagnetizingSample(
+        shape=shape, prism_lengths=(1.0, 1.0, 2.0), fourier_grid=8, padding=2.5
+    )
 
 
 # demagnetizing_tensor: shape dispatch
 
 
 def test_demagnetizing_tensor_supports_simple_limits() -> None:
-    np.testing.assert_allclose(demagnetizing_tensor(DemagnetizingSample(shape="sphere")), np.eye(3) / 3.0)
+    np.testing.assert_allclose(
+        demagnetizing_tensor(DemagnetizingSample(shape="sphere")), np.eye(3) / 3.0
+    )
     np.testing.assert_allclose(
         demagnetizing_tensor(DemagnetizingSample(shape="infinite_plate", plate_normal_axis="b")),
         np.diag([0.0, 1.0, 0.0]),
@@ -36,7 +40,9 @@ def test_demagnetizing_tensor_supports_simple_limits() -> None:
 
 @pytest.mark.parametrize("shape", ["none", "", "OFF", "no demag"])
 def test_demagnetizing_tensor_no_demag_aliases_return_zeros(shape: str) -> None:
-    np.testing.assert_array_equal(demagnetizing_tensor(DemagnetizingSample(shape=shape)), np.zeros((3, 3)))
+    np.testing.assert_array_equal(
+        demagnetizing_tensor(DemagnetizingSample(shape=shape)), np.zeros((3, 3))
+    )
 
 
 @pytest.mark.parametrize("shape", ["Plate", "infiniteplate", "infinite plate"])
@@ -99,7 +105,9 @@ def test_demagnetizing_tensor_rectangular_prism_branch() -> None:
 
 @pytest.mark.parametrize("shape", ["Box", "cuboid", "Rectangular"])
 def test_demagnetizing_tensor_prism_aliases_select_rectangular_prism(shape: str) -> None:
-    np.testing.assert_allclose(demagnetizing_tensor(_prism(shape)), demagnetizing_tensor(_prism("rectangular_prism")))
+    np.testing.assert_allclose(
+        demagnetizing_tensor(_prism(shape)), demagnetizing_tensor(_prism("rectangular_prism"))
+    )
 
 
 def test_demagnetizing_tensor_rejects_unknown_shape() -> None:

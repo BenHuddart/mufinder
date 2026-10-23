@@ -317,7 +317,9 @@ def test_parameter_dialog_includes_reset_button_per_visible_parameter(qapp) -> N
     )
 
     reset_buttons = [
-        button for button in dialog._table_widget.findChildren(QPushButton) if button.text() == "Reset"
+        button
+        for button in dialog._table_widget.findChildren(QPushButton)
+        if button.text() == "Reset"
     ]
 
     assert len(reset_buttons) == len(dialog._rows)
@@ -353,7 +355,9 @@ def test_parameter_dialog_read_only_disables_editing_controls(qapp) -> None:
     assert not dialog._rows["cut_off_energy"].radio.isEnabled()
     assert not dialog._add_advanced_button.isEnabled()
     reset_buttons = [
-        button for button in dialog._table_widget.findChildren(QPushButton) if button.text() == "Reset"
+        button
+        for button in dialog._table_widget.findChildren(QPushButton)
+        if button.text() == "Reset"
     ]
     assert reset_buttons
     assert all(not button.isEnabled() for button in reset_buttons)
@@ -457,7 +461,9 @@ def test_parameter_dialog_notice_only_appears_on_the_limited_keyword_set(
     def _status(*, is_starter: bool):
         return SimpleNamespace(is_starter=is_starter)
 
-    monkeypatch.setattr(param_dialog_module, "keyword_catalog_status", lambda: _status(is_starter=True))
+    monkeypatch.setattr(
+        param_dialog_module, "keyword_catalog_status", lambda: _status(is_starter=True)
+    )
     dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
     notice = dialog.findChild(QLabel, "catalogFallbackNotice")
     assert notice is not None
@@ -465,7 +471,9 @@ def test_parameter_dialog_notice_only_appears_on_the_limited_keyword_set(
     assert "Setup > CASTEP" in notice.text()
 
     # A full catalog, however it was found, needs no notice.
-    monkeypatch.setattr(param_dialog_module, "keyword_catalog_status", lambda: _status(is_starter=False))
+    monkeypatch.setattr(
+        param_dialog_module, "keyword_catalog_status", lambda: _status(is_starter=False)
+    )
     dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
     assert dialog.findChild(QLabel, "catalogFallbackNotice") is None
 
@@ -926,10 +934,14 @@ def test_parameter_dialog_validation_ignores_untouched_mixed_parameters(qapp, mo
     assert "xc_functional" not in seen[0]
 
 
-def test_parameter_dialog_resetting_the_inactive_member_of_a_mixed_pair_keeps_it_mixed(qapp) -> None:
+def test_parameter_dialog_resetting_the_inactive_member_of_a_mixed_pair_keeps_it_mixed(
+    qapp,
+) -> None:
     dialog = _mixed_dialog("basis_precision")
     inactive = next(
-        name for name in ("basis_precision", "cut_off_energy") if dialog._in_inactive_exclusive_choice(name)
+        name
+        for name in ("basis_precision", "cut_off_energy")
+        if dialog._in_inactive_exclusive_choice(name)
     )
 
     dialog._reset_parameter(inactive)
@@ -943,7 +955,9 @@ def test_parameter_dialog_resetting_the_inactive_member_of_a_mixed_pair_keeps_it
 def test_parameter_dialog_resetting_the_active_member_of_a_mixed_pair_applies_it(qapp) -> None:
     dialog = _mixed_dialog("basis_precision")
     active = next(
-        name for name in ("basis_precision", "cut_off_energy") if not dialog._in_inactive_exclusive_choice(name)
+        name
+        for name in ("basis_precision", "cut_off_energy")
+        if not dialog._in_inactive_exclusive_choice(name)
     )
 
     dialog._reset_parameter(active)

@@ -63,7 +63,6 @@ def test_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> Non
     assert widget._row_parameters_locked((row_id,)) is True
 
 
-
 def test_relaxation_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
     widget = PristineRelaxationWidget()
     widget._add_row()
@@ -105,7 +104,6 @@ def test_relaxation_widget_supercell_dropdown_create_emits_signal(qapp) -> None:
     combo.setCurrentIndex(combo.count() - 1)
 
     assert requested == [row_id]
-
 
 
 def test_relaxation_widget_supercell_dropdown_selection_sets_matrix(qapp) -> None:
@@ -221,7 +219,6 @@ def test_relaxation_widget_supercell_selection_can_stay_on_current_row(
     assert widget.row_supercell_matrix(second_id) is None
 
 
-
 def test_relaxation_widget_table_uses_stretch_columns(qapp) -> None:
     widget = PristineRelaxationWidget()
     header = widget._table.horizontalHeader()
@@ -233,7 +230,10 @@ def test_relaxation_widget_table_uses_stretch_columns(qapp) -> None:
 def test_relaxation_widget_omits_separate_kpoint_column(qapp) -> None:
     widget = PristineRelaxationWidget()
 
-    headers = [widget._table.horizontalHeaderItem(index).text() for index in range(widget._table.columnCount())]
+    headers = [
+        widget._table.horizontalHeaderItem(index).text()
+        for index in range(widget._table.columnCount())
+    ]
 
     assert "K-Point Grid" not in headers
 
@@ -366,7 +366,12 @@ def test_relaxation_widget_positions_kpoint_below_basis_controls(qapp) -> None:
     assert "cut_off_energy" in names
     assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("basis_precision") < names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
+    assert (
+        names.index("basis_precision")
+        < names.index("cut_off_energy")
+        < names.index("elec_energy_tol")
+        < names.index("kpoint_mp_grid")
+    )
 
 
 def test_relaxation_widget_uses_project_default_kpoint_in_configure_values(qapp) -> None:
@@ -536,9 +541,7 @@ def test_relaxation_widget_inspect_dialog_shows_spacing_when_spacing_is_active(q
     assert "kpoint_mp_spacing" in common
     assert "kpoint_mp_grid" in common
 
-    kpoint_hint = kpoint_exclusive_hint(
-        widget._effective_params_for_row(r) for r in (row_id,)
-    )
+    kpoint_hint = kpoint_exclusive_hint(widget._effective_params_for_row(r) for r in (row_id,))
 
     dialog = ParameterDialog(
         specs=widget._specs,
@@ -579,9 +582,7 @@ def test_relaxation_widget_effective_params_never_emit_both_kpoint_keywords(qapp
     row_id = widget._row_id_at(0)
 
     effective = widget._effective_params_for_row(row_id)
-    assert not (
-        "kpoint_mp_grid" in effective and "kpoint_mp_spacing" in effective
-    )
+    assert not ("kpoint_mp_grid" in effective and "kpoint_mp_spacing" in effective)
 
     # When the user has explicitly chosen spacing via the dialog, only
     # spacing remains in effective_values — never grid alongside it.
@@ -681,7 +682,9 @@ def test_relaxation_widget_updates_effective_defaults_when_project_defaults_chan
     assert second["kpoint_mp_grid"] == (6, 6, 6)
 
 
-def test_relaxation_widget_keeps_explicit_cutoff_override_when_project_defaults_change(qapp) -> None:
+def test_relaxation_widget_keeps_explicit_cutoff_override_when_project_defaults_change(
+    qapp,
+) -> None:
     widget = PristineRelaxationWidget()
     widget._add_row()
     widget.set_host_lattice([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]])
@@ -726,9 +729,7 @@ def test_relaxation_supercell_uses_snapshot_when_selection_collapsed(qapp, monke
     """Windows: selection collapses to one row before the slot fires.
     The handler must apply to the snapshot rows, not the live selection."""
     widget = PristineRelaxationWidget()
-    widget.set_supercell_options(
-        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
-    )
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
     widget._add_row()
     widget._add_row()
     widget._add_row()
@@ -736,7 +737,11 @@ def test_relaxation_supercell_uses_snapshot_when_selection_collapsed(qapp, monke
     second_id = widget._row_id_at(1)
     third_id = widget._row_id_at(2)
 
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
+    )
 
     _select_rows(widget, [0, 1, 2])
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
@@ -756,16 +761,16 @@ def test_relaxation_supercell_uses_snapshot_when_selection_collapsed(qapp, monke
 
 def test_relaxation_supercell_single_row_no_prompt(qapp, monkeypatch):
     widget = PristineRelaxationWidget()
-    widget.set_supercell_options(
-        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
-    )
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
     widget._add_row()
     widget._add_row()
     first_id = widget._row_id_at(0)
     second_id = widget._row_id_at(1)
 
     prompts: list = []
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1))
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1)
+    )
 
     _select_rows(widget, [0])
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
@@ -781,9 +786,7 @@ def test_relaxation_supercell_single_row_no_prompt(qapp, monkeypatch):
 def test_relaxation_supercell_click_unselected_row_no_prompt(qapp, monkeypatch):
     """Clicking a button in a row that is NOT in the selection → single-row only."""
     widget = PristineRelaxationWidget()
-    widget.set_supercell_options(
-        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
-    )
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
     widget._add_row()
     widget._add_row()
     widget._add_row()
@@ -792,7 +795,9 @@ def test_relaxation_supercell_click_unselected_row_no_prompt(qapp, monkeypatch):
     third_id = widget._row_id_at(2)
 
     prompts: list = []
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1))
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1)
+    )
 
     _select_rows(widget, [0, 1])  # rows 0, 1 selected
     combo = widget._table.cellWidget(2, widget._SUPERCELL_COLUMN)  # click row 2 (unselected)
@@ -822,7 +827,11 @@ def test_relaxation_configure_button_applies_to_snapshot_rows(qapp, monkeypatch)
     third_id = widget._row_id_at(2)
 
     monkeypatch.setattr(widget, "_open_parameter_dialog", _fake_dialog)
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
+    )
 
     btn = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -841,7 +850,9 @@ def test_relaxation_configure_button_single_row_no_prompt(qapp, monkeypatch):
         lambda self, row_ids: opened_for.extend(row_ids),
     )
     prompts: list = []
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1))
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1)
+    )
 
     widget = PristineRelaxationWidget()
     widget._add_row()
@@ -865,7 +876,11 @@ def test_relaxation_remove_button_applies_to_snapshot_rows(qapp, monkeypatch):
         "_remove_rows_by_id",
         lambda self, row_ids: removed.extend(row_ids),
     )
-    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
+    )
 
     widget = PristineRelaxationWidget()
     widget._add_row()
@@ -1044,7 +1059,9 @@ def test_relaxation_widget_context_menu_disables_reset_for_running_row(qapp, mon
     assert payloads == []
 
 
-def test_relaxation_widget_continue_action_defaults_disabled_when_unwired(qapp, monkeypatch) -> None:
+def test_relaxation_widget_continue_action_defaults_disabled_when_unwired(
+    qapp, monkeypatch
+) -> None:
     # An unwired widget (e.g. a stray fixture in another test) never offers an
     # action it cannot fulfil, whatever the row's displayed status is.
     widget = PristineRelaxationWidget()
@@ -1180,7 +1197,9 @@ def test_relaxation_fix_cell_applies_to_selected_rows(qapp, monkeypatch) -> None
     for _ in range(3):
         widget._add_row()
     monkeypatch.setattr(
-        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
     )
     states: list[dict] = []
     widget.form_state_changed.connect(states.append)
@@ -1203,7 +1222,9 @@ def test_relaxation_fix_cell_this_row_only(qapp, monkeypatch) -> None:
     widget._add_row()
     widget._add_row()
     monkeypatch.setattr(
-        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CLICKED_ONLY
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.CLICKED_ONLY,
     )
 
     _select_relaxation_rows(widget, (0, 1))
@@ -1265,9 +1286,7 @@ def test_relaxation_fix_cell_skips_locked_rows(qapp, monkeypatch) -> None:
 
 def test_relaxation_supercell_cancel_restores_combo_and_changes_nothing(qapp, monkeypatch) -> None:
     widget = PristineRelaxationWidget()
-    widget.set_supercell_options(
-        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
-    )
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
     widget._add_row()
     widget._add_row()
     first_id = widget._row_id_at(0)
@@ -1356,7 +1375,9 @@ def test_relaxation_remove_button_multi_row_prompt_is_the_only_confirmation(
     widget._add_row()
     widget._add_row()
     monkeypatch.setattr(
-        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
     )
 
     btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
@@ -1502,7 +1523,9 @@ def test_relaxation_row_explicit_value_wins_over_an_exclusive_default(qapp) -> N
     # A row that chose basis_precision drops the project cut-off default it is
     # mutually exclusive with, so the row validates and runs on its own choice.
     widget = PristineRelaxationWidget()
-    widget.set_project_defaults(cutoff_energy=800.0, kpoint_grid=None, kpoint_reference_lattice=None)
+    widget.set_project_defaults(
+        cutoff_energy=800.0, kpoint_grid=None, kpoint_reference_lattice=None
+    )
     widget._add_row()
     row_id = widget._row_id_at(0)
     widget._row_parameter_values[row_id] = {"basis_precision": "FINE"}

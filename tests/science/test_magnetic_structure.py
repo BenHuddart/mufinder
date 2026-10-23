@@ -190,9 +190,7 @@ def test_model_from_json_drops_components_without_id_or_terms() -> None:
             {"component_id": "has-id", "terms": []},
             {
                 "component_id": "keep",
-                "terms": [
-                    {"q_coeff": [1.0, 0.0, 0.0], "coefficient": {"real": [0.0, 0.0, 1.0]}}
-                ],
+                "terms": [{"q_coeff": [1.0, 0.0, 0.0], "coefficient": {"real": [0.0, 0.0, 1.0]}}],
             },
             "garbage",
         ],
@@ -213,9 +211,7 @@ def test_model_from_json_supports_legacy_q_basis_key() -> None:
 
 
 def test_model_q_basis_array_and_q_coeff_to_rlu() -> None:
-    model = MagneticStructureModel(
-        q_basis_rlu=((0.0, 0.0, 0.5), (0.25, 0.0, 0.0), (0.0, 0.0, 0.0))
-    )
+    model = MagneticStructureModel(q_basis_rlu=((0.0, 0.0, 0.5), (0.25, 0.0, 0.0), (0.0, 0.0, 0.0)))
     arr = model.q_basis_array
     assert arr.shape == (3, 3)
     rlu = model.q_coeff_to_rlu((1.0, 1.0, 0.0))
@@ -435,7 +431,9 @@ def test_atom_resolved_components_skips_disabled_and_filters_ids() -> None:
         q_basis_rlu=((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         components=(
             MagneticComponent("on", "On", "collinear", AtomSelector.all(), (term,), enabled=True),
-            MagneticComponent("off", "Off", "collinear", AtomSelector.all(), (term,), enabled=False),
+            MagneticComponent(
+                "off", "Off", "collinear", AtomSelector.all(), (term,), enabled=False
+            ),
             MagneticComponent("other", "Other", "collinear", AtomSelector.all(), (term,)),
         ),
     )
@@ -611,8 +609,16 @@ def test_q_basis_slots_report_every_component_that_uses_a_row() -> None:
 def test_component_q_basis_indices_and_texture_predicate() -> None:
     model = _q_basis_model()
 
-    assert [component_q_basis_indices(component) for component in model.components] == [(0,), (1,), (0, 2)]
-    assert [is_texture_component(component) for component in model.components] == [False, False, True]
+    assert [component_q_basis_indices(component) for component in model.components] == [
+        (0,),
+        (1,),
+        (0, 2),
+    ]
+    assert [is_texture_component(component) for component in model.components] == [
+        False,
+        False,
+        True,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -641,7 +647,9 @@ def test_set_q_basis_vector_moves_every_component_on_the_row() -> None:
 
     assert edited.q_basis_rlu[0] == (0.0, 0.0, 0.25)
     assert edited.components == model.components
-    assert np.allclose(edited.q_coeff_to_rlu(edited.components[1].terms[0].q_coeff), (0.0, 0.0, 0.25))
+    assert np.allclose(
+        edited.q_coeff_to_rlu(edited.components[1].terms[0].q_coeff), (0.0, 0.0, 0.25)
+    )
     _positions, before, _indices = moments_in_supercell(structure, model, (1, 1, 4))
     _positions, after, _indices = moments_in_supercell(structure, edited, (1, 1, 4))
     assert not np.allclose(before, after)
@@ -651,7 +659,11 @@ def test_set_q_basis_vector_moves_every_component_on_the_row() -> None:
 
 def test_set_q_basis_vector_allows_an_unused_row_and_rescaling_a_helix_row() -> None:
     model = _q_basis_model()
-    model = replace(model, q_basis_rlu=(*model.q_basis_rlu[:2], (0.0, 0.0, 0.0)), components=model.components[:2])
+    model = replace(
+        model,
+        q_basis_rlu=(*model.q_basis_rlu[:2], (0.0, 0.0, 0.0)),
+        components=model.components[:2],
+    )
 
     assert set_q_basis_vector(model, 2, (0.1, 0.1, 0.0)).q_basis_rlu[2] == (0.1, 0.1, 0.0)
     assert set_q_basis_vector(model, 1, (0.0, 0.0, 0.1)).q_basis_rlu[1] == (0.0, 0.0, 0.1)
@@ -714,9 +726,7 @@ def test_atom_resolved_components_skips_empty_selection() -> None:
     term = FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0]))
     model = MagneticStructureModel(
         components=(
-            MagneticComponent(
-                "none", "None", "collinear", AtomSelector.species("Xx"), (term,)
-            ),
+            MagneticComponent("none", "None", "collinear", AtomSelector.species("Xx"), (term,)),
         ),
     )
     assert atom_resolved_fourier_components(structure, model) == ()
@@ -764,8 +774,12 @@ def test_moment_at_atom_and_supercell_propagate_phase() -> None:
         ),
     )
 
-    assert moment_at_atom(structure, model, 0, cell_offset=(0.0, 0.0, 0.0)) == pytest.approx([0.0, 0.0, 2.0])
-    assert moment_at_atom(structure, model, 0, cell_offset=(0.0, 0.0, 1.0)) == pytest.approx([0.0, 0.0, -2.0])
+    assert moment_at_atom(structure, model, 0, cell_offset=(0.0, 0.0, 0.0)) == pytest.approx(
+        [0.0, 0.0, 2.0]
+    )
+    assert moment_at_atom(structure, model, 0, cell_offset=(0.0, 0.0, 1.0)) == pytest.approx(
+        [0.0, 0.0, -2.0]
+    )
 
     _positions, moments, atom_indices = moments_in_supercell(structure, model, (1, 1, 2))
     assert atom_indices.tolist() == [0, 0]
@@ -947,7 +961,10 @@ def test_split_helices_nonpositive_atol_raises() -> None:
         q_basis_rlu=((0.1, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         components=(
             MagneticComponent(
-                "lin", "Lin", "spin_density_wave", AtomSelector.all(),
+                "lin",
+                "Lin",
+                "spin_density_wave",
+                AtomSelector.all(),
                 (FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([1.0, 0.0, 0.0])),),
             ),
         ),
@@ -1022,7 +1039,9 @@ def test_preset_component_builders_produce_expected_fourier_coefficients() -> No
     assert conical.kind == "conical"
     assert len(conical.terms) == 2
     np.testing.assert_allclose(conical.terms[0].coefficient.to_array(), [0.0, 0.0, 1.0])
-    np.testing.assert_allclose(conical.terms[1].coefficient.to_array(), [np.sqrt(3.0), 1j * np.sqrt(3.0), 0.0])
+    np.testing.assert_allclose(
+        conical.terms[1].coefficient.to_array(), [np.sqrt(3.0), 1j * np.sqrt(3.0), 0.0]
+    )
 
 
 def test_build_conical_component_pure_helix_drops_static_term() -> None:
@@ -1074,7 +1093,9 @@ def test_legacy_magnetic_structure_converts_to_components() -> None:
     assert model.q_basis_rlu[0] == pytest.approx((0.0, 0.0, 0.25))
     assert len(model.components) == 1
     assert model.components[0].terms[0].q_coeff == pytest.approx((1.0, 0.0, 0.0))
-    np.testing.assert_allclose(model.components[0].terms[0].coefficient.to_array().real, [0.0, 0.0, 1.5])
+    np.testing.assert_allclose(
+        model.components[0].terms[0].coefficient.to_array().real, [0.0, 0.0, 1.5]
+    )
 
 
 def test_mcif_magnetic_structure_preserves_q_basis_labels_and_unit_cell_moments() -> None:
@@ -1180,7 +1201,11 @@ def test_legacy_moment_entry_with_out_of_range_atom_index_is_skipped() -> None:
 def test_hexagonal_skyrmion_texture_produces_three_helical_terms() -> None:
     texture = build_hexagonal_skyrmion_texture(
         magnitude=3.0,
-        q_directions=((1.0, 0.0, 0.0), (-0.5, np.sqrt(3.0) / 2.0, 0.0), (-0.5, -np.sqrt(3.0) / 2.0, 0.0)),
+        q_directions=(
+            (1.0, 0.0, 0.0),
+            (-0.5, np.sqrt(3.0) / 2.0, 0.0),
+            (-0.5, -np.sqrt(3.0) / 2.0, 0.0),
+        ),
         core_direction=(0.0, 0.0, -1.0),
         skyrmion_type="bloch",
     )
@@ -1294,7 +1319,9 @@ def test_skyrmion_q_direction_not_perpendicular_raises() -> None:
 def test_skyrmion_q_basis_rotates_in_cartesian_reciprocal_space() -> None:
     structure = _structure()
 
-    q_basis = skyrmion_q_basis_rlu(structure, q1_rlu=(0.1, 0.0, 0.0), core_direction=(0.0, 0.0, 1.0), lattice="square")
+    q_basis = skyrmion_q_basis_rlu(
+        structure, q1_rlu=(0.1, 0.0, 0.0), core_direction=(0.0, 0.0, 1.0), lattice="square"
+    )
 
     np.testing.assert_allclose(q_basis[0], [0.1, 0.0, 0.0])
     np.testing.assert_allclose(q_basis[1], [0.0, 0.1, 0.0], atol=1e-12)
@@ -1351,9 +1378,7 @@ def test_magnetic_texture_from_json_non_mapping_returns_empty() -> None:
 
 
 def test_magnetic_texture_from_json_skips_non_mapping_terms() -> None:
-    texture = MagneticTexture.from_json(
-        {"terms": [{"q_coeff": [1.0, 0.0, 0.0]}, "garbage", 42]}
-    )
+    texture = MagneticTexture.from_json({"terms": [{"q_coeff": [1.0, 0.0, 0.0]}, "garbage", 42]})
     assert len(texture.terms) == 1
     assert texture.to_json()["terms"][0]["q_coeff"] == [1.0, 0.0, 0.0]
 
@@ -1399,18 +1424,14 @@ def test_build_texture_component_default_label_and_identity_transform() -> None:
     texture = MagneticTexture(
         terms=(MagneticTextureTerm.from_vector((1.0, 0.0, 0.0), [0.0, 0.0, 1.0]),)
     )
-    component = build_texture_component(
-        label="   ", selector=AtomSelector.all(), texture=texture
-    )
+    component = build_texture_component(label="   ", selector=AtomSelector.all(), texture=texture)
     assert component.label == "Multi-q texture"
     assert component.terms[0].q_coeff == (1.0, 0.0, 0.0)
 
 
 def test_build_texture_component_requires_terms() -> None:
     with pytest.raises(MagneticStructureError, match="at least one Fourier term"):
-        build_texture_component(
-            label="X", selector=AtomSelector.all(), texture=MagneticTexture()
-        )
+        build_texture_component(label="X", selector=AtomSelector.all(), texture=MagneticTexture())
 
 
 def test_build_texture_component_bad_transform_shape() -> None:
@@ -1470,7 +1491,9 @@ def test_texture_diagnostics_empty_texture_returns_zeros() -> None:
     assert diag.magnitude_max == 0.0
 
 
-def test_texture_normalization_reduces_magnitude_variation_and_pruning_keeps_largest_terms() -> None:
+def test_texture_normalization_reduces_magnitude_variation_and_pruning_keeps_largest_terms() -> (
+    None
+):
     texture = build_square_skyrmion_texture(
         magnitude=1.0,
         q_directions=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
@@ -1541,7 +1564,9 @@ _HEXAGONAL_LATTICE = (
 )
 
 
-def _basis_model(*rows: tuple[float, float, float], components: tuple[MagneticComponent, ...] = ()) -> MagneticStructureModel:
+def _basis_model(
+    *rows: tuple[float, float, float], components: tuple[MagneticComponent, ...] = ()
+) -> MagneticStructureModel:
     basis = list(rows) + [(0.0, 0.0, 0.0)] * (3 - len(rows))
     return MagneticStructureModel(q_basis_rlu=tuple(basis), components=components)
 
@@ -1582,14 +1607,18 @@ def test_magnetic_period_along_axes_combines_wavevectors_and_flags_incommensurat
     assert magnetic_period_along_axes([(0.0, 0.0, 1.0 / 70.0)], max_period=80) == (1, 1, 70)
 
 
-def _checklist(model: MagneticStructureModel, repeats=(1, 1, 1), *, has_host: bool = True) -> dict[str, tuple[str, str]]:
+def _checklist(
+    model: MagneticStructureModel, repeats=(1, 1, 1), *, has_host: bool = True
+) -> dict[str, tuple[str, str]]:
     return {
         item.key: (item.state, item.detail)
         for item in magnetic_builder_checklist(model, has_host=has_host, preview_repeats=repeats)
     }
 
 
-def _helix(q_coeff=(1.0, 0.0, 0.0), *, label: str = "Helix", moment: float = 1.0) -> MagneticComponent:
+def _helix(
+    q_coeff=(1.0, 0.0, 0.0), *, label: str = "Helix", moment: float = 1.0
+) -> MagneticComponent:
     return build_helix_component(
         label=label,
         selector=AtomSelector.all(),
@@ -1616,7 +1645,9 @@ def test_magnetic_builder_checklist_flags_disabled_and_zero_moment_components() 
     zero = _helix(label="Zero", moment=0.0)
 
     all_disabled = _checklist(_basis_model((0.0, 0.0, 0.25), components=(disabled,)))
-    zero_moment = _checklist(_basis_model((0.0, 0.0, 0.25), components=(zero, _helix(label="Kept"))), (1, 1, 4))
+    zero_moment = _checklist(
+        _basis_model((0.0, 0.0, 0.25), components=(zero, _helix(label="Kept"))), (1, 1, 4)
+    )
 
     assert all_disabled["components"] == (
         CHECKLIST_PROBLEM,
@@ -1641,7 +1672,10 @@ def test_magnetic_builder_checklist_needs_no_basis_for_q_zero_components() -> No
 
     checklist = _checklist(MagneticStructureModel(components=(collinear,)))
 
-    assert checklist["q_basis"] == (CHECKLIST_DONE, "Not needed: every enabled component has q = 0.")
+    assert checklist["q_basis"] == (
+        CHECKLIST_DONE,
+        "Not needed: every enabled component has q = 0.",
+    )
     assert checklist["preview"][0] == CHECKLIST_DONE
     assert checklist["ready"][0] == CHECKLIST_DONE
 
@@ -1652,7 +1686,10 @@ def test_magnetic_builder_checklist_asks_for_a_whole_commensurate_cell() -> None
     short = _checklist(model, (2, 1, 1))
     whole = _checklist(model, (2, 1, 4))
 
-    assert short["preview"] == (CHECKLIST_TODO, "One magnetic cell needs a 2×1×4 preview; it shows 2×1×1.")
+    assert short["preview"] == (
+        CHECKLIST_TODO,
+        "One magnetic cell needs a 2×1×4 preview; it shows 2×1×1.",
+    )
     assert short["ready"][0] == CHECKLIST_TODO
     assert whole["q_basis"] == (CHECKLIST_DONE, "Enabled components use q1.")
     assert whole["preview"][0] == CHECKLIST_DONE
@@ -1662,8 +1699,12 @@ def test_magnetic_builder_checklist_asks_for_a_whole_commensurate_cell() -> None
 def test_magnetic_builder_checklist_caps_long_commensurate_periods_at_the_largest_preview() -> None:
     model = _basis_model((0.0, 0.0, 0.05), components=(_helix(),))
 
-    short = magnetic_builder_checklist(model, has_host=True, preview_repeats=(1, 1, 4), max_preview_repeat=12)
-    longest = magnetic_builder_checklist(model, has_host=True, preview_repeats=(1, 1, 12), max_preview_repeat=12)
+    short = magnetic_builder_checklist(
+        model, has_host=True, preview_repeats=(1, 1, 4), max_preview_repeat=12
+    )
+    longest = magnetic_builder_checklist(
+        model, has_host=True, preview_repeats=(1, 1, 12), max_preview_repeat=12
+    )
 
     assert short[2].detail == "The largest preview needs a 1×1×12 preview; it shows 1×1×4."
     assert longest[2].state == CHECKLIST_DONE
@@ -1696,7 +1737,9 @@ def test_q_cartesian_direction_follows_the_reciprocal_lattice() -> None:
 
 
 def test_crystal_axis_and_reciprocal_axis_helpers_validate_their_axis() -> None:
-    assert np.allclose(crystal_axis_direction(_HEXAGONAL_LATTICE, "B"), (-0.5, np.sqrt(3.0) / 2.0, 0.0))
+    assert np.allclose(
+        crystal_axis_direction(_HEXAGONAL_LATTICE, "B"), (-0.5, np.sqrt(3.0) / 2.0, 0.0)
+    )
     assert reciprocal_axis_q_rlu("c*", 0.2) == (0.0, 0.0, 0.2)
     assert reciprocal_axis_q_rlu("a", -0.1) == (-0.1, 0.0, 0.0)
     with pytest.raises(MagneticStructureError, match="crystal axis"):

@@ -87,7 +87,7 @@ def _default_clusters() -> list[ClusterConfig]:
             cancel_command_path=_REDWOOD_SCANCEL,
             keyword_execution_mode="direct",
             keyword_shell_init="",
-        )
+        ),
     ]
 
 
@@ -173,7 +173,9 @@ def _normalise_queue(queue: ClusterQueue, *, queue_system: str) -> ClusterQueue 
     )
 
 
-def _normalise_queues(queues: Iterable[ClusterQueue], *, queue_system: str) -> tuple[ClusterQueue, ...]:
+def _normalise_queues(
+    queues: Iterable[ClusterQueue], *, queue_system: str
+) -> tuple[ClusterQueue, ...]:
     cleaned: list[ClusterQueue] = []
     seen: set[str] = set()
     for queue in queues:
@@ -371,7 +373,9 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         f"{prefix}/jump_key_path",
         jump_defaults.jump_key_path if jump_defaults is not None else "",
     )
-    use_macos_keychain_passwords = _settings_bool(settings, f"{prefix}/use_macos_keychain_passwords", False)
+    use_macos_keychain_passwords = _settings_bool(
+        settings, f"{prefix}/use_macos_keychain_passwords", False
+    )
 
     queue_system = str(settings.value(f"{prefix}/queue_system", "SLURM", str) or "SLURM").strip()
     if not queue_system:
@@ -392,7 +396,9 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
 
     default_memory_raw = settings.value(f"{prefix}/default_memory_gb", None)
     if default_memory_raw in {None, ""}:
-        default_memory_gb: float | None = 7.5 if queue_system.strip().lower() == "addqueue" else None
+        default_memory_gb: float | None = (
+            7.5 if queue_system.strip().lower() == "addqueue" else None
+        )
     else:
         try:
             parsed_memory = float(default_memory_raw)
@@ -407,23 +413,33 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         queue_system=queue_system,
     )
 
-    queues = _queues_from_settings(settings.value(f"{prefix}/queues", None), queue_system=queue_system)
+    queues = _queues_from_settings(
+        settings.value(f"{prefix}/queues", None), queue_system=queue_system
+    )
     default_queue_name = str(settings.value(f"{prefix}/default_queue_name", "", str) or "").strip()
     if queue_system.strip().lower() == "addqueue" and not default_queue_name and not queues:
         default_queue_name = _REDWOOD_PARTITION
     default_queue_name = _resolve_default_queue_name(default_queue_name, queues)
 
-    keyword_execution_mode = str(
-        settings.value(
-            f"{prefix}/keyword_execution_mode",
-            builtin.keyword_execution_mode if builtin is not None else _DEFAULT_KEYWORD_EXECUTION_MODE,
-            str,
+    keyword_execution_mode = (
+        str(
+            settings.value(
+                f"{prefix}/keyword_execution_mode",
+                builtin.keyword_execution_mode
+                if builtin is not None
+                else _DEFAULT_KEYWORD_EXECUTION_MODE,
+                str,
+            )
+            or _DEFAULT_KEYWORD_EXECUTION_MODE
         )
-        or _DEFAULT_KEYWORD_EXECUTION_MODE
-    ).strip().lower()
+        .strip()
+        .lower()
+    )
     if keyword_execution_mode not in {"direct", "scheduler"}:
         keyword_execution_mode = (
-            builtin.keyword_execution_mode if builtin is not None else _DEFAULT_KEYWORD_EXECUTION_MODE
+            builtin.keyword_execution_mode
+            if builtin is not None
+            else _DEFAULT_KEYWORD_EXECUTION_MODE
         )
     keyword_shell_init = str(
         settings.value(
@@ -454,7 +470,9 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         queue_system=queue_system,
         cores_per_node=max(1, cores_per_node),
         default_walltime=default_walltime,
-        template_script_path=str(settings.value(f"{prefix}/template_script_path", "", str) or "").strip(),
+        template_script_path=str(
+            settings.value(f"{prefix}/template_script_path", "", str) or ""
+        ).strip(),
         castep_executable=str(
             settings.value(f"{prefix}/castep_executable", _DEFAULT_CASTEP_EXECUTABLE, str)
             or _DEFAULT_CASTEP_EXECUTABLE
@@ -463,11 +481,15 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         default_queue_name=default_queue_name,
         default_memory_gb=default_memory_gb,
         default_mem_per_cpu_gb=default_mem_per_cpu_gb,
-        submit_command_path=str(settings.value(f"{prefix}/submit_command_path", "", str) or "").strip(),
+        submit_command_path=str(
+            settings.value(f"{prefix}/submit_command_path", "", str) or ""
+        ).strip(),
         queue_check_command_path=str(
             settings.value(f"{prefix}/queue_check_command_path", "", str) or ""
         ).strip(),
-        cancel_command_path=str(settings.value(f"{prefix}/cancel_command_path", "", str) or "").strip(),
+        cancel_command_path=str(
+            settings.value(f"{prefix}/cancel_command_path", "", str) or ""
+        ).strip(),
         keyword_execution_mode=keyword_execution_mode,
         keyword_shell_init=keyword_shell_init,
         queues=queues,
@@ -569,7 +591,8 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 submit_command_path=config.submit_command_path.strip(),
                 queue_check_command_path=config.queue_check_command_path.strip(),
                 cancel_command_path=config.cancel_command_path.strip(),
-                keyword_execution_mode=config.keyword_execution_mode.strip().lower() or _DEFAULT_KEYWORD_EXECUTION_MODE,
+                keyword_execution_mode=config.keyword_execution_mode.strip().lower()
+                or _DEFAULT_KEYWORD_EXECUTION_MODE,
                 keyword_shell_init=config.keyword_shell_init.rstrip(),
                 queues=queues,
             )
@@ -590,7 +613,9 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/jump_username", config.jump_username)
         settings.setValue(f"{prefix}/jump_auth_method", config.jump_auth_method)
         settings.setValue(f"{prefix}/jump_key_path", config.jump_key_path)
-        settings.setValue(f"{prefix}/use_macos_keychain_passwords", bool(config.use_macos_keychain_passwords))
+        settings.setValue(
+            f"{prefix}/use_macos_keychain_passwords", bool(config.use_macos_keychain_passwords)
+        )
         settings.setValue(f"{prefix}/default_working_directory", config.default_working_directory)
         settings.setValue(f"{prefix}/queue_system", config.queue_system)
         settings.setValue(f"{prefix}/cores_per_node", int(config.cores_per_node))

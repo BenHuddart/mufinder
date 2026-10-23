@@ -132,7 +132,9 @@ def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Pa
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".cell") for cmd in runner._ssh.commands)
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".param") for cmd in runner._ssh.commands)
     uploaded_runner = next(
-        remote_path for action, remote_path in runner._ssh.commands if action == "put" and str(remote_path).endswith("run.sh")
+        remote_path
+        for action, remote_path in runner._ssh.commands
+        if action == "put" and str(remote_path).endswith("run.sh")
     )
     assert b"\r\n" not in runner._ssh.remote_files[uploaded_runner]
 
@@ -177,7 +179,9 @@ def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: P
     assert request.script_path == remote_script
 
 
-def test_cluster_runner_poll_moves_running_and_completed(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cluster_runner_poll_moves_running_and_completed(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     runner = ClusterJobRunner()
     runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
@@ -304,7 +308,9 @@ def test_cluster_runner_connect_disconnect_emits_status(
             self.is_connected = False
 
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _SSHFactory)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     config = cluster_runner_module.ClusterConfig(
         name="alpha",
@@ -593,7 +599,9 @@ def test_cluster_runner_connect_to_same_config_is_noop(
             self.is_connected = False
 
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _SSHFactory)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     runner.connect_to_cluster(config)
     first_ssh = runner._ssh
@@ -942,7 +950,9 @@ def test_cluster_runner_reconnect_reuses_cached_password_for_same_cluster(
             self.is_connected = False
 
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _SSHFactory)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     config = cluster_runner_module.ClusterConfig(
         name="redwood",
@@ -985,7 +995,9 @@ def test_cluster_runner_reconnect_reuses_cached_key_passphrase(
             self.is_connected = False
 
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _SSHFactory)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     config = cluster_runner_module.ClusterConfig(
         name="redwood",
@@ -1071,7 +1083,9 @@ def test_cluster_runner_reconnect_does_not_reuse_cached_credentials_after_endpoi
     runner = ClusterJobRunner()
     _RecordingJumpSSH.attempts = []
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     original = _jump_host_redwood_config()
     runner.connect_to_cluster(
@@ -1091,11 +1105,15 @@ def test_cluster_runner_reconnect_does_not_reuse_direct_password_after_enabling_
     runner = ClusterJobRunner()
     _RecordingJumpSSH.attempts = []
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     # The jump fields stay saved while the jump host is switched off, so only
     # ``jump_host_enabled`` changes between the two connections.
-    runner.connect_to_cluster(_jump_host_redwood_config(jump_host_enabled=False), password="target-pw")
+    runner.connect_to_cluster(
+        _jump_host_redwood_config(jump_host_enabled=False), password="target-pw"
+    )
     runner._ssh.is_connected = False
     runner.connect_to_cluster(_jump_host_redwood_config(), credentials=SSHCredentials())
 
@@ -1109,7 +1127,9 @@ def test_cluster_runner_reconnect_reuses_cached_credentials_for_unchanged_endpoi
     runner = ClusterJobRunner()
     _RecordingJumpSSH.attempts = []
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler()
+    )
 
     runner.connect_to_cluster(
         _jump_host_redwood_config(),
@@ -1177,7 +1197,9 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
     assert request.memory_gb == 9.0
     assert request.comment == "test comment"
     assert request.castep_executable == "/mnt/redwoodfs/muon/castep.mpi"
-    assert all(not str(cmd[1]).endswith("run.sh") for cmd in runner._ssh.commands if cmd[0] == "put")
+    assert all(
+        not str(cmd[1]).endswith("run.sh") for cmd in runner._ssh.commands if cmd[0] == "put"
+    )
 
 
 def test_cluster_runner_track_existing_job_registers_active_entry(qapp, tmp_path: Path) -> None:
@@ -1244,8 +1266,12 @@ def test_cluster_runner_connect_starts_polling_for_existing_active_jobs(
     fake_ssh = FakeSSH()
     fake_scheduler = _FakeScheduler()
 
-    monkeypatch.setattr(cluster_runner_module, "SSHConnection", lambda config, settings=None: fake_ssh)
-    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda *args, **kwargs: fake_scheduler)
+    monkeypatch.setattr(
+        cluster_runner_module, "SSHConnection", lambda config, settings=None: fake_ssh
+    )
+    monkeypatch.setattr(
+        cluster_runner_module, "create_scheduler", lambda *args, **kwargs: fake_scheduler
+    )
 
     output_dir = tmp_path / "tracked_preconnect"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1395,7 +1421,9 @@ def test_cluster_runner_completed_retrieval_emits_finished_then_completed(
 ) -> None:
     parsed = CastepResult(completed=True, total_energy=-1.0)
     artifacts = ParsedJobArtifacts()
-    result = RetrievalResult(RetrievalOutcome.COMPLETED, "output retrieved and parsed", parsed, artifacts)
+    result = RetrievalResult(
+        RetrievalOutcome.COMPLETED, "output retrieved and parsed", parsed, artifacts
+    )
     runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
     events = _record_signals(runner)
 
@@ -1450,7 +1478,9 @@ def test_cluster_runner_retry_eligible_failure_counts_attempts_then_fails(
     result = RetrievalResult(
         RetrievalOutcome.FAILED,
         "missing from scheduler queue; output retrieval failed",
-        failure=RetrievalFailure("Failed to retrieve or parse remote output: gone", retry_eligible=True),
+        failure=RetrievalFailure(
+            "Failed to retrieve or parse remote output: gone", retry_eligible=True
+        ),
     )
     runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
     events = _record_signals(runner)
@@ -1548,9 +1578,7 @@ def test_cluster_runner_missing_entry_defers_failure_within_grace_window(
     )
 
 
-def test_cluster_runner_missing_entry_reappearance_resets_counter(
-    qapp, tmp_path: Path
-) -> None:
+def test_cluster_runner_missing_entry_reappearance_resets_counter(qapp, tmp_path: Path) -> None:
     runner, scheduler, job_id = _submitted_runner(
         tmp_path, "reappear_seed", ssh=OutputUnavailableSSH()
     )
@@ -1629,9 +1657,7 @@ def test_cluster_runner_missing_entry_successful_retrieval_completes(
     )
 
 
-def test_cluster_runner_snapshot_observations_and_utc_checked_at(
-    qapp, tmp_path: Path
-) -> None:
+def test_cluster_runner_snapshot_observations_and_utc_checked_at(qapp, tmp_path: Path) -> None:
     runner, scheduler, job_id = _submitted_runner(tmp_path, "observed_seed")
     scheduler._states["12345"] = "R"
 
@@ -1651,9 +1677,7 @@ def test_cluster_runner_snapshot_observations_and_utc_checked_at(
     assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports QUEUED"
 
 
-def test_cluster_runner_poll_failure_leaves_tracked_jobs_untouched(
-    qapp, tmp_path: Path
-) -> None:
+def test_cluster_runner_poll_failure_leaves_tracked_jobs_untouched(qapp, tmp_path: Path) -> None:
     # Rec #3: a poll failure disconnects and emits poll_failed, but must not
     # mutate tracked job state or emit any job lifecycle signal — staleness is
     # derived by the dashboard from last_checked_at plus the disconnect.
@@ -1926,8 +1950,6 @@ def test_scheduler_job_is_active_propagates_an_accounting_failure(qapp) -> None:
     # Unknown state: the caller about to delete the job's directory must refuse.
     with pytest.raises(RuntimeError, match="Problem talking to the database"):
         runner.scheduler_job_is_active("7")
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -2240,11 +2262,17 @@ def test_cluster_runner_reads_geometry_progress_of_tracked_jobs(qapp, tmp_path: 
     assert ssh.reads == [("/remote/farmed/seed_farm001.castep", 0)]
 
 
-def test_cluster_runner_reports_no_geometry_progress_while_disconnected(qapp, tmp_path: Path) -> None:
+def test_cluster_runner_reports_no_geometry_progress_while_disconnected(
+    qapp, tmp_path: Path
+) -> None:
     runner = ClusterJobRunner()
     job_id = uuid4()
     runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
-        job_id=job_id, remote_job_id="1", remote_dir="/remote/job", seed_name="seed", local_output_dir=tmp_path
+        job_id=job_id,
+        remote_job_id="1",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
     )
     results: list[dict] = []
     runner.geometry_progress_read.connect(results.append)

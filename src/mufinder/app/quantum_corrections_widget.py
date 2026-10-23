@@ -20,7 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
-from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    status_brush,
+    style_hint_text,
+    style_section_subtitle,
+    style_section_title,
+)
 from mufinder.app.workflow_row_widget import SourceTableWidget
 from mufinder.app.workflow_table_utils import (
     RESET_FAILED_ACTION_TEXT,
@@ -208,13 +213,23 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         self._site_scope.open_muon_sites_requested.connect(self.open_muon_sites_requested)
         sources_layout.addWidget(self._site_scope)
         self._sources_table = create_workflow_table(
-            ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Farms", "Status", "Parameters"),
+            (
+                "Site",
+                "Charge",
+                "dE (eV)",
+                "Displacements",
+                "Source Job",
+                "Farms",
+                "Status",
+                "Parameters",
+            ),
             resize_to_contents_columns=(7,),
         )
         _set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
         )
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
         self._sources_table.itemChanged.connect(self._on_source_item_changed)
@@ -351,7 +366,9 @@ class QuantumCorrectionsWidget(SourceTableWidget):
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
             button = QPushButton("Launch Analysis")
-            button.clicked.connect(lambda _checked=False, key=row.key: self.analysis_requested.emit(key))
+            button.clicked.connect(
+                lambda _checked=False, key=row.key: self.analysis_requested.emit(key)
+            )
             self._results_table.setCellWidget(row_index, RESULT_ANALYSIS_COLUMN, button)
         if self._results_table.rowCount() > 0:
             for column in range(1, len(RESULT_COLUMNS)):
@@ -410,7 +427,9 @@ class QuantumCorrectionsWidget(SourceTableWidget):
     def _emit_reset_failed_selection(self) -> None:
         """Emit the selected failed, stopped or cancelled rows for the shared reset."""
 
-        keys = [row.key for row in self._selected_source_rows() if row.status in RESETTABLE_ROW_STATUSES]
+        keys = [
+            row.key for row in self._selected_source_rows() if row.status in RESETTABLE_ROW_STATUSES
+        ]
         if keys:
             self.reset_failed_requested.emit(keys)
 

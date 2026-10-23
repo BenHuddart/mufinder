@@ -177,9 +177,7 @@ def test_task_display_strings_map_back_to_keyword_values(printed: str, expected:
         ("BLYP", "BLYP"),
     ],
 )
-def test_functional_display_strings_map_back_to_keyword_values(
-    printed: str, expected: str
-) -> None:
+def test_functional_display_strings_map_back_to_keyword_values(printed: str, expected: str) -> None:
     values = parse_run_parameters_text(_echo(functional=printed)).mapped_values()
     assert values["xc_functional"] == expected
 

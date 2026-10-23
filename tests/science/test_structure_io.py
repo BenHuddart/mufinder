@@ -156,8 +156,12 @@ def _write_cif(tmp_path: Path, text: str, newline: str = "\n", name: str = "samp
 def _assert_synthetic_carbon_pair(loaded) -> None:
     assert loaded.species == ["C", "C"]
     assert loaded.properties["atom_count"] == 2
-    assert loaded.lattice_vectors == [pytest.approx(row) for row in ([5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0])]
-    assert loaded.fractional_positions == [pytest.approx(row) for row in ([0.10, 0.20, 0.30], [0.60, 0.70, 0.80])]
+    assert loaded.lattice_vectors == [
+        pytest.approx(row) for row in ([5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0])
+    ]
+    assert loaded.fractional_positions == [
+        pytest.approx(row) for row in ([0.10, 0.20, 0.30], [0.60, 0.70, 0.80])
+    ]
     assert loaded.properties["pbc"] == [True, True, True]
 
 
@@ -170,7 +174,12 @@ def _assert_synthetic_carbon_pair(loaded) -> None:
         (_SYMMETRY_HEADING_COMMENT,),
         (_SYMMETRY_HEADING_COMMENT, _ATOM_HEADING_COMMENT),
     ],
-    ids=["both-heading-comments", "symmetry-heading-comment", "atom-heading-comment", "no-comments"],
+    ids=[
+        "both-heading-comments",
+        "symmetry-heading-comment",
+        "atom-heading-comment",
+        "no-comments",
+    ],
 )
 def test_load_cif_accepts_comments_beside_loop_headings(
     tmp_path: Path, newline: str, removed_comments: tuple[str, ...]
@@ -198,12 +207,15 @@ def test_load_cif_accepts_standalone_comments_and_blank_lines_between_loop_headi
 
 
 @LINE_ENDINGS
-def test_load_cif_keeps_literal_hashes_in_quoted_values_and_text_fields(tmp_path: Path, newline: str) -> None:
+def test_load_cif_keeps_literal_hashes_in_quoted_values_and_text_fields(
+    tmp_path: Path, newline: str
+) -> None:
     # The text field holds lines that look like loop headings with comments;
     # they are data and must not be read as a loop.
-    text = SYNTHETIC_LOOP_COMMENTS_CIF.replace(
-        "_space_group_IT_number 1\n",
-        """_space_group_IT_number 1
+    text = (
+        SYNTHETIC_LOOP_COMMENTS_CIF.replace(
+            "_space_group_IT_number 1\n",
+            """_space_group_IT_number 1
 _chemical_name_common 'synthetic #1 compound'
 _publ_section_comment
 ;
@@ -212,7 +224,10 @@ loop_
 _atom_site_label # also not a comment
 ;
 """,
-    ).replace("C1 0.10", "C#1 0.10").replace("C2 0.60", "'C#2' 0.60")
+        )
+        .replace("C1 0.10", "C#1 0.10")
+        .replace("C2 0.60", "'C#2' 0.60")
+    )
 
     _assert_synthetic_carbon_pair(load_structure_file(_write_cif(tmp_path, text, newline)))
 
@@ -221,11 +236,15 @@ _atom_site_label # also not a comment
     ("text", "match"),
     [
         (
-            SYNTHETIC_LOOP_COMMENTS_CIF.replace("C2 0.60 0.70 0.80 0.010 1.0 Uiso C", "C2 0.60 0.70"),
+            SYNTHETIC_LOOP_COMMENTS_CIF.replace(
+                "C2 0.60 0.70 0.80 0.010 1.0 Uiso C", "C2 0.60 0.70"
+            ),
             "incomplete row",
         ),
         (
-            SYNTHETIC_LOOP_COMMENTS_CIF.replace("_space_group_IT_number 1\n", "_space_group_IT_number 1\nstray_bareword\n"),
+            SYNTHETIC_LOOP_COMMENTS_CIF.replace(
+                "_space_group_IT_number 1\n", "_space_group_IT_number 1\nstray_bareword\n"
+            ),
             'Unexpected CIF file entry: "stray_bareword"',
         ),
     ],
@@ -234,7 +253,9 @@ _atom_site_label # also not a comment
 def test_load_cif_with_commented_headings_still_reports_malformed_content(
     tmp_path: Path, text: str, match: str
 ) -> None:
-    with pytest.raises(StructureLoadError, match=f"Failed to parse structure file 'sample.cif': .*{match}"):
+    with pytest.raises(
+        StructureLoadError, match=f"Failed to parse structure file 'sample.cif': .*{match}"
+    ):
         load_structure_file(_write_cif(tmp_path, text))
 
 
@@ -375,12 +396,16 @@ Si 5.0 -1.0 0.0
 # one an ulp away (macOS libm). Either converts to a fractional x a rounding
 # error below zero, which must land on 0.0 rather than on or just under 1.0.
 HEXAGONAL_FACE_X = pytest.mark.parametrize(
-    "minus_b_x", ["1.4999999999999993", "1.4999999999999996"], ids=["correctly-rounded-cos", "one-ulp-cos"]
+    "minus_b_x",
+    ["1.4999999999999993", "1.4999999999999996"],
+    ids=["correctly-rounded-cos", "one-ulp-cos"],
 )
 
 
 @HEXAGONAL_FACE_X
-def test_load_cell_positions_abs_on_a_hexagonal_cell_face_wraps_to_zero(tmp_path: Path, minus_b_x: str) -> None:
+def test_load_cell_positions_abs_on_a_hexagonal_cell_face_wraps_to_zero(
+    tmp_path: Path, minus_b_x: str
+) -> None:
     loaded = _load_cell(
         tmp_path,
         f"""
@@ -515,7 +540,8 @@ Si 2
             id="short-lattice-vector",
         ),
         pytest.param(
-            "%BLOCK LATTICE_CART\nfurlong\n4 0 0\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n" + SI_AT_ORIGIN,
+            "%BLOCK LATTICE_CART\nfurlong\n4 0 0\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n"
+            + SI_AT_ORIGIN,
             "unsupported length unit 'furlong'",
             id="unsupported-unit",
         ),
@@ -583,13 +609,17 @@ def test_load_cell_with_a_non_numeric_coordinate_is_a_load_error(tmp_path: Path)
             id="both-position-blocks",
         ),
         pytest.param(
-            CUBIC_4 + SI_AT_ORIGIN + "%BLOCK POSITIONS_FRAC\nO 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n",
+            CUBIC_4
+            + SI_AT_ORIGIN
+            + "%BLOCK POSITIONS_FRAC\nO 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n",
             "Duplicate block POSITIONS_FRAC",
             id="repeated-block",
         ),
     ],
 )
-def test_load_cell_rejects_conflicting_geometry_blocks(tmp_path: Path, text: str, match: str) -> None:
+def test_load_cell_rejects_conflicting_geometry_blocks(
+    tmp_path: Path, text: str, match: str
+) -> None:
     # CASTEP itself rejects these files, so the import does not pick one block.
     with pytest.raises(StructureLoadError, match=match):
         _load_cell(tmp_path, text)
@@ -683,7 +713,9 @@ _cell_angle_gamma 90
 """
 
 
-def _mcif(tags: str = "", atoms: str = "Fe1 Fe 0.0 0.0 0.0\n  Mn1 Mn 0.5 0.5 0.5", loops: str = "") -> str:
+def _mcif(
+    tags: str = "", atoms: str = "Fe1 Fe 0.0 0.0 0.0\n  Mn1 Mn 0.5 0.5 0.5", loops: str = ""
+) -> str:
     return (
         _MCIF_HEADER
         + tags
@@ -738,7 +770,9 @@ loop_
 
     assert loaded.species == ["Si", "O"]
     assert loaded.properties["source_extension"] == ".mcif"
-    assert loaded.properties["magnetic_structure"]["propagation_vector"] == pytest.approx([0.0, 0.0, 0.5])
+    assert loaded.properties["magnetic_structure"]["propagation_vector"] == pytest.approx(
+        [0.0, 0.0, 0.5]
+    )
     assert loaded.properties["propagation_vector"] == pytest.approx([0.0, 0.0, 0.5])
     assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -1.0])
     moments = loaded.properties["magnetic_structure"]["moments"]
@@ -940,7 +974,9 @@ loop_
 
 
 @LINE_ENDINGS
-def test_load_mcif_with_commented_loop_headings_keeps_magnetic_metadata(tmp_path: Path, newline: str) -> None:
+def test_load_mcif_with_commented_loop_headings_keeps_magnetic_metadata(
+    tmp_path: Path, newline: str
+) -> None:
     text = """data_synthetic_magnetic
 _cell_length_a 5
 _cell_length_b 5
@@ -977,8 +1013,12 @@ Mn#2 0.0 0.0 -2.5
     loaded = load_structure_file(_write_cif(tmp_path, text, newline, name="sample.mcif"))
 
     assert loaded.species == ["Fe", "Mn"]
-    assert loaded.lattice_vectors == [pytest.approx(row) for row in ([5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0])]
-    assert loaded.fractional_positions == [pytest.approx(row) for row in ([0.0, 0.0, 0.0], [0.5, 0.5, 0.5])]
+    assert loaded.lattice_vectors == [
+        pytest.approx(row) for row in ([5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0])
+    ]
+    assert loaded.fractional_positions == [
+        pytest.approx(row) for row in ([0.0, 0.0, 0.0], [0.5, 0.5, 0.5])
+    ]
     magnetic = loaded.properties["magnetic_structure"]
     assert magnetic["atom_labels"] == ["Fe#1", "Mn#2"]
     assert magnetic["propagation_vectors_rlu"] == [pytest.approx([0.0, 0.0, 0.5])]
@@ -997,7 +1037,7 @@ Mn#2 0.0 0.0 -2.5
     ("line", "texts", "comment_start"),
     [
         ("_tag 'it''s' # note", ["_tag", "it''s"], 13),
-        ("O'1 \"a #b\" C#1", ["O'1", "a #b", "C#1"], None),
+        ('O\'1 "a #b" C#1', ["O'1", "a #b", "C#1"], None),
         ("a 'b c", ["a", "b c"], None),
         ("   # only a comment", [], 3),
     ],
@@ -1026,7 +1066,9 @@ def test_parse_cif_tags_and_loops_skips_headerless_loop_and_keeps_bare_tag() -> 
 
 
 def test_parse_cif_tags_and_loops_reads_text_fields_as_single_values() -> None:
-    tags, loops = sio._parse_cif_tags_and_loops("_note\n;\n_fake # x\n; _next 1\n_open\n;never closed\nloop_\n")
+    tags, loops = sio._parse_cif_tags_and_loops(
+        "_note\n;\n_fake # x\n; _next 1\n_open\n;never closed\nloop_\n"
+    )
 
     assert loops == []
     assert tags == {"_note": "\n_fake # x", "_next": "1", "_open": "never closed\nloop_\n"}
@@ -1079,8 +1121,18 @@ def test_export_structure_with_muon_sites_writes_p1_cif_with_labels(tmp_path: Pa
         fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
     )
     sites = [
-        CifMuonSite(label="Mu1", fractional_position=(0.25, 0.25, 0.25), relative_energy_ev=0.0, wyckoff_label="8c"),
-        CifMuonSite(label="Mu2", fractional_position=(0.1, 0.0, 0.0), relative_energy_ev=0.12, wyckoff_label=None),
+        CifMuonSite(
+            label="Mu1",
+            fractional_position=(0.25, 0.25, 0.25),
+            relative_energy_ev=0.0,
+            wyckoff_label="8c",
+        ),
+        CifMuonSite(
+            label="Mu2",
+            fractional_position=(0.1, 0.0, 0.0),
+            relative_energy_ev=0.12,
+            wyckoff_label=None,
+        ),
     ]
     output_path = tmp_path / "export.cif"
 
@@ -1100,7 +1152,11 @@ def test_export_structure_with_muon_sites_writes_p1_cif_with_labels(tmp_path: Pa
     atom_site_loop = text.split("loop_")[2]
     assert "_mufinder" not in atom_site_loop
     for line in ("Si  Si1", "Si  Si2", "H   Mu1", "H   Mu2"):
-        row = next(candidate for candidate in atom_site_loop.splitlines() if candidate.strip().startswith(line))
+        row = next(
+            candidate
+            for candidate in atom_site_loop.splitlines()
+            if candidate.strip().startswith(line)
+        )
         assert len(row.split()) == 7
 
     # Per-site metadata instead lives in its own standalone auxiliary loop.
@@ -1142,7 +1198,9 @@ def test_export_structure_with_muon_sites_labels_are_per_species(tmp_path: Path)
     assert "O   O2" in text
 
 
-def test_export_structure_with_muon_sites_warns_when_coincident_with_host_atom(tmp_path: Path) -> None:
+def test_export_structure_with_muon_sites_warns_when_coincident_with_host_atom(
+    tmp_path: Path,
+) -> None:
     # A muon site landing on top of (or implausibly close to) a host atom
     # produces a valid-looking CIF that many viewers render as one merged,
     # fractionally-occupied site (e.g. "Sr1/Mu1"); this must be surfaced.
@@ -1165,7 +1223,9 @@ def test_export_structure_with_muon_sites_warns_when_coincident_with_host_atom(t
     assert output_path.exists()
 
 
-def test_export_structure_with_muon_sites_no_warning_for_plausible_separation(tmp_path: Path) -> None:
+def test_export_structure_with_muon_sites_no_warning_for_plausible_separation(
+    tmp_path: Path,
+) -> None:
     host = Structure(
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
         species=["Si", "Si"],

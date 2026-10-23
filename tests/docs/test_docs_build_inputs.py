@@ -65,7 +65,10 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1080/001075199181521",
     ),
     "user_guide/quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
-    "user_guide/quantum_corrections_theory.rst": ("10.1038/s42005-023-01260-7", "10.1107/S0567740874004067"),
+    "user_guide/quantum_corrections_theory.rst": (
+        "10.1038/s42005-023-01260-7",
+        "10.1107/S0567740874004067",
+    ),
     "user_guide/site_generation.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/structural_relaxation_analysis.rst": (
         "10.1016/j.cpc.2022.108488",
@@ -94,9 +97,7 @@ def _toctree_entries(page: Path) -> list[str]:
             index += 1
             continue
         index += 1
-        while index < len(lines) and (
-            not lines[index].strip() or lines[index][0].isspace()
-        ):
+        while index < len(lines) and (not lines[index].strip() or lines[index][0].isspace()):
             entry = lines[index].strip()
             if entry and not entry.startswith(":"):
                 # Accept both ``name`` and ``Title <name>`` entries.
@@ -108,8 +109,7 @@ def _toctree_entries(page: Path) -> list[str]:
 
 def test_every_docs_page_is_reachable_from_the_index_toctree() -> None:
     pages = {
-        path.relative_to(DOCS_ROOT).with_suffix("").as_posix(): path
-        for path in _source_pages()
+        path.relative_to(DOCS_ROOT).with_suffix("").as_posix(): path for path in _source_pages()
     }
     reachable = {"index"}
     pending = ["index"]
@@ -118,9 +118,7 @@ def test_every_docs_page_is_reachable_from_the_index_toctree() -> None:
         base = current.parent.relative_to(DOCS_ROOT)
         for entry in _toctree_entries(current):
             name = entry[1:] if entry.startswith("/") else (base / entry).as_posix()
-            assert name in pages, (
-                f"docs/{current.name} toctree lists missing page {entry!r}"
-            )
+            assert name in pages, f"docs/{current.name} toctree lists missing page {entry!r}"
             if name not in reachable:
                 reachable.add(name)
                 pending.append(name)

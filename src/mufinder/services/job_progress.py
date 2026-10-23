@@ -123,7 +123,12 @@ class GeometryProgressReader:
                 self._cursors[key] = cursor
             if size <= cursor.offset:
                 return cursor.progress
-            offset, pending, lines, progress = cursor.offset, cursor.pending, cursor.lines, cursor.progress
+            offset, pending, lines, progress = (
+                cursor.offset,
+                cursor.pending,
+                cursor.lines,
+                cursor.progress,
+            )
 
         data = read_from(offset)
         complete, newline, rest = (pending + data).rpartition(b"\n")
@@ -158,7 +163,9 @@ class GeometryProgressReader:
             return self.read(key, size=size, read_from=read_from, source=path)
         return self.read(key, size=None, read_from=lambda _offset: b"")
 
-    def read_remote(self, key: Hashable, ssh: SSHConnection, candidates: Sequence[str]) -> GeometryProgress | None:
+    def read_remote(
+        self, key: Hashable, ssh: SSHConnection, candidates: Sequence[str]
+    ) -> GeometryProgress | None:
         """Read the first of ``candidates`` that exists on the cluster, over SFTP."""
 
         for remote_path in candidates:
@@ -169,7 +176,9 @@ class GeometryProgressReader:
             return self.read(
                 key,
                 size=int(size),
-                read_from=lambda offset, remote_path=remote_path: ssh.read_bytes(remote_path, offset),
+                read_from=lambda offset, remote_path=remote_path: ssh.read_bytes(
+                    remote_path, offset
+                ),
                 source=remote_path,
             )
         return self.read(key, size=None, read_from=lambda _offset: b"")
@@ -188,7 +197,9 @@ class GeometryProgressReader:
 def remote_castep_candidates(remote_dir: str, seed_name: str, farm_count: int) -> tuple[str, ...]:
     """Return the remote ``.castep`` paths a job may write; see :func:`castep_output_names`."""
 
-    return tuple(posixpath.join(remote_dir, name) for name in castep_output_names(seed_name, farm_count))
+    return tuple(
+        posixpath.join(remote_dir, name) for name in castep_output_names(seed_name, farm_count)
+    )
 
 
 def _start_daemon_thread(task: Callable[[], None]) -> None:

@@ -90,12 +90,16 @@ def test_project_store_entity_and_provenance_io(tmp_path: Path) -> None:
     store.append_provenance({"event": 1})
     store.append_provenance({"event": 2})
     # Corrupt one line and ensure loader skips it.
-    store.provenance_path.write_text(store.provenance_path.read_text(encoding="utf-8") + "{bad\n", encoding="utf-8")
+    store.provenance_path.write_text(
+        store.provenance_path.read_text(encoding="utf-8") + "{bad\n", encoding="utf-8"
+    )
     events = store.load_provenance()
     assert [row["event"] for row in events] == [1, 2]
 
 
-def test_project_store_read_json_reports_dataless_cloud_placeholder(tmp_path: Path, monkeypatch) -> None:
+def test_project_store_read_json_reports_dataless_cloud_placeholder(
+    tmp_path: Path, monkeypatch
+) -> None:
     root = tmp_path / "store.mufinder"
     store = ProjectStore(root)
     store.initialize_layout()
@@ -123,7 +127,11 @@ def test_project_store_read_json_wraps_timeouts_with_path(tmp_path: Path, monkey
     path.write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(ProjectStore, "_is_dataless_file", staticmethod(lambda _path: False))
-    monkeypatch.setattr(Path, "read_text", lambda self, encoding="utf-8": (_ for _ in ()).throw(TimeoutError("boom")))
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda self, encoding="utf-8": (_ for _ in ()).throw(TimeoutError("boom")),
+    )
 
     try:
         store.read_json(path)

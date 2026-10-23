@@ -154,7 +154,11 @@ def enumerate_distinct_muon_paths(
         )
 
     symmetry = get_crystal_symmetry(
-        (pristine_supercell.cell.array, pristine_supercell.get_scaled_positions(), pristine_supercell.numbers),
+        (
+            pristine_supercell.cell.array,
+            pristine_supercell.get_scaled_positions(),
+            pristine_supercell.numbers,
+        ),
         symprec=float(symprec),
     )
     if symmetry is None:
@@ -194,7 +198,12 @@ def enumerate_distinct_muon_paths(
         if existing is None or candidate.length_ang < existing.length_ang:
             unique[key] = candidate
 
-    return tuple(sorted(unique.values(), key=lambda path: (path.length_ang, path.end_fractional, path.start_fractional)))
+    return tuple(
+        sorted(
+            unique.values(),
+            key=lambda path: (path.length_ang, path.end_fractional, path.start_fractional),
+        )
+    )
 
 
 def prepare_transition_state_structures(
@@ -216,10 +225,16 @@ def prepare_transition_state_structures(
     _validate_transition_state_cells(reactant, product)
     pristine_supercell = _make_supercell_like(pristine, reactant)
 
-    reactant_target = np.asarray(tuple(float(value) for value in reactant_anchor_fractional), dtype=float)
-    product_target = np.asarray(tuple(float(value) for value in product_anchor_fractional), dtype=float)
+    reactant_target = np.asarray(
+        tuple(float(value) for value in reactant_anchor_fractional), dtype=float
+    )
+    product_target = np.asarray(
+        tuple(float(value) for value in product_anchor_fractional), dtype=float
+    )
     if reactant_target.shape != (3,) or product_target.shape != (3,):
-        raise EnergyBarrierError("Transition-state anchor positions must contain exactly three fractional coordinates.")
+        raise EnergyBarrierError(
+            "Transition-state anchor positions must contain exactly three fractional coordinates."
+        )
 
     aligned_reactant = _transform_structure_by_symmetry(
         pristine_supercell,
@@ -242,8 +257,12 @@ def prepare_transition_state_structures(
     _minimise_displacements(aligned_reactant, aligned_product)
 
     return PreparedTransitionState(
-        reactant=_atoms_to_structure(aligned_reactant, reactant_structure, origin="energy_barriers_transition_state"),
-        product=_atoms_to_structure(aligned_product, product_structure, origin="energy_barriers_transition_state"),
+        reactant=_atoms_to_structure(
+            aligned_reactant, reactant_structure, origin="energy_barriers_transition_state"
+        ),
+        product=_atoms_to_structure(
+            aligned_product, product_structure, origin="energy_barriers_transition_state"
+        ),
     )
 
 
@@ -265,11 +284,15 @@ def _default_max_distance(
         if np.isfinite(best):
             minima.append(float(best))
     if not minima:
-        raise EnergyBarrierError("No distinct muon paths were found between the selected relaxed structures.")
+        raise EnergyBarrierError(
+            "No distinct muon paths were found between the selected relaxed structures."
+        )
     return 1.5 * max(minima)
 
 
-def _canonical_delta_key(delta: np.ndarray, *, rotations: Sequence[np.ndarray], tol: float) -> tuple[int, int, int]:
+def _canonical_delta_key(
+    delta: np.ndarray, *, rotations: Sequence[np.ndarray], tol: float
+) -> tuple[int, int, int]:
     candidates = []
     for rotation in rotations:
         rotated = np.asarray(rotation, dtype=float) @ delta
@@ -281,9 +304,13 @@ def _canonical_delta_key(delta: np.ndarray, *, rotations: Sequence[np.ndarray], 
 
 def _validate_transition_state_cells(lhs: Atoms, rhs: Atoms) -> None:
     if len(lhs) != len(rhs):
-        raise EnergyBarrierError("Transition-state endpoints must contain the same number of atoms.")
+        raise EnergyBarrierError(
+            "Transition-state endpoints must contain the same number of atoms."
+        )
     if list(lhs.numbers) != list(rhs.numbers):
-        raise EnergyBarrierError("Transition-state endpoints must contain atoms in matching species order.")
+        raise EnergyBarrierError(
+            "Transition-state endpoints must contain atoms in matching species order."
+        )
     if not np.allclose(lhs.cell.array, rhs.cell.array, atol=1e-8):
         raise EnergyBarrierError("Transition-state endpoints must share the same simulation cell.")
 
@@ -306,7 +333,9 @@ def _structure_to_atoms(structure: Structure, *, require_muon: bool) -> Atoms:
         atoms.info["mufinder_atomic_spins"] = [float(value) for value in spins]
         atoms.set_initial_magnetic_moments([float(value) for value in spins])
     if require_muon and sum(1 for label in labels if is_muon_label(label)) != 1:
-        raise EnergyBarrierError("Transition-state endpoint structures must contain exactly one muon.")
+        raise EnergyBarrierError(
+            "Transition-state endpoint structures must contain exactly one muon."
+        )
     return atoms
 
 
@@ -317,9 +346,14 @@ def _atoms_to_structure(atoms: Atoms, template: Structure, *, origin: str) -> St
     result = Structure(
         label=template.label,
         origin=origin,
-        lattice_vectors=[[float(component) for component in row] for row in atoms.cell.array.tolist()],
+        lattice_vectors=[
+            [float(component) for component in row] for row in atoms.cell.array.tolist()
+        ],
         species=[str(label) for label in labels],
-        fractional_positions=[[float(component) for component in row] for row in atoms.get_scaled_positions(wrap=True).tolist()],
+        fractional_positions=[
+            [float(component) for component in row]
+            for row in atoms.get_scaled_positions(wrap=True).tolist()
+        ],
         source_file=template.source_file,
         parent_structure_id=template.parent_structure_id,
         properties=dict(template.properties),
@@ -371,7 +405,9 @@ def idpp_intermediate_structure(reactant: Structure, product: Structure) -> Stru
         )
         central = linear
 
-    return _atoms_to_structure(central, template=reactant, origin="energy_barriers_neb_intermediate")
+    return _atoms_to_structure(
+        central, template=reactant, origin="energy_barriers_neb_intermediate"
+    )
 
 
 def _linear_midpoint_atoms(reactant_atoms: Atoms, product_atoms: Atoms) -> Atoms:
@@ -421,12 +457,18 @@ def _single_muon_position(atoms: Atoms) -> np.ndarray:
     labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
     muon_indices = [index for index, label in enumerate(labels) if is_muon_label(str(label))]
     if len(muon_indices) != 1:
-        raise EnergyBarrierError("Transition-state endpoint structures must contain exactly one muon.")
+        raise EnergyBarrierError(
+            "Transition-state endpoint structures must contain exactly one muon."
+        )
     return np.asarray(atoms.get_scaled_positions(wrap=True)[muon_indices[0]], dtype=float)
 
 
-def _apply_symmetry_operation(positions: np.ndarray, rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
-    return (np.asarray(positions, dtype=float) @ np.asarray(rotation, dtype=float).T) + np.asarray(translation, dtype=float)
+def _apply_symmetry_operation(
+    positions: np.ndarray, rotation: np.ndarray, translation: np.ndarray
+) -> np.ndarray:
+    return (np.asarray(positions, dtype=float) @ np.asarray(rotation, dtype=float).T) + np.asarray(
+        translation, dtype=float
+    )
 
 
 def _symmetry_equivalent_muon_positions(
@@ -444,21 +486,22 @@ def _symmetry_equivalent_muon_positions(
         return ()
     rotations = np.asarray(symmetry["rotations"], dtype=float)
     translations = np.asarray(symmetry["translations"], dtype=float)
-    transformed = (rotations @ np.asarray(muon_position, dtype=float).reshape(3, 1)).reshape(-1, 3) + translations
+    transformed = (rotations @ np.asarray(muon_position, dtype=float).reshape(3, 1)).reshape(
+        -1, 3
+    ) + translations
     wrapped = np.mod(transformed, 1.0)
     keys = np.rint(wrapped / tol).astype(int)
     _unique_keys, unique_indexes = np.unique(keys, axis=0, return_index=True)
     ordered_indexes = sorted(int(index) for index in unique_indexes.tolist())
-    return tuple(
-        tuple(float(value) for value in wrapped[index])
-        for index in ordered_indexes
-    )
+    return tuple(tuple(float(value) for value in wrapped[index]) for index in ordered_indexes)
 
 
 def _make_supercell_like(pristine: Atoms, target: Atoms) -> Atoms:
     matrix = np.rint(target.cell.array @ np.linalg.inv(pristine.cell.array)).astype(int)
     if not np.allclose(matrix @ pristine.cell.array, target.cell.array, atol=1e-6):
-        raise EnergyBarrierError("Could not construct a pristine supercell matching the relaxed endpoint cell.")
+        raise EnergyBarrierError(
+            "Could not construct a pristine supercell matching the relaxed endpoint cell."
+        )
     return make_supercell(pristine, matrix)
 
 
@@ -470,8 +513,12 @@ def _is_symmetry_equivalent(
     symprec: float,
     tol: float,
 ) -> bool:
-    for equivalent in _symmetry_equivalent_muon_positions(pristine, position, symprec=symprec, tol=tol):
-        delta = _wrapped_fractional_delta(np.asarray(equivalent, dtype=float), np.asarray(target, dtype=float))
+    for equivalent in _symmetry_equivalent_muon_positions(
+        pristine, position, symprec=symprec, tol=tol
+    ):
+        delta = _wrapped_fractional_delta(
+            np.asarray(equivalent, dtype=float), np.asarray(target, dtype=float)
+        )
         if np.allclose(delta, 0.0, atol=tol):
             return True
     return False
@@ -487,14 +534,18 @@ def _transform_structure_by_symmetry(
     tol: float,
 ) -> Atoms:
     if not _is_symmetry_equivalent(pristine, current_muon, target_muon, symprec=symprec, tol=tol):
-        raise EnergyBarrierError("Selected path endpoint is not symmetry-equivalent to the relaxed muon position.")
+        raise EnergyBarrierError(
+            "Selected path endpoint is not symmetry-equivalent to the relaxed muon position."
+        )
 
     symmetry = get_crystal_symmetry(
         (pristine.cell.array, pristine.get_scaled_positions(), pristine.numbers),
         symprec=float(symprec),
     )
     if symmetry is None:
-        raise EnergyBarrierError("Could not determine a symmetry operation for the selected transition-state path.")
+        raise EnergyBarrierError(
+            "Could not determine a symmetry operation for the selected transition-state path."
+        )
     rotation = None
     translation = None
     current_wrapped = np.mod(current_muon, 1.0)
@@ -502,13 +553,17 @@ def _transform_structure_by_symmetry(
     for candidate_rotation, candidate_translation in zip(
         symmetry["rotations"], symmetry["translations"], strict=False
     ):
-        transformed = _apply_symmetry_operation(current_wrapped.reshape(1, 3), candidate_rotation, candidate_translation).reshape(3)
+        transformed = _apply_symmetry_operation(
+            current_wrapped.reshape(1, 3), candidate_rotation, candidate_translation
+        ).reshape(3)
         if np.allclose(_wrapped_fractional_delta(transformed, target_wrapped), 0.0, atol=tol):
             rotation = np.asarray(candidate_rotation, dtype=float)
             translation = np.asarray(candidate_translation, dtype=float)
             break
     if rotation is None or translation is None:
-        raise EnergyBarrierError("Could not determine a symmetry operation for the selected transition-state path.")
+        raise EnergyBarrierError(
+            "Could not determine a symmetry operation for the selected transition-state path."
+        )
 
     muon_index = _muon_index(relaxed)
     positions = relaxed.get_scaled_positions(wrap=True)
@@ -516,11 +571,15 @@ def _transform_structure_by_symmetry(
     for index, position in enumerate(positions):
         if index == muon_index:
             continue
-        displacements[index] = _wrapped_fractional_delta(current_wrapped, np.asarray(position, dtype=float))
+        displacements[index] = _wrapped_fractional_delta(
+            current_wrapped, np.asarray(position, dtype=float)
+        )
 
     transformed = relaxed.copy()
     new_positions = np.zeros_like(positions)
-    transformed_displacements = _apply_symmetry_operation(displacements, rotation, np.zeros(3, dtype=float))
+    transformed_displacements = _apply_symmetry_operation(
+        displacements, rotation, np.zeros(3, dtype=float)
+    )
     for index in range(len(positions)):
         if index == muon_index:
             new_positions[index] = target_wrapped
@@ -534,7 +593,9 @@ def _muon_index(atoms: Atoms) -> int:
     labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
     matches = [index for index, label in enumerate(labels) if is_muon_label(str(label))]
     if len(matches) != 1:
-        raise EnergyBarrierError("Transition-state endpoint structures must contain exactly one muon.")
+        raise EnergyBarrierError(
+            "Transition-state endpoint structures must contain exactly one muon."
+        )
     return int(matches[0])
 
 
@@ -555,7 +616,9 @@ def _reorder_atoms_like(reference: Atoms, target: Atoms) -> None:
             if reference_numbers[row] != target_numbers[column]:
                 penalties[row, column] = 1e9
                 continue
-            penalties[row, column] = _minimum_image_distance(reference_positions[row], target_positions[column], cell)
+            penalties[row, column] = _minimum_image_distance(
+                reference_positions[row], target_positions[column], cell
+            )
     row_ids, column_ids = linear_sum_assignment(penalties)
     order = [int(column) for column in column_ids[np.argsort(row_ids)]]
     target.set_scaled_positions(target_positions[order])

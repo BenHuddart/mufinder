@@ -93,7 +93,9 @@ def _kpoint_context_and_deps(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
-        definition_output_directory=lambda d: document.project_root / "files" / "convergence_kpoint",
+        definition_output_directory=lambda d: (
+            document.project_root / "files" / "convergence_kpoint"
+        ),
         job_output_directory=lambda _job: None,
         job_seed_name=lambda job: job.label,
         job_file_cleanup=None,  # type: ignore[arg-type]
@@ -283,9 +285,7 @@ def test_kpoint_controller_uses_shared_ready_predicate() -> None:
 
 def test_kpoint_controller_refresh_view_without_document_clears_rows() -> None:
     view = _FakeKpointView()
-    controller = ConvergenceKpointController(
-        make_context(document=None), _stub_kpoint_deps(), view
-    )
+    controller = ConvergenceKpointController(make_context(document=None), _stub_kpoint_deps(), view)
 
     controller.refresh_view()
 
@@ -313,7 +313,9 @@ def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     controller = ConvergenceKpointController(
         make_context(document=document), _stub_kpoint_deps(), _FakeKpointView()
     )
-    handled = make_job("j", service=service, document=document, calc_type="castep_convergence_kpoint")
+    handled = make_job(
+        "j", service=service, document=document, calc_type="castep_convergence_kpoint"
+    )
     other = make_job("k", service=service, document=document, calc_type="castep_convergence_cutoff")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False
@@ -327,7 +329,9 @@ def test_kpoint_controller_form_snapshot_reads_the_live_widget_first(tmp_path: P
         service, document, local_backend=RecordingBackend(), cluster_backend=RecordingBackend()
     )
     # The persisted form lists (2, 2, 2) only; the widget has since gained a grid.
-    view = _FakeKpointView(form_state={"name_prefix": "kconv", "kpoint_grids": [[2, 2, 2], [3, 3, 3]]})
+    view = _FakeKpointView(
+        form_state={"name_prefix": "kconv", "kpoint_grids": [[2, 2, 2], [3, 3, 3]]}
+    )
     controller = ConvergenceKpointController(context, deps, view)
 
     assert controller.form_snapshot() == ("kconv", ((2, 2, 2), (3, 3, 3)))

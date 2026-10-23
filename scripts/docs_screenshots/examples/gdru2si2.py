@@ -177,8 +177,12 @@ def _relaxation_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
 
     cell = _job_cell(job_dir, seed)
     site = _nearest_site(cell)
-    (job_dir / f"{seed}-out.cell").write_text(_fixture_text(f"{site.seed}-out.cell"), encoding="utf-8")
-    text = castep_text(energy=site.energy_eV, species=list(cell.species), geometry=True, wall_time=171236.4)
+    (job_dir / f"{seed}-out.cell").write_text(
+        _fixture_text(f"{site.seed}-out.cell"), encoding="utf-8"
+    )
+    text = castep_text(
+        energy=site.energy_eV, species=list(cell.species), geometry=True, wall_time=171236.4
+    )
     (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
     return True
 
@@ -189,7 +193,9 @@ def _phonon_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
     cell = _job_cell(job_dir, seed)
     site = _nearest_site(cell)
     (job_dir / f"{seed}.phonon").write_text(_fixture_text(f"{site.seed}.phonon"), encoding="utf-8")
-    text = castep_text(energy=site.energy_eV, species=list(cell.species), geometry=False, wall_time=259804.1)
+    text = castep_text(
+        energy=site.energy_eV, species=list(cell.species), geometry=False, wall_time=259804.1
+    )
     for name in (f"{seed}.castep", f"{seed}_farm001.castep"):
         (job_dir / name).write_text(text, encoding="utf-8")
     return True
@@ -204,7 +210,9 @@ def _neb_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
 
     (job_dir / f"{seed}_farm001.ts").write_text(_fixture_text(NEB_FIXTURE), encoding="utf-8")
     species = list(_job_cell(job_dir, seed).species)
-    text = castep_text(energy=SITES[1].energy_eV, species=species, geometry=False, wall_time=412833.9)
+    text = castep_text(
+        energy=SITES[1].energy_eV, species=species, geometry=False, wall_time=412833.9
+    )
     for name in (f"{seed}.castep", f"{seed}_farm001.castep"):
         (job_dir / name).write_text(text, encoding="utf-8")
     return True
@@ -228,10 +236,18 @@ def _build_generation(directory: Path) -> tuple[ProjectService, ProjectDocument]
     )
     document.project.supercell_matrix = [list(row) for row in SUPERCELL_2X2X1]
     # The paper's settings, set by hand: no convergence sweep ran in this project.
-    supercell_lattice = (np.asarray(SUPERCELL_2X2X1, dtype=float) @ np.asarray(host.lattice_vectors)).tolist()
-    service.set_recommended_cutoff(document, CUTOFF_EV, method="manual", xc_functional=XC_FUNCTIONAL)
+    supercell_lattice = (
+        np.asarray(SUPERCELL_2X2X1, dtype=float) @ np.asarray(host.lattice_vectors)
+    ).tolist()
+    service.set_recommended_cutoff(
+        document, CUTOFF_EV, method="manual", xc_functional=XC_FUNCTIONAL
+    )
     service.set_recommended_kpoint_grid(
-        document, RELAXATION_GRID, lattice_vectors=supercell_lattice, method="manual", xc_functional=XC_FUNCTIONAL
+        document,
+        RELAXATION_GRID,
+        lattice_vectors=supercell_lattice,
+        method="manual",
+        xc_functional=XC_FUNCTIONAL,
     )
     random = {
         "selection_mode": "separation",
@@ -259,7 +275,9 @@ def _configure_relaxations(window: MainWindow) -> None:
     view = window._muon_relaxation_view
     row_ids = tuple(entry.row_id for entry in view._row_entries())
     values = {"spin_polarized": True, "geom_force_tol": ValueWithUnit(FORCE_TOL_EV_ANG, "eV/ang")}
-    when_modal("ParameterDialog", lambda dialog: (dialog.set_values(values), dialog._accept_if_valid()))
+    when_modal(
+        "ParameterDialog", lambda dialog: (dialog.set_values(values), dialog._accept_if_valid())
+    )
     view._open_parameter_dialog(row_ids)
 
 
@@ -296,7 +314,9 @@ def _configure_phonons(window: MainWindow, keys: list[str]) -> None:
 def site_keys(window: MainWindow) -> dict[int, str]:
     """The relaxed-site key of each Table SI site, by its rank in energy."""
 
-    candidates = sorted(window._quantum_corrections_controller.candidates(), key=lambda item: item.total_energy_eV)
+    candidates = sorted(
+        window._quantum_corrections_controller.candidates(), key=lambda item: item.total_energy_eV
+    )
     return {number: candidates[number - 1].key for number in SITES}
 
 
@@ -323,7 +343,9 @@ def _build_results(directory: Path, *, run_neb: bool) -> Path:
     for site in SITES.values():
         x, y, z = site.start
         service.generate_candidate_sites(
-            document, method="manual", parameters={"coord_system": "fractional", "x": x, "y": y, "z": z}
+            document,
+            method="manual",
+            parameters={"coord_system": "fractional", "x": x, "y": y, "z": z},
         )
     service.save_project(document)
 
@@ -439,9 +461,13 @@ def task_farm_row(dialog: Any) -> QRect:
 
 SCENES: dict[str, Scene] = {
     "gdru2si2_site_generation": Scene(
-        generation_project, "muon_candidates", Page("_muon_generation_view", (1160, 740), prepare=select_all_sites)
+        generation_project,
+        "muon_candidates",
+        Page("_muon_generation_view", (1160, 740), prepare=select_all_sites),
     ),
-    "gdru2si2_muon_relaxations": Scene(results_project, "muon_relaxations", Page("_muon_relaxation_view", (1100, 440))),
+    "gdru2si2_muon_relaxations": Scene(
+        results_project, "muon_relaxations", Page("_muon_relaxation_view", (1100, 440))
+    ),
     "gdru2si2_analysis_workspace": Scene(
         results_project,
         None,
@@ -454,12 +480,22 @@ SCENES: dict[str, Scene] = {
     "gdru2si2_path_preview": Scene(
         results_project,
         "energy_barriers",
-        Dialog(open_path_preview, kind="EnergyBarrierPathViewerDialog", size=(860, 720), prepare=view_along_a),
+        Dialog(
+            open_path_preview,
+            kind="EnergyBarrierPathViewerDialog",
+            size=(860, 720),
+            prepare=view_along_a,
+        ),
     ),
     "gdru2si2_neb_configuration": Scene(
         configured_project,
         "energy_barriers",
-        Dialog(open_neb_configuration, kind="NudgedElasticBandConfigDialog", size=(900, 790), prepare=prepare_neb_dialog),
+        Dialog(
+            open_neb_configuration,
+            kind="NudgedElasticBandConfigDialog",
+            size=(900, 790),
+            prepare=prepare_neb_dialog,
+        ),
     ),
     "gdru2si2_neb_task_farms": Scene(
         configured_project,
@@ -473,7 +509,9 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "gdru2si2_neb_analysis": Scene(
-        results_project, "energy_barriers", Page("_energy_barriers_view", (1100, 860), prepare=show_transition_state)
+        results_project,
+        "energy_barriers",
+        Page("_energy_barriers_view", (1100, 860), prepare=show_transition_state),
     ),
     "gdru2si2_quantum_corrections": Scene(
         results_project, "quantum_corrections", Page("_quantum_corrections_view", (1100, 680))

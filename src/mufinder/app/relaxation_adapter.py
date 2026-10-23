@@ -137,14 +137,18 @@ def _structure_for_muon_row(host_structure: Structure, row: MuonRelaxationRow) -
         host_structure,
         PristineRelaxationRow(label=row.label, supercell_matrix=row.supercell_matrix),
     )
-    muon_position = _muon_supercell_fractional_position(row.initial_fractional_position, row.supercell_matrix)
+    muon_position = _muon_supercell_fractional_position(
+        row.initial_fractional_position, row.supercell_matrix
+    )
     properties = dict(base.properties)
     # Neutral muonium is open-shell: mu+ binds one electron (S = 1/2, ~1 muB). Seed +1 on the
     # muon so the spin-polarised SCF localises the unpaired electron there; the diamagnetic mu+
     # has no bound electron and stays 0.
     is_muonium = _charge_state_key(row.charge_state) == MUONIUM_CHARGE_STATE
     muon_spin = MUONIUM_MUON_SPIN if is_muonium else 0.0
-    host_spins = list(properties.get("atomic_spins", host_structure.properties.get("atomic_spins", [])))
+    host_spins = list(
+        properties.get("atomic_spins", host_structure.properties.get("atomic_spins", []))
+    )
     # The muon is appended as the last atom (see below), so seed it there. Only materialise the
     # array when it carries information: a magnetic host (host_spins) or a muonium seed. A
     # diamagnetic muon on a non-magnetic host needs no spin array at all.
@@ -162,14 +166,17 @@ def _structure_for_muon_row(host_structure: Structure, row: MuonRelaxationRow) -
         origin=base.origin,
         lattice_vectors=[list(vector) for vector in base.lattice_vectors],
         species=list(base.species) + ["H:mu"],
-        fractional_positions=[list(position) for position in base.fractional_positions] + [list(muon_position)],
+        fractional_positions=[list(position) for position in base.fractional_positions]
+        + [list(muon_position)],
         source_file=base.source_file,
         parent_structure_id=base.parent_structure_id,
         properties={
             **properties,
             "muon_site_id": str(row.site_id),
             "muon_charge_state": _charge_state_key(row.charge_state),
-            "muon_initial_fractional_position_host": [float(value) for value in row.initial_fractional_position],
+            "muon_initial_fractional_position_host": [
+                float(value) for value in row.initial_fractional_position
+            ],
             "muon_initial_fractional_position_supercell": [float(value) for value in muon_position],
         },
     )
@@ -314,7 +321,9 @@ def expand_muon_relaxation_jobs(
         forced_keywords = [KeywordAssignment("charge", muon_charge_for_state(charge_state))]
         # Muonium is open-shell, so default to a spin-polarised SCF. Left as a default (not locked
         # like charge) so the user can still override it from the param dialog.
-        if charge_state == MUONIUM_CHARGE_STATE and not row_values_has_keyword(prepared.values, "spin_polarized"):
+        if charge_state == MUONIUM_CHARGE_STATE and not row_values_has_keyword(
+            prepared.values, "spin_polarized"
+        ):
             forced_keywords.append(KeywordAssignment("spin_polarized", True))
         param_overrides = ParamTemplate(
             keywords=(tuple(param.keywords) if param is not None else ()) + tuple(forced_keywords),
@@ -379,7 +388,9 @@ def suggested_grid_for_row(
     if reference_grid is None:
         return None
 
-    if is_identity_supercell(row_matrix) and not reference_is_supercell_of(reference_lattice, host_lattice):
+    if is_identity_supercell(row_matrix) and not reference_is_supercell_of(
+        reference_lattice, host_lattice
+    ):
         return reference_grid
 
     row_lattice = [

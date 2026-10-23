@@ -108,7 +108,9 @@ class HostStructureWidget(QWidget):
         self._supercell_button.clicked.connect(self._on_supercell_preview_requested)
 
         self._active_host_combo = QComboBox()
-        self._active_host_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._active_host_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._active_host_combo.currentIndexChanged.connect(self._on_active_host_combo_changed)
 
         self._build_layout()
@@ -116,7 +118,9 @@ class HostStructureWidget(QWidget):
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
         layout.addWidget(self._title)
-        subtitle = QLabel("Load your crystal structure and inspect atoms before running calculations.")
+        subtitle = QLabel(
+            "Load your crystal structure and inspect atoms before running calculations."
+        )
         style_section_subtitle(subtitle)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -316,7 +320,9 @@ class HostStructureWidget(QWidget):
             current_index = 0
             for i, host in enumerate(hosts):
                 self._active_host_combo.addItem(host.label, userData=str(host.structure_id))
-                self._active_host_combo.setItemData(i, host.provenance_hint, Qt.ItemDataRole.ToolTipRole)
+                self._active_host_combo.setItemData(
+                    i, host.provenance_hint, Qt.ItemDataRole.ToolTipRole
+                )
                 if active_str and str(host.structure_id) == active_str:
                     current_index = i
             if hosts:
@@ -384,9 +390,7 @@ class HostStructureWidget(QWidget):
         try:
             self._atom_table.clearSelection()
             valid_rows = [
-                int(row)
-                for row in atom_indexes
-                if 0 <= int(row) < self._atom_table.rowCount()
+                int(row) for row in atom_indexes if 0 <= int(row) < self._atom_table.rowCount()
             ]
             if not valid_rows:
                 self._atom_table.setCurrentCell(-1, -1)
@@ -395,7 +399,8 @@ class HostStructureWidget(QWidget):
                 index = self._atom_table.model().index(row, 0)
                 selection_model.select(
                     index,
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
                 )
             selection_model.setCurrentIndex(
                 self._atom_table.model().index(valid_rows[-1], 0),
@@ -519,7 +524,9 @@ class HostStructureWidget(QWidget):
                 "vector": [0.0, 0.0, float(spin)],
                 "coordinate_system": "cartesian",
             }
-            for index, (species, spin) in enumerate(zip(self._current_structure.species, self._atomic_spins))
+            for index, (species, spin) in enumerate(
+                zip(self._current_structure.species, self._atomic_spins)
+            )
             if abs(float(spin)) > 1e-12
         ]
         propagation = [float(value) for value in self._propagation_vector]

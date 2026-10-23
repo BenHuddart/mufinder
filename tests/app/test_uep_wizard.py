@@ -15,7 +15,12 @@ from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy, QWidget
 
 from mufinder.app.theme import current_palette
 from mufinder.app.uep_clustering_dialog import cluster_color_map
-from mufinder.app.uep_wizard import UepAnalysisDialog, _AddSlicePlaneDialog, _EditSlicePlaneDialog, _SlicePlaneState
+from mufinder.app.uep_wizard import (
+    UepAnalysisDialog,
+    _AddSlicePlaneDialog,
+    _EditSlicePlaneDialog,
+    _SlicePlaneState,
+)
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.domain.models import Structure
 from mufinder.science.uep import (
@@ -190,7 +195,9 @@ def test_add_slice_plane_dialog_defaults_point_to_selected_atom(qapp) -> None:
     dialog.close()
 
 
-def test_add_slice_plane_dialog_uses_fractional_anchor_and_miller_indices_for_hexagonal_cell(qapp) -> None:
+def test_add_slice_plane_dialog_uses_fractional_anchor_and_miller_indices_for_hexagonal_cell(
+    qapp,
+) -> None:
     lattice_vectors = (
         (4.2, 0.0, 0.0),
         (-2.1, 0.5 * np.sqrt(3.0) * 4.2, 0.0),
@@ -208,8 +215,12 @@ def test_add_slice_plane_dialog_uses_fractional_anchor_and_miller_indices_for_he
 
     plane = dialog.plane()
     assert plane is not None
-    assert plane.anchor_ang == pytest.approx(fractional_point_to_cartesian(lattice_vectors, (0.25, 0.5, 0.75)))
-    assert plane.normal_ang == pytest.approx(miller_indices_to_cartesian_normal(lattice_vectors, (1.0, 0.0, 0.0)))
+    assert plane.anchor_ang == pytest.approx(
+        fractional_point_to_cartesian(lattice_vectors, (0.25, 0.5, 0.75))
+    )
+    assert plane.normal_ang == pytest.approx(
+        miller_indices_to_cartesian_normal(lattice_vectors, (1.0, 0.0, 0.0))
+    )
     dialog.close()
 
 
@@ -219,7 +230,9 @@ def test_add_slice_plane_dialog_defaults_normal_from_current_view_direction(qapp
         (-2.1, 0.5 * np.sqrt(3.0) * 4.2, 0.0),
         (0.0, 0.0, 6.8),
     )
-    default_components = cartesian_normal_to_lattice_plane_components(lattice_vectors, (0.0, 0.0, -1.0))
+    default_components = cartesian_normal_to_lattice_plane_components(
+        lattice_vectors, (0.0, 0.0, -1.0)
+    )
     dialog = _AddSlicePlaneDialog(
         selected_positions_ang=[],
         selected_positions_fractional=[],
@@ -277,7 +290,9 @@ def test_uep_wizard_probe_has_no_direct_promotion_workflow(qapp) -> None:
     assert "Total potential" in dialog._probe_output.toPlainText()
     assert not hasattr(dialog, "promote_requested")
     assert not hasattr(dialog, "_probe_promote")
-    assert not any(button.text().startswith("Promote") for button in dialog.findChildren(QPushButton))
+    assert not any(
+        button.text().startswith("Promote") for button in dialog.findChildren(QPushButton)
+    )
     dialog.close()
 
 
@@ -324,12 +339,16 @@ def test_uep_wizard_exposes_only_branded_batch_isosurface_and_slice_tabs(qapp) -
     assert palette.bg_surface in dialog._tabs.styleSheet()
     assert dialog._slice_colorbar_canvas.minimumHeight() == 180
     assert dialog._slice_colorbar_canvas.maximumHeight() == 320
-    assert dialog._slice_colorbar_canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    assert (
+        dialog._slice_colorbar_canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    )
     assert dialog._slice_manage_muons_button.isVisibleTo(dialog) is True
     dialog.close()
 
 
-def test_uep_wizard_initial_state_gw_factor_overrides_default_and_rejects_mismatched_grid(qapp) -> None:
+def test_uep_wizard_initial_state_gw_factor_overrides_default_and_rejects_mismatched_grid(
+    qapp,
+) -> None:
     baseline = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -476,7 +495,9 @@ def test_uep_wizard_pressing_enter_on_batch_gw_factor_rebuilds_and_syncs_all_tab
     dialog.close()
 
 
-def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_promotion(qapp, monkeypatch) -> None:
+def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_promotion(
+    qapp, monkeypatch
+) -> None:
     _run_batch_search_inline(monkeypatch)
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
@@ -519,13 +540,17 @@ def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_pro
         if (item := dialog._batch_table.topLevelItem(item_index)) is not None
         for index in range(item.childCount())
     ]
-    assert sorted(int(label.removeprefix("Site ")) for label in all_site_labels) == list(range(1, len(all_site_labels) + 1))
+    assert sorted(int(label.removeprefix("Site ")) for label in all_site_labels) == list(
+        range(1, len(all_site_labels) + 1)
+    )
     assert not hasattr(dialog, "promote_requested")
     assert not hasattr(dialog, "_promote_selected_cluster")
     dialog.close()
 
 
-def test_uep_wizard_clustering_window_close_clears_reference_and_allows_reopen(qapp, monkeypatch) -> None:
+def test_uep_wizard_clustering_window_close_clears_reference_and_allows_reopen(
+    qapp, monkeypatch
+) -> None:
     _run_batch_search_inline(monkeypatch)
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
@@ -603,7 +628,9 @@ def test_uep_wizard_state_change_keeps_child_dialogs_after_parent_handlers(
     dialog.close()
 
 
-def test_uep_wizard_site_selection_updates_viewer_without_direct_promotion(qapp, monkeypatch) -> None:
+def test_uep_wizard_site_selection_updates_viewer_without_direct_promotion(
+    qapp, monkeypatch
+) -> None:
     _run_batch_search_inline(monkeypatch)
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
@@ -633,7 +660,9 @@ def test_uep_wizard_site_selection_updates_viewer_without_direct_promotion(qapp,
     dialog.close()
 
 
-def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(qapp, monkeypatch) -> None:
+def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
+    qapp, monkeypatch
+) -> None:
     _run_batch_search_inline(monkeypatch)
 
     def _mock_zpe(_field, optimization):
@@ -650,7 +679,9 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
             classification=optimization.classification,
         )
 
-    monkeypatch.setattr("mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe
+    )
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -663,7 +694,9 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     dialog._batch_count.setValue(12)
     dialog._batch_max_steps.setValue(5)
     dialog._run_batch_search()
-    dialog._latest_batch_results = [_mock_zpe(dialog._field, result) for result in dialog._latest_batch_results]
+    dialog._latest_batch_results = [
+        _mock_zpe(dialog._field, result) for result in dialog._latest_batch_results
+    ]
     dialog._open_clustering_dialog()
 
     candidate = dialog._clustered_muon_candidates()[0]
@@ -676,12 +709,16 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     assert dialog._isosurface_viewer._structure.properties["atom_colors"][-1] == expected_color
     viewer_entry = dialog._isosurface_viewer_muons[0]
     assert viewer_entry.linked_isosurface_layer_key is not None
-    layer_index = dialog._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key)
+    layer_index = dialog._find_isosurface_layer_index_by_key(
+        viewer_entry.linked_isosurface_layer_key
+    )
     assert layer_index is not None
     linked_layer = dialog._isosurface_layers[layer_index]
     assert linked_layer.color == expected_color
     assert linked_layer.managed_muon_key == viewer_entry.key
-    assert linked_layer.level_ev == pytest.approx(float(candidate.total_energy_ev) + dialog._potential_grid_zero_shift_ev)
+    assert linked_layer.level_ev == pytest.approx(
+        float(candidate.total_energy_ev) + dialog._potential_grid_zero_shift_ev
+    )
     assert linked_layer.status_text == (
         "Isosurface at total (classical + zero-point) energy "
         f"{float(candidate.total_energy_ev):.6f} eV for muon {candidate.label}."
@@ -693,7 +730,9 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     assert dialog._isosurface_viewer._selected_indexes == [host_count]
     legend_texts = [
         label.text()
-        for label in dialog._isosurface_legend_entries.findChildren(type(dialog._isosurface_min_label))
+        for label in dialog._isosurface_legend_entries.findChildren(
+            type(dialog._isosurface_min_label)
+        )
     ]
     assert any(candidate.label in text for text in legend_texts)
     assert any(f"Cluster {candidate.cluster_index}" in text for text in legend_texts)
@@ -702,11 +741,15 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
 
     assert dialog._isosurface_viewer_muons == []
     assert dialog._isosurface_viewer._structure is dialog._viewer_host_structure
-    assert dialog._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key) is None
+    assert (
+        dialog._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key) is None
+    )
     dialog.close()
 
 
-def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_restores(qapp, monkeypatch) -> None:
+def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_restores(
+    qapp, monkeypatch
+) -> None:
     _run_batch_search_inline(monkeypatch)
 
     def _mock_zpe(_field, optimization):
@@ -723,7 +766,9 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
             classification=optimization.classification,
         )
 
-    monkeypatch.setattr("mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe
+    )
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -736,14 +781,18 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
     dialog._batch_count.setValue(12)
     dialog._batch_max_steps.setValue(5)
     dialog._run_batch_search()
-    dialog._latest_batch_results = [_mock_zpe(dialog._field, result) for result in dialog._latest_batch_results]
+    dialog._latest_batch_results = [
+        _mock_zpe(dialog._field, result) for result in dialog._latest_batch_results
+    ]
     dialog._open_clustering_dialog()
 
     candidate = dialog._clustered_muon_candidates()[0]
     dialog._add_candidate_muons_to_viewer("isosurface", [candidate.key], True)
     viewer_entry = dialog._isosurface_viewer_muons[0]
     assert viewer_entry.linked_isosurface_layer_key is not None
-    layer_index = dialog._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key)
+    layer_index = dialog._find_isosurface_layer_index_by_key(
+        viewer_entry.linked_isosurface_layer_key
+    )
     assert layer_index is not None
 
     dialog._open_isosurface_muon_dialog()
@@ -778,7 +827,9 @@ def test_uep_wizard_editing_isosurface_muon_label_updates_linked_status_and_rest
     )
 
     assert restored._isosurface_viewer_muons[0].label == "Renamed Site"
-    restored_layer_index = restored._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key)
+    restored_layer_index = restored._find_isosurface_layer_index_by_key(
+        viewer_entry.linked_isosurface_layer_key
+    )
     assert restored_layer_index is not None
     assert restored._isosurface_layers[restored_layer_index].status_text == (
         "Isosurface at total (classical + zero-point) energy "
@@ -843,7 +894,9 @@ def test_uep_wizard_slice_muon_management_restores_custom_muons(qapp) -> None:
     assert len(restored._slice_viewer_muons) == 1
     assert restored._slice_viewer._structure is not None
     assert restored._slice_viewer._structure.species.count("X") == 1
-    assert restored._slice_viewer_muons[0].fractional_position == pytest.approx((0.125, 0.25, 0.375))
+    assert restored._slice_viewer_muons[0].fractional_position == pytest.approx(
+        (0.125, 0.25, 0.375)
+    )
     assert restored._slice_viewer._selected_indexes == [host_count]
     restored.close()
 
@@ -866,7 +919,9 @@ def test_uep_wizard_slice_muon_overlays_use_distinct_colors_and_legend(qapp) -> 
     assert atom_colors[-2] != atom_colors[-1]
     legend_texts = [
         label.text()
-        for label in dialog._slice_muon_legend_entries.findChildren(type(dialog._slice_status_label))
+        for label in dialog._slice_muon_legend_entries.findChildren(
+            type(dialog._slice_status_label)
+        )
     ]
     assert any("Custom 1" in text for text in legend_texts)
     assert any("Custom 2" in text for text in legend_texts)
@@ -940,7 +995,9 @@ def test_uep_wizard_batch_search_uses_compact_control_card_layout(qapp) -> None:
     assert dialog._batch_summary.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert dialog._batch_summary.minimumHeight() >= 148
 
-    control_cards = dialog._batch_tab.findChildren(type(summary_parent), options=Qt.FindChildOption.FindChildrenRecursively)
+    control_cards = dialog._batch_tab.findChildren(
+        type(summary_parent), options=Qt.FindChildOption.FindChildrenRecursively
+    )
     object_names = [widget.objectName() for widget in control_cards]
     assert object_names.count("analysisSliderPanel") >= 2
     assert object_names.count("uepIsosurfaceInfoCard") >= 1
@@ -982,7 +1039,10 @@ def test_uep_wizard_isosurface_muon_dialog_places_include_checkbox_in_clustered_
     assert muon_dialog._include_isosurfaces is not None
     assert muon_dialog._include_isosurfaces.parentWidget() is not None
     assert muon_dialog._include_isosurfaces.parentWidget().title() == "Clustered Muons"
-    assert [muon_dialog._candidate_table.headerItem().text(index) for index in range(muon_dialog._candidate_table.columnCount())] == [
+    assert [
+        muon_dialog._candidate_table.headerItem().text(index)
+        for index in range(muon_dialog._candidate_table.columnCount())
+    ] == [
         "Cluster / Site",
         "fX",
         "fY",
@@ -991,7 +1051,10 @@ def test_uep_wizard_isosurface_muon_dialog_places_include_checkbox_in_clustered_
         "ZPE\n(eV)",
         "Total energy\n(eV)",
     ]
-    assert [muon_dialog._current_table.headerItem().text(index) for index in range(muon_dialog._current_table.columnCount())] == [
+    assert [
+        muon_dialog._current_table.headerItem().text(index)
+        for index in range(muon_dialog._current_table.columnCount())
+    ] == [
         "Muon",
         "Source",
         "fX",
@@ -1023,7 +1086,10 @@ def test_uep_wizard_batch_search_default_split_and_headers_are_compact(qapp) -> 
     ratio = 0.0 if total <= 0 else float(sizes[0]) / float(total)
 
     assert 0.45 <= ratio <= 0.55
-    assert [dialog._batch_table.headerItem().text(index) for index in range(dialog._batch_table.columnCount())] == [
+    assert [
+        dialog._batch_table.headerItem().text(index)
+        for index in range(dialog._batch_table.columnCount())
+    ] == [
         "Cluster / Site",
         "Size",
         "fX",
@@ -1050,7 +1116,9 @@ def test_uep_wizard_batch_search_default_split_and_headers_are_compact(qapp) -> 
     dialog.close()
 
 
-def test_uep_wizard_batch_search_starts_worker_thread_and_shows_busy_progress(qapp, monkeypatch) -> None:
+def test_uep_wizard_batch_search_starts_worker_thread_and_shows_busy_progress(
+    qapp, monkeypatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -1060,7 +1128,9 @@ def test_uep_wizard_batch_search_starts_worker_thread_and_shows_busy_progress(qa
         cell_path=_fixture_path("Si2.cell"),
     )
     started: list[object] = []
-    monkeypatch.setattr("mufinder.app.uep_wizard._BatchSearchThread.start", lambda self: started.append(self))
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard._BatchSearchThread.start", lambda self: started.append(self)
+    )
 
     dialog._run_batch_search()
 
@@ -1110,7 +1180,9 @@ def test_uep_wizard_batch_search_logs_reduced_initial_starts(qapp, monkeypatch) 
         assert kwargs["allow_partial"] is True
         return ([SimpleNamespace(cartesian=[1.0, 1.0, 1.0], fractional=[0.1, 0.1, 0.1])], 25)
 
-    monkeypatch.setattr("mufinder.app.uep_wizard.generate_random_sites", _fake_generate_random_sites)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.generate_random_sites", _fake_generate_random_sites
+    )
 
     dialog._batch_count.setValue(6)
     dialog._batch_min_muon_muon.setValue(1.2)
@@ -1143,7 +1215,9 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
             total_energy_ev=optimization.classical_energy_ev + 0.125,
         )
 
-    monkeypatch.setattr("mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe)
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe
+    )
     first = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -1169,7 +1243,9 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     first._clustering_dialog._kmeans_k_spin.setValue(2)
     first._clustering_dialog._structure_viewer._show_bonds.setChecked(True)
     first._clustering_dialog._structure_viewer._camera_state = _CameraState(29.0, 61.0, -8.0)
-    first._clustering_dialog._structure_viewer._axis.set_from_state(first._clustering_dialog._structure_viewer._camera_state)
+    first._clustering_dialog._structure_viewer._axis.set_from_state(
+        first._clustering_dialog._structure_viewer._camera_state
+    )
     cluster_item = first._batch_table.topLevelItem(0)
     assert cluster_item is not None
     cluster_item.setSelected(True)
@@ -1189,7 +1265,9 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     restored.show()
     qapp.processEvents()
     expected_zpe_flags = [
-        entry.get("zero_point_energy_ev") is not None for entry in snapshot["batch_results"] if isinstance(entry, dict)
+        entry.get("zero_point_energy_ev") is not None
+        for entry in snapshot["batch_results"]
+        if isinstance(entry, dict)
     ]
 
     assert "Total potential" in restored._probe_output.toPlainText()
@@ -1198,7 +1276,9 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     assert restored._batch_count.isEnabled() is True
     assert restored._batch_min_muon_muon.isEnabled() is True
     assert restored._batch_optimization_tolerance.value() == pytest.approx(3e-5)
-    assert [result.zero_point_energy_ev is not None for result in restored._latest_batch_results] == expected_zpe_flags
+    assert [
+        result.zero_point_energy_ev is not None for result in restored._latest_batch_results
+    ] == expected_zpe_flags
     restored_viewer_structure = restored._batch_viewer._structure
     assert restored_viewer_structure is not None
     assert restored_viewer_structure.species.count("X") == 0
@@ -1217,7 +1297,9 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     assert restored._clustering_dialog._method_key() == "kmeans"
     assert restored._clustering_dialog._kmeans_k_spin.value() == 2
     assert restored._clustering_dialog._structure_viewer._show_bonds.isChecked() is True
-    assert restored._clustering_dialog._structure_viewer._camera_state == _CameraState(29.0, 61.0, -8.0)
+    assert restored._clustering_dialog._structure_viewer._camera_state == _CameraState(
+        29.0, 61.0, -8.0
+    )
     restored.close()
 
 
@@ -1235,7 +1317,9 @@ def test_uep_wizard_batch_zpe_starts_worker_thread_and_updates_progress(qapp, mo
     dialog._run_batch_search()
 
     started: list[object] = []
-    monkeypatch.setattr("mufinder.app.uep_wizard._BatchZpeThread.start", lambda self: started.append(self))
+    monkeypatch.setattr(
+        "mufinder.app.uep_wizard._BatchZpeThread.start", lambda self: started.append(self)
+    )
     monkeypatch.setattr(dialog, "_batch_has_successful_optimizations", lambda: True)
 
     dialog._run_batch_zpe()
@@ -1374,7 +1458,9 @@ def test_uep_wizard_recalculating_grid_refreshes_all_isosurface_layers(
     assert len(dialog._isosurface_layers) == 2
     assert all(layer.mesh is not None for layer in dialog._isosurface_layers)
     layer_statuses = [(layer.status_kind, layer.status_text) for layer in dialog._isosurface_layers]
-    assert all(layer.status_kind == "success" for layer in dialog._isosurface_layers), layer_statuses
+    assert all(layer.status_kind == "success" for layer in dialog._isosurface_layers), (
+        layer_statuses
+    )
     assert not any("Calculating" in layer.status_text for layer in dialog._isosurface_layers)
     assert len(dialog._isosurface_viewer._isosurface_specs) == 2
     dialog.close()
@@ -1553,7 +1639,9 @@ def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp) ->
     assert first._current_isosurface_level() == pytest.approx(first_level, abs=1e-3)
     first_legend_row = first._isosurface_legend_entries_layout.itemAt(0).widget()
     assert first_legend_row is not None
-    legend_texts = [label.text() for label in first_legend_row.findChildren(type(first._isosurface_min_label))]
+    legend_texts = [
+        label.text() for label in first_legend_row.findChildren(type(first._isosurface_min_label))
+    ]
     assert any(text.endswith(" eV") for text in legend_texts)
 
     snapshot = first.state_snapshot()
@@ -1679,7 +1767,9 @@ def test_uep_wizard_isosurface_mesh_busy_keeps_level_controls_enabled(qapp) -> N
     dialog.close()
 
 
-def test_uep_wizard_slider_schedule_triggers_live_preview_and_debounced_request(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_slider_schedule_triggers_live_preview_and_debounced_request(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -1752,20 +1842,26 @@ def test_uep_wizard_live_preview_does_not_update_legend_until_refined(qapp) -> N
 
     legend_row = dialog._isosurface_legend_entries_layout.itemAt(0).widget()
     assert legend_row is not None
-    settled_texts = [label.text() for label in legend_row.findChildren(type(dialog._isosurface_min_label))]
+    settled_texts = [
+        label.text() for label in legend_row.findChildren(type(dialog._isosurface_min_label))
+    ]
     assert any(f"{settled_level:.6f} eV" == text for text in settled_texts)
 
     dialog._render_live_isosurface_preview(preview_level)
 
     legend_row_after = dialog._isosurface_legend_entries_layout.itemAt(0).widget()
     assert legend_row_after is not None
-    after_texts = [label.text() for label in legend_row_after.findChildren(type(dialog._isosurface_min_label))]
+    after_texts = [
+        label.text() for label in legend_row_after.findChildren(type(dialog._isosurface_min_label))
+    ]
     assert any(f"{settled_level:.6f} eV" == text for text in after_texts)
     assert all(f"{preview_level:.6f} eV" != text for text in after_texts)
     dialog.close()
 
 
-def test_uep_wizard_slider_sync_does_not_rebuild_legend(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_slider_sync_does_not_rebuild_legend(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -1784,7 +1880,9 @@ def test_uep_wizard_slider_sync_does_not_rebuild_legend(qapp, monkeypatch: pytes
         lambda: calls.__setitem__("legend", calls["legend"] + 1),
     )
 
-    dialog._isosurface_slider.setValue(min(dialog._isosurface_slider.maximum(), dialog._isosurface_slider.value() + 25))
+    dialog._isosurface_slider.setValue(
+        min(dialog._isosurface_slider.maximum(), dialog._isosurface_slider.value() + 25)
+    )
 
     assert calls["legend"] == 0
     dialog.close()
@@ -1875,7 +1973,9 @@ def test_uep_wizard_zero_minimum_toggle_shifts_displayed_grid_and_mesh(qapp) -> 
     assert dialog._isosurface_zero_minimum.isEnabled() is True
     assert dialog._isosurface_zero_minimum.isChecked() is False
     assert dialog._potential_grid_raw_cache is not None
-    assert float(dialog._potential_grid_raw_cache.potential_total_ev.min()) == pytest.approx(raw_minimum)
+    assert float(dialog._potential_grid_raw_cache.potential_total_ev.min()) == pytest.approx(
+        raw_minimum
+    )
 
     dialog._isosurface_zero_minimum.setChecked(True)
 
@@ -1892,7 +1992,9 @@ def test_uep_wizard_zero_minimum_toggle_shifts_displayed_grid_and_mesh(qapp) -> 
 
     legend_row = dialog._isosurface_legend_entries_layout.itemAt(0).widget()
     assert legend_row is not None
-    legend_texts = [label.text() for label in legend_row.findChildren(type(dialog._isosurface_min_label))]
+    legend_texts = [
+        label.text() for label in legend_row.findChildren(type(dialog._isosurface_min_label))
+    ]
     assert any(text == f"{shifted_level:.6f} eV" for text in legend_texts)
     dialog.close()
 
@@ -1969,11 +2071,15 @@ def test_uep_wizard_zero_minimum_snapshot_restores_raw_and_shifted_grid(qapp) ->
 
     assert restored._isosurface_zero_minimum.isChecked() is True
     assert restored._potential_grid_raw_cache is not None
-    assert float(restored._potential_grid_raw_cache.potential_total_ev.min()) == pytest.approx(raw_minimum)
+    assert float(restored._potential_grid_raw_cache.potential_total_ev.min()) == pytest.approx(
+        raw_minimum
+    )
     assert restored._potential_grid_cache is not None
     assert float(restored._potential_grid_cache.potential_total_ev.min()) == pytest.approx(0.0)
     assert restored._active_isosurface_layer().mesh is not None
-    assert restored._active_isosurface_layer().mesh.level_ev == pytest.approx(raw_level - raw_minimum)
+    assert restored._active_isosurface_layer().mesh.level_ev == pytest.approx(
+        raw_level - raw_minimum
+    )
     assert restored._isosurface_min_label.text() == "0.00 eV"
     restored.close()
 
@@ -2014,7 +2120,9 @@ def test_uep_wizard_restores_legacy_state_grid_and_single_isosurface_mesh(qapp) 
     )
 
     assert restored._potential_grid_raw_cache is not None
-    assert np.allclose(restored._potential_grid_raw_cache.potential_total_ev, grid.potential_total_ev)
+    assert np.allclose(
+        restored._potential_grid_raw_cache.potential_total_ev, grid.potential_total_ev
+    )
     restored_mesh = restored._active_isosurface_layer().mesh
     assert restored_mesh is not None
     assert restored_mesh.level_ev == pytest.approx(level)
@@ -2180,7 +2288,9 @@ def test_uep_wizard_slice_saturation_window_shifts_with_zero_minimum_reference(q
     dialog.close()
 
 
-def test_uep_wizard_adds_slice_plane_and_updates_viewer(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_adds_slice_plane_and_updates_viewer(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2215,7 +2325,9 @@ def test_uep_wizard_adds_slice_plane_and_updates_viewer(qapp, monkeypatch: pytes
     dialog.close()
 
 
-def test_uep_wizard_adding_slice_plane_preserves_viewer_camera(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_adding_slice_plane_preserves_viewer_camera(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2249,7 +2361,9 @@ def test_uep_wizard_adding_slice_plane_preserves_viewer_camera(qapp, monkeypatch
     dialog.close()
 
 
-def test_uep_wizard_sync_slice_viewer_restores_live_pyvista_snapshot(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_sync_slice_viewer_restores_live_pyvista_snapshot(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2284,9 +2398,13 @@ def test_uep_wizard_sync_slice_viewer_restores_live_pyvista_snapshot(qapp, monke
         0.25,
     )
 
-    monkeypatch.setattr(viewer, "set_slice_planes", lambda _surfaces: setattr(camera, "parallel_scale", 0.5))
+    monkeypatch.setattr(
+        viewer, "set_slice_planes", lambda _surfaces: setattr(camera, "parallel_scale", 0.5)
+    )
     render_calls = {"count": 0}
-    monkeypatch.setattr(viewer, "_render", lambda: render_calls.__setitem__("count", render_calls["count"] + 1))
+    monkeypatch.setattr(
+        viewer, "_render", lambda: render_calls.__setitem__("count", render_calls["count"] + 1)
+    )
 
     dialog._sync_slice_viewer()
 
@@ -2300,7 +2418,9 @@ def test_uep_wizard_sync_slice_viewer_restores_live_pyvista_snapshot(qapp, monke
     dialog.close()
 
 
-def test_uep_wizard_passes_viewer_direction_into_add_slice_plane_dialog(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_passes_viewer_direction_into_add_slice_plane_dialog(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2325,12 +2445,16 @@ def test_uep_wizard_passes_viewer_direction_into_add_slice_plane_dialog(qapp, mo
     dialog._open_add_slice_plane_dialog()
 
     assert captured["default_normal_components"] == pytest.approx(
-        cartesian_normal_to_lattice_plane_components(dialog._source.structure.lattice_vectors, (0.0, 0.0, -1.0))
+        cartesian_normal_to_lattice_plane_components(
+            dialog._source.structure.lattice_vectors, (0.0, 0.0, -1.0)
+        )
     )
     dialog.close()
 
 
-def test_uep_wizard_add_slice_plane_dialog_treats_selected_muons_like_atoms(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_add_slice_plane_dialog_treats_selected_muons_like_atoms(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2359,12 +2483,18 @@ def test_uep_wizard_add_slice_plane_dialog_treats_selected_muons_like_atoms(qapp
     expected_fractional = (0.125, 0.25, 0.375)
     assert captured["selected_positions_fractional"] == [expected_fractional]
     assert captured["selected_positions_ang"] == pytest.approx(
-        [fractional_point_to_cartesian(dialog._source.structure.lattice_vectors, expected_fractional)]
+        [
+            fractional_point_to_cartesian(
+                dialog._source.structure.lattice_vectors, expected_fractional
+            )
+        ]
     )
     dialog.close()
 
 
-def test_uep_wizard_deleting_slice_plane_preserves_viewer_camera(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_deleting_slice_plane_preserves_viewer_camera(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2438,7 +2568,9 @@ def test_uep_wizard_slice_colorbar_marks_clipped_bounds(qapp) -> None:
     dialog._resample_all_slice_planes()
     sample = dialog._slice_planes[0].sample
     assert sample is not None
-    dialog._set_slice_bounds(sample.minimum_potential_ev + 0.05, sample.maximum_potential_ev - 0.05, emit_state=False)
+    dialog._set_slice_bounds(
+        sample.minimum_potential_ev + 0.05, sample.maximum_potential_ev - 0.05, emit_state=False
+    )
 
     assert len(dialog._slice_colorbar_figure.axes) == 1
     colorbar_axis = dialog._slice_colorbar_figure.axes[0]
@@ -2449,7 +2581,9 @@ def test_uep_wizard_slice_colorbar_marks_clipped_bounds(qapp) -> None:
     dialog.close()
 
 
-def test_uep_wizard_slice_slider_defers_colorbar_refresh_until_release(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_slice_slider_defers_colorbar_refresh_until_release(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2539,7 +2673,9 @@ def test_uep_wizard_restores_slice_state_and_hide_atoms(qapp) -> None:
     restored.close()
 
 
-def test_uep_wizard_close_shuts_down_viewers_and_threads(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uep_wizard_close_shuts_down_viewers_and_threads(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2553,9 +2689,21 @@ def test_uep_wizard_close_shuts_down_viewers_and_threads(qapp, monkeypatch: pyte
     dialog.state_changed.connect(lambda state: emitted_states.append(state))
 
     viewer_calls = {"isosurface": 0, "slices": 0, "batch": 0}
-    monkeypatch.setattr(dialog._isosurface_viewer, "shutdown", lambda: viewer_calls.__setitem__("isosurface", viewer_calls["isosurface"] + 1))
-    monkeypatch.setattr(dialog._slice_viewer, "shutdown", lambda: viewer_calls.__setitem__("slices", viewer_calls["slices"] + 1))
-    monkeypatch.setattr(dialog._batch_viewer, "shutdown", lambda: viewer_calls.__setitem__("batch", viewer_calls["batch"] + 1))
+    monkeypatch.setattr(
+        dialog._isosurface_viewer,
+        "shutdown",
+        lambda: viewer_calls.__setitem__("isosurface", viewer_calls["isosurface"] + 1),
+    )
+    monkeypatch.setattr(
+        dialog._slice_viewer,
+        "shutdown",
+        lambda: viewer_calls.__setitem__("slices", viewer_calls["slices"] + 1),
+    )
+    monkeypatch.setattr(
+        dialog._batch_viewer,
+        "shutdown",
+        lambda: viewer_calls.__setitem__("batch", viewer_calls["batch"] + 1),
+    )
 
     class _FakeThread:
         def __init__(self) -> None:

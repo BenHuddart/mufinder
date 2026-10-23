@@ -31,7 +31,9 @@ from tests.support.structures import host_structure, hydrogen_host
 
 
 def _single_nucleus_structure(symbol: str = "H") -> Structure:
-    return host_structure(label=symbol, lattice=100.0, species=(symbol,), positions=((0.0, 0.0, 0.01),))
+    return host_structure(
+        label=symbol, lattice=100.0, species=(symbol,), positions=((0.0, 0.0, 0.01),)
+    )
 
 
 def _distorted_structure(host_position=(0.0, 0.0, 0.0), cell_length: float = 2.0) -> Structure:
@@ -124,7 +126,12 @@ def test_load_isotopes_parses_fractions_and_pads_missing_columns(isotope_table) 
     first, second = table["Xa"]
     assert (first.mass_number, first.abundance, first.spin) == (1, 0.6, 0.5)
     # Columns shorter than the longest one are padded: spin and Q default to 0.
-    assert (second.mass_number, second.abundance, second.spin, second.quadrupole_1e28_m2) == (2, 0.4, 0.0, 0.0)
+    assert (second.mass_number, second.abundance, second.spin, second.quadrupole_1e28_m2) == (
+        2,
+        0.4,
+        0.0,
+        0.0,
+    )
     assert second.gamma_rad_s_t == 0.0
     assert table["Xb"] == []
 
@@ -291,7 +298,9 @@ def test_tf_single_crystal_matches_manual_single_nucleus_formula() -> None:
     h_iso = isotopes_for_element("H")[0]
     r_m = 1.0 * ANGSTROM_TO_M
     weight = (h_iso.gamma_rad_s_t**2) * h_iso.spin * (h_iso.spin + 1.0)
-    sigma2_s = ((MU0_OVER_4PI**2) * (HBAR**2) * (GAMMA_MU_RAD_S_T**2) / 3.0) * weight * (4.0 / (r_m**6))
+    sigma2_s = (
+        ((MU0_OVER_4PI**2) * (HBAR**2) * (GAMMA_MU_RAD_S_T**2) / 3.0) * weight * (4.0 / (r_m**6))
+    )
 
     assert result.sigma_squared == pytest.approx(sigma2_s * 1e-12)
     assert result.m2 == pytest.approx(result.sigma_squared)
@@ -589,7 +598,11 @@ def test_distortion_correction_is_independent_of_atom_order() -> None:
 
     def distorted(species, positions) -> Structure:
         return host_structure(
-            label="distorted", lattice=3.0, species=species, positions=positions, parent_structure_id=pristine.id
+            label="distorted",
+            lattice=3.0,
+            species=species,
+            positions=positions,
+            parent_structure_id=pristine.id,
         )
 
     muon = (0.25, 0.25, 0.25)
@@ -602,7 +615,9 @@ def test_distortion_correction_is_independent_of_atom_order() -> None:
     result = calculate_distortion_correction(pristine, reordered, muon, options=options)
 
     assert abs(result.distortion_correction_sigma_squared) > 1e-12
-    assert result.distortion_correction_sigma_squared == pytest.approx(expected.distortion_correction_sigma_squared)
+    assert result.distortion_correction_sigma_squared == pytest.approx(
+        expected.distortion_correction_sigma_squared
+    )
 
 
 def test_distortion_correction_reports_unmatched_supercell() -> None:

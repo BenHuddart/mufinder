@@ -265,7 +265,8 @@ class ClusterSubmissionDialog(QDialog):
             cluster_name=self.selected_cluster_name(),
             working_directory=self._working_directory_edit.text().strip(),
             username=self._username_edit.text().strip(),
-            job_name_prefix=self._job_name_prefix_edit.text().strip() or self._default_job_name_prefix(),
+            job_name_prefix=self._job_name_prefix_edit.text().strip()
+            or self._default_job_name_prefix(),
             num_processes=self._num_processes_spin.value(),
             walltime=self._walltime_edit.text().strip(),
             queue_name=self.selected_queue_name(),
@@ -357,7 +358,9 @@ class ClusterSubmissionDialog(QDialog):
             return
         self._num_processes_spin.setValue(max(1, int(config.cores_per_node)))
         self._walltime_edit.setText(config.default_walltime)
-        self._memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
+        self._memory_spin.setValue(
+            7.5 if config.default_memory_gb is None else float(config.default_memory_gb)
+        )
         self._apply_mem_per_cpu_default(config.default_mem_per_cpu_gb)
         self._refresh_queue_hint()
 
@@ -377,7 +380,9 @@ class ClusterSubmissionDialog(QDialog):
                 cluster_name=config.name,
                 queue_system=config.queue_system,
             ):
-                notes.append("The job script template sets its own partition, which takes precedence.")
+                notes.append(
+                    "The job script template sets its own partition, which takes precedence."
+                )
         self._queue_hint.setText(" ".join(notes))
         self._form.setRowVisible(self._queue_hint, bool(notes))
 
@@ -392,7 +397,10 @@ class ClusterSubmissionDialog(QDialog):
             return
         if selected_cluster_name.casefold() != initial_cluster_name.casefold():
             return
-        if default_cluster_name and selected_cluster_name.casefold() != default_cluster_name.strip().casefold():
+        if (
+            default_cluster_name
+            and selected_cluster_name.casefold() != default_cluster_name.strip().casefold()
+        ):
             return
 
         if config.queue_name.strip():
@@ -508,9 +516,15 @@ class ClusterSubmissionDialog(QDialog):
         return config.jump_hostname.strip().casefold() == "bastion.physics.ox.ac.uk"
 
     def _jump_host_auth_hint(self, config: ClusterConfig) -> str:
-        target_label = "password" if config.auth_method.strip().lower() == "password" else "key passphrase"
+        target_label = (
+            "password" if config.auth_method.strip().lower() == "password" else "key passphrase"
+        )
         jump_system = "Physics" if self._is_physics_bastion(config) else "jump-host"
-        jump_label = "password" if config.jump_auth_method.strip().lower() == "password" else "key passphrase"
+        jump_label = (
+            "password"
+            if config.jump_auth_method.strip().lower() == "password"
+            else "key passphrase"
+        )
         optional_note = (
             " Key passphrase fields can be left blank when the corresponding private key is not encrypted."
             if "key passphrase" in {target_label, jump_label}
@@ -565,9 +579,7 @@ class ClusterSubmissionDialog(QDialog):
     @classmethod
     def _sanitize_path_fragment(cls, value: str) -> str:
         parts = [
-            cls._sanitize_path_component(part)
-            for part in value.strip().split("/")
-            if part.strip()
+            cls._sanitize_path_component(part) for part in value.strip().split("/") if part.strip()
         ]
         return "/".join(part for part in parts if part)
 
@@ -614,7 +626,9 @@ class ClusterSubmissionDialog(QDialog):
         cluster = self.selected_cluster_config()
         issue = walltime_issue(
             config.walltime,
-            max_walltime=cluster.max_walltime_for_queue(config.queue_name) if cluster is not None else "",
+            max_walltime=cluster.max_walltime_for_queue(config.queue_name)
+            if cluster is not None
+            else "",
             queue_name=config.queue_name,
         )
         if issue:
@@ -634,14 +648,22 @@ class ClusterSubmissionDialog(QDialog):
                 if resolved is None:
                     return
                 self._resolved_credentials = resolved
-            elif selected.jump_host_enabled and selected.jump_auth_method == "password" and not manual_credentials.jump_secret:
+            elif (
+                selected.jump_host_enabled
+                and selected.jump_auth_method == "password"
+                and not manual_credentials.jump_secret
+            ):
                 QMessageBox.warning(
                     self,
                     "Missing jump host password",
                     "Enter the jump-host password to continue with this submission.",
                 )
                 return
-            if not self._uses_keychain_credentials(selected) and selected.auth_method == "password" and not manual_credentials.target_secret:
+            if (
+                not self._uses_keychain_credentials(selected)
+                and selected.auth_method == "password"
+                and not manual_credentials.target_secret
+            ):
                 QMessageBox.warning(
                     self,
                     "Missing cluster password",

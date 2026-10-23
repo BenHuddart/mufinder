@@ -40,7 +40,10 @@ def _table() -> ComparisonTable:
 def test_comparison_table_widget_renders_headers_and_warning(qapp) -> None:
     widget = ComparisonTableWidget(_table())
 
-    headers = [widget._grid.horizontalHeaderItem(index).text() for index in range(widget._grid.columnCount())]
+    headers = [
+        widget._grid.horizontalHeaderItem(index).text()
+        for index in range(widget._grid.columnCount())
+    ]
 
     assert widget._title_edit.text() == "Comparison A"
     assert headers == ["Metric", "Experimental", "DFT (pristine_relax_01)"]

@@ -42,9 +42,7 @@ def _sweep_label_suffix(sweep_parameter: str, value: SweepValue) -> str:
     if sweep_parameter == "kpoint_mp_grid":
         grid = _as_kpoint_grid(value)
         return f"kgrid_{grid[0]}x{grid[1]}x{grid[2]}"
-    raise ValueError(
-        "Convergence sweep_parameter must be 'cut_off_energy' or 'kpoint_mp_grid'."
-    )
+    raise ValueError("Convergence sweep_parameter must be 'cut_off_energy' or 'kpoint_mp_grid'.")
 
 
 def convergence_job_name(
@@ -63,9 +61,7 @@ def _stage_and_tags_for_sweep(sweep_parameter: str) -> tuple[WorkflowStage, tupl
         return WorkflowStage.CONVERGENCE_CUTOFF, ("convergence_cutoff",)
     if sweep_parameter == "kpoint_mp_grid":
         return WorkflowStage.CONVERGENCE_KPOINT, ("convergence_kpoint",)
-    raise ValueError(
-        "Convergence sweep_parameter must be 'cut_off_energy' or 'kpoint_mp_grid'."
-    )
+    raise ValueError("Convergence sweep_parameter must be 'cut_off_energy' or 'kpoint_mp_grid'.")
 
 
 def _normalize_sweep_values(config: ConvergenceConfig) -> tuple[SweepValue, ...]:
@@ -80,7 +76,11 @@ def _normalize_sweep_values(config: ConvergenceConfig) -> tuple[SweepValue, ...]
 
     unique = tuple(dict.fromkeys(values))
     if len(unique) != len(values):
-        descriptor = "Cutoff energy list" if config.sweep_parameter == "cut_off_energy" else "K-point grid list"
+        descriptor = (
+            "Cutoff energy list"
+            if config.sweep_parameter == "cut_off_energy"
+            else "K-point grid list"
+        )
         raise ValueError(f"{descriptor} must not contain duplicates.")
     return unique
 
@@ -124,7 +124,9 @@ def expand_convergence_jobs(
     """
 
     if not config.sweep_values:
-        descriptor = "cutoff energy" if config.sweep_parameter == "cut_off_energy" else "k-point grid"
+        descriptor = (
+            "cutoff energy" if config.sweep_parameter == "cut_off_energy" else "k-point grid"
+        )
         raise ValueError(f"At least one {descriptor} must be provided.")
 
     unique_values = _normalize_sweep_values(config)
@@ -148,7 +150,9 @@ def expand_convergence_jobs(
             )
         )
 
-    workflow_defaults = _template_from_values(config.shared_params, sweep_parameter=config.sweep_parameter)
+    workflow_defaults = _template_from_values(
+        config.shared_params, sweep_parameter=config.sweep_parameter
+    )
 
     per_value_user_overrides: dict[SweepValue, InputTemplate] = {}
     for value_set, override_values in config.overrides.items():

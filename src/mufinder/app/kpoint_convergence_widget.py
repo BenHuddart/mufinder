@@ -33,7 +33,9 @@ _FIRST_GRID: KPointGrid = (1, 1, 1)
 class KPointSpacingDialog(QDialog):
     """Dialog for generating Monkhorst-Pack grids from a spacing target."""
 
-    def __init__(self, defaults: Mapping[str, object] | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, defaults: Mapping[str, object] | None = None, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Generate K-Point Grids")
 
@@ -203,7 +205,9 @@ class KPointConvergenceWidget(SweepConvergenceWidget):
 
     def generate_keys(self) -> tuple[tuple[KPointGrid, ...], bool] | None:
         if self._current_lattice is None:
-            QMessageBox.warning(self, "No simulation cell", "Select or create a simulation cell first.")
+            QMessageBox.warning(
+                self, "No simulation cell", "Select or create a simulation cell first."
+            )
             return None
 
         dialog = KPointSpacingDialog(self._range_state, self)
@@ -290,7 +294,9 @@ class KPointConvergenceWidget(SweepConvergenceWidget):
 
         generated_lattice = state.get("generated_for_lattice")
         if isinstance(generated_lattice, list) and len(generated_lattice) == 3:
-            self._generation_lattice = [list(row) for row in generated_lattice if isinstance(row, list)]
+            self._generation_lattice = [
+                list(row) for row in generated_lattice if isinstance(row, list)
+            ]
         else:
             self._generation_lattice = None
         self._refresh_generation_warning()

@@ -123,7 +123,9 @@ def resolve_cluster_credentials(
     )
 
 
-def show_keychain_credentials_missing(parent, config: ClusterConfig, exc: KeychainCredentialError) -> None:
+def show_keychain_credentials_missing(
+    parent, config: ClusterConfig, exc: KeychainCredentialError
+) -> None:
     """Show setup guidance for missing system keyring credentials."""
 
     store = credential_store_for_display()

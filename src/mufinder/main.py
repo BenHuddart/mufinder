@@ -47,7 +47,9 @@ def _set_windows_app_id() -> None:
         return
 
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("io.github.benhuddart.mufinder")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "io.github.benhuddart.mufinder"
+        )
     except (AttributeError, OSError):
         return
 
@@ -69,7 +71,9 @@ def _force_x11_platform_on_wayland() -> None:
         return
     if os.environ.get("QT_QPA_PLATFORM"):
         return
-    is_wayland = os.environ.get("XDG_SESSION_TYPE") == "wayland" or bool(os.environ.get("WAYLAND_DISPLAY"))
+    is_wayland = os.environ.get("XDG_SESSION_TYPE") == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
+    )
     if not is_wayland:
         return
     if not os.environ.get("DISPLAY"):

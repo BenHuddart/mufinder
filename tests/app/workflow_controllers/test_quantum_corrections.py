@@ -120,7 +120,9 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     return QuantumCorrectionsDeps(**base)
 
 
-def _quantum_job(service: ProjectService, document: ProjectDocument, label: str, calc_type: str) -> Job:
+def _quantum_job(
+    service: ProjectService, document: ProjectDocument, label: str, calc_type: str
+) -> Job:
     return service.add_job(
         document,
         label=label,
@@ -129,13 +131,17 @@ def _quantum_job(service: ProjectService, document: ProjectDocument, label: str,
     )
 
 
-def test_quantum_controller_handles_phonon_and_legacy_singlepoint_calc_types(tmp_path: Path) -> None:
+def test_quantum_controller_handles_phonon_and_legacy_singlepoint_calc_types(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "q.mufinder", "Q")
     controller = QuantumCorrectionsController(
         make_context(document=document), _stub_quantum_deps(), _FakeQuantumView()
     )
-    singlepoint = _quantum_job(service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    singlepoint = _quantum_job(
+        service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE
+    )
     phonon = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
     other = service.add_job(
         document,
@@ -360,7 +366,9 @@ def test_quantum_controller_build_result_singlepoint_is_empty_but_handled(tmp_pa
     job = _quantum_job(service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE)
     run = CalculationRun(job_id=job.id)
     controller = QuantumCorrectionsController(
-        make_context(document=document, project_service=service), _stub_quantum_deps(), _FakeQuantumView()
+        make_context(document=document, project_service=service),
+        _stub_quantum_deps(),
+        _FakeQuantumView(),
     )
 
     assert controller.handles_job(job) is True
@@ -408,7 +416,9 @@ def test_quantum_controller_build_result_phonon_parses_zpe_and_witness(tmp_path:
     assert isinstance(payload["muon_zpe_total_eV"], float)
     assert payload["muon_zpe_total_eV"] > 0.0
     assert len(payload["muon_zpe_modes"]) == 3
-    assert all("mode_index" in mode and "frequency_cm" in mode for mode in payload["muon_zpe_modes"])
+    assert all(
+        "mode_index" in mode and "frequency_cm" in mode for mode in payload["muon_zpe_modes"]
+    )
     # Each selected mode carries its muon zero-point width, from its frequency.
     for mode in payload["muon_zpe_modes"]:
         assert mode["width_A"] == pytest.approx(mode_width_angstrom(mode["frequency_cm"]))
@@ -457,9 +467,7 @@ def test_quantum_controller_build_result_warns_on_a_hydrogen_mass_muon(tmp_path:
 
     assert len(result.warnings) == 1
     assert "not the muon mass" in result.warnings[0]
-    assert any(
-        "not the muon mass" in warning for warning in result.payload["phonon_warnings"]
-    )
+    assert any("not the muon mass" in warning for warning in result.payload["phonon_warnings"])
 
 
 def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: Path) -> None:
@@ -480,7 +488,10 @@ def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: P
         deps,
         _FakeQuantumView(),
     )
-    assert controller.build_result(job, completed_castep_result(), run, ParsedJobArtifacts()).payload == {}
+    assert (
+        controller.build_result(job, completed_castep_result(), run, ParsedJobArtifacts()).payload
+        == {}
+    )
 
 
 def _seed_quantum_document(service: ProjectService, tmp_path: Path):
@@ -526,7 +537,9 @@ def _seed_quantum_document(service: ProjectService, tmp_path: Path):
             calc_type="castep_positivemuon_relaxation",
         )
         source_job.status = JobStatus.COMPLETED
-        run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+        run = CalculationRun(
+            job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True
+        )
         result = Result(calculation_run_id=run.id, derived_structure_ids=[relaxed.id])
         run.result_id = result.id
         document.runs[run.id] = run
@@ -554,12 +567,16 @@ def _seed_quantum_document(service: ProjectService, tmp_path: Path):
         },
         output_directory=output_root,
     )
-    candidates = {candidate.key: candidate for candidate in eligible_quantum_source_candidates(document)}
+    candidates = {
+        candidate.key: candidate for candidate in eligible_quantum_source_candidates(document)
+    }
     assert [candidate.site.label for candidate in candidates.values()] == ["siteA", "siteB"]
     return document, definition, candidates, output_root
 
 
-def _quantum_document_controller(service: ProjectService, document, output_root, *, deps=None, **context_kwargs):
+def _quantum_document_controller(
+    service: ProjectService, document, output_root, *, deps=None, **context_kwargs
+):
     context = make_context(
         document=document,
         project_service=service,
@@ -595,7 +612,9 @@ def _bind_legacy_singlepoint(
 ) -> Job:
     """Bind the singlepoint an older MuFinder version ran first (``singlepoint_job_ids_by_label``)."""
 
-    singlepoint = _quantum_job(service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    singlepoint = _quantum_job(
+        service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE
+    )
     singlepoint.status = status
     definition.parameters.setdefault("singlepoint_job_ids_by_label", {})[key] = str(singlepoint.id)
     return singlepoint
@@ -628,7 +647,10 @@ def test_quantum_controller_materialize_writes_one_phonon_job_per_row(tmp_path: 
     # The phonon mapping stays aliased into job_ids_by_label (load-bearing fallback).
     assert definition.parameters["job_ids_by_label"] is phonon_mapping
     assert "singlepoint_job_ids_by_label" not in definition.parameters
-    assert definition.parameters["job_seed_names_by_label"] == {first: "quantum_siteA", second: "quantum_siteB"}
+    assert definition.parameters["job_seed_names_by_label"] == {
+        first: "quantum_siteA",
+        second: "quantum_siteB",
+    }
 
     param_text = (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(encoding="utf-8")
     cell_text = (output_root / "quantum_siteA" / "quantum_siteA.cell").read_text(encoding="utf-8")
@@ -657,7 +679,9 @@ def test_quantum_controller_materialize_runs_one_site_in_both_charge_states(tmp_
 
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
-    site_a = next(candidate.site for candidate in candidates.values() if candidate.site.label == "siteA")
+    site_a = next(
+        candidate.site for candidate in candidates.values() if candidate.site.label == "siteA"
+    )
     scratch = add_relaxed_muon_site(
         document, label="siteA", charge_calc_type=MUONIUM_RELAXATION_CALC_TYPE, total_energy=-2.0
     )
@@ -665,7 +689,9 @@ def test_quantum_controller_materialize_runs_one_site_in_both_charge_states(tmp_
     del document.sites[scratch.id]
     bind_muon_relaxation_row(document, site_a, muonium_job, "muonium")
     keys = [str(site_a.id), f"{site_a.id}:muonium"]
-    assert set(keys) <= {candidate.key for candidate in eligible_quantum_source_candidates(document)}
+    assert set(keys) <= {
+        candidate.key for candidate in eligible_quantum_source_candidates(document)
+    }
     controller = _quantum_document_controller(service, document, output_root)
 
     jobs = controller.materialize(keys)
@@ -679,18 +705,24 @@ def test_quantum_controller_materialize_runs_one_site_in_both_charge_states(tmp_
         keys[0]: "quantum_siteA",
         keys[1]: "quantum_siteA_muonium",
     }
-    muonium_param = (output_root / "quantum_siteA_muonium" / "quantum_siteA_muonium.param").read_text(
-        encoding="utf-8"
-    )
+    muonium_param = (
+        output_root / "quantum_siteA_muonium" / "quantum_siteA_muonium.param"
+    ).read_text(encoding="utf-8")
     assert "CHARGE : 0" in muonium_param
     stored = definition.parameters["configuration"]["sources"]
-    assert [(entry["key"], entry["charge_state"]) for entry in stored if entry["site_id"] == str(site_a.id)] == [
+    assert [
+        (entry["key"], entry["charge_state"])
+        for entry in stored
+        if entry["site_id"] == str(site_a.id)
+    ] == [
         (keys[0], "positive_muon"),
         (keys[1], "muonium"),
     ]
 
 
-def test_quantum_controller_keeps_an_unselected_charge_state_out_of_the_sources(tmp_path: Path) -> None:
+def test_quantum_controller_keeps_an_unselected_charge_state_out_of_the_sources(
+    tmp_path: Path,
+) -> None:
     from tests.support.muon_sites import (
         MUONIUM_RELAXATION_CALC_TYPE,
         add_relaxed_muon_site,
@@ -700,7 +732,9 @@ def test_quantum_controller_keeps_an_unselected_charge_state_out_of_the_sources(
 
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
-    site_a = next(candidate.site for candidate in candidates.values() if candidate.site.label == "siteA")
+    site_a = next(
+        candidate.site for candidate in candidates.values() if candidate.site.label == "siteA"
+    )
     scratch = add_relaxed_muon_site(
         document, label="siteA", charge_calc_type=MUONIUM_RELAXATION_CALC_TYPE, total_energy=-2.0
     )
@@ -708,7 +742,9 @@ def test_quantum_controller_keeps_an_unselected_charge_state_out_of_the_sources(
     del document.sites[scratch.id]
     bind_muon_relaxation_row(document, site_a, muonium_job, "muonium")
     # The definition so far holds only siteB; select siteA's muonium relaxation alone.
-    site_b = next(candidate.site for candidate in candidates.values() if candidate.site.label == "siteB")
+    site_b = next(
+        candidate.site for candidate in candidates.values() if candidate.site.label == "siteB"
+    )
     definition.input_site_ids = [site_b.id]
     definition.parameters["configuration"] = {"sources": [{"site_id": str(site_b.id)}]}
     controller = _quantum_document_controller(service, document, output_root)
@@ -737,7 +773,9 @@ def test_quantum_controller_materialize_reuses_a_rows_job(tmp_path: Path) -> Non
     # Only the ready row is materialized; the failed row is not ready.
     assert jobs == [defined]
     assert len(document.jobs) == 2 + 2  # two source relaxations, two phonon jobs
-    assert "NUM_FARMS : 2" in (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(encoding="utf-8")
+    assert "NUM_FARMS : 2" in (output_root / "quantum_siteA" / "quantum_siteA.param").read_text(
+        encoding="utf-8"
+    )
     assert not (output_root / "quantum_siteB").exists()
     assert failed.status == JobStatus.FAILED
 
@@ -773,12 +811,19 @@ def test_quantum_controller_row_lifecycle_from_ready_to_a_completed_result(tmp_p
     # Submitting again leaves a running row alone: nothing new is created.
     controller.submit([key], target="local")
     assert controller.jobs_for_keys([key]) == [job]
-    assert sum(1 for other in document.jobs.values() if other.calc_type == QUANTUM_PHONON_CALC_TYPE) == 1
+    assert (
+        sum(1 for other in document.jobs.values() if other.calc_type == QUANTUM_PHONON_CALC_TYPE)
+        == 1
+    )
 
     job.status = JobStatus.COMPLETED
     run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
     document.runs[run.id] = run
-    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data={"muon_zpe_total_eV": 0.2})
+    result = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        calculation_run_id=run.id,
+        data={"muon_zpe_total_eV": 0.2},
+    )
     document.results[result.id] = result
     controller.refresh_view()
 
@@ -822,7 +867,9 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
     assert [job.calc_type for job in submitted] == [QUANTUM_PHONON_CALC_TYPE]
 
 
-def test_quantum_controller_dismissed_failed_job_resubmits_without_a_new_job(tmp_path: Path) -> None:
+def test_quantum_controller_dismissed_failed_job_resubmits_without_a_new_job(
+    tmp_path: Path,
+) -> None:
     """A dismissed failed row reads ready; the shared submit cycle resets and rewrites its job."""
 
     service = ProjectService()
@@ -873,13 +920,18 @@ def test_quantum_controller_configure_request_opens_editable_ready_rows(tmp_path
     # Every row inherits the tight default and the legacy method.
     assert all(values["phonon_method"] == "FINITEDISPLACEMENT" for values in request.row_values)
     assert controller.configure_request(["not-a-source"]) is None
-    assert QuantumCorrectionsController(
-        make_context(document=None), _stub_quantum_deps(), _FakeQuantumView()
-    ).configure_request(list(candidates)) is None
+    assert (
+        QuantumCorrectionsController(
+            make_context(document=None), _stub_quantum_deps(), _FakeQuantumView()
+        ).configure_request(list(candidates))
+        is None
+    )
 
 
 @pytest.mark.parametrize("dismissed", [False, True])
-def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(tmp_path: Path, dismissed: bool) -> None:
+def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(
+    tmp_path: Path, dismissed: bool
+) -> None:
     """A job still defined (or dismissed, so its row reads ready) is rewritten on submit."""
 
     service = ProjectService()
@@ -961,16 +1013,23 @@ def _phonon_method_controller(
         service,
         document,
         output_root,
-        deps=_stub_quantum_deps(confirm=lambda title, text: questions.append((title, text)) or answer),
+        deps=_stub_quantum_deps(
+            confirm=lambda title, text: questions.append((title, text)) or answer
+        ),
         local_backend=local,
         infos=infos,
     )
-    jobs = {key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_PHONON_CALC_TYPE) for key in keys}
+    jobs = {
+        key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_PHONON_CALC_TYPE)
+        for key in keys
+    }
     controller.materialize = lambda values: [jobs[str(value)] for value in values]  # type: ignore[assignment]
     return controller, keys
 
 
-def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name(tmp_path: Path) -> None:
+def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name(
+    tmp_path: Path,
+) -> None:
     """The refusal names the rows instead of ending in a generic "No ready jobs"."""
 
     infos: list[tuple[str, str]] = []
@@ -997,7 +1056,9 @@ def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name
     assert "stage" not in message.lower()
 
 
-def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_family(tmp_path: Path) -> None:
+def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_family(
+    tmp_path: Path,
+) -> None:
     infos: list[tuple[str, str]] = []
     questions: list[tuple[str, str]] = []
     local = RecordingBackend()
@@ -1021,7 +1082,9 @@ def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_fam
     assert "norm-conserving" in message
 
 
-def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(tmp_path: Path) -> None:
+def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(
+    tmp_path: Path,
+) -> None:
     infos: list[tuple[str, str]] = []
     questions: list[tuple[str, str]] = []
     local = RecordingBackend()
@@ -1073,11 +1136,17 @@ def test_quantum_controller_keeps_a_completed_legacy_pairs_phonon_result(tmp_pat
     phonon = _bind_phonon(service, document, definition, key, status=JobStatus.COMPLETED)
     run = CalculationRun(job_id=phonon.id, status=JobStatus.COMPLETED)
     document.runs[run.id] = run
-    result = Result(result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, data={"muon_zpe_total_eV": 0.3})
+    result = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        calculation_run_id=run.id,
+        data={"muon_zpe_total_eV": 0.3},
+    )
     document.results[result.id] = result
     view = _FakeQuantumView()
     context = make_context(
-        document=document, project_service=service, definition_output_directory=lambda _d: output_root
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _d: output_root,
     )
     controller = QuantumCorrectionsController(context, _stub_quantum_deps(), view)
 
@@ -1114,23 +1183,35 @@ def test_quantum_controller_singlepoint_only_row_is_ready_with_a_fresh_directory
     # The legacy singlepoint keeps its directory and its record.
     assert (legacy_dir / "quantum_siteA.check").read_bytes() == b"legacy checkpoint"
     assert document.jobs[singlepoint.id] is singlepoint
-    assert job_output_directory(
-        document,
-        singlepoint,
-        quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(document, definition, row),
-    ) == output_root / "quantum_siteA"
-    assert job_output_directory(
-        document,
-        job,
-        quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(document, definition, row),
-    ) == output_root / "quantum_siteA_phonon"
+    assert (
+        job_output_directory(
+            document,
+            singlepoint,
+            quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(
+                document, definition, row
+            ),
+        )
+        == output_root / "quantum_siteA"
+    )
+    assert (
+        job_output_directory(
+            document,
+            job,
+            quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(
+                document, definition, row
+            ),
+        )
+        == output_root / "quantum_siteA_phonon"
+    )
 
 
 def test_quantum_controller_fresh_seed_skips_names_already_taken(tmp_path: Path) -> None:
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     first, second = list(candidates)
-    definition.parameters["job_seed_names_by_label"].update({first: "quantum_siteA", second: "quantum_siteA_phonon"})
+    definition.parameters["job_seed_names_by_label"].update(
+        {first: "quantum_siteA", second: "quantum_siteA_phonon"}
+    )
     _write_legacy_seed_directory(output_root, "quantum_siteA")
     (output_root / "quantum_siteA_phonon_2").mkdir()
     controller = _quantum_document_controller(service, document, output_root)
@@ -1154,7 +1235,9 @@ def test_quantum_controller_refuses_a_row_whose_legacy_singlepoint_is_active(
     singlepoint = _bind_legacy_singlepoint(service, document, definition, key, status=status)
     infos: list[tuple[str, str]] = []
     local = RecordingBackend()
-    controller = _quantum_document_controller(service, document, output_root, local_backend=local, infos=infos)
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, infos=infos
+    )
 
     # The row shows the singlepoint, so it can be cancelled from the table.
     assert controller.build_states()[key].status == status.value
@@ -1173,11 +1256,15 @@ def test_quantum_controller_refuses_a_row_whose_legacy_singlepoint_is_active(
     assert definition.parameters["phonon_job_ids_by_label"] == {}
 
 
-def test_quantum_controller_directory_companions_name_the_legacy_singlepoint(tmp_path: Path) -> None:
+def test_quantum_controller_directory_companions_name_the_legacy_singlepoint(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     first, second = list(candidates)
-    definition.parameters["job_seed_names_by_label"].update({first: "quantum_siteA", second: "quantum_siteB"})
+    definition.parameters["job_seed_names_by_label"].update(
+        {first: "quantum_siteA", second: "quantum_siteB"}
+    )
     singlepoint = _bind_legacy_singlepoint(service, document, definition, first)
     phonon = _bind_phonon(service, document, definition, first, status=JobStatus.FAILED)
     lone_phonon = _bind_phonon(service, document, definition, second, status=JobStatus.FAILED)
@@ -1186,10 +1273,14 @@ def test_quantum_controller_directory_companions_name_the_legacy_singlepoint(tmp
         return job_output_directory(
             document,
             job,
-            quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(document, definition, row),
+            quantum_seed_name=lambda definition, row: quantum_seed_name_for_key(
+                document, definition, row
+            ),
         )
 
-    controller = _quantum_document_controller(service, document, output_root, job_output_directory=resolve)
+    controller = _quantum_document_controller(
+        service, document, output_root, job_output_directory=resolve
+    )
 
     assert controller.definition_and_key_for_job(phonon) == (definition, first)
     assert controller.directory_companions(phonon) == [singlepoint]
@@ -1211,7 +1302,9 @@ def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path)
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     first, second = list(candidates)
-    store_workflow_row_configuration(definition, first, {"parameter_values": {"max_scf_cycles": 80}})
+    store_workflow_row_configuration(
+        definition, first, {"parameter_values": {"max_scf_cycles": 80}}
+    )
     persisted: list[str] = []
     view = _FakeQuantumView()
     context = make_context(document=document, project_service=service)
@@ -1233,8 +1326,14 @@ def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path)
     second_params, _advanced, second_extras = workflow_row_configuration(definition, second)
     assert first_params == {"xc_functional": "PBE", "max_scf_cycles": 80}
     assert second_params == {"xc_functional": "PBE"}
-    assert first_extras == second_extras == {"pseudopotential_family": "norm_conserving", "num_farms": 2}
-    assert definition.parameters["configuration"]["sources"]  # the definition now records its sources
+    assert (
+        first_extras
+        == second_extras
+        == {"pseudopotential_family": "norm_conserving", "num_farms": 2}
+    )
+    assert definition.parameters["configuration"][
+        "sources"
+    ]  # the definition now records its sources
     assert persisted == ["Quantum Corrections configuration was updated, but autosave failed."]
     assert view.sources  # refreshed
 
@@ -1264,7 +1363,9 @@ def test_quantum_controller_resolves_the_phonon_analysis_input(tmp_path: Path) -
     result = Result(calculation_run_id=run.id, result_type=QUANTUM_PHONON_CALC_TYPE, data={})
     document.results[result.id] = result
     controller = QuantumCorrectionsController(
-        make_context(document=document, project_service=service), _stub_quantum_deps(), _FakeQuantumView()
+        make_context(document=document, project_service=service),
+        _stub_quantum_deps(),
+        _FakeQuantumView(),
     )
 
     assert controller.phonon_result("not-a-uuid") is None
@@ -1287,20 +1388,29 @@ def test_quantum_controller_validate_artifacts_checks_phonon_jobs_only(tmp_path:
     controller = QuantumCorrectionsController(
         make_context(document=document), _stub_quantum_deps(), _FakeQuantumView()
     )
-    singlepoint = _quantum_job(service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    singlepoint = _quantum_job(
+        service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE
+    )
     phonon = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
     run = CalculationRun(job_id=phonon.id)
     parsed = CastepResult(completed=True, total_energy=-1.0)
 
-    assert controller.validate_artifacts(
-        singlepoint, parsed, run, ParsedJobArtifacts(phonon_missing=True)
-    ) is None
-    assert controller.validate_artifacts(
-        phonon, parsed, run, ParsedJobArtifacts(phonon_missing=True)
-    ) == "Expected CASTEP phonon output was not found: quantum_phonon_s.phonon"
-    assert controller.validate_artifacts(
-        phonon, parsed, run, ParsedJobArtifacts(phonon_error="no Gamma point")
-    ) == "Failed to parse CASTEP phonon output: no Gamma point"
+    assert (
+        controller.validate_artifacts(
+            singlepoint, parsed, run, ParsedJobArtifacts(phonon_missing=True)
+        )
+        is None
+    )
+    assert (
+        controller.validate_artifacts(phonon, parsed, run, ParsedJobArtifacts(phonon_missing=True))
+        == "Expected CASTEP phonon output was not found: quantum_phonon_s.phonon"
+    )
+    assert (
+        controller.validate_artifacts(
+            phonon, parsed, run, ParsedJobArtifacts(phonon_error="no Gamma point")
+        )
+        == "Failed to parse CASTEP phonon output: no Gamma point"
+    )
     assert controller.validate_artifacts(phonon, parsed, run, no_artifacts()) is None
 
 

@@ -10,7 +10,10 @@ from PySide6.QtWidgets import QPushButton
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.main_window import MainWindow
-from mufinder.app.relaxation_analysis_widget import RelaxationAnalysisWidget, default_workspace_state
+from mufinder.app.relaxation_analysis_widget import (
+    RelaxationAnalysisWidget,
+    default_workspace_state,
+)
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
 from mufinder.services.muon_sites_summary import (
@@ -22,7 +25,9 @@ from tests.support.main_window import window_with_host
 from tests.support.structures import host_structure
 
 
-def _workspace(host: Structure, name: str, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE) -> dict:
+def _workspace(
+    host: Structure, name: str, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE
+) -> dict:
     return default_workspace_state(
         name=name,
         charge_state=charge_state,
@@ -86,7 +91,9 @@ def test_delete_removes_only_the_chosen_workspace_and_persists(
         assert "relaxations it uses are kept" in prompt["detail"]
         assert "pin" not in prompt["detail"]
         reloaded = service.load_project(doc.project_root)
-        assert [w["id"] for w in reloaded.ui_state["relaxation_analysis_workspaces"]] == [kept["id"]]
+        assert [w["id"] for w in reloaded.ui_state["relaxation_analysis_workspaces"]] == [
+            kept["id"]
+        ]
     finally:
         window.close()
 
@@ -145,7 +152,9 @@ def test_deleting_the_last_workspace_clears_the_analysis_stage(qapp, tmp_path: P
 
 
 def _analysis_item(window: MainWindow, workspace: dict):
-    return window._find_tree_item_by_route(window._relaxation_analysis_workspace_route(str(workspace["id"])))
+    return window._find_tree_item_by_route(
+        window._relaxation_analysis_workspace_route(str(workspace["id"]))
+    )
 
 
 def _window_with_workspaces(tmp_path: Path, *names: str) -> tuple[MainWindow, object, list[dict]]:
@@ -158,7 +167,9 @@ def _window_with_workspaces(tmp_path: Path, *names: str) -> tuple[MainWindow, ob
 
 
 def test_each_workspace_has_a_project_tree_node_that_opens_its_tab(qapp, tmp_path: Path) -> None:
-    window, _doc, (first, second) = _window_with_workspaces(tmp_path, "Preliminary analysis", "Full analysis")
+    window, _doc, (first, second) = _window_with_workspaces(
+        tmp_path, "Preliminary analysis", "Full analysis"
+    )
     try:
         parent = window._find_tree_item_by_route("muon_analysis")
         assert [parent.child(i).text(0) for i in range(parent.childCount())] == [
@@ -176,13 +187,17 @@ def test_each_workspace_has_a_project_tree_node_that_opens_its_tab(qapp, tmp_pat
 
 
 def test_switching_analysis_tabs_selects_the_matching_tree_node(qapp, tmp_path: Path) -> None:
-    window, _doc, (first, second) = _window_with_workspaces(tmp_path, "Preliminary analysis", "Full analysis")
+    window, _doc, (first, second) = _window_with_workspaces(
+        tmp_path, "Preliminary analysis", "Full analysis"
+    )
     try:
         window._set_active_route(window._relaxation_analysis_workspace_route(str(first["id"])))
 
         window._relaxation_analysis_view._workspace_tabs.setCurrentIndex(1)
 
-        assert window._active_route() == window._relaxation_analysis_workspace_route(str(second["id"]))
+        assert window._active_route() == window._relaxation_analysis_workspace_route(
+            str(second["id"])
+        )
     finally:
         window.close()
 
@@ -197,8 +212,12 @@ def test_renaming_a_workspace_relabels_its_tree_node(qapp, tmp_path: Path) -> No
         window.close()
 
 
-def test_tree_context_menu_deletes_an_analysis(qapp, tmp_path: Path, confirmed_destructive_actions) -> None:
-    window, _doc, (stale, kept) = _window_with_workspaces(tmp_path, "Preliminary analysis", "Full analysis")
+def test_tree_context_menu_deletes_an_analysis(
+    qapp, tmp_path: Path, confirmed_destructive_actions
+) -> None:
+    window, _doc, (stale, kept) = _window_with_workspaces(
+        tmp_path, "Preliminary analysis", "Full analysis"
+    )
     try:
         # Deleting the node that is showing must land on the Analysis page,
         # not drop back to the project home page.
@@ -210,7 +229,9 @@ def test_tree_context_menu_deletes_an_analysis(qapp, tmp_path: Path, confirmed_d
         menu.actions()[0].trigger()
 
         assert [w["id"] for w in window._relaxation_analysis_workspaces()] == [kept["id"]]
-        assert confirmed_destructive_actions[-1]["text"] == "Delete analysis 'Preliminary analysis'?"
+        assert (
+            confirmed_destructive_actions[-1]["text"] == "Delete analysis 'Preliminary analysis'?"
+        )
         assert _analysis_item(window, stale) is None
         assert window._main_stack.currentWidget() is window._relaxation_analysis_view
         assert window._active_route() == "muon_analysis"
@@ -218,7 +239,9 @@ def test_tree_context_menu_deletes_an_analysis(qapp, tmp_path: Path, confirmed_d
         window.close()
 
 
-def test_tree_context_menu_offers_magnetic_workspace_delete(qapp, tmp_path: Path, monkeypatch) -> None:
+def test_tree_context_menu_offers_magnetic_workspace_delete(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
     window, doc, _workspaces = _window_with_workspaces(tmp_path)
     try:
         doc.ui_state[window._MAGNETIC_FIELD_WORKSPACES_KEY] = [{"id": "mag-1", "title": "Helix"}]

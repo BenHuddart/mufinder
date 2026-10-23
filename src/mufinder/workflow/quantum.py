@@ -46,7 +46,9 @@ def _seed_muonium_spin(structure: StructureSpec, muon_species: str) -> Structure
     """
 
     positions = structure.positions_frac.positions
-    muon_indices = [index for index, position in enumerate(positions) if position.species == muon_species]
+    muon_indices = [
+        index for index, position in enumerate(positions) if position.species == muon_species
+    ]
     # Fail loudly rather than emit a spin-polarised muonium job with no seeded moment: a
     # zero net moment on an odd-electron cell silently converges to the wrong (closed-shell)
     # solution. This catches a species-label mismatch between the structure and muon_species.
@@ -56,7 +58,9 @@ def _seed_muonium_spin(structure: StructureSpec, muon_species: str) -> Structure
             f"cannot seed the +1 muon spin. Present species: "
             f"{sorted({position.species for position in positions})}."
         )
-    spins = seed_muon_spins(structure.atomic_spins, atom_count=len(positions), muon_indices=muon_indices)
+    spins = seed_muon_spins(
+        structure.atomic_spins, atom_count=len(positions), muon_indices=muon_indices
+    )
     return replace(structure, atomic_spins=tuple(spins))
 
 
@@ -117,15 +121,24 @@ def phonon_method_compatibility(
     if method == "finite_displacement":
         return True, None
     if pseudopotential_family == "ultrasoft":
-        return False, "CASTEP DFPT/linear-response phonons require norm-conserving pseudopotentials."
+        return (
+            False,
+            "CASTEP DFPT/linear-response phonons require norm-conserving pseudopotentials.",
+        )
     if uses_hubbard_u:
         return False, "CASTEP DFPT/linear-response phonons are not implemented with Hubbard U."
     if uses_exact_exchange:
         return False, "CASTEP DFPT/linear-response phonons are not implemented with exact exchange."
     if uses_spin_orbit:
-        return False, "CASTEP DFPT/linear-response phonons are not implemented with spin-orbit coupling."
+        return (
+            False,
+            "CASTEP DFPT/linear-response phonons are not implemented with spin-orbit coupling.",
+        )
     if pseudopotential_family == "unknown":
-        return True, "Pseudopotential family is unknown; verify norm-conserving pseudopotentials before running DFPT."
+        return (
+            True,
+            "Pseudopotential family is unknown; verify norm-conserving pseudopotentials before running DFPT.",
+        )
     return True, None
 
 
@@ -150,7 +163,9 @@ def quantum_source_eligibility(
         if site.status != "relaxed":
             return QuantumSourceEligibility(False, "Muon site has not been structurally relaxed.")
         if site.relaxation_run_id is None:
-            return QuantumSourceEligibility(False, "Muon site has no structural-relaxation run provenance.")
+            return QuantumSourceEligibility(
+                False, "Muon site has no structural-relaxation run provenance."
+            )
         if run is None or run.id != site.relaxation_run_id:
             return QuantumSourceEligibility(False, "The recorded relaxation run is missing.")
     elif run is None or job is None or run.job_id != job.id:
@@ -158,17 +173,30 @@ def quantum_source_eligibility(
     if run.status != JobStatus.COMPLETED:
         return QuantumSourceEligibility(False, "The structural-relaxation run is not complete.")
     if job is None or job.workflow_stage != WorkflowStage.MUON_RELAXATION:
-        return QuantumSourceEligibility(False, "The source job is not a MuFinder muon structural relaxation.")
+        return QuantumSourceEligibility(
+            False, "The source job is not a MuFinder muon structural relaxation."
+        )
     if job.status != JobStatus.COMPLETED:
         return QuantumSourceEligibility(False, "The source muon relaxation job is not complete.")
     if relaxed_structure is None:
-        return QuantumSourceEligibility(False, "The source relaxation has no parsed relaxed structure.")
+        return QuantumSourceEligibility(
+            False, "The source relaxation has no parsed relaxed structure."
+        )
     if relaxed_structure.origin != "muon_relaxation":
-        return QuantumSourceEligibility(False, "The source structure was not produced by muon structural relaxation.")
-    if relaxed_structure.properties.get("source_workflow_stage") != WorkflowStage.MUON_RELAXATION.value:
-        return QuantumSourceEligibility(False, "The source structure does not carry muon-relaxation provenance.")
+        return QuantumSourceEligibility(
+            False, "The source structure was not produced by muon structural relaxation."
+        )
+    if (
+        relaxed_structure.properties.get("source_workflow_stage")
+        != WorkflowStage.MUON_RELAXATION.value
+    ):
+        return QuantumSourceEligibility(
+            False, "The source structure does not carry muon-relaxation provenance."
+        )
     if "H:mu" not in relaxed_structure.species:
-        return QuantumSourceEligibility(False, "The relaxed structure does not contain an H:mu atom.")
+        return QuantumSourceEligibility(
+            False, "The relaxed structure does not contain an H:mu atom."
+        )
     return QuantumSourceEligibility(True)
 
 
@@ -298,7 +326,9 @@ def expand_quantum_singlepoint_jobs(
             structure = _seed_muonium_spin(structure, config.muon_species)
         keywords = [KeywordAssignment("task", "SINGLEPOINT")]
         if config.source.charge_state:
-            keywords.append(KeywordAssignment("charge", 0 if is_muonium(config.source.charge_state) else 1))
+            keywords.append(
+                KeywordAssignment("charge", 0 if is_muonium(config.source.charge_state) else 1)
+            )
         if is_muonium(config.source.charge_state):
             keywords.append(KeywordAssignment("spin_polarized", True))
         base = InputTemplate(
@@ -309,7 +339,10 @@ def expand_quantum_singlepoint_jobs(
             base, InputTemplate(cell=config.cell_overrides, param=config.param_overrides)
         )
         patch = JobPatch(
-            label_suffix=label, structure=structure, cell=patch_template.cell, param=patch_template.param
+            label_suffix=label,
+            structure=structure,
+            cell=patch_template.cell,
+            param=patch_template.param,
         )
         provenance: dict[str, Any] = {
             "workflow": "quantum_corrections",
@@ -356,7 +389,9 @@ def _muon_species_blocks(config: QuantumPhononJobConfig) -> tuple[BlockSection, 
 
     return (
         BlockSection("species_mass", ((config.muon_species, MUON_MASS_AMU),), unit="AMU"),
-        BlockSection("species_gamma", ((config.muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"),
+        BlockSection(
+            "species_gamma", ((config.muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"
+        ),
     )
 
 
@@ -391,7 +426,9 @@ def _phonon_nonscf_eigenvalue_tol(config: QuantumPhononJobConfig) -> ValueWithUn
         normalized_unit = elec_energy_tol.unit.strip().lower().replace(" ", "")
         if normalized_unit == "ev":
             return ValueWithUnit(
-                min(float(elec_energy_tol.value), float(QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL.value)),
+                min(
+                    float(elec_energy_tol.value), float(QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL.value)
+                ),
                 "eV",
             )
     if isinstance(elec_energy_tol, (int, float)) and not isinstance(elec_energy_tol, bool):

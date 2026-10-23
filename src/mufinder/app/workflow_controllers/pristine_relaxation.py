@@ -79,12 +79,8 @@ class PristineRelaxationDeps:
     is needed here.
     """
 
-    deserialize_pristine_relaxation_config: Callable[
-        [object], PristineRelaxationConfig | None
-    ]
-    serialize_pristine_relaxation_config: Callable[
-        [PristineRelaxationConfig], dict[str, object]
-    ]
+    deserialize_pristine_relaxation_config: Callable[[object], PristineRelaxationConfig | None]
+    serialize_pristine_relaxation_config: Callable[[PristineRelaxationConfig], dict[str, object]]
     pristine_relaxation_form_config: Callable[[], PristineRelaxationConfig | None]
     pristine_relaxation_row_signature: Callable[[object], tuple[object, ...]]
     expand_pristine_relaxation_jobs: Callable[
@@ -98,9 +94,7 @@ class PristineRelaxationController(WorkflowJobController):
     calc_types = frozenset({"castep_pristine_relaxation"})
     stage = WorkflowStage.PRISTINE_RELAXATION
     active_key = "active_pristine_relaxation_definition_id"
-    no_ready_message = (
-        "Only configured pristine-relaxation rows that have not yet been submitted can be submitted."
-    )
+    no_ready_message = "Only configured pristine-relaxation rows that have not yet been submitted can be submitted."
 
     def __init__(
         self,
@@ -198,9 +192,7 @@ class PristineRelaxationController(WorkflowJobController):
                 states[row.label] = RelaxationRunState(status="ready")
                 continue
 
-            status_value = (
-                "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
-            )
+            status_value = "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
             run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value
@@ -287,9 +279,7 @@ class PristineRelaxationController(WorkflowJobController):
             mapping = {}
             definition.parameters["job_ids_by_label"] = mapping
 
-        spec_by_label = {
-            str(spec.provenance.get("label", "")): spec for spec in expansion.jobs
-        }
+        spec_by_label = {str(spec.provenance.get("label", "")): spec for spec in expansion.jobs}
 
         created: list[Job] = []
         for label in keys:
@@ -359,9 +349,7 @@ class PristineRelaxationController(WorkflowJobController):
 
         values = dict(parameter_values)
         advanced = (
-            tuple(str(name) for name in added_advanced)
-            if added_advanced is not None
-            else None
+            tuple(str(name) for name in added_advanced) if added_advanced is not None else None
         )
         mirrored = self._mirror_row_parameters_into_form(label, values, advanced)
         if mirrored is not None:
@@ -377,8 +365,8 @@ class PristineRelaxationController(WorkflowJobController):
             else row
             for row in config.rows
         )
-        definition.parameters["configuration"] = (
-            self._deps.serialize_pristine_relaxation_config(replace(config, rows=rows))
+        definition.parameters["configuration"] = self._deps.serialize_pristine_relaxation_config(
+            replace(config, rows=rows)
         )
 
         self._context.persist_ui_state(
@@ -424,9 +412,7 @@ class PristineRelaxationController(WorkflowJobController):
             raw_advanced = row.get("added_advanced", [])
             return (
                 dict(raw_params) if isinstance(raw_params, dict) else {},
-                tuple(str(name) for name in raw_advanced)
-                if isinstance(raw_advanced, list)
-                else (),
+                tuple(str(name) for name in raw_advanced) if isinstance(raw_advanced, list) else (),
             )
         return None
 

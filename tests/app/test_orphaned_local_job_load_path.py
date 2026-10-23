@@ -59,7 +59,9 @@ def _seed_project_with_jobs(tmp_path: Path):
     return root, local_job.id, cluster_job.id
 
 
-def test_open_project_stops_orphaned_local_job_and_shows_message(qapp, tmp_path, monkeypatch) -> None:
+def test_open_project_stops_orphaned_local_job_and_shows_message(
+    qapp, tmp_path, monkeypatch
+) -> None:
     root, local_id, cluster_id = _seed_project_with_jobs(tmp_path)
 
     window = MainWindow()
@@ -211,9 +213,7 @@ def test_stopped_local_muon_job_stays_linked_and_resettable(qapp, tmp_path, monk
     assert [j.id for j in reconciled] == [job.id]
 
     reloaded_definition = reloaded.calculations[definition.id]
-    resolved = muon_relaxation_job_for_row(
-        reloaded, reloaded_definition, "Site 1", "positive_muon"
-    )
+    resolved = muon_relaxation_job_for_row(reloaded, reloaded_definition, "Site 1", "positive_muon")
     assert resolved is not None
     assert resolved.status == JobStatus.STOPPED
     # STOPPED is a resettable state, so the job can be resubmitted from the row.

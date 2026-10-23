@@ -249,7 +249,9 @@ def test_geometry_progress_is_read_on_the_worker_and_reported_on_the_gui_thread(
     ctrl, fake = controller
     gui_thread = QThread.currentThread()
     received: list[tuple[object, QThread]] = []
-    ctrl.geometry_progress_read.connect(lambda results: received.append((results, QThread.currentThread())))
+    ctrl.geometry_progress_read.connect(
+        lambda results: received.append((results, QThread.currentThread()))
+    )
 
     ctrl.read_geometry_progress(["job-1", "job-2"])
 

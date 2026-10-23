@@ -72,7 +72,9 @@ def test_run_bootstraps_qt_and_returns_exit_code(monkeypatch):
 
     monkeypatch.setattr(main_module, "QApplication", fake_app)
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: fake_window_ctor)
-    monkeypatch.setattr(main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
     monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
     monkeypatch.setattr(
@@ -128,7 +130,9 @@ def test_run_sets_windows_app_id_before_qt_startup(monkeypatch):
     monkeypatch.setattr(main_module, "_set_windows_app_id", lambda: called.append("app-id"))
     monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: _FakeWindow)
-    monkeypatch.setattr(main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
     monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
     monkeypatch.setattr(
@@ -156,7 +160,9 @@ def test_set_windows_app_id_calls_shell32(monkeypatch):
 
     fake_shell32 = _FakeShell32()
     monkeypatch.setattr(main_module.sys, "platform", "win32")
-    monkeypatch.setattr(main_module.ctypes, "windll", SimpleNamespace(shell32=fake_shell32), raising=False)
+    monkeypatch.setattr(
+        main_module.ctypes, "windll", SimpleNamespace(shell32=fake_shell32), raising=False
+    )
 
     main_module._set_windows_app_id()
 
@@ -268,7 +274,11 @@ def test_helper_import_wrappers(monkeypatch):
 
 def test_prompt_for_keyword_catalog_is_deferred_to_the_event_loop(monkeypatch):
     scheduled = []
-    monkeypatch.setattr(main_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+    monkeypatch.setattr(
+        main_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
     prompted = []
     window = SimpleNamespace(prompt_for_keyword_catalog_if_needed=lambda: prompted.append(True))
 

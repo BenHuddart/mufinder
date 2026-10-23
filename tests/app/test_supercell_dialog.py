@@ -174,7 +174,11 @@ def test_supercell_editor_matrix_edit_saves_copy_for_frozen_asset(qapp, tmp_path
 
     assert saved is not None
     assert saved.id != asset.id
-    assert doc.structures[asset.id].properties["supercell_asset"]["matrix"] == [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
+    assert doc.structures[asset.id].properties["supercell_asset"]["matrix"] == [
+        [2, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+    ]
     assert saved.properties["supercell_asset"]["matrix"] == [[3, 0, 0], [0, 1, 0], [0, 0, 1]]
     assert saved.properties["supercell_asset"]["source_asset_structure_id"] == str(asset.id)
     dialog.close()
@@ -232,7 +236,9 @@ def test_supercell_editor_suggest_writes_scaling_to_matrix(qapp, tmp_path, monke
 
     suggestion = SupercellSuggestion(
         candidates=(
-            SupercellCandidate(scaling=(3, 3, 3), atom_count=54, min_image_distance=12.0, satisfies_criterion=True),
+            SupercellCandidate(
+                scaling=(3, 3, 3), atom_count=54, min_image_distance=12.0, satisfies_criterion=True
+            ),
         ),
         recommended_index=0,
         primitive_atom_count=2,
@@ -243,12 +249,15 @@ def test_supercell_editor_suggest_writes_scaling_to_matrix(qapp, tmp_path, monke
     )
 
     def fake_exec(self):
-        self._chosen_scaling = self._suggestion.candidates[self._suggestion.recommended_index].scaling
+        self._chosen_scaling = self._suggestion.candidates[
+            self._suggestion.recommended_index
+        ].scaling
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(SupercellSuggestionDialog, "exec", fake_exec)
 
     from unittest.mock import patch
+
     with patch("mufinder.app.supercell_dialog.suggest_supercell", return_value=suggestion):
         dialog._suggest_supercell()
 

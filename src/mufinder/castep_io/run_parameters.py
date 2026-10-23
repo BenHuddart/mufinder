@@ -143,9 +143,7 @@ _XC_VALUES: dict[str, tuple[str, ...]] = {
 _LABEL_RULES: dict[str, _LabelRule] = {
     "type of calculation": _LabelRule("task", "param", "enum", _TASK_VALUES),
     "using functional": _LabelRule("xc_functional", "param", "enum", _XC_VALUES),
-    "write structure in cell formatted file": _LabelRule(
-        "write_cell_structure", "param", "on_off"
-    ),
+    "write structure in cell formatted file": _LabelRule("write_cell_structure", "param", "on_off"),
     "plane wave basis set cut-off": _LabelRule("cut_off_energy", "param", "physical"),
     "net charge of system": _LabelRule("charge", "param", "int"),
     "total energy / atom convergence tol.": _LabelRule("elec_energy_tol", "param", "physical"),
@@ -166,9 +164,7 @@ _LABEL_RULES: dict[str, _LabelRule] = {
     # state them: without these rules the values survive only when the local
     # input file happens to carry them, so two runs of the same calculation can
     # import with different parameter sets purely because one `.param` was older.
-    "density-mixing scheme": _LabelRule(
-        "mixing_scheme", "param", "enum", _MIXING_SCHEME_VALUES
-    ),
+    "density-mixing scheme": _LabelRule("mixing_scheme", "param", "enum", _MIXING_SCHEME_VALUES),
     "max. length of mixing history": _LabelRule("mix_history_length", "param", "int"),
     # Written by format 94 with no trailing unit argument, so these two are bare
     # reals rather than physical quantities.

@@ -40,14 +40,18 @@ def test_failure_reason_loads_as_none_when_absent_or_unknown() -> None:
     base = _job_payload(status=JobStatus.FAILED.value)
 
     assert project_codec.job_from_dict(base).failure_reason is None
-    assert project_codec.job_from_dict({**base, "failure_reason": "cosmic_ray"}).failure_reason is None
+    assert (
+        project_codec.job_from_dict({**base, "failure_reason": "cosmic_ray"}).failure_reason is None
+    )
     assert (
         project_codec.job_from_dict({**base, "failure_reason": "out_of_memory"}).failure_reason
         == FailureReason.OUT_OF_MEMORY
     )
 
 
-@pytest.mark.parametrize(("raw", "expected"), [(4, 4), ("2", 2), (0, None), (-1, None), ("many", None), (None, None)])
+@pytest.mark.parametrize(
+    ("raw", "expected"), [(4, 4), ("2", 2), (0, None), (-1, None), ("many", None), (None, None)]
+)
 def test_job_num_processes_keeps_only_positive_counts(raw: object, expected: int | None) -> None:
     assert project_codec.job_from_dict(_job_payload(num_processes=raw)).num_processes == expected
 
@@ -77,7 +81,12 @@ def test_site_from_dict_maps_legacy_candidate_status_and_energy_key() -> None:
 
 
 def test_site_from_dict_prefers_total_energy_key_and_defaults_blank_status() -> None:
-    payload = {"id": str(uuid4()), "status": "", "total_energy_eV": -3.0, "relative_energy_eV": -9.0}
+    payload = {
+        "id": str(uuid4()),
+        "status": "",
+        "total_energy_eV": -3.0,
+        "relative_energy_eV": -9.0,
+    }
 
     site = project_codec.site_from_dict(payload)
 
@@ -105,7 +114,12 @@ def test_relaxed_site_round_trips_both_positions_under_their_own_keys() -> None:
 
 
 def test_site_round_trips_through_to_jsonable() -> None:
-    site = MuonSite(label="Site 1", status="staged", initial_fractional_position=[0.1, 0.2, 0.3], total_energy_eV=-1.0)
+    site = MuonSite(
+        label="Site 1",
+        status="staged",
+        initial_fractional_position=[0.1, 0.2, 0.3],
+        total_energy_eV=-1.0,
+    )
 
     assert project_codec.site_from_dict(to_jsonable(site)) == site
 
@@ -135,7 +149,9 @@ def test_project_from_dict_drops_malformed_recommended_defaults() -> None:
     assert project.recommended_cutoff_xc_functional is None
 
 
-@pytest.mark.parametrize(("value", "expected"), [(" pbe ", "PBE"), ("LDA", "LDA"), ("  ", None), (None, None), (3, None)])
+@pytest.mark.parametrize(
+    ("value", "expected"), [(" pbe ", "PBE"), ("LDA", "LDA"), ("  ", None), (None, None), (3, None)]
+)
 def test_normalized_xc_functional(value: object, expected: str | None) -> None:
     assert project_codec.normalized_xc_functional(value) == expected
 

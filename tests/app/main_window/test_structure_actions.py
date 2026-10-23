@@ -72,7 +72,9 @@ def test_generate_comparison_uses_selected_job_labels_for_dft_columns(
 ) -> None:
     window = main_window
     service = ProjectService()
-    window._document = service.create_project(tmp_path / "comparison_labels.mufinder", "ComparisonLabels")
+    window._document = service.create_project(
+        tmp_path / "comparison_labels.mufinder", "ComparisonLabels"
+    )
 
     host = Structure(
         label="Host",
@@ -143,7 +145,9 @@ def test_generate_comparison_uses_selected_job_labels_for_dft_columns(
     window.close()
 
 
-def test_comparison_table_title_edit_updates_project_tree_and_persists(main_window, tmp_path: Path) -> None:
+def test_comparison_table_title_edit_updates_project_tree_and_persists(
+    main_window, tmp_path: Path
+) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "comparison_title_edit.mufinder", "ComparisonTitleEdit")
@@ -207,7 +211,9 @@ def test_host_magnetic_configuration_changes_update_document(main_window, tmp_pa
             "propagation_vector": [0.0, 0.0, 0.25],
             "magnetic_structure": {
                 "propagation_vector": [0.0, 0.0, 0.25],
-                "moments": [{"label": "Fe1", "vector": [0.0, 0.0, 2.0], "coordinate_system": "cartesian"}],
+                "moments": [
+                    {"label": "Fe1", "vector": [0.0, 0.0, 2.0], "coordinate_system": "cartesian"}
+                ],
             },
             "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
         }
@@ -224,7 +230,9 @@ def test_host_magnetic_configuration_changes_update_document(main_window, tmp_pa
     assert reloaded_host.properties["atomic_spins"] == pytest.approx([2.0])
     assert reloaded_host.properties["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
     assert reloaded.project.magnetic_structure is not None
-    assert reloaded.project.magnetic_structure["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
+    assert reloaded.project.magnetic_structure["propagation_vector"] == pytest.approx(
+        [0.0, 0.0, 0.25]
+    )
     assert reloaded.project.supercell_matrix == [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
 
     window.close()
@@ -244,7 +252,9 @@ def test_load_structure_requested_handles_import_error(
     )
 
     warnings: list[str] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *args, **kwargs: warnings.append("warn"))
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "warning", lambda *args, **kwargs: warnings.append("warn")
+    )
 
     def broken_import(*args, **kwargs):
         raise StructureLoadError("bad")

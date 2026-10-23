@@ -273,7 +273,9 @@ class ClusterSetupDialog(QDialog):
         self._working_dir_edit.setPlaceholderText("e.g. /work/username")
         self._template_path_edit = QLineEdit(tab)
         self._template_path_edit.setPlaceholderText("Built-in SLURM template")
-        self._template_path_row, self._template_browse_button = self._path_row(tab, self._template_path_edit)
+        self._template_path_row, self._template_browse_button = self._path_row(
+            tab, self._template_path_edit
+        )
         self._castep_exec_edit = QLineEdit(tab)
         self._castep_exec_edit.setPlaceholderText("castep.mpi")
         self._cores_per_node_spin = QSpinBox(tab)
@@ -324,7 +326,11 @@ class ClusterSetupDialog(QDialog):
         self._submit_command_edit = QLineEdit(commands_group)
         self._queue_check_command_edit = QLineEdit(commands_group)
         self._cancel_command_edit = QLineEdit(commands_group)
-        for edit in (self._submit_command_edit, self._queue_check_command_edit, self._cancel_command_edit):
+        for edit in (
+            self._submit_command_edit,
+            self._queue_check_command_edit,
+            self._cancel_command_edit,
+        ):
             edit.setPlaceholderText("Found on the cluster's PATH")
         commands_form.addRow("Submit command path", self._submit_command_edit)
         commands_form.addRow("Queue check command path", self._queue_check_command_edit)
@@ -424,7 +430,9 @@ class ClusterSetupDialog(QDialog):
         return tab
 
     def _connect_signals(self) -> None:
-        self._cluster_list.currentRowChanged.connect(lambda *_: self._on_cluster_selection_changed())
+        self._cluster_list.currentRowChanged.connect(
+            lambda *_: self._on_cluster_selection_changed()
+        )
         self._add_button.clicked.connect(self._add_cluster)
         self._duplicate_button.clicked.connect(self._duplicate_cluster)
         self._remove_button.clicked.connect(self._remove_cluster)
@@ -440,9 +448,15 @@ class ClusterSetupDialog(QDialog):
         self._auth_combo.currentTextChanged.connect(lambda *_: self._refresh_keychain_controls())
         self._jump_enabled_check.toggled.connect(lambda *_: self._refresh_keychain_controls())
         self._jump_hostname_edit.textChanged.connect(lambda *_: self._refresh_keychain_controls())
-        self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_keychain_controls())
-        self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_jump_host_controls())
-        self._queue_system_combo.currentTextChanged.connect(lambda *_: self._refresh_scheduler_controls())
+        self._jump_auth_combo.currentTextChanged.connect(
+            lambda *_: self._refresh_keychain_controls()
+        )
+        self._jump_auth_combo.currentTextChanged.connect(
+            lambda *_: self._refresh_jump_host_controls()
+        )
+        self._queue_system_combo.currentTextChanged.connect(
+            lambda *_: self._refresh_scheduler_controls()
+        )
         self._default_mem_per_cpu_check.toggled.connect(self._default_mem_per_cpu_edit.setEnabled)
         self._default_mem_per_cpu_edit.setEnabled(self._default_mem_per_cpu_check.isChecked())
         self._username_edit.editingFinished.connect(self._maybe_sync_working_dir_for_username)
@@ -627,7 +641,9 @@ class ClusterSetupDialog(QDialog):
         self._walltime_edit.setText(config.default_walltime)
         self._template_path_edit.setText(config.template_script_path)
         self._castep_exec_edit.setText(config.castep_executable)
-        self._default_memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
+        self._default_memory_spin.setValue(
+            7.5 if config.default_memory_gb is None else float(config.default_memory_gb)
+        )
         self._apply_default_mem_per_cpu(config.default_mem_per_cpu_gb)
         self._submit_command_edit.setText(config.submit_command_path)
         self._queue_check_command_edit.setText(config.queue_check_command_path)
@@ -771,7 +787,11 @@ class ClusterSetupDialog(QDialog):
     def _append_queue_row(self, queue: ClusterQueue) -> int:
         row = self._queue_table.rowCount()
         self._queue_table.insertRow(row)
-        memory = queue.default_memory_gb if queue.default_memory_gb is not None else queue.default_mem_per_cpu_gb
+        memory = (
+            queue.default_memory_gb
+            if queue.default_memory_gb is not None
+            else queue.default_mem_per_cpu_gb
+        )
         values = {
             _QUEUE_NAME_COLUMN: queue.name,
             _QUEUE_WALLTIME_COLUMN: queue.default_walltime,
@@ -813,7 +833,9 @@ class ClusterSetupDialog(QDialog):
         self._default_queue_combo.blockSignals(False)
 
     def _refresh_queue_buttons(self) -> None:
-        self._remove_queue_button.setEnabled(bool(self._queue_table.selectionModel().selectedRows()))
+        self._remove_queue_button.setEnabled(
+            bool(self._queue_table.selectionModel().selectedRows())
+        )
 
     def _on_queue_item_changed(self, item: QTableWidgetItem) -> None:
         if item.column() != _QUEUE_NAME_COLUMN:
@@ -885,7 +907,9 @@ class ClusterSetupDialog(QDialog):
                     default_memory_gb=memory if is_addqueue else None,
                     default_mem_per_cpu_gb=None if is_addqueue else memory,
                     castep_executable=self._queue_cell(row, _QUEUE_EXECUTABLE_COLUMN),
-                    template_script_path="" if is_addqueue else self._queue_cell(row, _QUEUE_TEMPLATE_COLUMN),
+                    template_script_path=""
+                    if is_addqueue
+                    else self._queue_cell(row, _QUEUE_TEMPLATE_COLUMN),
                 )
             )
         issues = queue_issues(queues, profile_walltime=self._walltime_edit.text().strip())
@@ -894,17 +918,26 @@ class ClusterSetupDialog(QDialog):
     # ------------------------------------------------------------- utilities
 
     def _browse_key_path(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select SSH private key", str(Path.home()), "All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select SSH private key", str(Path.home()), "All Files (*)"
+        )
         if path:
             self._key_path_edit.setText(path)
 
     def _browse_jump_key_path(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select jump-host SSH private key", str(Path.home()), "All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select jump-host SSH private key", str(Path.home()), "All Files (*)"
+        )
         if path:
             self._jump_key_path_edit.setText(path)
 
     def _browse_template_path(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select submission template", str(Path.home()), "Shell Scripts (*.sh);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select submission template",
+            str(Path.home()),
+            "Shell Scripts (*.sh);;All Files (*)",
+        )
         if path:
             self._template_path_edit.setText(path)
 
@@ -912,7 +945,11 @@ class ClusterSetupDialog(QDialog):
         QMessageBox.information(
             self,
             f"{credential_store_for_display().sentence_name} setup",
-            keychain_setup_help(self._updated_selected_config() or self._selected_config() or ClusterConfig(name="", hostname="")),
+            keychain_setup_help(
+                self._updated_selected_config()
+                or self._selected_config()
+                or ClusterConfig(name="", hostname="")
+            ),
         )
 
     def _config_from_form(self, existing: ClusterConfig) -> ClusterConfig:
@@ -921,7 +958,9 @@ class ClusterSetupDialog(QDialog):
         walltime = self._walltime_edit.text().strip()
         if not is_addqueue and not walltime:
             walltime = "01:00:00"
-        default_memory_gb: float | None = float(self._default_memory_spin.value()) if is_addqueue else None
+        default_memory_gb: float | None = (
+            float(self._default_memory_spin.value()) if is_addqueue else None
+        )
         if queue_system.lower() == "slurm" and self._default_mem_per_cpu_check.isChecked():
             default_mem_per_cpu_gb: float | None = float(self._default_mem_per_cpu_edit.value())
         else:
@@ -943,7 +982,8 @@ class ClusterSetupDialog(QDialog):
             jump_username=self._jump_username_edit.text().strip(),
             jump_auth_method=self._jump_auth_combo.currentText().strip().lower() or "key",
             jump_key_path=self._jump_key_path_edit.text().strip(),
-            use_macos_keychain_passwords=self._keychain_check.isChecked() and self._keychain_is_available_for_form(),
+            use_macos_keychain_passwords=self._keychain_check.isChecked()
+            and self._keychain_is_available_for_form(),
             default_working_directory=self._working_dir_edit.text().strip(),
             queue_system=queue_system,
             cores_per_node=self._cores_per_node_spin.value(),
@@ -977,15 +1017,21 @@ class ClusterSetupDialog(QDialog):
         if config is None:
             return
         if not config.hostname:
-            QMessageBox.warning(self, "Missing hostname", "Enter a host name before testing the connection.")
+            QMessageBox.warning(
+                self, "Missing hostname", "Enter a host name before testing the connection."
+            )
             return
         if not config.username:
-            QMessageBox.warning(self, "Missing username", "Enter a username before testing the connection.")
+            QMessageBox.warning(
+                self, "Missing username", "Enter a username before testing the connection."
+            )
             return
 
         credentials = prompt_for_cluster_credentials(self, config)
         if credentials is None:
-            QMessageBox.warning(self, "Missing credentials", "Credentials are required for this connection.")
+            QMessageBox.warning(
+                self, "Missing credentials", "Credentials are required for this connection."
+            )
             return
 
         # The connect runs on a worker thread behind a cancellable progress
@@ -1050,9 +1096,14 @@ class ClusterSetupDialog(QDialog):
         # cluster is refused until its queue table is valid.
         _queues, queue_issues = self._queues_from_table()
         name = self._name_edit.text().strip() or "this cluster"
-        issues = [*self._validate_configs(), *(f"Cluster '{name}': {issue}" for issue in queue_issues)]
+        issues = [
+            *self._validate_configs(),
+            *(f"Cluster '{name}': {issue}" for issue in queue_issues),
+        ]
         if issues:
-            QMessageBox.warning(self, "Invalid cluster configuration", "\n".join(f"- {issue}" for issue in issues))
+            QMessageBox.warning(
+                self, "Invalid cluster configuration", "\n".join(f"- {issue}" for issue in issues)
+            )
             return
 
         save_cluster_configs(self._settings, self._configs)

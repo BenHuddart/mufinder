@@ -155,7 +155,9 @@ class SweepConvergenceController(WorkflowJobController):
         if definition is None:
             return None, None
         self.sync_mappings(definition)
-        config = self._deps.deserialize_convergence_config(definition.parameters.get("configuration", {}))
+        config = self._deps.deserialize_convergence_config(
+            definition.parameters.get("configuration", {})
+        )
         if config is None or config.sweep_parameter != self.sweep_parameter:
             return definition, None
         return definition, config
@@ -164,7 +166,11 @@ class SweepConvergenceController(WorkflowJobController):
         """Return ``config``'s sweep values as keys, in order and without repeats."""
 
         return tuple(
-            dict.fromkeys(key for raw in config.sweep_values if (key := self.key_codec.coerce(raw)) is not None)
+            dict.fromkeys(
+                key
+                for raw in config.sweep_values
+                if (key := self.key_codec.coerce(raw)) is not None
+            )
         )
 
     def definition_for_sweep_key(
@@ -173,7 +179,11 @@ class SweepConvergenceController(WorkflowJobController):
         """Return the active definition and configuration when they sweep ``key``."""
 
         definition, config = self.active_config()
-        if definition is None or config is None or self.normalize(key) not in self.config_keys(config):
+        if (
+            definition is None
+            or config is None
+            or self.normalize(key) not in self.config_keys(config)
+        ):
             return None, None
         return definition, config
 
@@ -186,7 +196,9 @@ class SweepConvergenceController(WorkflowJobController):
         """
 
         if isinstance(definition.parameters.get(self.mapping_name), dict):
-            return self.job_for_key(definition, self.mapping_key(key), mapping_name=self.mapping_name)
+            return self.job_for_key(
+                definition, self.mapping_key(key), mapping_name=self.mapping_name
+            )
         return self.legacy_job_for_key(definition, key)
 
     def newest_job_labelled(self, label: str) -> Job | None:
@@ -259,7 +271,11 @@ class SweepConvergenceController(WorkflowJobController):
         for raw in keys:
             key = self.key_codec.coerce(raw)
             state = states.get(key) if key is not None else None
-            job = document.jobs.get(state.job_id) if state is not None and state.job_id is not None else None
+            job = (
+                document.jobs.get(state.job_id)
+                if state is not None and state.job_id is not None
+                else None
+            )
             if job is not None:
                 jobs.append(job)
         return dedupe_jobs(jobs)

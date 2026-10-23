@@ -36,7 +36,9 @@ class CredentialStore:
     short_name: str
 
 
-_MACOS_KEYCHAIN = CredentialStore(name="macOS Keychain", sentence_name="macOS Keychain", short_name="Keychain")
+_MACOS_KEYCHAIN = CredentialStore(
+    name="macOS Keychain", sentence_name="macOS Keychain", short_name="Keychain"
+)
 _SECRET_SERVICE_KEYRING = CredentialStore(
     name="system keyring", sentence_name="System keyring", short_name="keyring"
 )
@@ -56,7 +58,9 @@ class KeychainCredentialIssue:
 class KeychainCredentialError(ConnectionError):
     """Raised when configured keyring credentials cannot be resolved."""
 
-    def __init__(self, issues: list[KeychainCredentialIssue], *, store_name: str = _MACOS_KEYCHAIN.name) -> None:
+    def __init__(
+        self, issues: list[KeychainCredentialIssue], *, store_name: str = _MACOS_KEYCHAIN.name
+    ) -> None:
         self.issues = list(issues)
         missing = ", ".join(f"{issue.service}/{issue.account}" for issue in self.issues)
         super().__init__(f"Missing {store_name} credential(s): {missing}")

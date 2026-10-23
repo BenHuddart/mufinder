@@ -31,8 +31,12 @@ DEFAULT_JOBS = min(4, os.cpu_count() or 1)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render the documentation screenshots from the running application.")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="directory to write the images to")
+    parser = argparse.ArgumentParser(
+        description="Render the documentation screenshots from the running application."
+    )
+    parser.add_argument(
+        "--output", type=Path, default=DEFAULT_OUTPUT, help="directory to write the images to"
+    )
     parser.add_argument("--list", action="store_true", help="print the screenshot names and exit")
     parser.add_argument(
         "--example",
@@ -116,7 +120,9 @@ def _render_in_workers(names: list[str], output: Path, jobs: int) -> bool:
     """Render ``names`` in ``jobs`` worker processes, one share each; ``True`` if all succeed."""
 
     workers = [
-        subprocess.Popen([sys.executable, str(SCRIPT), "--jobs", "1", "--output", str(output), *share])
+        subprocess.Popen(
+            [sys.executable, str(SCRIPT), "--jobs", "1", "--output", str(output), *share]
+        )
         for share in _shares(names, jobs)
         if share
     ]

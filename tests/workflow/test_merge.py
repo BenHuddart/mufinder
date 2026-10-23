@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.castep_io.types import AtomicPosition, KPoint, KeywordAssignment, LatticeABC, PositionBlock, ValueWithUnit
+from mufinder.castep_io.types import (
+    AtomicPosition,
+    KPoint,
+    KeywordAssignment,
+    LatticeABC,
+    PositionBlock,
+    ValueWithUnit,
+)
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.workflow.bridge import structure_to_spec
@@ -33,28 +40,18 @@ def test_merge_with_precedence_prefers_higher_layers() -> None:
         workflow_defaults=InputTemplate(
             cell=CellTemplate(kpoint_mp_grid=(2, 2, 2)),
             param=ParamTemplate(
-                keywords=(
-                    KeywordAssignment("cut_off_energy", ValueWithUnit(300.0, "eV")),
-                )
+                keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(300.0, "eV")),)
             ),
         ),
         sweep_overrides=InputTemplate(
             param=ParamTemplate(
-                keywords=(
-                    KeywordAssignment("cut_off_energy", ValueWithUnit(350.0, "eV")),
-                )
+                keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(350.0, "eV")),)
             )
         ),
         user_overrides=InputTemplate(
-            cell=CellTemplate(
-                kpoints_list=(
-                    KPoint((0.0, 0.0, 0.0), 1.0),
-                )
-            ),
+            cell=CellTemplate(kpoints_list=(KPoint((0.0, 0.0, 0.0), 1.0),)),
             param=ParamTemplate(
-                keywords=(
-                    KeywordAssignment("cut_off_energy", ValueWithUnit(400.0, "eV")),
-                )
+                keywords=(KeywordAssignment("cut_off_energy", ValueWithUnit(400.0, "eV")),)
             ),
         ),
     )
@@ -141,9 +138,7 @@ def test_resolve_job_includes_atomic_spins_only_for_spin_polarized() -> None:
         base_structure=spec,
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         workflow_defaults=InputTemplate(
-            param=ParamTemplate(
-                keywords=(KeywordAssignment("task", "SINGLEPOINT"),)
-            )
+            param=ParamTemplate(keywords=(KeywordAssignment("task", "SINGLEPOINT"),))
         ),
     )
 

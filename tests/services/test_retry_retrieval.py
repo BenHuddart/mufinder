@@ -139,9 +139,7 @@ def test_retrieve_outputs_for_incomplete_marks_failed(
     assert statuses[-1] == JobStatus.FAILED.value
 
 
-def test_retrieve_outputs_for_not_connected_resolves_to_failed(
-    qapp, tmp_path: Path
-) -> None:
+def test_retrieve_outputs_for_not_connected_resolves_to_failed(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
     # No _ssh set -> is_connected is False; a naive retrieval would strand the
     # job in RETRIEVING, so it must resolve to FAILED instead.
