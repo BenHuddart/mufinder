@@ -876,9 +876,10 @@ keywords:
     requires: []
     example: |
       %BLOCK SPECIES_GAMMA
-      H:mu 851615456.5524
+      radsectesla
+      H:mu 851615456.598
       %ENDBLOCK SPECIES_GAMMA
-    notes: Per-species gyromagnetic ratios. Muon workflows set the H:mu pseudo-species value.
+    notes: Per-species gyromagnetic ratios. Muon workflows set the H:mu pseudo-species value to the CODATA muon gyromagnetic ratio, 2|mu_mu|/hbar from scipy.constants (mufinder.domain.constants.MUON_GAMMA_RAD_S_T).
 
   - name: SYMMETRY_TOL
     canonical_name: symmetry_tol

@@ -13,6 +13,7 @@ from typing import Literal
 from ase import Atoms
 import numpy as np
 
+from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T, MUON_GAMMA_RAD_S_T
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, structure_to_ase_atoms
 from mufinder.science.muon_distortion import MuonDistortion, map_muon_distortion
@@ -21,8 +22,8 @@ MU0_OVER_4PI = 1e-7
 HBAR = 1.054_571_817e-34
 MU_N = 5.050_783_699e-27
 ANGSTROM_TO_M = 1e-10
-GAMMA_MU_OVER_2PI_MHZ_T = 135.538_96
-GAMMA_MU_RAD_S_T = 2.0 * np.pi * GAMMA_MU_OVER_2PI_MHZ_T * 1e6
+GAMMA_MU_OVER_2PI_MHZ_T = MUON_GAMMA_OVER_2PI_MHZ_T
+GAMMA_MU_RAD_S_T = MUON_GAMMA_RAD_S_T
 SEC2_TO_US2 = 1e-12
 
 NuclearRelaxationMode = Literal[
