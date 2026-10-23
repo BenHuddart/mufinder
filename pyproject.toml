@@ -99,6 +99,12 @@ allow_zero_version = true
 commit_parser = "conventional"
 tag_format = "v{version}"
 version_toml = ["pyproject.toml:project.version"]
+# Re-lock after the version bump so the release commit carries a uv.lock that
+# matches pyproject.toml; CI's `uv sync --locked` rejects a stale lock.
+build_command = """
+uv lock --upgrade-package "$PACKAGE_NAME"
+git add uv.lock
+"""
 
 [tool.semantic_release.branches.main]
 match = "^main$"

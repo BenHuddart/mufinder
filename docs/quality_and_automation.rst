@@ -135,8 +135,10 @@ CI runs on 4-vCPU runners. Keep these in place when changing the test setup:
   from a busy one, so a handful of slow tests at the end does not leave one
   worker running alone.
 - **``uv`` installs.** CI installs from ``uv.lock`` with
-  ``uv sync --frozen`` and a cached ``uv`` download store, which takes seconds
-  where ``pip`` took close to a minute per job.
+  ``uv sync --locked`` and a cached ``uv`` download store, which takes seconds
+  where ``pip`` took close to a minute per job. ``--locked`` fails the job when
+  ``uv.lock`` does not match ``pyproject.toml``, so a stale lock cannot merge;
+  run ``uv lock`` and commit the result to fix it.
 
 - **Incremental garbage collection between tests.** The autouse per-test Qt
   cleanup in ``tests/conftest.py`` runs ``gc.collect()`` after each test so
@@ -795,6 +797,9 @@ continuous integration and tag-driven publishing:
   Bump the version and stamp ``CHANGELOG.md`` locally with
   ``semantic-release version`` (for example
   ``uvx "python-semantic-release>=10.5,<11" version``) before pushing the tag.
+  Its ``build_command`` runs ``uv lock --upgrade-package mufinder`` and stages
+  ``uv.lock``, so the version-bump commit updates the lock's ``mufinder``
+  version alongside ``pyproject.toml`` and leaves every dependency pin as it was.
   Branch protection blocks pushing that version-bump commit to ``main``, so it
   goes through a ``release/vX.Y.Z`` pull request first:
 
