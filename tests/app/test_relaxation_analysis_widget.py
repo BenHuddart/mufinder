@@ -11,9 +11,20 @@ from matplotlib import colors as mcolors
 from matplotlib.collections import PolyCollection
 from matplotlib.patches import Circle, PathPatch
 import numpy as np
-from PySide6.QtWidgets import QCheckBox, QFrame, QPushButton, QSplitter, QTabWidget, QTreeWidget
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QLineEdit,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QTreeWidget,
+)
 
 from mufinder.app import relaxation_analysis_widget as relaxation_analysis_widget_module
+from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 
 from mufinder.app.relaxation_analysis_widget import (
@@ -1076,3 +1087,176 @@ def test_relaxation_analysis_export_relaxed_on_empty_workspace_says_so(qapp, mon
         assert informed == ["Nothing to export"]
     finally:
         widget.close()
+
+
+def _three_workspace_widget() -> tuple[RelaxationAnalysisWidget, list[dict]]:
+    host = host_structure()
+    workspaces = [
+        default_workspace_state(
+            name=name,
+            charge_state="positive_muon",
+            host_structure_id=host.id,
+            job_ids=[uuid4()],
+        )
+        for name in ("First", "Second", "Third")
+    ]
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=workspaces,
+        sources=[],
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[],
+    )
+    return widget, workspaces
+
+
+def _tab_viewers(widget: RelaxationAnalysisWidget) -> list[int]:
+    return [
+        len(widget._workspace_tabs.widget(index).findChildren(AtomicStructureViewer))
+        for index in range(widget._workspace_tabs.count())
+    ]
+
+
+def test_relaxation_analysis_builds_only_the_current_tab_viewer(qapp) -> None:
+    widget, _workspaces = _three_workspace_widget()
+    try:
+        assert _tab_viewers(widget) == [1, 0, 0]
+
+        widget._workspace_tabs.setCurrentIndex(2)
+
+        assert _tab_viewers(widget) == [1, 0, 1]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_rebuild_shuts_down_the_replaced_viewers(qapp, monkeypatch) -> None:
+    widget, workspaces = _three_workspace_widget()
+    try:
+        old_viewer = widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer)
+        shut_down: list[object] = []
+        monkeypatch.setattr(old_viewer, "shutdown", lambda: shut_down.append(old_viewer))
+
+        widget.set_context(
+            workspaces=workspaces,
+            sources=[],
+            structures=dict(widget._structures_by_id),
+            host_structure=widget._host_structure,
+            comparison_options=[],
+        )
+
+        assert shut_down == [old_viewer]
+        assert _tab_viewers(widget) == [1, 0, 0]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_rename_relabels_the_tab_without_rebuilding(qapp, monkeypatch) -> None:
+    widget, workspaces = _three_workspace_widget()
+    try:
+        viewer = widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer)
+        monkeypatch.setattr(
+            widget, "_rebuild_tabs", lambda: pytest.fail("rename rebuilt every tab")
+        )
+        emitted: list[list] = []
+        widget.state_changed.connect(emitted.append)
+
+        widget._rename_workspace(str(workspaces[0]["id"]), "Renamed")
+
+        assert widget._workspace_tabs.tabText(0) == "Renamed"
+        assert widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer) is viewer
+        assert emitted[-1][0]["name"] == "Renamed"
+
+        widget._rename_workspace(str(workspaces[1]["id"]), "   ")
+
+        assert widget._workspace_tabs.tabText(1) == "Relaxation analysis"
+        assert widget._workspace_tabs.widget(1).findChild(QLineEdit).text() == (
+            "Relaxation analysis"
+        )
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_show_shifted_updates_the_tab_in_place(qapp, monkeypatch) -> None:
+    widget, workspaces = _three_workspace_widget()
+    try:
+        viewer = widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer)
+        overlays: list[object] = []
+        monkeypatch.setattr(viewer, "set_point_overlays", overlays.append)
+        monkeypatch.setattr(
+            widget, "_rebuild_tabs", lambda: pytest.fail("show shifted rebuilt every tab")
+        )
+
+        widget._set_show_shifted(str(workspaces[0]["id"]), True)
+
+        assert widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer) is viewer
+        assert len(overlays) == 1
+        assert widget._workspaces[0]["show_shifted_positions"] is True
+        # A tab whose viewer is not built yet keeps the edit for when it is.
+        widget._set_show_shifted(str(workspaces[2]["id"]), True)
+        assert _tab_viewers(widget) == [1, 0, 0]
+        widget._workspace_tabs.setCurrentIndex(2)
+        assert _tab_viewers(widget) == [1, 0, 1]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_added_structures_and_clustering_update_the_tab_in_place(
+    qapp, monkeypatch
+) -> None:
+    host = host_structure()
+    sources = [
+        CompletedRelaxationAnalysisSource(
+            job_id=uuid4(),
+            job_label=f"Site {name}",
+            charge_state="positive_muon",
+            structure_id=uuid4(),
+            site_id=None,
+            folded_fractional_position=position,
+            total_energy_ev=-10.0,
+        )
+        for name, position in (("A", (0.0, 0.5, 0.5)), ("B", (0.5, 0.0, 0.5)))
+    ]
+    workspace = default_workspace_state(
+        name="Analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[sources[0].job_id],
+    )
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=sources,
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[],
+    )
+    try:
+        page = widget._workspace_tabs.widget(0)
+        viewer = page.findChild(AtomicStructureViewer)
+        overlays: list[list] = []
+        monkeypatch.setattr(viewer, "set_point_overlays", overlays.append)
+        monkeypatch.setattr(widget, "_rebuild_tabs", lambda *_: pytest.fail("rebuilt every tab"))
+        table = page.findChild(QTreeWidget)
+        workspace_id = str(workspace["id"])
+
+        widget.add_job_ids_to_workspace(workspace_id, [sources[1].job_id])
+
+        assert table.topLevelItemCount() == 2
+        assert len(overlays[-1][0]["positions"]) == 2
+
+        widget._apply_clustering(workspace_id, {"result": {"cluster_labels": [1, 2]}})
+
+        assert [table.topLevelItem(row).data(0, Qt.ItemDataRole.UserRole) for row in range(2)] == [
+            1,
+            2,
+        ]
+        assert page.findChild(AtomicStructureViewer) is viewer
+        assert len(overlays) == 2
+    finally:
+        widget.shutdown()
+        widget.deleteLater()

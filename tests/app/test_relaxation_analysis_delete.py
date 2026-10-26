@@ -80,6 +80,8 @@ def test_delete_removes_only_the_chosen_workspace_and_persists(
         kept = _workspace(host, "Full analysis")
         window._set_relaxation_analysis_workspaces([stale, kept])
         window._refresh_relaxation_analysis_context()
+        window._populate_project_tree()
+        window._set_active_route("muon_analysis")
 
         window._delete_relaxation_analysis_workspace(str(stale["id"]))
 
@@ -138,6 +140,8 @@ def test_deleting_the_last_workspace_clears_the_analysis_stage(qapp, tmp_path: P
     try:
         workspace = _workspace(host, "Preliminary analysis")
         window._set_relaxation_analysis_workspaces([workspace])
+        window._populate_project_tree()
+        window._set_active_route("muon_analysis")
         assert relaxation_analysis_complete(doc)
 
         window._delete_relaxation_analysis_workspace(str(workspace["id"]))
@@ -205,6 +209,7 @@ def test_switching_analysis_tabs_selects_the_matching_tree_node(qapp, tmp_path: 
 def test_renaming_a_workspace_relabels_its_tree_node(qapp, tmp_path: Path) -> None:
     window, _doc, (workspace,) = _window_with_workspaces(tmp_path, "Preliminary analysis")
     try:
+        window._set_active_route(window._relaxation_analysis_workspace_route(str(workspace["id"])))
         window._relaxation_analysis_view._rename_workspace(str(workspace["id"]), "Early look")
 
         assert _analysis_item(window, workspace).text(0) == "Early look"

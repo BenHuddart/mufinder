@@ -845,6 +845,10 @@ class MainWindow(QMainWindow):
             self._on_create_relaxation_analysis_workspace_requested
         )
         self._relaxation_analysis_view = RelaxationAnalysisWidget()
+        # The page is rebuilt only while it is showing; see
+        # _refresh_relaxation_analysis_context.
+        self._relaxation_analysis_context_stale = False
+        self._deferring_relaxation_analysis_refresh = False
         self._relaxation_analysis_view.set_relaxed_structure_export_provider(
             lambda job_id: relaxed_structure_export_for_job_id(self._document, job_id)
         )
@@ -1847,6 +1851,78 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
+        trace = PerfTrace(label="project change refresh", logger=_LOG)
+        # Several steps below cascade into the Relaxation Analysis page (the
+        # jobs table, the muon relaxation form restore, the explicit calls).
+        # Each only marks it stale here; it is rebuilt once at the end, and only
+        # if it is the page showing.
+        self._deferring_relaxation_analysis_refresh = True
+        try:
+            with trace.stage("cluster and local job tracking"):
+                self._reset_job_tracking_for_project_change()
+            with trace.stage("project defaults and titles"):
+                self._apply_project_change_defaults_and_titles()
+            with trace.stage("comparison and magnetic workspace views"):
+                self._sync_comparison_table_views()
+                self._sync_magnetic_field_workspace_views()
+            with trace.stage("_populate_project_tree"):
+                self._populate_project_tree(preserve_selection=False)
+            with trace.stage("_refresh_jobs_table"):
+                self._refresh_jobs_table()
+            with trace.stage("_refresh_host_structure_view"):
+                self._refresh_host_structure_view()
+            with trace.stage("_refresh_magnetic_field_view"):
+                self._refresh_magnetic_field_view()
+            with trace.stage("_refresh_muon_generation_table"):
+                self._refresh_muon_generation_table()
+            with trace.stage("convergence views"):
+                self._convergence_view.set_form_state(self._convergence_form_restore_state())
+                self._refresh_convergence_simulation_cell()
+                self._convergence_controller.refresh_view()
+                self._kpoint_convergence_view.set_form_state(
+                    self._document.ui_state.get("kpoint_convergence_form", {})
+                )
+                self._refresh_kpoint_convergence_simulation_cell()
+                self._kpoint_convergence_controller.refresh_view()
+            with trace.stage("workflow forms"):
+                self._pristine_relaxation_view.set_form_state(
+                    self._document.ui_state.get("pristine_relaxation_form", {})
+                )
+                self._uep_view.set_form_state(self._document.ui_state.get("uep_form", {}))
+                self._muon_generation_view.set_form_state(
+                    self._document.ui_state.get("muon_generation_form", {})
+                )
+                self._muon_relaxation_view.set_form_state(
+                    self._document.ui_state.get("muon_relaxation_form", {})
+                )
+            with trace.stage("relaxation rows"):
+                self._refresh_convergence_project_defaults()
+                self._refresh_workflow_defaults(self._pristine_relaxation_view)
+                self._pristine_relaxation_controller.refresh_view()
+                self._refresh_workflow_defaults(self._muon_relaxation_view)
+                self._refresh_muon_relaxation_rows()
+            with trace.stage("uep rows"):
+                self._refresh_workflow_defaults(self._uep_view, supercells=False)
+                self._refresh_uep_rows()
+                self._refresh_uep_source_structures()
+                self._refresh_workflow_supercell_options(self._uep_view)
+            with trace.stage("_refresh_convergence_overview"):
+                self._refresh_convergence_overview()
+        finally:
+            self._deferring_relaxation_analysis_refresh = False
+        with trace.stage("_refresh_relaxation_analysis_context"):
+            self._refresh_relaxation_analysis_context()
+        # Keep a visible summary current on project change without rebuilding its
+        # two PyVista viewers off-screen when the page is not showing (route
+        # dispatch and pin/unpin refresh it unconditionally when it is shown).
+        with trace.stage("_refresh_muon_sites_summary"):
+            self._refresh_muon_sites_summary(only_if_visible=True)
+        with trace.stage("_refresh_journal_view"):
+            self._refresh_journal_view()
+        trace.log_summary(extra=self._document.project.name)
+
+    def _reset_job_tracking_for_project_change(self) -> None:
+        assert self._document is not None
         # Clear then re-register tracked cluster jobs. Both are queued onto the
         # cluster worker thread and return immediately (never blocking the GUI,
         # even mid-retrieval); FIFO ordering guarantees the clear runs before the
@@ -1866,6 +1942,8 @@ class MainWindow(QMainWindow):
                 failure_message=("Reconciled orphaned local jobs, but saving the project failed.")
             )
 
+    def _apply_project_change_defaults_and_titles(self) -> None:
+        assert self._document is not None
         if self._document.project.recommended_cutoff_energy is not None:
             self._document.ui_state["default_cut_off_energy"] = float(
                 self._document.project.recommended_cutoff_energy
@@ -1888,47 +1966,6 @@ class MainWindow(QMainWindow):
             "Pick a stage on the chart to see where it stands; double-click it to open it."
         )
         self._project_tree_title.setText(f"Project: {self._document.project.name}")
-        self._sync_comparison_table_views()
-        self._sync_magnetic_field_workspace_views()
-        self._populate_project_tree(preserve_selection=False)
-        self._refresh_jobs_table()
-        self._refresh_host_structure_view()
-        self._refresh_magnetic_field_view()
-        self._refresh_muon_generation_table()
-        self._convergence_view.set_form_state(self._convergence_form_restore_state())
-        self._refresh_convergence_simulation_cell()
-        self._convergence_controller.refresh_view()
-        self._kpoint_convergence_view.set_form_state(
-            self._document.ui_state.get("kpoint_convergence_form", {})
-        )
-        self._refresh_kpoint_convergence_simulation_cell()
-        self._kpoint_convergence_controller.refresh_view()
-        self._pristine_relaxation_view.set_form_state(
-            self._document.ui_state.get("pristine_relaxation_form", {})
-        )
-        self._uep_view.set_form_state(self._document.ui_state.get("uep_form", {}))
-        self._muon_generation_view.set_form_state(
-            self._document.ui_state.get("muon_generation_form", {})
-        )
-        self._muon_relaxation_view.set_form_state(
-            self._document.ui_state.get("muon_relaxation_form", {})
-        )
-        self._refresh_convergence_project_defaults()
-        self._refresh_workflow_defaults(self._pristine_relaxation_view)
-        self._pristine_relaxation_controller.refresh_view()
-        self._refresh_workflow_defaults(self._muon_relaxation_view)
-        self._refresh_muon_relaxation_rows()
-        self._refresh_relaxation_analysis_context()
-        self._refresh_workflow_defaults(self._uep_view, supercells=False)
-        self._refresh_uep_rows()
-        self._refresh_uep_source_structures()
-        self._refresh_workflow_supercell_options(self._uep_view)
-        self._refresh_convergence_overview()
-        # Keep a visible summary current on project change without rebuilding its
-        # two PyVista viewers off-screen when the page is not showing (route
-        # dispatch and pin/unpin refresh it unconditionally when it is shown).
-        self._refresh_muon_sites_summary(only_if_visible=True)
-        self._refresh_journal_view()
 
     def _refresh_journal_view(self) -> None:
         if self._document is None:
@@ -2426,13 +2463,7 @@ class MainWindow(QMainWindow):
             self._pristine_relaxation_view.set_runtime_states({})
             self._muon_relaxation_view.set_runtime_states({})
             self._uep_view.set_runtime_states({})
-            self._relaxation_analysis_view.set_context(
-                workspaces=[],
-                sources=[],
-                structures={},
-                host_structure=None,
-                comparison_options=[],
-            )
+            self._refresh_relaxation_analysis_context()
             return
 
         now = utc_now()
@@ -3176,10 +3207,12 @@ class MainWindow(QMainWindow):
         elif route == "muon_relaxations":
             target = self._muon_relaxation_view
         elif route == "muon_analysis":
+            self._refresh_stale_relaxation_analysis_context()
             target = self._relaxation_analysis_view
         elif (
             analysis_workspace_id := self._relaxation_analysis_workspace_id_from_route(route)
         ) is not None:
+            self._refresh_stale_relaxation_analysis_context(analysis_workspace_id)
             self._relaxation_analysis_view.focus_workspace(analysis_workspace_id)
             target = self._relaxation_analysis_view
         elif route == "muon_sites":
@@ -7485,7 +7518,6 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
-        self._refresh_relaxation_analysis_context()
         self.statusBar().showMessage(
             f"Added {len(selected)} relaxation result(s) to the analysis workspace"
         )
@@ -9709,9 +9741,32 @@ class MainWindow(QMainWindow):
             options.append((job.structure_id, label, not fixed_cell))
         return options
 
-    def _refresh_relaxation_analysis_context(self) -> None:
+    def _refresh_relaxation_analysis_context(
+        self, *, force: bool = False, current_workspace_id: str | None = None
+    ) -> None:
+        """Rebuild the Relaxation Analysis page from the document, if it is showing.
+
+        Every workspace tab holds a 3D viewer, so a hidden page is only marked
+        stale; the route dispatch rebuilds a stale page as it shows it. ``force``
+        rebuilds now, for that dispatch, opening ``current_workspace_id``'s tab.
+        A project change defers the rebuild to one call at its end. With no
+        project the page is always cleared, which builds no viewer.
+        """
+
+        self._relaxation_analysis_context_stale = True
+        view = self._relaxation_analysis_view
+        if (
+            not force
+            and self._document is not None
+            and (
+                self._deferring_relaxation_analysis_refresh
+                or self._main_stack.currentWidget() is not view
+            )
+        ):
+            return
+        self._relaxation_analysis_context_stale = False
         if self._document is None:
-            self._relaxation_analysis_view.set_context(
+            view.set_context(
                 workspaces=[],
                 sources=[],
                 structures={},
@@ -9719,13 +9774,26 @@ class MainWindow(QMainWindow):
                 comparison_options=[],
             )
             return
-        self._relaxation_analysis_view.set_context(
+        view.set_context(
             workspaces=self._relaxation_analysis_workspaces(),
             sources=self._completed_muon_relaxation_sources(),
             structures=self._document.structures,
             host_structure=self._project_service.active_host_structure(self._document),
             comparison_options=self._comparison_structure_options_for_relaxation_analysis(),
+            current_workspace_id=current_workspace_id,
         )
+
+    def _refresh_stale_relaxation_analysis_context(
+        self, current_workspace_id: str | None = None
+    ) -> None:
+        """Bring the Relaxation Analysis page up to date before it is shown."""
+
+        if self._relaxation_analysis_context_stale and not (
+            self._deferring_relaxation_analysis_refresh
+        ):
+            self._refresh_relaxation_analysis_context(
+                force=True, current_workspace_id=current_workspace_id
+            )
 
     def _on_pristine_relaxation_supercell_edit_requested(self, payload: object) -> None:
         if self._document is None:
