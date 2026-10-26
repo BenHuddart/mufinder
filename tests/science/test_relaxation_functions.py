@@ -196,14 +196,47 @@ def test_abragam_limits() -> None:
     )
 
 
-def test_abragam_is_continuous_across_its_short_time_series() -> None:
-    # The motional factor switches to a power series below νt = 1e-3.
-    nu = 1.0
-    times = np.array([1e-3 * (1.0 - 1e-9), 1e-3 * (1.0 + 1e-9)])
+@pytest.mark.parametrize("direction", [1.0, 1j, (1.0 - 1j) / np.sqrt(2.0)])
+def test_motional_factor_is_continuous_across_its_series(direction: complex) -> None:
+    # The Gaussian–Markov factor switches to a power series below |x| = 1e-2.
+    x = 1e-2 * direction * np.array([1.0 - 1e-12, 1.0 + 1e-12])
 
-    values = abragam_relaxation(times, 50.0, nu)
+    values = relaxation_functions._motional_factor(x)
 
-    assert values[0] == pytest.approx(values[1], rel=1e-9)
+    assert values[0] == pytest.approx(values[1], rel=1e-12)
+
+
+def test_keren_stays_accurate_when_field_and_rate_are_tiny() -> None:
+    # ω t ≈ 1e-7 and ν = 0: the static Gaussian limit e^{−Δ²t²}, without cancellation.
+    np.testing.assert_allclose(
+        keren_lf_relaxation(TIMES, 1.0, 0.0, 1e-10), np.exp(-(TIMES**2)), rtol=1e-9
+    )
+    np.testing.assert_allclose(
+        keren_lf_relaxation(TIMES, 1.0, 1e-9, 1e-12),
+        abragam_relaxation(TIMES, 1.0, 1e-9),
+        rtol=1e-9,
+    )
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        lambda t: static_gaussian_kubo_toyabe(t, 0.5),
+        lambda t: static_gaussian_kubo_toyabe_lf(t, 0.5, 0.002),
+        lambda t: static_gaussian_kubo_toyabe_lf(t, 0.5, 1e-6),
+        lambda t: static_lorentzian_kubo_toyabe(t, 0.5),
+        lambda t: dynamic_lorentzian_kubo_toyabe(t, 0.5, 1.0),
+        lambda t: keren_lf_relaxation(t, 0.5, 2.0, 0.002),
+        lambda t: abragam_relaxation(t, 0.5, 2.0),
+    ],
+)
+def test_functions_keep_the_shape_of_the_times(function) -> None:
+    grid = TIMES[:20].reshape(4, 5)
+
+    assert np.shape(function(2.0)) == ()
+    values = function(grid)
+    assert values.shape == (4, 5)
+    np.testing.assert_allclose(values.ravel(), function(grid.ravel()), rtol=0.0, atol=1e-15)
 
 
 @pytest.mark.parametrize(

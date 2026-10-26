@@ -621,7 +621,7 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.domain.constants``
      - Every physical constant and unit conversion (``HBAR_J_S``,
        ``MU0_T_M_PER_A``, ``BOHR_MAGNETON_J_PER_T``, ``BOHR_RADIUS_ANGSTROM``,
-       ``MUON_MASS_AMU``, ``MUON_GAMMA_RAD_S_T`` and the rest), each taken from
+       ``MUON_MASS_AMU``, ``MUON_GAMMA_RAD_S_T``, ``MUON_GAMMA_RAD_US_T`` and the rest), each taken from
        ``scipy.constants`` (CODATA 2022) or an exact SI definition, with its units
        in its name. The only module that imports ``scipy.constants`` or
        ``ase.units``. Derived, workflow-specific factors stay in their science

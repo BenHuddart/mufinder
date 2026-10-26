@@ -184,6 +184,8 @@ def test_invalid_static_traces_and_options_raise() -> None:
         calculate_dynamic_polarisation(np.ones(11), times, 1.0, alpha=0.1)
     with pytest.raises(PolarisationError, match="alpha must be"):
         calculate_dynamic_polarisation(np.ones(11), times, 1.0, method="fft", alpha=-0.1)
+    with pytest.raises(PolarisationError, match="overflow"):
+        calculate_dynamic_polarisation(np.ones(11), times, 1.0, method="fft", alpha=100.0)
 
 
 def test_result_round_trips_through_json() -> None:

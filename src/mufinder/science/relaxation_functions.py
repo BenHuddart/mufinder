@@ -24,19 +24,17 @@ from types import MappingProxyType
 import numpy as np
 from scipy.special import wofz
 
-from mufinder.domain.constants import MUON_GAMMA_RAD_S_T
+from mufinder.domain.constants import MUON_GAMMA_RAD_US_T
 from mufinder.science.polarisation import PolarisationError
 
-# γ_μ in rad μs⁻¹ T⁻¹, so that ω t is in radians for t in μs.
-_GAMMA_RAD_US_T = MUON_GAMMA_RAD_S_T * 1e-6
 # Below this ω/Δ the longitudinal-field Kubo–Toyabe uses its power series in ω/Δ,
 # where the closed form's 1/ω² and 1/ω³ terms cancel badly.
 _LF_SERIES_LIMIT = 0.05
 # Below this ν/a the dynamic Lorentzian Kubo–Toyabe is the static function: the
 # cubic's double root at u = −a splits only as √(ν/a).
 _STATIC_RATE_LIMIT = 1e-9
-# Below this ν t the motional-narrowing exponent uses its power series.
-_MOTIONAL_SERIES_LIMIT = 1e-3
+# Below this |z t| the Gaussian–Markov exponent uses its power series.
+_MOTIONAL_SERIES_LIMIT = 1e-2
 
 TimesLike = Sequence[float] | np.ndarray
 
@@ -79,7 +77,7 @@ def static_gaussian_kubo_toyabe_lf(
     times = _times(times_us)
     delta = _non_negative(delta_per_us, "delta_per_us")
     field = _finite(field_T, "field_T")
-    omega = _GAMMA_RAD_US_T * abs(field)
+    omega = MUON_GAMMA_RAD_US_T * abs(field)
     if delta == 0.0:
         return np.ones_like(times)
     ratio = omega / delta
@@ -132,7 +130,7 @@ def dynamic_lorentzian_kubo_toyabe(
     numerator = 3.0 * roots**2 + 2.0 * a * roots + a * a
     derivative = 9.0 * roots**2 + 2.0 * (6.0 * a - 3.0 * nu) * roots + 3.0 * a * a - 2.0 * a * nu
     residues = numerator / derivative
-    exponents = np.exp(np.outer(times, roots - nu))
+    exponents = np.exp(times[..., np.newaxis] * (roots - nu))
     return (exponents @ residues).real
 
 
@@ -142,30 +140,18 @@ def keren_lf_relaxation(
     """Keren's Gaussian–Markov relaxation ``exp(−Γ(t) t)`` in a longitudinal field.
 
     ``Γ(t) t = 2Δ²/(ω² + ν²)² [(ω² + ν²)νt + (ω² − ν²)(1 − e^{−νt} cos ωt)
-    − 2νω e^{−νt} sin ωt]`` with ``ω = γ_μ|B|``. It reduces to the Abragam
-    function in zero field.
+    − 2νω e^{−νt} sin ωt]`` with ``ω = γ_μ|B|``, which is
+    ``2Δ²t² Re h(zt)`` with ``z = ν − iω`` and ``h(x) = (x − 1 + e^{−x})/x²``,
+    the Abragam factor at a complex rate. It reduces to the Abragam function in
+    zero field.
     """
 
     times = _times(times_us)
     delta = _non_negative(delta_per_us, "delta_per_us")
     nu = _non_negative(collision_rate_per_us, "collision_rate_per_us")
     field = _finite(field_T, "field_T")
-    omega = _GAMMA_RAD_US_T * abs(field)
-    if omega == 0.0:
-        return abragam_relaxation(times, delta, nu)
-    total = omega**2 + nu**2
-    decay = np.exp(-nu * times)
-    exponent = (
-        2.0
-        * delta**2
-        / total**2
-        * (
-            total * nu * times
-            + (omega**2 - nu**2) * (1.0 - decay * np.cos(omega * times))
-            - 2.0 * nu * omega * decay * np.sin(omega * times)
-        )
-    )
-    return np.exp(-exponent)
+    rate = complex(nu, -MUON_GAMMA_RAD_US_T * abs(field))
+    return np.exp(-2.0 * (delta * times) ** 2 * _motional_factor(rate * times))
 
 
 def abragam_relaxation(
@@ -275,12 +261,23 @@ def _lf_kubo_toyabe_series(x: np.ndarray, ratio: float) -> np.ndarray:
 
 
 def _motional_factor(x: np.ndarray) -> np.ndarray:
-    # (e^{−x} − 1 + x)/x², which is ½ at x = 0.
-    small = x < _MOTIONAL_SERIES_LIMIT
+    """``Re[(x − 1 + e^{−x})/x²]`` for real or complex ``x``, which is ½ at ``x = 0``.
+
+    The Gaussian–Markov exponent ``2Δ² ∫₀ᵗ (t − τ) e^{−ντ} cos ωτ dτ`` is
+    ``2Δ²t²`` times this factor at ``x = (ν − iω)t``.
+    """
+
+    x = np.asarray(x, dtype=complex)
+    small = np.abs(x) < _MOTIONAL_SERIES_LIMIT
     safe = np.where(small, 1.0, x)
-    exact = (np.expm1(-safe) + safe) / safe**2
-    series = 0.5 - x / 6.0 + x**2 / 24.0 - x**3 / 120.0 + x**4 / 720.0
-    return np.where(small, series, exact)
+    exact = (np.exp(-safe) - 1.0 + safe) / safe**2
+    # Σ_k (−x)^k/(k + 2)!, through x⁶.
+    series = 0.5 + x * (
+        -1.0 / 6.0
+        + x
+        * (1.0 / 24.0 + x * (-1.0 / 120.0 + x * (1.0 / 720.0 + x * (-1.0 / 5040.0 + x / 40320.0))))
+    )
+    return np.where(small, series, exact).real
 
 
 def _cubic_roots(b: float, c: float, d: float) -> np.ndarray:

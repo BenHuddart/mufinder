@@ -40,6 +40,8 @@ DynamicsMethod = Literal["exact", "fft"]
 
 # Damping exponent α N of the fft method (Allodi and De Renzi, Table 1).
 DEFAULT_ALPHA_N = 10.0
+# Largest damping exponent α N the fft method accepts; e^{αN} must not overflow.
+_MAX_ALPHA_N = 700.0
 # Relative tolerance on the grid step for a "uniform" grid.
 _GRID_TOLERANCE = 1e-6
 
@@ -127,6 +129,10 @@ def calculate_dynamic_polarisation(
         alpha = DEFAULT_ALPHA_N / times.size if alpha is None else float(alpha)
         if not math.isfinite(alpha) or alpha < 0.0:
             raise PolarisationError("alpha must be finite and non-negative")
+        if alpha * times.size > _MAX_ALPHA_N:
+            raise PolarisationError(
+                f"alpha × N must not exceed {_MAX_ALPHA_N:g}; the unweighting e^(alpha N) would overflow"
+            )
 
     if rate == 0.0:
         dynamic = static.copy()

@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T, MUON_GAMMA_RAD_S_T
+from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T, MUON_GAMMA_RAD_US_T
 from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
     MagneticFieldResult,
@@ -35,8 +35,6 @@ from mufinder.science.nuclear_relaxation import NuclearWidthTensors
 
 FieldResult = MagneticFieldResult | MagneticFieldDistributionResult
 
-# γ_μ in rad μs⁻¹ T⁻¹, so that ω t is in radians for t in μs.
-_GAMMA_RAD_US_T = MUON_GAMMA_RAD_S_T * 1e-6
 # Largest phase, in radians, a sample may sit from its bin centre at the last time.
 _MAX_IN_BIN_PHASE = 0.1
 # Upper limit on the number of |B| bins the in-bin phase limit may ask for.
@@ -453,7 +451,7 @@ def _polarisation(
             yield _single_geometry(site, spin_c, detector_c, applied, polycrystalline)
 
     edges = _magnitude_edges(sites, applied, powder_field, times, int(magnitude_bins))
-    centres = 0.5 * (edges[:-1] + edges[1:]) * _GAMMA_RAD_US_T
+    centres = 0.5 * (edges[:-1] + edges[1:]) * MUON_GAMMA_RAD_US_T
     histograms = []
     for site in sites:
         widths, width_floor = _width_levels(site, fixed_sigma_squared, times)
@@ -610,7 +608,7 @@ def _site_histogram(
         constant += weight * float(np.sum(geometry.constant))
         scaled = (geometry.magnitudes - edges[0]) * (bins / (edges[-1] - edges[0]))
         index = np.clip(scaled.astype(np.intp), 0, bins - 1)
-        offset = geometry.magnitudes * _GAMMA_RAD_US_T - centres[index]
+        offset = geometry.magnitudes * MUON_GAMMA_RAD_US_T - centres[index]
         if site.tensors is not None:
             sigma_squared = site.tensors.tf_sigma_squared(_field_axes(site, geometry))
             level = (
@@ -716,7 +714,7 @@ def _magnitude_edges(
     pad = 1e-9 * max(1.0, high)
     if high - low < pad:
         low, high = max(0.0, low - pad), high + pad
-    span = _GAMMA_RAD_US_T * (high - low) * float(np.max(np.abs(times)))
+    span = MUON_GAMMA_RAD_US_T * (high - low) * float(np.max(np.abs(times)))
     needed = int(math.ceil(span / (2.0 * _MAX_IN_BIN_PHASE)))
     bins = max(magnitude_bins, min(needed, MAX_MAGNITUDE_BINS))
     return np.linspace(low, high, bins + 1)
@@ -729,7 +727,7 @@ def _max_in_bin_phase(edges: np.ndarray, times: np.ndarray) -> float:
     the second-order in-bin correction is accurate while it is well below 1.
     """
 
-    half_width = 0.5 * _GAMMA_RAD_US_T * (edges[1] - edges[0])
+    half_width = 0.5 * MUON_GAMMA_RAD_US_T * (edges[1] - edges[0])
     return float(half_width * np.max(np.abs(times)))
 
 

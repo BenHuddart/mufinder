@@ -25,6 +25,7 @@ from mufinder.science.demagnetization import (
     demagnetizing_tensor,
     magnetometric_rectangular_prism_tensor,
 )
+from mufinder.science.dynamics import DynamicPolarisationResult, calculate_dynamic_polarisation
 from mufinder.science.magnetic_fields import (
     CommensurateApproximant,
     DISTRIBUTION_FIELD_TERMS,
@@ -111,6 +112,7 @@ from mufinder.science.polarisation import (
     calculate_spectrum,
     calculate_tf_polarisation,
 )
+from mufinder.science.relaxation_functions import RELAXATION_FUNCTIONS, RelaxationFunction
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -245,6 +247,10 @@ __all__ = [
     "calculate_polarisation",
     "calculate_spectrum",
     "calculate_tf_polarisation",
+    "DynamicPolarisationResult",
+    "calculate_dynamic_polarisation",
+    "RELAXATION_FUNCTIONS",
+    "RelaxationFunction",
     "SiteGenerationError",
     "closest_symmetry_equivalent_position",
     "estimate_muon_muon_separation_for_count",
