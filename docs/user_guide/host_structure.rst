@@ -134,6 +134,8 @@ MCIF
    - moment labels mapped onto atoms by exact MCIF label match or by the
      unique ``label_...`` expansion of a site label.
 
+   In a file with several ``data_`` blocks, the symmetry and metadata come from
+   the block whose structure is imported: the last block that lists atom sites.
    A ``.cif`` file that carries magnetic operations is read the same way. The
    import stops with a message when a magnetic operation cannot be read, when
    an image of one site lands on another site, when a moment disagrees with its

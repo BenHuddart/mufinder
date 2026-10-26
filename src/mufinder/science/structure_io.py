@@ -786,11 +786,36 @@ def _moment_images(
 
 
 def _parse_cif_tags_and_loops(text: str) -> tuple[dict[str, str], list[dict[str, Any]]]:
-    """Parse simple CIF/MCIF tags and loops from text.
+    """Parse the simple tags and loops of the CIF data block ASE reads.
 
-    This parser intentionally targets the subset needed for magnetic metadata.
+    ASE reads the last ``data_`` block that holds a structure (atom symbols and
+    positions), so the magnetic metadata comes from that block alone; without such
+    a block the last block is used. This parser intentionally targets the subset
+    needed for magnetic metadata.
     """
-    tokens = list(_iter_cif_tokens(text))
+    blocks: list[list[_CifToken]] = [[]]
+    for token in _iter_cif_tokens(text):
+        if not token.quoted and token.text.lower().startswith("data_"):
+            blocks.append([])
+            continue
+        blocks[-1].append(token)
+    parsed = [_parse_cif_block(block) for block in blocks if block] or [({}, [])]
+    for tags, loops in reversed(parsed):
+        if _cif_block_has_structure(tags, loops):
+            return tags, loops
+    return parsed[-1]
+
+
+def _cif_block_has_structure(tags: dict[str, str], loops: list[dict[str, Any]]) -> bool:
+    """Whether a parsed block has atom symbols and positions, as ASE requires of a structure."""
+    names = set(tags) | {header for loop in loops for header in loop.get("headers", [])}
+    has_symbols = bool(names & {"_atom_site_type_symbol", "_atom_site_label"})
+    has_positions = bool(names & {"_atom_site_fract_x", "_atom_site_cartn_x"})
+    return has_symbols and has_positions
+
+
+def _parse_cif_block(tokens: list[_CifToken]) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Parse the tags and loops of one data block's tokens."""
     tags: dict[str, str] = {}
     loops: list[dict[str, Any]] = []
 

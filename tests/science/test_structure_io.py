@@ -1378,6 +1378,30 @@ loop_
     assert moment["source_coordinate_system"] == "cartesian"
 
 
+@pytest.mark.parametrize("magnetic_block_last", [True, False])
+def test_load_mcif_reads_magnetic_symmetry_from_the_block_ase_reads(
+    tmp_path: Path, magnetic_block_last: bool
+) -> None:
+    # ASE reads the last block holding a structure; the other block's operations,
+    # sites and moments must not leak into it.
+    magnetic = _mcif(
+        atoms="Fe1 Fe 0.1 0.2 0.3",
+        loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x,-y,-z,-1 -mx,-my,-mz")
+        + _CRYSTALAXIS_MOMENTS
+        + "  Fe1 0.0 0.0 1.0\n",
+    )
+    plain = _mcif(atoms="Co1 Co 0.0 0.0 0.0\n  O1 O 0.5 0.5 0.5\n  O2 O 0.25 0.25 0.25")
+    blocks = [plain, magnetic] if magnetic_block_last else [magnetic, plain]
+    loaded = _load_mcif(tmp_path, "\n".join(blocks))
+
+    if magnetic_block_last:
+        assert loaded.species == ["Fe", "Fe"]
+        assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -1.0])
+    else:
+        assert loaded.species == ["Co", "O", "O"]
+        assert "magnetic_structure" not in loaded.properties
+
+
 def test_load_cif_with_magnetic_operations_is_read_as_mcif(tmp_path: Path) -> None:
     text = _mcif(
         atoms="Fe1 Fe 0.1 0.2 0.3",
