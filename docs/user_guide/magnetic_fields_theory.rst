@@ -260,8 +260,8 @@ Beyond the dipolar sum, the field calculation includes:
 - the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
   advanced ellipsoid, or advanced rectangular prism;
-- the muon-induced distortion correction for commensurate fields, when the
-  selected site requests it (see :ref:`Apply muon-induced distortion corrections <magnetic-fields-distortion-corrections>`).
+- the muon-induced distortion correction of the dipolar and contact terms, when
+  the selected site requests it (see :ref:`Apply muon-induced distortion corrections <magnetic-fields-distortion-corrections>`).
 
 Dipolar tensors from selected magnetic-ion positions and the nuclear-relaxation
 distortion correction are available through their own dialogs.
@@ -279,8 +279,9 @@ by their ``Total``. A newly calculated or restored commensurate result selects
 its first row. With several rows selected, the first selected row is shown. A
 saved result that stores only its total asks for a recalculation instead.
 
-Selecting a distribution row lists the same terms without the distortion
-correction, under the headings ``Mean Bx (T)``, ``Mean By (T)``, ``Mean Bz (T)``
+Selecting a distribution row lists the same terms without a separate distortion
+correction, which a corrected distribution includes in its dipolar and contact
+terms, under the headings ``Mean Bx (T)``, ``Mean By (T)``, ``Mean Bz (T)``
 and ``RMS |B| (T)``: the mean vector of each term over the phase samples and
 its root-mean-square magnitude :math:`\sqrt{\langle |\mathbf{B}_\text{term}|^2
 \rangle}`. The means sum to the ``Total`` mean, and the ``Total`` RMS is that

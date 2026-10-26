@@ -412,7 +412,7 @@ pinned site.
 
 3. In the ``Muon Site`` card click ``Select Muon Site...``. With ``Structural
    relaxation clustering`` as the ``Source``, the table lists the pinned
-   sites. Choose the lowest-energy one, tick ``Correct the dipolar field for
+   sites. Choose the lowest-energy one, tick ``Correct the local field for
    muon-induced displacements`` and click ``OK``.
 
    .. figure:: ../_generated/screenshots/magnetic_muon_site_dialog.webp

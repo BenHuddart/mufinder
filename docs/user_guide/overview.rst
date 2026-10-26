@@ -250,6 +250,9 @@ zero-moment and unpreviewed incommensurate structures. It calculates:
 - demagnetizing-field corrections for spherical, plate, ellipsoidal and
   rectangular-prism samples, from the model's bulk magnetisation or a measured
   one in μB per formula unit;
+- muon-induced distortion corrections of the dipolar and contact fields, from
+  the relaxed structure, for commensurate fields, approximants and
+  distributions;
 - dipolar tensors for selected magnetic ions;
 - nuclear dipolar second moments in zero and transverse field, for single
   crystals and polycrystals, from bundled natural-abundance isotope data, with

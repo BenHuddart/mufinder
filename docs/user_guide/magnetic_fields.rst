@@ -768,12 +768,13 @@ are formed.
 Apply muon-induced distortion corrections
 -----------------------------------------
 
-A muon displaces the host ions around it, so the dipolar field at the relaxed
-site differs from the field computed for the pristine host. To correct for it:
+A muon displaces the host ions around it, so the dipolar and contact fields at
+the relaxed site differ from the fields computed for the pristine host. To
+correct for it:
 
 1. Choose a site from ``Structural relaxation clustering`` whose representative
    relaxed structure is available (see `Correct for the relaxed structure`_).
-2. Tick ``Correct the dipolar field for muon-induced displacements`` in the
+2. Tick ``Correct the local field for muon-induced displacements`` in the
    ``Select Muon Site`` dialog.
 3. Optionally tick ``Include equivalent sites`` on the page.
 4. Click ``Calculate Dipolar Field``. Corrected rows read ``field
@@ -789,10 +790,14 @@ site differs from the field computed for the pristine host. To correct for it:
    A distortion-corrected field at the CoF₂ 4c site; the relaxed structure is
    synthetic (see :doc:`/user_guide/examples/cof2`).
 
-The correction applies to commensurate structures only: an incommensurate field
-distribution or a commensurate approximant with the option ticked stops with an
-error, and dipolar tensors always use the pristine host. The Lorentz, contact
-and demagnetizing terms keep their pristine values.
+The correction applies to commensurate fields, to every translated row of a
+commensurate approximant and to every phase sample of an incommensurate
+distribution. A distribution has no separate distortion term: its correction is
+included in the ``Dipolar`` and ``Contact`` terms of the breakdown, and its row
+reads ``distribution mean (distortion-corrected)`` in the ``Result`` column, also
+after the project is reopened. Dipolar
+tensors always use the pristine host. The Lorentz and demagnetizing terms depend
+on the bulk magnetisation, so they keep their pristine values.
 
 MuFinder corrects the converged pristine lattice sum with the finite-cell change
 from the ion displacements in the representative relaxed supercell:
@@ -809,6 +814,44 @@ where :math:`\mathbf{r}_i` runs from the muon to the pristine site of host ion
 muon, and :math:`\mathbf{B}_i` is the point-dipole field of the moment the
 magnetic model assigns to the pristine site. Every ion of the relaxed
 supercell enters the sum; ions with no moment contribute nothing.
+
+For an order that is not commensurate with the relaxed supercell, each Fourier
+component :math:`c` with coefficients :math:`\mathbf{F}_c` and propagation
+vector :math:`\mathbf{q}_c` gives a complex change
+
+.. math::
+
+   \Delta\mathbf{B}_c = \sum_{i \in \mathrm{cell}}
+   \left[\mathsf{D}(\mathbf{r}_i + \mathbf{u}_i) - \mathsf{D}(\mathbf{r}_i)\right]
+   \mathbf{F}_{c,i}\, e^{-2\pi i\, \mathbf{q}_c \cdot \mathbf{L}_i},
+
+where :math:`\mathsf{D}` is the point-dipole tensor and :math:`\mathbf{L}_i` the
+lattice translation of ion :math:`i`'s pristine site, so that each ion carries the
+moment :math:`\operatorname{Re}[\mathbf{F}\,e^{-2\pi i\,\mathbf{q}\cdot\mathbf{L}}]`
+of its pristine site. Shifting the component's order by a phase
+:math:`\theta_c` turns, as a phase sample of a distribution does, changes the
+field by :math:`\operatorname{Re}[e^{-2\pi i \theta_c}\,\Delta\mathbf{B}_c]`.
+MuFinder adds that change at the phase each lookup angle of the distribution
+samples, so the convergence checks run on the corrected distribution. A
+commensurate approximant row at :math:`\mathbf{r} + \mathbf{T}` takes the phase
+:math:`\theta_c = \mathbf{q}_c \cdot \mathbf{T}`, and a commensurate field
+takes :math:`\theta_c = 0`.
+
+When a ``Hyperfine coupling`` :math:`A` is set, the contact term is corrected
+too. The contact field is :math:`(2\mu_0/3)\,\mu_B A` times the
+:math:`1/r^3`-weighted mean moment of the ``nnn`` nearest magnetic ions closer
+than ``rcont``, ``muesr``'s contact rule, and the correction is that field with
+the shell chosen from the displaced positions minus the field with the shell
+chosen from the pristine sites. This is a rough correction: it tracks which ions
+are in the shell and their distances through the weights, but a real hyperfine
+coupling changes with the muon-ion distance in a way a single coupling cannot
+describe. A coupling calculated for the relaxed structure, for example by DFT,
+supersedes it. The relaxed supercell must hold the whole contact shell: when the
+shell reaches past the largest sphere about the muon that the supercell holds,
+the calculation stops and asks for a larger relaxed supercell. When ions with
+different moments tie for the last place in the shell, ``muesr`` keeps an
+arbitrary one of them, so the contact field is undefined there and the
+calculation stops with a message naming the tied ions' distance.
 
 MuFinder pairs the relaxed supercell with the pristine host before it sums
 anything, and reports the first check that fails:

@@ -174,6 +174,18 @@ _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _SITE_OPTION_ROLE = int(Qt.ItemDataRole.UserRole) + 41
 _DISTORTION_CORRECTED_FIELD = "field (distortion-corrected)"
+_DISTORTION_CORRECTED_DISTRIBUTION = "distribution mean (distortion-corrected)"
+
+
+def _distribution_label(calculation_parameters: object) -> str:
+    """The Result column text of a distribution row, marking a distortion-corrected one."""
+
+    corrected = isinstance(calculation_parameters, Mapping) and bool(
+        calculation_parameters.get("distortion_corrected", False)
+    )
+    return _DISTORTION_CORRECTED_DISTRIBUTION if corrected else "distribution mean"
+
+
 _UNRELAXED_ESTIMATE_NOTE = (
     "UEP sites are unrelaxed, so fields computed at them are estimates: "
     "the relaxed muon site can sit some distance from the UEP minimum."
@@ -3802,12 +3814,12 @@ class MuonSiteSelectionDialog(QDialog):
         self._site_status.setWordWrap(True)
         style_hint_text(self._site_status)
         self._distortion_checkbox = QCheckBox(
-            "Correct the dipolar field for muon-induced displacements"
+            "Correct the local field for muon-induced displacements"
         )
         self._distortion_checkbox.setToolTip(
-            "Adds the finite-cell change in the dipolar field from the host-ion displacements in the "
-            "representative relaxed structure. Available for structural-relaxation clusters whose relaxed "
-            "structure is present, for commensurate magnetic structures."
+            "Adds the finite-cell change in the dipolar field, and in the contact field when a hyperfine "
+            "coupling is set, from the host-ion displacements in the representative relaxed structure. "
+            "Available for structural-relaxation clusters whose relaxed structure is present."
         )
         self._distortion_requested = bool(
             current_site is not None and current_site.include_distortion
@@ -6503,7 +6515,7 @@ class MagneticFieldWidget(QWidget):
         source = site.source_label or _site_source_label(site.source)
         cluster = f" ({site.cluster_label})" if site.cluster_label else ""
         distortion = (
-            " Dipolar field corrected for muon-induced displacements."
+            " Local field corrected for muon-induced displacements."
             if site.include_distortion
             else ""
         )
@@ -6660,6 +6672,9 @@ class MagneticFieldWidget(QWidget):
         try:
             distorted_structures = [self._distorted_structure_for_site(site)]
             classification = classify_magnetic_model(self._host_structure, self._model)
+            corrected = (
+                " with muon-induced distortion corrections" if site.include_distortion else ""
+            )
             if classification == "commensurate":
                 results = calculate_commensurate_fields(
                     self._host_structure,
@@ -6669,9 +6684,6 @@ class MagneticFieldWidget(QWidget):
                     distorted_structures=distorted_structures,
                 )
                 self._populate_commensurate_results(results, site_source=site.source)
-                corrected = (
-                    " with muon-induced distortion corrections" if site.include_distortion else ""
-                )
                 self._calculation_status.setText(
                     f"Results: calculated {len(results)} commensurate field value(s){corrected}."
                     + self._estimate_status_suffix()
@@ -6695,8 +6707,8 @@ class MagneticFieldWidget(QWidget):
                     self._populate_commensurate_results(results, site_source=site.source)
                     self._calculation_status.setText(
                         f"Results: calculated {len(results)} field value(s) of the commensurate approximant "
-                        f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)."
-                        + self._estimate_status_suffix()
+                        f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)"
+                        f"{corrected}." + self._estimate_status_suffix()
                     )
                 else:
                     results = calculate_incommensurate_field_distributions(
@@ -6707,7 +6719,7 @@ class MagneticFieldWidget(QWidget):
                         distorted_structures=distorted_structures,
                     )
                     self._populate_distribution_results(results, site_source=site.source)
-                    status = f"Results: sampled {len(results)} incommensurate field distribution(s)"
+                    status = f"Results: sampled {len(results)} incommensurate field distribution(s){corrected}"
                     flagged = sum(
                         1
                         for result in results
@@ -7360,7 +7372,9 @@ class MagneticFieldWidget(QWidget):
                 result.site_label,
                 mean,
                 float(np.mean(magnitudes)),
-                self._result_type_label("distribution mean"),
+                self._result_type_label(
+                    _distribution_label(getattr(result, "calculation_parameters", None))
+                ),
                 distribution_index=index,
             )
         if self._result_table.rowCount() > 0:
@@ -7415,7 +7429,9 @@ class MagneticFieldWidget(QWidget):
                     str(result.get("site_label", f"site {index + 1}")),
                     mean,
                     magnitude,
-                    self._result_type_label("distribution mean"),
+                    self._result_type_label(
+                        _distribution_label(result.get("calculation_parameters"))
+                    ),
                     distribution_index=index,
                 )
             if self._result_table.rowCount() > 0:
