@@ -1059,6 +1059,18 @@ def test_demag_sample_takes_precedence_over_demag_shape(monkeypatch) -> None:
     assert demag == pytest.approx(tuple(-_bulk_field() / 3.0))
 
 
+def test_demag_field_of_an_oriented_sample_uses_the_rotated_tensor(monkeypatch) -> None:
+    # A plate normal to (110) of the cubic cell takes only the [110] part of mu0 M.
+    plate = DemagnetizingSample.oriented(
+        np.eye(3) * 3.0, (1.0, 1.0, 0.0), (0.0, 0.0, 1.0), shape="infinite_plate"
+    )
+    normal = np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0)
+
+    demag = _commensurate_demag(monkeypatch, demag_sample=plate)
+
+    assert demag == pytest.approx(tuple(-normal * (normal @ _bulk_field())))
+
+
 def test_demag_field_is_zero_for_order_without_a_uniform_moment(monkeypatch) -> None:
     # An antiferromagnet has no bulk magnetisation, whatever Lorentz field muesr reports.
     demag = _commensurate_demag(

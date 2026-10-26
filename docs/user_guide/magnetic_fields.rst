@@ -635,12 +635,14 @@ configured through the ``Advanced...`` button, for shape-specific tensors:
 
 ``Advanced shape``
    ``Advanced...`` opens the ``Advanced Demagnetizing Field`` window. Choose a
-   ``Shape`` and its ``Parameters``, then click ``Use Shape``. The first
-   implemented advanced shapes are ellipsoids (``Semi-axis a``, ``Semi-axis b``,
-   ``Semi-axis c``) and finite rectangular prisms (``Length a``, ``Length b``,
-   ``Length c``, ``Fourier grid`` and ``Padding``). The window reports the
-   tensor used by the calculation and renders the selected sample with a
-   PyVista preview, including crystal-axis and magnetisation-direction arrows.
+   ``Shape`` and its ``Parameters``, set the ``Orientation`` (see
+   `Orient the sample`_), then click ``Use Shape``. The advanced shapes are
+   ellipsoids (``Semi-axis a``, ``Semi-axis b``, ``Semi-axis c``) and finite
+   rectangular prisms (``Length a``, ``Length b``, ``Length c``,
+   ``Fourier grid`` and ``Padding``). The window reports the tensor used by
+   the calculation and renders the sample with a PyVista preview, with arrows
+   along the crystal axes ``a``, ``b`` and ``c`` and the magnetisation
+   direction ``M``.
 
 .. figure:: ../_generated/screenshots/fe_demagnetizing_shapes.webp
    :alt: The Calculation card for bcc iron with the Infinite plate shape chosen,
@@ -651,19 +653,84 @@ configured through the ``Advanced...`` button, for shape-specific tensors:
    is the ``c`` axis, along the moment, so the demagnetizing term is
    :math:`-\mu_0 M = -2.1737` T instead of the sphere's -0.7246 T.
 
-The advanced ellipsoid mode ports the analytical mag2spectra demagnetising
-factor workflow. Spheres and infinite plates use exact limits, spheroids use
-closed-form factors, and fully triaxial ellipsoids use the standard ellipsoid
-integral. The principal axes are currently aligned with MuFinder's crystal-axis
-frame.
+The ellipsoid factors are exact. For semi-axes :math:`a`, :math:`b` and
+:math:`c` along the sample axes,
 
-The advanced rectangular-prism mode ports mag2spectra's analytical
-Joseph–Schlömann rectangular-prism tensor (R. I. Joseph and E. Schlömann,
-J. Appl. Phys. **36**, 1579 (1965), DOI: ``10.1063/1.1703091``) and averages it
-over midpoint samples inside the prism. This avoids the resolution loss that a
-single cubic Fourier grid would suffer for very thin plates or long needles. ``Fourier grid`` is
+.. math::
+
+   N_a = \frac{abc}{3}\,R_D(b^2, c^2, a^2),
+
+and cyclically for :math:`N_b` and :math:`N_c` (J. A. Osborn, Phys. Rev.
+**67**, 351 (1945), DOI: ``10.1103/PhysRev.67.351``), where :math:`R_D` is
+Carlson's symmetric elliptic integral of the second kind (B. C. Carlson, Numer.
+Algorithms **10**, 13 (1995), DOI: ``10.1007/BF02198293``). The three factors
+sum to one, a sphere gives :math:`\tfrac{1}{3}` along every axis, and spheroids
+reproduce the prolate and oblate closed forms.
+
+The rectangular-prism mode uses the analytical Joseph–Schlömann
+rectangular-prism tensor (R. I. Joseph and E. Schlömann, J. Appl. Phys. **36**,
+1579 (1965), DOI: ``10.1063/1.1703091``) and averages it over midpoint samples
+inside the prism. This avoids the resolution loss that a single cubic Fourier
+grid would suffer for very thin plates or long needles. ``Fourier grid`` is
 kept as the user-facing resolution control for the midpoint average; increasing
 it improves the estimate but increases cost.
+
+Orient the sample
+~~~~~~~~~~~~~~~~~
+
+A real crystal is cut or grown with a face on some :math:`(hkl)` plane and an
+edge along some :math:`[uvw]` direction, so the principal axes of its shape are
+not, in general, the Cartesian axes of the host lattice. The ``Orientation``
+group of the ``Advanced Demagnetizing Field`` window sets them:
+
+``Aligned with crystal axes``
+   The sample axes ``a``, ``b`` and ``c`` lie along Cartesian ``x``, ``y``
+   and ``z`` of the host lattice vectors, and the tensor is diagonal. The
+   ``Normal (h k l)`` and ``In-plane axis [u v w]`` rows are greyed out, since
+   this choice ignores them; they keep their values for when you switch back.
+
+``Crystal directions``
+   The sample ``c`` axis is normal to the plane in ``Normal (h k l)``, taken
+   through the reciprocal lattice as :math:`h\mathbf{a}^* + k\mathbf{b}^* +
+   l\mathbf{c}^*`. The sample ``a`` axis lies along ``In-plane axis [u v w]``,
+   :math:`u\mathbf{a} + v\mathbf{b} + w\mathbf{c}`, and ``b`` completes a
+   right-handed set. Indices may be negative or fractional.
+
+With crystal directions the tensor in the crystal frame is
+:math:`R\,\mathrm{diag}(N_a, N_b, N_c)\,R^\mathsf{T}`, where the columns of the
+rotation :math:`R` are the sample axes, so it has off-diagonal elements and the
+demagnetizing field is no longer parallel to the magnetisation. The preview
+shows the shape rotated against the crystal axes.
+
+When ``[u v w]`` is not perpendicular to the normal, MuFinder keeps the normal
+exactly and uses the component of ``[u v w]`` in the plane as the ``a`` axis;
+the hint under the fields reports the angle between the two directions. A
+direction parallel to the normal, a zero index triplet or a blank index is
+reported there instead, and ``Use Shape`` stays disabled until it is fixed.
+Orienting by crystal directions needs a host structure. Without one the
+``Orientation`` group cannot be changed: a new sample stays aligned, and a sample
+already oriented by crystal directions keeps them.
+
+A sample whose rotation was saved without crystal directions, for example one
+set up through the Python API, opens with ``Saved rotation`` selected, which
+keeps that rotation; the summary under the ``Demagnetizing field`` row then ends
+in ``rotated sample axes``. Choosing either of the other options replaces it.
+
+The orientation is saved with the project as the Miller indices, so it follows
+the host lattice. The summary under the ``Demagnetizing field`` row lists them,
+for example ``Ellipsoid a=4, b=4, c=0.5; normal (1 1 0), in-plane [0 0 1]``.
+
+.. figure:: ../_generated/screenshots/fe_oriented_demagnetizing_sample.webp
+   :alt: The Advanced Demagnetizing Field window for bcc iron with an oblate
+         ellipsoid of semi-axes 4, 4 and 0.5, normal (1 1 0) and in-plane axis
+         [0 0 1], and a tensor with off-diagonal elements 0.37315.
+
+   A disc of bcc iron cut with its faces on :math:`(110)` and its ``a`` axis
+   along :math:`[001]`. The disc's large factor :math:`N_c = 0.8309` acts
+   along :math:`[110]`, so the tensor has
+   :math:`N_{xx} = N_{yy} = (N_b + N_c)/2 = 0.4577` and
+   :math:`N_{xy} = (N_c - N_b)/2 = 0.3732`; along the moment, :math:`[001]`,
+   it is the small in-plane factor 0.0846.
 
 Use a measured bulk magnetisation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

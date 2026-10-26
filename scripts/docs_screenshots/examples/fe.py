@@ -132,6 +132,26 @@ def select_infinite_plate(window: MainWindow) -> None:
     calculate_and_list(window)
 
 
+def open_advanced_demagnetizing_field(window: MainWindow) -> None:
+    """Open the Advanced Demagnetizing Field window from the Calculation card."""
+
+    window._magnetic_field_view._advanced_demag_button.click()
+
+
+def orient_disc_normal_to_110(dialog: QWidget) -> None:
+    """Make the sample an oblate disc cut with its face on (1 1 0) and its a axis along [0 0 1]."""
+
+    dialog._ellipsoid_a.setValue(4.0)
+    dialog._ellipsoid_b.setValue(4.0)
+    dialog._ellipsoid_c.setValue(0.5)
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    for edit, value in zip(dialog._normal_inputs, ("1", "1", "0"), strict=True):
+        edit.setText(value)
+    for edit, value in zip(dialog._in_plane_inputs, ("0", "0", "1"), strict=True):
+        edit.setText(value)
+    focus_default_button(dialog)
+
+
 def save_both_workspaces(window: MainWindow) -> None:
     """Save the octahedral field as a workspace, move to the tetrahedral site and save that too."""
 
@@ -193,6 +213,16 @@ SCENES: dict[str, Scene] = {
         "magnetic_fields",
         Page(calculation_card, (1100, 900)),
         setup=select_infinite_plate,
+    ),
+    "fe_oriented_demagnetizing_sample": Scene(
+        octahedral_project,
+        "magnetic_fields",
+        Dialog(
+            open_advanced_demagnetizing_field,
+            kind="DemagnetizingFieldAdvancedDialog",
+            size=(1000, 640),
+            prepare=orient_disc_normal_to_110,
+        ),
     ),
     "fe_measured_magnetisation": Scene(
         fe_project(

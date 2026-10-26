@@ -60,7 +60,9 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
     ),
     "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/magnetic_fields.rst": (
+        "10.1007/BF02198293",
         "10.1063/1.1703091",
+        "10.1103/PhysRev.67.351",
         "10.1103/PhysRevB.20.850",
         "10.1080/001075199181521",
     ),

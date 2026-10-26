@@ -90,7 +90,9 @@ from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
-    demagnetizing_tensor,
+    SampleOrientation,
+    principal_demagnetizing_tensor,
+    sample_orientation,
 )
 from mufinder.science.magnetic_fields import (
     CONTACT_COUPLING_UNIT_OPTIONS,
@@ -214,6 +216,12 @@ ADVANCED_DEMAG_SHAPE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("ellipsoid", "Ellipsoid"),
     ("rectangular_prism", "Rectangular prism"),
 )
+DEMAG_ORIENTATION_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("aligned", "Aligned with crystal axes"),
+    ("directions", "Crystal directions"),
+)
+# Offered only for a sample whose rotation was saved without crystal directions.
+DEMAG_SAVED_ROTATION_OPTION = ("saved", "Saved rotation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,14 +534,19 @@ class MagneticComponentDialog(QDialog):
         edit.setValidator(validator)
         return edit
 
+    @staticmethod
     def _direction_inputs(
-        self, values: tuple[float, float, float]
+        values: Sequence[float],
+        *,
+        minimum: float = -100.0,
+        maximum: float = 100.0,
+        placeholders: Sequence[str] = ("x", "y", "z"),
     ) -> tuple[QLineEdit, QLineEdit, QLineEdit]:
-        return tuple(
-            self._decimal_input(
-                f"{value:g}", minimum=-100.0, maximum=100.0, placeholder=placeholder
+        return tuple(  # type: ignore[return-value]
+            MagneticComponentDialog._decimal_input(
+                f"{float(value):g}", minimum=minimum, maximum=maximum, placeholder=placeholder
             )
-            for value, placeholder in zip(values, ("x", "y", "z"), strict=True)
+            for value, placeholder in zip(values, placeholders, strict=True)
         )
 
     @staticmethod
@@ -2222,12 +2235,7 @@ class MagneticTextureDialog(QDialog):
         minimum: float = -100.0,
         maximum: float = 100.0,
     ) -> tuple[QLineEdit, QLineEdit, QLineEdit]:
-        return tuple(
-            self._decimal_input(
-                f"{value:g}", minimum=minimum, maximum=maximum, placeholder=placeholder
-            )
-            for value, placeholder in zip(values, ("x", "y", "z"), strict=True)
-        )
+        return MagneticComponentDialog._direction_inputs(values, minimum=minimum, maximum=maximum)
 
     @staticmethod
     def _direction_group(inputs: tuple[QLineEdit, QLineEdit, QLineEdit]) -> QWidget:
@@ -4711,6 +4719,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
                 "PyVista and pyvistaqt are required for demagnetizing-field visualisation."
             )
         self._sample: DemagnetizingSample | None = None
+        self._lattice_vectors: np.ndarray | None = None
         self._refreshing_theme = False
         self._style_signature = self._style_signature_for_current_palette()
         # auto_update=False disables pyvistaqt's always-on render_timer; we
@@ -4737,8 +4746,19 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             palette.text_primary,
         )
 
-    def set_sample(self, sample: DemagnetizingSample) -> None:
+    def set_sample(
+        self, sample: DemagnetizingSample, lattice_vectors: Sequence[Sequence[float]] | None = None
+    ) -> None:
+        """Draw the sample rotated into the crystal frame, with arrows along the crystal axes.
+
+        Without ``lattice_vectors`` the axis arrows follow Cartesian x, y and z.
+        """
+
         self._sample = sample
+        self._lattice_vectors = (
+            None if lattice_vectors is None else np.asarray(lattice_vectors, dtype=float)
+        )
+        rotation = sample.rotation_matrix() if sample.rotation is not None else None
         plotter = self._plotter
         pv = self._pv
         plotter.clear()
@@ -4757,17 +4777,25 @@ class _DemagnetizingPyVistaCanvas(QWidget):
                 )
             )
             extent = float(np.max(lengths))
+            if rotation is not None:
+                transform = np.eye(4, dtype=float)
+                transform[:3, :3] = rotation
+                mesh = mesh.transform(transform, inplace=False)
         else:
             axes = np.asarray(sample.semi_axes, dtype=float)
-            mesh = self._ellipsoid_mesh(axes)
+            mesh = self._ellipsoid_mesh(axes, rotation)
             extent = float(np.max(axes))
 
         palette = current_palette()
         plotter.add_mesh(mesh, color=palette.status_running, opacity=0.42, smooth_shading=True)
         axis_colors = (palette.accent, palette.success, palette.status_submitting)
-        self._add_arrow((0.0, 0.0, 0.0), (1.25 * extent, 0.0, 0.0), axis_colors[0], "a")
-        self._add_arrow((0.0, 0.0, 0.0), (0.0, 1.25 * extent, 0.0), axis_colors[1], "b")
-        self._add_arrow((0.0, 0.0, 0.0), (0.0, 0.0, 1.25 * extent), axis_colors[2], "c")
+        directions = np.eye(3, dtype=float)
+        if self._lattice_vectors is not None and self._lattice_vectors.shape == (3, 3):
+            lengths = np.linalg.norm(self._lattice_vectors, axis=1)
+            if np.all(lengths > 0.0):
+                directions = self._lattice_vectors / lengths[:, None]
+        for direction, color, label in zip(directions, axis_colors, ("a", "b", "c"), strict=True):
+            self._add_arrow((0.0, 0.0, 0.0), 1.25 * extent * direction, color, label)
         self._add_arrow(
             (0.0, 0.0, -0.18 * extent), (0.0, 0.0, 1.65 * extent), palette.text_primary, "M"
         )
@@ -4795,7 +4823,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             self._style_signature = signature
             _configure_transparent_pyvista_background(plotter)
             if self._sample is not None:
-                self.set_sample(self._sample)
+                self.set_sample(self._sample, self._lattice_vectors)
             else:
                 plotter.render()
         finally:
@@ -4804,7 +4832,7 @@ class _DemagnetizingPyVistaCanvas(QWidget):
     def shutdown(self) -> None:
         _shutdown_pyvista_widget(self._plotter)
 
-    def _ellipsoid_mesh(self, axes: np.ndarray):
+    def _ellipsoid_mesh(self, axes: np.ndarray, rotation: np.ndarray | None = None):
         theta = np.linspace(0.0, 2.0 * np.pi, 72, endpoint=False)
         phi = np.linspace(0.0, np.pi, 36)
         tt, pp = np.meshgrid(theta, phi)
@@ -4815,6 +4843,8 @@ class _DemagnetizingPyVistaCanvas(QWidget):
                 (axes[2] * np.cos(pp)).ravel(),
             ]
         )
+        if rotation is not None:
+            points = points @ rotation.T
         faces: list[int] = []
         n_phi, n_theta = tt.shape
         for i in range(n_phi - 1):
@@ -4838,10 +4868,11 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         arrow = pv.Arrow(
             start=tuple(start_arr),
             direction=tuple(vector_arr / length),
+            # pv.Arrow builds a unit arrow and scales all of it by ``scale``.
             scale=length,
-            shaft_radius=0.018 * length,
-            tip_radius=0.055 * length,
-            tip_length=0.18 * length,
+            shaft_radius=0.018,
+            tip_radius=0.055,
+            tip_length=0.18,
         )
         self._plotter.add_mesh(arrow, color=color)
         self._plotter.add_point_labels(
@@ -4858,12 +4889,19 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
     """Advanced demagnetizing-field shape and tensor settings."""
 
     def __init__(
-        self, sample: DemagnetizingSample | None = None, parent: QWidget | None = None
+        self,
+        sample: DemagnetizingSample | None = None,
+        parent: QWidget | None = None,
+        *,
+        lattice_vectors: Sequence[Sequence[float]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Advanced Demagnetizing Field")
-        self.resize(860, 520)
+        self.resize(860, 560)
         self._preview: _DemagnetizingPyVistaCanvas | QLabel
+        self._lattice_vectors = (
+            None if lattice_vectors is None else [list(row) for row in lattice_vectors]
+        )
 
         sample = sample or DemagnetizingSample(shape="ellipsoid")
         if str(sample.shape).strip().lower() not in {
@@ -4900,6 +4938,32 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._stack.addWidget(self._ellipsoid_page())
         self._stack.addWidget(self._prism_page())
 
+        # The seed's orientation is kept whenever the dialog cannot edit it: a
+        # rotation saved without crystal directions, or directions with no host.
+        self._seed = sample
+        self._principal: tuple[DemagnetizingSample, np.ndarray] | None = None
+        self._orientation_mode = QComboBox(self)
+        for key, label in DEMAG_ORIENTATION_OPTIONS:
+            self._orientation_mode.addItem(label, key)
+        if sample.rotation is not None and sample.normal_hkl is None:
+            self._orientation_mode.addItem(
+                DEMAG_SAVED_ROTATION_OPTION[1], DEMAG_SAVED_ROTATION_OPTION[0]
+            )
+            initial_mode = DEMAG_SAVED_ROTATION_OPTION[0]
+        else:
+            initial_mode = "directions" if sample.normal_hkl is not None else "aligned"
+        self._orientation_mode.setCurrentIndex(self._orientation_mode.findData(initial_mode))
+        self._orientation_mode.setEnabled(self._lattice_vectors is not None)
+        self._normal_inputs = MagneticComponentDialog._direction_inputs(
+            sample.normal_hkl or (0.0, 0.0, 1.0), placeholders="hkl"
+        )
+        self._in_plane_inputs = MagneticComponentDialog._direction_inputs(
+            sample.in_plane_uvw or (1.0, 0.0, 0.0), placeholders="uvw"
+        )
+        self._orientation_hint = QLabel("", self)
+        self._orientation_hint.setWordWrap(True)
+        style_hint_text(self._orientation_hint)
+
         self._tensor_label = QLabel("", self)
         self._tensor_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         style_hint_text(self._tensor_label)
@@ -4925,10 +4989,25 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         form.addRow("Shape", self._shape)
         form.addRow("Parameters", self._stack)
 
+        orientation_group = QGroupBox("Orientation", self)
+        orientation_form = QFormLayout(orientation_group)
+        orientation_form.addRow("Sample axes", self._orientation_mode)
+        self._index_rows: list[QWidget] = []
+        for label, inputs in (
+            ("Normal (h k l)", self._normal_inputs),
+            ("In-plane axis [u v w]", self._in_plane_inputs),
+        ):
+            label_widget = QLabel(label, orientation_group)
+            group = MagneticComponentDialog._direction_group(inputs)
+            orientation_form.addRow(label_widget, group)
+            self._index_rows.extend((label_widget, group))
+        orientation_form.addRow(self._orientation_hint)
+
         left = QVBoxLayout()
         left.addWidget(title)
         left.addWidget(subtitle)
         left.addLayout(form)
+        left.addWidget(orientation_group)
         left.addWidget(self._tensor_label)
         left.addStretch(1)
 
@@ -4939,7 +5018,8 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Use Shape")
+        self._use_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self._use_button.setText("Use Shape")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
@@ -4962,9 +5042,48 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
                 widget.valueChanged.connect(self._sync)
             else:
                 widget.valueChanged.connect(self._sync)
+        self._orientation_mode.currentIndexChanged.connect(self._sync)
+        for edit in (*self._normal_inputs, *self._in_plane_inputs):
+            edit.textChanged.connect(self._sync)
         self._sync()
 
     def selected_sample(self) -> DemagnetizingSample:
+        """Return the configured sample, oriented when ``Crystal directions`` is chosen.
+
+        Raises :class:`DemagnetizationError` for unusable crystal directions.
+        """
+
+        return self._resolve()[0]
+
+    def _resolve(self) -> tuple[DemagnetizingSample, SampleOrientation | None]:
+        """Return the sample and, for directions set here, their resolved orientation."""
+
+        sample = self._shape_sample()
+        mode = self._orientation_key()
+        if mode == "aligned":
+            return sample, None
+        seed = self._seed
+        if mode == DEMAG_SAVED_ROTATION_OPTION[0] or self._lattice_vectors is None:
+            return (
+                replace(
+                    sample,
+                    rotation=seed.rotation,
+                    normal_hkl=seed.normal_hkl,
+                    in_plane_uvw=seed.in_plane_uvw,
+                ),
+                None,
+            )
+        normal = self._index_values(self._normal_inputs, "normal (h k l)")
+        in_plane = self._index_values(self._in_plane_inputs, "in-plane axis [u v w]")
+        orientation = sample_orientation(self._lattice_vectors, normal, in_plane)
+        return (
+            replace(
+                sample, rotation=orientation.rotation, normal_hkl=normal, in_plane_uvw=in_plane
+            ),
+            orientation,
+        )
+
+    def _shape_sample(self) -> DemagnetizingSample:
         shape = str(self._shape.currentData() or "ellipsoid")
         return DemagnetizingSample(
             shape=shape,
@@ -5005,6 +5124,49 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         form.addRow("Padding", self._padding)
         return page
 
+    def _orientation_key(self) -> str:
+        return str(self._orientation_mode.currentData() or "aligned")
+
+    @staticmethod
+    def _index_values(
+        inputs: tuple[QLineEdit, QLineEdit, QLineEdit], name: str
+    ) -> tuple[float, float, float]:
+        try:
+            h, k, l_ = (float(edit.text().strip()) for edit in inputs)
+        except ValueError as exc:
+            raise DemagnetizationError(f"enter three numbers for the {name}") from exc
+        return (h, k, l_)
+
+    def _orientation_text(self, orientation: SampleOrientation | None) -> str:
+        mode = self._orientation_key()
+        if mode == "aligned":
+            text = "The sample axes a, b and c lie along Cartesian x, y and z."
+            if self._lattice_vectors is None:
+                text += " Orienting the sample by crystal directions needs a host structure."
+            return text
+        if mode == DEMAG_SAVED_ROTATION_OPTION[0]:
+            return (
+                "The sample axes follow a rotation saved without crystal directions. Choose "
+                "Crystal directions to set them by (h k l) and [u v w]."
+            )
+        if self._lattice_vectors is None:
+            return "The saved crystal directions are kept; editing them needs a host structure."
+        text = "The sample c axis is normal to (h k l) and its a axis lies along [u v w]."
+        if orientation is not None and not orientation.orthogonal:
+            text += (
+                f" [u v w] is {orientation.angle_deg:.2f}° from the normal, so the a axis "
+                "follows its component in the plane."
+            )
+        return text
+
+    def _principal_tensor(self, sample: DemagnetizingSample) -> np.ndarray:
+        """Return the shape's principal tensor, reused while only the orientation changes."""
+
+        shape = replace(sample, rotation=None, normal_hkl=None, in_plane_uvw=None)
+        if self._principal is None or self._principal[0] != shape:
+            self._principal = (shape, principal_demagnetizing_tensor(shape))
+        return self._principal[1]
+
     @staticmethod
     def _length_input(value: float) -> QDoubleSpinBox:
         spinbox = QDoubleSpinBox()
@@ -5018,9 +5180,23 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
     def _sync(self, *_args: object) -> None:
         shape = str(self._shape.currentData() or "ellipsoid")
         self._stack.setCurrentIndex(0 if shape == "ellipsoid" else 1)
-        sample = self.selected_sample()
+        editable = self._orientation_key() == "directions" and self._lattice_vectors is not None
+        for row in self._index_rows:
+            row.setEnabled(editable)
+        sample = self._shape_sample()
         try:
-            tensor = demagnetizing_tensor(sample)
+            sample, orientation = self._resolve()
+            self._orientation_hint.setText(self._orientation_text(orientation))
+        except DemagnetizationError as exc:
+            self._orientation_hint.setText(f"Orientation unavailable: {exc}")
+            self._tensor_label.setText("Tensor unavailable until the orientation is valid.")
+            self._use_button.setEnabled(False)
+            if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
+                self._preview.set_sample(sample, self._lattice_vectors)
+            return
+        self._use_button.setEnabled(True)
+        try:
+            tensor = sample.rotate(self._principal_tensor(sample))
             self._tensor_label.setText(
                 "N = "
                 f"[[{tensor[0, 0]:.5f}, {tensor[0, 1]:.5f}, {tensor[0, 2]:.5f}], "
@@ -5030,7 +5206,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         except DemagnetizationError as exc:
             self._tensor_label.setText(f"Tensor unavailable: {exc}")
         if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
-            self._preview.set_sample(sample)
+            self._preview.set_sample(sample, self._lattice_vectors)
 
 
 class NuclearRelaxationDialog(QDialog):
@@ -6996,15 +7172,25 @@ class MagneticFieldWidget(QWidget):
         return "none"
 
     def _active_demag_sample(self) -> DemagnetizingSample | None:
-        if self._advanced_demag_radio.isChecked():
+        """Return the advanced sample, its orientation resolved against the host lattice."""
+
+        if not self._advanced_demag_radio.isChecked():
+            return None
+        if self._host_structure is None:
             return self._demag_sample
-        return None
+        return self._demag_sample.resolve_orientation(self._host_structure.lattice_vectors)
 
     def _open_advanced_demag_dialog(self) -> None:
         seed = self._demag_sample
         if seed.shape == "none":
             seed = DemagnetizingSample(shape="ellipsoid")
-        dialog = DemagnetizingFieldAdvancedDialog(seed, self)
+        dialog = DemagnetizingFieldAdvancedDialog(
+            seed,
+            self,
+            lattice_vectors=(
+                None if self._host_structure is None else self._host_structure.lattice_vectors
+            ),
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._demag_sample = dialog.selected_sample()
@@ -7022,6 +7208,13 @@ class MagneticFieldWidget(QWidget):
             text = f"Rectangular prism {a:g} x {b:g} x {c:g}"
         else:
             text = "No advanced shape selected."
+        sample = self._demag_sample
+        if shape in {"ellipsoid", "rectangular_prism"} and sample.normal_hkl is not None:
+            normal = " ".join(f"{value:g}" for value in sample.normal_hkl)
+            in_plane = " ".join(f"{value:g}" for value in sample.in_plane_uvw or ())
+            text += f"; normal ({normal}), in-plane [{in_plane}]"
+        elif shape in {"ellipsoid", "rectangular_prism"} and sample.rotation is not None:
+            text += "; rotated sample axes"
         self._advanced_demag_summary.setText(text)
 
     def _measured_magnetization(self) -> tuple[float, float, float] | None:
