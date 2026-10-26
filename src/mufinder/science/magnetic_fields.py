@@ -692,17 +692,35 @@ def _contact_shell_mean(
         return np.zeros(3, dtype=complex)
     distances = np.linalg.norm(vectors, axis=1)
     candidates = np.flatnonzero(magnetic & (distances < rcont))
-    shell = candidates[np.argsort(distances[candidates], kind="stable")][: int(nnn)]
+    ordered = candidates[np.argsort(distances[candidates], kind="stable")]
+    shell = ordered[: int(nnn)]
     reach = float(distances[shell[-1]]) if shell.size == int(nnn) else rcont
     if reach >= reach_limit:
         raise MagneticFieldError(
             f"the contact shell reaches {reach:.2f} Å from the muon but the relaxed supercell only holds "
-            f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell or a smaller contact radius"
+            f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell"
         )
+    if ordered.size > shell.size:
+        # muLFC keeps whichever tied ion its parallel lattice walk meets first, so a tie
+        # across the last place of the shell leaves its contact field undefined.
+        tied = ordered[np.abs(distances[ordered] - reach) <= _CONTACT_SHELL_TIE_ANG]
+        if tied.size > np.count_nonzero(np.isin(tied, shell)) and not np.allclose(
+            coefficients[tied], coefficients[tied[0]], atol=1e-8, rtol=0.0
+        ):
+            raise MagneticFieldError(
+                f"the contact shell is ambiguous: {tied.size} magnetic ions with different moments tie at "
+                f"{reach:.3f} Å from the muon for the last of its {int(nnn)} places, and muesr keeps an "
+                "arbitrary one of them; include or exclude the whole tied set with the number of contact "
+                "neighbours"
+            )
     if not shell.size:
         return np.zeros(3, dtype=complex)
     weights = distances[shell] ** -3
     return np.sum(weights[:, np.newaxis] * coefficients[shell], axis=0) / np.sum(weights)
+
+
+_CONTACT_SHELL_TIE_ANG = 1e-6
+"""Distance difference within which two ions tie for a place in the contact shell."""
 
 
 def _contact_shell_reach_limit(supercell_lattice: np.ndarray) -> float:
@@ -742,24 +760,34 @@ def _phase_shifted_fields(change: np.ndarray, phases_turns: np.ndarray) -> np.nd
     return (factors[:, np.newaxis] * np.asarray(change, dtype=complex)[np.newaxis, :]).real
 
 
-def _distortion_correction(
+def _distortion_changes(
     models: Sequence[MuesrModelData],
     distortion: MuonDistortion,
     options: MagneticFieldOptions,
-    translation: Sequence[int],
-) -> np.ndarray:
-    """Return the dipolar plus contact distortion correction, in T, at the site translated by ``translation``.
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return each commensurate component's propagation vector and complex dipolar plus contact change."""
+
+    changes = []
+    for model_data in models:
+        dipolar, contact = _component_distortion_changes(model_data, distortion, options)
+        changes.append((np.asarray(model_data.k_rlu, dtype=float), dipolar + contact))
+    return changes
+
+
+def _distortion_correction(
+    changes: Sequence[tuple[np.ndarray, np.ndarray]], translation: Sequence[int]
+) -> tuple[float, float, float]:
+    """Return the distortion correction, in T, at the site translated by ``translation``.
 
     Translating the muon by ``T`` shifts each commensurate component's order by
     the phase ``q . T``.
     """
 
     total = np.zeros(3, dtype=float)
-    for model_data in models:
-        dipolar, contact = _component_distortion_changes(model_data, distortion, options)
-        phase = float(np.dot(np.asarray(model_data.k_rlu, dtype=float), translation))
-        total += _phase_shifted_fields(dipolar + contact, np.array([phase]))[0]
-    return total
+    for q_rlu, change in changes:
+        phase = float(np.dot(q_rlu, translation))
+        total += _phase_shifted_fields(change, np.array([phase]))[0]
+    return _tuple3(total)
 
 
 def calculate_commensurate_fields(
@@ -831,7 +859,9 @@ def calculate_commensurate_fields(
                 distortion=(
                     None
                     if distortion is None
-                    else _tuple3(_distortion_correction(models, distortion, opts, (0, 0, 0)))
+                    else _distortion_correction(
+                        _distortion_changes(models, distortion, opts), (0, 0, 0)
+                    )
                 ),
             )
         )
@@ -919,7 +949,11 @@ def calculate_commensurate_approximant_fields(
 
     results: list[MagneticFieldResult] = []
     for index, (label, position) in enumerate(muons):
-        distortion = distortions[index]
+        changes = (
+            None
+            if distortions[index] is None
+            else _distortion_changes(approximant_models, distortions[index], opts)
+        )
         for translation, (dipolar, lorentz, contact) in zip(
             translations, terms_by_translation, strict=True
         ):
@@ -938,13 +972,7 @@ def calculate_commensurate_approximant_fields(
                     demag=_tuple3(demag),
                     applied=_tuple3(applied),
                     distortion=(
-                        None
-                        if distortion is None
-                        else _tuple3(
-                            _distortion_correction(
-                                approximant_models, distortion, opts, translation
-                            )
-                        )
+                        None if changes is None else _distortion_correction(changes, translation)
                     ),
                 )
             )
@@ -1217,6 +1245,8 @@ def calculate_incommensurate_field_distributions(
     ]
     component_phase_coeffs: list[tuple[float, ...]] = []
 
+    # One backend call per entry: incommensurate components split into circular helices.
+    backend_entries: list[tuple[str, Sequence[float], MuesrModelData]] = []
     for model_data, phase_coeff in zip(models, phase_coeffs_by_model, strict=True):
         mode = (
             "s"
@@ -1230,54 +1260,63 @@ def calculate_incommensurate_field_distributions(
         model_entries = (
             split_muesr_model_data_into_helices(model_data) if mode == "i" else (model_data,)
         )
-        for model_entry in model_entries:
-            sample = _build_muesr_sample(structure, [position for _label, position in muons])
-            sample.new_mm()
-            sample.mm.k = model_entry.k_rlu
-            sample.mm.fc = _muesr_fourier_components(model_entry, opts.supercell)
-            sample.mm.phi = model_entry.phi
-            kwargs: dict[str, Any] = {}
-            if mode == "i":
-                kwargs["nangles"] = int(opts.nangles)
-            fields = locfield(
-                sample,
-                mode,
-                list(opts.supercell),
-                radius,
-                nnn=int(opts.nnn),
-                rcont=float(opts.rcont),
-                **kwargs,
+        backend_entries.extend((mode, phase_coeff, entry) for entry in model_entries)
+    # The distortion changes, and so the contact-shell checks, come before any lattice sum.
+    changes_by_site = [
+        None
+        if distortion is None
+        else [
+            _component_distortion_changes(entry, distortion, opts) for *_, entry in backend_entries
+        ]
+        for distortion in distortions
+    ]
+
+    for entry_index, (mode, phase_coeff, model_entry) in enumerate(backend_entries):
+        sample = _build_muesr_sample(structure, [position for _label, position in muons])
+        sample.new_mm()
+        sample.mm.k = model_entry.k_rlu
+        sample.mm.fc = _muesr_fourier_components(model_entry, opts.supercell)
+        sample.mm.phi = model_entry.phi
+        kwargs: dict[str, Any] = {}
+        if mode == "i":
+            kwargs["nangles"] = int(opts.nangles)
+        fields = locfield(
+            sample,
+            mode,
+            list(opts.supercell),
+            radius,
+            nnn=int(opts.nnn),
+            rcont=float(opts.rcont),
+            **kwargs,
+        )
+        for index, local_field in enumerate(fields):
+            if opts.contact_coupling is not None:
+                local_field.ACont = float(opts.contact_coupling)
+            dip = _field_array(local_field, "Dipolar", "D", nangles=int(opts.nangles))
+            lor = (
+                _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles))
+                if opts.include_lorentz
+                else np.zeros_like(dip)
             )
-            for index, local_field in enumerate(fields):
-                if opts.contact_coupling is not None:
-                    local_field.ACont = float(opts.contact_coupling)
-                dip = _field_array(local_field, "Dipolar", "D", nangles=int(opts.nangles))
-                lor = (
-                    _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles))
-                    if opts.include_lorentz
-                    else np.zeros_like(dip)
+            con = _field_array(local_field, "Contact", "C", nangles=int(opts.nangles))
+            site_changes = changes_by_site[index]
+            if site_changes is not None:
+                row_phases = (
+                    _lookup_row_phases_turns(
+                        model_entry.k_rlu, muons[index][1], opts.supercell, int(opts.nangles)
+                    )
+                    if mode == "i"
+                    else np.zeros(int(opts.nangles), dtype=float)
                 )
-                con = _field_array(local_field, "Contact", "C", nangles=int(opts.nangles))
-                distortion = distortions[index]
-                if distortion is not None:
-                    row_phases = (
-                        _lookup_row_phases_turns(
-                            model_entry.k_rlu, muons[index][1], opts.supercell, int(opts.nangles)
-                        )
-                        if mode == "i"
-                        else np.zeros(int(opts.nangles), dtype=float)
-                    )
-                    dip_change, con_change = _component_distortion_changes(
-                        model_entry, distortion, opts
-                    )
-                    dip = dip + _phase_shifted_fields(dip_change, row_phases)
-                    con = con + _phase_shifted_fields(con_change, row_phases)
-                component_totals_by_site[index].append(dip + lor + con)
-                site_terms = component_terms_by_site[index]
-                site_terms["dipolar"].append(dip)
-                site_terms["lorentz"].append(lor)
-                site_terms["contact"].append(con)
-            component_phase_coeffs.append(tuple(float(value) for value in phase_coeff))
+                dip_change, con_change = site_changes[entry_index]
+                dip = dip + _phase_shifted_fields(dip_change, row_phases)
+                con = con + _phase_shifted_fields(con_change, row_phases)
+            component_totals_by_site[index].append(dip + lor + con)
+            site_terms = component_terms_by_site[index]
+            site_terms["dipolar"].append(dip)
+            site_terms["lorentz"].append(lor)
+            site_terms["contact"].append(con)
+        component_phase_coeffs.append(tuple(float(value) for value in phase_coeff))
     calculation_parameters["component_phase_coefficients"] = [
         list(coeff) for coeff in component_phase_coeffs
     ]
@@ -1359,7 +1398,10 @@ def calculate_incommensurate_field_distributions(
                 fields_T=fields,
                 histogram_centres_T=centres,
                 histogram_counts=counts,
-                calculation_parameters=calculation_parameters,
+                calculation_parameters={
+                    **calculation_parameters,
+                    "distortion_corrected": changes_by_site[index] is not None,
+                },
                 convergence=convergence,
                 terms={name: terms[name] for name in DISTRIBUTION_FIELD_TERMS},
                 total_rms_T=float(np.sqrt(np.mean(magnitudes**2))),

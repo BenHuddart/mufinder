@@ -879,6 +879,45 @@ def test_contact_distortion_needs_the_shell_inside_the_relaxed_supercell(monkeyp
         )
 
 
+@pytest.mark.parametrize(
+    ("model", "ambiguous"), [(_antiferromagnet, True), (_ferromagnet, False)], ids=["afm", "fm"]
+)
+def test_contact_distortion_refuses_a_tie_across_the_shell_edge(
+    monkeypatch, model, ambiguous
+) -> None:
+    # Two Fe tie 1.5 Å from the muon for one contact place. With opposite
+    # moments muesr's pick between them is arbitrary; with equal ones it is not.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=1, rcont=2.0)
+
+    def _calculate():
+        return calculate_commensurate_fields(
+            _structure(), model(), [_MU_X], options=options, distorted_structures=[relaxed]
+        )
+
+    if ambiguous:
+        with pytest.raises(MagneticFieldError, match="2 magnetic ions with different moments tie"):
+            _calculate()
+    else:
+        assert _calculate()[0].distortion == pytest.approx((0.0, 0.0, 0.0), abs=1e-15)
+
+
+def test_distribution_checks_the_contact_shell_before_any_lattice_sum(monkeypatch) -> None:
+    _install_fake_muesr(
+        monkeypatch, locfield=lambda *_a, **_k: pytest.fail("no lattice sum should run")
+    )
+
+    with pytest.raises(MagneticFieldError, match="contact shell reaches"):
+        calculate_incommensurate_field_distributions(
+            _structure(),
+            _circular_helix_model(),
+            [_MU_X],
+            options=MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=50),
+            distorted_structures=[relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)],
+        )
+
+
 def _zero_field_locfield(sample, mode, *_args, **kwargs):
     rows = int(kwargs["nangles"]) if mode == "i" else 1
     return [_Field(Dipolar=np.zeros((rows, 3))) for _ in sample.muons]
@@ -926,6 +965,10 @@ def test_distribution_without_displacements_is_unchanged(monkeypatch) -> None:
     )
 
     np.testing.assert_allclose(result.fields_T, 0.0, atol=1e-15)
+    assert result.calculation_parameters["distortion_corrected"] is True
+    assert MagneticFieldDistributionResult.from_json(result.to_json()).calculation_parameters[
+        "distortion_corrected"
+    ]
 
 
 def test_distribution_correction_walks_the_helix_phase(monkeypatch) -> None:

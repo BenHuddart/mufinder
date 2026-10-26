@@ -174,6 +174,18 @@ _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _SITE_OPTION_ROLE = int(Qt.ItemDataRole.UserRole) + 41
 _DISTORTION_CORRECTED_FIELD = "field (distortion-corrected)"
+_DISTORTION_CORRECTED_DISTRIBUTION = "distribution mean (distortion-corrected)"
+
+
+def _distribution_label(calculation_parameters: object) -> str:
+    """The Result column text of a distribution row, marking a distortion-corrected one."""
+
+    corrected = isinstance(calculation_parameters, Mapping) and bool(
+        calculation_parameters.get("distortion_corrected", False)
+    )
+    return _DISTORTION_CORRECTED_DISTRIBUTION if corrected else "distribution mean"
+
+
 _UNRELAXED_ESTIMATE_NOTE = (
     "UEP sites are unrelaxed, so fields computed at them are estimates: "
     "the relaxed muon site can sit some distance from the UEP minimum."
@@ -7360,7 +7372,9 @@ class MagneticFieldWidget(QWidget):
                 result.site_label,
                 mean,
                 float(np.mean(magnitudes)),
-                self._result_type_label("distribution mean"),
+                self._result_type_label(
+                    _distribution_label(getattr(result, "calculation_parameters", None))
+                ),
                 distribution_index=index,
             )
         if self._result_table.rowCount() > 0:
@@ -7415,7 +7429,9 @@ class MagneticFieldWidget(QWidget):
                     str(result.get("site_label", f"site {index + 1}")),
                     mean,
                     magnitude,
-                    self._result_type_label("distribution mean"),
+                    self._result_type_label(
+                        _distribution_label(result.get("calculation_parameters"))
+                    ),
                     distribution_index=index,
                 )
             if self._result_table.rowCount() > 0:

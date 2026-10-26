@@ -1831,8 +1831,17 @@ def test_magnetic_field_widget_corrects_an_incommensurate_distribution(
     assert widget._calculation_status.text().startswith(
         "Results: sampled 1 incommensurate field distribution(s) with muon-induced distortion corrections"
     )
-    (payload,) = widget.collect_state()["magnetic_field_results"]["results"]
+    assert widget._result_table.item(0, 5).text() == "distribution mean (distortion-corrected)"
+    state = widget.collect_state()
+    (payload,) = state["magnetic_field_results"]["results"]
     assert change < payload["terms"]["dipolar"]["rms_T"] < 2.0 * change
+    assert payload["calculation_parameters"]["distortion_corrected"] is True
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(state)
+    assert restored._result_table.item(0, 5).text() == "distribution mean (distortion-corrected)"
+    restored.close()
     widget.close()
 
 

@@ -793,7 +793,9 @@ correct for it:
 The correction applies to commensurate fields, to every translated row of a
 commensurate approximant and to every phase sample of an incommensurate
 distribution. A distribution has no separate distortion term: its correction is
-included in the ``Dipolar`` and ``Contact`` terms of the breakdown. Dipolar
+included in the ``Dipolar`` and ``Contact`` terms of the breakdown, and its row
+reads ``distribution mean (distortion-corrected)`` in the ``Result`` column, also
+after the project is reopened. Dipolar
 tensors always use the pristine host. The Lorentz and demagnetizing terms depend
 on the bulk magnetisation, so they keep their pristine values.
 
@@ -846,8 +848,10 @@ coupling changes with the muon-ion distance in a way a single coupling cannot
 describe. A coupling calculated for the relaxed structure, for example by DFT,
 supersedes it. The relaxed supercell must hold the whole contact shell: when the
 shell reaches past the largest sphere about the muon that the supercell holds,
-the calculation stops and asks for a larger relaxed supercell or a smaller
-contact radius.
+the calculation stops and asks for a larger relaxed supercell. When ions with
+different moments tie for the last place in the shell, ``muesr`` keeps an
+arbitrary one of them, so the contact field is undefined there and the
+calculation stops with a message naming the tied ions' distance.
 
 MuFinder pairs the relaxed supercell with the pristine host before it sums
 anything, and reports the first check that fails:
