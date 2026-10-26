@@ -20,3 +20,9 @@ BOHR_MAGNETON_J_PER_T = 9.274_010_065_7e-24
 
 #: Muon mass, in unified atomic mass units (CODATA 2022).
 MUON_MASS_AMU = 0.113_428_925_7
+
+#: Muon gyromagnetic ratio over 2 pi, in MHz T^-1 (CODATA 2018 and 2022: 135.538 8094).
+MUON_GAMMA_OVER_2PI_MHZ_T = 135.538_8094
+
+#: Muon gyromagnetic ratio, in rad s^-1 T^-1.
+MUON_GAMMA_RAD_S_T = 2.0 * math.pi * MUON_GAMMA_OVER_2PI_MHZ_T * 1e6

@@ -529,3 +529,18 @@ def _force_exit_before_extension_teardown() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(_PYTEST_EXITSTATUS)
+
+
+@pytest.fixture
+def real_muesr() -> None:
+    """Skip a test unless the real muesr and muLFC engines import."""
+
+    from mufinder.science.magnetic_fields import (
+        MagneticFieldDependencyError,
+        _load_muesr_engines,
+    )
+
+    try:
+        _load_muesr_engines()
+    except MagneticFieldDependencyError as exc:
+        pytest.skip(str(exc))

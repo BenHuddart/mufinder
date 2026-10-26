@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import json
 
 import numpy as np
 import pytest
@@ -16,15 +17,18 @@ from mufinder.science.nuclear_relaxation import (
     Isotope,
     NuclearRelaxationError,
     NuclearRelaxationOptions,
+    NuclearWidthTensors,
     calculate_distortion_correction,
     calculate_nuclear_relaxation,
     calculate_nuclear_relaxation_with_distortion,
+    calculate_nuclear_width_tensors,
     gyromagnetic_ratio_from_moment,
     isotopes_for_element,
     load_isotopes,
     structure_to_atoms,
     weighted_spin_factor,
 )
+from mufinder.science.polarisation import fibonacci_sphere
 from tests.support.structures import host_structure, hydrogen_host
 
 
@@ -391,12 +395,7 @@ def test_zf_single_crystal_powder_average_matches_polycrystal() -> None:
 
     # Deterministic Fibonacci spherical design: near-uniform coverage with
     # quadrature error well below the assertion tolerance at modest cost.
-    n_dirs = 64
-    indices = np.arange(n_dirs, dtype=float)
-    z = 1.0 - (2.0 * indices + 1.0) / n_dirs
-    phi = np.pi * (3.0 - np.sqrt(5.0)) * indices
-    rho = np.sqrt(1.0 - z**2)
-    directions = np.column_stack([rho * np.cos(phi), rho * np.sin(phi), z])
+    directions = fibonacci_sphere(64)
 
     perp_values = []
     parallel_values = []
@@ -743,6 +742,146 @@ def test_result_and_distortion_to_json_include_nested_payloads() -> None:
     assert "distorted_supercell_result" in dc
     # Nested results are themselves serialised dicts.
     assert isinstance(dc["undistorted_result"], dict)
+
+
+# Moment tensors: every direction from one lattice sum
+
+
+def _low_symmetry_host() -> Structure:
+    """An orthorhombic H/F/Cu host with no symmetry that would hide a wrong tensor index."""
+
+    return Structure(
+        label="HFCu",
+        lattice_vectors=[[4.1, 0.0, 0.0], [0.3, 5.2, 0.0], [0.2, 0.4, 6.3]],
+        species=["H", "F", "Cu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.31, 0.17, 0.62], [0.55, 0.71, 0.24]],
+    )
+
+
+_TENSOR_SITE = (0.23, 0.41, 0.37)
+
+
+def _random_directions(count: int = 10) -> np.ndarray:
+    directions = np.random.default_rng(254).normal(size=(count, 3))
+    return directions / np.linalg.norm(directions, axis=1)[:, None]
+
+
+def test_width_tensors_give_the_direct_single_crystal_widths_in_any_direction() -> None:
+    structure = _low_symmetry_host()
+    tensors = calculate_nuclear_width_tensors(structure, _TENSOR_SITE, radius=9.0)
+
+    for direction in _random_directions():
+        tf = calculate_nuclear_relaxation(
+            structure,
+            _TENSOR_SITE,
+            options=NuclearRelaxationOptions(
+                mode="tf_single_crystal", direction=tuple(direction), radius=9.0
+            ),
+        )
+        zf = calculate_nuclear_relaxation(
+            structure,
+            _TENSOR_SITE,
+            options=NuclearRelaxationOptions(
+                mode="zf_single_crystal", direction=tuple(direction), radius=9.0
+            ),
+        )
+        assert tensors.tf_sigma_squared(direction) == pytest.approx(tf.sigma_squared, rel=1e-10)
+        assert tensors.zf_sigma_squared(direction) == pytest.approx(zf.sigma_squared, rel=1e-10)
+        assert tensors.zf_parallel_sigma_squared(direction) == pytest.approx(
+            zf.sigma_parallel_squared, rel=1e-10
+        )
+    # Many directions at once give the same values as one at a time.
+    directions = _random_directions()
+    np.testing.assert_allclose(
+        tensors.tf_sigma_squared(directions),
+        [tensors.tf_sigma_squared(direction) for direction in directions],
+        rtol=1e-12,
+    )
+
+
+def test_width_tensor_sphere_averages_are_the_polycrystal_widths() -> None:
+    structure = _low_symmetry_host()
+    tensors = calculate_nuclear_width_tensors(structure, _TENSOR_SITE, radius=9.0)
+    poly = {
+        mode: calculate_nuclear_relaxation(
+            structure, _TENSOR_SITE, options=NuclearRelaxationOptions(mode=mode, radius=9.0)
+        ).sigma_squared
+        for mode in ("tf_polycrystal", "zf_polycrystal")
+    }
+    # A 2000-point Fibonacci sphere integrates the quartic exactly enough for 1e-4.
+    sphere = fibonacci_sphere(2000)
+
+    assert np.mean(tensors.tf_sigma_squared(sphere)) == pytest.approx(
+        poly["tf_polycrystal"], rel=1e-4
+    )
+    assert np.mean(tensors.zf_sigma_squared(sphere)) == pytest.approx(
+        poly["zf_polycrystal"], rel=1e-4
+    )
+    assert tensors.tf_polycrystal_sigma_squared == pytest.approx(poly["tf_polycrystal"], rel=1e-12)
+    assert tensors.zf_polycrystal_sigma_squared == pytest.approx(poly["zf_polycrystal"], rel=1e-12)
+
+
+def test_width_tensors_put_the_quadrupolar_factor_on_the_zero_field_widths_only() -> None:
+    structure = _low_symmetry_host()
+    plain = calculate_nuclear_width_tensors(structure, _TENSOR_SITE, radius=8.0)
+    quadrupolar = calculate_nuclear_width_tensors(
+        structure, _TENSOR_SITE, radius=8.0, include_quadrupolar=True
+    )
+    zf = calculate_nuclear_relaxation(
+        structure,
+        _TENSOR_SITE,
+        options=NuclearRelaxationOptions(
+            mode="zf_single_crystal",
+            direction=(0.0, 0.6, 0.8),
+            radius=8.0,
+            include_quadrupolar=True,
+        ),
+    )
+
+    # Cu (I = 3/2) carries the quadrupolar factor; H and F (I = 1/2) do not.
+    assert quadrupolar.zf_sigma_squared((0.0, 0.6, 0.8)) == pytest.approx(
+        zf.sigma_squared, rel=1e-10
+    )
+    assert quadrupolar.zf_isotropic != pytest.approx(plain.zf_isotropic)
+    assert quadrupolar.isotropic == pytest.approx(plain.isotropic, rel=1e-12)
+    np.testing.assert_allclose(quadrupolar.quartic, plain.quartic, rtol=1e-12)
+
+
+def test_width_tensors_converge_with_the_auto_radius_and_round_trip_through_json() -> None:
+    tensors = calculate_nuclear_width_tensors(
+        _low_symmetry_host(), (1.23, -0.59, 0.37), site_label="site 2", elements=["H", "F"]
+    )
+    restored = NuclearWidthTensors.from_json(json.loads(json.dumps(tensors.to_json())))
+
+    assert tensors.convergence_radius_a >= 6.0
+    assert tensors.muon_position == pytest.approx(_TENSOR_SITE)
+    assert restored.site_label == "site 2"
+    assert restored.tf_sigma_squared((1.0, 2.0, 3.0)) == pytest.approx(
+        tensors.tf_sigma_squared((1.0, 2.0, 3.0)), rel=1e-12
+    )
+    assert restored.n_nuclei_summed == tensors.n_nuclei_summed
+    # Only H and F are summed: their quadrupolar weights equal the plain ones.
+    assert tensors.zf_isotropic == pytest.approx(tensors.isotropic, rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("direction", "message"),
+    [((0.0, 0.0, 0.0), "non-zero"), ((1.0, 0.0), "3 components")],
+)
+def test_width_tensors_reject_a_bad_direction(direction, message: str) -> None:
+    tensors = calculate_nuclear_width_tensors(_low_symmetry_host(), _TENSOR_SITE, radius=6.0)
+
+    with pytest.raises(NuclearRelaxationError, match=message):
+        tensors.tf_sigma_squared(direction)
+
+
+def test_width_tensors_reject_bad_inputs() -> None:
+    with pytest.raises(NuclearRelaxationError, match="radius"):
+        calculate_nuclear_width_tensors(_low_symmetry_host(), _TENSOR_SITE, radius=-1.0)
+    with pytest.raises(NuclearRelaxationError, match="No nuclei"):
+        calculate_nuclear_width_tensors(_single_nucleus_structure(), (0.5, 0.5, 0.5), radius=1.0)
+    with pytest.raises(NuclearRelaxationError, match="malformed"):
+        NuclearWidthTensors.from_json({"site_label": "site 1", "quadratic": [1.0]})
 
 
 # Internal guards the public entry points never reach

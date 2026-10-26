@@ -26,6 +26,12 @@ same way. In the form state the source sits on each tensor row and on the
 nuclear-relaxation result, as ``site_source``. These results survive a change
 of muon site, so a record saved without a source has none: nothing is
 inferred, and it is not shown as an estimate.
+
+A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
+:class:`~mufinder.science.polarisation.PolarisationResult` in
+``data["result"]``, with the same ``owner`` rule. It is stored and read with
+:func:`store_polarisation_result` and :func:`polarisation_result` and is not
+part of the form state.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from typing import Any
 
 from mufinder.domain.models import Result
 from mufinder.persistence.codec import to_jsonable
+from mufinder.science.polarisation import PolarisationError, PolarisationResult
 from mufinder.services.project_document import ProjectDocument
 
 
@@ -45,6 +52,8 @@ MAGNETIC_FIELD_RESULT_TYPE = "magnetic_field"
 MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE = "magnetic_dipolar_tensor"
 #: Result type of a nuclear dipolar relaxation calculation.
 NUCLEAR_RELAXATION_RESULT_TYPE = "nuclear_relaxation"
+#: Result type of a muon-spin polarisation calculation.
+MUON_POLARISATION_RESULT_TYPE = "muon_polarisation"
 
 #: ``data["owner"]`` of the Magnetic Fields page's own results. A saved
 #: workspace's results use the workspace id instead.
@@ -58,6 +67,7 @@ MAGNETIC_FIELD_RESULT_TYPES = (
     MAGNETIC_FIELD_RESULT_TYPE,
     MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
     NUCLEAR_RELAXATION_RESULT_TYPE,
+    MUON_POLARISATION_RESULT_TYPE,
 )
 
 
@@ -250,6 +260,45 @@ def attach_magnetic_field_results(
     for key, empty in _EMPTY_FORM_RESULTS.items():
         attached.setdefault(key, empty())
     return attached
+
+
+def store_polarisation_result(
+    document: ProjectDocument,
+    owner: str,
+    result: PolarisationResult | None,
+) -> Result | None:
+    """Record ``result`` as ``owner``'s polarisation and return the record.
+
+    The record replaces ``owner``'s previous polarisation record, unless that
+    one holds the same result; ``None`` removes it.
+    """
+
+    existing = magnetic_field_result(document, owner, MUON_POLARISATION_RESULT_TYPE)
+    if result is None:
+        if existing is not None:
+            del document.results[existing.id]
+        return None
+    data = {"owner": owner, "result": result.to_json()}
+    if existing is not None:
+        if existing.data == data:
+            return existing
+        del document.results[existing.id]
+    record = Result(result_type=MUON_POLARISATION_RESULT_TYPE, data=data)
+    document.results[record.id] = record
+    return record
+
+
+def polarisation_result(document: ProjectDocument, owner: str) -> PolarisationResult | None:
+    """Return ``owner``'s recorded polarisation, or ``None`` if it has none or it is malformed."""
+
+    record = magnetic_field_result(document, owner, MUON_POLARISATION_RESULT_TYPE)
+    payload = record.data.get("result") if record is not None else None
+    if not isinstance(payload, Mapping):
+        return None
+    try:
+        return PolarisationResult.from_json(payload)
+    except PolarisationError:
+        return None
 
 
 def remove_magnetic_field_results(document: ProjectDocument, owner: str) -> None:

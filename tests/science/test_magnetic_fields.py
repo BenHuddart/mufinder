@@ -55,11 +55,18 @@ from mufinder.science.magnetic_structure import (
     FourierTerm,
     MagneticComponent,
     MagneticStructureModel,
-    build_magnetic_preset_component,
     moments_at_atoms,
 )
 from mufinder.science.muon_distortion import map_muon_distortion
 from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A, MU0_T_M_PER_A
+from tests.support.mnsi import (
+    MNSI_MOMENT,
+    MNSI_MUON,
+    MNSI_SITE_II,
+    mnsi_helix,
+    mnsi_options,
+    mnsi_structure,
+)
 from tests.support.structures import BODY_CENTRE, host_structure, relaxed_muon_supercell
 
 _structure = partial(
@@ -2351,16 +2358,6 @@ _bcc_structure = partial(
 )
 
 
-@pytest.fixture
-def real_muesr() -> None:
-    """Skip a test unless the real muesr and muLFC engines import."""
-
-    try:
-        module._load_muesr_engines()
-    except MagneticFieldDependencyError as exc:
-        pytest.skip(str(exc))
-
-
 def _single_q_model(q, real, imaginary=(0.0, 0.0, 0.0)) -> MagneticStructureModel:
     """One component on every atom with Fourier coefficient ``real + i imaginary`` at ``q``."""
 
@@ -2770,73 +2767,17 @@ def test_worked_example_a_type_antiferromagnet(real_muesr) -> None:
         assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
 
 
-# --- MnSi, the incommensurate helix worked example --------------------------------
-#
-# B20 MnSi (P2_1 3, a = 4.558 Å; Mn and Si at 4a with x = 0.138 and 0.845) is a
-# left-handed helix along [111]: |k| = 0.035 Å^-1, 0.385 mu_B per Mn. The muon
-# stops at 4a with x = 0.532 (Amato et al. 2014), where the four positions of
-# one k domain split into site I, on the k axis, and the equivalent sites II-IV.
-# The contact coupling -0.505 T/mu_B reproduces the edges Amato et al. predict:
-# an isolated line at 88.0 mT and a continuum from 90.0 to 206.5 mT.
-
-_MNSI_A = 4.558
-_MNSI_Q = (0.0147, 0.0147, 0.0147)
-_MNSI_MOMENT = 0.385
-_MNSI_MUON = (0.532, 0.532, 0.532)
-_MNSI_SITE_II = (0.968, 0.468, 0.032)
-_MNSI_CONTACT_T_PER_MUB = -0.505
-
-
-def _4a(x: float) -> tuple[tuple[float, ...], ...]:
-    positions = (
-        (x, x, x),
-        (-x + 0.5, -x, x + 0.5),
-        (-x, x + 0.5, -x + 0.5),
-        (x + 0.5, -x + 0.5, -x),
-    )
-    return tuple(tuple(value % 1.0 for value in position) for position in positions)
-
-
-def _mnsi() -> Structure:
-    return host_structure(
-        label="MnSi",
-        lattice=_MNSI_A,
-        species=("Mn",) * 4 + ("Si",) * 4,
-        positions=_4a(0.138) + _4a(0.845),
-    )
-
-
-def _mnsi_helix(handedness: int = -1) -> MagneticStructureModel:
-    component = build_magnetic_preset_component(
-        "helix",
-        lattice_vectors=_mnsi().lattice_vectors,
-        q_rlu=_MNSI_Q,
-        q_coeff=(1.0, 0.0, 0.0),
-        moment=_MNSI_MOMENT,
-        reference_axis="a",
-        selector=AtomSelector.species("Mn"),
-        handedness=handedness,
-    )
-    return MagneticStructureModel(
-        q_basis_rlu=(_MNSI_Q, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), components=(component,)
-    )
-
-
-def _mnsi_options(**changes) -> MagneticFieldOptions:
-    contact = contact_coupling_to_angstrom_minus3(_MNSI_CONTACT_T_PER_MUB, "T_per_muB")
-    return MagneticFieldOptions(
-        **{"find_equivalent_sites": True, "contact_coupling": contact, **changes}
-    )
+# --- MnSi, the incommensurate helix worked example (tests/support/mnsi.py) ---------
 
 
 def test_worked_example_mnsi_helix_is_left_handed(real_muesr) -> None:
     for handedness in (-1, 1):
         moments = moments_at_atoms(
-            _mnsi(), _mnsi_helix(handedness), [0] * 4, [(n, n, n) for n in range(4)]
+            mnsi_structure(), mnsi_helix(handedness), [0] * 4, [(n, n, n) for n in range(4)]
         )
         axis = np.ones(3) / np.sqrt(3.0)
 
-        assert np.linalg.norm(moments, axis=1) == pytest.approx(_MNSI_MOMENT)
+        assert np.linalg.norm(moments, axis=1) == pytest.approx(MNSI_MOMENT)
         assert moments @ axis == pytest.approx(0.0, abs=1e-12)
         # Left-handed: the moment turns against the screw sense along +q.
         turns = [
@@ -2847,7 +2788,7 @@ def test_worked_example_mnsi_helix_is_left_handed(real_muesr) -> None:
 
 def test_worked_example_mnsi_distribution_edges_match_the_amato_prediction(real_muesr) -> None:
     site_one, *others = calculate_incommensurate_field_distributions(
-        _mnsi(), _mnsi_helix(), [_MNSI_MUON], options=_mnsi_options()
+        mnsi_structure(), mnsi_helix(), [MNSI_MUON], options=mnsi_options()
     )
 
     # The grid of phases is deterministic. Site I, on the k axis, is one line at 88 mT.
@@ -2866,7 +2807,10 @@ def test_worked_example_mnsi_site_two_terms_average_to_zero_but_not_their_size(
     real_muesr,
 ) -> None:
     (site_two,) = calculate_incommensurate_field_distributions(
-        _mnsi(), _mnsi_helix(), [_MNSI_SITE_II], options=_mnsi_options(find_equivalent_sites=False)
+        mnsi_structure(),
+        mnsi_helix(),
+        [MNSI_SITE_II],
+        options=mnsi_options(find_equivalent_sites=False),
     )
 
     # Every term of the helix averages to zero over phase; its RMS keeps its size.
@@ -2882,9 +2826,9 @@ def test_worked_example_mnsi_contact_term_is_applied_to_the_sampled_distribution
     real_muesr,
 ) -> None:
     dipolar_only = calculate_incommensurate_field_distributions(
-        _mnsi(),
-        _mnsi_helix(),
-        [_MNSI_MUON],
+        mnsi_structure(),
+        mnsi_helix(),
+        [MNSI_MUON],
         options=MagneticFieldOptions(find_equivalent_sites=True),
     )
 
@@ -2896,7 +2840,7 @@ def test_worked_example_mnsi_contact_term_is_applied_to_the_sampled_distribution
 
 def test_worked_example_mnsi_the_helix_sense_matters_for_sites_two_to_four(real_muesr) -> None:
     right = calculate_incommensurate_field_distributions(
-        _mnsi(), _mnsi_helix(1), [_MNSI_MUON], options=_mnsi_options()
+        mnsi_structure(), mnsi_helix(1), [MNSI_MUON], options=mnsi_options()
     )
 
     # Site I is on the k axis and does not tell the senses apart; sites II-IV do.
@@ -2907,10 +2851,10 @@ def test_worked_example_mnsi_the_helix_sense_matters_for_sites_two_to_four(real_
 
 def test_worked_example_mnsi_has_a_commensurate_approximant_of_period_64(real_muesr) -> None:
     approximant = find_commensurate_approximant(
-        _mnsi(), _mnsi_helix(), tolerance=1e-3, max_period=64
+        mnsi_structure(), mnsi_helix(), tolerance=1e-3, max_period=64
     )
     nothing_shorter = find_commensurate_approximant(
-        _mnsi(), _mnsi_helix(), tolerance=1e-3, max_period=12
+        mnsi_structure(), mnsi_helix(), tolerance=1e-3, max_period=12
     )
 
     assert nothing_shorter is None
@@ -2922,10 +2866,10 @@ def test_worked_example_mnsi_has_a_commensurate_approximant_of_period_64(real_mu
 
 def test_worked_example_mnsi_approximant_fields_span_the_continuum(real_muesr) -> None:
     results = calculate_commensurate_approximant_fields(
-        _mnsi(),
-        _mnsi_helix(),
-        [_MNSI_SITE_II],
-        options=_mnsi_options(find_equivalent_sites=False, approximant_max_period=64),
+        mnsi_structure(),
+        mnsi_helix(),
+        [MNSI_SITE_II],
+        options=mnsi_options(find_equivalent_sites=False, approximant_max_period=64),
     )
 
     magnitudes = np.array([result.magnitude for result in results])

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from configparser import ConfigParser
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
 from importlib import resources
-from typing import Literal
+from typing import Literal, TypeVar
 
 from ase import Atoms
 import numpy as np
@@ -42,6 +42,9 @@ _ALLOWED_MODES = {
     "tf_polycrystal",
     "zf_polycrystal",
 }
+
+
+_Sums = TypeVar("_Sums")
 
 
 class NuclearRelaxationError(ValueError):
@@ -168,6 +171,116 @@ class DistortionCorrectionResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class NuclearWidthTensors:
+    """Moment tensors of a nuclear lattice sum, giving the widths along any direction.
+
+    The single-crystal widths are polynomials in the direction: the ZF widths
+    are quadratic in it and the TF width quartic. One sum of
+    ``S = Σ w / r⁶``, ``M_ij = Σ w r̂_i r̂_j / r⁶`` and
+    ``M_ijkl = Σ w r̂_i r̂_j r̂_k r̂_l / r⁶`` over the nuclei, with ``w`` the
+    isotope-weighted ``γ² I(I+1)``, therefore gives every direction at once.
+    Each tensor already carries the prefactor ``(μ₀/4π)² ħ² γ_μ² / 3``, so the
+    widths come out in μs⁻² without further factors.
+
+    ``isotropic``, ``quadratic`` and ``quartic`` use the plain weights, for the
+    TF width; ``zf_isotropic`` and ``zf_quadratic`` use the quadrupolar
+    weights when ``include_quadrupolar`` is set, and equal the plain ones
+    otherwise.
+    """
+
+    site_label: str
+    muon_position: tuple[float, float, float]
+    isotropic: float
+    quadratic: np.ndarray
+    quartic: np.ndarray
+    zf_isotropic: float
+    zf_quadratic: np.ndarray
+    include_quadrupolar: bool
+    convergence_radius_a: float
+    n_nuclei_summed: int
+
+    def tf_sigma_squared(self, direction: Sequence[float] | np.ndarray) -> np.ndarray | float:
+        """Return σ²_TF (μs⁻²) for a field along ``direction``, or along each row of an array.
+
+        This is the secular second moment of the nuclear field components
+        along the field, ``9 n n n n M₄ − 6 n n M₂ + S``.
+        """
+
+        n, scalar = _unit_directions(direction)
+        quadratic = np.einsum("...i,ij,...j->...", n, self.quadratic, n)
+        quartic = np.einsum("ijkl,...k,...l->...ij", self.quartic, n, n)
+        quartic = np.einsum("...i,...ij,...j->...", n, quartic, n)
+        values = 9.0 * quartic - 6.0 * quadratic + self.isotropic
+        return float(values) if scalar else values
+
+    def zf_sigma_squared(self, direction: Sequence[float] | np.ndarray) -> np.ndarray | float:
+        """Return the zero-field Kubo-Toyabe σ⊥² (μs⁻²) for polarisation along ``direction``."""
+
+        n, scalar = _unit_directions(direction)
+        quadratic = np.einsum("...i,ij,...j->...", n, self.zf_quadratic, n)
+        values = 0.5 * (5.0 * self.zf_isotropic - 3.0 * quadratic)
+        return float(values) if scalar else values
+
+    def zf_parallel_sigma_squared(
+        self, direction: Sequence[float] | np.ndarray
+    ) -> np.ndarray | float:
+        """Return σ∥² (μs⁻²), the field variance along a polarisation ``direction``."""
+
+        n, scalar = _unit_directions(direction)
+        quadratic = np.einsum("...i,ij,...j->...", n, self.zf_quadratic, n)
+        values = 3.0 * quadratic + self.zf_isotropic
+        return float(values) if scalar else values
+
+    @property
+    def tf_polycrystal_sigma_squared(self) -> float:
+        """The sphere average of σ²_TF, the TF polycrystal width (μs⁻²)."""
+
+        return 0.8 * self.isotropic
+
+    @property
+    def zf_polycrystal_sigma_squared(self) -> float:
+        """The sphere average of σ⊥², the ZF polycrystal width (μs⁻²)."""
+
+        return 2.0 * self.zf_isotropic
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "site_label": self.site_label,
+            "muon_position": list(self.muon_position),
+            "isotropic": float(self.isotropic),
+            "quadratic": np.asarray(self.quadratic, dtype=float).tolist(),
+            "quartic": np.asarray(self.quartic, dtype=float).tolist(),
+            "zf_isotropic": float(self.zf_isotropic),
+            "zf_quadratic": np.asarray(self.zf_quadratic, dtype=float).tolist(),
+            "include_quadrupolar": bool(self.include_quadrupolar),
+            "convergence_radius_a": float(self.convergence_radius_a),
+            "n_nuclei_summed": int(self.n_nuclei_summed),
+        }
+
+    @classmethod
+    def from_json(cls, payload: Mapping[str, object]) -> NuclearWidthTensors:
+        try:
+            quadratic = np.asarray(payload["quadratic"], dtype=float).reshape(3, 3)
+            quartic = np.asarray(payload["quartic"], dtype=float).reshape(3, 3, 3, 3)
+            zf_quadratic = np.asarray(payload["zf_quadratic"], dtype=float).reshape(3, 3)
+            position = np.asarray(payload["muon_position"], dtype=float).reshape(3)
+            return cls(
+                site_label=str(payload.get("site_label", "")),
+                muon_position=(float(position[0]), float(position[1]), float(position[2])),
+                isotropic=float(payload["isotropic"]),
+                quadratic=quadratic,
+                quartic=quartic,
+                zf_isotropic=float(payload["zf_isotropic"]),
+                zf_quadratic=zf_quadratic,
+                include_quadrupolar=bool(payload.get("include_quadrupolar", False)),
+                convergence_radius_a=float(payload.get("convergence_radius_a", 0.0)),
+                n_nuclei_summed=int(payload.get("n_nuclei_summed", 0)),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise NuclearRelaxationError(f"malformed nuclear width tensors: {exc}") from exc
+
+
 def gyromagnetic_ratio_from_moment(moment_mu_n: float, spin: float) -> float:
     """Return nuclear gyromagnetic ratio in rad/(s*T)."""
 
@@ -275,6 +388,76 @@ def calculate_nuclear_relaxation(
         elements=opts.elements,
         radius=opts.radius,
         convergence_rtol=opts.convergence_rtol,
+    )
+
+
+def calculate_nuclear_width_tensors(
+    structure: Structure,
+    muon_position: Sequence[float],
+    *,
+    site_label: str = "site 1",
+    include_quadrupolar: bool = False,
+    elements: Sequence[str] | None = None,
+    radius: float | None = None,
+    convergence_rtol: float = 1e-6,
+) -> NuclearWidthTensors:
+    """Sum the nuclear moment tensors at a fractional ``muon_position`` once.
+
+    The sum runs over the undistorted periodic host, like
+    :func:`calculate_nuclear_relaxation`. With ``radius`` unset it grows until
+    the isotropic sum changes by less than ``convergence_rtol``.
+    """
+
+    atoms = structure_to_atoms(structure, skip_muon=True)
+    tensors, final_radius, final_n = _converged_lattice_sum(
+        atoms,
+        _muon_position_cartesian(atoms, muon_position, True),
+        lambda vectors, distances, symbols: _moment_tensors(
+            vectors, distances * METRES_PER_ANGSTROM, symbols, include_quadrupolar
+        ),
+        lambda sums: sums[0],
+        elements=elements,
+        radius=radius,
+        convergence_rtol=convergence_rtol,
+    )
+    isotropic, quadratic, quartic, zf_isotropic, zf_quadratic = tensors
+    return NuclearWidthTensors(
+        site_label=site_label,
+        muon_position=_canonical_fractional(muon_position),
+        isotropic=isotropic,
+        quadratic=quadratic,
+        quartic=quartic,
+        zf_isotropic=zf_isotropic,
+        zf_quadratic=zf_quadratic,
+        include_quadrupolar=include_quadrupolar,
+        convergence_radius_a=final_radius,
+        n_nuclei_summed=final_n,
+    )
+
+
+def _moment_tensors(
+    vectors_a: np.ndarray,
+    distances_m: np.ndarray,
+    symbols: np.ndarray,
+    include_quadrupolar: bool,
+) -> tuple[float, np.ndarray, np.ndarray, float, np.ndarray]:
+    unit = vectors_a / np.linalg.norm(vectors_a, axis=1)[:, None]
+    base = _prefactor_sigma_squared() * SEC2_TO_US2 / distances_m**6
+    weights = np.zeros_like(base)
+    zf_weights = np.zeros_like(base)
+    for element in np.unique(symbols):
+        mask = symbols == element
+        isotopes = isotopes_for_element(str(element))
+        weights[mask] = weighted_spin_factor(isotopes)
+        zf_weights[mask] = weighted_spin_factor(isotopes, include_quadrupolar=include_quadrupolar)
+    terms = weights * base
+    zf_terms = zf_weights * base
+    return (
+        float(np.sum(terms)),
+        np.einsum("k,ki,kj->ij", terms, unit, unit),
+        np.einsum("k,ki,kj,kl,km->ijlm", terms, unit, unit, unit, unit),
+        float(np.sum(zf_terms)),
+        np.einsum("k,ki,kj->ij", zf_terms, unit, unit),
     )
 
 
@@ -443,55 +626,29 @@ def _calculate_second_moment(
     convergence_rtol: float = 1e-6,
 ) -> NuclearRelaxationResult:
     _validate_mode(mode, include_quadrupolar=include_quadrupolar)
-    if radius is not None and radius <= 0.0:
-        raise NuclearRelaxationError("radius must be > 0")
-
     field_dir = _unit_vector(field_direction, "direction") if mode == "tf_single_crystal" else None
     pol_dir = (
         _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
     )
-    muon_cart = _muon_position_cartesian(atoms, muon_position, muon_position_fractional)
-    selected = (
-        None
-        if elements is None
-        else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
-    )
-    radii = [float(radius)] if radius is not None else list(_auto_radii_sequence())
-
-    prev_sigma2: float | None = None
-    final_sigma2 = 0.0
-    final_sigma2_parallel: float | None = None
-    final_per_element: dict[str, float] = {}
-    final_n = 0
-    final_radius = radii[-1]
-    for rad in radii:
-        vecs_a, dists_a, symbols = _iter_nuclear_vectors(atoms, muon_cart, rad, selected)
-        if dists_a.size == 0:
-            continue
-        sigma2, sigma2_parallel, per_element = _evaluate_mode(
-            mode,
-            vecs_a * METRES_PER_ANGSTROM,
-            dists_a * METRES_PER_ANGSTROM,
-            symbols,
-            field_dir,
-            pol_dir,
-            include_quadrupolar,
+    (final_sigma2, final_sigma2_parallel, final_per_element), final_radius, final_n = (
+        _converged_lattice_sum(
+            atoms,
+            _muon_position_cartesian(atoms, muon_position, muon_position_fractional),
+            lambda vectors, distances, symbols: _evaluate_mode(
+                mode,
+                vectors * METRES_PER_ANGSTROM,
+                distances * METRES_PER_ANGSTROM,
+                symbols,
+                field_dir,
+                pol_dir,
+                include_quadrupolar,
+            ),
+            lambda sums: sums[0],
+            elements=elements,
+            radius=radius,
+            convergence_rtol=convergence_rtol,
         )
-        final_sigma2 = sigma2
-        final_sigma2_parallel = sigma2_parallel
-        final_per_element = per_element
-        final_n = int(dists_a.size)
-        final_radius = rad
-        if (
-            prev_sigma2 is not None
-            and radius is None
-            and np.isclose(sigma2, prev_sigma2, rtol=convergence_rtol, atol=0.0)
-        ):
-            break
-        prev_sigma2 = sigma2
-
-    if final_n == 0:
-        raise NuclearRelaxationError("No nuclei found within the selected radius.")
+    )
     return _result_from_sigma(
         site_label=site_label,
         muon_position=_canonical_fractional(muon_position)
@@ -504,6 +661,55 @@ def _calculate_second_moment(
         convergence_radius_a=final_radius,
         n_nuclei_summed=final_n,
     )
+
+
+def _converged_lattice_sum(
+    atoms: Atoms,
+    muon_cart: np.ndarray,
+    evaluate: Callable[[np.ndarray, np.ndarray, np.ndarray], _Sums],
+    key: Callable[[_Sums], float],
+    *,
+    elements: Sequence[str] | None,
+    radius: float | None,
+    convergence_rtol: float,
+) -> tuple[_Sums, float, int]:
+    """Evaluate a lattice sum over the nuclei around a muon until it converges.
+
+    ``evaluate`` takes the muon-to-nucleus vectors and distances (Å) and the
+    symbols. With ``radius`` set it runs once at that radius; otherwise the
+    radius grows through :func:`_auto_radii_sequence` until ``key`` of the
+    sum changes by less than ``convergence_rtol``. Returns the sum, its
+    radius (Å) and the number of nuclei summed.
+    """
+
+    if radius is not None and radius <= 0.0:
+        raise NuclearRelaxationError("radius must be > 0")
+    selected = (
+        None
+        if elements is None
+        else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
+    )
+    radii = [float(radius)] if radius is not None else list(_auto_radii_sequence())
+    sums: _Sums | None = None
+    final_n = 0
+    final_radius = radii[-1]
+    for rad in radii:
+        vectors, distances, symbols = _iter_nuclear_vectors(atoms, muon_cart, rad, selected)
+        if distances.size == 0:
+            continue
+        previous = None if sums is None else key(sums)
+        sums = evaluate(vectors, distances, symbols)
+        final_n = int(distances.size)
+        final_radius = rad
+        if (
+            previous is not None
+            and radius is None
+            and np.isclose(key(sums), previous, rtol=convergence_rtol, atol=0.0)
+        ):
+            break
+    if sums is None:
+        raise NuclearRelaxationError("No nuclei found within the selected radius.")
+    return sums, final_radius, final_n
 
 
 def _calculate_second_moment_finite_cell(
@@ -782,11 +988,22 @@ def _muon_position_cartesian(
 
 
 def _unit_vector(vec: Sequence[float], name: str) -> np.ndarray:
-    arr = np.asarray(vec, dtype=float).reshape(3)
-    norm = float(np.linalg.norm(arr))
-    if norm == 0.0:
+    unit, _ = _unit_directions(np.asarray(vec, dtype=float).reshape(3), name)
+    return unit
+
+
+def _unit_directions(
+    direction: Sequence[float] | np.ndarray, name: str = "direction"
+) -> tuple[np.ndarray, bool]:
+    """Return ``direction`` as unit rows and whether it was a single vector."""
+
+    arr = np.asarray(direction, dtype=float)
+    if arr.shape[-1:] != (3,):
+        raise NuclearRelaxationError(f"{name} must have 3 components, got shape {arr.shape}")
+    norms = np.linalg.norm(arr, axis=-1, keepdims=True)
+    if np.any(norms == 0.0):
         raise NuclearRelaxationError(f"{name} must be non-zero.")
-    return arr / norm
+    return arr / norms, arr.ndim == 1
 
 
 def _canonical_fractional(

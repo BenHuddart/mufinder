@@ -60,3 +60,15 @@ def test_dipolar_field_example_matches_the_documented_iron_ferromagnet() -> None
     assert "Dipolar Bz: -0.9261 T" in lines
     assert "Lorentz Bz: 0.7243 T" in lines
     assert "Total Bz: -0.2018 T" in lines
+
+
+def test_polarisation_example_finds_the_iron_precession_line() -> None:
+    pytest.importorskip("muesr")
+    pytest.importorskip("mulfc")
+
+    lines = _run_example("polarisation.py")
+
+    assert "|B| at each site: 0.2018 T, 0.2018 T, 2.5765 T" in lines
+    assert "Zero-field P(0): 1.000" in lines
+    # gamma_mu / 2 pi x 0.2018 T = 27.35 MHz, on the spectrum's 0.0625 MHz grid.
+    assert "Spectrum peak: 27.36 MHz, 0.202 T" in lines

@@ -16,7 +16,7 @@ never import higher ones, and nothing outside ``mufinder.app`` imports Qt
 widgets. ``mufinder.app``, the PySide6 user interface, is intentionally not
 documented here.
 
-:doc:`using_mufinder` walks through three scripts that call these packages
+:doc:`using_mufinder` walks through four scripts that call these packages
 directly.
 
 .. toctree::

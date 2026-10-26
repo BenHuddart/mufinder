@@ -1046,8 +1046,9 @@ magnetic-structure builder and multi-q texture dialogs, commensurate local
 fields with optional muon-induced distortion corrections, incommensurate field
 distributions with convergence checks, finite field lists of commensurate
 approximants, dipolar tensors, demagnetizing corrections, and nuclear dipolar
-linewidths. It stops at field-level results: MuFinder does not simulate muon
-spectra or polarisation functions. Distortion corrections are not applied to
+linewidths. The page stops at field-level results; the library computes the
+muon polarisation, its powder averages and its spectrum from them (see
+:doc:`/api/using_mufinder`). Distortion corrections are not applied to
 incommensurate field distributions, commensurate approximants or dipolar
 tensors.
 
