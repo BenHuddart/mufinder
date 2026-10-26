@@ -7517,7 +7517,6 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
-        self._refresh_relaxation_analysis_context()
         self.statusBar().showMessage(
             f"Added {len(selected)} relaxation result(s) to the analysis workspace"
         )

@@ -1056,7 +1056,9 @@ dashboard flush therefore never rebuilds a hidden viewer page.
   the form restore to one request at its end, so the page is rebuilt at most
   once per project change. Within the page, each workspace tab builds its
   ``AtomicStructureViewer`` the first time the tab is current, and a rebuild
-  shuts down the viewers of the tabs it replaces.
+  shuts down the viewers of the tabs it replaces. An edit to one workspace
+  (renaming it, showing shifted positions, clustering it, adding structures)
+  updates that tab in place and keeps its viewer and camera.
 - The Muon Sites summary is refreshed on project and host changes only when it
   is showing; navigation and pin changes refresh it unconditionally.
 - The project-change refresh and the dashboard flush time their stages with

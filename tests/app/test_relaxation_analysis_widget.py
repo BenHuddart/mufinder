@@ -11,7 +11,16 @@ from matplotlib import colors as mcolors
 from matplotlib.collections import PolyCollection
 from matplotlib.patches import Circle, PathPatch
 import numpy as np
-from PySide6.QtWidgets import QCheckBox, QFrame, QPushButton, QSplitter, QTabWidget, QTreeWidget
+import pytest
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QLineEdit,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QTreeWidget,
+)
 
 from mufinder.app import relaxation_analysis_widget as relaxation_analysis_widget_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
@@ -1128,10 +1137,68 @@ def test_relaxation_analysis_rebuild_shuts_down_the_replaced_viewers(qapp, monke
         shut_down: list[object] = []
         monkeypatch.setattr(old_viewer, "shutdown", lambda: shut_down.append(old_viewer))
 
-        widget._rename_workspace(str(workspaces[0]["id"]), "Renamed")
+        widget.set_context(
+            workspaces=workspaces,
+            sources=[],
+            structures=dict(widget._structures_by_id),
+            host_structure=widget._host_structure,
+            comparison_options=[],
+        )
 
         assert shut_down == [old_viewer]
         assert _tab_viewers(widget) == [1, 0, 0]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_rename_relabels_the_tab_without_rebuilding(qapp, monkeypatch) -> None:
+    widget, workspaces = _three_workspace_widget()
+    try:
+        viewer = widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer)
+        monkeypatch.setattr(
+            widget, "_rebuild_tabs", lambda: pytest.fail("rename rebuilt every tab")
+        )
+        emitted: list[list] = []
+        widget.state_changed.connect(emitted.append)
+
+        widget._rename_workspace(str(workspaces[0]["id"]), "Renamed")
+
+        assert widget._workspace_tabs.tabText(0) == "Renamed"
+        assert widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer) is viewer
+        assert emitted[-1][0]["name"] == "Renamed"
+
+        widget._rename_workspace(str(workspaces[1]["id"]), "   ")
+
+        assert widget._workspace_tabs.tabText(1) == "Relaxation analysis"
+        assert widget._workspace_tabs.widget(1).findChild(QLineEdit).text() == (
+            "Relaxation analysis"
+        )
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_show_shifted_updates_the_tab_in_place(qapp, monkeypatch) -> None:
+    widget, workspaces = _three_workspace_widget()
+    try:
+        viewer = widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer)
+        overlays: list[object] = []
+        monkeypatch.setattr(viewer, "set_point_overlays", overlays.append)
+        monkeypatch.setattr(
+            widget, "_rebuild_tabs", lambda: pytest.fail("show shifted rebuilt every tab")
+        )
+
+        widget._set_show_shifted(str(workspaces[0]["id"]), True)
+
+        assert widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer) is viewer
+        assert len(overlays) == 1
+        assert widget._workspaces[0]["show_shifted_positions"] is True
+        # A tab whose viewer is not built yet keeps the edit for when it is.
+        widget._set_show_shifted(str(workspaces[2]["id"]), True)
+        assert _tab_viewers(widget) == [1, 0, 0]
+        widget._workspace_tabs.setCurrentIndex(2)
+        assert _tab_viewers(widget) == [1, 0, 1]
     finally:
         widget.shutdown()
         widget.deleteLater()

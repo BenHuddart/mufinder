@@ -1779,6 +1779,8 @@ class RelaxationAnalysisWidget(QWidget):
         # Clearing and re-adding tabs fires currentChanged for tabs that are
         # only transiently current; silence it so listeners see real switches.
         self._rebuilding_tabs = True
+        # Paint the rebuilt tabs once, not every intermediate state.
+        self.setUpdatesEnabled(False)
         try:
             # QTabWidget.clear() only removes the pages, so the old pages, and
             # the render windows of their viewers, are released explicitly.
@@ -1802,7 +1804,38 @@ class RelaxationAnalysisWidget(QWidget):
                 self.focus_workspace(str(current_id))
         finally:
             self._rebuilding_tabs = False
+            self.setUpdatesEnabled(True)
         self._build_current_viewer()
+
+    def _workspace_page(self, workspace_id: str) -> QWidget | None:
+        for index in range(self._workspace_tabs.count()):
+            page = self._workspace_tabs.widget(index)
+            if page.property("workspace_id") == workspace_id:
+                return page
+        return None
+
+    def _refresh_workspace_tab(self, workspace_id: str) -> None:
+        """Refill one workspace's table and viewer markers in place after an edit to it.
+
+        Rebuilding every tab would recreate each viewer's render window and
+        make the tabs flicker; the edited tab keeps its viewer and camera.
+        """
+
+        page = self._workspace_page(workspace_id)
+        workspace = self._workspace_by_id(workspace_id)
+        if page is None or workspace is None:
+            return
+        table = page.findChild(QTreeWidget)
+        if table is None:
+            return
+        overlays = self._populate_workspace_table(table, workspace)
+        viewer = page.findChild(AtomicStructureViewer)
+        if viewer is not None:
+            viewer.set_point_overlays(overlays)
+            return
+        pending = self._pending_viewers.get(workspace_id)
+        if pending is not None:
+            self._pending_viewers[workspace_id] = (pending[0], overlays)
 
     def _build_current_viewer(self) -> None:
         workspace_id = self.current_workspace_id()
@@ -2184,8 +2217,13 @@ class RelaxationAnalysisWidget(QWidget):
             return
         workspace["name"] = cleaned
         self._emit_state()
-        self._rebuild_tabs()
-        self.focus_workspace(workspace_id)
+        page = self._workspace_page(workspace_id)
+        if page is None:
+            return
+        self._workspace_tabs.setTabText(self._workspace_tabs.indexOf(page), cleaned)
+        name_edit = page.findChild(QLineEdit)
+        if name_edit is not None and name_edit.text() != cleaned:
+            name_edit.setText(cleaned)
 
     def _set_show_shifted(self, workspace_id: str, checked: bool) -> None:
         workspace = self._workspace_by_id(workspace_id)
@@ -2193,8 +2231,7 @@ class RelaxationAnalysisWidget(QWidget):
             return
         workspace["show_shifted_positions"] = bool(checked)
         self._emit_state()
-        self._rebuild_tabs()
-        self.focus_workspace(workspace_id)
+        self._refresh_workspace_tab(workspace_id)
 
     def add_job_ids_to_workspace(self, workspace_id: str, job_ids: Sequence[UUID]) -> None:
         workspace = self._workspace_by_id(workspace_id)
@@ -2208,8 +2245,7 @@ class RelaxationAnalysisWidget(QWidget):
                 seen.add(job_id)
         workspace["job_ids"] = [str(job_id) for job_id in current]
         self._emit_state()
-        self._rebuild_tabs()
-        self.focus_workspace(workspace_id)
+        self._refresh_workspace_tab(workspace_id)
 
     def _open_clustering(self, workspace_id: str) -> None:
         workspace = self._workspace_by_id(workspace_id)
@@ -2238,8 +2274,7 @@ class RelaxationAnalysisWidget(QWidget):
             return
         workspace["clustering"] = dict(clustering)
         self._emit_state()
-        self._rebuild_tabs()
-        self.focus_workspace(workspace_id)
+        self._refresh_workspace_tab(workspace_id)
 
     def _open_displacements(self, workspace_id: str) -> None:
         workspace = self._workspace_by_id(workspace_id)
