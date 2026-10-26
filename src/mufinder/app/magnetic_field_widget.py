@@ -6660,6 +6660,9 @@ class MagneticFieldWidget(QWidget):
         try:
             distorted_structures = [self._distorted_structure_for_site(site)]
             classification = classify_magnetic_model(self._host_structure, self._model)
+            corrected = (
+                " with muon-induced distortion corrections" if site.include_distortion else ""
+            )
             if classification == "commensurate":
                 results = calculate_commensurate_fields(
                     self._host_structure,
@@ -6669,9 +6672,6 @@ class MagneticFieldWidget(QWidget):
                     distorted_structures=distorted_structures,
                 )
                 self._populate_commensurate_results(results, site_source=site.source)
-                corrected = (
-                    " with muon-induced distortion corrections" if site.include_distortion else ""
-                )
                 self._calculation_status.setText(
                     f"Results: calculated {len(results)} commensurate field value(s){corrected}."
                     + self._estimate_status_suffix()
@@ -6695,8 +6695,8 @@ class MagneticFieldWidget(QWidget):
                     self._populate_commensurate_results(results, site_source=site.source)
                     self._calculation_status.setText(
                         f"Results: calculated {len(results)} field value(s) of the commensurate approximant "
-                        f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)."
-                        + self._estimate_status_suffix()
+                        f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)"
+                        f"{corrected}." + self._estimate_status_suffix()
                     )
                 else:
                     results = calculate_incommensurate_field_distributions(
@@ -6707,7 +6707,7 @@ class MagneticFieldWidget(QWidget):
                         distorted_structures=distorted_structures,
                     )
                     self._populate_distribution_results(results, site_source=site.source)
-                    status = f"Results: sampled {len(results)} incommensurate field distribution(s)"
+                    status = f"Results: sampled {len(results)} incommensurate field distribution(s){corrected}"
                     flagged = sum(
                         1
                         for result in results

@@ -1799,6 +1799,43 @@ def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(
     widget.close()
 
 
+def test_magnetic_field_widget_corrects_an_incommensurate_distribution(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    widget = _distortion_widget(document, include_distortion=True)
+    helix = MagneticComponent(
+        component_id="fe",
+        label="Fe",
+        kind="helix",
+        selector=AtomSelector.indices([0]),
+        terms=(
+            FourierTerm(
+                q_coeff=(1.0, 0.0, 0.0),
+                coefficient=ComplexVector(real=(1.0, 0.0, 0.0), imaginary=(0.0, 1.0, 0.0)),
+            ),
+        ),
+    )
+    widget._set_model(
+        MagneticStructureModel(
+            q_basis_rlu=((0.12345, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            components=(helix,),
+        )
+    )
+
+    widget._calculate_fields()
+
+    # The zero lattice field leaves only the moved Fe's dipole change, turning with the helix.
+    change = MU0_OVER_4PI_T_M_PER_A * BOHR_MAGNETON_J_PER_T / 1e-30 * (1.5**-3 - 1.6**-3)
+    assert widget._calculation_status.text().startswith(
+        "Results: sampled 1 incommensurate field distribution(s) with muon-induced distortion corrections"
+    )
+    (payload,) = widget.collect_state()["magnetic_field_results"]["results"]
+    assert change < payload["terms"]["dipolar"]["rms_T"] < 2.0 * change
+    widget.close()
+
+
 def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(
     qapp, tmp_path, monkeypatch
 ) -> None:
