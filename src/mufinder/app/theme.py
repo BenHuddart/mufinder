@@ -781,6 +781,9 @@ def _base_widget_styles(p: MuFinderPalette) -> str:
         background: {p.bg_primary};
         color: {p.text_primary};
     }}
+    QWidget:disabled {{
+        color: {p.text_muted};
+    }}
     QLabel, QCheckBox, QRadioButton {{
         background: transparent;
     }}
@@ -889,6 +892,12 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         border-radius: 6px;
         padding: 4px 8px;
         background: {p.bg_surface};
+    }}
+    /* A disabled input is drawn muted, so a field that is ignored reads as such. */
+    QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QSpinBox:disabled,
+    QDoubleSpinBox:disabled, QComboBox:disabled {{
+        background: {p.bg_surface_alt};
+        color: {p.text_muted};
     }}
     QComboBox {{
         padding-right: 28px;

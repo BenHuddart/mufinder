@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
     QFrame,
     QTableWidget,
@@ -549,3 +549,28 @@ def test_disabled_menu_items_are_muted_and_never_highlighted(palette_factory: st
     assert "background: transparent;" in block
     # Declared after the hover highlight, so it wins for a hovered disabled item.
     assert stylesheet.index("QMenu::item:selected {") < stylesheet.index("QMenu::item:disabled")
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_disabled_inputs_and_labels_are_drawn_muted(qapp, mode: str) -> None:
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QLabel, QLineEdit, QWidget
+
+    theme_module.apply_theme(qapp, mode)
+    try:
+        muted = QColor(theme_module.current_palette().text_muted)
+        surface_alt = QColor(theme_module.current_palette().bg_surface_alt)
+        container = QWidget()
+        label = QLabel("Normal (h k l)", container)
+        edit = QLineEdit("1", container)
+        container.setEnabled(False)
+        for widget in (label, edit):
+            widget.ensurePolished()
+
+        disabled = QPalette.ColorGroup.Disabled
+        assert label.palette().color(disabled, QPalette.ColorRole.WindowText) == muted
+        assert edit.palette().color(disabled, QPalette.ColorRole.Text) == muted
+        assert edit.palette().color(disabled, QPalette.ColorRole.Base) == surface_alt
+        container.deleteLater()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)

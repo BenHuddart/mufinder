@@ -21,9 +21,12 @@ from mufinder.science.kpoint_grids import (
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
+    SampleOrientation,
     demagnetizing_factors_ellipsoid,
     demagnetizing_tensor,
     magnetometric_rectangular_prism_tensor,
+    principal_demagnetizing_tensor,
+    sample_orientation,
 )
 from mufinder.science.dynamics import DynamicPolarisationResult, calculate_dynamic_polarisation
 from mufinder.science.magnetic_fields import (
@@ -171,6 +174,9 @@ __all__ = [
     "demagnetizing_factors_ellipsoid",
     "demagnetizing_tensor",
     "magnetometric_rectangular_prism_tensor",
+    "SampleOrientation",
+    "principal_demagnetizing_tensor",
+    "sample_orientation",
     "CommensurateApproximant",
     "DISTRIBUTION_FIELD_TERMS",
     "DistributionConvergenceCheck",

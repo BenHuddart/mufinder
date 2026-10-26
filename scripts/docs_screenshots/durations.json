@@ -43,6 +43,7 @@
   "fe_tetrahedral_sites": 1.7,
   "fe_equivalent_sites": 1.4,
   "fe_demagnetizing_shapes": 1.4,
+  "fe_oriented_demagnetizing_sample": 1.8,
   "fe_measured_magnetisation": 1.4,
   "fe_select_muon_site": 1.0,
   "fe_magnetic_workspaces": 2.2,

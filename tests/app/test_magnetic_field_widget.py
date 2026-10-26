@@ -54,6 +54,7 @@ from mufinder.services.magnetic_field_results import (
     attach_magnetic_field_results,
     store_magnetic_field_results,
 )
+from mufinder.science.demagnetization import demagnetizing_tensor
 from mufinder.services.project_service import ProjectService
 from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A
 from tests.support.structures import host_structure, relaxed_muon_supercell
@@ -2279,19 +2280,36 @@ def test_magnetic_field_widget_defaults_demag_shape_to_none(qapp, tmp_path) -> N
     restored.close()
 
 
+class _DemagPreview(magnetic_field_widget_module.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.samples = []
+
+    def set_sample(self, sample, lattice_vectors=None):
+        self.samples.append((sample, lattice_vectors))
+
+    def shutdown(self):
+        pass
+
+
+_HEXAGONAL_LATTICE = [[3.0, 0.0, 0.0], [-1.5, 1.5 * np.sqrt(3.0), 0.0], [0.0, 0.0, 5.0]]
+
+
+def _demag_dialog(monkeypatch, sample=None, lattice_vectors=None):
+    monkeypatch.setattr(magnetic_field_widget_module, "_DemagnetizingPyVistaCanvas", _DemagPreview)
+    return magnetic_field_widget_module.DemagnetizingFieldAdvancedDialog(
+        sample or magnetic_field_widget_module.DemagnetizingSample(shape="ellipsoid"),
+        lattice_vectors=lattice_vectors,
+    )
+
+
+def _set_indices(inputs, values) -> None:
+    for edit, value in zip(inputs, values, strict=True):
+        edit.setText(str(value))
+
+
 def test_demagnetizing_advanced_dialog_collects_prism_values(qapp, monkeypatch) -> None:
-    class _Preview(magnetic_field_widget_module.QWidget):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self.samples = []
-
-        def set_sample(self, sample):
-            self.samples.append(sample)
-
-        def shutdown(self):
-            pass
-
-    monkeypatch.setattr(magnetic_field_widget_module, "_DemagnetizingPyVistaCanvas", _Preview)
+    monkeypatch.setattr(magnetic_field_widget_module, "_DemagnetizingPyVistaCanvas", _DemagPreview)
 
     dialog = magnetic_field_widget_module.DemagnetizingFieldAdvancedDialog(
         magnetic_field_widget_module.DemagnetizingSample(shape="ellipsoid")
@@ -2311,6 +2329,233 @@ def test_demagnetizing_advanced_dialog_collects_prism_values(qapp, monkeypatch) 
     assert sample.padding == pytest.approx(3.0)
     assert "N =" in dialog._tensor_label.text()
     dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_orients_sample_by_crystal_directions(
+    qapp, monkeypatch
+) -> None:
+    dialog = _demag_dialog(monkeypatch, lattice_vectors=np.eye(3).tolist())
+    dialog._ellipsoid_c.setValue(3.0)
+    assert dialog.selected_sample().rotation is None
+    assert "Cartesian x, y and z" in dialog._orientation_hint.text()
+    # Aligned ignores the indices, so their rows (labels and fields) are greyed out.
+    assert not any(row.isEnabled() for row in dialog._index_rows)
+    assert not dialog._normal_inputs[0].isEnabled()
+
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    assert all(row.isEnabled() for row in dialog._index_rows)
+    assert dialog._in_plane_inputs[2].isEnabled()
+    _set_indices(dialog._normal_inputs, (1, 1, 0))
+    _set_indices(dialog._in_plane_inputs, (0, 0, 1))
+
+    sample = dialog.selected_sample()
+    assert sample.normal_hkl == (1.0, 1.0, 0.0)
+    assert sample.in_plane_uvw == (0.0, 0.0, 1.0)
+    np.testing.assert_allclose(
+        sample.rotation_matrix()[:, 2], np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0)
+    )
+    assert "normal to (h k l)" in dialog._orientation_hint.text()
+    assert "°" not in dialog._orientation_hint.text()
+    tensor = demagnetizing_tensor(sample)
+    assert f"{tensor[0, 1]:.5f}" in dialog._tensor_label.text()
+    assert tensor[0, 1] != pytest.approx(0.0)
+    assert dialog._use_button.isEnabled()
+    preview_sample, preview_lattice = dialog._preview.samples[-1]
+    assert preview_sample == sample
+    assert preview_lattice == np.eye(3).tolist()
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_reports_angle_of_non_orthogonal_directions(
+    qapp, monkeypatch
+) -> None:
+    dialog = _demag_dialog(monkeypatch, lattice_vectors=_HEXAGONAL_LATTICE)
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    _set_indices(dialog._normal_inputs, (1, 0, 0))
+    _set_indices(dialog._in_plane_inputs, (1, 0, 0))
+
+    assert "30.00°" in dialog._orientation_hint.text()
+    assert dialog._use_button.isEnabled()
+    assert dialog.selected_sample().rotation is not None
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("normal", "in_plane", "message"),
+    [
+        ((1, 1, 0), (2, 2, 0), "parallel"),
+        ((0, 0, 0), (1, 0, 0), "non-zero"),
+        ((0, "", 1), (1, 0, 0), "three numbers"),
+    ],
+    ids=["parallel", "zero-normal", "blank-index"],
+)
+def test_demagnetizing_advanced_dialog_blocks_unusable_directions(
+    qapp, monkeypatch, normal, in_plane, message
+) -> None:
+    dialog = _demag_dialog(monkeypatch, lattice_vectors=np.eye(3).tolist())
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    _set_indices(dialog._normal_inputs, normal)
+    _set_indices(dialog._in_plane_inputs, in_plane)
+
+    assert message in dialog._orientation_hint.text()
+    assert "Tensor unavailable" in dialog._tensor_label.text()
+    assert not dialog._use_button.isEnabled()
+
+    _set_indices(dialog._normal_inputs, (0, 0, 1))
+    _set_indices(dialog._in_plane_inputs, (1, 0, 0))
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_without_host_offers_only_aligned(qapp, monkeypatch) -> None:
+    dialog = _demag_dialog(monkeypatch)
+
+    assert not dialog._orientation_mode.isEnabled()
+    assert dialog._orientation_mode.currentData() == "aligned"
+    assert "needs a host structure" in dialog._orientation_hint.text()
+    assert not dialog.selected_sample().is_oriented
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_without_host_keeps_saved_directions(
+    qapp, monkeypatch
+) -> None:
+    seed = magnetic_field_widget_module.DemagnetizingSample.oriented(
+        np.eye(3), (1.0, 1.0, 0.0), (0.0, 0.0, 1.0), shape="ellipsoid"
+    )
+    dialog = _demag_dialog(monkeypatch, sample=seed)
+    dialog._ellipsoid_c.setValue(3.0)
+
+    assert not dialog._orientation_mode.isEnabled()
+    assert dialog._orientation_mode.currentData() == "directions"
+    assert not any(row.isEnabled() for row in dialog._index_rows)
+    assert "kept" in dialog._orientation_hint.text()
+    sample = dialog.selected_sample()
+    assert sample.semi_axes == (1.0, 1.0, 3.0)
+    assert (sample.rotation, sample.normal_hkl, sample.in_plane_uvw) == (
+        seed.rotation,
+        seed.normal_hkl,
+        seed.in_plane_uvw,
+    )
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_keeps_a_rotation_saved_without_directions(
+    qapp, monkeypatch
+) -> None:
+    rotation = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+    seed = magnetic_field_widget_module.DemagnetizingSample(
+        shape="ellipsoid", semi_axes=(1.0, 2.0, 3.0), rotation=rotation
+    )
+    dialog = _demag_dialog(monkeypatch, sample=seed, lattice_vectors=np.eye(3).tolist())
+
+    assert dialog._orientation_mode.currentData() == "saved"
+    assert "saved without crystal directions" in dialog._orientation_hint.text()
+    assert not any(row.isEnabled() for row in dialog._index_rows)
+    assert dialog.selected_sample() == seed
+    expected = demagnetizing_tensor(seed)
+    assert expected[0, 0] != pytest.approx(expected[1, 1])
+    assert f"[[{expected[0, 0]:.5f}, {expected[0, 1]:.5f}" in dialog._tensor_label.text()
+
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("aligned"))
+    assert dialog.selected_sample().rotation is None
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_reuses_principal_tensor_while_orienting(
+    qapp, monkeypatch
+) -> None:
+    calls = []
+    original = magnetic_field_widget_module.principal_demagnetizing_tensor
+
+    def _counting(sample):
+        calls.append(sample)
+        return original(sample)
+
+    monkeypatch.setattr(magnetic_field_widget_module, "principal_demagnetizing_tensor", _counting)
+    dialog = _demag_dialog(monkeypatch, lattice_vectors=np.eye(3).tolist())
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    _set_indices(dialog._normal_inputs, (1, 1, 0))
+    _set_indices(dialog._in_plane_inputs, (0, 0, 1))
+
+    assert len(calls) == 1
+    dialog._ellipsoid_c.setValue(2.0)
+    assert len(calls) == 2
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_restores_saved_directions(qapp, monkeypatch) -> None:
+    seed = magnetic_field_widget_module.DemagnetizingSample.oriented(
+        _HEXAGONAL_LATTICE, (0.0, 0.0, 1.0), (1.0, 1.0, 0.0), shape="rectangular_prism"
+    )
+    dialog = _demag_dialog(monkeypatch, sample=seed, lattice_vectors=_HEXAGONAL_LATTICE)
+
+    assert dialog._orientation_mode.currentData() == "directions"
+    assert [edit.text() for edit in dialog._in_plane_inputs] == ["1", "1", "0"]
+    assert dialog.selected_sample() == seed
+    dialog.close()
+
+
+def test_demagnetizing_pyvista_preview_rotates_shape_and_follows_crystal_axes(
+    qapp, monkeypatch
+) -> None:
+    class _FakeMesh:
+        def __init__(self, points=None):
+            self.points = points
+
+        def transform(self, matrix, inplace=False):
+            return ("transformed", np.asarray(matrix))
+
+    class _FakePv:
+        @staticmethod
+        def Cube(*, bounds):
+            return _FakeMesh()
+
+        @staticmethod
+        def Arrow(**kwargs):
+            return ("arrow", kwargs)
+
+        @staticmethod
+        def PolyData(points, faces):
+            return _FakeMesh(points)
+
+    class _FakePlotter(magnetic_field_widget_module.QWidget):
+        def __init__(self, parent=None, **kwargs):
+            super().__init__(parent)
+            self.meshes = []
+
+        def add_mesh(self, mesh, **kwargs):
+            self.meshes.append(mesh)
+
+        def set_background(self, *args, **kwargs):
+            pass
+
+        enable_parallel_projection = clear = add_point_labels = set_background
+        reset_camera = render = set_background
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "_pyvista_modules", lambda: (_FakePv, _FakePlotter)
+    )
+    canvas = magnetic_field_widget_module._DemagnetizingPyVistaCanvas()
+    ellipsoid = magnetic_field_widget_module.DemagnetizingSample.oriented(
+        np.eye(3), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), shape="ellipsoid", semi_axes=(1.0, 1.0, 3.0)
+    )
+
+    canvas.set_sample(ellipsoid, _HEXAGONAL_LATTICE)
+
+    points = canvas._plotter.meshes[0].points
+    # The long sample c axis now lies along Cartesian x.
+    assert np.max(np.abs(points[:, 0])) == pytest.approx(3.0)
+    assert np.max(np.abs(points[:, 2])) <= 1.0 + 1e-12
+    b_arrow = canvas._plotter.meshes[2][1]
+    np.testing.assert_allclose(b_arrow["direction"], (-0.5, np.sqrt(3.0) / 2.0, 0.0))
+
+    prism = replace(ellipsoid, shape="rectangular_prism")
+    canvas.set_sample(prism)
+    transformed = canvas._plotter.meshes[-5]
+    np.testing.assert_allclose(transformed[1][:3, :3], prism.rotation_matrix())
+    canvas.close()
 
 
 def test_demagnetizing_pyvista_axis_triad_uses_active_theme(qapp, monkeypatch) -> None:
@@ -2408,8 +2653,9 @@ def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monke
     service.add_structure(document, _host_structure())
 
     class _Dialog:
-        def __init__(self, sample, parent=None):
+        def __init__(self, sample, parent=None, *, lattice_vectors=None):
             assert sample.shape == "ellipsoid"
+            assert lattice_vectors == _host_structure().lattice_vectors
 
         def exec(self):
             return QDialog.DialogCode.Accepted
@@ -2465,6 +2711,61 @@ def test_magnetic_field_widget_restores_advanced_demag_state(qapp, tmp_path) -> 
     assert options.demag_sample is not None
     assert options.demag_sample.prism_lengths == pytest.approx((2.0, 4.0, 6.0))
     assert "Rectangular prism" in widget._advanced_demag_summary.text()
+    widget.close()
+
+
+def test_magnetic_field_widget_persists_and_resolves_demag_orientation(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(
+        tmp_path / "advanced-demag-orientation.mufinder", "Advanced Demag Orientation"
+    )
+    service.add_structure(document, _host_structure())
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state(
+        {
+            "demag_shape": "ellipsoid",
+            "demag_sample": {
+                "shape": "ellipsoid",
+                "semi_axes": [1.0, 1.0, 3.0],
+                "normal_hkl": [1.0, 1.0, 0.0],
+                "in_plane_uvw": [0.0, 0.0, 1.0],
+            },
+        }
+    )
+
+    options = widget._field_options()
+
+    assert options.demag_sample is not None
+    np.testing.assert_allclose(
+        options.demag_sample.rotation_matrix()[:, 2], np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0)
+    )
+    assert "normal (1 1 0), in-plane [0 0 1]" in widget._advanced_demag_summary.text()
+
+    widget.set_form_state(
+        {
+            "demag_shape": "ellipsoid",
+            "demag_sample": {
+                "shape": "ellipsoid",
+                "rotation": [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            },
+        }
+    )
+    assert widget._advanced_demag_summary.text().endswith("; rotated sample axes")
+    widget.set_form_state(
+        {
+            "demag_shape": "ellipsoid",
+            "demag_sample": {
+                "shape": "ellipsoid",
+                "normal_hkl": [1.0, 1.0, 0.0],
+                "in_plane_uvw": [0.0, 0.0, 1.0],
+            },
+        }
+    )
+    state = widget.collect_state()
+    assert state["demag_sample"]["normal_hkl"] == [1.0, 1.0, 0.0]
+    assert state["demag_sample"]["in_plane_uvw"] == [0.0, 0.0, 1.0]
     widget.close()
 
 
