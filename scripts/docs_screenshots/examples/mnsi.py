@@ -5,9 +5,10 @@ Mn moments rotate in the plane perpendicular to a propagation vector q along
 [111], left-handed, with a period of about 18 nm. The positive muon stops at
 the 4a site with x = 0.532 (Amato et al. 2014). The scenes build that helix
 with the structure builder's preset helper, sample the field distribution at
-the four 4a positions of one k domain with the real ``muesr`` calculation, and
-list the finite fields of the helix's commensurate approximant. The project is
-a host structure and a Magnetic Fields form: no CASTEP job is involved.
+the four 4a positions of one k domain with the real ``muesr`` calculation,
+break site II's distribution into its field terms, and list the finite fields
+of the helix's commensurate approximant. The project is a host structure and a
+Magnetic Fields form: no CASTEP job is involved.
 ``docs/user_guide/examples/mnsi.rst`` tells the story these scenes illustrate.
 
 The helix and the contact coupling are the plain model of the literature, not
@@ -286,7 +287,7 @@ SCENES: dict[str, Scene] = {
     "mnsi_magnetic_fields_page": Scene(
         helix_project,
         "magnetic_fields",
-        Page("_magnetic_field_view", (1100, 920)),
+        Page("_magnetic_field_view", (1100, 1140)),
         setup=list_and_select_continuum,
     ),
     "mnsi_calculation_settings": Scene(
@@ -300,6 +301,18 @@ SCENES: dict[str, Scene] = {
     ),
     "mnsi_field_distribution": Scene(
         helix_project, "magnetic_fields", Dialog(open_distribution_plot)
+    ),
+    "mnsi_distribution_breakdown": Scene(
+        mnsi_project(
+            "MnSi site II",
+            {
+                "include_equivalent_sites": False,
+                "selected_muon_site": custom_site(mnsi_host(), SITE_II),
+            },
+        ),
+        "magnetic_fields",
+        Page("_magnetic_field_view", (1100, 1100)),
+        setup=lambda window: calculate_field(window._magnetic_field_view),
     ),
     "mnsi_approximant_fields": Scene(
         mnsi_project(

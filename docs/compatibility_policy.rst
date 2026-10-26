@@ -413,6 +413,22 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that copies the selected site's source into each
        stored ``magnetic_field`` record.
+   * - ``magnetic_field`` distribution entries without ``terms``
+     - ``mufinder.science.magnetic_fields``
+       (``MagneticFieldDistributionResult.from_json``,
+       ``regenerate_phase_samples``), read by the Magnetic Fields results
+       table
+     - A distribution entry stores ``terms``, ``total_rms_T``, ``applied_T``
+       and ``demag_T``, and its ``calculation_parameters`` hold
+       ``phase_sampling_seed`` and ``component_phase_coefficients``. An entry
+       saved before these keys existed loads with empty ``terms`` and ``None``
+       for the rest; selecting its row shows its convergence checks and asks
+       for a recalculation instead of a breakdown, and
+       ``regenerate_phase_samples`` refuses it. The next calculation writes
+       the keys. Nothing is recomputed on load.
+     - Read-side repair. Current behaviour for any entry without the keys;
+       keep until a saved-project schema version bump includes a migration
+       that drops such entries or the page stops reading them.
    * - ``w1_entanglement_witness`` result payloads without ``w1_definition``
      - ``mufinder.services.quantum_results`` (``w1_from_result_data``), read
        by the Quantum Corrections results table

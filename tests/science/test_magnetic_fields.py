@@ -10,6 +10,7 @@ and direct lattice sums, and skips when muesr or muLFC cannot be imported.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 import importlib
 import json
@@ -46,6 +47,7 @@ from mufinder.science.magnetic_fields import (
     find_commensurate_approximant,
     find_equivalent_muon_sites,
     is_commensurate_propagation_vector,
+    regenerate_phase_samples,
 )
 from mufinder.science.magnetic_structure import (
     AtomSelector,
@@ -1467,6 +1469,254 @@ def test_incommensurate_distribution_monte_carlo_sampling_is_seeded(
     np.testing.assert_array_equal(first[0].fields_T, second[0].fields_T)
 
 
+# calculate_incommensurate_field_distributions: term breakdown and phase sampling
+
+
+def _helix_term_locfield(_sample, mode, *_args, **kwargs):
+    """A fake ``locfield`` whose dipolar term rotates in the ab plane and whose
+    Lorentz and contact terms are fixed along c."""
+
+    assert mode == "i"
+    nangles = int(kwargs["nangles"])
+    angles = 2.0 * np.pi * np.arange(nangles) / nangles
+    dipolar = 0.2 * np.column_stack([np.cos(angles), np.sin(angles), np.zeros(nangles)])
+    lorentz = np.tile([0.0, 0.0, 0.01], (nangles, 1))
+    contact = np.tile([0.0, 0.0, -0.03], (nangles, 1))
+    return [_Field(Dipolar=dipolar, Lorentz=lorentz, Contact=contact)]
+
+
+def _helix_term_distribution(monkeypatch, **overrides) -> MagneticFieldDistributionResult:
+    _install_fake_muesr(monkeypatch, locfield=_helix_term_locfield)
+    options = {
+        "supercell": (1, 1, 1),
+        "nangles": 8,
+        "phase_sampling": "grid",
+        "demag_shape": "infinite_plate",
+        "plate_normal_axis": "a",
+        "measured_magnetization": _MEASURED_MOMENT,
+        "applied_field": (0.0, 0.0, 0.05),
+        "histogram_bins": 4,
+    }
+    options.update(overrides)
+    return calculate_incommensurate_field_distributions(
+        _structure(), _circular_helix_model(), [_SITE_A], options=MagneticFieldOptions(**options)
+    )[0]
+
+
+def test_incommensurate_distribution_keeps_the_mean_and_rms_of_each_term(monkeypatch) -> None:
+    result = _helix_term_distribution(monkeypatch)
+
+    assert tuple(result.terms) == ("dipolar", "lorentz", "contact", "demag", "applied")
+    # The rotating dipolar term averages to zero while every sample has 0.2 T of it.
+    assert result.terms["dipolar"].mean_T == pytest.approx((0.0, 0.0, 0.0), abs=1e-12)
+    assert result.terms["dipolar"].rms_T == pytest.approx(0.2)
+    assert result.terms["lorentz"].mean_T == pytest.approx((0.0, 0.0, 0.01))
+    assert result.terms["lorentz"].rms_T == pytest.approx(0.01)
+    assert result.terms["contact"].mean_T == pytest.approx((0.0, 0.0, -0.03))
+    demag = np.array([-_bulk_field(_MEASURED_MOMENT)[0], 0.0, 0.0])
+    np.testing.assert_allclose(result.demag_T, demag, atol=1e-15)
+    assert result.terms["demag"].rms_T == pytest.approx(float(np.linalg.norm(demag)))
+    assert result.applied_T == pytest.approx((0.0, 0.0, 0.05))
+    assert result.terms["applied"].rms_T == pytest.approx(0.05)
+    summed = np.sum([term.mean_T for term in result.terms.values()], axis=0)
+    np.testing.assert_allclose(summed, np.mean(result.fields_T, axis=0), atol=1e-15)
+    assert result.total_rms_T == pytest.approx(
+        float(np.sqrt(np.mean(np.sum(result.fields_T**2, axis=1))))
+    )
+
+
+def test_incommensurate_distribution_without_lorentz_keeps_a_zero_lorentz_term(
+    monkeypatch,
+) -> None:
+    result = _helix_term_distribution(monkeypatch, include_lorentz=False)
+
+    assert result.terms["lorentz"].mean_T == (0.0, 0.0, 0.0)
+    assert result.terms["lorentz"].rms_T == 0.0
+    summed = np.sum([term.mean_T for term in result.terms.values()], axis=0)
+    np.testing.assert_allclose(summed, np.mean(result.fields_T, axis=0), atol=1e-15)
+
+
+def test_distribution_term_breakdown_round_trips_through_json(monkeypatch) -> None:
+    result = _helix_term_distribution(monkeypatch)
+
+    payload = json.loads(json.dumps(result.to_json()))
+    assert payload["terms"]["dipolar"]["rms_T"] == pytest.approx(0.2)
+    assert payload["applied_T"] == pytest.approx([0.0, 0.0, 0.05])
+    restored = MagneticFieldDistributionResult.from_json(payload)
+
+    np.testing.assert_array_equal(restored.fields_T, result.fields_T)
+    np.testing.assert_array_equal(restored.histogram_counts, result.histogram_counts)
+    assert restored.terms == result.terms
+    assert restored.total_rms_T == result.total_rms_T
+    assert restored.applied_T == result.applied_T
+    assert restored.demag_T == result.demag_T
+    assert restored.convergence == result.convergence
+    assert restored.calculation_parameters == payload["calculation_parameters"]
+    assert restored.to_json() == payload
+
+
+def test_distribution_saved_without_a_breakdown_loads_with_none() -> None:
+    payload = {
+        "site_label": "A",
+        "muon_position": [0.25, 0.25, 0.25],
+        "fields_T": [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+        "histogram_centres_T": [1.0],
+        "histogram_counts": [2.0],
+        "mean_T": [0.0, 0.5, 0.5],
+        "std_T": [0.0, 0.5, 0.5],
+        "calculation_parameters": {"phase_sampling": "grid"},
+        "convergence": [],
+    }
+
+    restored = MagneticFieldDistributionResult.from_json(payload)
+
+    assert restored.terms == {}
+    assert restored.total_rms_T is None
+    assert restored.applied_T is None
+    assert restored.demag_T is None
+    saved = restored.to_json()
+    assert "terms" not in saved
+    assert "applied_T" not in saved
+    with pytest.raises(MagneticFieldError, match="recalculate"):
+        regenerate_phase_samples(restored)
+
+
+def test_distribution_from_json_rejects_fields_that_are_not_vectors() -> None:
+    with pytest.raises(ValueError, match="fields_T must have shape"):
+        MagneticFieldDistributionResult.from_json(
+            {"site_label": "A", "fields_T": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]}
+        )
+
+
+def test_distribution_from_json_drops_a_malformed_breakdown_whole(monkeypatch) -> None:
+    payload = json.loads(json.dumps(_helix_term_distribution(monkeypatch).to_json()))
+    del payload["terms"]["dipolar"]["rms_T"]
+
+    restored = MagneticFieldDistributionResult.from_json(payload)
+
+    assert restored.terms == {}
+    np.testing.assert_array_equal(restored.fields_T, np.asarray(payload["fields_T"]))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"phase_sampling_seed": None},
+        {"phase_sample_count": None},
+        {"component_phase_coefficients": [[1.0, 0.0, 5.0]]},
+    ],
+)
+def test_regenerate_phase_samples_reports_malformed_parameters(
+    monkeypatch, change: dict[str, object]
+) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=_LOOKUP))
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _two_q_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=7,
+            phase_sampling="montecarlo",
+            histogram_bins=4,
+        ),
+    )
+    broken = replace(result, calculation_parameters={**result.calculation_parameters, **change})
+
+    with pytest.raises(MagneticFieldError, match="phase sampling is malformed"):
+        regenerate_phase_samples(broken)
+
+
+def _capture_phase_samples(monkeypatch) -> list[np.ndarray]:
+    captured: list[np.ndarray] = []
+    build = module._build_phase_samples_turns
+
+    def _build(**kwargs):
+        phases = build(**kwargs)
+        captured.append(phases)
+        return phases
+
+    monkeypatch.setattr(module, "_build_phase_samples_turns", _build)
+    return captured
+
+
+@pytest.mark.parametrize(
+    ("sampling", "sample_count", "seed"),
+    [("grid", 9, None), ("montecarlo", 7, 123), ("montecarlo", 7, None)],
+)
+def test_regenerate_phase_samples_reproduces_the_sampling_bit_for_bit(
+    monkeypatch, sampling: str, sample_count: int, seed: int | None
+) -> None:
+    captured = _capture_phase_samples(monkeypatch)
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=_LOOKUP))
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _two_q_helix_model(),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1),
+            nangles=4,
+            phase_sample_count=sample_count,
+            phase_sampling=sampling,
+            random_seed=seed,
+            histogram_bins=4,
+        ),
+    )
+    saved = MagneticFieldDistributionResult.from_json(json.loads(json.dumps(result.to_json())))
+
+    regenerated = regenerate_phase_samples(saved)
+
+    np.testing.assert_array_equal(regenerated.phases_turns, captured[0])
+    assert regenerated.phases_turns.shape == (sample_count, 2)
+    np.testing.assert_allclose(regenerated.component_phase_coefficients, np.eye(2), atol=1e-12)
+    assert result.calculation_parameters["random_seed"] == seed
+    if sampling == "grid":
+        assert result.calculation_parameters["phase_sampling_seed"] is None
+    else:
+        assert isinstance(result.calculation_parameters["phase_sampling_seed"], int)
+
+
+def test_unseeded_monte_carlo_records_the_seed_that_reproduces_it(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=_LOOKUP))
+    options = MagneticFieldOptions(
+        supercell=(1, 1, 1),
+        nangles=4,
+        phase_sample_count=7,
+        phase_sampling="montecarlo",
+        histogram_bins=4,
+    )
+
+    (first,) = calculate_incommensurate_field_distributions(
+        _structure(), _two_q_helix_model(), [_SITE_A], options=options
+    )
+    seed = first.calculation_parameters["phase_sampling_seed"]
+    (second,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _two_q_helix_model(),
+        [_SITE_A],
+        options=replace(options, random_seed=seed),
+    )
+
+    assert 0 <= seed < 2**63
+    np.testing.assert_array_equal(first.fields_T, second.fields_T)
+
+
+def test_regenerate_phase_samples_of_a_single_phase_is_one_empty_row(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0.0, 0.0, 2.0)))
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _model([0.0, 0.0, 0.5]),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nangles=4, histogram_bins=4),
+    )
+
+    regenerated = regenerate_phase_samples(result)
+
+    assert regenerated.phases_turns.shape == (1, 0)
+    assert regenerated.component_phase_coefficients.shape == (1, 0)
+
+
 def test_auto_two_q_sampling_is_bounded_by_phase_sample_count() -> None:
     phases = module._build_phase_samples_turns(
         n_dim=2,
@@ -2601,6 +2851,22 @@ def test_worked_example_mnsi_distribution_edges_match_the_amato_prediction(real_
     # The singleton lies below the continuum's lower edge, as measured (91 mT and 96 mT).
     assert site_one.magnitudes_T.max() < others[0].magnitudes_T.min()
     assert all(check.converged for check in site_one.convergence)
+
+
+def test_worked_example_mnsi_site_two_terms_average_to_zero_but_not_their_size(
+    real_muesr,
+) -> None:
+    (site_two,) = calculate_incommensurate_field_distributions(
+        _mnsi(), _mnsi_helix(), [_MNSI_SITE_II], options=_mnsi_options(find_equivalent_sites=False)
+    )
+
+    # Every term of the helix averages to zero over phase; its RMS keeps its size.
+    for name in ("dipolar", "lorentz", "contact"):
+        assert np.linalg.norm(site_two.terms[name].mean_T) < 1e-9
+    assert site_two.terms["dipolar"].rms_T == pytest.approx(0.0810, abs=5e-4)
+    assert site_two.terms["contact"].rms_T == pytest.approx(0.1944, abs=5e-4)
+    assert site_two.terms["lorentz"].rms_T == pytest.approx(0.00036, abs=5e-5)
+    assert site_two.total_rms_T == pytest.approx(0.1595, abs=5e-4)
 
 
 def test_worked_example_mnsi_contact_term_is_applied_to_the_sampled_distribution(

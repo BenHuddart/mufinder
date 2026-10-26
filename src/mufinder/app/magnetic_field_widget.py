@@ -96,6 +96,7 @@ from mufinder.science.magnetic_fields import (
     CONTACT_COUPLING_UNIT_OPTIONS,
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     MagneticFieldDependencyError,
+    MagneticFieldDistributionResult,
     MagneticFieldError,
     MagneticFieldOptions,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -5841,6 +5842,13 @@ class MagneticFieldWidget(QWidget):
 
     _COMPONENT_SUMMARY_HEADERS = ("Component", "Type", "Apply to", "q", "Moment")
     _BREAKDOWN_HEADERS = ("Term", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)")
+    _DISTRIBUTION_BREAKDOWN_HEADERS = (
+        "Term",
+        "Mean Bx (T)",
+        "Mean By (T)",
+        "Mean Bz (T)",
+        "RMS |B| (T)",
+    )
     # Summary tables grow to this many rows, then scroll, so long models cannot push the controls off the page.
     _SUMMARY_MAX_VISIBLE_ROWS = 8
     # Commensurate result payload keys, in the order the breakdown lists them.
@@ -5851,6 +5859,14 @@ class MagneticFieldWidget(QWidget):
         ("Demagnetizing", "demag_T"),
         ("Distortion correction", "distortion_T"),
         ("Applied", "applied_T"),
+    )
+    # Distribution payload ``terms`` keys, in the order the breakdown lists them.
+    _DISTRIBUTION_BREAKDOWN_TERMS = (
+        ("Dipolar", "dipolar"),
+        ("Lorentz", "lorentz"),
+        ("Contact", "contact"),
+        ("Demagnetizing", "demag"),
+        ("Applied", "applied"),
     )
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -7192,10 +7208,15 @@ class MagneticFieldWidget(QWidget):
         self._refresh_field_breakdown()
 
     def _refresh_field_breakdown(self) -> None:
-        """List the field terms that sum to the selected commensurate result row."""
+        """List the field terms that sum to the selected result row.
+
+        A commensurate row lists each term's vector; a distribution row lists
+        each term's mean vector and RMS magnitude over the phase samples.
+        """
 
         rows: list[tuple[str, ...]] = []
         hint = ""
+        headers = self._BREAKDOWN_HEADERS
         selected_rows = sorted({item.row() for item in self._result_table.selectedItems()})
         state = self._field_results_state
         results = state.get("results") if isinstance(state, Mapping) else None
@@ -7210,14 +7231,25 @@ class MagneticFieldWidget(QWidget):
                 else ""
             )
         elif state.get("kind") != "commensurate":
-            hint = (
-                "Incommensurate distributions are sampled as a combined field; "
-                "the term breakdown is available for commensurate results."
-            )
-            if selected_rows[0] < len(results) and isinstance(results[selected_rows[0]], Mapping):
-                checks = self._convergence_lines(results[selected_rows[0]].get("convergence"))
+            headers = self._DISTRIBUTION_BREAKDOWN_HEADERS
+            if selected_rows[0] >= len(results) or not isinstance(
+                results[selected_rows[0]], Mapping
+            ):
+                hint = "Select a result row to see its field terms."
+            else:
+                payload = results[selected_rows[0]]
+                rows = self._distribution_breakdown_rows(payload)
+                lines = []
+                checks = self._convergence_lines(payload.get("convergence"))
                 if checks:
-                    hint = "\n".join(["Convergence checks:", *checks, hint])
+                    lines = ["Convergence checks:", *checks]
+                if not rows:
+                    lines.append(
+                        "This saved distribution has no term breakdown; recalculate to see it."
+                    )
+                elif len(selected_rows) > 1:
+                    lines.append(f"Showing {payload.get('site_label', 'the first selected site')}.")
+                hint = "\n".join(lines)
         elif selected_rows[0] >= len(results) or not isinstance(results[selected_rows[0]], Mapping):
             hint = "Select a result row to see its field terms."
         else:
@@ -7245,11 +7277,39 @@ class MagneticFieldWidget(QWidget):
                 )
                 if len(selected_rows) > 1:
                     hint = f"Showing {payload.get('site_label', 'the first selected site')}."
+        self._breakdown_table.setHorizontalHeaderLabels(list(headers))
         self._set_summary_rows(self._breakdown_table, rows)
         self._breakdown_label.setVisible(bool(rows))
         self._breakdown_table.setVisible(bool(rows))
         self._breakdown_hint.setText(hint)
         self._breakdown_hint.setVisible(bool(hint))
+
+    @classmethod
+    def _distribution_breakdown_rows(cls, payload: Mapping[str, object]) -> list[tuple[str, ...]]:
+        """Return the mean and RMS rows of a distribution payload, or none for an old record."""
+
+        terms = payload.get("terms")
+        if not isinstance(terms, Mapping):
+            return []
+        entries = [(label, terms.get(key)) for label, key in cls._DISTRIBUTION_BREAKDOWN_TERMS]
+        entries.append(
+            ("Total", {"mean_T": payload.get("mean_T"), "rms_T": payload.get("total_rms_T")})
+        )
+        rows: list[tuple[str, ...]] = []
+        for label, term in entries:
+            if not isinstance(term, Mapping):
+                return []
+            try:
+                mean = np.asarray(term.get("mean_T"), dtype=float)
+                rms = float(term.get("rms_T"))
+            except (TypeError, ValueError):
+                return []
+            if mean.shape != (3,):
+                return []
+            rows.append(
+                (label, *format_vector_components(mean, scale=rms), format_table_number(rms))
+            )
+        return rows
 
     @staticmethod
     def _convergence_lines(raw_checks: object) -> list[str]:
@@ -7340,7 +7400,9 @@ class MagneticFieldWidget(QWidget):
                 + self._estimate_status_suffix()
             )
         elif kind == "distribution":
-            self._distribution_results = result_payloads
+            self._distribution_results = [
+                self._distribution_result_from_payload(result) for result in result_payloads
+            ]
             for index, result in enumerate(result_payloads):
                 fields = np.asarray(result.get("fields_T", []), dtype=float)
                 if fields.ndim == 2 and fields.shape[1] == 3 and fields.size:
@@ -7363,6 +7425,19 @@ class MagneticFieldWidget(QWidget):
                 + self._estimate_status_suffix()
             )
         self._sync_distribution_plot_button()
+
+    @staticmethod
+    def _distribution_result_from_payload(payload: dict[str, object]) -> object:
+        """Return the saved distribution as a result object, or the payload when it is malformed.
+
+        The distribution plot reads result attributes, so a restored row must
+        hand it the same kind of object a fresh calculation does.
+        """
+
+        try:
+            return MagneticFieldDistributionResult.from_json(payload)
+        except (TypeError, ValueError, KeyError):
+            return payload
 
     def _results_are_estimates(self) -> bool:
         """Return whether the shown field results were computed at an unrelaxed UEP site."""

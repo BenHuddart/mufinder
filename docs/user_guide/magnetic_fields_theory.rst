@@ -155,9 +155,9 @@ The user-facing sampling controls are:
 ``Monte Carlo``
    Draws random points in the active phase space and uses ``Distribution
    samples`` as the total number of phase samples. This keeps large phase spaces
-   bounded, but the resulting histogram has statistical noise. MuFinder also
-   carries an internal random-seed option for reproducible programmatic
-   calculations.
+   bounded, but the resulting histogram has statistical noise. The seed of
+   the random draw is recorded with the result: it is the ``random_seed``
+   option when one is given, and a freshly drawn seed otherwise.
 
 ``Auto``
    Chooses grid sampling for one or two active phase dimensions when the
@@ -169,7 +169,13 @@ The user-facing sampling controls are:
 The calculation parameters saved with an incommensurate result include the
 chosen ``phase_sampling`` mode, the ``resolved_phase_sampling`` it ran as
 (``grid`` or ``montecarlo``), the active ``independent_q_indices``, the
-``phase_sample_count`` actually used, and the histogram settings.
+``phase_basis_rlu`` they span, the ``phase_sample_count`` actually used, the
+``phase_sampling_seed`` of a Monte Carlo run (``None`` for a grid), the
+``component_phase_coefficients`` of each lookup table in that basis, and the
+histogram settings. The phase samples themselves are not saved: they follow
+from these parameters, and
+:func:`~mufinder.science.magnetic_fields.regenerate_phase_samples` rebuilds
+them bit for bit, with the coefficients, without a new lattice sum.
 
 .. _magnetic-fields-convergence-checks:
 
@@ -272,9 +278,19 @@ that sum to its field: ``Dipolar``, ``Lorentz``, ``Contact``,
 by their ``Total``. A newly calculated or restored commensurate result selects
 its first row. With several rows selected, the first selected row is shown. A
 saved result that stores only its total asks for a recalculation instead.
-Incommensurate distributions are sampled as one combined field, so they show
-their convergence checks (see `Convergence Checks`_) and a note instead of a
-breakdown.
+
+Selecting a distribution row lists the same terms without the distortion
+correction, under the headings ``Mean Bx (T)``, ``Mean By (T)``, ``Mean Bz (T)``
+and ``RMS |B| (T)``: the mean vector of each term over the phase samples and
+its root-mean-square magnitude :math:`\sqrt{\langle |\mathbf{B}_\text{term}|^2
+\rangle}`. The means sum to the ``Total`` mean, and the ``Total`` RMS is that
+of ``|B|``. Both columns are needed: over the phases of a helix the dipolar,
+Lorentz and contact terms each average to nearly zero while every sample
+carries a large field, and only the RMS shows its size. The demagnetizing and
+applied terms are the same at every phase, so their mean is the vector and
+their RMS its length. The selected row's convergence checks (see `Convergence
+Checks`_) follow the table. A distribution saved without its terms shows its
+checks and asks for a recalculation instead.
 
 The results table and the term breakdown show fields to six significant
 figures. A component no larger than 10\ :sup:`-12` T, or than 10\ :sup:`-9` of

@@ -109,11 +109,15 @@ and lists one row per site, showing the mean ``|B|`` of the distribution.
 .. figure:: ../../_generated/screenshots/mnsi_magnetic_fields_page.webp
    :alt: The Magnetic Fields page for the MnSi helix: four distribution rows,
          site 1 equiv 1 with a mean of 0.0879129 T and the other three with
-         0.154303 T, and the three convergence checks of the selected row.
+         0.154303 T, and the field terms and three convergence checks of the
+         selected row.
 
    The four 4a sites of one magnetic domain, computed by MuFinder from the model
    above. Site I has a mean field magnitude of 0.0879 T. The other three have a mean of
-   0.1543 T. The selected row's convergence checks are listed under the table.
+   0.1543 T. The selected row's field terms and convergence checks are listed
+   under the table: every term averages to zero over the phase, and the RMS
+   column shows the contact field, 0.194 T, outweighing the dipolar field,
+   0.081 T.
 
 Site I, on the axis, sees a circle: its field has the same magnitude at every
 phase, 87.9 mT, an isolated line. Sites II to IV see an ellipse, so their

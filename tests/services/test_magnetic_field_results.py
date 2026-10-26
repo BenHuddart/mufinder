@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
+from mufinder.science.magnetic_fields import (
+    FieldTermStatistics,
+    MagneticFieldDistributionResult,
+    regenerate_phase_samples,
+)
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -317,3 +324,48 @@ def test_only_uep_sites_are_unrelaxed_estimates() -> None:
         == "uep_clustering"
     )
     assert field_result_site_source({}, None) is None
+
+
+def test_a_saved_distribution_keeps_its_term_breakdown_and_phase_sampling(tmp_path: Path) -> None:
+    distribution = MagneticFieldDistributionResult(
+        site_label="site 1",
+        muon_position=(0.25, 0.25, 0.25),
+        fields_T=np.asarray([[0.1, 0.0, 0.05], [-0.1, 0.0, 0.05]], dtype=float),
+        histogram_centres_T=np.asarray([0.1118], dtype=float),
+        histogram_counts=np.asarray([2.0], dtype=float),
+        calculation_parameters={
+            "phase_basis_rlu": [[0.12345, 0.0, 0.0]],
+            "phase_sample_count": 2,
+            "resolved_phase_sampling": "montecarlo",
+            "phase_sampling_seed": 2**62 + 7,
+            "component_phase_coefficients": [[1.0]],
+        },
+        terms={
+            "dipolar": FieldTermStatistics(mean_T=(0.0, 0.0, 0.0), rms_T=0.1),
+            "applied": FieldTermStatistics(mean_T=(0.0, 0.0, 0.05), rms_T=0.05),
+        },
+        total_rms_T=0.1118,
+        applied_T=(0.0, 0.0, 0.05),
+        demag_T=(0.0, 0.0, 0.0),
+    )
+    service = ProjectService()
+    document = _document(tmp_path)
+    field = {"kind": "distribution", "results": [distribution.to_json()]}
+    store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, _form(magnetic_field_results=field)
+    )
+    service.save_project(document)
+
+    reloaded = service.load_project(document.project_root)
+    attached = attach_magnetic_field_results(reloaded, MAGNETIC_FIELD_PAGE_OWNER, {})
+    restored = MagneticFieldDistributionResult.from_json(
+        attached["magnetic_field_results"]["results"][0]
+    )
+
+    assert restored.terms == distribution.terms
+    assert restored.applied_T == (0.0, 0.0, 0.05)
+    assert restored.calculation_parameters["phase_sampling_seed"] == 2**62 + 7
+    np.testing.assert_array_equal(
+        regenerate_phase_samples(restored).phases_turns,
+        regenerate_phase_samples(distribution).phases_turns,
+    )
