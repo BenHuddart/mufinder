@@ -14,6 +14,7 @@ import numpy as np
 from PySide6.QtWidgets import QCheckBox, QFrame, QPushButton, QSplitter, QTabWidget, QTreeWidget
 
 from mufinder.app import relaxation_analysis_widget as relaxation_analysis_widget_module
+from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 
 from mufinder.app.relaxation_analysis_widget import (
@@ -1076,3 +1077,61 @@ def test_relaxation_analysis_export_relaxed_on_empty_workspace_says_so(qapp, mon
         assert informed == ["Nothing to export"]
     finally:
         widget.close()
+
+
+def _three_workspace_widget() -> tuple[RelaxationAnalysisWidget, list[dict]]:
+    host = host_structure()
+    workspaces = [
+        default_workspace_state(
+            name=name,
+            charge_state="positive_muon",
+            host_structure_id=host.id,
+            job_ids=[uuid4()],
+        )
+        for name in ("First", "Second", "Third")
+    ]
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=workspaces,
+        sources=[],
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[],
+    )
+    return widget, workspaces
+
+
+def _tab_viewers(widget: RelaxationAnalysisWidget) -> list[int]:
+    return [
+        len(widget._workspace_tabs.widget(index).findChildren(AtomicStructureViewer))
+        for index in range(widget._workspace_tabs.count())
+    ]
+
+
+def test_relaxation_analysis_builds_only_the_current_tab_viewer(qapp) -> None:
+    widget, _workspaces = _three_workspace_widget()
+    try:
+        assert _tab_viewers(widget) == [1, 0, 0]
+
+        widget._workspace_tabs.setCurrentIndex(2)
+
+        assert _tab_viewers(widget) == [1, 0, 1]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_rebuild_shuts_down_the_replaced_viewers(qapp, monkeypatch) -> None:
+    widget, workspaces = _three_workspace_widget()
+    try:
+        old_viewer = widget._workspace_tabs.widget(0).findChild(AtomicStructureViewer)
+        shut_down: list[object] = []
+        monkeypatch.setattr(old_viewer, "shutdown", lambda: shut_down.append(old_viewer))
+
+        widget._rename_workspace(str(workspaces[0]["id"]), "Renamed")
+
+        assert shut_down == [old_viewer]
+        assert _tab_viewers(widget) == [1, 0, 0]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()

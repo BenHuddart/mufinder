@@ -166,7 +166,9 @@ The workspace page
 Each workspace is a tab on the ``Muon Sites -> Analysis`` page. Selecting a
 workspace's node in the project tree opens its tab, and switching tabs selects
 the matching node. The node is marked complete once clustering has been
-applied.
+applied. A tab draws its 3D preview the first time you open it, so a project
+with many workspaces opens without waiting for previews you have not looked
+at.
 
 The header of each workspace has:
 

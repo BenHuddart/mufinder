@@ -1042,6 +1042,27 @@ strings and never re-reads a file the carrier holds. The overrides are:
 failure check goes in the owning controller's ``validate_artifacts`` and reads
 the carrier rather than disk.
 
+Refreshing pages that are not showing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A page that embeds 3D structure viewers costs far more to rebuild than a table,
+so it is rebuilt only while it is the page in the main stack. Callers ask for a
+refresh as usual; a hidden page is marked stale instead, and the project-tree
+route dispatch rebuilds a stale page as it shows it. A job-status change or a
+dashboard flush therefore never rebuilds a hidden viewer page.
+
+- The Relaxation Analysis page follows this rule. A project change defers the
+  cascade of refresh requests from the jobs table, the muon relaxation rows and
+  the form restore to one request at its end, so the page is rebuilt at most
+  once per project change. Within the page, each workspace tab builds its
+  ``AtomicStructureViewer`` the first time the tab is current, and a rebuild
+  shuts down the viewers of the tabs it replaces.
+- The Muon Sites summary is refreshed on project and host changes only when it
+  is showing; navigation and pin changes refresh it unconditionally.
+- The project-change refresh and the dashboard flush time their stages with
+  ``PerfTrace`` (``mufinder.services.perf_trace``), which logs a WARNING naming
+  the slow stage when either runs long.
+
 Controller summary
 ~~~~~~~~~~~~~~~~~~
 
