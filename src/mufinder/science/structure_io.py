@@ -18,6 +18,7 @@ from typing import Any
 from ase import Atoms
 from ase.io import read as ase_read
 from ase.io import write as ase_write
+import numpy as np
 
 from mufinder.castep_io.cell_parser import parse_cell_file
 from mufinder.castep_io.cell_writer import write_cell
@@ -25,7 +26,12 @@ from mufinder.castep_io.types import AtomicPosition, CellFile, LatticeCart, Posi
 from mufinder.domain.magnetic_properties import atomic_spins_from_magnetic_moments
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, is_muon_label
-from mufinder.science.lattice import nearest_image_distance
+from mufinder.science.lattice import (
+    crystal_axis_to_cartesian,
+    greedy_unique_indexes,
+    minimum_image_distance_matrix,
+    nearest_image_distance,
+)
 
 
 class StructureLoadError(ValueError):
@@ -64,9 +70,10 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
     if read_format == "castep-cell":
         return _load_castep_cell_file(source)
 
+    raw_bytes = source.read_bytes()
     try:
         # ASE decodes CIF bytes as Latin-1, so this round trip is lossless.
-        cif_text = _cif_text_for_ase(source.read_bytes().decode("latin-1"))
+        cif_text = _cif_text_for_ase(raw_bytes.decode("latin-1"))
         atoms = ase_read(io.BytesIO(cif_text.encode("latin-1")), format=read_format)
     except Exception as exc:  # noqa: BLE001 - normalize parser exceptions.
         raise StructureLoadError(f"Failed to parse structure file '{source.name}': {exc}") from exc
@@ -85,8 +92,26 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
 
     lattice_vectors = atoms.cell.array.tolist()
     fractional_positions = atoms.get_scaled_positions(wrap=True).tolist()
-
     magmoms = atoms.get_initial_magnetic_moments().tolist()
+
+    tags, loops = _parse_cif_tags_and_loops(raw_bytes.decode("utf-8", errors="replace"))
+    operations = _extract_magnetic_operations(tags, loops)
+    magnetic_structure: dict[str, Any] | None = None
+    if suffix == ".mcif" or operations:
+        magnetic_cell = _magnetic_cell(
+            tags,
+            loops,
+            operations,
+            lattice_vectors=lattice_vectors,
+            species=symbols,
+            fractional_positions=fractional_positions,
+            file_name=source.name,
+        )
+        symbols = magnetic_cell.species
+        fractional_positions = magnetic_cell.fractional_positions
+        magmoms = [magmoms[parent] for parent in magnetic_cell.parents]
+        magnetic_structure = magnetic_cell.magnetic_structure
+
     properties: dict[str, Any] = {
         "source_extension": suffix,
         "atom_count": len(symbols),
@@ -96,21 +121,19 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
         properties["initial_magnetic_moments"] = magmoms
         properties["atomic_spins"] = [float(value) for value in magmoms]
 
-    if suffix == ".mcif":
-        magnetic_structure = _extract_mcif_magnetic_structure(source)
-        if magnetic_structure:
-            properties["magnetic_structure"] = magnetic_structure
-            propagation_vector = magnetic_structure.get("propagation_vector")
-            if isinstance(propagation_vector, list) and len(propagation_vector) == 3:
-                properties["propagation_vector"] = [float(value) for value in propagation_vector]
+    if magnetic_structure:
+        properties["magnetic_structure"] = magnetic_structure
+        propagation_vector = magnetic_structure.get("propagation_vector")
+        if isinstance(propagation_vector, list) and len(propagation_vector) == 3:
+            properties["propagation_vector"] = [float(value) for value in propagation_vector]
 
-            spins_from_moments = atomic_spins_from_magnetic_moments(
-                magnetic_structure,
-                atom_count=len(symbols),
-                honour_atom_index=True,
-            )
-            if spins_from_moments is not None:
-                properties["atomic_spins"] = spins_from_moments
+        spins_from_moments = atomic_spins_from_magnetic_moments(
+            magnetic_structure,
+            atom_count=len(symbols),
+            honour_atom_index=True,
+        )
+        if spins_from_moments is not None:
+            properties["atomic_spins"] = spins_from_moments
 
     return LoadedStructure(
         lattice_vectors=lattice_vectors,
@@ -399,37 +422,352 @@ def _load_castep_cell_file(source: Path) -> LoadedStructure:
     )
 
 
-def _extract_mcif_magnetic_structure(source: Path) -> dict[str, Any] | None:
-    """Extract magnetic metadata from MCIF text when present."""
-    text = source.read_text(encoding="utf-8")
-    tags, loops = _parse_cif_tags_and_loops(text)
+#: Images of one atom closer than this (Angstrom) are one atom. Coordinates in a
+#: magnetic CIF are rounded, so an image of a site on a special position lands a
+#: rounding error away from it; distinct atoms are never this close.
+_MAGNETIC_IMAGE_TOLERANCE_ANG = 0.01
 
-    atom_labels = _extract_atom_labels(tags, loops)
+#: Tag pairs (positions with time reversal, moments) for magnetic operations and
+#: centerings: the MAGNDATA spelling first, then the DDLm magCIF spelling.
+_MAGNETIC_OPERATION_TAGS = (
+    ("_space_group_symop.magn_operation_xyz", "_space_group_symop.magn_operation_mxmymz"),
+    ("_space_group_symop_magn_operation.xyz", "_space_group_symop_magn_operation.mxmymz"),
+)
+_MAGNETIC_CENTERING_TAGS = (
+    ("_space_group_symop.magn_centering_xyz", "_space_group_symop.magn_centering_mxmymz"),
+    ("_space_group_symop_magn_centering.xyz", "_space_group_symop_magn_centering.mxmymz"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _MagneticOperation:
+    """One magnetic symmetry operation in the lattice basis.
+
+    ``rotation`` and ``translation`` act on fractional positions; ``moment_matrix``
+    acts on a moment's components along the lattice vectors (m = sum_i u_i a_i).
+    """
+
+    rotation: np.ndarray
+    translation: np.ndarray
+    time_reversal: int
+    moment_matrix: np.ndarray
+
+    def after(self, first: _MagneticOperation) -> _MagneticOperation:
+        """Return this operation applied after ``first``."""
+        return _MagneticOperation(
+            rotation=self.rotation @ first.rotation,
+            translation=self.rotation @ first.translation + self.translation,
+            time_reversal=self.time_reversal * first.time_reversal,
+            moment_matrix=self.moment_matrix @ first.moment_matrix,
+        )
+
+
+@dataclass(slots=True)
+class _MagneticCell:
+    """Atoms of a magnetic CIF after its magnetic symmetry, with their magnetic metadata.
+
+    ``parents[i]`` is the index, in the file's atom-site order, of the site atom ``i``
+    was generated from.
+    """
+
+    species: list[str]
+    fractional_positions: list[list[float]]
+    parents: list[int]
+    magnetic_structure: dict[str, Any] | None
+
+
+def _magnetic_cell(
+    tags: dict[str, str],
+    loops: list[dict[str, Any]],
+    operations: list[_MagneticOperation],
+    *,
+    lattice_vectors: list[list[float]],
+    species: list[str],
+    fractional_positions: list[list[float]],
+    file_name: str,
+) -> _MagneticCell:
+    """Apply a magnetic CIF's operations to its sites and read its magnetic metadata.
+
+    Moments are returned as Cartesian vectors in Bohr magnetons. Without magnetic
+    operations the atoms are kept as read.
+    """
+    site_labels = _atom_site_labels(tags, loops)
+    moments = _cartesian_moments(_extract_moments_from_loops(loops), lattice_vectors)
+    parents = list(range(len(species)))
+    if operations:
+        if len(site_labels) != len(species):
+            raise StructureLoadError(
+                f"'{file_name}' lists {len(site_labels)} atom sites but its ordinary symmetry "
+                f"operations give {len(species)} atoms; a file with magnetic operations must "
+                "describe its symmetry through them alone."
+            )
+        fractional_positions, parents, images = _apply_magnetic_operations(
+            fractional_positions, site_labels, operations, lattice_vectors
+        )
+        species = [species[parent] for parent in parents]
+        atom_labels = [site_labels[parent] for parent in parents]
+        moments = _moment_images(moments, site_labels, parents, images, lattice_vectors)
+    else:
+        atom_labels = _dedupe_strings(site_labels)
+        moments = _attach_moment_atom_indices(moments, atom_labels=atom_labels)
+
     propagation_vectors = _extract_propagation_vectors(tags, loops)
-    propagation = propagation_vectors[0] if propagation_vectors else None
-    moments = _attach_moment_atom_indices(
-        _extract_moments_from_loops(loops),
-        atom_labels=atom_labels,
+    magnetic_structure: dict[str, Any] | None = None
+    if propagation_vectors or moments:
+        magnetic_structure = {"source": "mcif"}
+        if atom_labels:
+            magnetic_structure["atom_labels"] = atom_labels
+        if propagation_vectors:
+            magnetic_structure["propagation_vector"] = propagation_vectors[0]
+            magnetic_structure["propagation_vectors_rlu"] = propagation_vectors
+        if moments:
+            magnetic_structure["moments"] = moments
+            site_moments: dict[str, list[float]] = {}
+            for moment in moments:
+                # The first entry for a label is the site as written, before any image.
+                site_moments.setdefault(str(moment["label"]), list(moment["vector"]))
+            magnetic_structure["site_moments"] = site_moments
+    return _MagneticCell(
+        species=list(species),
+        fractional_positions=fractional_positions,
+        parents=parents,
+        magnetic_structure=magnetic_structure,
     )
 
-    if not propagation_vectors and not moments:
-        return None
 
-    payload: dict[str, Any] = {"source": "mcif"}
-    if atom_labels:
-        payload["atom_labels"] = atom_labels
-    if propagation:
-        payload["propagation_vector"] = propagation
-    if propagation_vectors:
-        payload["propagation_vectors_rlu"] = propagation_vectors
-    if moments:
-        payload["moments"] = moments
-        payload["site_moments"] = {
-            str(moment["label"]): list(moment["vector"])
-            for moment in moments
-            if isinstance(moment.get("label"), str) and isinstance(moment.get("vector"), list)
-        }
-    return payload
+def _extract_magnetic_operations(
+    tags: dict[str, str], loops: list[dict[str, Any]]
+) -> list[_MagneticOperation]:
+    """Return every magnetic operation composed with every magnetic centering.
+
+    Empty when the file has no magnetic operations. The identity comes first when
+    both lists start with it, as magnetic CIF files write them.
+    """
+    operations = _magnetic_operation_rows(tags, loops, _MAGNETIC_OPERATION_TAGS)
+    if not operations:
+        return []
+    centerings = _magnetic_operation_rows(tags, loops, _MAGNETIC_CENTERING_TAGS)
+    if not centerings:
+        return operations
+    return [centering.after(operation) for operation in operations for centering in centerings]
+
+
+def _magnetic_operation_rows(
+    tags: dict[str, str],
+    loops: list[dict[str, Any]],
+    tag_pairs: tuple[tuple[str, str], ...],
+) -> list[_MagneticOperation]:
+    for xyz_tag, moment_tag in tag_pairs:
+        for loop in loops:
+            headers: list[str] = loop.get("headers", [])
+            if xyz_tag in headers:
+                return [
+                    _parse_magnetic_operation(str(row[xyz_tag]), row.get(moment_tag))
+                    for row in loop.get("rows", [])
+                ]
+        if xyz_tag in tags:
+            return [_parse_magnetic_operation(tags[xyz_tag], tags.get(moment_tag))]
+    return []
+
+
+def _parse_magnetic_operation(xyz: str, mxmymz: str | None) -> _MagneticOperation:
+    """Parse ``x',y',z',theta`` and, when given, the explicit moment part ``mx',my',mz'``.
+
+    Without a moment part, an axial moment transforms as det(R) * theta * R.
+    """
+    parts = [part.strip() for part in xyz.split(",")]
+    if len(parts) != 4:
+        raise StructureLoadError(
+            f"Magnetic symmetry operation '{xyz}' must have four comma-separated parts: "
+            "x, y, z and a time-reversal sign."
+        )
+    rows = [_parse_symmetry_expression(part, ("x", "y", "z"), xyz) for part in parts[:3]]
+    rotation = np.array([row[0] for row in rows], dtype=float)
+    translation = np.array([row[1] for row in rows], dtype=float)
+    if parts[3] not in {"+1", "1", "-1"}:
+        raise StructureLoadError(
+            f"Magnetic symmetry operation '{xyz}' has time-reversal sign '{parts[3]}'; "
+            "expected +1 or -1."
+        )
+    time_reversal = -1 if parts[3] == "-1" else 1
+    determinant = float(np.linalg.det(rotation))
+    if abs(determinant) < 1e-9:
+        raise StructureLoadError(f"Magnetic symmetry operation '{xyz}' has a singular rotation.")
+
+    moment_text = "" if mxmymz is None else str(mxmymz).strip()
+    if moment_text in {"", ".", "?"}:
+        moment_matrix = np.sign(determinant) * time_reversal * rotation
+    else:
+        moment_parts = [part.strip() for part in moment_text.split(",")]
+        if len(moment_parts) != 3:
+            raise StructureLoadError(
+                f"Moment part '{moment_text}' of a magnetic symmetry operation must have "
+                "three comma-separated parts."
+            )
+        moment_rows = [
+            _parse_symmetry_expression(part, ("mx", "my", "mz"), moment_text)
+            for part in moment_parts
+        ]
+        if any(constant != 0 for _, constant in moment_rows):
+            raise StructureLoadError(
+                f"Moment part '{moment_text}' of a magnetic symmetry operation must be "
+                "linear in mx, my, mz."
+            )
+        moment_matrix = np.array([row[0] for row in moment_rows], dtype=float)
+    return _MagneticOperation(
+        rotation=rotation,
+        translation=translation,
+        time_reversal=time_reversal,
+        moment_matrix=moment_matrix,
+    )
+
+
+def _parse_symmetry_expression(
+    text: str, variables: tuple[str, str, str], operation: str
+) -> tuple[list[Fraction], Fraction]:
+    """Parse one affine component such as ``-x+y+1/2`` into coefficients and a constant."""
+    compact = text.replace(" ", "").lower()
+    terms = re.findall(r"[+-]?[^+-]+", compact)
+    if not terms or "".join(terms) != compact:
+        raise StructureLoadError(f"Cannot read '{text}' in symmetry operation '{operation}'.")
+    coefficients = [Fraction(0)] * 3
+    constant = Fraction(0)
+    for term in terms:
+        sign = -1 if term.startswith("-") else 1
+        body = term.lstrip("+-")
+        try:
+            for axis, variable in enumerate(variables):
+                if body.endswith(variable):
+                    factor = body[: -len(variable)].rstrip("*")
+                    coefficients[axis] += sign * (Fraction(factor) if factor else Fraction(1))
+                    break
+            else:
+                constant += sign * Fraction(body)
+        except (ValueError, ZeroDivisionError) as exc:
+            raise StructureLoadError(
+                f"Cannot read '{text}' in symmetry operation '{operation}'."
+            ) from exc
+    return coefficients, constant
+
+
+def _apply_magnetic_operations(
+    fractional_positions: list[list[float]],
+    site_labels: list[str],
+    operations: list[_MagneticOperation],
+    lattice_vectors: list[list[float]],
+) -> tuple[list[list[float]], list[int], list[_MagneticOperation]]:
+    """Generate every distinct image of each site, grouped by site in the file's order.
+
+    Returns the wrapped positions, the site each came from, and the operation that
+    generated it. Each site comes first in its group, so a site keeps its position as
+    written. Raises when an image of one site lands on another site.
+    """
+    positions: list[list[float]] = []
+    parents: list[int] = []
+    images: list[_MagneticOperation] = []
+    for parent, site in enumerate(fractional_positions):
+        point = np.asarray(site, dtype=float)
+        candidates = np.array(
+            [operation.rotation @ point + operation.translation for operation in operations]
+        )
+        candidates = np.concatenate([point[None, :], candidates]) % 1.0
+        identity = _MagneticOperation(np.eye(3), np.zeros(3), 1, np.eye(3))
+        candidate_operations = [identity, *operations]
+        if positions:
+            clashes = (
+                minimum_image_distance_matrix(candidates, positions, lattice_vectors)
+                <= _MAGNETIC_IMAGE_TOLERANCE_ANG
+            )
+            if clashes.any():
+                other = parents[int(np.argwhere(clashes)[0][1])]
+                raise StructureLoadError(
+                    f"Magnetic symmetry places an image of site '{site_labels[parent]}' on "
+                    f"site '{site_labels[other]}'."
+                )
+        within = (
+            minimum_image_distance_matrix(candidates, candidates, lattice_vectors)
+            <= _MAGNETIC_IMAGE_TOLERANCE_ANG
+        )
+        for index in greedy_unique_indexes(within):
+            positions.append([float(value) for value in candidates[index]])
+            parents.append(parent)
+            images.append(candidate_operations[index])
+    return positions, parents, images
+
+
+def _cartesian_moments(
+    moments: list[dict[str, Any]], lattice_vectors: list[list[float]]
+) -> list[dict[str, Any]]:
+    """Convert moment components to Cartesian vectors and check any stated magnitude.
+
+    ``crystalaxis`` components lie along the unit lattice directions; ``cartn``
+    components pass through. The components as written are kept.
+    """
+    converted: list[dict[str, Any]] = []
+    for moment in moments:
+        components = [float(value) for value in moment["vector"]]
+        source_system = moment["coordinate_system"]
+        if source_system == "crystalaxis":
+            vector = crystal_axis_to_cartesian(
+                components, lattice_vectors, error=StructureLoadError
+            )
+        else:
+            vector = list(components)
+        magnitude = moment.pop("magnitude", None)
+        if magnitude is not None:
+            length = float(np.linalg.norm(vector))
+            if abs(length - magnitude) > max(0.02, 0.01 * abs(magnitude)):
+                raise StructureLoadError(
+                    f"Moment '{moment['label']}' has |m| = {length:.2f} Bohr magnetons from its "
+                    f"{source_system} components but the file gives a magnitude of "
+                    f"{magnitude:.2f}."
+                )
+        converted.append(
+            {
+                **moment,
+                "vector": [float(value) for value in vector],
+                "coordinate_system": "cartesian",
+                "source_coordinate_system": source_system,
+                "source_components": components,
+            }
+        )
+    return converted
+
+
+def _moment_images(
+    moments: list[dict[str, Any]],
+    site_labels: list[str],
+    parents: list[int],
+    images: list[_MagneticOperation],
+    lattice_vectors: list[list[float]],
+) -> list[dict[str, Any]]:
+    """Give every image of a site with a moment its transformed moment.
+
+    The moment's lattice-basis components u (m = sum_i u_i a_i) transform with each
+    operation's moment matrix. A moment whose label matches no site is kept as is,
+    without an atom index.
+    """
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    expanded: list[dict[str, Any]] = []
+    for moment in moments:
+        site = _find_atom_label_index(site_labels, str(moment.get("label", "")).strip())
+        if site is None:
+            expanded.append(moment)
+            continue
+        lattice_components = np.linalg.solve(lattice.T, np.asarray(moment["vector"]))
+        for atom_index, (parent, operation) in enumerate(zip(parents, images, strict=True)):
+            if parent != site:
+                continue
+            vector = (operation.moment_matrix @ lattice_components) @ lattice
+            expanded.append(
+                {
+                    **moment,
+                    "vector": [float(value) for value in vector],
+                    "atom_index": atom_index,
+                    "atom_label": site_labels[site],
+                }
+            )
+    return expanded
 
 
 def _parse_cif_tags_and_loops(text: str) -> tuple[dict[str, str], list[dict[str, Any]]]:
@@ -602,8 +940,8 @@ def _cif_text_for_ase(text: str) -> str:
     return "\n".join(lines)
 
 
-def _extract_atom_labels(tags: dict[str, str], loops: list[dict[str, Any]]) -> list[str]:
-    """Extract MCIF atom labels in structure order when present."""
+def _atom_site_labels(tags: dict[str, str], loops: list[dict[str, Any]]) -> list[str]:
+    """Return the CIF atom-site labels in file order, one per site row."""
     labels: list[str] = []
     if "_atom_site_label" in tags:
         labels.append(str(tags["_atom_site_label"]))
@@ -617,7 +955,7 @@ def _extract_atom_labels(tags: dict[str, str], loops: list[dict[str, Any]]) -> l
             if label:
                 labels.append(label)
 
-    return _dedupe_strings(labels)
+    return labels
 
 
 def _extract_propagation_vectors(
@@ -701,6 +1039,9 @@ def _extract_moments_from_loops(loops: list[dict[str, Any]]) -> list[dict[str, A
         if not (x_key and y_key and z_key):
             continue
 
+        magnitude_key = _first_matching_header(
+            headers, ["_atom_site_moment.magnitude", "_atom_site_moment_magnitude"]
+        )
         coordinate_system = "cartesian" if "cartn" in x_key else "crystalaxis"
         for row_index, row in enumerate(loop.get("rows", []), start=1):
             x = _parse_cif_float(str(row.get(x_key, "")))
@@ -714,13 +1055,15 @@ def _extract_moments_from_loops(loops: list[dict[str, Any]]) -> list[dict[str, A
                 if label_key
                 else f"moment_{row_index}"
             )
-            extracted.append(
-                {
-                    "label": label,
-                    "vector": [x, y, z],
-                    "coordinate_system": coordinate_system,
-                }
-            )
+            moment: dict[str, Any] = {
+                "label": label,
+                "vector": [x, y, z],
+                "coordinate_system": coordinate_system,
+            }
+            magnitude = _parse_cif_float(str(row.get(magnitude_key, ""))) if magnitude_key else None
+            if magnitude is not None:
+                moment["magnitude"] = magnitude
+            extracted.append(moment)
 
     return extracted
 

@@ -11,7 +11,11 @@ import numpy as np
 
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import Structure
-from mufinder.science.lattice import lattice_matrix, reciprocal_to_cartesian
+from mufinder.science.lattice import (
+    crystal_axis_to_cartesian,
+    lattice_matrix,
+    reciprocal_to_cartesian,
+)
 from mufinder.science.spglib_compat import get_crystal_symmetry_dataset, spglib_cell
 
 MAGNETIC_STRUCTURE_SCHEMA_VERSION = 2
@@ -1818,6 +1822,8 @@ def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStruct
             metadata["source"] = entry["source"]
         if entry.get("mcif_label"):
             metadata["mcif_label"] = entry["mcif_label"]
+        if entry.get("source_coordinate_system"):
+            metadata["source_coordinate_system"] = entry["source_coordinate_system"]
         components.append(
             MagneticComponent(
                 component_id=f"legacy_atom_{index + 1}",
@@ -1961,6 +1967,20 @@ def _legacy_moment_entries(structure: Structure) -> list[dict[str, object]]:
                     vector = _as_float_tuple(moment.get("vector", (0.0, 0.0, 0.0)), "moment vector")
                 except MagneticStructureError:
                     continue
+                if moment.get("coordinate_system") == "crystalaxis":
+                    # Stored as written in the file (components along the unit lattice
+                    # directions) by imports that did not convert them.
+                    try:
+                        vector = tuple(
+                            crystal_axis_to_cartesian(
+                                vector, structure.lattice_vectors, error=MagneticStructureError
+                            )
+                        )
+                    except MagneticStructureError:
+                        continue
+                source_system = moment.get("source_coordinate_system") or moment.get(
+                    "coordinate_system"
+                )
                 label = str(
                     moment.get("label")
                     or moment.get("atom_label")
@@ -1973,6 +1993,7 @@ def _legacy_moment_entries(structure: Structure) -> list[dict[str, object]]:
                         "vector": vector,
                         "source": "mcif",
                         "mcif_label": str(moment.get("label", label)),
+                        "source_coordinate_system": source_system,
                     }
                 )
     if any(any(abs(value) > 1e-12 for value in entry["vector"]) for entry in entries):

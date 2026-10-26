@@ -95,11 +95,15 @@ Import a structure from an MCIF file
 To start from a magnetic CIF, import the ``.mcif`` file as the host structure
 (see :doc:`/user_guide/host_structure` for the import itself), then open the
 builder. MuFinder imports magnetic metadata from ``.mcif`` files before any
-field or spectral calculation is attempted. The importer follows the
-non-spectral MCIF behaviour already used in mag2spectra:
+field or spectral calculation is attempted:
 
+- the magnetic symmetry operations and centerings are applied to the listed
+  sites, so the host holds every atom of the magnetic cell and every image of a
+  magnetic site carries its moment, reversed where the operation includes time
+  reversal (see :doc:`/user_guide/host_structure`);
 - atom labels from ``_atom_site_label`` are preserved so magnetic-site labels
-  can be mapped back to concrete unit-cell atom indices;
+  can be mapped back to concrete unit-cell atom indices; each generated atom
+  keeps the label of the site it was generated from;
 - propagation vectors are read from both legacy scalar tags such as
   ``_cell_wave_vector_x/y/z`` and MCIF triplet entries such as
   ``_magnetic_propagation_vector_kxkykz``;
@@ -107,18 +111,20 @@ non-spectral MCIF behaviour already used in mag2spectra:
   propagation-vector basis rows;
 - atom-site moments are read from dotted and underscored
   ``_atom_site_moment`` dialects, including fraction and uncertainty notation
-  in numeric fields;
+  in numeric fields, and converted to Cartesian vectors in μB:
+  ``crystalaxis`` components lie along the unit lattice directions,
+  ``m = Σ m_i a_i/|a_i|``, and ``cartn`` components are already Cartesian;
 - moment labels are matched by exact atom label first, then by a unique
   ``label_...`` atom-label expansion.
 
 When an MCIF-derived host is converted into a MuFinder magnetic model, each
-labelled moment becomes an atom-targeted component. For finite propagation
+atom with a moment becomes an atom-targeted component, whose metadata records
+the coordinate system the file gave its components in. For finite propagation
 vectors MuFinder stores a complex Fourier coefficient
 ``S(q) = m exp(2 pi i q.r_i)`` for atom ``i`` so that the model's evaluation
 formula (see :doc:`/user_guide/magnetic_fields_theory`) reconstructs the real
-MCIF unit-cell moment ``m`` at ``cell_offset=(0, 0, 0)``. This matches
-mag2spectra's MCIF reconstruction rule while stopping at the field-distribution
-boundary: MuFinder does not import or simulate spectra from MCIF files.
+MCIF unit-cell moment ``m`` at ``cell_offset=(0, 0, 0)``. MuFinder does not
+import or simulate spectra from MCIF files.
 
 Build components in the builder
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
