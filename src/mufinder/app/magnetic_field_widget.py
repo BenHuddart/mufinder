@@ -3802,12 +3802,12 @@ class MuonSiteSelectionDialog(QDialog):
         self._site_status.setWordWrap(True)
         style_hint_text(self._site_status)
         self._distortion_checkbox = QCheckBox(
-            "Correct the dipolar field for muon-induced displacements"
+            "Correct the local field for muon-induced displacements"
         )
         self._distortion_checkbox.setToolTip(
-            "Adds the finite-cell change in the dipolar field from the host-ion displacements in the "
-            "representative relaxed structure. Available for structural-relaxation clusters whose relaxed "
-            "structure is present, for commensurate magnetic structures."
+            "Adds the finite-cell change in the dipolar field, and in the contact field when a hyperfine "
+            "coupling is set, from the host-ion displacements in the representative relaxed structure. "
+            "Available for structural-relaxation clusters whose relaxed structure is present."
         )
         self._distortion_requested = bool(
             current_site is not None and current_site.include_distortion
@@ -6503,7 +6503,7 @@ class MagneticFieldWidget(QWidget):
         source = site.source_label or _site_source_label(site.source)
         cluster = f" ({site.cluster_label})" if site.cluster_label else ""
         distortion = (
-            " Dipolar field corrected for muon-induced displacements."
+            " Local field corrected for muon-induced displacements."
             if site.include_distortion
             else ""
         )

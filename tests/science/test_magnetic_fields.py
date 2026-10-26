@@ -806,17 +806,150 @@ def test_commensurate_fields_need_one_distorted_entry_per_site(monkeypatch) -> N
         )
 
 
-def test_incommensurate_distributions_refuse_distortion_corrections(monkeypatch) -> None:
-    _forbid_muesr(monkeypatch)
+def _contact_change(coupling: float, before, after) -> float:
+    """Contact field change in T for muLFC's 1/r^3-weighted mean of the shell moments.
+
+    ``before`` and ``after`` list each shell ion as ``(distance in Å, z moment)``.
+    """
+
+    def _mean(shell) -> float:
+        weights = [distance**-3 for distance, _moment in shell]
+        return sum(w * m for w, (_d, m) in zip(weights, shell)) / sum(weights)
+
+    per_mub = 2.0 * MU0_T_M_PER_A / 3.0 * BOHR_MAGNETON_J_PER_T / (1e-10) ** 3
+    return coupling * per_mub * (_mean(after) - _mean(before))
+
+
+@pytest.mark.parametrize(
+    ("shift", "after"),
+    [(0.6, [(1.5, 1.0)]), (0.3, [(1.5, 1.0), (1.8, -1.0)])],
+    ids=["leaves-the-shell", "moves-within-the-shell"],
+)
+def test_commensurate_distortion_corrects_the_contact_term(monkeypatch, shift, after) -> None:
+    # The muon sits between two Fe 1.5 Å away with opposite moments. Moving the
+    # +x one out of the 2 Å contact radius leaves only the other in the shell;
+    # moving it less reweights the pair by 1/r^3.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(
+        _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (shift, 0.0, 0.0)}
+    )
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=2, rcont=2.0)
+
+    (result,) = calculate_commensurate_fields(
+        _structure(), _antiferromagnet(), [_MU_X], options=options, distorted_structures=[relaxed]
+    )
+
+    dipolar_change = _axial_dipole_change(-1.0, 1.5, 1.5 + shift)
+    contact_change = _contact_change(0.1, [(1.5, 1.0), (1.5, -1.0)], after)
+    assert result.distortion == pytest.approx(
+        (0.0, 0.0, dipolar_change + contact_change), abs=1e-12
+    )
+
+
+def test_distortion_without_a_contact_coupling_leaves_the_contact_term(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(
+        _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.6, 0.0, 0.0)}
+    )
+
+    (result,) = calculate_commensurate_fields(
+        _structure(),
+        _antiferromagnet(),
+        [_MU_X],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), nnn=2, rcont=2.0),
+        distorted_structures=[relaxed],
+    )
+
+    assert result.distortion == pytest.approx(
+        (0.0, 0.0, _axial_dipole_change(-1.0, 1.5, 2.1)), abs=1e-12
+    )
+
+
+def test_contact_distortion_needs_the_shell_inside_the_relaxed_supercell(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
     relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
 
-    with pytest.raises(MagneticFieldError, match="commensurate magnetic structures only"):
-        calculate_incommensurate_field_distributions(
+    with pytest.raises(MagneticFieldError, match="contact shell reaches 10.00 Å"):
+        calculate_commensurate_fields(
             _structure(),
-            _circular_helix_model(),
+            _antiferromagnet(),
             [_MU_X],
+            options=MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=50),
             distorted_structures=[relaxed],
         )
+
+
+def _zero_field_locfield(sample, mode, *_args, **kwargs):
+    rows = int(kwargs["nangles"]) if mode == "i" else 1
+    return [_Field(Dipolar=np.zeros((rows, 3))) for _ in sample.muons]
+
+
+@pytest.mark.parametrize("coupling", [None, 0.1], ids=["dipolar", "with-contact"])
+def test_distribution_of_a_uniform_order_gets_the_commensurate_correction(
+    monkeypatch, coupling
+) -> None:
+    # A q = 0 order runs through the distribution path as a single phase.
+    _install_fake_muesr(monkeypatch, locfield=_zero_field_locfield)
+    relaxed = relaxed_muon_supercell(
+        _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.3, 0.1, 0.0)}
+    )
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=coupling, rcont=2.0)
+
+    (distribution,) = calculate_incommensurate_field_distributions(
+        _structure(), _ferromagnet(), [_MU_X], options=options, distorted_structures=[relaxed]
+    )
+    (commensurate,) = calculate_commensurate_fields(
+        _structure(), _ferromagnet(), [_MU_X], options=options, distorted_structures=[relaxed]
+    )
+
+    assert np.linalg.norm(commensurate.distortion) > 1e-3
+    np.testing.assert_allclose(
+        distribution.fields_T, [commensurate.distortion], rtol=1e-12, atol=1e-15
+    )
+
+
+def _helix_distribution(monkeypatch, relaxed, **overrides) -> MagneticFieldDistributionResult:
+    _install_fake_muesr(monkeypatch, locfield=_zero_field_locfield)
+    options = {"supercell": (1, 1, 1), "nangles": 16, "phase_sampling": "grid", **overrides}
+    return calculate_incommensurate_field_distributions(
+        _structure(),
+        _circular_helix_model(),
+        [_MU_X],
+        options=MagneticFieldOptions(**options),
+        distorted_structures=[relaxed],
+    )[0]
+
+
+def test_distribution_without_displacements_is_unchanged(monkeypatch) -> None:
+    result = _helix_distribution(
+        monkeypatch, relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X), contact_coupling=0.1
+    )
+
+    np.testing.assert_allclose(result.fields_T, 0.0, atol=1e-15)
+
+
+def test_distribution_correction_walks_the_helix_phase(monkeypatch) -> None:
+    # One Fe moves along the muon-Fe axis; its helical moment turns in the ab
+    # plane with the phase, so the correction is that one dipole change, rotated.
+    relaxed = relaxed_muon_supercell(
+        _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)}
+    )
+
+    result = _helix_distribution(monkeypatch, relaxed)
+
+    magnitudes = np.linalg.norm(result.fields_T, axis=1)
+    radial = 2.0 * abs(_axial_dipole_change(1.0, 1.5, 1.6))
+    transverse = abs(_axial_dipole_change(1.0, 1.5, 1.6))
+    assert np.all(magnitudes <= radial * (1.0 + 1e-9))
+    assert np.all(magnitudes >= transverse * (1.0 - 1e-9))
+    assert magnitudes.max() > 0.95 * radial
+    assert magnitudes.min() < 1.05 * transverse
+    assert result.terms["dipolar"].rms_T > 0.0
+    assert {check.setting for check in result.convergence} == {
+        "nangles",
+        "phase_sample_count",
+        "histogram_bins",
+    }
 
 
 # Demagnetising correction: B_demag = -mu0 N M_meas, with M_meas the bulk
@@ -2181,16 +2314,36 @@ def test_approximant_fields_cap_the_number_of_translations(monkeypatch) -> None:
         )
 
 
-def test_approximant_fields_refuse_distortion_corrections(monkeypatch) -> None:
-    _forbid_muesr(monkeypatch)
+def test_approximant_correction_follows_each_translated_site(monkeypatch) -> None:
+    # At r + T each ion carries the moment of its pristine site one translation along.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    model = _circular_helix_model((0.25, 0.0, 0.0))
+    relaxed = relaxed_muon_supercell(
+        _structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.05, 0.0)}
+    )
 
-    with pytest.raises(MagneticFieldError, match="not available for commensurate approximants"):
-        calculate_commensurate_approximant_fields(
-            _structure(),
-            _circular_helix_model((0.3334, 0.0, 0.0)),
-            [_SITE_A],
-            distorted_structures=[_structure()],
+    results = calculate_commensurate_approximant_fields(
+        _structure(),
+        model,
+        [_MU_X],
+        options=MagneticFieldOptions(supercell=(1, 1, 1)),
+        distorted_structures=[relaxed],
+    )
+
+    distortion = map_muon_distortion(_structure(), relaxed, _MU_X)
+    assert len(results) == 4
+    for result in results:
+        translation = np.round(np.asarray(result.muon_position) - _MU_X)
+        moments = moments_at_atoms(
+            _structure(), model, distortion.atom_indices, distortion.cell_offsets + translation
         )
+        expected = np.asarray(
+            calculate_finite_dipolar_field(distortion.distorted_vectors, moments, np.zeros(3))
+        ) - np.asarray(
+            calculate_finite_dipolar_field(distortion.pristine_vectors, moments, np.zeros(3))
+        )
+        np.testing.assert_allclose(result.distortion, expected, rtol=1e-9, atol=1e-15)
+    assert len({tuple(np.round(result.distortion, 9)) for result in results}) == 4
 
 
 def test_approximant_fields_reject_an_empty_model(monkeypatch) -> None:
@@ -2540,6 +2693,95 @@ def test_real_muesr_distortion_corrected_field_matches_the_distorted_lattice(rea
     np.testing.assert_allclose(
         np.asarray(result.dipolar) + np.asarray(result.distortion), distorted, rtol=1e-6, atol=1e-9
     )
+
+
+def test_real_muesr_distribution_correction_matches_the_approximant_per_translation(
+    real_muesr,
+) -> None:
+    # q = 1/4 counts as incommensurate below period 4, so the distribution path
+    # samples the helix with muLFC's lookup rows while the approximant path sums
+    # it exactly at each of four translations. 40 lookup rows put a phase sample
+    # on every translation's phase, whatever muLFC's row offset. Matching the
+    # samples by their uncorrected field pins the row offset of the correction;
+    # test_approximant_correction_follows_each_translated_site pins its sign.
+    model = _single_q_model((0.25, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    relaxed = relaxed_muon_supercell(
+        _structure(), (3, 3, 3), _GENERAL_SITE, {(1.0, 0.0, 0.0): (0.1, 0.05, -0.05)}
+    )
+    common = {
+        "supercell": (15, 15, 15),
+        "radius": _RADIUS,
+        "contact_coupling": 0.1,
+        "nnn": 2,
+        "rcont": 3.0,
+        "include_lorentz": False,
+    }
+    distribution_options = MagneticFieldOptions(
+        **common, nangles=40, phase_sampling="grid", commensurate_max_period=2
+    )
+
+    def _distribution(distorted):
+        return calculate_incommensurate_field_distributions(
+            _structure(),
+            model,
+            [_GENERAL_SITE],
+            options=distribution_options,
+            distorted_structures=distorted,
+        )[0].fields_T
+
+    plain = _distribution(None)
+    corrected = _distribution([relaxed])
+    translated = calculate_commensurate_approximant_fields(
+        _structure(),
+        model,
+        [_GENERAL_SITE],
+        options=MagneticFieldOptions(**common),
+        distorted_structures=[relaxed],
+    )
+
+    assert len(translated) == 4
+    for result in translated:
+        uncorrected = np.asarray(result.dipolar) + np.asarray(result.contact)
+        sample = int(np.argmin(np.linalg.norm(plain - uncorrected, axis=1)))
+        np.testing.assert_allclose(plain[sample], uncorrected, rtol=1e-6, atol=1e-9)
+        assert np.linalg.norm(result.distortion) > 1e-3
+        np.testing.assert_allclose(
+            corrected[sample] - plain[sample], result.distortion, rtol=1e-6, atol=1e-9
+        )
+
+
+def test_real_muesr_contact_shell_matches_the_contact_field(real_muesr) -> None:
+    # The pristine half of the contact correction must be muLFC's own contact
+    # average, 1/r^3-weighted over the nnn nearest moments, or the correction
+    # would not difference cleanly against muesr's contact field.
+    model = _single_q_model((0.5, 0.0, 0.25), (0.0, 0.0, 1.0), (0.3, 0.0, 0.0))
+    options = MagneticFieldOptions(
+        supercell=(15, 15, 15), radius=_RADIUS, contact_coupling=0.1, nnn=3, rcont=4.0
+    )
+    (result,) = calculate_commensurate_fields(_structure(), model, [_GENERAL_SITE], options=options)
+    distortion = map_muon_distortion(
+        _structure(), relaxed_muon_supercell(_structure(), (4, 4, 4), _GENERAL_SITE), _GENERAL_SITE
+    )
+    (model_data,) = module.get_muesr_model_data(_structure(), model)
+
+    _dipolar, change = module._component_distortion_changes(model_data, distortion, options)
+    coefficients = (
+        model_data.fc[distortion.atom_indices]
+        * np.exp(-2j * np.pi * (distortion.cell_offsets @ model_data.k_rlu))[:, np.newaxis]
+    )
+    shell = module._contact_shell_mean(
+        distortion.pristine_vectors,
+        coefficients,
+        np.ones(len(coefficients), dtype=bool),
+        nnn=3,
+        rcont=4.0,
+        reach_limit=6.0,
+    )
+
+    assert change == pytest.approx(np.zeros(3), abs=1e-15)
+    expected = 0.1 * module.CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB * shell.real
+    assert np.linalg.norm(expected) > 1e-2
+    np.testing.assert_allclose(result.contact, expected, rtol=1e-6, atol=1e-9)
 
 
 def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_muesr) -> None:
