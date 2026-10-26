@@ -3227,7 +3227,7 @@ def test_magnetic_field_widget_restores_distribution_results(qapp, tmp_path) -> 
     assert widget._result_table.rowCount() == 1
     assert widget._result_table.item(0, 5).text() == "distribution mean"
     assert widget._open_distribution_button.isEnabled()
-    assert widget._selected_distribution_results()[0]["site_label"] == "site 1"
+    assert widget._selected_distribution_results()[0].site_label == "site 1"
     widget.close()
 
 
@@ -3451,7 +3451,10 @@ def test_magnetic_field_widget_explains_results_without_a_term_breakdown(qapp, t
         }
     )
     assert widget._breakdown_table.isHidden()
-    assert "available for commensurate results" in widget._breakdown_hint.text()
+    assert (
+        widget._breakdown_hint.text()
+        == "This saved distribution has no term breakdown; recalculate to see it."
+    )
     widget.close()
 
 
@@ -3548,6 +3551,122 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(
         [0.0, 0.0, 1.0],
         [0.0, 0.0, 3.0],
     ]
+    widget.close()
+
+
+def _breakdown_headers(widget: MagneticFieldWidget) -> list[str]:
+    table = widget._breakdown_table
+    return [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())]
+
+
+def test_magnetic_field_widget_breaks_a_distribution_into_term_means_and_rms(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(
+        tmp_path / "magnetic-dist-breakdown.mufinder", "Magnetic Dist Breakdown"
+    )
+    service.add_structure(document, _host_structure())
+    stats = magnetic_fields_module.FieldTermStatistics
+    distribution = magnetic_fields_module.MagneticFieldDistributionResult(
+        site_label="site 1",
+        muon_position=(0.0, 0.0, 0.0),
+        fields_T=np.asarray([[0.2, 0.0, 0.1], [-0.2, 0.0, 0.1]], dtype=float),
+        histogram_centres_T=np.asarray([0.2236], dtype=float),
+        histogram_counts=np.asarray([2.0], dtype=float),
+        convergence=(
+            magnetic_fields_module.DistributionConvergenceCheck(
+                setting="histogram_bins",
+                label="Histogram bins",
+                converged=True,
+                metric=2.0,
+                message="2 samples per occupied histogram bin.",
+            ),
+        ),
+        terms={
+            "dipolar": stats(mean_T=(1e-18, 0.0, 0.0), rms_T=0.2),
+            "lorentz": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+            "contact": stats(mean_T=(0.0, 0.0, 0.05), rms_T=0.05),
+            "demag": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+            "applied": stats(mean_T=(0.0, 0.0, 0.05), rms_T=0.05),
+        },
+        total_rms_T=float(np.hypot(0.2, 0.1)),
+        applied_T=(0.0, 0.0, 0.05),
+        demag_T=(0.0, 0.0, 0.0),
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "incommensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_incommensurate_field_distributions",
+        lambda *_args, **_kwargs: (distribution,),
+    )
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+
+    widget._calculate_fields()
+
+    expected = [
+        ["Dipolar", "0", "0", "0", "0.2"],
+        ["Lorentz", "0", "0", "0", "0"],
+        ["Contact", "0", "0", "0.05", "0.05"],
+        ["Demagnetizing", "0", "0", "0", "0"],
+        ["Applied", "0", "0", "0.05", "0.05"],
+        ["Total", "0", "0", "0.1", "0.223607"],
+    ]
+    assert not widget._breakdown_table.isHidden()
+    assert _breakdown_headers(widget) == [
+        "Term",
+        "Mean Bx (T)",
+        "Mean By (T)",
+        "Mean Bz (T)",
+        "RMS |B| (T)",
+    ]
+    assert _breakdown_rows(widget) == expected
+    assert widget._breakdown_hint.text().splitlines() == [
+        "Convergence checks:",
+        "Histogram bins: OK. 2 samples per occupied histogram bin.",
+    ]
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(widget.collect_state())
+    assert _breakdown_rows(restored) == expected
+    restored.close()
+
+    widget.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "total_T": [0.0, 0.0, 1.0],
+                        "dipolar_T": [0.0, 0.0, 1.0],
+                    }
+                ],
+            }
+        }
+    )
+    assert _breakdown_headers(widget)[1] == "Bx (T)"
+
+    corrupt = widget.collect_state()
+    corrupt["magnetic_field_results"] = restored_state = {
+        "kind": "distribution",
+        "results": [dict(distribution.to_json())],
+    }
+    restored_state["results"][0]["terms"]["dipolar"] = {"mean_T": [0.0, 0.0, 0.0], "rms_T": "n/a"}
+    widget.set_form_state(corrupt)
+    widget._result_table.selectRow(0)
+    assert widget._breakdown_table.isHidden()
+    assert widget._breakdown_hint.text().endswith(
+        "This saved distribution has no term breakdown; recalculate to see it."
+    )
     widget.close()
 
 
@@ -3763,7 +3882,7 @@ def test_magnetic_field_widget_shows_distribution_convergence_checks(qapp, tmp_p
         "Lookup angles per q: OK. Halving the lookup angles to 16384 shifts the |B| distribution by 0.05%.",
         "Histogram bins: Needs attention. 8 samples per occupied histogram bin (fewer than 20).",
     ]
-    assert "available for commensurate results" in hint[3]
+    assert hint[3] == "This saved distribution has no term breakdown; recalculate to see it."
     widget.close()
 
 
@@ -3910,6 +4029,55 @@ def test_magnetic_field_widget_opens_selected_distribution_plots_together(
 
     assert widget._result_table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert opened == [distributions]
+    widget.close()
+
+
+def test_magnetic_field_widget_plots_a_restored_distribution(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(
+        tmp_path / "magnetic-restored-plot.mufinder", "Magnetic Restored Plot"
+    )
+    service.add_structure(document, _host_structure())
+    opened: list[tuple[object, ...]] = []
+
+    class _Dialog:
+        def __init__(self, results, parent=None, *, estimate=False):
+            opened.append(tuple(results))
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(magnetic_field_widget_module, "MagneticFieldDistributionDialog", _Dialog)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state(
+        {
+            "magnetic_field_results": {
+                "kind": "distribution",
+                "results": [
+                    {
+                        "site_label": "site 1",
+                        "muon_position": [0.0, 0.0, 0.0],
+                        "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                        "histogram_centres_T": [1.0, 3.0],
+                        "histogram_counts": [4.0, 2.0],
+                    },
+                    {"site_label": "malformed", "fields_T": [[1.0, 2.0]]},
+                ],
+            }
+        }
+    )
+    widget._result_table.selectRow(0)
+
+    widget._open_distribution_plot()
+
+    (restored,) = opened[0]
+    monkeypatch.undo()
+    series = MagneticFieldDistributionDialog(restored)._distribution_series()
+    assert [label for *_values, label in series] == ["site 1"]
+    np.testing.assert_allclose(series[0][0], [1.0, 3.0])
+    np.testing.assert_allclose(series[0][2], [1.0, 3.0])
+    assert widget._result_table.rowCount() == 2
     widget.close()
 
 

@@ -52,9 +52,22 @@ A typical pass through the page is:
    - A commensurate result row also lists its field terms (see
      :ref:`Field Terms <magnetic-fields-field-terms>`): select the row to see
      them under the table.
-   - For an incommensurate result, select its row and click ``Open
-     Distribution Plot`` to view the field-magnitude histogram. ``Export
-     Data...`` in that window saves it to a file.
+   - An incommensurate result row lists the mean and RMS magnitude of each
+     field term over the sampled phases, with its convergence checks: select
+     the row to see them under the table. Click ``Open Distribution Plot`` to
+     view the field-magnitude histogram. ``Export Data...`` in that window
+     saves it to a file.
+
+   .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
+      :alt: The Magnetic Fields page with the MnSi helix distribution at site
+            II selected: a mean |B| of 0.154303 T, every term mean 0, RMS
+            magnitudes of 0.0809557 T dipolar, 0.000360636 T Lorentz,
+            0.194362 T contact and 0.159547 T in total, and three passing
+            convergence checks.
+
+      The distribution of the helix in :doc:`/user_guide/examples/mnsi` at
+      site II. Every term averages to zero over the phase of the helix; the
+      RMS column shows that the contact term is the largest.
 
 6. Optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card (see `Calculate a dipolar tensor`_ and `Calculate
@@ -1000,7 +1013,10 @@ A ``magnetic_field`` record holds ``kind`` (``commensurate`` or
 stores ``site_label``, ``muon_position``, ``total_T``, ``magnitude_T`` and its
 field terms (the correction is stored as ``distortion_T`` beside the uncorrected
 ``dipolar_T``); a distribution entry stores ``fields_T``, the histogram,
-``calculation_parameters`` and its ``convergence`` checks; the finite field
+``calculation_parameters``, its ``convergence`` checks, ``terms`` (each of
+``dipolar``, ``lorentz``, ``contact``, ``demag`` and ``applied`` with its
+``mean_T`` and ``rms_T``), ``total_rms_T``, and the constant ``applied_T`` and
+``demag_T`` vectors; the finite field
 list of a commensurate approximant is stored as ``commensurate`` entries. A
 ``magnetic_dipolar_tensor`` record holds ``results`` and a
 ``nuclear_relaxation`` record holds ``result``. The form state saves the

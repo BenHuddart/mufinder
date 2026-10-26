@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import math
 from typing import Any
@@ -196,10 +196,50 @@ class DistributionConvergenceCheck:
             "message": self.message,
         }
 
+    @classmethod
+    def from_json(cls, payload: Mapping[str, object]) -> DistributionConvergenceCheck:
+        return cls(
+            setting=str(payload.get("setting", "")),
+            label=str(payload.get("label", "")),
+            converged=bool(payload.get("converged", False)),
+            metric=float(payload.get("metric", 0.0)),
+            message=str(payload.get("message", "")),
+        )
+
+
+# Field terms of a distribution, in the order they are reported.
+DISTRIBUTION_FIELD_TERMS = ("dipolar", "lorentz", "contact", "demag", "applied")
+
+
+@dataclass(frozen=True, slots=True)
+class FieldTermStatistics:
+    """Mean vector and RMS magnitude, in T, of one field term over the phase samples.
+
+    The RMS is ``sqrt(<|B_term|^2>)``. For a helix the dipolar mean is near zero
+    while every sample carries a large dipolar field; the RMS shows that size.
+    """
+
+    mean_T: tuple[float, float, float]
+    rms_T: float
+
+    def to_json(self) -> dict[str, object]:
+        return {"mean_T": list(self.mean_T), "rms_T": float(self.rms_T)}
+
+    @classmethod
+    def from_json(cls, payload: Mapping[str, object]) -> FieldTermStatistics:
+        return cls(mean_T=_tuple3(payload["mean_T"]), rms_T=float(payload["rms_T"]))
+
 
 @dataclass(frozen=True, slots=True)
 class MagneticFieldDistributionResult:
-    """Field distribution for an incommensurate magnetic structure."""
+    """Field distribution for an incommensurate magnetic structure.
+
+    ``terms`` maps each name in :data:`DISTRIBUTION_FIELD_TERMS` to its
+    statistics over the samples, and ``total_rms_T`` is the RMS of ``|B|``.
+    ``applied_T`` and ``demag_T`` are the constant applied and demagnetizing
+    vectors included in every row of ``fields_T``. A result saved before the
+    breakdown existed has empty ``terms`` and ``None`` for the rest.
+    """
 
     site_label: str
     muon_position: tuple[float, float, float]
@@ -208,13 +248,17 @@ class MagneticFieldDistributionResult:
     histogram_counts: np.ndarray
     calculation_parameters: dict[str, object] = field(default_factory=dict)
     convergence: tuple[DistributionConvergenceCheck, ...] = ()
+    terms: Mapping[str, FieldTermStatistics] = field(default_factory=dict)
+    total_rms_T: float | None = None
+    applied_T: tuple[float, float, float] | None = None
+    demag_T: tuple[float, float, float] | None = None
 
     @property
     def magnitudes_T(self) -> np.ndarray:
         return np.linalg.norm(self.fields_T, axis=1)
 
     def to_json(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "site_label": self.site_label,
             "muon_position": list(self.muon_position),
             "fields_T": np.asarray(self.fields_T, dtype=float).tolist(),
@@ -225,6 +269,123 @@ class MagneticFieldDistributionResult:
             "calculation_parameters": dict(self.calculation_parameters),
             "convergence": [check.to_json() for check in self.convergence],
         }
+        if self.terms:
+            payload["terms"] = {name: term.to_json() for name, term in self.terms.items()}
+        if self.total_rms_T is not None:
+            payload["total_rms_T"] = float(self.total_rms_T)
+        if self.applied_T is not None:
+            payload["applied_T"] = list(self.applied_T)
+        if self.demag_T is not None:
+            payload["demag_T"] = list(self.demag_T)
+        return payload
+
+    @classmethod
+    def from_json(cls, payload: Mapping[str, Any]) -> MagneticFieldDistributionResult:
+        """Rebuild a result from :meth:`to_json` output, including one saved without a breakdown."""
+
+        fields = np.asarray(payload.get("fields_T", []), dtype=float)
+        if fields.size == 0:
+            fields = np.zeros((0, 3), dtype=float)
+        elif fields.ndim != 2 or fields.shape[1] != 3:
+            raise ValueError(f"fields_T must have shape (n, 3), got {fields.shape}")
+        terms = _terms_from_json(payload.get("terms"))
+        raw_parameters = payload.get("calculation_parameters")
+        raw_checks = payload.get("convergence")
+        return cls(
+            site_label=str(payload.get("site_label", "")),
+            muon_position=_tuple3(payload.get("muon_position", (0.0, 0.0, 0.0))),
+            fields_T=fields,
+            histogram_centres_T=np.asarray(payload.get("histogram_centres_T", []), dtype=float),
+            histogram_counts=np.asarray(payload.get("histogram_counts", []), dtype=float),
+            calculation_parameters=(
+                dict(raw_parameters) if isinstance(raw_parameters, Mapping) else {}
+            ),
+            convergence=tuple(
+                DistributionConvergenceCheck.from_json(check)
+                for check in (raw_checks if isinstance(raw_checks, Sequence) else ())
+                if isinstance(check, Mapping)
+            ),
+            terms=terms,
+            total_rms_T=(
+                None if payload.get("total_rms_T") is None else float(payload["total_rms_T"])
+            ),
+            applied_T=None if payload.get("applied_T") is None else _tuple3(payload["applied_T"]),
+            demag_T=None if payload.get("demag_T") is None else _tuple3(payload["demag_T"]),
+        )
+
+
+def _terms_from_json(raw_terms: object) -> dict[str, FieldTermStatistics]:
+    """Return the saved term statistics, or none unless every term is present and well formed.
+
+    A partial breakdown would not sum to the total, so a missing, unknown or
+    malformed term drops it whole and the result reads as one saved without a
+    breakdown. The terms come back in :data:`DISTRIBUTION_FIELD_TERMS` order.
+    """
+
+    if not isinstance(raw_terms, Mapping) or set(raw_terms) != set(DISTRIBUTION_FIELD_TERMS):
+        return {}
+    try:
+        return {
+            name: FieldTermStatistics.from_json(raw_terms[name])
+            for name in DISTRIBUTION_FIELD_TERMS
+        }
+    except (KeyError, TypeError, ValueError):
+        return {}
+
+
+@dataclass(frozen=True, slots=True)
+class RegeneratedPhaseSamples:
+    """The phase sampling of a distribution, rebuilt from its calculation parameters.
+
+    ``phases_turns`` has shape ``(n_samples, n_active_q)``: each row is one
+    sampled phase per independent incommensurate wavevector, in turns.
+    ``component_phase_coefficients`` has one row per backend component, giving
+    the phase of that component's lookup table as a combination of those phases.
+    """
+
+    phases_turns: np.ndarray
+    component_phase_coefficients: np.ndarray
+
+
+def regenerate_phase_samples(
+    result: MagneticFieldDistributionResult,
+) -> RegeneratedPhaseSamples:
+    """Rebuild the phase samples a distribution was evaluated at, bit for bit.
+
+    A grid is a function of the sample count and the number of independent
+    wavevectors; Monte Carlo samples come from the recorded
+    ``phase_sampling_seed``. Raises :class:`MagneticFieldError` for a result
+    saved before the seed and phase coefficients were recorded.
+    """
+
+    params = result.calculation_parameters
+    if "phase_sampling_seed" not in params or "component_phase_coefficients" not in params:
+        raise MagneticFieldError(
+            "this distribution was saved without its phase sampling; recalculate it"
+        )
+    grid = params.get("resolved_phase_sampling") == "grid"
+    try:
+        n_dim = len(params.get("phase_basis_rlu") or [])
+        raw_coefficients = list(params["component_phase_coefficients"])
+        coefficients = np.asarray(raw_coefficients, dtype=float).reshape(
+            len(raw_coefficients), n_dim
+        )
+        sample_count = int(params["phase_sample_count"])
+        seed = None if grid or n_dim == 0 else int(params["phase_sampling_seed"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise MagneticFieldError(f"this distribution's phase sampling is malformed: {exc}") from exc
+    if n_dim == 0:
+        phases = np.zeros((1, 0), dtype=float)
+    elif grid:
+        axis_count = int(round(sample_count ** (1.0 / n_dim)))
+        if axis_count**n_dim != sample_count:
+            raise MagneticFieldError(
+                f"{sample_count} grid samples do not form a {n_dim}-dimensional phase grid"
+            )
+        phases = _phase_grid(axis_count, n_dim)
+    else:
+        phases = _monte_carlo_phases(seed, sample_count, n_dim)
+    return RegeneratedPhaseSamples(phases_turns=phases, component_phase_coefficients=coefficients)
 
 
 @dataclass(frozen=True, slots=True)
@@ -871,14 +1032,6 @@ def calculate_incommensurate_field_distributions(
         max_period=opts.commensurate_max_period,
     )
     active_q_indices = _active_component_q_indices(models)
-    phase_samples_turns = _build_phase_samples_turns(
-        n_dim=phase_basis_rlu.shape[0],
-        nangles=int(opts.nangles),
-        phase_sample_count=int(opts.phase_sample_count),
-        sampling=opts.phase_sampling,
-        random_seed=opts.random_seed,
-        max_grid_samples=int(opts.max_grid_samples),
-    )
     resolved_sampling = _resolved_phase_sampling(
         n_dim=phase_basis_rlu.shape[0],
         nangles=int(opts.nangles),
@@ -886,11 +1039,34 @@ def calculate_incommensurate_field_distributions(
         sampling=opts.phase_sampling,
         max_grid_samples=int(opts.max_grid_samples),
     )
+    # Monte Carlo always runs from a recorded seed, so the samples can be rebuilt later.
+    phase_sampling_seed = (
+        None
+        if resolved_sampling == "grid"
+        else (
+            int(opts.random_seed)
+            if opts.random_seed is not None
+            else int(np.random.SeedSequence().entropy) % 2**63
+        )
+    )
+    phase_samples_turns = _build_phase_samples_turns(
+        n_dim=phase_basis_rlu.shape[0],
+        nangles=int(opts.nangles),
+        phase_sample_count=int(opts.phase_sample_count),
+        sampling=opts.phase_sampling,
+        random_seed=phase_sampling_seed,
+        max_grid_samples=int(opts.max_grid_samples),
+    )
     calculation_parameters["independent_q_indices"] = list(active_q_indices)
     calculation_parameters["phase_basis_rlu"] = phase_basis_rlu.tolist()
     calculation_parameters["phase_sample_count"] = int(phase_samples_turns.shape[0])
     calculation_parameters["resolved_phase_sampling"] = resolved_sampling
+    calculation_parameters["phase_sampling_seed"] = phase_sampling_seed
     component_totals_by_site: list[list[np.ndarray]] = [[] for _ in muons]
+    # Per site, the dipolar, Lorentz and contact lookup tables of every component.
+    component_terms_by_site: list[dict[str, list[np.ndarray]]] = [
+        {"dipolar": [], "lorentz": [], "contact": []} for _ in muons
+    ]
     component_phase_coeffs: list[tuple[float, ...]] = []
 
     for model_data, phase_coeff in zip(models, phase_coeffs_by_model, strict=True):
@@ -931,43 +1107,75 @@ def calculate_incommensurate_field_distributions(
                 lor = (
                     _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles))
                     if opts.include_lorentz
-                    else 0.0
+                    else np.zeros_like(dip)
                 )
                 con = _field_array(local_field, "Contact", "C", nangles=int(opts.nangles))
                 component_totals_by_site[index].append(dip + lor + con)
+                site_terms = component_terms_by_site[index]
+                site_terms["dipolar"].append(dip)
+                site_terms["lorentz"].append(lor)
+                site_terms["contact"].append(con)
             component_phase_coeffs.append(tuple(float(value) for value in phase_coeff))
+    calculation_parameters["component_phase_coefficients"] = [
+        list(coeff) for coeff in component_phase_coeffs
+    ]
 
     # The demagnetizing field depends only on the bulk magnetisation, so it is
     # the same at every sampled phase point.
-    offset = _as_vector(opts.applied_field, "applied_field") + _demag_field(structure, models, opts)
+    applied = _as_vector(opts.applied_field, "applied_field")
+    demag = _demag_field(structure, models, opts)
+    offset = applied + demag
     half_samples = _half_resolution_phase_samples(phase_samples_turns, resolved_sampling)
+    # The lookup rows each phase sample reads depend only on the phases, so every
+    # site and term shares them.
+    full_indices = _component_lookup_indices(
+        component_phase_coeffs, phase_samples_turns, nangles=int(opts.nangles)
+    )
+    half_lookup_indices = (
+        _component_lookup_indices(
+            component_phase_coeffs, phase_samples_turns, nangles=int(opts.nangles), stride=2
+        )
+        if phase_basis_rlu.shape[0] and int(opts.nangles) % 2 == 0
+        else None
+    )
+    half_sample_indices = (
+        _component_lookup_indices(component_phase_coeffs, half_samples, nangles=int(opts.nangles))
+        if half_samples is not None
+        else None
+    )
     results: list[MagneticFieldDistributionResult] = []
     for index, (label, position) in enumerate(muons):
-
-        def site_fields(phases: np.ndarray, *, stride: int = 1, index: int = index) -> np.ndarray:
-            fields = _combine_component_samples(
-                component_totals_by_site[index],
-                component_phase_coeffs,
-                phases,
-                nangles=int(opts.nangles),
-                stride=stride,
-            )
-            return fields + offset[np.newaxis, :]
-
-        fields = site_fields(phase_samples_turns)
+        term_fields = {
+            name: _sum_component_lookups(tables, full_indices)
+            for name, tables in component_terms_by_site[index].items()
+        }
+        fields = sum(term_fields.values()) + offset[np.newaxis, :]
         magnitudes = np.linalg.norm(fields, axis=1)
+        terms = {name: _sampled_term_statistics(values) for name, values in term_fields.items()}
+        terms["demag"] = _constant_term_statistics(demag)
+        terms["applied"] = _constant_term_statistics(applied)
         centres, counts = _field_magnitude_histogram(magnitudes, bins=int(opts.histogram_bins))
         convergence = _distribution_convergence_checks(
             magnitudes,
             counts,
             half_lookup_magnitudes=(
-                np.linalg.norm(site_fields(phase_samples_turns, stride=2), axis=1)
-                if phase_basis_rlu.shape[0] and int(opts.nangles) % 2 == 0
+                np.linalg.norm(
+                    _sum_component_lookups(
+                        component_totals_by_site[index], half_lookup_indices, stride=2
+                    )
+                    + offset,
+                    axis=1,
+                )
+                if half_lookup_indices is not None
                 else None
             ),
             half_sample_magnitudes=(
-                np.linalg.norm(site_fields(half_samples), axis=1)
-                if half_samples is not None
+                np.linalg.norm(
+                    _sum_component_lookups(component_totals_by_site[index], half_sample_indices)
+                    + offset,
+                    axis=1,
+                )
+                if half_sample_indices is not None
                 else None
             ),
             nangles=int(opts.nangles),
@@ -991,9 +1199,24 @@ def calculate_incommensurate_field_distributions(
                 histogram_counts=counts,
                 calculation_parameters=calculation_parameters,
                 convergence=convergence,
+                terms={name: terms[name] for name in DISTRIBUTION_FIELD_TERMS},
+                total_rms_T=float(np.sqrt(np.mean(magnitudes**2))),
+                applied_T=_tuple3(applied),
+                demag_T=_tuple3(demag),
             )
         )
     return tuple(results)
+
+
+def _sampled_term_statistics(fields: np.ndarray) -> FieldTermStatistics:
+    return FieldTermStatistics(
+        mean_T=_tuple3(np.mean(fields, axis=0)),
+        rms_T=float(np.sqrt(np.mean(np.sum(fields**2, axis=1)))),
+    )
+
+
+def _constant_term_statistics(vector: np.ndarray) -> FieldTermStatistics:
+    return FieldTermStatistics(mean_T=_tuple3(vector), rms_T=float(np.linalg.norm(vector)))
 
 
 def _half_resolution_phase_samples(
@@ -1209,14 +1432,21 @@ def _build_phase_samples_turns(
                 "requested grid phase sampling is too large; reduce incommensurate samples "
                 "or use Monte Carlo sampling"
             )
-        axis_values = np.arange(axis_count, dtype=float) / float(axis_count)
-        meshes = np.meshgrid(*([axis_values] * n_dim), indexing="ij")
-        coords = np.stack([mesh.ravel() for mesh in meshes], axis=1)
-    else:
-        rng = np.random.default_rng(seed=random_seed)
-        coords = rng.random((int(phase_sample_count), n_dim), dtype=float)
+        return _phase_grid(axis_count, n_dim)
+    return _monte_carlo_phases(random_seed, int(phase_sample_count), n_dim)
 
-    return coords
+
+def _phase_grid(axis_count: int, n_dim: int) -> np.ndarray:
+    """Return a uniform grid of ``axis_count`` phases, in turns, along each of ``n_dim`` axes."""
+
+    axis_values = np.arange(axis_count, dtype=float) / float(axis_count)
+    meshes = np.meshgrid(*([axis_values] * n_dim), indexing="ij")
+    return np.stack([mesh.ravel() for mesh in meshes], axis=1)
+
+
+def _monte_carlo_phases(seed: int | None, sample_count: int, n_dim: int) -> np.ndarray:
+    rng = np.random.default_rng(seed=seed)
+    return rng.random((int(sample_count), n_dim), dtype=float)
 
 
 def _resolved_phase_sampling(
@@ -1268,27 +1498,57 @@ def _combine_component_samples(
     it must divide ``nangles`` so the kept rows stay uniformly spaced.
     """
 
+    indices = _component_lookup_indices(
+        component_q_coeffs, phase_samples_turns, nangles=nangles, stride=stride
+    )
+    return _sum_component_lookups(component_fields, indices, stride=stride)
+
+
+def _component_lookup_indices(
+    component_q_coeffs: Sequence[Sequence[float]],
+    phase_samples_turns: np.ndarray,
+    *,
+    nangles: int,
+    stride: int = 1,
+) -> list[np.ndarray]:
+    """Return, per component, the lookup row each phase sample reads.
+
+    The rows index a lookup table of ``nangles`` angles thinned to every
+    ``stride``-th row; ``stride`` must divide ``nangles``.
+    """
+
     if int(stride) < 1 or int(nangles) % int(stride) != 0:
         raise MagneticFieldError("lookup stride must divide the number of lookup angles")
     phases = np.asarray(phase_samples_turns, dtype=float)
     if phases.ndim != 2:
         raise MagneticFieldError("phase_samples_turns must have shape (n, n_phase_dimensions)")
-    combined = np.zeros((phases.shape[0], 3), dtype=float)
-    for fields, q_coeff in zip(component_fields, component_q_coeffs, strict=True):
-        lookup = np.asarray(fields, dtype=float)
-        if lookup.ndim != 2 or lookup.shape[1] != 3:
-            raise MagneticFieldError(
-                f"component field lookup must have shape (nangles, 3), got {lookup.shape}"
-            )
+    rows = int(nangles) // int(stride)
+    indices: list[np.ndarray] = []
+    for q_coeff in component_q_coeffs:
         coeff = np.asarray(q_coeff, dtype=float)
         if coeff.shape != (phases.shape[1],):
             raise MagneticFieldError(
                 "component phase coefficient length does not match sampled phase dimensions"
             )
-        table = lookup[:: int(stride)]
         phase_turns = np.mod(phases @ coeff, 1.0)
-        indices = np.rint(phase_turns * float(nangles) / float(stride)).astype(int) % table.shape[0]
-        combined += table[indices]
+        indices.append(np.rint(phase_turns * float(rows)).astype(int) % rows)
+    return indices
+
+
+def _sum_component_lookups(
+    component_fields: Sequence[np.ndarray], indices: Sequence[np.ndarray], *, stride: int = 1
+) -> np.ndarray:
+    """Sum each component's lookup field at the rows :func:`_component_lookup_indices` chose."""
+
+    sample_count = indices[0].shape[0] if indices else 0
+    combined = np.zeros((sample_count, 3), dtype=float)
+    for fields, rows in zip(component_fields, indices, strict=True):
+        lookup = np.asarray(fields, dtype=float)
+        if lookup.ndim != 2 or lookup.shape[1] != 3:
+            raise MagneticFieldError(
+                f"component field lookup must have shape (nangles, 3), got {lookup.shape}"
+            )
+        combined += lookup[:: int(stride)][rows]
     return combined
 
 
