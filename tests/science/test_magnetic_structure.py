@@ -1126,6 +1126,40 @@ def test_mcif_magnetic_structure_preserves_q_basis_labels_and_unit_cell_moments(
     assert moment_at_atom(structure, model, 1) == pytest.approx([0.0, 1.0, 2.0])
 
 
+def test_legacy_model_converts_stored_crystal_axis_moments_to_cartesian() -> None:
+    # Projects imported before moments were converted on import store the
+    # crystal-axis components as written; a hexagonal cell shows the difference.
+    structure = _structure()
+    structure.lattice_vectors = [[5.8, 0.0, 0.0], [-2.9, 2.9 * 3**0.5, 0.0], [0.0, 0.0, 11.2]]
+    structure.properties["magnetic_structure"] = {
+        "source": "mcif",
+        "moments": [
+            {
+                "label": "Fe1",
+                "atom_index": 0,
+                "vector": [2.0, 2.0, 0.0],
+                "coordinate_system": "crystalaxis",
+            },
+            {
+                "label": "O1",
+                "atom_index": 1,
+                "vector": [0.0, 1.0, 0.0],
+                "coordinate_system": "cartesian",
+                "source_coordinate_system": "crystalaxis",
+            },
+        ],
+    }
+
+    model = magnetic_model_from_legacy_structure(structure)
+
+    assert moment_at_atom(structure, model, 0) == pytest.approx([1.0, 3**0.5, 0.0])
+    assert moment_at_atom(structure, model, 1) == pytest.approx([0.0, 1.0, 0.0])
+    assert [component.metadata["source_coordinate_system"] for component in model.components] == [
+        "crystalaxis",
+        "crystalaxis",
+    ]
+
+
 def test_legacy_model_no_magnetism_yields_no_components() -> None:
     structure = _structure()
     model = magnetic_model_from_legacy_structure(structure)

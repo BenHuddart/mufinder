@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
+import numpy as np
 import pytest
 from ase import Atoms
 from ase.geometry import cell_to_cellpar
@@ -782,7 +784,9 @@ loop_
     assert moments[0]["label"] == "Si1"
     assert moments[0]["vector"] == pytest.approx([0.0, 0.0, 1.0])
     assert moments[0]["atom_index"] == 0
-    assert moments[0]["coordinate_system"] == "crystalaxis"
+    assert moments[0]["coordinate_system"] == "cartesian"
+    assert moments[0]["source_coordinate_system"] == "crystalaxis"
+    assert moments[0]["source_components"] == pytest.approx([0.0, 0.0, 1.0])
 
 
 def test_load_mcif_preserves_richer_magnetic_metadata(tmp_path: Path) -> None:
@@ -1031,6 +1035,458 @@ Mn#2 0.0 0.0 -2.5
 
 
 # --------------------------------------------------------------------------
+# MCIF magnetic symmetry and moment components
+# --------------------------------------------------------------------------
+
+
+def _magnetic_symmetry_loops(
+    operations: str,
+    centerings: str = "1 x,y,z,+1 mx,my,mz",
+    *,
+    style: str = "magndata",
+    with_moment_matrices: bool = True,
+) -> str:
+    """Return magnetic operation and centering loops in MAGNDATA or DDLm tag style."""
+    if style == "magndata":
+        op_tags = (
+            "_space_group_symop.magn_operation_xyz",
+            "_space_group_symop.magn_operation_mxmymz",
+        )
+        centering_tags = (
+            "_space_group_symop.magn_centering_xyz",
+            "_space_group_symop.magn_centering_mxmymz",
+        )
+        id_tags = ("_space_group_symop.magn_id", "_space_group_symop.magn_centering_id")
+    else:
+        op_tags = (
+            "_space_group_symop_magn_operation.xyz",
+            "_space_group_symop_magn_operation.mxmymz",
+        )
+        centering_tags = (
+            "_space_group_symop_magn_centering.xyz",
+            "_space_group_symop_magn_centering.mxmymz",
+        )
+        id_tags = ("_space_group_symop_magn_operation.id", "_space_group_symop_magn_centering.id")
+
+    def loop(id_tag: str, tags: tuple[str, str], rows: str) -> str:
+        headers = [id_tag, tags[0]] + ([tags[1]] if with_moment_matrices else [])
+        body = rows.strip().splitlines()
+        if not with_moment_matrices:
+            body = [" ".join(row.split()[:2]) for row in body]
+        return "loop_\n" + "\n".join(headers) + "\n" + "\n".join(body) + "\n"
+
+    return loop(id_tags[0], op_tags, operations) + loop(id_tags[1], centering_tags, centerings)
+
+
+_CRYSTALAXIS_MOMENTS = """
+loop_
+  _atom_site_moment.label
+  _atom_site_moment.crystalaxis_x
+  _atom_site_moment.crystalaxis_y
+  _atom_site_moment.crystalaxis_z
+"""
+
+
+def _moment_by_index(magnetic: dict) -> dict[int, list[float]]:
+    return {int(moment["atom_index"]): moment["vector"] for moment in magnetic["moments"]}
+
+
+@pytest.mark.parametrize("style", ["magndata", "ddlm"])
+def test_load_mcif_applies_magnetic_operations_and_reverses_time_reversed_images(
+    tmp_path: Path, style: str
+) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.1 0.2 0.0\n  O1 O 0.0 0.0 0.25",
+            loops=_magnetic_symmetry_loops(
+                "1 x,y,z,+1 mx,my,mz\n2 -x,-y,z+1/2,-1 mx,my,-mz", style=style
+            )
+            + _CRYSTALAXIS_MOMENTS
+            + "  Fe1 0.0 0.0 2.0\n",
+        ),
+    )
+
+    assert loaded.species == ["Fe", "Fe", "O", "O"]
+    assert loaded.fractional_positions == [
+        pytest.approx([0.1, 0.2, 0.0]),
+        pytest.approx([0.9, 0.8, 0.5]),
+        pytest.approx([0.0, 0.0, 0.25]),
+        pytest.approx([0.0, 0.0, 0.75]),
+    ]
+    assert loaded.properties["atom_count"] == 4
+    magnetic = loaded.properties["magnetic_structure"]
+    assert magnetic["atom_labels"] == ["Fe1", "Fe1", "O1", "O1"]
+    assert [moment["label"] for moment in magnetic["moments"]] == ["Fe1", "Fe1"]
+    moments = _moment_by_index(magnetic)
+    assert moments[0] == pytest.approx([0.0, 0.0, 2.0])
+    assert moments[1] == pytest.approx([0.0, 0.0, -2.0])
+    assert loaded.properties["atomic_spins"] == pytest.approx([2.0, -2.0, 0.0, 0.0])
+    assert magnetic["site_moments"]["Fe1"] == pytest.approx([0.0, 0.0, 2.0])
+
+
+def test_load_mcif_derives_axial_moment_images_without_mxmymz(tmp_path: Path) -> None:
+    # m' = det(R) * theta * R m: a two-fold about z with time reversal keeps an
+    # in-plane moment and reverses an out-of-plane one; inversion keeps both.
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.1 0.2 0.3",
+            loops=_magnetic_symmetry_loops(
+                "1 x,y,z,+1\n2 -x,-y,z,-1\n3 -x,-y,-z,+1", with_moment_matrices=False
+            )
+            + _CRYSTALAXIS_MOMENTS
+            + "  Fe1 1.0 0.0 2.0\n",
+        ),
+    )
+
+    assert loaded.fractional_positions == [
+        pytest.approx([0.1, 0.2, 0.3]),
+        pytest.approx([0.9, 0.8, 0.3]),
+        pytest.approx([0.9, 0.8, 0.7]),
+    ]
+    moments = _moment_by_index(loaded.properties["magnetic_structure"])
+    assert moments[0] == pytest.approx([1.0, 0.0, 2.0])
+    assert moments[1] == pytest.approx([1.0, 0.0, -2.0])
+    assert moments[2] == pytest.approx([1.0, 0.0, 2.0])
+
+
+def test_load_mcif_uses_explicit_moment_matrices(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.1 0.2 0.3",
+            loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x,-y,z,+1 -my,mx,mz")
+            + _CRYSTALAXIS_MOMENTS
+            + "  Fe1 1.0 0.0 0.0\n",
+        ),
+    )
+
+    assert _moment_by_index(loaded.properties["magnetic_structure"])[1] == pytest.approx(
+        [0.0, 1.0, 0.0]
+    )
+
+
+def test_load_mcif_composes_centerings_with_operations(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.1 0.2 0.3",
+            loops=_magnetic_symmetry_loops(
+                "1 x,y,z,+1 mx,my,mz\n2 -x,-y,-z,+1 mx,my,mz",
+                "1 x,y,z,+1 mx,my,mz\n2 x+1/2,y+1/2,z,-1 -mx,-my,-mz",
+            )
+            + _CRYSTALAXIS_MOMENTS
+            + "  Fe1 0.0 0.0 1.0\n",
+        ),
+    )
+
+    assert loaded.fractional_positions == [
+        pytest.approx([0.1, 0.2, 0.3]),
+        pytest.approx([0.6, 0.7, 0.3]),
+        pytest.approx([0.9, 0.8, 0.7]),
+        pytest.approx([0.4, 0.3, 0.7]),
+    ]
+    moments = _moment_by_index(loaded.properties["magnetic_structure"])
+    assert [moments[index][2] for index in range(4)] == pytest.approx([1.0, -1.0, 1.0, -1.0])
+
+
+def test_load_mcif_gives_unlabelled_moments_to_the_site_in_the_same_row(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.1 0.2 0.3\n  Mn1 Mn 0.5 0.5 0.0",
+            loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 x,y,z+1/2,-1 -mx,-my,-mz")
+            + """
+loop_
+  _atom_site_moment.crystalaxis_x
+  _atom_site_moment.crystalaxis_y
+  _atom_site_moment.crystalaxis_z
+  0.0 0.0 1.0
+  0.0 0.0 2.0
+  0.0 0.0 3.0
+""",
+        ),
+    )
+
+    assert loaded.species == ["Fe", "Fe", "Mn", "Mn"]
+    assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -1.0, 2.0, -2.0])
+
+
+def test_load_mcif_wraps_images_a_rounding_error_below_zero_to_zero(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            # -0.1 + 0.3 - 1/5 is -2.8e-17 in floating point.
+            atoms="Fe1 Fe 0.1 0.3 0.25",
+            loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x+y-1/5,y,z+1/2,+1 mx,my,mz"),
+        ),
+    )
+
+    assert loaded.fractional_positions[1] == [0.0, pytest.approx(0.3), pytest.approx(0.75)]
+
+
+def test_load_mcif_keeps_one_atom_on_a_special_position(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.0 0.0 0.0\n  Mn1 Mn 0.5 0.5 0.49999",
+            loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x,-y,-z,+1 mx,my,mz"),
+        ),
+    )
+
+    assert loaded.species == ["Fe", "Mn"]
+
+
+def test_load_mcif_rejects_atoms_generated_onto_another_site(tmp_path: Path) -> None:
+    with pytest.raises(StructureLoadError, match="'sample.mcif'.*'Fe1'.*'Mn1'|'Mn1'.*'Fe1'"):
+        _load_mcif(
+            tmp_path,
+            _mcif(
+                atoms="Fe1 Fe 0.25 0.0 0.0\n  Mn1 Mn 0.75 0.0 0.0",
+                loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x,-y,-z,+1 mx,my,mz"),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("operation", "message"),
+    [
+        ("x,y,+1", "x,y,\\+1"),
+        ("x,q,z,+1", "x,q,z,\\+1"),
+        ("x,y,z,+2", "time-reversal"),
+        ("x,y,z", "x,y,z"),
+        ("x,x,z,+1", "singular"),
+    ],
+)
+def test_load_mcif_rejects_malformed_magnetic_operations(
+    tmp_path: Path, operation: str, message: str
+) -> None:
+    with pytest.raises(StructureLoadError, match=message):
+        _load_mcif(
+            tmp_path,
+            _mcif(
+                loops=_magnetic_symmetry_loops(
+                    f"1 x,y,z,+1\n2 {operation}", with_moment_matrices=False
+                )
+            ),
+        )
+
+
+def test_load_mcif_rejects_a_moment_matrix_with_a_translation(tmp_path: Path) -> None:
+    with pytest.raises(StructureLoadError, match="mx\\+1/2"):
+        _load_mcif(
+            tmp_path,
+            _mcif(loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx+1/2,my,mz")),
+        )
+
+
+def test_load_mcif_rejects_ordinary_symmetry_alongside_magnetic_operations(
+    tmp_path: Path,
+) -> None:
+    ordinary = "loop_\n_space_group_symop_operation_xyz\n'x,y,z'\n'-x,-y,-z'\n"
+    with pytest.raises(StructureLoadError, match="ordinary symmetry"):
+        _load_mcif(
+            tmp_path,
+            _mcif(
+                atoms="Fe1 Fe 0.1 0.2 0.3",
+                loops=ordinary + _magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz"),
+            ),
+        )
+
+
+_HEXAGONAL_MCIF_HEADER = """
+data_hexagonal
+_cell_length_a 5.8
+_cell_length_b 5.8
+_cell_length_c 11.2
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 120
+loop_
+  _atom_site_label
+  _atom_site_type_symbol
+  _atom_site_fract_x
+  _atom_site_fract_y
+  _atom_site_fract_z
+  Mn1 Mn 0.33 0.0 0.0
+"""
+
+
+@pytest.mark.parametrize(
+    ("components", "expected"),
+    [
+        ("2.5 2.5 0.0", 2.5),  # a/|a| + b/|b| has unit length when gamma = 120 degrees
+        ("-3.03 0.0 0.0", 3.03),
+        ("0.0 0.0 1.5", 1.5),
+    ],
+)
+def test_load_mcif_converts_crystal_axis_components_in_a_hexagonal_cell(
+    tmp_path: Path, components: str, expected: float
+) -> None:
+    loaded = _load_mcif(
+        tmp_path, _HEXAGONAL_MCIF_HEADER + _CRYSTALAXIS_MOMENTS + f"  Mn1 {components}\n"
+    )
+
+    moment = loaded.properties["magnetic_structure"]["moments"][0]
+    lattice = np.array(loaded.lattice_vectors)
+    unit_axes = lattice / np.linalg.norm(lattice, axis=1)[:, None]
+    written = [float(value) for value in components.split()]
+    assert moment["vector"] == pytest.approx(list(np.array(written) @ unit_axes))
+    assert np.linalg.norm(moment["vector"]) == pytest.approx(expected)
+    assert moment["coordinate_system"] == "cartesian"
+    assert moment["source_coordinate_system"] == "crystalaxis"
+    assert moment["source_components"] == pytest.approx(written)
+
+
+def test_load_mcif_checks_crystal_axis_moments_against_the_given_magnitude(
+    tmp_path: Path,
+) -> None:
+    moments = """
+loop_
+  _atom_site_moment.label
+  _atom_site_moment.crystalaxis_x
+  _atom_site_moment.crystalaxis_y
+  _atom_site_moment.crystalaxis_z
+  _atom_site_moment.magnitude
+"""
+    loaded = _load_mcif(tmp_path, _HEXAGONAL_MCIF_HEADER + moments + "  Mn1 2.0 2.0 0.0 2.0(1)\n")
+    assert np.linalg.norm(
+        loaded.properties["magnetic_structure"]["moments"][0]["vector"]
+    ) == pytest.approx(2.0)
+
+    with pytest.raises(StructureLoadError, match=r"Mn1.*3\.46.*2\.0"):
+        # Along unit axes 120 degrees apart, (2, -2, 0) has |m| = 2 sqrt(3).
+        _load_mcif(tmp_path, _HEXAGONAL_MCIF_HEADER + moments + "  Mn1 2.0 -2.0 0.0 2.0\n")
+
+
+def test_load_mcif_cartesian_components_pass_through_in_a_hexagonal_cell(
+    tmp_path: Path,
+) -> None:
+    moments = """
+loop_
+  _atom_site_moment.label
+  _atom_site_moment.cartn_x
+  _atom_site_moment.cartn_y
+  _atom_site_moment.cartn_z
+  Mn1 1.0 2.0 0.5
+"""
+    loaded = _load_mcif(tmp_path, _HEXAGONAL_MCIF_HEADER + moments)
+
+    moment = loaded.properties["magnetic_structure"]["moments"][0]
+    assert moment["vector"] == pytest.approx([1.0, 2.0, 0.5])
+    assert moment["source_coordinate_system"] == "cartesian"
+
+
+@pytest.mark.parametrize("magnetic_block_last", [True, False])
+def test_load_mcif_reads_magnetic_symmetry_from_the_block_ase_reads(
+    tmp_path: Path, magnetic_block_last: bool
+) -> None:
+    # ASE reads the last block holding a structure; the other block's operations,
+    # sites and moments must not leak into it.
+    magnetic = _mcif(
+        atoms="Fe1 Fe 0.1 0.2 0.3",
+        loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x,-y,-z,-1 -mx,-my,-mz")
+        + _CRYSTALAXIS_MOMENTS
+        + "  Fe1 0.0 0.0 1.0\n",
+    )
+    plain = _mcif(atoms="Co1 Co 0.0 0.0 0.0\n  O1 O 0.5 0.5 0.5\n  O2 O 0.25 0.25 0.25")
+    blocks = [plain, magnetic] if magnetic_block_last else [magnetic, plain]
+    loaded = _load_mcif(tmp_path, "\n".join(blocks))
+
+    if magnetic_block_last:
+        assert loaded.species == ["Fe", "Fe"]
+        assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -1.0])
+    else:
+        assert loaded.species == ["Co", "O", "O"]
+        assert "magnetic_structure" not in loaded.properties
+
+
+def test_load_cif_with_magnetic_operations_is_read_as_mcif(tmp_path: Path) -> None:
+    text = _mcif(
+        atoms="Fe1 Fe 0.1 0.2 0.3",
+        loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x,-y,-z,-1 -mx,-my,-mz")
+        + _CRYSTALAXIS_MOMENTS
+        + "  Fe1 0.0 0.0 1.0\n",
+    )
+    loaded = load_structure_file(_write(tmp_path, "magnetic.cif", text))
+
+    assert loaded.species == ["Fe", "Fe"]
+    assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -1.0])
+
+
+def _magndata_file(name: str) -> Path:
+    """Return one of the MAGNDATA example files muesr ships, or skip when muesr is absent."""
+    spec = importlib.util.find_spec("muesr")
+    if spec is None or not spec.submodule_search_locations:
+        pytest.skip("muesr is not installed")
+    path = Path(next(iter(spec.submodule_search_locations))) / "tests" / "structures" / name
+    if not path.is_file():
+        pytest.skip(f"muesr does not ship {name}")
+    return path
+
+
+def _magnetic_species(loaded) -> list[str]:
+    moments = loaded.properties["magnetic_structure"]["moments"]
+    return sorted(loaded.species[int(moment["atom_index"])] for moment in moments)
+
+
+@pytest.mark.parametrize(
+    ("name", "atom_count", "magnetic_species", "moment_size"),
+    [
+        ("ScMnO3.mcif", 30, ["Mn"] * 6, {"Mn": 3.03}),
+        ("DyFeO3.mcif", 20, ["Dy"] * 4 + ["Fe"] * 4, {"Dy": 1.0, "Fe": float(np.hypot(1.0, 0.3))}),
+        ("LiFeSO4F.mcif", 64, ["Fe"] * 8, None),
+        ("Cd2Os2O7.mcif", 88, ["Os"] * 16, {"Os": 0.6 * 3**0.5}),
+    ],
+)
+def test_load_magndata_files_expands_the_magnetic_cell(
+    name: str,
+    atom_count: int,
+    magnetic_species: list[str],
+    moment_size: dict[str, float] | None,
+) -> None:
+    loaded = load_structure_file(_magndata_file(name))
+
+    assert len(loaded.species) == atom_count
+    assert loaded.properties["atom_count"] == atom_count
+    assert _magnetic_species(loaded) == magnetic_species
+    lattice = np.array(loaded.lattice_vectors)
+    positions = np.array(loaded.fractional_positions)
+    for left in range(atom_count):
+        for right in range(left):
+            delta = positions[left] - positions[right]
+            delta -= np.round(delta)
+            assert np.linalg.norm(delta @ lattice) > 0.1
+    moments = loaded.properties["magnetic_structure"]["moments"]
+    total = np.zeros(3)
+    for moment in moments:
+        vector = np.array(moment["vector"])
+        total += vector
+        if moment_size is not None:
+            species = loaded.species[int(moment["atom_index"])]
+            assert np.linalg.norm(vector) == pytest.approx(moment_size[species], abs=1e-9)
+    # Every one of these structures is antiferromagnetic: the cell's moments cancel.
+    assert total == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)
+
+
+def test_load_scmno3_reverses_the_moment_on_a_primed_mirror_image() -> None:
+    # Operation 12 of P6_3c'm' is (y, x, z) with time reversal, moment (my, mx, mz):
+    # Mn1 at (0.3316, 0, 0) with moment -3.03 along a maps to (0, 0.3316, 0) with
+    # moment -3.03 along b.
+    loaded = load_structure_file(_magndata_file("ScMnO3.mcif"))
+
+    positions = np.array(loaded.fractional_positions)
+    index = int(np.argmin(np.linalg.norm(positions - [0.0, 0.3316, 0.0], axis=1)))
+    assert positions[index] == pytest.approx([0.0, 0.3316, 0.0])
+    lattice = np.array(loaded.lattice_vectors)
+    expected = -3.03 * lattice[1] / np.linalg.norm(lattice[1])
+    assert _moment_by_index(loaded.properties["magnetic_structure"])[index] == pytest.approx(
+        list(expected)
+    )
+
+
+# --------------------------------------------------------------------------
 # MCIF parser helpers with no public path to their edge cases
 # --------------------------------------------------------------------------
 
@@ -1076,7 +1532,7 @@ def test_parse_cif_tags_and_loops_reads_text_fields_as_single_values() -> None:
     assert tags == {"_note": "\n_fake # x", "_next": "1", "_open": "never closed\nloop_\n"}
 
 
-def test_extract_atom_labels_dedupes_tag_and_loop_labels() -> None:
+def test_atom_site_labels_reads_tag_and_loop_labels_in_order() -> None:
     tags = {"_atom_site_label": "Si1"}
     loops = [
         {
@@ -1085,7 +1541,7 @@ def test_extract_atom_labels_dedupes_tag_and_loop_labels() -> None:
         }
     ]
 
-    assert sio._extract_atom_labels(tags, loops) == ["Si1", "O1"]
+    assert sio._atom_site_labels(tags, loops) == ["Si1", "Si1", "O1"]
 
 
 def test_attach_moment_atom_indices_without_labels_is_a_passthrough() -> None:

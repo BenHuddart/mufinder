@@ -388,6 +388,18 @@ Compatibility ledger
      - Application setting, not project data. Current behaviour, not
        deprecated: ``default_queue_name`` stays the name of the default queue,
        and a profile with no queues is valid.
+   * - ``magnetic_structure`` moments with ``coordinate_system: "crystalaxis"``
+     - ``mufinder.science.magnetic_structure``
+       (``magnetic_model_from_legacy_structure``)
+     - The MCIF importer stores each moment as a Cartesian ``vector`` in μB,
+       with ``coordinate_system: "cartesian"`` and the components as written
+       in ``source_components`` under ``source_coordinate_system``. A moment
+       saved with ``coordinate_system: "crystalaxis"`` holds the file's
+       components along the unit lattice directions, so building the magnetic
+       model converts it with the host lattice. The per-atom spins such a
+       project already stores are not recomputed.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that converts stored crystal-axis moments.
    * - ``magnetic_field`` records without ``site_source``
      - ``mufinder.services.magnetic_field_results``
        (``field_result_site_source``, ``attach_magnetic_field_results``)

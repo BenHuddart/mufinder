@@ -279,6 +279,29 @@ def vector_length(vector: Sequence[float]) -> float:
     return math.sqrt(sum(float(value) * float(value) for value in vector))
 
 
+def crystal_axis_to_cartesian(
+    components: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+    *,
+    error: type[Exception] = LatticeError,
+) -> list[float]:
+    """Return ``sum_i c_i a_i / |a_i|``: components along the unit lattice directions, in Cartesian.
+
+    This is the magnetic CIF ``crystalaxis`` convention for moments, so in a cell
+    whose axes are not orthogonal the components are not Cartesian ones.
+    """
+
+    rows = lattice_rows(lattice_vectors, error=error)
+    if len(components) != 3:
+        raise error("Crystal-axis components must be a 3-vector.")
+    lengths = [vector_length(row) for row in rows]
+    if any(length == 0.0 for length in lengths):
+        raise error("Lattice vectors must be non-zero.")
+    return _frac_to_cart(
+        [float(value) / length for value, length in zip(components, lengths, strict=True)], rows
+    )
+
+
 # Broadcast helpers: arrays of points.
 
 
@@ -410,6 +433,7 @@ __all__ = [
     "NEAR_TIE_RTOL",
     "cartesian_to_fractional",
     "cell_volume",
+    "crystal_axis_to_cartesian",
     "deduplicate_periodic_positions",
     "determinant3",
     "fractional_to_cartesian",

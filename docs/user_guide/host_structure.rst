@@ -109,14 +109,38 @@ CIF
    endings are all accepted. A quoted loop value that contains a space
    followed by ``#`` (``'C #1'``) is rejected.
 MCIF
-   Read like a CIF, plus the magnetic metadata:
+   Read like a CIF, plus the magnetic symmetry and magnetic metadata:
 
+   - the magnetic operations and centerings
+     (``_space_group_symop.magn_operation_xyz`` and
+     ``_space_group_symop.magn_centering_xyz``, or the
+     ``_space_group_symop_magn_operation.xyz`` spelling) are applied to the
+     listed sites, so the structure holds the whole magnetic cell rather than
+     only the sites the file lists. Every operation is combined with every
+     centering; images of one site closer than 0.01 Å are one atom, and each
+     atom keeps the label of the site it came from. A moment on a site is
+     carried to each of its images, through the operation's ``mxmymz`` part
+     when the file gives one and otherwise as an axial vector,
+     ``m' = det(R) θ R m``, with θ = -1 for a time-reversed operation;
    - atom labels, single-vector legacy propagation-vector tags,
      ``_magnetic_propagation_vector_kxkykz`` entries, and atom-site moment
      vectors;
    - every imported propagation vector, kept in reciprocal-lattice units;
+   - moment components converted to Cartesian vectors in μB: ``crystalaxis``
+     components lie along the unit lattice directions, ``m = Σ m_i a_i/|a_i|``,
+     and ``cartn`` components pass through. When the file gives
+     ``_atom_site_moment.magnitude``, the converted moment must match it to
+     within 1 % or 0.02 μB, whichever is larger;
    - moment labels mapped onto atoms by exact MCIF label match or by the
-     unique ``label_...`` expansion used by mag2spectra MCIF files.
+     unique ``label_...`` expansion of a site label.
+
+   In a file with several ``data_`` blocks, the symmetry and metadata come from
+   the block whose structure is imported: the last block that lists atom sites.
+   A ``.cif`` file that carries magnetic operations is read the same way. The
+   import stops with a message when a magnetic operation cannot be read, when
+   an image of one site lands on another site, when a moment disagrees with its
+   stated magnitude, or when the file also carries ordinary symmetry
+   operations that expand the sites before the magnetic ones are applied.
 
    When the imported structure becomes the active host, this metadata becomes
    the project's magnetic structure: MuFinder derives per-atom scalar spins
@@ -135,6 +159,10 @@ Limitations
 - The viewer is orthographic only.
 - A CIF with a quoted loop value containing a space followed by ``#`` cannot
   be imported (see `What is read from each format`_).
+- Magnetic superspace-group operations
+  (``_space_group_symop_ssg.operation_algebraic``), which incommensurate
+  magnetic CIF files use, are not applied: such a file imports with only the
+  sites it lists.
 
 For developers
 --------------

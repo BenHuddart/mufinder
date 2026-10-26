@@ -17,6 +17,7 @@ from mufinder.science.lattice import (
     LatticeError,
     cartesian_to_fractional,
     cell_volume,
+    crystal_axis_to_cartesian,
     deduplicate_periodic_positions,
     fractional_to_cartesian,
     inverse_lattice,
@@ -126,6 +127,27 @@ def test_lattice_matrix_and_rows_reject_non_3x3_input_with_the_callers_error() -
         lattice_matrix([[1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], error=CallerError)
     with pytest.raises(CallerError, match="3x3 matrix"):
         lattice_frac_to_cart([0.0, 0.0, 0.0], [[1.0, 0.0, 0.0]], error=CallerError)
+
+
+def test_crystal_axis_to_cartesian_uses_unit_lattice_directions() -> None:
+    hexagonal = [[5.8, 0.0, 0.0], [-2.9, 2.9 * math.sqrt(3.0), 0.0], [0.0, 0.0, 11.2]]
+
+    assert crystal_axis_to_cartesian([2.0, 2.0, 0.0], hexagonal) == pytest.approx(
+        [1.0, math.sqrt(3.0), 0.0]
+    )
+    assert crystal_axis_to_cartesian([0.0, 0.0, -1.5], hexagonal) == pytest.approx([0.0, 0.0, -1.5])
+
+
+def test_crystal_axis_to_cartesian_rejects_bad_input_with_the_callers_error() -> None:
+    class CallerError(ValueError):
+        pass
+
+    with pytest.raises(CallerError, match="3-vector"):
+        crystal_axis_to_cartesian([1.0, 0.0], np.eye(3).tolist(), error=CallerError)
+    with pytest.raises(CallerError, match="non-zero"):
+        crystal_axis_to_cartesian(
+            [1.0, 0.0, 0.0], [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], error=CallerError
+        )
 
 
 def test_inverse_rejects_singular_lattices() -> None:
