@@ -146,6 +146,18 @@ def test_fft_keeps_a_static_trace_that_does_not_start_at_one() -> None:
     np.testing.assert_allclose(fft.polarisation, exact.polarisation, atol=1e-6)
 
 
+@pytest.mark.parametrize("method", ["exact", "fft"])
+def test_a_collision_every_step_does_not_overflow(method: str) -> None:
+    # ν τ = 1000: e^{ντ} overflows, but the model is just a collision in every step,
+    # G_n = G⁽⁰⁾(τ) G_{n−1}.
+    times = np.linspace(0.0, 10.0, 11)
+    static = _gaussian_kt(times)
+
+    dynamic = calculate_dynamic_polarisation(static, times, 1000.0, method=method).polarisation
+
+    np.testing.assert_allclose(dynamic, static[1] ** np.arange(11), rtol=1e-9, atol=1e-12)
+
+
 @pytest.mark.parametrize(
     ("times", "message"),
     [

@@ -153,13 +153,11 @@ def calculate_dynamic_polarisation(
 
 
 def _exact(static: np.ndarray, rate_step: float) -> np.ndarray:
-    q = math.exp(-rate_step)
-    coupling = math.expm1(rate_step)  # λ/q
-    damped = static * q ** np.arange(static.size)
+    damped, kernel = _recursion_terms(static, rate_step)
     dynamic = np.empty_like(damped)
     dynamic[0] = damped[0]
     for n in range(1, damped.size):
-        dynamic[n] = damped[n] + coupling * np.dot(damped[1 : n + 1], dynamic[n - 1 :: -1])
+        dynamic[n] = damped[n] + np.dot(kernel[1 : n + 1], dynamic[n - 1 :: -1])
     return dynamic
 
 
@@ -167,12 +165,30 @@ def _fft(static: np.ndarray, rate_step: float, alpha: float) -> np.ndarray:
     # Weighting by e^{−αn} keeps the convolution and damps the wrap-around.
     count = static.size
     steps = np.arange(count)
-    weighted = static * np.exp(-(rate_step + alpha) * steps)
-    coupling = math.expm1(rate_step)  # λ/q
-    spectrum = np.fft.rfft(weighted, 2 * count)
-    # G = H + (λ/q)(H − H₀)G, which is q H / (1 − λ H) when H₀ = 1.
-    solved = spectrum / (1.0 + coupling * (weighted[0] - spectrum))
-    return np.fft.irfft(solved, 2 * count)[:count] * np.exp(alpha * steps)
+    damped, kernel = _recursion_terms(static, rate_step)
+    weight = np.exp(-alpha * steps)
+    # G = H + K ⊛ G, so G = H / (1 − K) in the transform; this is q H / (1 − λ H)
+    # when G⁽⁰⁾(0) = 1.
+    solved = np.fft.rfft(damped * weight, 2 * count) / (
+        1.0 - np.fft.rfft(kernel * weight, 2 * count)
+    )
+    return np.fft.irfft(solved, 2 * count)[:count] / weight
+
+
+def _recursion_terms(static: np.ndarray, rate_step: float) -> tuple[np.ndarray, np.ndarray]:
+    """``H_n = qⁿ G⁽⁰⁾_n`` and the kernel ``K_k = (λ/q) H_k = λ q^{k−1} G⁽⁰⁾_k`` (``K_0 = 0``).
+
+    Written with ``q^{k−1}`` rather than ``λ/q = e^{ντ} − 1``, so a collision in
+    every step (``ντ`` beyond the float range of ``e^{ντ}``) stays finite.
+    """
+
+    q = math.exp(-rate_step)
+    collision = -math.expm1(-rate_step)  # λ = 1 − q
+    steps = np.arange(static.size)
+    damped = static * q**steps
+    kernel = np.zeros_like(damped)
+    kernel[1:] = collision * q ** (steps[1:] - 1) * static[1:]
+    return damped, kernel
 
 
 def _grid_step(times: np.ndarray) -> float:
