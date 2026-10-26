@@ -519,10 +519,11 @@ no two workflow widgets may define the same private method.
        :doc:`/user_guide/project_home`).
    * - ``mufinder.services.magnetic_field_results``
      - The Magnetic Fields page's and each saved magnetic-field workspace's
-       latest field, dipolar-tensor and nuclear-relaxation results as
-       ``Result`` records with no calculation run, keyed by owner
+       latest field, dipolar-tensor, nuclear-relaxation and muon-polarisation
+       results as ``Result`` records with no calculation run, keyed by owner
        (``store_magnetic_field_results``, ``attach_magnetic_field_results``,
-       ``remove_magnetic_field_results``, ``magnetic_field_results``; see
+       ``remove_magnetic_field_results``, ``magnetic_field_results``,
+       ``store_polarisation_result``, ``polarisation_result``; see
        :doc:`/user_guide/magnetic_fields`).
    * - ``mufinder.services.project_survey``
      - The positions each stage has found, in the active host's cell, for the
@@ -585,6 +586,16 @@ no two workflow widgets may define the same private method.
        pairing to a symmetry-equivalent site
        (``equivalent_site_distortion``). The nuclear-relaxation and
        dipolar-field distortion corrections both use it.
+   * - ``mufinder.science.nuclear_relaxation``
+     - Nuclear dipolar second moments: isotope data, the lattice sums for each
+       mode (``calculate_nuclear_relaxation``) and the moment tensors that give
+       the single-crystal widths along any direction from one sum
+       (``calculate_nuclear_width_tensors``, ``NuclearWidthTensors``).
+   * - ``mufinder.science.polarisation``
+     - Muon-spin polarisation from field results: the precession kernel, the
+       ``|B|`` histogram evaluation, site weighting, powder averages
+       (``calculate_polarisation``, ``calculate_lf_polarisation``,
+       ``calculate_tf_polarisation``) and spectra (``calculate_spectrum``).
    * - ``mufinder.science._muesr_compat``
      - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
        restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the

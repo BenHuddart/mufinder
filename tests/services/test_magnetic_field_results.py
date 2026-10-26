@@ -9,12 +9,15 @@ import numpy as np
 from mufinder.science.magnetic_fields import (
     FieldTermStatistics,
     MagneticFieldDistributionResult,
+    MagneticFieldResult,
     regenerate_phase_samples,
 )
+from mufinder.science.polarisation import calculate_polarisation
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
+    MUON_POLARISATION_RESULT_TYPE,
     NUCLEAR_RELAXATION_RESULT_TYPE,
     attach_magnetic_field_results,
     commensurate_field_entries,
@@ -22,8 +25,10 @@ from mufinder.services.magnetic_field_results import (
     is_unrelaxed_site_source,
     magnetic_field_result,
     magnetic_field_results,
+    polarisation_result,
     remove_magnetic_field_results,
     store_magnetic_field_results,
+    store_polarisation_result,
 )
 from mufinder.services.project_service import ProjectService
 
@@ -372,3 +377,63 @@ def test_a_saved_distribution_keeps_its_term_breakdown_and_phase_sampling(tmp_pa
         regenerate_phase_samples(restored).phases_turns,
         regenerate_phase_samples(distribution).phases_turns,
     )
+
+
+def _polarisation(lambda_z: float = 0.0):
+    field = MagneticFieldResult(
+        "site 1", (0.0, 0.0, 0.0), (0.05, 0.0, 0.1), *([(0.0, 0.0, 0.0)] * 4)
+    )
+    return calculate_polarisation(field, np.linspace(0.0, 5.0, 51), lambda_z=lambda_z)
+
+
+def test_a_polarisation_record_is_stored_replaced_and_removed_per_owner(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+
+    first = store_polarisation_result(document, "workspace-1", _polarisation())
+    again = store_polarisation_result(document, "workspace-1", _polarisation())
+    store_polarisation_result(document, MAGNETIC_FIELD_PAGE_OWNER, _polarisation(0.5))
+    changed = store_polarisation_result(document, "workspace-1", _polarisation(0.2))
+
+    assert again is first
+    assert changed is not None and changed.id != first.id
+    assert first.id not in document.results
+    assert changed.result_type == MUON_POLARISATION_RESULT_TYPE
+    assert polarisation_result(document, "workspace-1").parameters["lambda_z"] == 0.2
+    assert polarisation_result(document, MAGNETIC_FIELD_PAGE_OWNER).parameters["lambda_z"] == 0.5
+    # The form-state round trip leaves the polarisation record alone.
+    store_magnetic_field_results(document, "workspace-1", _form())
+    assert polarisation_result(document, "workspace-1") is not None
+
+    assert store_polarisation_result(document, "workspace-1", None) is None
+    assert polarisation_result(document, "workspace-1") is None
+    assert store_polarisation_result(document, "workspace-1", None) is None
+    store_polarisation_result(document, "workspace-1", _polarisation())
+    remove_magnetic_field_results(document, "workspace-1")
+    assert polarisation_result(document, "workspace-1") is None
+    assert polarisation_result(document, MAGNETIC_FIELD_PAGE_OWNER) is not None
+
+
+def test_a_polarisation_record_survives_a_save_and_reload(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _document(tmp_path)
+    result = _polarisation(0.3)
+    store_polarisation_result(document, MAGNETIC_FIELD_PAGE_OWNER, result)
+    service.save_project(document)
+
+    restored = polarisation_result(
+        service.load_project(document.project_root), MAGNETIC_FIELD_PAGE_OWNER
+    )
+
+    assert restored is not None
+    np.testing.assert_allclose(restored.polarisation, result.polarisation)
+    assert restored.site_labels == ("site 1",)
+
+
+def test_a_malformed_polarisation_record_reads_as_none(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    record = store_polarisation_result(document, "workspace-1", _polarisation())
+    record.data["result"] = {"times_us": "broken"}
+
+    assert polarisation_result(document, "workspace-1") is None
+    record.data["result"] = None
+    assert polarisation_result(document, "workspace-1") is None

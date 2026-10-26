@@ -13,15 +13,10 @@ from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T, MUON_GAMMA_RAD_
 from mufinder.science import magnetic_fields, nuclear_relaxation
 from tests.support import codata
 
-# CODATA 2018: gamma_mu / 2 pi = 135.538 8094 MHz T^-1.
-CODATA_MUON_GAMMA_OVER_2PI_MHZ_T = 135.538_8094
-
 
 def test_muon_gamma_matches_codata() -> None:
-    assert MUON_GAMMA_OVER_2PI_MHZ_T == pytest.approx(CODATA_MUON_GAMMA_OVER_2PI_MHZ_T, rel=1e-8)
-    assert MUON_GAMMA_RAD_S_T == pytest.approx(
-        2.0 * math.pi * CODATA_MUON_GAMMA_OVER_2PI_MHZ_T * 1e6, rel=1e-8
-    )
+    assert MUON_GAMMA_OVER_2PI_MHZ_T == pytest.approx(codata.MUON_GAMMA_OVER_2PI_MHZ_T, rel=1e-8)
+    assert MUON_GAMMA_RAD_S_T == pytest.approx(codata.MUON_GAMMA_RAD_S_T, rel=1e-8)
 
 
 def test_muon_gamma_is_derived_from_scipy_magnetic_moment() -> None:
