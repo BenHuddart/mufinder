@@ -73,6 +73,9 @@ MUON_GAMMA_RAD_S_T: float = abs(2.0 * physical_constants["muon mag. mom."][0] / 
 #: Muon gyromagnetic ratio over 2 pi, gamma_mu / 2 pi, in MHz T^-1.
 MUON_GAMMA_OVER_2PI_MHZ_T: float = MUON_GAMMA_RAD_S_T / (2.0 * math.pi) / 1e6
 
+#: Muon gyromagnetic ratio, in rad us^-1 T^-1, for precession phases with times in us.
+MUON_GAMMA_RAD_US_T: float = MUON_GAMMA_RAD_S_T * 1e-6
+
 #: Tag marking a job that records a calculation performed outside MuFinder.
 #:
 #: Carried on the ``Job`` rather than looked up through its definition row,

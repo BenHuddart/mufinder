@@ -222,3 +222,97 @@ axis and sees 2.58 T. The spectrum's strongest line is the pair of sites at
 keeps a result in a project as a ``muon_polarisation`` record owned by the
 Magnetic Fields page or a saved workspace, like the field and tensor results.
 
+
+Model spin dynamics
+-------------------
+
+:func:`~mufinder.science.dynamics.calculate_dynamic_polarisation` turns a static
+polarisation ``G⁽⁰⁾(t)`` into the dynamic ``G(t)`` of the strong-collision
+model. In this model the whole local field is redrawn from the static
+distribution at Poisson times with rate ``ν``, and each new field is independent
+of the one before it:
+
+.. math::
+
+   G(t) = e^{-\nu t} G^{(0)}(t)
+        + \nu \int_0^t e^{-\nu t'} G^{(0)}(t')\, G(t - t')\, dt'.
+
+The strong-collision model describes muon hopping between sites and fast
+paramagnetic fluctuations. A fixed applied field stays fixed, because every
+sample of the static distribution contains it. The Keren and Abragam formulas
+below rest on a different model, the Gaussian–Markov model, in which each field
+component fluctuates continuously. The two models agree closely for Gaussian
+distributions when ``ν`` is comparable to the width or larger.
+
+``static_polarisation`` is an array on ``times_us`` or a callable that evaluates
+it there, for example a reference function or the ``polarisation`` of a
+:class:`~mufinder.science.polarisation.PolarisationResult`. ``times_us`` must be
+uniform and start at zero, and ``ν`` (``collision_rate_per_us``) must not be
+negative; ``ν = 0`` returns the static trace. Two methods solve the discrete
+form of the integral equation of Allodi and De Renzi, Phys. Scr. **89**, 115201
+(2014):
+
+- ``method="exact"`` (the default) evaluates their recursion (Eq. 13a). With grid
+  step ``τ``, ``q = e^{−ντ}``, ``λ = 1 − q`` and ``H_n = qⁿ G⁽⁰⁾_n`` it is
+  ``G_n = H_n + (λ/q) Σ_{k=1}^{n} H_k G_{n−k}``. It costs ``O(N²)`` but each step
+  is one dot product, so 4096 points take a few milliseconds. It has no tuning
+  parameter and no wrap-around error.
+- ``method="fft"`` solves the same recursion with a discrete Fourier transform
+  (their Eq. 20). It zero-pads to ``2N`` and damps the sequences by
+  ``e^{−αn}``, with ``α = 10/N`` by default (their Table 1). It suits very long
+  grids.
+
+The result is a
+:class:`~mufinder.science.dynamics.DynamicPolarisationResult` with the static
+and dynamic traces, ``ν``, ``τ``, the method and ``α``.
+
+:mod:`mufinder.science.relaxation_functions` holds the standard
+phenomenological functions used to fit μSR data. All of them take times in μs,
+widths and rates in μs⁻¹ and fields in tesla:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Function
+     - Model
+   * - ``static_gaussian_kubo_toyabe``
+     - Static Gaussian field distribution in zero field.
+   * - ``static_gaussian_kubo_toyabe_lf``
+     - The same in a longitudinal field. The time integral is in closed form
+       through the Faddeeva function, so the value does not depend on the time
+       grid.
+   * - ``static_lorentzian_kubo_toyabe``
+     - Static Lorentzian distribution in zero field, for dilute moments.
+   * - ``dynamic_lorentzian_kubo_toyabe``
+     - The Lorentzian function with strong collisions, exactly: its Laplace
+       transform is rational, so ``G(t)`` is a sum of three exponentials from
+       the roots of a cubic.
+   * - ``keren_lf_relaxation``
+     - Gaussian–Markov relaxation in a longitudinal field (Keren, Phys. Rev. B
+       **50**, 10039 (1994)), for ``ν ≳ Δ`` or ``ω ≫ Δ``.
+   * - ``abragam_relaxation``
+     - The zero-field motional-narrowing limit of the Keren function.
+
+:data:`~mufinder.science.relaxation_functions.RELAXATION_FUNCTIONS` maps each
+name to a :class:`~mufinder.science.relaxation_functions.RelaxationFunction`.
+The record holds the function itself, the physical scenario, its assumptions,
+its parameter names and its references.
+
+The example below needs only the core install. It applies strong collisions to a
+Gaussian Kubo–Toyabe function and compares the fast-fluctuation result with
+Abragam's formula:
+
+.. literalinclude:: examples/dynamics.py
+   :language: python
+
+Slow fluctuations remove the ⅓ tail. Fast ones narrow the decay towards
+``e^{−2Δ²t/ν}``:
+
+.. code-block:: text
+
+   nu = 0.0 us^-1: G(10 us) = 0.333
+   nu = 0.2 us^-1: G(10 us) = 0.101
+   nu = 5.0 us^-1: G(10 us) = 0.379
+   Largest difference from Abragam at nu = 5 us^-1: 0.0034
+   Abragam assumes: Gaussian–Markov model with correlation e^{−νt}; valid for ν ≳ Δ. It has no 1/3 tail.

@@ -72,3 +72,10 @@ def test_polarisation_example_finds_the_iron_precession_line() -> None:
     assert "Zero-field P(0): 1.000" in lines
     # gamma_mu / 2 pi x 0.2018 T = 27.35 MHz, on the spectrum's 0.0625 MHz grid.
     assert "Spectrum peak: 27.36 MHz, 0.202 T" in lines
+
+
+def test_dynamics_example_shows_the_tail_and_motional_narrowing() -> None:
+    lines = _run_example("dynamics.py")
+
+    assert "nu = 0.0 us^-1: G(10 us) = 0.333" in lines
+    assert "Largest difference from Abragam at nu = 5 us^-1: 0.0034" in lines
