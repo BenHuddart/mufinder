@@ -161,3 +161,20 @@ def test_a_project_change_rebuilds_the_analysis_page_at_most_once(
     window._set_active_route("muon_analysis")
 
     assert rebuilds == {"set_context": 1, "_rebuild_tabs": 1}
+
+
+def test_a_workspace_route_on_a_stale_page_builds_only_that_tabs_viewer(
+    qapp, tmp_path: Path
+) -> None:
+    from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+
+    root, workspaces = _saved_project_with_workspaces(tmp_path)
+    window = MainWindow()
+    assert window.open_project(root)
+
+    window._set_active_route(window._relaxation_analysis_workspace_route(str(workspaces[2]["id"])))
+
+    tabs = window._relaxation_analysis_view._workspace_tabs
+    assert [
+        len(tabs.widget(index).findChildren(AtomicStructureViewer)) for index in range(tabs.count())
+    ] == [0, 0, 1]

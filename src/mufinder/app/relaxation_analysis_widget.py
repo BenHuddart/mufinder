@@ -1707,7 +1707,14 @@ class RelaxationAnalysisWidget(QWidget):
         structures: Mapping[UUID, Structure],
         host_structure: Structure | None,
         comparison_options: Sequence[tuple[UUID, str, bool]],
+        current_workspace_id: str | None = None,
     ) -> None:
+        """Rebuild the tabs from ``workspaces``.
+
+        The current tab stays current unless ``current_workspace_id`` names
+        another workspace to open; only the opened tab builds its 3D viewer.
+        """
+
         self._restoring = True
         try:
             self._workspaces = [dict(workspace) for workspace in workspaces]
@@ -1715,7 +1722,7 @@ class RelaxationAnalysisWidget(QWidget):
             self._structures_by_id = dict(structures)
             self._host_structure = host_structure
             self._comparison_options = list(comparison_options)
-            self._rebuild_tabs()
+            self._rebuild_tabs(current_workspace_id)
         finally:
             self._restoring = False
 
@@ -1735,15 +1742,10 @@ class RelaxationAnalysisWidget(QWidget):
         workspace or cluster that no longer exists.
         """
 
-        page: QWidget | None = None
-        for index in range(self._workspace_tabs.count()):
-            candidate = self._workspace_tabs.widget(index)
-            if candidate.property("workspace_id") == workspace_id:
-                self._workspace_tabs.setCurrentIndex(index)
-                page = candidate
-                break
+        page = self._workspace_page(workspace_id)
         if page is None:
             return False
+        self._workspace_tabs.setCurrentWidget(page)
         # cluster_index <= 0 means "no specific cluster" (unclustered sites carry
         # label 0 and get no header); treat it as a plain workspace focus rather
         # than a failed reveal, so callers don't report a false "analysis changed".
@@ -1771,11 +1773,8 @@ class RelaxationAnalysisWidget(QWidget):
             return True
         return False
 
-    def _rebuild_tabs(self) -> None:
-        current_id = None
-        current = self._workspace_tabs.currentWidget()
-        if current is not None:
-            current_id = current.property("workspace_id")
+    def _rebuild_tabs(self, current_workspace_id: str | None = None) -> None:
+        current_id = current_workspace_id or self.current_workspace_id()
         # Clearing and re-adding tabs fires currentChanged for tabs that are
         # only transiently current; silence it so listeners see real switches.
         self._rebuilding_tabs = True

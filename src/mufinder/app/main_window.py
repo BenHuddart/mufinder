@@ -1862,9 +1862,10 @@ class MainWindow(QMainWindow):
                 self._reset_job_tracking_for_project_change()
             with trace.stage("project defaults and titles"):
                 self._apply_project_change_defaults_and_titles()
-            with trace.stage("_populate_project_tree"):
+            with trace.stage("comparison and magnetic workspace views"):
                 self._sync_comparison_table_views()
                 self._sync_magnetic_field_workspace_views()
+            with trace.stage("_populate_project_tree"):
                 self._populate_project_tree(preserve_selection=False)
             with trace.stage("_refresh_jobs_table"):
                 self._refresh_jobs_table()
@@ -3211,7 +3212,7 @@ class MainWindow(QMainWindow):
         elif (
             analysis_workspace_id := self._relaxation_analysis_workspace_id_from_route(route)
         ) is not None:
-            self._refresh_stale_relaxation_analysis_context()
+            self._refresh_stale_relaxation_analysis_context(analysis_workspace_id)
             self._relaxation_analysis_view.focus_workspace(analysis_workspace_id)
             target = self._relaxation_analysis_view
         elif route == "muon_sites":
@@ -9740,20 +9741,27 @@ class MainWindow(QMainWindow):
             options.append((job.structure_id, label, not fixed_cell))
         return options
 
-    def _refresh_relaxation_analysis_context(self, *, force: bool = False) -> None:
+    def _refresh_relaxation_analysis_context(
+        self, *, force: bool = False, current_workspace_id: str | None = None
+    ) -> None:
         """Rebuild the Relaxation Analysis page from the document, if it is showing.
 
         Every workspace tab holds a 3D viewer, so a hidden page is only marked
         stale; the route dispatch rebuilds a stale page as it shows it. ``force``
-        rebuilds now, for that dispatch. A project change defers the rebuild to
-        one call at its end.
+        rebuilds now, for that dispatch, opening ``current_workspace_id``'s tab.
+        A project change defers the rebuild to one call at its end. With no
+        project the page is always cleared, which builds no viewer.
         """
 
         self._relaxation_analysis_context_stale = True
         view = self._relaxation_analysis_view
-        if not force and (
-            self._deferring_relaxation_analysis_refresh
-            or self._main_stack.currentWidget() is not view
+        if (
+            not force
+            and self._document is not None
+            and (
+                self._deferring_relaxation_analysis_refresh
+                or self._main_stack.currentWidget() is not view
+            )
         ):
             return
         self._relaxation_analysis_context_stale = False
@@ -9772,15 +9780,20 @@ class MainWindow(QMainWindow):
             structures=self._document.structures,
             host_structure=self._project_service.active_host_structure(self._document),
             comparison_options=self._comparison_structure_options_for_relaxation_analysis(),
+            current_workspace_id=current_workspace_id,
         )
 
-    def _refresh_stale_relaxation_analysis_context(self) -> None:
+    def _refresh_stale_relaxation_analysis_context(
+        self, current_workspace_id: str | None = None
+    ) -> None:
         """Bring the Relaxation Analysis page up to date before it is shown."""
 
         if self._relaxation_analysis_context_stale and not (
             self._deferring_relaxation_analysis_refresh
         ):
-            self._refresh_relaxation_analysis_context(force=True)
+            self._refresh_relaxation_analysis_context(
+                force=True, current_workspace_id=current_workspace_id
+            )
 
     def _on_pristine_relaxation_supercell_edit_requested(self, payload: object) -> None:
         if self._document is None:

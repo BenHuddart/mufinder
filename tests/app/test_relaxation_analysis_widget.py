@@ -12,6 +12,7 @@ from matplotlib.collections import PolyCollection
 from matplotlib.patches import Circle, PathPatch
 import numpy as np
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -1199,6 +1200,63 @@ def test_relaxation_analysis_show_shifted_updates_the_tab_in_place(qapp, monkeyp
         assert _tab_viewers(widget) == [1, 0, 0]
         widget._workspace_tabs.setCurrentIndex(2)
         assert _tab_viewers(widget) == [1, 0, 1]
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
+def test_relaxation_analysis_added_structures_and_clustering_update_the_tab_in_place(
+    qapp, monkeypatch
+) -> None:
+    host = host_structure()
+    sources = [
+        CompletedRelaxationAnalysisSource(
+            job_id=uuid4(),
+            job_label=f"Site {name}",
+            charge_state="positive_muon",
+            structure_id=uuid4(),
+            site_id=None,
+            folded_fractional_position=position,
+            total_energy_ev=-10.0,
+        )
+        for name, position in (("A", (0.0, 0.5, 0.5)), ("B", (0.5, 0.0, 0.5)))
+    ]
+    workspace = default_workspace_state(
+        name="Analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[sources[0].job_id],
+    )
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=sources,
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[],
+    )
+    try:
+        page = widget._workspace_tabs.widget(0)
+        viewer = page.findChild(AtomicStructureViewer)
+        overlays: list[list] = []
+        monkeypatch.setattr(viewer, "set_point_overlays", overlays.append)
+        monkeypatch.setattr(widget, "_rebuild_tabs", lambda *_: pytest.fail("rebuilt every tab"))
+        table = page.findChild(QTreeWidget)
+        workspace_id = str(workspace["id"])
+
+        widget.add_job_ids_to_workspace(workspace_id, [sources[1].job_id])
+
+        assert table.topLevelItemCount() == 2
+        assert len(overlays[-1][0]["positions"]) == 2
+
+        widget._apply_clustering(workspace_id, {"result": {"cluster_labels": [1, 2]}})
+
+        assert [table.topLevelItem(row).data(0, Qt.ItemDataRole.UserRole) for row in range(2)] == [
+            1,
+            2,
+        ]
+        assert page.findChild(AtomicStructureViewer) is viewer
+        assert len(overlays) == 2
     finally:
         widget.shutdown()
         widget.deleteLater()
