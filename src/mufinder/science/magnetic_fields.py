@@ -315,16 +315,20 @@ class MagneticFieldDistributionResult:
 
 
 def _terms_from_json(raw_terms: object) -> dict[str, FieldTermStatistics]:
-    """Return the saved term statistics, or none when any entry is malformed.
+    """Return the saved term statistics, or none unless every term is present and well formed.
 
-    A partial breakdown would not sum to the total, so it is dropped whole and
-    the result reads as one saved without a breakdown.
+    A partial breakdown would not sum to the total, so a missing, unknown or
+    malformed term drops it whole and the result reads as one saved without a
+    breakdown. The terms come back in :data:`DISTRIBUTION_FIELD_TERMS` order.
     """
 
-    if not isinstance(raw_terms, Mapping):
+    if not isinstance(raw_terms, Mapping) or set(raw_terms) != set(DISTRIBUTION_FIELD_TERMS):
         return {}
     try:
-        return {str(name): FieldTermStatistics.from_json(term) for name, term in raw_terms.items()}
+        return {
+            name: FieldTermStatistics.from_json(raw_terms[name])
+            for name in DISTRIBUTION_FIELD_TERMS
+        }
     except (KeyError, TypeError, ValueError):
         return {}
 

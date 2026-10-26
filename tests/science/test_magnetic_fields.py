@@ -1588,9 +1588,18 @@ def test_distribution_from_json_rejects_fields_that_are_not_vectors() -> None:
         )
 
 
-def test_distribution_from_json_drops_a_malformed_breakdown_whole(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda terms: terms["dipolar"].pop("rms_T"),
+        lambda terms: terms.pop("contact"),
+        lambda terms: terms.update(extra={"mean_T": [0.0, 0.0, 0.0], "rms_T": 0.0}),
+    ],
+    ids=["entry-missing-rms", "term-missing", "unknown-term"],
+)
+def test_distribution_from_json_drops_a_malformed_breakdown_whole(monkeypatch, corrupt) -> None:
     payload = json.loads(json.dumps(_helix_term_distribution(monkeypatch).to_json()))
-    del payload["terms"]["dipolar"]["rms_T"]
+    corrupt(payload["terms"])
 
     restored = MagneticFieldDistributionResult.from_json(payload)
 

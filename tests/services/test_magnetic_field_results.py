@@ -342,6 +342,9 @@ def test_a_saved_distribution_keeps_its_term_breakdown_and_phase_sampling(tmp_pa
         },
         terms={
             "dipolar": FieldTermStatistics(mean_T=(0.0, 0.0, 0.0), rms_T=0.1),
+            "lorentz": FieldTermStatistics(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+            "contact": FieldTermStatistics(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+            "demag": FieldTermStatistics(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
             "applied": FieldTermStatistics(mean_T=(0.0, 0.0, 0.05), rms_T=0.05),
         },
         total_rms_T=0.1118,
