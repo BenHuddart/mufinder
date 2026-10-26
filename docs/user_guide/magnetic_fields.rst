@@ -1047,7 +1047,8 @@ fields with optional muon-induced distortion corrections, incommensurate field
 distributions with convergence checks, finite field lists of commensurate
 approximants, dipolar tensors, demagnetizing corrections, and nuclear dipolar
 linewidths. The page stops at field-level results; the library computes the
-muon polarisation, its powder averages and its spectrum from them (see
+muon polarisation, its powder averages, its spectrum and its strong-collision
+dynamics from them, and provides the reference relaxation functions (see
 :doc:`/api/using_mufinder`). Distortion corrections are not applied to
 incommensurate field distributions, commensurate approximants or dipolar
 tensors.

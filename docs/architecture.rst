@@ -596,6 +596,14 @@ no two workflow widgets may define the same private method.
        ``|B|`` histogram evaluation, site weighting, powder averages
        (``calculate_polarisation``, ``calculate_lf_polarisation``,
        ``calculate_tf_polarisation``) and spectra (``calculate_spectrum``).
+   * - ``mufinder.science.dynamics``
+     - Strong-collision dynamic polarisation from a static trace
+       (``calculate_dynamic_polarisation``, ``DynamicPolarisationResult``), by
+       the exact discrete recursion or the damped FFT.
+   * - ``mufinder.science.relaxation_functions``
+     - Reference relaxation functions (Kubo–Toyabe in zero and longitudinal
+       field, dynamic Lorentzian, Keren, Abragam) and their descriptions
+       (``RELAXATION_FUNCTIONS``, ``RelaxationFunction``).
    * - ``mufinder.science._muesr_compat``
      - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
        restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the
