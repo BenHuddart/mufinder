@@ -95,18 +95,24 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
     magmoms = atoms.get_initial_magnetic_moments().tolist()
 
     tags, loops = _parse_cif_tags_and_loops(raw_bytes.decode("utf-8", errors="replace"))
-    operations = _extract_magnetic_operations(tags, loops)
     magnetic_structure: dict[str, Any] | None = None
-    if suffix == ".mcif" or operations:
-        magnetic_cell = _magnetic_cell(
-            tags,
-            loops,
-            operations,
-            lattice_vectors=lattice_vectors,
-            species=symbols,
-            fractional_positions=fractional_positions,
-            file_name=source.name,
+    try:
+        operations = _extract_magnetic_operations(tags, loops)
+        magnetic_cell = (
+            _magnetic_cell(
+                tags,
+                loops,
+                operations,
+                lattice_vectors=lattice_vectors,
+                species=symbols,
+                fractional_positions=fractional_positions,
+            )
+            if suffix == ".mcif" or operations
+            else None
         )
+    except StructureLoadError as exc:
+        raise StructureLoadError(f"Failed to read '{source.name}': {exc}") from exc
+    if magnetic_cell is not None:
         symbols = magnetic_cell.species
         fractional_positions = magnetic_cell.fractional_positions
         magmoms = [magmoms[parent] for parent in magnetic_cell.parents]
@@ -484,7 +490,6 @@ def _magnetic_cell(
     lattice_vectors: list[list[float]],
     species: list[str],
     fractional_positions: list[list[float]],
-    file_name: str,
 ) -> _MagneticCell:
     """Apply a magnetic CIF's operations to its sites and read its magnetic metadata.
 
@@ -497,7 +502,7 @@ def _magnetic_cell(
     if operations:
         if len(site_labels) != len(species):
             raise StructureLoadError(
-                f"'{file_name}' lists {len(site_labels)} atom sites but its ordinary symmetry "
+                f"The file lists {len(site_labels)} atom sites but its ordinary symmetry "
                 f"operations give {len(species)} atoms; a file with magnetic operations must "
                 "describe its symmetry through them alone."
             )

@@ -1204,7 +1204,7 @@ def test_load_mcif_keeps_one_atom_on_a_special_position(tmp_path: Path) -> None:
 
 
 def test_load_mcif_rejects_atoms_generated_onto_another_site(tmp_path: Path) -> None:
-    with pytest.raises(StructureLoadError, match="Fe1.*Mn1|Mn1.*Fe1"):
+    with pytest.raises(StructureLoadError, match="'sample.mcif'.*'Fe1'.*'Mn1'|'Mn1'.*'Fe1'"):
         _load_mcif(
             tmp_path,
             _mcif(
