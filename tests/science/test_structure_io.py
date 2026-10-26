@@ -1191,6 +1191,41 @@ def test_load_mcif_composes_centerings_with_operations(tmp_path: Path) -> None:
     assert [moments[index][2] for index in range(4)] == pytest.approx([1.0, -1.0, 1.0, -1.0])
 
 
+def test_load_mcif_gives_unlabelled_moments_to_the_site_in_the_same_row(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            atoms="Fe1 Fe 0.1 0.2 0.3\n  Mn1 Mn 0.5 0.5 0.0",
+            loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 x,y,z+1/2,-1 -mx,-my,-mz")
+            + """
+loop_
+  _atom_site_moment.crystalaxis_x
+  _atom_site_moment.crystalaxis_y
+  _atom_site_moment.crystalaxis_z
+  0.0 0.0 1.0
+  0.0 0.0 2.0
+  0.0 0.0 3.0
+""",
+        ),
+    )
+
+    assert loaded.species == ["Fe", "Fe", "Mn", "Mn"]
+    assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -1.0, 2.0, -2.0])
+
+
+def test_load_mcif_wraps_images_a_rounding_error_below_zero_to_zero(tmp_path: Path) -> None:
+    loaded = _load_mcif(
+        tmp_path,
+        _mcif(
+            # -0.1 + 0.3 - 1/5 is -2.8e-17 in floating point.
+            atoms="Fe1 Fe 0.1 0.3 0.25",
+            loops=_magnetic_symmetry_loops("1 x,y,z,+1 mx,my,mz\n2 -x+y-1/5,y,z+1/2,+1 mx,my,mz"),
+        ),
+    )
+
+    assert loaded.fractional_positions[1] == [0.0, pytest.approx(0.3), pytest.approx(0.75)]
+
+
 def test_load_mcif_keeps_one_atom_on_a_special_position(tmp_path: Path) -> None:
     loaded = _load_mcif(
         tmp_path,

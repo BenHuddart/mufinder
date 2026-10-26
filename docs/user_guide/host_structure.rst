@@ -157,6 +157,10 @@ Limitations
 - The viewer is orthographic only.
 - A CIF with a quoted loop value containing a space followed by ``#`` cannot
   be imported (see `What is read from each format`_).
+- Magnetic superspace-group operations
+  (``_space_group_symop_ssg.operation_algebraic``), which incommensurate
+  magnetic CIF files use, are not applied: such a file imports with only the
+  sites it lists.
 
 For developers
 --------------

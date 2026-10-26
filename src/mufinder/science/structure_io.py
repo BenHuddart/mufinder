@@ -94,24 +94,25 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
     fractional_positions = atoms.get_scaled_positions(wrap=True).tolist()
     magmoms = atoms.get_initial_magnetic_moments().tolist()
 
-    tags, loops = _parse_cif_tags_and_loops(raw_bytes.decode("utf-8", errors="replace"))
     magnetic_structure: dict[str, Any] | None = None
-    try:
-        operations = _extract_magnetic_operations(tags, loops)
-        magnetic_cell = (
-            _magnetic_cell(
-                tags,
-                loops,
-                operations,
-                lattice_vectors=lattice_vectors,
-                species=symbols,
-                fractional_positions=fractional_positions,
-            )
-            if suffix == ".mcif" or operations
-            else None
-        )
-    except StructureLoadError as exc:
-        raise StructureLoadError(f"Failed to read '{source.name}': {exc}") from exc
+    magnetic_cell: _MagneticCell | None = None
+    # Only a magnetic CIF needs the second parse: a .cif without magnetic operations
+    # is read by ASE alone.
+    if suffix == ".mcif" or b"magn_operation" in raw_bytes.lower():
+        tags, loops = _parse_cif_tags_and_loops(raw_bytes.decode("utf-8", errors="replace"))
+        try:
+            operations = _extract_magnetic_operations(tags, loops)
+            if suffix == ".mcif" or operations:
+                magnetic_cell = _magnetic_cell(
+                    tags,
+                    loops,
+                    operations,
+                    lattice_vectors=lattice_vectors,
+                    species=symbols,
+                    fractional_positions=fractional_positions,
+                )
+        except StructureLoadError as exc:
+            raise StructureLoadError(f"Failed to read '{source.name}': {exc}") from exc
     if magnetic_cell is not None:
         symbols = magnetic_cell.species
         fractional_positions = magnetic_cell.fractional_positions
@@ -502,9 +503,9 @@ def _magnetic_cell(
     if operations:
         if len(site_labels) != len(species):
             raise StructureLoadError(
-                f"The file lists {len(site_labels)} atom sites but its ordinary symmetry "
-                f"operations give {len(species)} atoms; a file with magnetic operations must "
-                "describe its symmetry through them alone."
+                f"The CIF reader gave {len(species)} atoms for the {len(site_labels)} atom "
+                "sites the file lists, through ordinary symmetry operations or merged "
+                "partially occupied sites; magnetic operations apply only to the listed sites."
             )
         fractional_positions, parents, images = _apply_magnetic_operations(
             fractional_positions, site_labels, operations, lattice_vectors
@@ -670,14 +671,21 @@ def _apply_magnetic_operations(
     positions: list[list[float]] = []
     parents: list[int] = []
     images: list[_MagneticOperation] = []
+    identity = _MagneticOperation(np.eye(3), np.zeros(3), 1, np.eye(3))
+    candidate_operations = [identity, *operations]
     for parent, site in enumerate(fractional_positions):
         point = np.asarray(site, dtype=float)
-        candidates = np.array(
-            [operation.rotation @ point + operation.translation for operation in operations]
+        candidates = (
+            np.array(
+                [
+                    operation.rotation @ point + operation.translation
+                    for operation in candidate_operations
+                ]
+            )
+            % 1.0
         )
-        candidates = np.concatenate([point[None, :], candidates]) % 1.0
-        identity = _MagneticOperation(np.eye(3), np.zeros(3), 1, np.eye(3))
-        candidate_operations = [identity, *operations]
+        # A coordinate a rounding error below zero wraps to exactly 1.0.
+        candidates[candidates >= 1.0] = 0.0
         if positions:
             clashes = (
                 minimum_image_distance_matrix(candidates, positions, lattice_vectors)
@@ -749,16 +757,18 @@ def _moment_images(
     """Give every image of a site with a moment its transformed moment.
 
     The moment's lattice-basis components u (m = sum_i u_i a_i) transform with each
-    operation's moment matrix. A moment whose label matches no site is kept as is,
-    without an atom index.
+    operation's moment matrix. A moment whose label matches no site belongs to the
+    site at its row position, as it would without magnetic operations; one beyond
+    the last site is dropped.
     """
     lattice = np.asarray(lattice_vectors, dtype=float)
     expanded: list[dict[str, Any]] = []
-    for moment in moments:
+    for row, moment in enumerate(moments):
         site = _find_atom_label_index(site_labels, str(moment.get("label", "")).strip())
         if site is None:
-            expanded.append(moment)
-            continue
+            if row >= len(site_labels):
+                continue
+            site = row
         lattice_components = np.linalg.solve(lattice.T, np.asarray(moment["vector"]))
         for atom_index, (parent, operation) in enumerate(zip(parents, images, strict=True)):
             if parent != site:
