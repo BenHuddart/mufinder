@@ -177,7 +177,9 @@ def calculate_polarisation(
     at the last time (up to :data:`MAX_MAGNITUDE_BINS`); offsets within a bin are
     corrected to second order. ``parameters["max_in_bin_phase_rad"]`` records
     the largest in-bin phase the bins allow, which exceeds 0.1 rad only at
-    that limit.
+    that limit. With ``"auto"`` the samples are binned in σ² as well, on up to
+    :data:`MAX_WIDTH_LEVELS` levels (``parameters["width_levels"]``), with the
+    same second-order correction, so each keeps its own damping.
     """
 
     return _polarisation(
@@ -452,10 +454,15 @@ def _polarisation(
 
     edges = _magnitude_edges(sites, applied, powder_field, times, int(magnitude_bins))
     centres = 0.5 * (edges[:-1] + edges[1:]) * _GAMMA_RAD_US_T
-    histograms = [
-        _site_histogram(geometries(site), len(orientations), site, edges, centres) for site in sites
-    ]
-    traces = _site_traces(histograms, centres, times, lambda_z, fixed_sigma_squared)
+    histograms = []
+    for site in sites:
+        widths, width_floor = _width_levels(site, fixed_sigma_squared, times)
+        histograms.append(
+            _site_histogram(
+                geometries(site), len(orientations), site, edges, centres, widths, width_floor
+            )
+        )
+    traces = _site_traces(histograms, centres, times, lambda_z)
     return PolarisationResult(
         times_us=times,
         polarisation=weights @ traces,
@@ -474,6 +481,7 @@ def _polarisation(
             "sphere_points": int(sphere_points),
             "magnitude_bins": int(edges.size - 1),
             "max_in_bin_phase_rad": _max_in_bin_phase(edges, times),
+            "width_levels": max(histogram.widths.size for histogram in histograms),
         },
     )
 
@@ -531,18 +539,48 @@ def _powder_geometry(
     return _Geometry(magnitudes, constant, overlap - constant, sine, applied_size * axis_crystal)
 
 
+# Orders (i, j) of the in-bin moments Σ z δⁱ εʲ: δ the frequency offset from the
+# |B| bin centre, ε the σ² offset from the width level, to second order overall.
+_MOMENT_ORDERS = ((0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (0, 2))
+# Upper limit on the number of σ² levels of one site.
+MAX_WIDTH_LEVELS = 64
+
+
 @dataclass(slots=True)
 class _Histogram:
-    """One site's kernel amplitudes binned in |B|.
+    """One site's kernel amplitudes binned in |B| and in nuclear width.
 
-    ``moments[k]`` is the per-bin sum of ``z δᵏ``, with ``z = C − iS`` and
-    ``δ`` the sample's frequency offset from its bin centre; ``sigma_squared``
-    is the per-bin nuclear width, or ``None`` when one width damps every bin.
+    ``moments[k, l, b]`` is the sum of ``z δⁱ εʲ`` over the samples in |B|
+    bin ``b`` and width level ``l``, for ``(i, j) = _MOMENT_ORDERS[k]``, with
+    ``z = C − iS``. ``widths`` holds each level's σ² (μs⁻²); a site with one
+    width has one level and no ``ε`` moments.
     """
 
     constant: float
     moments: np.ndarray
-    sigma_squared: np.ndarray | None
+    widths: np.ndarray
+
+
+def _width_levels(
+    site: _Site, fixed_sigma_squared: float, times: np.ndarray
+) -> tuple[np.ndarray, float]:
+    """Return a site's σ² level centres and the lowest level's lower edge.
+
+    The levels span σ²_TF over the sphere of field directions, in as many
+    levels as keep ``½ t² |ε|`` below :data:`_MAX_IN_BIN_PHASE` at the last
+    time, up to :data:`MAX_WIDTH_LEVELS`. A sample outside the span joins the
+    nearest end level with a larger offset.
+    """
+
+    if site.tensors is None:
+        return np.array([fixed_sigma_squared]), fixed_sigma_squared
+    widths = site.tensors.tf_sigma_squared(fibonacci_sphere(2000))
+    low, high = float(np.min(widths)), float(np.max(widths))
+    longest = 0.5 * float(np.max(np.abs(times))) ** 2
+    count = int(math.ceil(longest * (high - low) / (2.0 * _MAX_IN_BIN_PHASE)))
+    count = min(max(count, 1), MAX_WIDTH_LEVELS)
+    step = (high - low) / count
+    return low + step * (np.arange(count) + 0.5), low
 
 
 def _site_histogram(
@@ -551,41 +589,47 @@ def _site_histogram(
     site: _Site,
     edges: np.ndarray,
     centres: np.ndarray,
+    widths: np.ndarray,
+    width_floor: float,
 ) -> _Histogram:
-    """Bin one site's samples, over all its orientations, on the shared |B| grid.
+    """Bin one site's samples, over all its orientations, in |B| and in σ².
 
-    The nuclear width of a bin is the ``|z|``-weighted mean of its samples' ``σ²``.
+    Each sample keeps its own nuclear width to second order: it joins the
+    width level nearest its σ², and its offset ``ε`` from that level enters
+    the moments, as its frequency offset ``δ`` from the bin centre does.
     """
 
     bins = centres.size
+    levels = widths.size
+    step = 2.0 * (widths[0] - width_floor)
+    orders = _MOMENT_ORDERS if site.tensors is not None else _MOMENT_ORDERS[:3]
     constant = 0.0
-    moments = np.zeros((2, 3, bins))
-    size_sum = np.zeros(bins)
-    sigma_sum = np.zeros(bins)
+    moments = np.zeros((len(_MOMENT_ORDERS), levels * bins), dtype=complex)
     for geometry in geometries:
         weight = 1.0 / (orientation_count * geometry.magnitudes.size)
         constant += weight * float(np.sum(geometry.constant))
         scaled = (geometry.magnitudes - edges[0]) * (bins / (edges[-1] - edges[0]))
         index = np.clip(scaled.astype(np.intp), 0, bins - 1)
         offset = geometry.magnitudes * _GAMMA_RAD_US_T - centres[index]
+        if site.tensors is not None:
+            sigma_squared = site.tensors.tf_sigma_squared(_field_axes(site, geometry))
+            level = (
+                np.clip(((sigma_squared - width_floor) / step).astype(np.intp), 0, levels - 1)
+                if step > 0.0
+                else np.zeros(index.shape, dtype=np.intp)
+            )
+            excess = sigma_squared - widths[level]
+            index = level * bins + index
+        else:
+            excess = np.zeros_like(offset)
         # z = C − iS, so that Re[z e^{iωt}] = C cos ωt + S sin ωt; S often vanishes.
         parts = (geometry.cosine, -geometry.sine) if np.any(geometry.sine) else (geometry.cosine,)
-        power = np.ones_like(offset)
-        for order in range(3):
+        for row, (i, j) in enumerate(orders):
+            factor = weight * offset**i * excess**j
             for part, values in enumerate(parts):
-                moments[part, order] += weight * np.bincount(
-                    index, weights=values * power, minlength=bins
-                )
-            power = power * offset
-        if site.tensors is not None:
-            size = np.hypot(geometry.cosine, geometry.sine)
-            sigma_squared = site.tensors.tf_sigma_squared(_field_axes(site, geometry))
-            size_sum += weight * np.bincount(index, weights=size, minlength=bins)
-            sigma_sum += weight * np.bincount(index, weights=size * sigma_squared, minlength=bins)
-    per_bin = None
-    if site.tensors is not None:
-        per_bin = np.divide(sigma_sum, size_sum, out=np.zeros(bins), where=size_sum > 0.0)
-    return _Histogram(constant, moments[0] + 1j * moments[1], per_bin)
+                summed = np.bincount(index, weights=values * factor, minlength=levels * bins)
+                moments[row] += summed if part == 0 else 1j * summed
+    return _Histogram(constant, moments.reshape(len(_MOMENT_ORDERS), levels, bins), widths)
 
 
 def _site_traces(
@@ -593,53 +637,48 @@ def _site_traces(
     centres: np.ndarray,
     times: np.ndarray,
     lambda_z: float,
-    fixed_sigma_squared: float,
 ) -> np.ndarray:
-    """Evaluate every site's trace, ``Σ_b e^{iω_b t} (Z₀ + i t Z₁ − t² Z₂ / 2) × envelope``.
+    """Evaluate every site's trace from its binned moments.
 
-    The bin centres are evenly spaced, so a chunk's phases are one base phase
-    times a table of ``e^{ikΔω t}`` computed once. When one width damps every
-    bin its envelope leaves the sum, which becomes a matrix product.
+    For a sample at ``ω_b + δ`` with width ``σ_l² + ε``,
+    ``z e^{iωt − σ²t²/2} ≈ z e^{iω_b t − σ_l² t²/2} (1 + iδt − δ²t²/2)(1 − xε + x²ε²/2)``
+    with ``x = t²/2``, kept to second order. The bin centres are evenly spaced,
+    so a chunk's phases are one base phase times a table of ``e^{ikΔω t}``
+    computed once, and the sum over bins is a matrix product.
     """
 
     time = times[:, None]
+    half_squared = 0.5 * time**2
+    # The time factor of each moment order, in _MOMENT_ORDERS order.
+    factors = np.stack(
+        [
+            np.ones_like(time),
+            1j * time,
+            -half_squared,
+            -half_squared,
+            -1j * time * half_squared,
+            0.5 * half_squared**2,
+        ],
+        axis=1,
+    )  # (times, orders, 1)
     traces = np.outer([histogram.constant for histogram in histograms], np.exp(-lambda_z * times))
-    moments = np.stack([histogram.moments for histogram in histograms])  # (sites, 3, bins)
-    occupied = np.any(moments != 0.0, axis=(0, 1))
     step = centres[1] - centres[0] if centres.size > 1 else 0.0
     table = np.exp(1j * time * (step * np.arange(min(_BIN_CHUNK, centres.size))))
-    oscillation = np.zeros((times.size, len(histograms)), dtype=complex)
-    # Sites with one width for every bin share the phases in a single matrix product.
-    fixed = [site for site, histogram in enumerate(histograms) if histogram.sigma_squared is None]
-    damped = [
-        site for site, histogram in enumerate(histograms) if histogram.sigma_squared is not None
-    ]
-    for start in range(0, centres.size, _BIN_CHUNK):
-        stop = min(start + _BIN_CHUNK, centres.size)
-        if not np.any(occupied[start:stop]):
-            continue
-        phases = np.exp(1j * times * centres[start])[:, None] * table[:, : stop - start]
-        if fixed:
-            z0, z1, z2 = (moments[fixed, order, start:stop].T for order in range(3))
-            oscillation[:, fixed] += (
-                phases @ z0 + 1j * time * (phases @ z1) - 0.5 * time**2 * (phases @ z2)
-            )
-        for site in damped:
-            sigma_squared = histograms[site].sigma_squared[start:stop]
-            chunk = phases * np.exp(-0.5 * time**2 * sigma_squared)
-            z0, z1, z2 = moments[site, :, start:stop]
-            oscillation[:, site] += (
-                chunk @ z0 + 1j * times * (chunk @ z1) - 0.5 * times**2 * (chunk @ z2)
-            )
-    envelopes = np.array(
-        [
-            np.ones_like(times)
-            if histogram.sigma_squared is not None
-            else np.exp(-0.5 * fixed_sigma_squared * times**2)
-            for histogram in histograms
-        ]
-    )
-    return traces + oscillation.real.T * envelopes
+    for site, histogram in enumerate(histograms):
+        orders, levels, _ = histogram.moments.shape
+        occupied = np.any(histogram.moments != 0.0, axis=(0, 1))
+        envelopes = np.exp(-half_squared * histogram.widths)  # (times, levels)
+        oscillation = np.zeros(times.size, dtype=complex)
+        for start in range(0, centres.size, _BIN_CHUNK):
+            stop = min(start + _BIN_CHUNK, centres.size)
+            if not np.any(occupied[start:stop]):
+                continue
+            phases = np.exp(1j * times * centres[start])[:, None] * table[:, : stop - start]
+            chunk = histogram.moments[:, :, start:stop].reshape(orders * levels, stop - start)
+            summed = (phases @ chunk.T).reshape(times.size, orders, levels)
+            oscillation += np.sum(np.sum(summed * factors, axis=1) * envelopes, axis=1)
+        traces[site] += oscillation.real
+    return traces
 
 
 def _field_axes(site: _Site, geometry: _Geometry) -> np.ndarray:

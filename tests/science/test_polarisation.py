@@ -193,8 +193,45 @@ def test_auto_nuclear_width_damps_each_field_direction_with_its_own_tf_width() -
         sigma_squared = tensors.tf_sigma_squared(axis)
         # Both fields lie across the spin, so each site is a damped cosine.
         expected = np.cos(GAMMA * 0.1 * TIMES) * np.exp(-0.5 * sigma_squared * TIMES**2)
-        np.testing.assert_allclose(row, expected, atol=1e-6)
+        np.testing.assert_allclose(row, expected, atol=1e-5)
     assert result.parameters["sigma_nuclear"] == "auto"
+
+
+def test_auto_nuclear_width_damps_each_sample_even_within_one_magnitude_bin() -> None:
+    # Fields of one size in every direction share a |B| bin but not a nuclear width.
+    host = Structure(
+        label="H",
+        lattice_vectors=[[3.4, 0.0, 0.0], [0.0, 4.5, 0.0], [0.0, 0.0, 5.5]],
+        species=["H"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    # Midway between two protons 3.4 Å apart: σ² runs from 0.0005 to 0.48 μs⁻².
+    tensors = calculate_nuclear_width_tensors(host, (0.5, 0.0, 0.0), radius=10.0)
+    directions = fibonacci_sphere(4000)
+    fields = 0.1 * directions
+    times = np.linspace(0.0, 4.0, 401)
+    widths = tensors.tf_sigma_squared(directions)
+    assert widths.max() > 100.0 * widths.min()
+
+    result = calculate_polarisation(
+        _distribution(fields), times, sigma_nuclear="auto", nuclear_width_tensors=[tensors]
+    )
+
+    # The kernel sample by sample, each with its own width.
+    along = directions[:, 2]
+    oscillation = (
+        (1.0 - along**2)[:, None]
+        * np.cos(GAMMA * 0.1 * times)
+        * np.exp(-0.5 * np.outer(widths, times**2))
+    )
+    direct = np.mean(along**2) + np.mean(oscillation, axis=0)
+    np.testing.assert_allclose(result.polarisation, direct, atol=1e-4)
+    # One mean width per bin would damp the trace differently.
+    lumped = np.mean(along**2) + np.mean(1.0 - along**2) * np.cos(GAMMA * 0.1 * times) * np.exp(
+        -0.5 * np.average(widths, weights=1.0 - along**2) * times**2
+    )
+    assert np.max(np.abs(lumped - direct)) > 1e-2
+    assert result.parameters["width_levels"] > 1
 
 
 # --- Powder averages -----------------------------------------------------------------

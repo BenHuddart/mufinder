@@ -593,7 +593,7 @@ no two workflow widgets may define the same private method.
        (``calculate_nuclear_width_tensors``, ``NuclearWidthTensors``).
    * - ``mufinder.science.polarisation``
      - Muon-spin polarisation from field results: the precession kernel, the
-       |B|-histogram evaluation, site weighting, powder averages
+       ``|B|`` histogram evaluation, site weighting, powder averages
        (``calculate_polarisation``, ``calculate_lf_polarisation``,
        ``calculate_tf_polarisation``) and spectra (``calculate_spectrum``).
    * - ``mufinder.science._muesr_compat``

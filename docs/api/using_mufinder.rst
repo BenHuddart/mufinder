@@ -182,8 +182,8 @@ equivalent sites and approximant translations). The rules it follows:
   averaged exactly. Equivalent sites in the result already make the domain
   average.
 - **Cost.** ``P(t)`` depends on the samples only through histograms of ``|B|``,
-  with second-order corrections for each sample's offset from its bin centre,
-  so a distribution costs ``O(N_samples)`` per orientation plus
+  and, with ``"auto"``, of the nuclear width as well, with second-order
+  corrections for each sample's offset from its bin, so a distribution costs ``O(N_samples)`` per orientation plus
   ``O(N_bins × N_times)``, never ``O(N_samples × N_times)``. There are at least
   ``magnitude_bins`` bins, more when a long time window needs them. A
   200 000-sample distribution on 1000 times takes a fraction of a second as a
