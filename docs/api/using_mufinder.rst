@@ -120,6 +120,44 @@ octahedral site reproduces the ferromagnet in :ref:`magnetic-fields-worked-examp
 Without ``muesr`` installed the call raises
 :class:`~mufinder.science.magnetic_fields.MagneticFieldDependencyError`.
 
+Demagnetizing tensor of any shape
+---------------------------------
+
+:class:`~mufinder.science.demagnetization.DemagnetizingSample` describes the
+sample shape a calculation takes its demagnetizing field from, through
+``demag_sample`` in
+:class:`~mufinder.science.magnetic_fields.MagneticFieldOptions`. Besides the
+closed-form spheres, plates, ellipsoids and rectangular prisms of the
+Magnetic Fields page, a script can give any shape as voxels with
+:meth:`~mufinder.science.demagnetization.DemagnetizingSample.voxel_grid`: a
+3-D boolean array indexed along the sample axes ``a``, ``b`` and ``c`` and the
+voxel edge along each. Voxels need not be cubes, so a thin plate can be a few
+voxels thick. The tensor comes from the Fourier method described in
+:ref:`demagnetizing-fourier-method`;
+:func:`~mufinder.science.demagnetization.fourier_demagnetizing_result` returns
+it with its trace and the FFT box, and
+:func:`~mufinder.science.demagnetization.voxel_demagnetizing_tensor` takes a
+bare array.
+
+The example below needs only the core install. It voxelises a 4 x 4 x 1 prism
+and compares the result with the prism's closed form:
+
+.. literalinclude:: examples/demagnetizing_tensor.py
+   :language: python
+
+.. code-block:: text
+
+   Fourier N: [0.1756 0.1756 0.6487]
+   Aharoni N: [0.1747 0.1747 0.6506]
+   Tr N: 1.000000, FFT box: (80, 80, 40)
+
+The FFT box is 2.5 times the longest edge, 4, along every axis, rounded up to a
+size the FFT handles quickly. A plate outlined in a photograph is the
+``image_plate`` shape, made by
+:meth:`~mufinder.science.demagnetization.DemagnetizingSample.image_plate` from
+an in-plane mask; :mod:`mufinder.science.sample_image` segments the mask from
+a greyscale array.
+
 Simulate the muon polarisation
 ------------------------------
 

@@ -33,11 +33,17 @@ from ..render import (
     when_modal,
 )
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+from matplotlib import image as mpl_image
+from matplotlib.path import Path as PolygonPath
 from PySide6.QtWidgets import QApplication, QWidget
 
 from mufinder.domain.models import Structure
+from mufinder.science.demagnetization import DemagnetizingSample, PlatePhoto
+from mufinder.science.sample_image import segment_plate_image
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
@@ -63,6 +69,11 @@ CONTACT_COUPLING_T_PER_MU_B = "-0.5045455"
 # 100 x 100 x 100 sum leaves 1e-7 T of numerical noise in them.
 SUPERCELL = [80, 80, 80]
 MEASURED_MAGNETISATION_MU_B = 2.0  # μB per Fe: a sample short of saturation, illustrative
+# A hexagonal platelet photographed along its normal, c: illustrative, not a real crystal.
+PLATE_PHOTO_SIZE = (480, 640)  # pixels, rows x columns
+PLATE_WIDTH = 5.0  # along a, the width of the outline's bounding box
+PLATE_THICKNESS = 0.1
+PLATE_GRID = 64
 
 
 def fe_host() -> Structure:
@@ -110,6 +121,52 @@ def fe_project(name: str, form: dict[str, object]) -> ProjectBuilder:
     return magnetic_project(name, fe_host(), fe_magnetic_model(), settings)
 
 
+def plate_photo(path: Path) -> np.ndarray:
+    """Write a synthetic photo of a dark hexagonal platelet on a light, unevenly lit card.
+
+    The platelet has a bright glare spot, which ``Fill holes`` keeps in the
+    outline. Returns the grey levels written.
+    """
+
+    rows, columns = PLATE_PHOTO_SIZE
+    y, x = np.mgrid[0:rows, 0:columns].astype(float)
+    grey = 205.0 + 30.0 * (x / columns) - 20.0 * (y / rows)
+    angles = np.radians(np.arange(6) * 60.0 + 8.0)
+    radii = np.array([210.0, 190.0, 215.0, 200.0, 185.0, 205.0])
+    vertices = np.column_stack(
+        [320.0 + 1.15 * radii * np.cos(angles), 240.0 + 0.95 * radii * np.sin(angles)]
+    )
+    inside = PolygonPath(vertices).contains_points(np.column_stack([x.ravel(), y.ravel()]))
+    inside = inside.reshape(rows, columns)
+    grey = np.where(inside, 55.0 + 15.0 * (y / rows), grey)
+    glare = (x - 260.0) ** 2 / 40.0**2 + (y - 190.0) ** 2 / 18.0**2 <= 1.0
+    grey = np.where(glare & inside, 235.0, grey)
+    grey += np.random.default_rng(258).normal(0.0, 6.0, grey.shape)
+    levels = np.clip(np.round(grey), 0, 255).astype(np.uint8)
+    mpl_image.imsave(path, levels, cmap="gray", vmin=0, vmax=255)
+    return levels
+
+
+def fe_plate_project(name: str) -> ProjectBuilder:
+    """The Fe project whose sample is a platelet outlined in a photo beside the project."""
+
+    def build(directory: Path) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        photo_path = directory / "fe_platelet.png"
+        segmentation = segment_plate_image(plate_photo(photo_path))
+        plate = DemagnetizingSample.image_plate(
+            segmentation.in_plane_mask(),
+            (PLATE_WIDTH, PLATE_WIDTH * segmentation.aspect_ratio),
+            PLATE_THICKNESS,
+            fourier_grid=PLATE_GRID,
+            photo=PlatePhoto(path=str(photo_path)),
+        )
+        form = {**_OCTAHEDRAL, "demag_shape": "image_plate", "demag_sample": plate.to_json()}
+        return fe_project(name, form)(directory)
+
+    return build
+
+
 # --- Scene steps --------------------------------------------------------------
 
 
@@ -136,6 +193,13 @@ def open_advanced_demagnetizing_field(window: MainWindow) -> None:
     """Open the Advanced Demagnetizing Field window from the Calculation card."""
 
     window._magnetic_field_view._advanced_demag_button.click()
+
+
+def open_plate_photo(window: MainWindow) -> None:
+    """Open Plate from Photo from the Advanced Demagnetizing Field window."""
+
+    when_modal("DemagnetizingFieldAdvancedDialog", lambda dialog: dialog._photo_button.click())
+    open_advanced_demagnetizing_field(window)
 
 
 def orient_disc_normal_to_110(dialog: QWidget) -> None:
@@ -222,6 +286,26 @@ SCENES: dict[str, Scene] = {
             kind="DemagnetizingFieldAdvancedDialog",
             size=(1000, 640),
             prepare=orient_disc_normal_to_110,
+        ),
+    ),
+    "fe_plate_photo_outline": Scene(
+        fe_plate_project("Iron platelet outline"),
+        "magnetic_fields",
+        Dialog(
+            open_plate_photo,
+            kind="SamplePhotoDialog",
+            size=(1000, 600),
+            prepare=focus_default_button,
+        ),
+    ),
+    "fe_photographed_plate": Scene(
+        fe_plate_project("Iron platelet"),
+        "magnetic_fields",
+        Dialog(
+            open_advanced_demagnetizing_field,
+            kind="DemagnetizingFieldAdvancedDialog",
+            size=(1000, 640),
+            prepare=focus_default_button,
         ),
     ),
     "fe_measured_magnetisation": Scene(

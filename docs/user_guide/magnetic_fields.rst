@@ -637,12 +637,14 @@ configured through the ``Advanced...`` button, for shape-specific tensors:
    ``Advanced...`` opens the ``Advanced Demagnetizing Field`` window. Choose a
    ``Shape`` and its ``Parameters``, set the ``Orientation`` (see
    `Orient the sample`_), then click ``Use Shape``. The advanced shapes are
-   ellipsoids (``Semi-axis a``, ``Semi-axis b``, ``Semi-axis c``) and finite
-   rectangular prisms (``Length a``, ``Length b``, ``Length c``,
-   ``Fourier grid`` and ``Padding``). The window reports the tensor used by
-   the calculation and renders the sample with a PyVista preview, with arrows
-   along the crystal axes ``a``, ``b`` and ``c`` and the magnetisation
-   direction ``M``.
+   ellipsoids (``Semi-axis a``, ``Semi-axis b``, ``Semi-axis c``), finite
+   rectangular prisms (``Length a``, ``Length b``, ``Length c``) and a
+   ``Plate from photo``, a plate whose outline is traced from a photograph
+   (see `Outline a plate in a photograph`_). The window reports the tensor
+   used by the calculation and renders the sample with a PyVista preview, with
+   arrows along the crystal axes ``a``, ``b`` and ``c`` and the magnetisation
+   direction ``M``. Lengths are in arbitrary units, since only their ratios
+   matter.
 
 .. figure:: ../_generated/screenshots/fe_demagnetizing_shapes.webp
    :alt: The Calculation card for bcc iron with the Infinite plate shape chosen,
@@ -667,13 +669,77 @@ Algorithms **10**, 13 (1995), DOI: ``10.1007/BF02198293``). The three factors
 sum to one, a sphere gives :math:`\tfrac{1}{3}` along every axis, and spheroids
 reproduce the prolate and oblate closed forms.
 
-The rectangular-prism mode uses the analytical Joseph–Schlömann
-rectangular-prism tensor (R. I. Joseph and E. Schlömann, J. Appl. Phys. **36**,
-1579 (1965), DOI: ``10.1063/1.1703091``) and averages it over midpoint samples
-inside the prism. This avoids the resolution loss that a single cubic Fourier
-grid would suffer for very thin plates or long needles. ``Fourier grid`` is
-kept as the user-facing resolution control for the midpoint average; increasing
-it improves the estimate but increases cost.
+The rectangular-prism factors are exact too: MuFinder uses Aharoni's closed
+form for the magnetometric factors of a rectangular prism (A. Aharoni, J. Appl.
+Phys. **83**, 3432 (1998), DOI: ``10.1063/1.367113``). They sum to one, a cube
+gives :math:`\tfrac{1}{3}` along every edge, and the tensor of a prism has no
+off-diagonal elements along its edges.
+
+Outline a plate in a photograph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Real crystals are rarely ellipsoids or prisms. A plate-like crystal is often
+photographed, and its size and thickness measured, so MuFinder can take its
+outline from the photo:
+
+1. In the ``Advanced Demagnetizing Field`` window, choose ``Plate from photo``
+   as the ``Shape`` and click ``From photo...``. The button reads ``Edit
+   outline...`` once the plate has an outline.
+2. In the ``Plate from Photo`` window, click ``Choose...`` and pick a photo of
+   the sample taken along its normal, on a plain background. PNG, JPEG, TIFF
+   and BMP files are read; a photo larger than 1024 pixels is scaled down
+   first.
+3. MuFinder splits the photo into sample and background at the Otsu threshold
+   (N. Otsu, IEEE Trans. Syst. Man Cybern. **9**, 62 (1979), DOI:
+   ``10.1109/TSMC.1979.4310076``) and takes as the sample the class covering
+   most of the centre of the photo, so a dark crystal on a light card and a
+   light crystal on a dark one both work. The outline is drawn over the photo,
+   and the line under the fields gives its size in pixels.
+4. If the outline is wrong, drag ``Threshold``; ``Auto`` returns it to the Otsu
+   level. ``Invert`` swaps sample and background. ``Fill holes``, on by default,
+   counts background enclosed by the sample, such as a reflection, as sample.
+5. Enter the ``Width (along a)`` and ``Height (along b)`` of the outline's
+   bounding box and the ``Thickness (along c)``. Choosing a photo sets the
+   height from the width and the outline's aspect ratio; ``Match photo`` does
+   so again after the width changes.
+6. Set the resolution: ``Fourier grid`` voxels span the longer in-plane edge,
+   ``Voxels through thickness`` the thickness, and ``Padding`` and
+   ``Smoothing`` are described in `How the Fourier method works`_. The line
+   under the fields gives the FFT box these settings need, or says the box is
+   too large to calculate, in which case ``Use Outline`` stays disabled.
+7. Click ``Use Outline``, then ``Use Shape``.
+
+The photo's ``x`` axis is the sample ``a`` axis, its ``y`` axis, up the photo,
+the ``b`` axis, and the plate normal the ``c`` axis, so ``Orientation`` places
+the plate in the crystal as for any shape: set ``Normal (h k l)`` to the face
+of the plate. An outline that is empty or covers the whole photo is reported
+under the fields, and ``Use Outline`` stays disabled until the threshold or
+``Invert`` finds the sample.
+
+.. figure:: ../_generated/screenshots/fe_plate_photo_outline.webp
+   :alt: The Plate from Photo window with a dark hexagonal platelet outlined in
+         red on a light background, at the automatic threshold 128.8, width 5,
+         height 3.5408 and thickness 0.1.
+
+   A synthetic photo of a hexagonal platelet. The glare spot is enclosed by
+   the sample, so ``Fill holes`` keeps it inside the outline.
+
+.. figure:: ../_generated/screenshots/fe_photographed_plate.webp
+   :alt: The Advanced Demagnetizing Field window with Plate from photo chosen,
+         the tensor of the platelet with N along c of 0.92469 and its trace 1,
+         and the voxelised platelet in the preview.
+
+   The same platelet as a ``Plate from photo`` of bcc iron, aligned with the
+   crystal axes. The line under the tensor gives its trace, the number of
+   voxels and the FFT box.
+
+MuFinder saves the outline with the project, at up to 256 pixels along its
+longer side, with the photo's path and the segmentation settings. The tensor
+needs only the saved outline, so a project still calculates after the photo
+moves; ``Edit outline...`` then shows the saved outline instead of the photo,
+and choosing the photo again re-enables the threshold controls. An
+incommensurate distribution records the sample it was calculated with, naming
+the outline by its size and SHA-256 digest rather than storing another copy.
 
 Orient the sample
 ~~~~~~~~~~~~~~~~~
@@ -829,6 +895,62 @@ muon site or on the magnetic phase, so the demagnetizing field is the same for
 every site of a commensurate calculation and for every sampled phase point of an
 incommensurate distribution; it is added before applied fields and histograms
 are formed.
+
+.. _demagnetizing-fourier-method:
+
+How the Fourier method works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A plate from a photo, or a voxel grid given through the Python API (see
+:doc:`/api/using_mufinder`), has no closed-form tensor. MuFinder computes it in
+Fourier space (M. Beleggia and M. De Graef, J. Magn. Magn. Mater. **263**, L1
+(2003), DOI: ``10.1016/S0304-8853(03)00238-5``). The shape function
+:math:`D(\mathbf{r})`, 1 in the sample and 0 outside, is laid on a voxel grid
+whose voxels may have a different edge along each axis, so a thin plate can be
+a few voxels thick. Its fast Fourier transform is the shape amplitude
+:math:`D(\mathbf{k})`, the local tensor is
+
+.. math::
+
+   N_{ij}(\mathbf{k}) = D(\mathbf{k})\,\frac{k_i k_j}{k^2},
+
+with :math:`D(0)/3` on the diagonal at :math:`\mathbf{k} = 0`, and the
+calculation uses its average over the sample, the magnetometric tensor
+
+.. math::
+
+   \langle N_{ij} \rangle = \frac{1}{V\,V_\mathrm{box}}
+   \sum_{\mathbf{k}} |D(\mathbf{k})|^2\,\frac{k_i k_j}{k^2},
+
+where :math:`V` is the sample volume and :math:`V_\mathrm{box}` that of the
+FFT box. By Parseval's theorem the trace of :math:`\langle N \rangle` is 1,
+and the window reports it as ``Tr N``.
+
+Like the closed forms, the result is an average over the sample. Inside a
+shape that is not an ellipsoid the local tensor varies from point to point,
+most near edges and corners, so the field at a muon near a surface differs
+from the averaged value.
+
+``Padding``
+   The FFT treats the box as periodic, so the sample sits in a lattice of its
+   own images. The box spans ``Padding`` times the longest sample edge along
+   every axis, not along each axis separately: a thin plate padded only
+   through its thickness would sit in a stack of plates one thickness apart
+   and behave like bulk. ``Padding`` is at least 2. At 2.5, the default,
+   voxelised prisms from 20 x 20 x 1 plates to 1 x 1 x 20 needles, with 1 to
+   64 voxels along an edge, give every factor within 0.002 of the prism's
+   closed form.
+``Smoothing``
+   The width, in voxels along each axis, of a Gaussian filter
+   :math:`\exp(-\sigma^2 k^2 / 2)` on :math:`D(\mathbf{k})`, which damps
+   the ringing of a sharp outline. It removes part of the shape's spectrum, so
+   ``Tr N`` falls below 1 by the part removed; refining the grid at the same
+   width in voxels brings it back towards 1. 0, the default, turns it off.
+
+A box of more than 16.8 million voxels is refused with a message naming the
+settings to lower. A thin plate needs many voxels through the box: a
+5 x 4 x 0.1 plate one voxel thick at a 64-voxel grid and padding 2 needs 100
+voxels along ``c`` to span 10.
 
 .. _magnetic-fields-distortion-corrections:
 

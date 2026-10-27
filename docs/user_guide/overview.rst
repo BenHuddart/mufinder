@@ -248,8 +248,8 @@ zero-moment and unpreviewed incommensurate structures. It calculates:
   approximant; commensurate results list their dipolar, Lorentz, contact,
   demagnetizing, distortion and applied terms;
 - demagnetizing-field corrections for spherical, plate, ellipsoidal and
-  rectangular-prism samples, from the model's bulk magnetisation or a measured
-  one in μB per formula unit;
+  rectangular-prism samples and for plates outlined in a photograph, from the
+  model's bulk magnetisation or a measured one in μB per formula unit;
 - muon-induced distortion corrections of the dipolar and contact fields, from
   the relaxed structure, for commensurate fields, approximants and
   distributions;

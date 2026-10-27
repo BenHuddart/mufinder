@@ -61,10 +61,12 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
     "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
     "user_guide/magnetic_fields.rst": (
         "10.1007/BF02198293",
-        "10.1063/1.1703091",
+        "10.1016/S0304-8853(03)00238-5",
+        "10.1063/1.367113",
         "10.1103/PhysRev.67.351",
         "10.1103/PhysRevB.20.850",
         "10.1080/001075199181521",
+        "10.1109/TSMC.1979.4310076",
     ),
     "user_guide/quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
     "user_guide/quantum_corrections_theory.rst": (

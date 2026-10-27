@@ -54,7 +54,7 @@ from mufinder.services.magnetic_field_results import (
     attach_magnetic_field_results,
     store_magnetic_field_results,
 )
-from mufinder.science.demagnetization import demagnetizing_tensor
+from mufinder.science.demagnetization import PlatePhoto, demagnetizing_tensor
 from mufinder.services.project_service import ProjectService
 from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A
 from tests.support.structures import host_structure, relaxed_muon_supercell
@@ -2318,17 +2318,114 @@ def test_demagnetizing_advanced_dialog_collects_prism_values(qapp, monkeypatch) 
     dialog._prism_a.setValue(2.0)
     dialog._prism_b.setValue(3.0)
     dialog._prism_c.setValue(4.0)
-    dialog._fourier_grid.setValue(24)
-    dialog._padding.setValue(3.0)
 
     sample = dialog.selected_sample()
 
     assert sample.shape == "rectangular_prism"
     assert sample.prism_lengths == pytest.approx((2.0, 3.0, 4.0))
-    assert sample.fourier_grid == 24
-    assert sample.padding == pytest.approx(3.0)
     assert "N =" in dialog._tensor_label.text()
+    # The prism tensor is exact, so no Fourier settings or trace are shown.
+    assert "Tr N" not in dialog._tensor_label.text()
+    assert not hasattr(dialog, "_fourier_grid")
     dialog.close()
+
+
+def _plate_sample(**fields):
+    x = (np.arange(40) + 0.5) / 40 * 2.0 - 1.0
+    outline = x[:, None] ** 2 + x[None, :] ** 2 <= 1.0
+    return magnetic_field_widget_module.DemagnetizingSample.image_plate(
+        outline, (5.0, 5.0), 0.2, fourier_grid=32, padding=2.0, **fields
+    )
+
+
+def test_demagnetizing_advanced_dialog_needs_an_outline_for_a_plate(qapp, monkeypatch) -> None:
+    dialog = _demag_dialog(monkeypatch)
+    dialog._shape.setCurrentIndex(dialog._shape.findData("image_plate"))
+
+    assert dialog._stack.currentIndex() == 2
+    assert "No outline yet" in dialog._plate_summary.text()
+    assert dialog._photo_button.text() == "From photo..."
+    assert "no outline" in dialog._tensor_label.text()
+    assert not dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_takes_the_plate_from_the_photo_dialog(
+    qapp, monkeypatch
+) -> None:
+    plate = _plate_sample(photo=PlatePhoto(path="/photos/crystal.png"))
+
+    class _PhotoDialog:
+        def __init__(self, sample, parent=None):
+            assert sample.shape == "image_plate"
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_sample(self):
+            return plate
+
+    monkeypatch.setattr(magnetic_field_widget_module, "SamplePhotoDialog", _PhotoDialog)
+    dialog = _demag_dialog(monkeypatch, lattice_vectors=np.eye(3).tolist())
+    dialog._shape.setCurrentIndex(dialog._shape.findData("image_plate"))
+
+    dialog._open_photo_dialog()
+
+    assert dialog._use_button.isEnabled()
+    assert "Plate from photo 5 x 5 x 0.2 (crystal.png)" in dialog._plate_summary.text()
+    assert dialog._photo_button.text() == "Edit outline..."
+    assert "Tr N = 1.00000" in dialog._tensor_label.text()
+    assert "FFT box" in dialog._tensor_label.text()
+    assert dialog._preview.samples[-1][0].shape == "image_plate"
+    # The orientation is applied to the plate like any shape.
+    dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
+    _set_indices(dialog._normal_inputs, (1, 0, 0))
+    _set_indices(dialog._in_plane_inputs, (0, 1, 0))
+    selected = dialog.selected_sample()
+    assert selected.plate_mask == plate.plate_mask
+    assert selected.photo == plate.photo
+    assert selected.normal_hkl == (1.0, 0.0, 0.0)
+    assert demagnetizing_tensor(selected)[0, 0] > 0.8
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_keeps_a_cancelled_photo_dialog_out(
+    qapp, monkeypatch
+) -> None:
+    class _PhotoDialog:
+        def __init__(self, sample, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(magnetic_field_widget_module, "SamplePhotoDialog", _PhotoDialog)
+    plate = _plate_sample()
+    dialog = _demag_dialog(monkeypatch, sample=plate)
+
+    dialog._open_photo_dialog()
+
+    assert dialog.selected_sample() == plate
+    dialog.close()
+
+
+def test_demagnetizing_advanced_dialog_offers_voxel_grid_only_for_a_voxel_seed(
+    qapp, monkeypatch
+) -> None:
+    voxels = magnetic_field_widget_module.DemagnetizingSample.voxel_grid(
+        np.ones((6, 4, 2), dtype=bool), 0.5
+    )
+    dialog = _demag_dialog(monkeypatch, sample=voxels)
+
+    assert dialog._shape.currentData() == "voxel_grid"
+    assert "Voxel grid 6 x 4 x 2 voxels" in dialog._voxel_summary.text()
+    assert "Python API" in dialog._voxel_summary.text()
+    assert dialog.selected_sample() == voxels
+    dialog.close()
+
+    plain = _demag_dialog(monkeypatch)
+    assert plain._shape.findData("voxel_grid") == -1
+    plain.close()
 
 
 def test_demagnetizing_advanced_dialog_orients_sample_by_crystal_directions(
@@ -2681,6 +2778,70 @@ def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monke
     assert options.demag_sample.semi_axes == pytest.approx((1.0, 2.0, 3.0))
     assert emitted[-1]["demag_shape"] == "ellipsoid"
     assert emitted[-1]["demag_sample"]["semi_axes"] == [1.0, 2.0, 3.0]
+    widget.close()
+
+
+def test_demagnetizing_preview_draws_the_voxels_of_a_plate(qapp, monkeypatch) -> None:
+    pyvista = pytest.importorskip("pyvista")
+
+    class _FakePlotter(magnetic_field_widget_module.QWidget):
+        def __init__(self, parent=None, **kwargs):
+            super().__init__(parent)
+            self.meshes = []
+
+        def add_mesh(self, mesh, **kwargs):
+            self.meshes.append(mesh)
+
+        def set_background(self, *args, **kwargs):
+            pass
+
+        enable_parallel_projection = clear = add_point_labels = set_background
+        reset_camera = render = set_background
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "_pyvista_modules", lambda: (pyvista, _FakePlotter)
+    )
+    canvas = magnetic_field_widget_module._DemagnetizingPyVistaCanvas()
+    plate = _plate_sample(thickness_voxels=4)
+
+    canvas.set_sample(plate)
+
+    surface = canvas._plotter.meshes[0]
+    xmin, xmax, ymin, ymax, zmin, zmax = surface.bounds
+    assert (xmax - xmin, ymax - ymin) == pytest.approx((5.0, 5.0), rel=1e-6)
+    assert zmax - zmin == pytest.approx(0.2)
+    assert xmin == pytest.approx(-2.5)
+    # Orienting the plate rotates the cached surface rather than rebuilding it.
+    built = []
+    build = canvas._build_voxel_mesh
+    monkeypatch.setattr(canvas, "_build_voxel_mesh", lambda s: built.append(s) or build(s))
+    canvas.set_sample(replace(plate, rotation=tuple(map(tuple, np.eye(3)[[1, 2, 0]]))))
+    assert built == []
+    # A different shape setting builds a new one.
+    canvas.set_sample(replace(plate, smoothing=0.5))
+    assert len(built) == 1
+    # A plate without an outline draws only the three axis arrows and M.
+    canvas._plotter.meshes.clear()
+    canvas.set_sample(magnetic_field_widget_module.DemagnetizingSample(shape="image_plate"))
+    assert len(canvas._plotter.meshes) == 4
+    canvas.close()
+
+
+def test_magnetic_field_widget_restores_a_photographed_plate(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "plate-demag.mufinder", "Plate Demag")
+    service.add_structure(document, _host_structure())
+    plate = _plate_sample(photo=PlatePhoto(path="/p/disc.png"))
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state({"demag_shape": "image_plate", "demag_sample": plate.to_json()})
+
+    options = widget._field_options()
+    assert widget._demag_shape() == "image_plate"
+    assert options.demag_sample == plate
+    assert widget._advanced_demag_summary.text() == "Plate from photo 5 x 5 x 0.2 (disc.png)"
+    assert widget.collect_state()["demag_sample"] == plate.to_json()
     widget.close()
 
 

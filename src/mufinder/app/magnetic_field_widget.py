@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from html import escape
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -63,6 +64,7 @@ from mufinder.app.atomic_structure_viewer import (
 from mufinder.app.icons import icon
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.plot_canvas import create_plot_canvas
+from mufinder.app.sample_photo_dialog import SamplePhotoDialog, demag_length_input
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
@@ -90,6 +92,7 @@ from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
+    fourier_demagnetizing_result,
     SampleOrientation,
     principal_demagnetizing_tensor,
     sample_orientation,
@@ -215,7 +218,15 @@ PHASE_SAMPLING_METHOD_OPTIONS: tuple[tuple[str, str], ...] = (
 ADVANCED_DEMAG_SHAPE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("ellipsoid", "Ellipsoid"),
     ("rectangular_prism", "Rectangular prism"),
+    ("image_plate", "Plate from photo"),
 )
+# Offered only for a sample given as voxels through the Python API.
+DEMAG_VOXEL_GRID_OPTION = ("voxel_grid", "Voxel grid")
+ADVANCED_DEMAG_SHAPES = frozenset(
+    {key for key, _label in ADVANCED_DEMAG_SHAPE_OPTIONS} | {DEMAG_VOXEL_GRID_OPTION[0]}
+)
+# The preview draws at most this many voxels, skipping evenly through larger grids.
+_PREVIEW_MAX_VOXELS = 400_000
 DEMAG_ORIENTATION_OPTIONS: tuple[tuple[str, str], ...] = (
     ("aligned", "Aligned with crystal axes"),
     ("directions", "Crystal directions"),
@@ -4708,6 +4719,30 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         return spinbox
 
 
+def demag_sample_summary(sample: DemagnetizingSample) -> str:
+    """Return a one-line description of an advanced sample's shape, without its orientation."""
+
+    shape = str(sample.shape).strip().lower()
+    if shape == "ellipsoid":
+        a, b, c = sample.semi_axes
+        return f"Ellipsoid a={a:g}, b={b:g}, c={c:g}"
+    if shape == "rectangular_prism":
+        a, b, c = sample.prism_lengths
+        return f"Rectangular prism {a:g} x {b:g} x {c:g}"
+    if shape == "image_plate":
+        if sample.plate_mask is None:
+            return "No outline yet. Click From photo... to outline the sample in a photo."
+        width, height = sample.plate_size
+        text = f"Plate from photo {width:g} x {height:g} x {sample.plate_thickness:g}"
+        if sample.photo is not None and sample.photo.path:
+            text += f" ({Path(sample.photo.path).name})"
+        return text
+    if shape == DEMAG_VOXEL_GRID_OPTION[0]:
+        counts = "unset" if sample.voxels is None else " x ".join(map(str, sample.voxels.shape))
+        return f"Voxel grid {counts} voxels"
+    return "No advanced shape selected."
+
+
 class _DemagnetizingPyVistaCanvas(QWidget):
     """PyVista preview canvas for demagnetizing sample shapes."""
 
@@ -4720,6 +4755,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             )
         self._sample: DemagnetizingSample | None = None
         self._lattice_vectors: np.ndarray | None = None
+        # The last voxel surface and the shape it was built for: editing the
+        # orientation only rotates it.
+        self._voxel_mesh_cache: tuple[DemagnetizingSample, object] | None = None
         self._refreshing_theme = False
         self._style_signature = self._style_signature_for_current_palette()
         # auto_update=False disables pyvistaqt's always-on render_timer; we
@@ -4764,7 +4802,14 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         plotter.clear()
         _configure_transparent_pyvista_background(plotter)
         shape = str(sample.shape).strip().lower()
-        if shape == "rectangular_prism":
+        voxel_mesh = self._voxel_mesh(sample) if sample.uses_fourier_method else None
+        if sample.uses_fourier_method:
+            mesh, extent = voxel_mesh if voxel_mesh is not None else (None, 1.0)
+            if mesh is not None and rotation is not None:
+                transform = np.eye(4, dtype=float)
+                transform[:3, :3] = rotation
+                mesh = mesh.transform(transform, inplace=False)
+        elif shape == "rectangular_prism":
             lengths = np.asarray(sample.prism_lengths, dtype=float)
             mesh = pv.Cube(
                 bounds=(
@@ -4787,7 +4832,13 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             extent = float(np.max(axes))
 
         palette = current_palette()
-        plotter.add_mesh(mesh, color=palette.status_running, opacity=0.42, smooth_shading=True)
+        if mesh is not None:
+            plotter.add_mesh(
+                mesh,
+                color=palette.status_running,
+                opacity=0.42,
+                smooth_shading=not sample.uses_fourier_method,
+            )
         axis_colors = (palette.accent, palette.success, palette.status_submitting)
         directions = np.eye(3, dtype=float)
         if self._lattice_vectors is not None and self._lattice_vectors.shape == (3, 3):
@@ -4831,6 +4882,42 @@ class _DemagnetizingPyVistaCanvas(QWidget):
 
     def shutdown(self) -> None:
         _shutdown_pyvista_widget(self._plotter)
+
+    def _voxel_mesh(self, sample: DemagnetizingSample):
+        """Return the surface of the sample's voxels, centred on the origin, and its half-extent.
+
+        A plate is drawn one voxel thick, since its layers are identical. A
+        sample without voxels yet (a plate with no photo) draws nothing.
+        """
+
+        shape_only = replace(sample, rotation=None, normal_hkl=None, in_plane_uvw=None, photo=None)
+        cached = self._voxel_mesh_cache
+        if cached is not None and cached[0] == shape_only:
+            return cached[1]
+        mesh = self._build_voxel_mesh(shape_only)
+        self._voxel_mesh_cache = (shape_only, mesh)
+        return mesh
+
+    def _build_voxel_mesh(self, sample: DemagnetizingSample):
+        try:
+            if sample.shape == "image_plate":
+                sample = replace(sample, thickness_voxels=1)
+            model = sample.voxel_model()
+        except DemagnetizationError:
+            return None
+        mask, spacing = model.mask, np.asarray(model.spacing, dtype=float)
+        step = max(1, int(np.ceil((mask.size / _PREVIEW_MAX_VOXELS) ** (1.0 / 3.0))))
+        if step > 1:
+            mask = mask[::step, ::step, ::step]
+            spacing = spacing * step
+        grid = self._pv.ImageData(
+            dimensions=tuple(int(n) + 1 for n in mask.shape),
+            spacing=tuple(float(s) for s in spacing),
+            origin=tuple(-0.5 * float(n) * float(s) for n, s in zip(mask.shape, spacing)),
+        )
+        grid.cell_data["inside"] = mask.ravel(order="F").astype(np.uint8)
+        surface = grid.threshold(0.5, scalars="inside").extract_surface(algorithm="dataset_surface")
+        return surface, 0.5 * float(np.max(np.asarray(mask.shape) * spacing))
 
     def _ellipsoid_mesh(self, axes: np.ndarray, rotation: np.ndarray | None = None):
         theta = np.linspace(0.0, 2.0 * np.pi, 72, endpoint=False)
@@ -4904,39 +4991,43 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         )
 
         sample = sample or DemagnetizingSample(shape="ellipsoid")
-        if str(sample.shape).strip().lower() not in {
-            key for key, _label in ADVANCED_DEMAG_SHAPE_OPTIONS
-        }:
+        if str(sample.shape).strip().lower() not in ADVANCED_DEMAG_SHAPES:
             sample = DemagnetizingSample(shape="ellipsoid")
 
         self._shape = QComboBox(self)
         for key, label in ADVANCED_DEMAG_SHAPE_OPTIONS:
             self._shape.addItem(label, key)
+        if sample.shape == DEMAG_VOXEL_GRID_OPTION[0]:
+            self._shape.addItem(DEMAG_VOXEL_GRID_OPTION[1], DEMAG_VOXEL_GRID_OPTION[0])
         index = self._shape.findData(sample.shape)
         self._shape.setCurrentIndex(index if index >= 0 else 0)
 
-        self._ellipsoid_a = self._length_input(sample.semi_axes[0])
-        self._ellipsoid_b = self._length_input(sample.semi_axes[1])
-        self._ellipsoid_c = self._length_input(sample.semi_axes[2])
-        self._prism_a = self._length_input(sample.prism_lengths[0])
-        self._prism_b = self._length_input(sample.prism_lengths[1])
-        self._prism_c = self._length_input(sample.prism_lengths[2])
-        self._fourier_grid = QSpinBox(self)
-        self._fourier_grid.setRange(16, 160)
-        self._fourier_grid.setSingleStep(8)
-        self._fourier_grid.setValue(int(sample.fourier_grid))
-        self._fourier_grid.setToolTip(
-            "Voxel grid used for the rectangular-prism Fourier tensor estimate."
+        self._ellipsoid_a = demag_length_input(sample.semi_axes[0])
+        self._ellipsoid_b = demag_length_input(sample.semi_axes[1])
+        self._ellipsoid_c = demag_length_input(sample.semi_axes[2])
+        self._prism_a = demag_length_input(sample.prism_lengths[0])
+        self._prism_b = demag_length_input(sample.prism_lengths[1])
+        self._prism_c = demag_length_input(sample.prism_lengths[2])
+        # The plate and voxel grid are edited as a whole: through the photo
+        # dialog, or not at all.
+        self._plate_sample = (
+            sample if sample.shape == "image_plate" else DemagnetizingSample(shape="image_plate")
         )
-        self._padding = QDoubleSpinBox(self)
-        self._padding.setRange(1.1, 8.0)
-        self._padding.setDecimals(2)
-        self._padding.setSingleStep(0.25)
-        self._padding.setValue(float(sample.padding))
+        self._voxel_sample = sample if sample.shape == DEMAG_VOXEL_GRID_OPTION[0] else None
+        self._plate_summary = QLabel("", self)
+        self._plate_summary.setWordWrap(True)
+        style_hint_text(self._plate_summary)
+        self._photo_button = QPushButton("From photo...", self)
+        self._photo_button.clicked.connect(self._open_photo_dialog)
+        self._voxel_summary = QLabel("", self)
+        self._voxel_summary.setWordWrap(True)
+        style_hint_text(self._voxel_summary)
 
         self._stack = QStackedWidget(self)
         self._stack.addWidget(self._ellipsoid_page())
         self._stack.addWidget(self._prism_page())
+        self._stack.addWidget(self._plate_page())
+        self._stack.addWidget(self._voxel_page())
 
         # The seed's orientation is kept whenever the dialog cannot edit it: a
         # rotation saved without crystal directions, or directions with no host.
@@ -5035,13 +5126,8 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
             self._prism_a,
             self._prism_b,
             self._prism_c,
-            self._fourier_grid,
-            self._padding,
         ):
-            if isinstance(widget, QDoubleSpinBox):
-                widget.valueChanged.connect(self._sync)
-            else:
-                widget.valueChanged.connect(self._sync)
+            widget.valueChanged.connect(self._sync)
         self._orientation_mode.currentIndexChanged.connect(self._sync)
         for edit in (*self._normal_inputs, *self._in_plane_inputs):
             edit.textChanged.connect(self._sync)
@@ -5085,6 +5171,10 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
 
     def _shape_sample(self) -> DemagnetizingSample:
         shape = str(self._shape.currentData() or "ellipsoid")
+        if shape == "image_plate":
+            return replace(self._plate_sample, rotation=None, normal_hkl=None, in_plane_uvw=None)
+        if shape == DEMAG_VOXEL_GRID_OPTION[0] and self._voxel_sample is not None:
+            return replace(self._voxel_sample, rotation=None, normal_hkl=None, in_plane_uvw=None)
         return DemagnetizingSample(
             shape=shape,
             semi_axes=(
@@ -5097,9 +5187,14 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
                 float(self._prism_b.value()),
                 float(self._prism_c.value()),
             ),
-            fourier_grid=int(self._fourier_grid.value()),
-            padding=float(self._padding.value()),
         )
+
+    def _open_photo_dialog(self) -> None:
+        dialog = SamplePhotoDialog(self._plate_sample, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._plate_sample = dialog.selected_sample()
+        self._sync()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
@@ -5120,9 +5215,38 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         form.addRow("Length a", self._prism_a)
         form.addRow("Length b", self._prism_b)
         form.addRow("Length c", self._prism_c)
-        form.addRow("Fourier grid", self._fourier_grid)
-        form.addRow("Padding", self._padding)
         return page
+
+    def _plate_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._plate_summary)
+        row = QHBoxLayout()
+        row.addWidget(self._photo_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        layout.addStretch(1)
+        return page
+
+    def _voxel_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._voxel_summary)
+        layout.addStretch(1)
+        return page
+
+    def _sync_voxel_summaries(self) -> None:
+        self._plate_summary.setText(demag_sample_summary(self._plate_sample))
+        self._photo_button.setText(
+            "From photo..." if self._plate_sample.plate_mask is None else "Edit outline..."
+        )
+        if self._voxel_sample is not None:
+            self._voxel_summary.setText(
+                demag_sample_summary(self._voxel_sample)
+                + ". A voxel grid is set through the Python API and cannot be edited here."
+            )
 
     def _orientation_key(self) -> str:
         return str(self._orientation_mode.currentData() or "aligned")
@@ -5167,19 +5291,11 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
             self._principal = (shape, principal_demagnetizing_tensor(shape))
         return self._principal[1]
 
-    @staticmethod
-    def _length_input(value: float) -> QDoubleSpinBox:
-        spinbox = QDoubleSpinBox()
-        spinbox.setRange(0.001, 1_000_000.0)
-        spinbox.setDecimals(4)
-        spinbox.setSingleStep(0.25)
-        spinbox.setValue(float(value))
-        spinbox.setSuffix(" arb.")
-        return spinbox
-
     def _sync(self, *_args: object) -> None:
         shape = str(self._shape.currentData() or "ellipsoid")
-        self._stack.setCurrentIndex(0 if shape == "ellipsoid" else 1)
+        pages = ("ellipsoid", "rectangular_prism", "image_plate", DEMAG_VOXEL_GRID_OPTION[0])
+        self._stack.setCurrentIndex(pages.index(shape) if shape in pages else 0)
+        self._sync_voxel_summaries()
         editable = self._orientation_key() == "directions" and self._lattice_vectors is not None
         for row in self._index_rows:
             row.setEnabled(editable)
@@ -5194,17 +5310,29 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
             if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
                 self._preview.set_sample(sample, self._lattice_vectors)
             return
-        self._use_button.setEnabled(True)
         try:
             tensor = sample.rotate(self._principal_tensor(sample))
-            self._tensor_label.setText(
+        except DemagnetizationError as exc:
+            self._tensor_label.setText(f"Tensor unavailable: {exc}")
+            self._use_button.setEnabled(False)
+        else:
+            # Elements that round to zero print as 0.00000, not -0.00000.
+            tensor = np.where(np.abs(tensor) < 5e-6, 0.0, tensor)
+            text = (
                 "N = "
                 f"[[{tensor[0, 0]:.5f}, {tensor[0, 1]:.5f}, {tensor[0, 2]:.5f}], "
                 f"[{tensor[1, 0]:.5f}, {tensor[1, 1]:.5f}, {tensor[1, 2]:.5f}], "
                 f"[{tensor[2, 0]:.5f}, {tensor[2, 1]:.5f}, {tensor[2, 2]:.5f}]]"
             )
-        except DemagnetizationError as exc:
-            self._tensor_label.setText(f"Tensor unavailable: {exc}")
+            if sample.uses_fourier_method:
+                result = fourier_demagnetizing_result(sample)
+                box = " x ".join(str(n) for n in result.box_shape)
+                text += (
+                    f"\nTr N = {result.trace:.5f} from {result.voxel_count} voxels in a "
+                    f"{box} FFT box."
+                )
+            self._tensor_label.setText(text)
+            self._use_button.setEnabled(True)
         if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
             self._preview.set_sample(sample, self._lattice_vectors)
 
@@ -6433,7 +6561,7 @@ class MagneticFieldWidget(QWidget):
                 self._plate_radio.setChecked(True)
             elif demag_shape == "sphere":
                 self._sphere_radio.setChecked(True)
-            elif demag_shape in {"ellipsoid", "rectangular_prism"}:
+            elif demag_shape in ADVANCED_DEMAG_SHAPES:
                 if self._demag_sample.shape == "none":
                     self._demag_sample = DemagnetizingSample(shape=demag_shape)
                 self._advanced_demag_radio.setChecked(True)
@@ -7199,21 +7327,17 @@ class MagneticFieldWidget(QWidget):
         self._on_form_setting_changed()
 
     def _refresh_demag_summary(self) -> None:
-        shape = str(self._demag_sample.shape).strip().lower()
-        if shape == "ellipsoid":
-            a, b, c = self._demag_sample.semi_axes
-            text = f"Ellipsoid a={a:g}, b={b:g}, c={c:g}"
-        elif shape == "rectangular_prism":
-            a, b, c = self._demag_sample.prism_lengths
-            text = f"Rectangular prism {a:g} x {b:g} x {c:g}"
-        else:
-            text = "No advanced shape selected."
         sample = self._demag_sample
-        if shape in {"ellipsoid", "rectangular_prism"} and sample.normal_hkl is not None:
+        shape = str(sample.shape).strip().lower()
+        if shape not in ADVANCED_DEMAG_SHAPES:
+            self._advanced_demag_summary.setText("No advanced shape selected.")
+            return
+        text = demag_sample_summary(sample)
+        if sample.normal_hkl is not None:
             normal = " ".join(f"{value:g}" for value in sample.normal_hkl)
             in_plane = " ".join(f"{value:g}" for value in sample.in_plane_uvw or ())
             text += f"; normal ({normal}), in-plane [{in_plane}]"
-        elif shape in {"ellipsoid", "rectangular_prism"} and sample.rotation is not None:
+        elif sample.rotation is not None:
             text += "; rotated sample axes"
         self._advanced_demag_summary.setText(text)
 

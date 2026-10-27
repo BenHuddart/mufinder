@@ -2,21 +2,32 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import hashlib
+
 import numpy as np
 import pytest
 
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
+    PlatePhoto,
+    VoxelMask,
     demagnetizing_factors_ellipsoid,
+    demagnetizing_factors_rectangular_prism,
     demagnetizing_tensor,
+    demagnetizing_tensor_field,
+    fourier_box_shape,
+    fourier_demagnetizing_result,
     fourier_k_grid,
     magnetometric_demagnetizing_tensor,
     magnetometric_rectangular_prism_tensor,
     principal_demagnetizing_tensor,
     rectangular_prism_shape,
     rectangular_prism_tensor,
+    sample_fourier_box,
     sample_orientation,
+    voxel_demagnetizing_tensor,
 )
 
 _CUBIC = np.eye(3) * 4.0
@@ -111,17 +122,14 @@ def test_demagnetizing_tensor_rejects_non_positive_semi_axes() -> None:
         demagnetizing_tensor(DemagnetizingSample(shape="ellipsoid", semi_axes=(1.0, -2.0, 3.0)))
 
 
-def test_demagnetizing_tensor_rectangular_prism_branch() -> None:
-    sample = DemagnetizingSample(
-        shape="rectangular_prism",
-        prism_lengths=(1.0, 1.0, 1.0),
-        fourier_grid=16,
-        padding=2.5,
-    )
+def test_demagnetizing_tensor_rectangular_prism_branch_is_the_aharoni_diagonal() -> None:
+    sample = DemagnetizingSample(shape="rectangular_prism", prism_lengths=(3.0, 2.0, 0.5))
     tensor = demagnetizing_tensor(sample)
 
-    assert float(np.trace(tensor)) == pytest.approx(1.0)
-    np.testing.assert_allclose(tensor, tensor.T, atol=1e-12)
+    np.testing.assert_allclose(
+        tensor, np.diag(demagnetizing_factors_rectangular_prism((3.0, 2.0, 0.5))), atol=1e-15
+    )
+    assert float(np.trace(tensor)) == pytest.approx(1.0, abs=1e-12)
 
 
 @pytest.mark.parametrize("shape", ["Box", "cuboid", "Rectangular"])
@@ -392,40 +400,80 @@ def test_effective_demagnetizing_factor_rejects_unusable_direction(direction: ob
         DemagnetizingSample(shape="sphere").effective_demagnetizing_factor(direction)  # type: ignore[arg-type]
 
 
-# magnetometric_rectangular_prism_tensor
+# Rectangular prism: Aharoni's closed form
 
 
-def test_rectangular_prism_tensor_is_symmetric_and_normalized_for_cube() -> None:
-    tensor = magnetometric_rectangular_prism_tensor((1.0, 1.0, 1.0), grid_size=24)
-
-    np.testing.assert_allclose(tensor, tensor.T, atol=1e-12)
-    assert float(np.trace(tensor)) == pytest.approx(1.0)
-    np.testing.assert_allclose(np.diag(tensor), np.full(3, 1.0 / 3.0), atol=0.04)
+def test_aharoni_cube_factors_are_one_third() -> None:
+    np.testing.assert_allclose(
+        demagnetizing_factors_rectangular_prism((2.0, 2.0, 2.0)), np.full(3, 1.0 / 3.0), atol=1e-14
+    )
 
 
-def test_rectangular_prism_tensor_uses_analytic_shape_for_thin_plate() -> None:
-    tensor = magnetometric_rectangular_prism_tensor((10.0, 10.0, 0.25), grid_size=18)
+def test_aharoni_factors_tend_to_the_plate_limit() -> None:
+    factors = demagnetizing_factors_rectangular_prism((1.0, 1.0, 1e-5))
 
-    np.testing.assert_allclose(tensor, tensor.T, atol=1e-12)
-    assert float(np.trace(tensor)) == pytest.approx(1.0, abs=1e-3)
-    assert tensor[2, 2] > 0.85
-    assert tensor[0, 0] < 0.1
-    assert tensor[1, 1] < 0.1
+    np.testing.assert_allclose(factors, (0.0, 0.0, 1.0), atol=1e-4)
 
 
-def test_prism_grid_too_small_raises() -> None:
-    with pytest.raises(DemagnetizationError, match="at least 8"):
-        magnetometric_rectangular_prism_tensor((1.0, 1.0, 1.0), grid_size=4)
+@pytest.mark.parametrize("ratio", [1e-5, 1e-8, 1e-150])
+def test_aharoni_factors_stay_exact_for_extreme_aspect_ratios(ratio: float) -> None:
+    # The factors are accurate to about 1e-40 absolute, whatever the ratio.
+    needle = demagnetizing_factors_rectangular_prism((1.0, ratio, ratio))
+    plate = demagnetizing_factors_rectangular_prism((1.0, 1.0, ratio))
+
+    for factors in (needle, plate):
+        assert sum(factors) == pytest.approx(1.0, abs=1e-14)
+        assert min(factors) >= 0.0
+    np.testing.assert_allclose(needle, (0.0, 0.5, 0.5), atol=10 * ratio + 1e-30)
+    assert needle[1] == needle[2]
+    np.testing.assert_allclose(plate, (0.0, 0.0, 1.0), atol=10 * ratio + 1e-30)
+    assert plate[0] == plate[1]
 
 
-def test_prism_padding_too_small_raises() -> None:
-    with pytest.raises(DemagnetizationError, match="padding"):
-        magnetometric_rectangular_prism_tensor((1.0, 1.0, 1.0), grid_size=16, padding=1.0)
+def test_aharoni_needle_factor_falls_in_proportion_to_its_width() -> None:
+    # Along a long square rod the factor is proportional to width / length.
+    wide = demagnetizing_factors_rectangular_prism((1.0, 1e-5, 1e-5))[0]
+    narrow = demagnetizing_factors_rectangular_prism((1.0, 1e-8, 1e-8))[0]
+
+    assert narrow / wide == pytest.approx(1e-3, rel=1e-3)
 
 
-def test_prism_nonpositive_length_raises() -> None:
-    with pytest.raises(DemagnetizationError, match="positive"):
-        magnetometric_rectangular_prism_tensor((0.0, 1.0, 1.0), grid_size=16)
+def test_aharoni_factors_tend_to_the_needle_limit() -> None:
+    factors = demagnetizing_factors_rectangular_prism((1.0, 1.0, 1e5))
+
+    np.testing.assert_allclose(factors, (0.5, 0.5, 0.0), atol=1e-4)
+
+
+@pytest.mark.parametrize("lengths", [(3.0, 1.0, 0.2), (1.0, 7.0, 2.0), (50.0, 1.0, 1.0)])
+def test_aharoni_factors_sum_to_one_and_follow_the_edges(lengths: tuple[float, ...]) -> None:
+    factors = demagnetizing_factors_rectangular_prism(lengths)
+
+    assert sum(factors) == pytest.approx(1.0, abs=1e-12)
+    # The shortest edge carries the largest factor.
+    assert np.argmax(factors) == np.argmin(lengths)
+    np.testing.assert_allclose(
+        demagnetizing_factors_rectangular_prism(lengths[::-1]), factors[::-1], atol=1e-14
+    )
+
+
+@pytest.mark.parametrize("lengths", [(0.0, 1.0, 1.0), (1.0, -1.0, 1.0), (1.0, np.inf, 1.0)])
+def test_aharoni_factors_reject_unusable_lengths(lengths: tuple[float, ...]) -> None:
+    with pytest.raises(DemagnetizationError, match="prism_lengths"):
+        demagnetizing_factors_rectangular_prism(lengths)
+
+
+def test_magnetometric_prism_tensor_is_the_diagonal_of_the_factors() -> None:
+    np.testing.assert_array_equal(
+        magnetometric_rectangular_prism_tensor((10.0, 10.0, 0.25)),
+        np.diag(demagnetizing_factors_rectangular_prism((10.0, 10.0, 0.25))),
+    )
+
+
+def test_magnetometric_prism_tensor_warns_that_grid_arguments_are_ignored() -> None:
+    with pytest.warns(DeprecationWarning, match="ignored"):
+        tensor = magnetometric_rectangular_prism_tensor((1.0, 1.0, 1.0), grid_size=4, padding=1.0)
+
+    np.testing.assert_allclose(tensor, np.eye(3) / 3.0, atol=1e-14)
 
 
 # rectangular_prism_tensor (local Joseph-Schlomann tensor)
@@ -526,14 +574,48 @@ def test_magnetometric_demagnetizing_tensor_cube_is_isotropic() -> None:
         sample_volume=volume,
         domain_lengths=(1.0, 1.0, 1.0),
     )
-    assert float(np.trace(tensor)) == pytest.approx(1.0)
-    np.testing.assert_allclose(tensor, tensor.T, atol=1e-12)
-    # Cube -> near isotropic diagonal.
-    np.testing.assert_allclose(np.diag(tensor), np.full(3, 1.0 / 3.0), atol=0.05)
+    # With k = 0 on the diagonal the trace is 1 by Parseval's theorem, unnormalised.
+    assert float(np.trace(tensor)) == pytest.approx(1.0, abs=1e-12)
+    np.testing.assert_allclose(tensor, np.eye(3) / 3.0, atol=1e-12)
 
 
-def test_magnetometric_demagnetizing_tensor_zero_amplitude_trace_branch() -> None:
-    # All-zero amplitude -> trace == 0 -> skips the normalization branch.
+def test_magnetometric_demagnetizing_tensor_matches_the_voxel_path() -> None:
+    mask = np.ones((4, 4, 2), dtype=bool)
+    mask[0, 0, 0] = False
+    spacing = (0.5, 0.75, 0.2)
+    box = fourier_box_shape(mask.shape, spacing, 2.0)
+    embedded = np.zeros(box)
+    embedded[: mask.shape[0], : mask.shape[1], : mask.shape[2]] = mask
+    voxel_volume = float(np.prod(spacing))
+    kx, ky, kz = fourier_k_grid(box, spacing)
+    tensor = magnetometric_demagnetizing_tensor(
+        np.fft.fftn(embedded) * voxel_volume,
+        kx,
+        ky,
+        kz,
+        sample_volume=float(mask.sum()) * voxel_volume,
+        domain_lengths=[n * s for n, s in zip(box, spacing, strict=True)],
+    )
+
+    voxel = voxel_demagnetizing_tensor(mask, spacing, padding=2.0).tensor
+
+    # The full-spectrum sum counts each even-length axis's unpaired Nyquist
+    # plane in the off-diagonal elements; the voxel path leaves it out.
+    np.testing.assert_allclose(np.diag(voxel), np.diag(tensor), atol=1e-12)
+    assert voxel[0, 1] == pytest.approx(tensor[0, 1], abs=2e-3)
+
+
+def test_mirror_symmetric_voxel_shape_has_no_off_diagonal_elements() -> None:
+    mask = np.zeros((7, 6, 4), dtype=bool)
+    mask[1:6, :, :] = True
+    mask[0, 2:4, 1:3] = True
+    mask[6, 2:4, 1:3] = True
+    tensor = voxel_demagnetizing_tensor(mask, (0.5, 0.75, 0.2), padding=2.0).tensor
+
+    np.testing.assert_allclose(tensor - np.diag(np.diag(tensor)), 0.0, atol=1e-14)
+
+
+def test_magnetometric_demagnetizing_tensor_zero_amplitude_gives_zero() -> None:
     grid_shape = (4, 4, 4)
     kx, ky, kz = fourier_k_grid(grid_shape, 1.0)
     amplitude = np.zeros(grid_shape, dtype=complex)
@@ -565,6 +647,349 @@ def test_magnetometric_demagnetizing_tensor_shape_mismatch_raises() -> None:
         magnetometric_demagnetizing_tensor(
             amplitude, kx, ky, kz, sample_volume=1.0, domain_lengths=(1.0, 1.0, 1.0)
         )
+
+
+# Fourier method for voxel shapes
+
+
+def _voxel_sphere(n: int) -> np.ndarray:
+    x = (np.arange(n) + 0.5) / n * 2.0 - 1.0
+    return x[:, None, None] ** 2 + x[None, :, None] ** 2 + x[None, None, :] ** 2 <= 1.0
+
+
+def test_voxel_sphere_tensor_is_one_third_at_128_cubed() -> None:
+    result = voxel_demagnetizing_tensor(_voxel_sphere(128), 1.0 / 64.0, padding=2.0)
+
+    np.testing.assert_allclose(result.tensor, np.eye(3) / 3.0, rtol=0.01, atol=1e-12)
+    assert result.box_shape == (256, 256, 256)
+
+
+@pytest.mark.parametrize(
+    ("lengths", "voxels"),
+    [
+        ((1.0, 1.0, 1.0), (16, 16, 16)),
+        ((4.0, 4.0, 1.0), (32, 32, 4)),
+        ((20.0, 20.0, 1.0), (64, 64, 2)),
+        ((1.0, 1.0, 4.0), (8, 8, 32)),
+    ],
+    ids=["aspect-1", "plate-4", "plate-20", "needle-4"],
+)
+def test_voxel_prism_with_anisotropic_voxels_matches_aharoni(
+    lengths: tuple[float, float, float], voxels: tuple[int, int, int]
+) -> None:
+    spacing = tuple(length / count for length, count in zip(lengths, voxels, strict=True))
+    result = voxel_demagnetizing_tensor(np.ones(voxels, dtype=bool), spacing, padding=2.0)
+
+    np.testing.assert_allclose(
+        np.diag(result.tensor), demagnetizing_factors_rectangular_prism(lengths), rtol=0.02
+    )
+    np.testing.assert_allclose(result.tensor - np.diag(np.diag(result.tensor)), 0.0, atol=1e-12)
+
+
+def test_voxel_needle_of_aspect_20_matches_aharoni() -> None:
+    lengths = (1.0, 1.0, 20.0)
+    result = voxel_demagnetizing_tensor(
+        np.ones((6, 6, 60), dtype=bool), (1.0 / 6.0, 1.0 / 6.0, 1.0 / 3.0), padding=2.0
+    )
+
+    # The small factor along the needle is resolved to 1e-3 rather than 2 %.
+    np.testing.assert_allclose(
+        np.diag(result.tensor), demagnetizing_factors_rectangular_prism(lengths), atol=1e-3
+    )
+
+
+def test_voxel_tensor_trace_is_one_without_smoothing() -> None:
+    result = voxel_demagnetizing_tensor(_voxel_sphere(12), (1.0, 2.0, 0.5), padding=3.0)
+
+    assert result.trace == pytest.approx(1.0, abs=1e-12)
+
+
+def test_smoothed_trace_approaches_one_with_grid_refinement() -> None:
+    traces = [
+        voxel_demagnetizing_tensor(
+            np.ones((n, n, n // 4), dtype=bool), 4.0 / n, padding=2.0, smoothing=0.5
+        ).trace
+        for n in (8, 16, 32)
+    ]
+
+    assert traces[0] < traces[1] < traces[2] < 1.0
+    assert traces[2] > 0.9
+
+
+def test_padding_sets_the_box_on_every_axis_from_the_longest_edge() -> None:
+    # A plate 64 x 64 x 2 voxels of 20 x 20 x 1: the box spans 2 x 20 along every
+    # axis, so 80 voxels through the 1-thick plate, not 2 x 2.
+    assert fourier_box_shape((64, 64, 2), (20 / 64, 20 / 64, 0.5), 2.0) == (128, 128, 80)
+    assert fourier_box_shape((64, 64, 2), (20 / 64, 20 / 64, 0.5), 3.0)[2] == 120
+
+
+def test_padding_changes_the_tensor_of_a_plate() -> None:
+    mask = np.ones((16, 16, 2), dtype=bool)
+    spacing = (0.25, 0.25, 0.25)
+    loose = voxel_demagnetizing_tensor(mask, spacing, padding=2.0).tensor
+    tight = voxel_demagnetizing_tensor(mask, spacing, padding=4.0).tensor
+
+    assert loose[2, 2] != pytest.approx(tight[2, 2], abs=1e-6)
+    assert tight[2, 2] == pytest.approx(
+        demagnetizing_factors_rectangular_prism((4.0, 4.0, 0.5))[2], rel=0.01
+    )
+
+
+def test_voxel_tensor_ignores_empty_margins() -> None:
+    mask = np.ones((4, 4, 2), dtype=bool)
+    padded = np.zeros((9, 7, 5), dtype=bool)
+    padded[3:7, 1:5, 2:4] = True
+
+    np.testing.assert_allclose(
+        voxel_demagnetizing_tensor(padded, 1.0, padding=2.0).tensor,
+        voxel_demagnetizing_tensor(mask, 1.0, padding=2.0).tensor,
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"padding": 1.5}, "padding must be at least 2"),
+        ({"smoothing": -1.0}, "smoothing"),
+        ({"spacing": 0.0}, "spacing"),
+    ],
+)
+def test_voxel_tensor_rejects_unusable_settings(kwargs: dict[str, float], match: str) -> None:
+    options = {"spacing": 1.0, "padding": 2.0, **kwargs}
+    spacing = options.pop("spacing")
+    with pytest.raises(DemagnetizationError, match=match):
+        voxel_demagnetizing_tensor(np.ones((2, 2, 2), dtype=bool), spacing, **options)
+
+
+def test_voxel_tensor_rejects_empty_and_flat_masks() -> None:
+    with pytest.raises(DemagnetizationError, match="empty"):
+        voxel_demagnetizing_tensor(np.zeros((3, 3, 3), dtype=bool), 1.0)
+    with pytest.raises(DemagnetizationError, match="3-D"):
+        voxel_demagnetizing_tensor(np.ones((3, 3), dtype=bool), 1.0)
+
+
+def test_sample_fourier_box_matches_the_calculation_and_checks_its_size() -> None:
+    plate = DemagnetizingSample.image_plate(
+        np.ones((30, 20), dtype=bool), (6.0, 4.0), 0.5, fourier_grid=24, padding=2.0
+    )
+
+    assert sample_fourier_box(plate) == fourier_demagnetizing_result(plate).box_shape
+    with pytest.raises(DemagnetizationError, match="million voxels"):
+        sample_fourier_box(replace(plate, plate_thickness=1e-5, thickness_voxels=64))
+    with pytest.raises(DemagnetizationError, match="closed-form"):
+        sample_fourier_box(DemagnetizingSample(shape="sphere"))
+
+
+def test_voxel_tensor_rejects_a_box_too_large_to_hold() -> None:
+    with pytest.raises(DemagnetizationError, match="million voxels"):
+        voxel_demagnetizing_tensor(np.ones((64, 64, 1), dtype=bool), (1.0, 1.0, 1e-3))
+
+
+def test_tensor_field_trace_is_one_inside_and_zero_outside() -> None:
+    mask = np.zeros((6, 5, 3), dtype=bool)
+    mask[0:6, 0:5, 0:2] = True
+    mask[2:4, 1:3, 0:2] = False
+    field = demagnetizing_tensor_field(mask, (1.0, 1.0, 0.5), padding=2.0)
+    trace = np.einsum("ii...->...", field.values)
+
+    np.testing.assert_allclose(trace, field.mask.astype(float), atol=1e-12)
+    assert field.values.shape == (3, 3, *field.mask.shape)
+
+
+def test_tensor_field_matches_the_local_prism_tensor_at_its_centre() -> None:
+    n = 24
+    field = demagnetizing_tensor_field(np.ones((n, n, n), dtype=bool), 1.0 / n, padding=3.0)
+    centre = field.values[:, :, n // 2, n // 2, n // 2]
+    # The voxel grid is offset by half a voxel, so compare with the tensor there.
+    offset = 0.5 / n
+    local = rectangular_prism_tensor(offset, offset, offset, (0.5, 0.5, 0.5))
+
+    np.testing.assert_allclose(centre, local, atol=0.01)
+
+
+def test_tensor_field_of_a_mirror_symmetric_shape_averages_without_off_diagonals() -> None:
+    # A diagonal line of voxels: symmetric under z -> -z, but not axis-aligned.
+    mask = np.eye(4, dtype=bool)[:, :, None]
+    field = demagnetizing_tensor_field(mask, 1.0, padding=2.0)
+    average = field.values[:, :, field.mask].mean(axis=-1)
+
+    np.testing.assert_allclose(average[[0, 1], [2, 2]], 0.0, atol=1e-14)
+    np.testing.assert_allclose(
+        average, voxel_demagnetizing_tensor(mask, 1.0, padding=2.0).tensor, atol=1e-12
+    )
+
+
+def test_tensor_field_averages_to_the_magnetometric_tensor() -> None:
+    mask = np.ones((8, 6, 2), dtype=bool)
+    spacing = (1.0, 1.0, 0.5)
+    field = demagnetizing_tensor_field(mask, spacing, padding=2.0)
+    average = field.values[:, :, field.mask].mean(axis=-1)
+
+    np.testing.assert_allclose(
+        average, voxel_demagnetizing_tensor(mask, spacing, padding=2.0).tensor, atol=1e-12
+    )
+
+
+# Voxel-grid and image-plate samples
+
+
+def _disc(n: int) -> np.ndarray:
+    x = (np.arange(n) + 0.5) / n * 2.0 - 1.0
+    return x[:, None] ** 2 + x[None, :] ** 2 <= 1.0
+
+
+def test_voxel_grid_sample_uses_the_fourier_tensor() -> None:
+    mask = np.ones((8, 8, 2), dtype=bool)
+    sample = DemagnetizingSample.voxel_grid(mask, (0.5, 0.5, 0.25), padding=2.0)
+
+    assert sample.shape == "voxel_grid"
+    assert sample.uses_fourier_method
+    np.testing.assert_allclose(
+        principal_demagnetizing_tensor(sample),
+        voxel_demagnetizing_tensor(mask, (0.5, 0.5, 0.25), padding=2.0).tensor,
+    )
+
+
+def test_voxel_grid_sample_is_rotated_like_any_shape() -> None:
+    sample = DemagnetizingSample.voxel_grid(
+        np.ones((8, 4, 2), dtype=bool), 1.0, rotation=_rotation_about_z(90.0)
+    )
+    principal = principal_demagnetizing_tensor(sample)
+
+    np.testing.assert_allclose(demagnetizing_tensor(sample)[0, 0], principal[1, 1], atol=1e-12)
+
+
+def test_image_plate_of_a_thin_disc_is_a_plate_along_its_normal() -> None:
+    sample = DemagnetizingSample.image_plate(
+        _disc(64), (5.0, 5.0), 0.05, fourier_grid=48, padding=2.0
+    )
+    tensor = demagnetizing_tensor(sample)
+
+    assert tensor[2, 2] > 0.95
+    assert tensor[0, 0] == pytest.approx(tensor[1, 1], abs=1e-3)
+    assert fourier_demagnetizing_result(sample).trace == pytest.approx(1.0, abs=1e-12)
+
+
+def test_image_plate_of_a_rectangle_matches_aharoni() -> None:
+    sample = DemagnetizingSample.image_plate(
+        np.ones((30, 20), dtype=bool),
+        (6.0, 4.0),
+        1.0,
+        fourier_grid=48,
+        thickness_voxels=4,
+        padding=2.0,
+    )
+
+    np.testing.assert_allclose(
+        np.diag(principal_demagnetizing_tensor(sample)),
+        demagnetizing_factors_rectangular_prism((6.0, 4.0, 1.0)),
+        rtol=0.02,
+    )
+
+
+def test_image_plate_voxels_follow_the_grid_and_thickness() -> None:
+    sample = DemagnetizingSample.image_plate(
+        np.ones((40, 20), dtype=bool), (8.0, 4.0), 0.3, fourier_grid=16, thickness_voxels=3
+    )
+    model = sample.voxel_model()
+
+    assert model.mask.shape == (16, 8, 3)
+    np.testing.assert_allclose(model.spacing, (0.5, 0.5, 0.1))
+    np.testing.assert_allclose(model.lengths, (8.0, 4.0, 0.3))
+
+
+def test_image_plate_stores_a_large_outline_at_256_cells() -> None:
+    sample = DemagnetizingSample.image_plate(np.ones((1024, 512), dtype=bool), (2.0, 1.0), 0.1)
+
+    assert sample.plate_mask is not None
+    assert sample.plate_mask.shape == (256, 128)
+
+
+def test_fourier_tensor_is_cached_per_shape_and_ignores_orientation() -> None:
+    sample = DemagnetizingSample.voxel_grid(np.ones((4, 4, 2), dtype=bool), 1.0)
+    rotated = DemagnetizingSample.voxel_grid(
+        np.ones((4, 4, 2), dtype=bool), 1.0, rotation=_rotation_about_z(30.0)
+    )
+
+    assert fourier_demagnetizing_result(sample) is fourier_demagnetizing_result(rotated)
+    with pytest.raises(ValueError, match="read-only"):
+        fourier_demagnetizing_result(sample).tensor[0, 0] = 1.0
+
+
+@pytest.mark.parametrize(
+    ("sample", "match"),
+    [
+        (DemagnetizingSample(shape="voxel_grid"), "no voxels"),
+        (DemagnetizingSample(shape="image_plate"), "no outline"),
+        (
+            DemagnetizingSample(
+                shape="image_plate",
+                plate_mask=VoxelMask.from_array(np.ones((4, 4), dtype=bool)),
+                plate_thickness=0.0,
+            ),
+            "thickness must be positive",
+        ),
+        (
+            DemagnetizingSample(
+                shape="image_plate",
+                plate_mask=VoxelMask.from_array(np.ones((4, 4), dtype=bool)),
+                thickness_voxels=0,
+            ),
+            "at least one voxel",
+        ),
+        (
+            DemagnetizingSample(
+                shape="image_plate",
+                plate_mask=VoxelMask.from_array(np.ones((4, 4), dtype=bool)),
+                fourier_grid=4,
+            ),
+            "at least 8",
+        ),
+    ],
+    ids=["no-voxels", "no-outline", "zero-thickness", "zero-layers", "small-grid"],
+)
+def test_voxel_samples_report_what_is_missing(sample: DemagnetizingSample, match: str) -> None:
+    with pytest.raises(DemagnetizationError, match=match):
+        demagnetizing_tensor(sample)
+
+
+def test_image_plate_rejects_an_empty_outline() -> None:
+    with pytest.raises(DemagnetizationError, match="sample in it"):
+        DemagnetizingSample.image_plate(np.zeros((4, 4), dtype=bool), (1.0, 1.0), 0.1)
+
+
+def test_closed_form_shape_has_no_fourier_result() -> None:
+    with pytest.raises(DemagnetizationError, match="closed-form"):
+        fourier_demagnetizing_result(DemagnetizingSample(shape="sphere"))
+    with pytest.raises(DemagnetizationError, match="not made of voxels"):
+        DemagnetizingSample(shape="sphere").voxel_model()
+
+
+def test_voxel_mask_round_trips_and_rejects_non_boolean_values() -> None:
+    values = np.random.default_rng(3).random((5, 7, 3)) > 0.5
+    mask = VoxelMask.from_array(values)
+
+    np.testing.assert_array_equal(mask.array(), values)
+    assert VoxelMask.from_json(mask.to_json()) == mask
+    assert mask.count == int(values.sum())
+    with pytest.raises(DemagnetizationError, match="true and false"):
+        VoxelMask.from_array(np.full((2, 2), 0.5))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"shape": [2, 2]},
+        {"shape": [2, 2], "bits": "not base64!"},
+        {"shape": [2, 2, 2, 2], "bits": "AA=="},
+        {"shape": [4, 4], "bits": "AA=="},
+    ],
+    ids=["missing", "no-bits", "bad-base64", "four-dimensional", "wrong-length"],
+)
+def test_voxel_mask_from_json_reads_unusable_payloads_as_none(payload: object) -> None:
+    assert VoxelMask.from_json(payload) is None
 
 
 # DemagnetizingSample JSON
@@ -622,6 +1047,75 @@ def test_sample_from_json_reads_unusable_orientation_as_aligned(
     )
 
     assert sample == DemagnetizingSample(shape="ellipsoid", semi_axes=(1.0, 2.0, 3.0))
+
+
+def test_image_plate_sample_round_trips_json() -> None:
+    sample = DemagnetizingSample.image_plate(
+        _disc(40),
+        (5.0, 4.0),
+        0.1,
+        fourier_grid=32,
+        thickness_voxels=2,
+        smoothing=0.5,
+        photo=PlatePhoto(path="/data/crystal.png", threshold=97.5, invert=True, fill_holes=False),
+    )
+    restored = DemagnetizingSample.from_json(sample.to_json())
+
+    assert restored == sample
+    np.testing.assert_array_equal(demagnetizing_tensor(restored), demagnetizing_tensor(sample))
+
+
+def test_voxel_grid_sample_round_trips_json() -> None:
+    sample = DemagnetizingSample.voxel_grid(np.ones((3, 4, 2), dtype=bool), (1.0, 0.5, 0.25))
+
+    assert DemagnetizingSample.from_json(sample.to_json()) == sample
+
+
+def test_sample_from_json_without_voxel_fields_reads_defaults() -> None:
+    sample = DemagnetizingSample.from_json({"shape": "image_plate"})
+
+    assert sample.plate_mask is None
+    assert sample.photo is None
+    assert sample.plate_size == (1.0, 1.0)
+    assert sample.thickness_voxels == 1
+    assert sample.smoothing == 0.0
+
+
+def test_sample_from_json_reads_unusable_voxel_fields_as_defaults() -> None:
+    sample = DemagnetizingSample.from_json(
+        {
+            "shape": "image_plate",
+            "plate_mask": {"shape": [2, 2], "bits": 7},
+            "plate_size": [1.0],
+            "plate_thickness": "thin",
+            "thickness_voxels": -2,
+            "smoothing": float("nan"),
+            "photo": {"path": "a.png", "threshold": "dark", "invert": 1},
+        }
+    )
+
+    assert sample.plate_mask is None
+    assert sample.plate_size == (1.0, 1.0)
+    assert sample.plate_thickness == 0.1
+    assert sample.thickness_voxels == 1
+    assert sample.smoothing == 0.0
+    assert sample.photo == PlatePhoto(path="a.png", threshold=None, invert=True)
+
+
+def test_summary_json_names_each_mask_by_its_digest() -> None:
+    plate = DemagnetizingSample.image_plate(_disc(40), (5.0, 4.0), 0.1)
+    voxels = DemagnetizingSample.voxel_grid(np.ones((3, 4, 2), dtype=bool), 1.0)
+
+    summary = plate.summary_json()
+    assert summary["plate_mask"] == {
+        "shape": [40, 40],
+        "sha256": hashlib.sha256(plate.plate_mask.bits).hexdigest(),
+    }
+    assert summary["plate_size"] == [5.0, 4.0]
+    assert voxels.summary_json()["voxels"]["shape"] == [3, 4, 2]
+    assert "bits" not in str(summary)
+    sphere = DemagnetizingSample(shape="sphere")
+    assert sphere.summary_json() == sphere.to_json()
 
 
 def test_sample_from_json_non_mapping_returns_default() -> None:

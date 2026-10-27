@@ -21,12 +21,16 @@ from mufinder.science.kpoint_grids import (
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
+    FourierDemagnetizingResult,
+    PlatePhoto,
     SampleOrientation,
     demagnetizing_factors_ellipsoid,
+    demagnetizing_factors_rectangular_prism,
     demagnetizing_tensor,
     magnetometric_rectangular_prism_tensor,
     principal_demagnetizing_tensor,
     sample_orientation,
+    voxel_demagnetizing_tensor,
 )
 from mufinder.science.dynamics import DynamicPolarisationResult, calculate_dynamic_polarisation
 from mufinder.science.magnetic_fields import (
@@ -171,12 +175,16 @@ __all__ = [
     "reciprocal_lattice_vectors",
     "DemagnetizationError",
     "DemagnetizingSample",
+    "FourierDemagnetizingResult",
+    "PlatePhoto",
     "demagnetizing_factors_ellipsoid",
+    "demagnetizing_factors_rectangular_prism",
     "demagnetizing_tensor",
     "magnetometric_rectangular_prism_tensor",
     "SampleOrientation",
     "principal_demagnetizing_tensor",
     "sample_orientation",
+    "voxel_demagnetizing_tensor",
     "CommensurateApproximant",
     "DISTRIBUTION_FIELD_TERMS",
     "DistributionConvergenceCheck",

@@ -79,3 +79,11 @@ def test_dynamics_example_shows_the_tail_and_motional_narrowing() -> None:
 
     assert "nu = 0.0 us^-1: G(10 us) = 0.333" in lines
     assert "Largest difference from Abragam at nu = 5 us^-1: 0.0034" in lines
+
+
+def test_demagnetizing_tensor_example_matches_the_closed_form_prism() -> None:
+    lines = _run_example("demagnetizing_tensor.py")
+
+    assert "Fourier N: [0.1756 0.1756 0.6487]" in lines
+    assert "Aharoni N: [0.1747 0.1747 0.6506]" in lines
+    assert "Tr N: 1.000000, FFT box: (80, 80, 40)" in lines
