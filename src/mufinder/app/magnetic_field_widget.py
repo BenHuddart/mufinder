@@ -2412,7 +2412,10 @@ class MagneticTextureDialog(QDialog):
                 shading="flat",
                 cmap="viridis",
             )
-            colorbar = self._magnitude_figure.colorbar(self._magnitude_mesh, ax=axis)
+            # The cell is drawn square, with a colour bar exactly as tall as the cell.
+            axis.set_aspect("equal")
+            colorbar_axis = axis.inset_axes((1.04, 0.0, 0.05, 1.0))
+            colorbar = self._magnitude_figure.colorbar(self._magnitude_mesh, cax=colorbar_axis)
             colorbar.set_label("|m| (μB)", color=palette.text_primary)
             colorbar.ax.tick_params(colors=palette.text_primary)
             colorbar.outline.set_edgecolor(palette.border)

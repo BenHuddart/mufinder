@@ -889,8 +889,18 @@ def test_magnetic_texture_dialog_magnitude_map_toggles_the_preview(qapp) -> None
     assert not dialog._preview_dark_button.isVisible()
     assert dialog._magnitude_mesh is not None
     assert dialog._magnitude_mesh.get_array().size == 32 * 32
-    colorbar_axes = dialog._magnitude_figure.axes[1]
+    cell_axes = dialog._magnitude_figure.axes[0]
+    colorbar_axes = cell_axes.child_axes[0]
     assert colorbar_axes.get_ylabel() == "|m| (μB)"
+    for size in ((860, 560), (1000, 1100), (1500, 700)):
+        dialog.resize(*size)
+        qapp.processEvents()
+        dialog._magnitude_canvas.draw()
+        renderer = dialog._magnitude_canvas.get_renderer()
+        cell = cell_axes.get_window_extent(renderer)
+        colorbar = colorbar_axes.get_window_extent(renderer)
+        assert cell.width == pytest.approx(cell.height, abs=1.0), size
+        assert colorbar.height == pytest.approx(cell.height, abs=1.0), size
 
     dialog._grid_u.setValue(16)
     assert dialog._magnitude_mesh.get_array().size == 16 * 32
