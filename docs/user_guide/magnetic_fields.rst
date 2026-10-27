@@ -679,14 +679,25 @@ A note under these settings explains the convergence checks (see
 - ``Longest period`` (default 12, at most 64), the largest denominator allowed
   for each wavevector component.
 
+The ``Contact Field`` group sets the shell of magnetic ions whose moments make
+up the contact field when a ``Hyperfine coupling`` is set (see
+:ref:`Choose the contact shell <magnetic-fields-contact-shell>`):
+
+- ``Contact neighbours (nnn)`` (default 2, from 1 to 64), the number of
+  nearest magnetic ions in the shell;
+- ``Contact radius (Å)`` (default 10 Å, from 0.1 Å to 100 Å), the distance
+  from the muon inside which an ion may join the shell.
+
 The settings summary on the ``Calculation`` card names the approximant
-tolerance and period when the option is on.
+tolerance and period when the option is on, and the contact shell when a
+hyperfine coupling is set. Each commensurate result records the contact
+coupling and shell it used.
 
 .. figure:: ../_generated/screenshots/mnsi_calculation_settings.webp
    :alt: The Calculation Settings dialog with 100 x 100 x 100 cells, 32768 lookup
          angles per q, 200000 distribution samples, Auto sampling, 512 histogram
-         bins, and the approximant option ticked with tolerance 0.001 r.l.u. and
-         longest period 64.
+         bins, the approximant option ticked with tolerance 0.001 r.l.u. and
+         longest period 64, and a contact shell of 2 neighbours within 10 Å.
 
    The settings of the helix in :doc:`/user_guide/examples/mnsi`, whose q lies
    0.0009 r.l.u. from 1/64, so a period of 64 is needed for its approximant.
@@ -709,6 +720,20 @@ the full term breakdown of a commensurate result.
 
 The sampling method affects only incommensurate field distributions. It does not
 simulate muon spectra or time-dependent polarisation functions.
+
+.. _magnetic-fields-contact-shell:
+
+Choose the contact shell
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The contact field is :math:`(2\mu_0/3)\,\mu_B A` times the
+:math:`1/r^3`-weighted mean moment of the ``Contact neighbours (nnn)`` nearest
+magnetic ions closer than the ``Contact radius``, ``muesr``'s contact rule. If
+fewer ions lie inside the radius, the shell holds only those. Choose the shell
+to match the muon's bonding: a muon bonded to one magnetic ion needs one
+neighbour, and a muon among four equidistant ions needs four. In a uniform
+ferromagnet every moment is the same, so the contact field equals the coupling
+times the moment whatever the shell.
 
 Set the demagnetizing field
 ---------------------------
@@ -1138,20 +1163,23 @@ commensurate approximant row at :math:`\mathbf{r} + \mathbf{T}` takes the phase
 takes :math:`\theta_c = 0`.
 
 When a ``Hyperfine coupling`` :math:`A` is set, the contact term is corrected
-too. The contact field is :math:`(2\mu_0/3)\,\mu_B A` times the
-:math:`1/r^3`-weighted mean moment of the ``nnn`` nearest magnetic ions closer
-than ``rcont``, ``muesr``'s contact rule, and the correction is that field with
-the shell chosen from the displaced positions minus the field with the shell
-chosen from the pristine sites. This is a rough correction: it tracks which ions
+too. The correction is the contact field (see :ref:`Choose the contact
+shell <magnetic-fields-contact-shell>`) with the shell chosen from the displaced
+positions minus the contact field with the shell chosen from the pristine
+sites. This is a rough correction: it tracks which ions
 are in the shell and their distances through the weights, but a real hyperfine
 coupling changes with the muon-ion distance in a way a single coupling cannot
 describe. A coupling calculated for the relaxed structure, for example by DFT,
 supersedes it. The relaxed supercell must hold the whole contact shell: when the
 shell reaches past the largest sphere about the muon that the supercell holds,
-the calculation stops and asks for a larger relaxed supercell. When ions with
-different moments tie for the last place in the shell, ``muesr`` keeps an
-arbitrary one of them, so the contact field is undefined there and the
-calculation stops with a message naming the tied ions' distance.
+the calculation stops and asks for a larger relaxed supercell, a smaller
+``Contact radius`` or fewer ``Contact neighbours``. A shell that runs out of
+ions inside the radius reaches to the radius itself, so a smaller radius brings
+it inside the supercell. When ions with different moments tie for the last
+place in the shell, ``muesr`` keeps an arbitrary one of them, so the contact
+field is undefined there and the calculation stops with a message naming the
+tied ions' distance. Raise ``Contact neighbours (nnn)`` to take in the whole
+tied set, or lower it to leave the set out.
 
 MuFinder pairs the relaxed supercell with the pristine host before it sums
 anything, and reports the first check that fails:
@@ -1359,7 +1387,8 @@ A ``magnetic_field`` record holds ``kind`` (``commensurate`` or
 ``distribution``) and one ``results`` entry per site: a commensurate entry
 stores ``site_label``, ``muon_position``, ``total_T``, ``magnitude_T`` and its
 field terms (the correction is stored as ``distortion_T`` beside the uncorrected
-``dipolar_T``); a distribution entry stores ``fields_T``, the histogram,
+``dipolar_T``), and ``calculation_parameters`` with the ``contact_coupling`` in
+``Å⁻³``, ``nnn`` and ``rcont`` of the contact shell it used; a distribution entry stores ``fields_T``, the histogram,
 ``calculation_parameters``, its ``convergence`` checks, ``terms`` (each of
 ``dipolar``, ``lorentz``, ``contact``, ``demag`` and ``applied`` with its
 ``mean_T`` and ``rms_T``), ``total_rms_T``, and the constant ``applied_T`` and
@@ -1368,7 +1397,8 @@ list of a commensurate approximant is stored as ``commensurate`` entries. A
 ``magnetic_dipolar_tensor`` record holds ``results`` and a
 ``nuclear_relaxation`` record holds ``result``. The form state saves the
 measured magnetisation as ``use_measured_magnetization`` and
-``measured_magnetization`` and the applied field as ``applied_field_T``. See :doc:`/compatibility_policy` for the persisted
+``measured_magnetization``, the applied field as ``applied_field_T``, and the
+contact shell as ``contact_nnn`` and ``contact_rcont``. See :doc:`/compatibility_policy` for the persisted
 names.
 
 Dependency handling

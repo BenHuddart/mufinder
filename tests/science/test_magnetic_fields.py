@@ -277,6 +277,7 @@ def test_magnetic_field_result_total_magnitude_and_json() -> None:
     assert payload["total_T"] == pytest.approx([1.0, 2.0, 3.0])
     assert payload["magnitude_T"] == pytest.approx(np.sqrt(14.0))
     assert "distortion_T" not in payload
+    assert "calculation_parameters" not in payload
 
 
 def test_magnetic_field_result_adds_the_distortion_correction_to_the_total() -> None:
@@ -295,8 +296,11 @@ def test_magnetic_field_result_adds_the_distortion_correction_to_the_total() -> 
     assert result.to_json()["distortion_T"] == [0.5, 0.0, 0.25]
 
 
-@pytest.mark.parametrize("distortion", [None, (0.5, 0.0, 0.25)])
-def test_magnetic_field_result_json_round_trips(distortion) -> None:
+@pytest.mark.parametrize(
+    ("distortion", "parameters"),
+    [(None, {}), ((0.5, 0.0, 0.25), {"contact_coupling": 0.1, "nnn": 4, "rcont": 3.5})],
+)
+def test_magnetic_field_result_json_round_trips(distortion, parameters) -> None:
     result = MagneticFieldResult(
         site_label="A",
         muon_position=(0.1, 0.2, 0.3),
@@ -306,6 +310,7 @@ def test_magnetic_field_result_json_round_trips(distortion) -> None:
         demag=(0.0, 0.0, -0.3),
         applied=(0.0, 0.0, 0.05),
         distortion=distortion,
+        calculation_parameters=parameters,
     )
 
     restored = MagneticFieldResult.from_json(json.loads(json.dumps(result.to_json())))
@@ -903,12 +908,35 @@ def test_contact_distortion_needs_the_shell_inside_the_relaxed_supercell(monkeyp
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
     relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
 
-    with pytest.raises(MagneticFieldError, match="contact shell reaches 10.00 Å"):
+    # Fewer than 50 ions lie within 10 Å of the muon, so the shell reaches the radius.
+    with pytest.raises(
+        MagneticFieldError,
+        match=r"contact shell reaches 10\.00 Å.*a smaller Contact radius \(only \d+ magnetic ions",
+    ):
         calculate_commensurate_fields(
             _structure(),
             _antiferromagnet(),
             [_MU_X],
             options=MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=50),
+            distorted_structures=[relaxed],
+        )
+
+
+def test_a_full_contact_shell_past_the_relaxed_supercell_asks_for_fewer_neighbours(
+    monkeypatch,
+) -> None:
+    # The four Fe after the two 1.5 Å from the muon lie 3.35 Å away, past the 2x2x2 supercell.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
+
+    with pytest.raises(
+        MagneticFieldError, match=r"contact shell reaches 3\.35 Å.*fewer Contact neighbours"
+    ):
+        calculate_commensurate_fields(
+            _structure(),
+            _antiferromagnet(),
+            [_MU_X],
+            options=MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=6),
             distorted_structures=[relaxed],
         )
 
@@ -931,10 +959,26 @@ def test_contact_distortion_refuses_a_tie_across_the_shell_edge(
         )
 
     if ambiguous:
-        with pytest.raises(MagneticFieldError, match="2 magnetic ions with different moments tie"):
+        with pytest.raises(
+            MagneticFieldError,
+            match=r"2 magnetic ions with different moments tie.*Contact neighbours \(nnn\)",
+        ):
             _calculate()
     else:
         assert _calculate()[0].distortion == pytest.approx((0.0, 0.0, 0.0), abs=1e-15)
+
+
+def test_contact_distortion_tie_is_resolved_by_including_the_whole_tied_set(monkeypatch) -> None:
+    # The two Fe that tie 1.5 Å from the muon for one place both fit in a two-place shell.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=2, rcont=2.0)
+
+    (result,) = calculate_commensurate_fields(
+        _structure(), _antiferromagnet(), [_MU_X], options=options, distorted_structures=[relaxed]
+    )
+
+    assert result.distortion == pytest.approx((0.0, 0.0, 0.0), abs=1e-15)
 
 
 def test_distribution_checks_the_contact_shell_before_any_lattice_sum(monkeypatch) -> None:
@@ -2771,6 +2815,61 @@ def test_real_muesr_contact_field_converts_the_coupling_unit(real_muesr) -> None
         assert result.contact == pytest.approx((0.0, 0.0, 0.5), rel=1e-6, abs=1e-9)
 
 
+def _direct_contact_field(structure, model, muon_frac, coupling, nnn, rcont) -> np.ndarray:
+    """muesr's contact field from a direct 1/r^3-weighted mean over the ``nnn`` nearest moments."""
+
+    lattice = np.asarray(structure.lattice_vectors, dtype=float)
+    fractional = np.asarray(structure.fractional_positions, dtype=float)
+    steps = range(-3, 4)
+    offsets = np.array([(i, j, k) for i in steps for j in steps for k in steps], dtype=float)
+    indices = np.repeat(np.arange(len(fractional)), len(offsets))
+    cells = np.tile(offsets, (len(fractional), 1))
+    distances = np.linalg.norm(
+        (fractional[indices] + cells) @ lattice - np.asarray(muon_frac) @ lattice, axis=1
+    )
+    order = np.argsort(distances, kind="stable")
+    shell = order[distances[order] < rcont][:nnn]
+    moments = moments_at_atoms(structure, model, indices[shell], cells[shell])
+    weights = distances[shell] ** -3
+    mean = np.sum(weights[:, np.newaxis] * moments, axis=0) / np.sum(weights)
+    return coupling * CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB * mean
+
+
+@pytest.mark.parametrize(("nnn", "rcont"), [(1, 10.0), (2, 10.0), (4, 10.0), (4, 2.5)])
+def test_real_muesr_contact_field_follows_the_contact_shell(real_muesr, nnn, rcont) -> None:
+    model = _single_q_model((0.5, 0.0, 0.25), (0.0, 0.0, 1.0), (0.3, 0.0, 0.0))
+    options = MagneticFieldOptions(
+        supercell=(15, 15, 15), radius=_RADIUS, contact_coupling=0.1, nnn=nnn, rcont=rcont
+    )
+
+    (result,) = calculate_commensurate_fields(_structure(), model, [_GENERAL_SITE], options=options)
+
+    expected = _direct_contact_field(_structure(), model, _GENERAL_SITE, 0.1, nnn, rcont)
+    assert np.linalg.norm(expected) > 1e-3
+    np.testing.assert_allclose(result.contact, expected, rtol=1e-6, atol=1e-9)
+    assert result.calculation_parameters["nnn"] == nnn
+    assert result.calculation_parameters["rcont"] == rcont
+
+
+@pytest.mark.parametrize(("nnn", "rcont"), [(1, 10.0), (6, 10.0), (3, 3.5)])
+def test_real_muesr_ferromagnet_contact_field_does_not_depend_on_the_shell(
+    real_muesr, nnn, rcont
+) -> None:
+    options = MagneticFieldOptions(
+        supercell=(15, 15, 15),
+        radius=_RADIUS,
+        contact_coupling=contact_coupling_to_angstrom_minus3(0.5, "T_per_muB"),
+        nnn=nnn,
+        rcont=rcont,
+    )
+
+    (result,) = calculate_commensurate_fields(
+        _structure(), _model(), [_GENERAL_SITE], options=options
+    )
+
+    assert result.contact == pytest.approx((0.0, 0.0, 0.5), rel=1e-6, abs=1e-9)
+
+
 def test_real_muesr_distortion_corrected_field_matches_the_distorted_lattice(real_muesr) -> None:
     # The Fe one cell along +x moves 0.1 Å away from the muon in a q = 1/4 helix,
     # where the lattice sum and the correction must agree on that Fe's moment.
@@ -2892,7 +2991,9 @@ def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_mue
         _structure(),
         model,
         [_GENERAL_SITE],
-        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS),
+        options=MagneticFieldOptions(
+            supercell=(15, 15, 15), radius=_RADIUS, contact_coupling=0.1, nnn=3, rcont=4.0
+        ),
     )
 
     assert [result.site_label for result in results] == [
@@ -2901,6 +3002,7 @@ def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_mue
     for result in results:
         expected = _direct_lattice_field(_structure(), model, result.muon_position, _RADIUS)
         np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
+        assert result.calculation_parameters == {"contact_coupling": 0.1, "nnn": 3, "rcont": 4.0}
 
 
 @pytest.mark.parametrize(

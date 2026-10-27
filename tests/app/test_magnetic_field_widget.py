@@ -3579,6 +3579,8 @@ def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> Non
     dialog._use_approximants.setChecked(True)
     dialog._approximant_tolerance.setValue(0.002)
     dialog._approximant_max_period.setValue(8)
+    dialog._contact_nnn.setValue(4)
+    dialog._contact_rcont.setValue(3.5)
 
     assert dialog.values() == {
         "supercell": (18, 24, 36),
@@ -3589,6 +3591,8 @@ def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> Non
         "use_approximants": True,
         "approximant_tolerance": 0.002,
         "approximant_max_period": 8,
+        "contact_nnn": 4,
+        "contact_rcont": 3.5,
     }
     assert (
         dialog._phase_samples.maximum()
@@ -3618,6 +3622,8 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
             use_approximants,
             approximant_tolerance,
             approximant_max_period,
+            contact_nnn,
+            contact_rcont,
             parent=None,
         ):
             assert supercell == (100, 100, 100)
@@ -3628,6 +3634,8 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
             assert use_approximants is False
             assert approximant_tolerance == 1e-3
             assert approximant_max_period == 12
+            assert contact_nnn == 2
+            assert contact_rcont == 10.0
 
         def exec(self):
             return QDialog.DialogCode.Accepted
@@ -3642,6 +3650,8 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
                 "use_approximants": True,
                 "approximant_tolerance": 0.002,
                 "approximant_max_period": 8,
+                "contact_nnn": 4,
+                "contact_rcont": 3.5,
             }
 
     monkeypatch.setattr(
@@ -3662,6 +3672,8 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
     assert widget._field_options().histogram_bins == 1024
     assert widget._field_options().approximant_tolerance == 0.002
     assert widget._field_options().approximant_max_period == 8
+    assert widget._field_options().nnn == 4
+    assert widget._field_options().rcont == 3.5
     assert "cells 24 x 36 x 48" in widget._calculation_settings_summary.text()
     assert "commensurate approximants within 0.002 r.l.u., period up to 8" in (
         widget._calculation_settings_summary.text()
@@ -3670,7 +3682,129 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
     assert emitted[-1]["use_commensurate_approximants"] is True
     assert emitted[-1]["approximant_tolerance"] == 0.002
     assert emitted[-1]["approximant_max_period"] == 8
+    assert emitted[-1]["contact_nnn"] == 4
+    assert emitted[-1]["contact_rcont"] == 3.5
     widget.close()
+
+
+def test_calculation_settings_dialog_defaults_the_contact_shell_to_muesr(qapp) -> None:
+    dialog = MagneticFieldCalculationSettingsDialog(
+        supercell=(100, 100, 100), nangles=32_768, phase_sample_count=200_000, histogram_bins=512
+    )
+
+    assert dialog.values()["contact_nnn"] == 2
+    assert dialog.values()["contact_rcont"] == 10.0
+    dialog.close()
+
+
+def test_calculation_settings_dialog_refuses_an_empty_contact_shell(qapp) -> None:
+    dialog = MagneticFieldCalculationSettingsDialog(
+        supercell=(100, 100, 100), nangles=32_768, phase_sample_count=200_000, histogram_bins=512
+    )
+
+    dialog._contact_nnn.setValue(0)
+    dialog._contact_rcont.setValue(0.0)
+    dialog._contact_rcont.setValue(-2.0)
+
+    assert dialog.values()["contact_nnn"] == 1
+    assert dialog.values()["contact_rcont"] > 0.0
+    assert dialog._contact_nnn.minimum() == 1
+    assert dialog._contact_rcont.minimum() > 0.0
+    dialog.close()
+
+
+def test_settings_summary_names_the_contact_shell_only_with_a_coupling(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "contact-summary.mufinder", "Contact Summary")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state({"contact_nnn": 1, "contact_rcont": 2.5})
+
+    assert "contact shell" not in widget._calculation_settings_summary.text()
+
+    widget._hyperfine_coupling.setText("0.5")
+
+    assert "contact shell of 1 nearest magnetic ion within 2.5 Å" in (
+        widget._calculation_settings_summary.text()
+    )
+    # The validator lets a half-typed number through; it is no coupling yet.
+    widget._hyperfine_coupling.clear()
+    QTest.keyClicks(widget._hyperfine_coupling, "-")
+    assert widget._hyperfine_coupling.text() == "-"
+    assert "contact shell" not in widget._calculation_settings_summary.text()
+    widget.close()
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [{}, {"contact_nnn": 0, "contact_rcont": -1.0}, {"contact_nnn": "x", "contact_rcont": None}],
+    ids=["missing", "out-of-range", "malformed"],
+)
+def test_form_state_without_a_valid_contact_shell_uses_the_defaults(qapp, tmp_path, stored) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "contact-defaults.mufinder", "Contact Defaults")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state({"contact_nnn": 5, "contact_rcont": 4.0})
+    widget.set_form_state(stored)
+
+    assert widget._field_options().nnn == 2
+    assert widget._field_options().rcont == 10.0
+    widget.close()
+
+
+def test_form_state_rounds_the_contact_radius_to_what_the_dialog_shows(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "contact-rounding.mufinder", "Contact Rounding")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+
+    widget.set_form_state({"contact_rcont": 3.456})
+
+    assert widget._field_options().rcont == 3.46
+    widget.close()
+
+
+def test_contact_shell_survives_save_and_reopen_with_its_result(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    service = ProjectService()
+    document = _uep_cluster_document(tmp_path)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
+    widget.set_form_state({**widget.collect_state(), "contact_nnn": 4, "contact_rcont": 3.5})
+    widget._hyperfine_coupling.setText("0.5")
+
+    widget._calculate_fields()
+
+    state = widget.collect_state()
+    document.ui_state["magnetic_field_form"] = store_magnetic_field_results(
+        document, MAGNETIC_FIELD_PAGE_OWNER, state
+    )
+    service.save_project(document)
+    widget.close()
+
+    reloaded = service.load_project(document.project_root)
+    restored = MagneticFieldWidget()
+    restored.set_document(reloaded)
+    restored.set_form_state(
+        attach_magnetic_field_results(
+            reloaded, MAGNETIC_FIELD_PAGE_OWNER, reloaded.ui_state["magnetic_field_form"]
+        )
+    )
+
+    assert restored._field_options().nnn == 4
+    assert restored._field_options().rcont == 3.5
+    (result,) = restored.collect_state()["magnetic_field_results"]["results"]
+    assert result["calculation_parameters"]["nnn"] == 4
+    assert result["calculation_parameters"]["rcont"] == 3.5
+    assert result["calculation_parameters"]["contact_coupling"] == pytest.approx(0.5)
+    restored.close()
 
 
 def test_dipolar_tensor_dialog_defaults_to_assigned_magnetic_atoms(qapp) -> None:

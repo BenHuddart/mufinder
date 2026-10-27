@@ -440,6 +440,22 @@ Compatibility ledger
      - Read-side repair. Current behaviour for any entry without the keys;
        keep until a saved-project schema version bump includes a migration
        that drops such entries or the page stops reading them.
+   * - ``magnetic_field`` commensurate entries without
+       ``calculation_parameters``, and Magnetic Fields form state without
+       ``contact_nnn`` or ``contact_rcont``
+     - ``mufinder.science.magnetic_fields`` (``MagneticFieldResult.from_json``)
+       and ``mufinder.app.magnetic_field_widget`` (the form-state restore)
+     - A commensurate entry records the ``contact_coupling``, ``nnn`` and
+       ``rcont`` its contact term used in ``calculation_parameters``, and the
+       form state saves the contact shell as ``contact_nnn`` and
+       ``contact_rcont``. An entry saved before the key existed loads with
+       empty ``calculation_parameters``; its fields were computed with
+       ``muesr``'s shell of 2 ions within 10 Å. A form without the keys, or
+       with values outside the dialog's ranges, takes those defaults. The
+       next calculation writes the keys.
+     - Read-side repair. Current behaviour for any entry or form without the
+       keys; keep until a saved-project schema version bump includes a
+       migration that writes the default shell into stored entries and forms.
    * - ``w1_entanglement_witness`` result payloads without ``w1_definition``
      - ``mufinder.services.quantum_results`` (``w1_from_result_data``), read
        by the Quantum Corrections results table
