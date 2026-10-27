@@ -128,6 +128,17 @@ Compatibility ledger
        ``DeprecationWarning``. One test checks it still resolves and renders.
      - Public helper, deprecated. Keep for one minor release (through 0.7.x)
        or until the next major release, whichever comes first; then drop it.
+   * - ``grid_size`` / ``padding`` arguments of
+       ``magnetometric_rectangular_prism_tensor``
+     - ``mufinder.science.demagnetization``, also exported from
+       ``mufinder.science``
+     - The function returns the exact closed-form tensor of a rectangular
+       prism, so the two keyword arguments of its sampled predecessor are
+       ignored; passing either raises a ``DeprecationWarning``. One test checks
+       the warning. The persisted ``fourier_grid`` and ``padding`` fields of a
+       ``DemagnetizingSample`` stay current: the Fourier method uses them.
+     - Deprecated public arguments. Keep for one minor release (through 0.9.x)
+       or until the next major release, whichever comes first; then drop them.
    * - ``singlepoint_job_ids_by_label`` /
        ``singlepoint_seed_names_by_label`` definition keys
      - Quantum Corrections ``castep_quantum_phonon_set`` definitions;

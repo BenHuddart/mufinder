@@ -565,6 +565,13 @@ no two workflow widgets may define the same private method.
        (``minimum_image_distance``, ``minimum_image_distance_matrix``,
        ``nearest_image_distance``) and periodic deduplication
        (``deduplicate_periodic_positions``).
+   * - ``mufinder.science.demagnetization``
+     - Demagnetizing tensors of a sample: the shapes (``DemagnetizingSample``),
+       the closed forms for ellipsoids and rectangular prisms, the Fourier
+       method for voxel shapes (``voxel_demagnetizing_tensor``,
+       ``demagnetizing_tensor_field``) and the sample orientation from crystal
+       directions. Segmenting a photographed plate into an outline is
+       ``mufinder.science.sample_image``; loading the image file is the app's.
    * - ``mufinder.science.cell_projection``
      - Flat projections of a unit cell down one lattice vector for 2D drawings
        (``cell_projection``, ``CellProjection``) and the periodic images of an
