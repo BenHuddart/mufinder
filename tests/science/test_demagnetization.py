@@ -415,6 +415,29 @@ def test_aharoni_factors_tend_to_the_plate_limit() -> None:
     np.testing.assert_allclose(factors, (0.0, 0.0, 1.0), atol=1e-4)
 
 
+@pytest.mark.parametrize("ratio", [1e-5, 1e-8, 1e-150])
+def test_aharoni_factors_stay_exact_for_extreme_aspect_ratios(ratio: float) -> None:
+    # The factors are accurate to about 1e-40 absolute, whatever the ratio.
+    needle = demagnetizing_factors_rectangular_prism((1.0, ratio, ratio))
+    plate = demagnetizing_factors_rectangular_prism((1.0, 1.0, ratio))
+
+    for factors in (needle, plate):
+        assert sum(factors) == pytest.approx(1.0, abs=1e-14)
+        assert min(factors) >= 0.0
+    np.testing.assert_allclose(needle, (0.0, 0.5, 0.5), atol=10 * ratio + 1e-30)
+    assert needle[1] == needle[2]
+    np.testing.assert_allclose(plate, (0.0, 0.0, 1.0), atol=10 * ratio + 1e-30)
+    assert plate[0] == plate[1]
+
+
+def test_aharoni_needle_factor_falls_in_proportion_to_its_width() -> None:
+    # Along a long square rod the factor is proportional to width / length.
+    wide = demagnetizing_factors_rectangular_prism((1.0, 1e-5, 1e-5))[0]
+    narrow = demagnetizing_factors_rectangular_prism((1.0, 1e-8, 1e-8))[0]
+
+    assert narrow / wide == pytest.approx(1e-3, rel=1e-3)
+
+
 def test_aharoni_factors_tend_to_the_needle_limit() -> None:
     factors = demagnetizing_factors_rectangular_prism((1.0, 1.0, 1e5))
 
@@ -783,6 +806,18 @@ def test_tensor_field_matches_the_local_prism_tensor_at_its_centre() -> None:
     local = rectangular_prism_tensor(offset, offset, offset, (0.5, 0.5, 0.5))
 
     np.testing.assert_allclose(centre, local, atol=0.01)
+
+
+def test_tensor_field_of_a_mirror_symmetric_shape_averages_without_off_diagonals() -> None:
+    # A diagonal line of voxels: symmetric under z -> -z, but not axis-aligned.
+    mask = np.eye(4, dtype=bool)[:, :, None]
+    field = demagnetizing_tensor_field(mask, 1.0, padding=2.0)
+    average = field.values[:, :, field.mask].mean(axis=-1)
+
+    np.testing.assert_allclose(average[[0, 1], [2, 2]], 0.0, atol=1e-14)
+    np.testing.assert_allclose(
+        average, voxel_demagnetizing_tensor(mask, 1.0, padding=2.0).tensor, atol=1e-12
+    )
 
 
 def test_tensor_field_averages_to_the_magnetometric_tensor() -> None:

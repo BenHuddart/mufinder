@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import decimal
 import hashlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -607,29 +608,45 @@ def demagnetizing_factors_rectangular_prism(lengths: Sequence[float]) -> Triplet
 def _aharoni_factor(a: float, b: float, c: float) -> float:
     """Return Aharoni's factor along the edge of half-length ``c`` (Eq. 1 of the paper).
 
-    The logarithms of the paper are written as inverse hyperbolic sines, which
-    stay accurate for very flat or very long prisms.
+    The polynomial and logarithmic terms each grow like the square of the
+    aspect ratio and cancel to a factor between 0 and 1, so in floating point
+    a 1e5:1 needle loses six digits and a 1e8:1 one all of them. They are
+    evaluated in decimal arithmetic with enough digits for the aspect ratio;
+    the arctangent term is bounded and stays in floating point. The
+    logarithms of the paper are written as inverse hyperbolic sines.
     """
 
-    r = math.sqrt(a * a + b * b + c * c)
-    r_ab = math.sqrt(a * a + b * b)
-    r_bc = math.sqrt(b * b + c * c)
-    r_ac = math.sqrt(a * a + c * c)
-    abc = a * b * c
-    value = (
-        -(b * b - c * c) / (b * c) * math.asinh(a / r_bc)
-        - (a * a - c * c) / (a * c) * math.asinh(b / r_ac)
-        + b / c * math.asinh(a / b)
-        + a / c * math.asinh(b / a)
-        - c / a * math.asinh(b / c)
-        - c / b * math.asinh(a / c)
-        + 2.0 * math.atan(a * b / (c * r))
-        + (a**3 + b**3 - 2.0 * c**3) / (3.0 * abc)
-        + (a * a + b * b - 2.0 * c * c) / (3.0 * abc) * r
-        + c / (a * b) * (r_ac + r_bc)
-        - (r_ab**3 + r_bc**3 + r_ac**3) / (3.0 * abc)
-    )
-    return float(value / math.pi)
+    aspect = max(a, b, c) / min(a, b, c)
+    digits = 40 + 2 * math.ceil(math.log10(aspect))
+    with decimal.localcontext() as context:
+        context.prec = digits
+        x, y, z = decimal.Decimal(a), decimal.Decimal(b), decimal.Decimal(c)
+        r = (x * x + y * y + z * z).sqrt()
+        r_xy = (x * x + y * y).sqrt()
+        r_yz = (y * y + z * z).sqrt()
+        r_xz = (x * x + z * z).sqrt()
+        xyz = x * y * z
+        three = decimal.Decimal(3)
+        value = (
+            -(y * y - z * z) / (y * z) * _decimal_asinh(x / r_yz)
+            - (x * x - z * z) / (x * z) * _decimal_asinh(y / r_xz)
+            + y / z * _decimal_asinh(x / y)
+            + x / z * _decimal_asinh(y / x)
+            - z / x * _decimal_asinh(y / z)
+            - z / y * _decimal_asinh(x / z)
+            + (x**3 + y**3 - 2 * z**3) / (three * xyz)
+            + (x * x + y * y - 2 * z * z) / (three * xyz) * r
+            + z / (x * y) * (r_xz + r_yz)
+            - (r_xy**3 + r_yz**3 + r_xz**3) / (three * xyz)
+        )
+    bounded = 2.0 * math.atan(a * b / (c * math.sqrt(a * a + b * b + c * c)))
+    return float(value) / math.pi + bounded / math.pi
+
+
+def _decimal_asinh(x: decimal.Decimal) -> decimal.Decimal:
+    """Return ``asinh(x)`` for ``x >= 0`` at the context's precision."""
+
+    return (x + (x * x + 1).sqrt()).ln()
 
 
 def magnetometric_rectangular_prism_tensor(
@@ -932,12 +949,20 @@ def demagnetizing_tensor_field(
     if smoothing > 0.0:
         spectrum *= _gaussian_filter(k_axes, step, smoothing, squared=False)
     grids = np.meshgrid(*k_axes, indexing="ij", sparse=True)
+    # As in voxel_demagnetizing_tensor, the unpaired Nyquist planes are left
+    # out of the off-diagonal elements.
+    paired = np.meshgrid(
+        *(_without_nyquist(k, n) for k, n in zip(k_axes, box, strict=True)),
+        indexing="ij",
+        sparse=True,
+    )
     k2 = grids[0] ** 2 + grids[1] ** 2 + grids[2] ** 2
     k2[0, 0, 0] = 1.0
     values = np.empty((3, 3, *box), dtype=float)
     for i in range(3):
         for j in range(i, 3):
-            component = spectrum * (grids[i] * grids[j] / k2)
+            factors = grids if i == j else paired
+            component = spectrum * (factors[i] * factors[j] / k2)
             if i == j:
                 component[0, 0, 0] = spectrum[0, 0, 0] / 3.0
             values[i, j] = scipy_fft.irfftn(component, s=box, workers=-1)
