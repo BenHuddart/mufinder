@@ -11,6 +11,7 @@ from uuid import UUID
 
 import numpy as np
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.transforms import Bbox
 from PySide6.QtCore import (
     QEvent,
     QItemSelection,
@@ -1832,6 +1833,19 @@ def _evaluate_texture_preview_grid(
     return moments.real
 
 
+def _beside_square_cell(cell_axis):
+    """Return an axes locator that keeps a colour bar beside a fixed-aspect plot, as tall as it."""
+
+    def locate(colorbar_axis, _renderer) -> Bbox:
+        cell_axis.apply_aspect()
+        cell = cell_axis.get_position()
+        reserved = colorbar_axis.get_position(original=True)
+        gap = reserved.x0 - cell_axis.get_position(original=True).x1
+        return Bbox.from_bounds(cell.x1 + gap, cell.y0, reserved.width, cell.height)
+
+    return locate
+
+
 class CornerHelpGroupBox(QGroupBox):
     """Group box with a help button positioned in the title band."""
 
@@ -2412,10 +2426,12 @@ class MagneticTextureDialog(QDialog):
                 shading="flat",
                 cmap="viridis",
             )
-            # The cell is drawn square, with a colour bar exactly as tall as the cell.
+            # The cell is drawn square. The layout reserves room for the colour bar
+            # and its labels; at draw time the bar is resized to the cell's height.
             axis.set_aspect("equal")
-            colorbar_axis = axis.inset_axes((1.04, 0.0, 0.05, 1.0))
-            colorbar = self._magnitude_figure.colorbar(self._magnitude_mesh, cax=colorbar_axis)
+            colorbar = self._magnitude_figure.colorbar(self._magnitude_mesh, ax=axis)
+            colorbar.ax.set_box_aspect(None)
+            colorbar.ax.set_axes_locator(_beside_square_cell(axis))
             colorbar.set_label("|m| (μB)", color=palette.text_primary)
             colorbar.ax.tick_params(colors=palette.text_primary)
             colorbar.outline.set_edgecolor(palette.border)

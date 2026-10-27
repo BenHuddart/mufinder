@@ -876,6 +876,7 @@ def test_magnetic_texture_dialog_reports_topological_charge_per_magnetic_cell(qa
 
 def test_magnetic_texture_dialog_magnitude_map_toggles_the_preview(qapp) -> None:
     dialog = MagneticTextureDialog(_multi_species_structure())
+    dialog._amplitude.setText("0.385")
     dialog.show()
     qapp.processEvents()
 
@@ -890,7 +891,7 @@ def test_magnetic_texture_dialog_magnitude_map_toggles_the_preview(qapp) -> None
     assert dialog._magnitude_mesh is not None
     assert dialog._magnitude_mesh.get_array().size == 32 * 32
     cell_axes = dialog._magnitude_figure.axes[0]
-    colorbar_axes = cell_axes.child_axes[0]
+    colorbar_axes = dialog._magnitude_figure.axes[1]
     assert colorbar_axes.get_ylabel() == "|m| (μB)"
     for size in ((860, 560), (1000, 1100), (1500, 700)):
         dialog.resize(*size)
@@ -901,6 +902,9 @@ def test_magnetic_texture_dialog_magnitude_map_toggles_the_preview(qapp) -> None
         colorbar = colorbar_axes.get_window_extent(renderer)
         assert cell.width == pytest.approx(cell.height, abs=1.0), size
         assert colorbar.height == pytest.approx(cell.height, abs=1.0), size
+        assert colorbar.y0 == pytest.approx(cell.y0, abs=1.0), size
+        decorations = colorbar_axes.get_tightbbox(renderer)
+        assert decorations.x1 <= dialog._magnitude_figure.bbox.x1, size
 
     dialog._grid_u.setValue(16)
     assert dialog._magnitude_mesh.get_array().size == 16 * 32

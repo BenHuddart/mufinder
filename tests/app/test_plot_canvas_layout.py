@@ -213,6 +213,8 @@ def _field_distribution() -> QDialog:
 
 def _texture_magnitude_map() -> QDialog:
     dialog = MagneticTextureDialog(_cubic_host())
+    # A sub-unit amplitude gives the colour bar its widest tick labels (0.35, 0.30, ...).
+    dialog._amplitude.setText("0.385")
     dialog._magnitude_map_check.setChecked(True)
     assert dialog._magnitude_mesh is not None, "texture fixture drew no |m| map"
     return dialog
