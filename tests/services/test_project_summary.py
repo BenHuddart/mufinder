@@ -12,6 +12,7 @@ from mufinder.services.project_summary import (
     COMPLETION_CHECKS,
     PROJECT_HOME_STAGE_KEY,
     STAGE_DEPENDENCIES,
+    StageDependency,
     STAGE_GROUPS,
     WORKFLOW_STAGES,
     DependencyKind,
@@ -229,3 +230,38 @@ def test_structure_formula_reduces_counts_and_skips_the_muon() -> None:
         positions=[(index / 11.0, 0.0, 0.0) for index in range(11)],
     )
     assert structure_formula(hematite) == "Fe2O3"
+
+
+def test_polarisation_needs_fields_and_completes_with_a_simulation(tmp_path: Path) -> None:
+    from mufinder.services.magnetic_field_results import (
+        MUON_POLARISATION_RESULT_TYPE,
+        SIMULATION_OWNER_PREFIX,
+    )
+    from mufinder.services.project_summary import polarisation_complete
+
+    document = _empty_project(tmp_path)
+    assert (
+        StageDependency("magnetic_fields", "polarisation", DependencyKind.REQUIRED)
+        in STAGE_DEPENDENCIES
+    )
+    assert polarisation_complete(document) is False
+    assert summarize_project(document).stage("polarisation").facts == (
+        "No polarisation simulations yet",
+    )
+
+    # A bare polarisation result owned by a field page is not a simulation.
+    bare = Result(result_type=MUON_POLARISATION_RESULT_TYPE, data={"owner": "magnetic_fields"})
+    document.results[bare.id] = bare
+    assert polarisation_complete(document) is False
+
+    for name in ("a", "b"):
+        result = Result(
+            result_type=MUON_POLARISATION_RESULT_TYPE,
+            data={"owner": f"{SIMULATION_OWNER_PREFIX}{name}"},
+        )
+        document.results[result.id] = result
+
+    assert polarisation_complete(document) is True
+    polarisation = summarize_project(document).stage("polarisation")
+    assert polarisation.status == StageStatus.COMPLETE
+    assert polarisation.facts == ("2 simulations",)

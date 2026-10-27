@@ -49,6 +49,7 @@ from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
     MUON_POLARISATION_RESULT_TYPE,
+    SIMULATION_OWNER_PREFIX,
     UEP_SITE_SOURCE,
     field_result_site_source,
     is_unrelaxed_site_source,
@@ -57,8 +58,6 @@ from mufinder.services.magnetic_field_results import (
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
 
-#: Prefix of a simulation record's ``data["owner"]``; the simulation id follows it.
-SIMULATION_OWNER_PREFIX = "polarisation:"
 #: Title of the Magnetic Fields page as a source.
 MAGNETIC_FIELD_PAGE_TITLE = "Magnetic Fields"
 

@@ -3413,10 +3413,16 @@ def test_magnetic_field_widget_applied_field_reaches_the_calculation_and_round_t
     y.setText("0.01")
     z.setText("-0.25")
     assert emitted[-1]["applied_field_T"] == [0.0, 0.01, -0.25]
+    assert not widget._polarisation_button.isEnabled()
 
     widget._calculate_fields()
 
     assert seen_options[-1].applied_field == (0.0, 0.01, -0.25)
+    assert widget._polarisation_button.isEnabled()
+    requested: list[bool] = []
+    widget.open_polarisation_requested.connect(lambda: requested.append(True))
+    widget._polarisation_button.click()
+    assert requested == [True]
     assert _breakdown_rows(widget)[4][:4] == ["Applied", "0", "0.01", "-0.25"]
 
     restored = MagneticFieldWidget()
@@ -3428,6 +3434,7 @@ def test_magnetic_field_widget_applied_field_reaches_the_calculation_and_round_t
     # Changing the field invalidates the shown results.
     restored._applied_field_inputs[2].setText("0.5")
     assert restored.collect_state()["magnetic_field_results"] is None
+    assert not restored._polarisation_button.isEnabled()
 
     restored.set_form_state({"applied_field_T": ["a", 1.0, 2.0]})
     assert restored._field_options().applied_field == (0.0, 0.0, 0.0)

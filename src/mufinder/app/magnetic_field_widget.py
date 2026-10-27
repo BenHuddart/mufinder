@@ -170,7 +170,11 @@ from mufinder.science.nuclear_relaxation import (
     calculate_nuclear_relaxation,
     calculate_nuclear_relaxation_with_distortion,
 )
-from mufinder.services.magnetic_field_results import UEP_SITE_SOURCE, is_unrelaxed_site_source
+from mufinder.services.magnetic_field_results import (
+    UEP_SITE_SOURCE,
+    UNRELAXED_RESULTS_NOTE,
+    is_unrelaxed_site_source,
+)
 from mufinder.services.muon_sites_summary import (
     MAGNETIC_FIELDS_SCOPE,
     NO_PINNED_SITES_NOTICE,
@@ -205,10 +209,6 @@ _UNRELAXED_ESTIMATE_NOTE = (
     "the relaxed muon site can sit some distance from the UEP minimum."
 )
 _UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are estimates."
-_UNRELAXED_RESULTS_NOTE = (
-    "Computed at an unrelaxed UEP site, so these are estimates: "
-    "the relaxed muon site can sit some distance from the UEP minimum."
-)
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
@@ -5775,7 +5775,7 @@ class NuclearRelaxationDialog(QDialog):
             resize_to_contents_columns=(0,),
             stretch_last_section=False,
         )
-        self._estimate_note = _unrelaxed_results_note(self)
+        self._estimate_note = unrelaxed_results_note(self)
 
         self._build_layout()
         self._apply_styles()
@@ -6224,7 +6224,7 @@ class DipolarTensorDialog(QDialog):
             self._result_unit_combo.setCurrentIndex(t_index)
         self._result_unit_combo.currentIndexChanged.connect(self._refresh_result_units)
 
-        self._estimate_note = _unrelaxed_results_note(self)
+        self._estimate_note = unrelaxed_results_note(self)
         self._result_scroll = QScrollArea(self)
         self._result_scroll.setWidgetResizable(True)
         self._result_content = QWidget(self._result_scroll)
@@ -6556,6 +6556,7 @@ class MagneticFieldWidget(QWidget):
     form_state_changed = Signal(dict)
     pin_requested = Signal(dict)
     open_muon_sites_requested = Signal()
+    open_polarisation_requested = Signal()
     workspace_title_changed = Signal(str)
     delete_requested = Signal()
 
@@ -6726,6 +6727,12 @@ class MagneticFieldWidget(QWidget):
         self._open_distribution_button = QPushButton("Open Distribution Plot")
         self._open_distribution_button.setEnabled(False)
         self._open_distribution_button.clicked.connect(self._open_distribution_plot)
+        self._polarisation_button = QPushButton("Polarisation →")
+        self._polarisation_button.setToolTip(
+            "Simulate the muon polarisation from these field results on the Polarisation page."
+        )
+        self._polarisation_button.setEnabled(False)
+        self._polarisation_button.clicked.connect(self.open_polarisation_requested.emit)
         self._calculation_status = QLabel("Results: -")
         self._calculation_status.setWordWrap(True)
         style_hint_text(self._calculation_status)
@@ -6840,6 +6847,7 @@ class MagneticFieldWidget(QWidget):
         action_row.addWidget(self._nuclear_relaxation_button)
         action_row.addWidget(self._open_distribution_button)
         action_row.addStretch(1)
+        action_row.addWidget(self._polarisation_button)
         results_layout.addLayout(action_row)
         results_layout.addWidget(self._calculation_status)
         results_layout.addWidget(self._result_table)
@@ -8324,6 +8332,10 @@ class MagneticFieldWidget(QWidget):
 
     def _sync_distribution_plot_button(self) -> None:
         self._open_distribution_button.setEnabled(bool(self._selected_distribution_results()))
+        state = self._field_results_state
+        self._polarisation_button.setEnabled(
+            isinstance(state, Mapping) and bool(state.get("results"))
+        )
 
     def _open_distribution_plot(self) -> None:
         results = self._selected_distribution_results()
@@ -8506,10 +8518,10 @@ def _relaxation_cluster_muon_site_options(
     )
 
 
-def _unrelaxed_results_note(parent: QWidget) -> QLabel:
+def unrelaxed_results_note(parent: QWidget) -> QLabel:
     """Return a hidden note marking results computed at an unrelaxed UEP site as estimates."""
 
-    note = QLabel(_UNRELAXED_RESULTS_NOTE, parent)
+    note = QLabel(UNRELAXED_RESULTS_NOTE, parent)
     note.setWordWrap(True)
     style_hint_text(note)
     note.setVisible(False)

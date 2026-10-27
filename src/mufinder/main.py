@@ -121,6 +121,7 @@ PAGE_ROUTES = (
     "muon_relaxations",
     "muon_analysis",
     "magnetic_fields",
+    "polarisation",
     "quantum_corrections",
     "energy_barriers",
     "provenance_log",
