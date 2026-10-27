@@ -213,6 +213,9 @@ _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
 MAX_APPROXIMANT_PERIOD = 64
+MAX_CONTACT_NEIGHBOURS = 64
+MIN_CONTACT_RADIUS_ANG = 0.1
+MAX_CONTACT_RADIUS_ANG = 100.0
 CONVERGENCE_GUIDANCE_TEXT = (
     "Each distribution is checked after it is calculated: halving the lookup angles or the samples "
     "must shift the field distribution by at most 1%, and every occupied histogram bin needs at "
@@ -4925,6 +4928,8 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         use_approximants: bool = False,
         approximant_tolerance: float = MagneticFieldOptions().approximant_tolerance,
         approximant_max_period: int = MagneticFieldOptions().approximant_max_period,
+        contact_nnn: int = MagneticFieldOptions().nnn,
+        contact_rcont: float = MagneticFieldOptions().rcont,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -4994,6 +4999,28 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         approximant_form.addRow("Longest period", self._approximant_max_period)
         layout.addWidget(approximant_group)
 
+        contact_group = QGroupBox("Contact Field", self)
+        contact_form = QFormLayout(contact_group)
+        self._contact_nnn = QSpinBox(contact_group)
+        self._contact_nnn.setRange(1, MAX_CONTACT_NEIGHBOURS)
+        self._contact_nnn.setValue(int(contact_nnn))
+        self._contact_nnn.setToolTip(
+            "Number of nearest magnetic ions whose 1/r³-weighted mean moment sets the contact "
+            "field. Used only when a hyperfine coupling is set."
+        )
+        self._contact_rcont = QDoubleSpinBox(contact_group)
+        self._contact_rcont.setDecimals(2)
+        self._contact_rcont.setRange(MIN_CONTACT_RADIUS_ANG, MAX_CONTACT_RADIUS_ANG)
+        self._contact_rcont.setSingleStep(0.5)
+        self._contact_rcont.setValue(float(contact_rcont))
+        self._contact_rcont.setToolTip(
+            "Only magnetic ions closer than this to the muon enter the contact shell. "
+            "Used only when a hyperfine coupling is set."
+        )
+        contact_form.addRow("Contact neighbours (nnn)", self._contact_nnn)
+        contact_form.addRow("Contact radius (Å)", self._contact_rcont)
+        layout.addWidget(contact_group)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -5015,6 +5042,8 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
             "use_approximants": self._use_approximants.isChecked(),
             "approximant_tolerance": float(self._approximant_tolerance.value()),
             "approximant_max_period": int(self._approximant_max_period.value()),
+            "contact_nnn": int(self._contact_nnn.value()),
+            "contact_rcont": float(self._contact_rcont.value()),
         }
 
     @staticmethod
@@ -6697,6 +6726,8 @@ class MagneticFieldWidget(QWidget):
         self._use_approximants = False
         self._approximant_tolerance = MagneticFieldOptions().approximant_tolerance
         self._approximant_max_period = MagneticFieldOptions().approximant_max_period
+        self._contact_nnn = MagneticFieldOptions().nnn
+        self._contact_rcont = MagneticFieldOptions().rcont
         self._hyperfine_coupling = self._hyperfine_coupling_input()
         self._hyperfine_units = QComboBox()
         for unit_key, label in CONTACT_COUPLING_UNIT_OPTIONS:
@@ -6929,6 +6960,8 @@ class MagneticFieldWidget(QWidget):
             "use_commensurate_approximants": bool(self._use_approximants),
             "approximant_tolerance": float(self._approximant_tolerance),
             "approximant_max_period": int(self._approximant_max_period),
+            "contact_nnn": int(self._contact_nnn),
+            "contact_rcont": float(self._contact_rcont),
             "hyperfine_coupling": self._hyperfine_coupling.text().strip(),
             "hyperfine_coupling_unit": self._current_hyperfine_unit(),
             "selected_muon_site": self._muon_site_to_state(self._selected_muon_site),
@@ -7034,6 +7067,8 @@ class MagneticFieldWidget(QWidget):
             self._approximant_max_period = self._state_approximant_max_period(
                 state.get("approximant_max_period")
             )
+            self._contact_nnn = self._state_contact_nnn(state.get("contact_nnn"))
+            self._contact_rcont = self._state_contact_rcont(state.get("contact_rcont"))
             raw_hyperfine = state.get("hyperfine_coupling")
             if raw_hyperfine is not None:
                 self._hyperfine_coupling.setText(str(raw_hyperfine))
@@ -7091,6 +7126,8 @@ class MagneticFieldWidget(QWidget):
             self._use_approximants = False
             self._approximant_tolerance = defaults.approximant_tolerance
             self._approximant_max_period = defaults.approximant_max_period
+            self._contact_nnn = defaults.nnn
+            self._contact_rcont = defaults.rcont
             self._hyperfine_coupling.setText("0.0")
             self._set_hyperfine_unit("angstrom^-3")
             self._selected_muon_site = self._default_muon_site()
@@ -7519,6 +7556,8 @@ class MagneticFieldWidget(QWidget):
             use_approximants=self._use_approximants,
             approximant_tolerance=self._approximant_tolerance,
             approximant_max_period=self._approximant_max_period,
+            contact_nnn=self._contact_nnn,
+            contact_rcont=self._contact_rcont,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -7547,6 +7586,12 @@ class MagneticFieldWidget(QWidget):
             )
             self._approximant_max_period = self._state_approximant_max_period(
                 values.get("approximant_max_period", self._approximant_max_period)
+            )
+            self._contact_nnn = self._state_contact_nnn(
+                values.get("contact_nnn", self._contact_nnn)
+            )
+            self._contact_rcont = self._state_contact_rcont(
+                values.get("contact_rcont", self._contact_rcont)
             )
         finally:
             self._restoring_form_state = False
@@ -7676,11 +7721,24 @@ class MagneticFieldWidget(QWidget):
             f"{int(self._histogram_bins.value())} histogram bins"
             + (
                 f"; commensurate approximants within {self._approximant_tolerance:g} r.l.u., "
-                f"period up to {self._approximant_max_period}."
+                f"period up to {self._approximant_max_period}"
                 if self._use_approximants
-                else "."
+                else ""
             )
+            + (
+                f"; contact shell of {self._contact_nnn} nearest magnetic "
+                f"{'ion' if self._contact_nnn == 1 else 'ions'} within {self._contact_rcont:g} Å"
+                if self._has_contact_coupling()
+                else ""
+            )
+            + "."
         )
+
+    def _has_contact_coupling(self) -> bool:
+        try:
+            return self._contact_coupling_angstrom_minus3() is not None
+        except ValueError:
+            return False
 
     def _field_options(self) -> MagneticFieldOptions:
         return MagneticFieldOptions(
@@ -7695,6 +7753,8 @@ class MagneticFieldWidget(QWidget):
             ),
             find_equivalent_sites=self._include_equivalent_sites.isChecked(),
             contact_coupling=self._contact_coupling_angstrom_minus3(),
+            nnn=int(self._contact_nnn),
+            rcont=float(self._contact_rcont),
             nangles=int(self._lookup_angles.value()),
             phase_sample_count=int(self._phase_samples.value()),
             phase_sampling=str(self._phase_sampling_method),
@@ -7720,6 +7780,25 @@ class MagneticFieldWidget(QWidget):
         except (TypeError, ValueError):
             return default
         return period if 1 <= period <= MAX_APPROXIMANT_PERIOD else default
+
+    @staticmethod
+    def _state_contact_nnn(value: object) -> int:
+        default = MagneticFieldOptions().nnn
+        try:
+            nnn = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+        return nnn if 1 <= nnn <= MAX_CONTACT_NEIGHBOURS else default
+
+    @staticmethod
+    def _state_contact_rcont(value: object) -> float:
+        default = MagneticFieldOptions().rcont
+        try:
+            rcont = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+        in_range = MIN_CONTACT_RADIUS_ANG <= rcont <= MAX_CONTACT_RADIUS_ANG
+        return rcont if np.isfinite(rcont) and in_range else default
 
     def _phase_sampling_label(self) -> str:
         method = self._normalize_phase_sampling_method(self._phase_sampling_method)

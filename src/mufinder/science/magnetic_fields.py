@@ -123,7 +123,12 @@ def contact_coupling_to_angstrom_minus3(value: float, unit: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class MagneticFieldResult:
-    """One vector magnetic-field result in Tesla."""
+    """One vector magnetic-field result in Tesla.
+
+    ``calculation_parameters`` records the contact coupling and contact shell
+    (``nnn``, ``rcont``) the contact term used; a result saved without them has
+    an empty mapping.
+    """
 
     site_label: str
     muon_position: tuple[float, float, float]
@@ -133,6 +138,7 @@ class MagneticFieldResult:
     demag: tuple[float, float, float]
     applied: tuple[float, float, float]
     distortion: tuple[float, float, float] | None = None
+    calculation_parameters: dict[str, object] = field(default_factory=dict)
 
     @property
     def total(self) -> tuple[float, float, float]:
@@ -165,6 +171,8 @@ class MagneticFieldResult:
         }
         if self.distortion is not None:
             payload["distortion_T"] = list(self.distortion)
+        if self.calculation_parameters:
+            payload["calculation_parameters"] = dict(self.calculation_parameters)
         return payload
 
     @classmethod
@@ -172,6 +180,7 @@ class MagneticFieldResult:
         """Rebuild a result from :meth:`to_json` output; ``total_T`` and ``magnitude_T`` are derived."""
 
         distortion = payload.get("distortion_T")
+        raw_parameters = payload.get("calculation_parameters")
         return cls(
             site_label=str(payload.get("site_label", "")),
             muon_position=_tuple3(payload["muon_position"]),
@@ -181,6 +190,9 @@ class MagneticFieldResult:
             demag=_tuple3(payload["demag_T"]),
             applied=_tuple3(payload["applied_T"]),
             distortion=None if distortion is None else _tuple3(distortion),
+            calculation_parameters=(
+                dict(raw_parameters) if isinstance(raw_parameters, Mapping) else {}
+            ),
         )
 
 
@@ -714,7 +726,8 @@ def _contact_shell_mean(
     if reach >= reach_limit:
         raise MagneticFieldError(
             f"the contact shell reaches {reach:.2f} Å from the muon but the relaxed supercell only holds "
-            f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell"
+            f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell, or a smaller "
+            "Contact radius or fewer Contact neighbours in Calculation Settings"
         )
     if ordered.size > shell.size:
         # muLFC keeps whichever tied ion its parallel lattice walk meets first, so a tie
@@ -726,8 +739,8 @@ def _contact_shell_mean(
             raise MagneticFieldError(
                 f"the contact shell is ambiguous: {tied.size} magnetic ions with different moments tie at "
                 f"{reach:.3f} Å from the muon for the last of its {int(nnn)} places, and muesr keeps an "
-                "arbitrary one of them; include or exclude the whole tied set with the number of contact "
-                "neighbours"
+                "arbitrary one of them; set Contact neighbours (nnn) in Calculation Settings to include "
+                "or exclude the whole tied set"
             )
     if not shell.size:
         return np.zeros(3, dtype=complex)
@@ -879,6 +892,7 @@ def calculate_commensurate_fields(
                         _distortion_changes(models, distortion, opts), (0, 0, 0)
                     )
                 ),
+                calculation_parameters=_contact_calculation_parameters(opts),
             )
         )
     return tuple(results)
@@ -990,6 +1004,7 @@ def calculate_commensurate_approximant_fields(
                     distortion=(
                         None if changes is None else _distortion_correction(changes, translation)
                     ),
+                    calculation_parameters=_contact_calculation_parameters(opts),
                 )
             )
     return tuple(results)
@@ -1814,6 +1829,16 @@ def _field_magnitude_histogram(
         counts, edges = np.histogram(finite, bins=bins, range=(low, high))
     centres = edges[:-1] + 0.5 * np.diff(edges)
     return centres, counts
+
+
+def _contact_calculation_parameters(options: MagneticFieldOptions) -> dict[str, object]:
+    return {
+        "contact_coupling": (
+            None if options.contact_coupling is None else float(options.contact_coupling)
+        ),
+        "nnn": int(options.nnn),
+        "rcont": float(options.rcont),
+    }
 
 
 def _distribution_calculation_parameters(

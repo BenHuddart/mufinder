@@ -256,7 +256,10 @@ Beyond the dipolar sum, the field calculation includes:
 - the Lorentz field. It is part of the Lorentz-sphere evaluation of the
   dipolar sum, not an optional extra, so it is always included and reported as
   its own term (see `Field Terms`_);
-- the contact hyperfine term, when a ``Hyperfine coupling`` is entered;
+- the contact hyperfine term, when a ``Hyperfine coupling`` is entered, from
+  the moments of the contact shell set in ``Calculation Settings`` (see
+  :ref:`Choose the contact shell
+  <magnetic-fields-contact-shell>`);
 - the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
   advanced ellipsoid, or advanced rectangular prism;
