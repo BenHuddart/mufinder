@@ -139,6 +139,31 @@ def test_geometry_and_sample_enable_the_controls_they_use(page) -> None:
     assert page._dynamics_method.isEnabled()
 
 
+@pytest.mark.parametrize(
+    ("geometry", "polycrystal", "detector_along_spin", "allowed"),
+    [
+        ("zero_field", True, True, True),
+        ("longitudinal", True, True, True),
+        ("zero_field", False, True, False),
+        ("zero_field", True, False, False),
+        ("transverse", True, True, False),
+    ],
+)
+def test_dynamics_are_offered_only_where_symmetry_allows_them(
+    page, geometry: str, polycrystal: bool, detector_along_spin: bool, allowed: bool
+) -> None:
+    page._collision_rate.setValue(2.0)
+    page._geometry.setCurrentIndex(page._geometry.findData(geometry))
+    page._sample.setCurrentIndex(page._sample.findData(polycrystal))
+    page._detector_along_spin.setChecked(detector_along_spin)
+
+    assert page._collision_rate.isEnabled() is allowed
+    assert page._dynamics_method.isEnabled() is allowed
+    assert page.settings().collision_rate_per_us == (2.0 if allowed else 0.0)
+    if not allowed:
+        assert "polycrystal" in page._collision_rate.toolTip()
+
+
 def test_an_applied_field_can_be_added_only_to_zero_field_results(page) -> None:
     assert page._added_field.isEnabled()
     assert "can be added" in page._applied_summary.text()
@@ -225,6 +250,7 @@ def test_selecting_a_simulation_loads_its_settings_and_sources(page) -> None:
 
 
 def test_recalculate_replaces_the_selected_simulation(page, document) -> None:
+    page._sample.setCurrentIndex(page._sample.findData(True))
     page._add_button.click()
     simulation_id = page.selected_simulation_id()
 
@@ -319,6 +345,7 @@ def test_select_sources_checks_exactly_those_owners(page) -> None:
 
 def test_export_writes_the_traces_and_spectrum(page, tmp_path, monkeypatch) -> None:
     _set_checked(page, {MAGNETIC_FIELD_PAGE_OWNER, "ws-uep"})
+    page._sample.setCurrentIndex(page._sample.findData(True))
     page._collision_rate.setValue(0.5)
     page._title_edit.setText("ZF pair")
     page._add_button.click()

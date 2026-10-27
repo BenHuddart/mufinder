@@ -273,6 +273,7 @@ def _polarisation_page() -> QDialog:
     page = PolarisationWidget(dialog)
     QVBoxLayout(dialog).addWidget(page)
     page.set_document(document)
+    page._sample.setCurrentIndex(page._sample.findData(True))
     page._collision_rate.setValue(0.5)
     page._add_button.click()
     assert page._figure.axes[0].lines, "polarisation fixture drew no trace"

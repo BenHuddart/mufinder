@@ -98,8 +98,10 @@ Settings
      - The time grid, from zero. A warning is shown when the largest field
        precesses faster than the grid resolves.
    * - ``Collision rate ν``
-     - Strong-collision dynamics (see `Dynamics`_); 0 is static. ``Exact
-       recursion`` is the default; ``FFT`` suits very long grids.
+     - Strong-collision dynamics (see `Dynamics`_); 0 is static. Offered for a
+       polycrystal in zero field with the detector along the spin, and for a
+       polycrystal in a longitudinal field. ``Exact recursion`` is the default;
+       ``FFT`` suits very long grids.
    * - ``Spectrum``
      - ``Subtract baseline`` removes the mean of the last 10 % of the trace;
        ``Apodisation`` multiplies it by a Gaussian window of time σ and an
@@ -115,6 +117,13 @@ of the field before. This strong-collision model describes a muon hopping
 between sites and fast fluctuations of the moments. A hop redraws from every
 site, so the dynamics act on the weighted average: the plot shows the static
 average dashed and the dynamic one solid.
+
+The model is applied to the measured trace alone, which is exact only where
+symmetry makes that trace the one component of the spin that survives a new
+field: a polycrystal in zero field, measured along the spin, and a polycrystal
+in a longitudinal field. ``Collision rate ν`` is greyed out in every other
+geometry, such as a single crystal or a transverse field, where the dynamics
+would need the whole spin evolution.
 
 .. figure:: ../_generated/screenshots/mnsi_polarisation_dynamics.webp
    :alt: The Polarisation page with the MnSi zero-field polycrystal simulated

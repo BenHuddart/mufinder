@@ -356,7 +356,10 @@ class PolarisationWidget(QWidget):
             sigma_from_nuclear_widths=self._sigma_from_widths.isChecked(),
             end_time_us=float(self._end_time.value()),
             time_points=int(self._time_points.value()),
-            collision_rate_per_us=float(self._collision_rate.value()),
+            # Dynamics apply only where the geometry allows them (see _dynamics_allowed).
+            collision_rate_per_us=float(self._collision_rate.value())
+            if self._dynamics_allowed()
+            else 0.0,
             dynamics_method=self._dynamics_method.currentData(),
             subtract_baseline=self._subtract_baseline.isChecked(),
             apodisation_sigma_us=_optional_positive(self._apodisation_sigma, "apodisation σ"),
@@ -887,13 +890,35 @@ class PolarisationWidget(QWidget):
         self._detector.setEnabled(zero_field and not self._detector_along_spin.isChecked())
         self._sphere_points.setEnabled(bool(self._sample.currentData()))
         self._sigma.setEnabled(not self._sigma_from_widths.isChecked())
-        self._dynamics_method.setEnabled(self._collision_rate.value() > 0.0)
+        dynamics = self._dynamics_allowed()
+        self._collision_rate.setEnabled(dynamics)
+        self._collision_rate.setToolTip(
+            "Strong-collision rate ν; 0 is static."
+            if dynamics
+            else "Dynamics need a polycrystal in zero field with the detector along the spin, "
+            "or a polycrystal in a longitudinal field."
+        )
+        self._dynamics_method.setEnabled(dynamics and self._collision_rate.value() > 0.0)
         has_sources = bool(self._sources)
         selected = self.selected_simulation_id() is not None
         self._add_button.setEnabled(self._document is not None and has_sources)
         self._recalculate_button.setEnabled(self._document is not None and selected)
         self._remove_button.setEnabled(selected)
         self._export_button.setEnabled(selected)
+
+    def _dynamics_allowed(self) -> bool:
+        """Whether symmetry reduces the strong-collision dynamics to the measured trace.
+
+        The same rule as :func:`~mufinder.science.polarisation_simulation.simulate_polarisation`:
+        a polycrystal in a longitudinal field, or in zero field measured along the spin.
+        """
+
+        if not self._sample.currentData():
+            return False
+        geometry = self._geometry.currentData()
+        return geometry == "longitudinal" or (
+            geometry == "zero_field" and self._detector_along_spin.isChecked()
+        )
 
     def _emit_form_state(self) -> None:
         if not self._restoring:
