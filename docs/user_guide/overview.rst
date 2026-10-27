@@ -231,7 +231,9 @@ Magnetic Fields
 
 The ``Magnetic Fields`` workflow builds magnetic structures in the
 propagation-vector formalism, including from the host spins and as skyrmion or
-custom Fourier textures, and calculates at a chosen muon site. Components can be
+custom Fourier textures, which report their topological charge per magnetic
+cell and can be shown as a moment-magnitude map, and calculates at a chosen muon
+site. Components can be
 edited, duplicated, reordered and disabled without deleting them. A panel shows
 and edits the stored propagation-vector basis and which components use each
 row, and a component q can be taken from a basis row or a combination of rows.

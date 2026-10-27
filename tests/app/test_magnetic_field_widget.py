@@ -48,6 +48,7 @@ from mufinder.science.magnetic_structure import (
     build_collinear_component,
     build_conical_component,
     build_helix_component,
+    texture_diagnostics,
 )
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -850,6 +851,126 @@ def test_magnetic_texture_dialog_normalization_and_pruning_update_diagnostics(qa
 
     assert len(texture.terms) == 2
     assert "2 term(s)" in dialog._diagnostics.text()
+    dialog.close()
+
+
+def test_magnetic_texture_dialog_reports_topological_charge_per_magnetic_cell(qapp) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+
+    assert "Topological charge per magnetic cell: -1." in dialog._diagnostics.text()
+    _set_direction(dialog._core_direction, (0.0, 0.0, 1.0))
+    assert "Topological charge per magnetic cell: 1." in dialog._diagnostics.text()
+    dialog._helicity.setCurrentIndex(dialog._helicity.findData(-1))
+    assert "Topological charge per magnetic cell: 1." in dialog._diagnostics.text()
+
+    _set_direction(dialog._core_direction, (0.0, 0.0, -1.0))
+    dialog._mode_buttons["square_skyrmion"].setChecked(True)
+    assert (
+        "Topological charge per magnetic cell: undefined (the moment magnitude vanishes"
+        in dialog._diagnostics.text()
+    )
+    dialog._background.setText("-0.3")
+    assert "Topological charge per magnetic cell: -1." in dialog._diagnostics.text()
+    dialog.close()
+
+
+def test_magnetic_texture_dialog_magnitude_map_toggles_the_preview(qapp) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    dialog._amplitude.setText("0.385")
+    dialog.show()
+    qapp.processEvents()
+
+    assert dialog._preview_stack.currentWidget() is dialog._preview
+    assert dialog._magnitude_mesh is None
+    dialog._magnitude_map_check.setChecked(True)
+    qapp.processEvents()
+
+    assert dialog._preview_stack.currentWidget() is dialog._magnitude_frame
+    assert "moment magnitude |m|" in dialog._preview_legend.text()
+    assert not dialog._preview_dark_button.isVisible()
+    assert dialog._magnitude_mesh is not None
+    assert dialog._magnitude_mesh.get_array().size == 32 * 32
+    cell_axes = dialog._magnitude_figure.axes[0]
+    colorbar_axes = dialog._magnitude_figure.axes[1]
+    assert colorbar_axes.get_ylabel() == "|m| (μB)"
+    for size in ((860, 560), (1000, 1100), (1500, 700)):
+        dialog.resize(*size)
+        qapp.processEvents()
+        dialog._magnitude_canvas.draw()
+        renderer = dialog._magnitude_canvas.get_renderer()
+        cell = cell_axes.get_window_extent(renderer)
+        colorbar = colorbar_axes.get_window_extent(renderer)
+        assert cell.width == pytest.approx(cell.height, abs=1.0), size
+        assert colorbar.height == pytest.approx(cell.height, abs=1.0), size
+        assert colorbar.y0 == pytest.approx(cell.y0, abs=1.0), size
+        decorations = colorbar_axes.get_tightbbox(renderer)
+        assert decorations.x1 <= dialog._magnitude_figure.bbox.x1, size
+
+    dialog._grid_u.setValue(16)
+    assert dialog._magnitude_mesh.get_array().size == 16 * 32
+
+    dialog._magnitude_map_check.setChecked(False)
+    qapp.processEvents()
+    assert dialog._preview_stack.currentWidget() is dialog._preview
+    assert "out-of-plane moment" in dialog._preview_legend.text()
+    assert dialog._preview_dark_button.isVisible()
+    dialog.close()
+
+
+def test_magnetic_texture_dialog_reuses_the_charge_while_the_texture_is_unchanged(
+    qapp, monkeypatch
+) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    calls = []
+    original = magnetic_field_widget_module.topological_charge_magnetic_unit_cell
+
+    def counting(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "topological_charge_magnetic_unit_cell", counting
+    )
+    dialog._label_edit.setText("Renamed texture")
+    dialog._magnitude_map_check.setChecked(True)
+    assert calls == []
+    assert "Topological charge per magnetic cell: -1." in dialog._diagnostics.text()
+
+    _set_direction(dialog._core_direction, (0.0, 0.0, 1.0))
+    assert len(calls) == 1
+    assert "Topological charge per magnetic cell: 1." in dialog._diagnostics.text()
+    dialog.close()
+
+
+def test_magnetic_texture_dialog_unticking_the_map_brings_a_popped_out_map_back(qapp) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    dialog.show()
+    dialog._magnitude_map_check.setChecked(True)
+    dialog._magnitude_frame.pop_out()
+    qapp.processEvents()
+    assert dialog._magnitude_frame.is_popped_out()
+
+    dialog._magnitude_map_check.setChecked(False)
+    qapp.processEvents()
+
+    assert not dialog._magnitude_frame.is_popped_out()
+    assert dialog._preview_stack.currentWidget() is dialog._preview
+    dialog.close()
+
+
+def test_magnetic_texture_dialog_magnitude_map_of_normalized_texture_matches_reported_std(
+    qapp,
+) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    dialog._normalise_check.setChecked(True)
+    dialog._magnitude_map_check.setChecked(True)
+
+    magnitudes = np.asarray(dialog._magnitude_mesh.get_array(), dtype=float)
+    reported = texture_diagnostics(dialog.texture(), dialog._grid_resolution())
+
+    assert float(np.std(magnitudes)) == pytest.approx(reported.magnitude_std, rel=1e-9)
+    assert float(np.ptp(magnitudes)) < 0.1 * float(np.mean(magnitudes))
+    assert f"std {reported.magnitude_std:.4g}" in dialog._diagnostics.text()
     dialog.close()
 
 

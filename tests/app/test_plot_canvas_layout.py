@@ -23,7 +23,10 @@ import pytest
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.geometry_progress_dialog import GeometryProgressDialog
-from mufinder.app.magnetic_field_widget import MagneticFieldDistributionDialog
+from mufinder.app.magnetic_field_widget import (
+    MagneticFieldDistributionDialog,
+    MagneticTextureDialog,
+)
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
 from mufinder.app.relaxation_analysis_widget import (
     GRAPH_NODE_GID,
@@ -208,6 +211,15 @@ def _field_distribution() -> QDialog:
     return dialog
 
 
+def _texture_magnitude_map() -> QDialog:
+    dialog = MagneticTextureDialog(_cubic_host())
+    # A sub-unit amplitude gives the colour bar its widest tick labels (0.35, 0.30, ...).
+    dialog._amplitude.setText("0.385")
+    dialog._magnitude_map_check.setChecked(True)
+    assert dialog._magnitude_mesh is not None, "texture fixture drew no |m| map"
+    return dialog
+
+
 def _convergence_examiner() -> QDialog:
     states = {
         cutoff: SweepPointRunState(status="completed", total_energy=energy, max_force=force)
@@ -234,6 +246,7 @@ PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "uep-clustering-hierarchical": lambda: _uep_clustering({}),
     "uep-clustering-kmeans": lambda: _uep_clustering({"method": "kmeans", "kmeans_k": 2}),
     "magnetic-field-distribution": _field_distribution,
+    "magnetic-texture-magnitude-map": _texture_magnitude_map,
     "convergence-examiner": _convergence_examiner,
     "geometry-progress": _geometry_progress,
 }

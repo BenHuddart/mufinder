@@ -11,6 +11,7 @@ from uuid import UUID
 
 import numpy as np
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.transforms import Bbox
 from PySide6.QtCore import (
     QEvent,
     QItemSelection,
@@ -63,7 +64,7 @@ from mufinder.app.atomic_structure_viewer import (
 )
 from mufinder.app.icons import icon
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
-from mufinder.app.plot_canvas import create_plot_canvas
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.sample_photo_dialog import SamplePhotoDialog, demag_length_input
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
@@ -99,6 +100,7 @@ from mufinder.science.demagnetization import (
     principal_demagnetizing_tensor,
     sample_orientation,
 )
+from mufinder.science.lattice import reciprocal_to_cartesian
 from mufinder.science.magnetic_fields import (
     CONTACT_COUPLING_UNIT_OPTIONS,
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
@@ -132,6 +134,7 @@ from mufinder.science.magnetic_structure import (
     build_square_skyrmion_texture,
     build_spin_density_wave_component,
     build_texture_component,
+    evaluate_texture_grid,
     component_q_basis_indices,
     default_preset_reference_axis,
     duplicate_magnetic_components,
@@ -155,6 +158,7 @@ from mufinder.science.magnetic_structure import (
     set_q_basis_vector,
     skyrmion_q_basis_rlu,
     texture_diagnostics,
+    topological_charge_magnetic_unit_cell,
     viable_atom_selectors,
 )
 from mufinder.science.nuclear_relaxation import (
@@ -1832,6 +1836,19 @@ def _evaluate_texture_preview_grid(
     return moments.real
 
 
+def _beside_square_cell(cell_axis):
+    """Return an axes locator that keeps a colour bar beside a fixed-aspect plot, as tall as it."""
+
+    def locate(colorbar_axis, _renderer) -> Bbox:
+        cell_axis.apply_aspect()
+        cell = cell_axis.get_position()
+        reserved = colorbar_axis.get_position(original=True)
+        gap = reserved.x0 - cell_axis.get_position(original=True).x1
+        return Bbox.from_bounds(cell.x1 + gap, cell.y0, reserved.width, cell.height)
+
+    return locate
+
+
 class CornerHelpGroupBox(QGroupBox):
     """Group box with a help button positioned in the title band."""
 
@@ -1861,6 +1878,13 @@ class MagneticTextureDialog(QDialog):
     _PREVIEW_RESOLUTION = 161
     _PREVIEW_RENDER_REPEATS = 8.0
     _PREVIEW_INITIAL_REPEATS = 3.0
+    _CHARGE_RESOLUTION = 64
+    _CHARGE_MAX_RESOLUTION = 256
+    _ARROW_LEGEND = "Colour shows the out-of-plane moment; arrows show the in-plane moment."
+    _MAGNITUDE_LEGEND = (
+        "Colour shows the moment magnitude |m| over one magnetic cell, on the u-v plane "
+        "of the normalization grid."
+    )
 
     _MODES = (
         ("Hexagonal skyrmion", "hexagonal_skyrmion"),
@@ -1989,6 +2013,23 @@ class MagneticTextureDialog(QDialog):
         self._preview_dark_button = self._preview_canvas_button("Dark canvas", "appearance_dark")
         self._preview_light_button.setChecked(True)
         self._preview_canvas_group.buttonClicked.connect(self._refresh_preview_canvas_mode)
+        self._magnitude_map_check = QCheckBox("Show |m| map")
+        self._magnitude_map_check.setToolTip(
+            "Show the moment magnitude over one magnetic cell, sampled on the normalization grid."
+        )
+        self._magnitude_map_check.toggled.connect(self._refresh_preview_page)
+        palette = current_palette()
+        self._magnitude_figure, self._magnitude_canvas = create_plot_canvas(
+            figsize=(4.0, 3.6), facecolor=palette.bg_surface, minimum_size=(300, 260)
+        )
+        self._magnitude_frame = PlotFrame(
+            self._magnitude_canvas, title="Moment Magnitude", parent=self
+        )
+        self._magnitude_mesh = None
+        self._charge_cache: tuple[object, str] | None = None
+        self._preview_stack = QStackedWidget(self)
+        self._preview_stack.addWidget(self._preview)
+        self._preview_stack.addWidget(self._magnitude_frame)
         self._diagnostics = QLabel("Texture: -")
         self._diagnostics.setWordWrap(True)
         style_hint_text(self._diagnostics)
@@ -2145,16 +2186,15 @@ class MagneticTextureDialog(QDialog):
         preview_title = QLabel("Spin Texture Preview")
         preview_header.addWidget(preview_title)
         preview_header.addStretch(1)
+        preview_header.addWidget(self._magnitude_map_check)
         preview_header.addWidget(self._preview_light_button)
         preview_header.addWidget(self._preview_dark_button)
         preview_layout.addLayout(preview_header)
-        preview_legend = QLabel(
-            "Colour shows the out-of-plane moment; arrows show the in-plane moment."
-        )
-        preview_legend.setWordWrap(True)
-        style_hint_text(preview_legend)
-        preview_layout.addWidget(preview_legend)
-        preview_layout.addWidget(self._preview, 1)
+        self._preview_legend = QLabel(self._ARROW_LEGEND)
+        self._preview_legend.setWordWrap(True)
+        style_hint_text(self._preview_legend)
+        preview_layout.addWidget(self._preview_legend)
+        preview_layout.addWidget(self._preview_stack, 1)
         preview_layout.addWidget(self._diagnostics)
         splitter.addWidget(self._controls_scroll)
         splitter.addWidget(preview_panel)
@@ -2358,6 +2398,74 @@ class MagneticTextureDialog(QDialog):
 
     def _refresh_preview_canvas_mode(self, *_args) -> None:
         self._preview.set_canvas_mode("dark" if self._preview_dark_button.isChecked() else "light")
+
+    def _refresh_preview_page(self, *_args) -> None:
+        show_map = self._magnitude_map_check.isChecked()
+        if not show_map and self._magnitude_frame.is_popped_out():
+            # A popped-out map would stop updating once hidden; bring it back first.
+            self._magnitude_frame.show_here()
+        self._preview_stack.setCurrentIndex(1 if show_map else 0)
+        self._preview_legend.setText(self._MAGNITUDE_LEGEND if show_map else self._ARROW_LEGEND)
+        for button in (self._preview_light_button, self._preview_dark_button):
+            button.setVisible(not show_map)
+        if show_map:
+            self._refresh_preview()
+
+    def _draw_magnitude_map(self, texture: MagneticTexture | None) -> None:
+        palette = current_palette()
+        self._magnitude_figure.clear()
+        self._magnitude_mesh = None
+        axis = self._magnitude_figure.add_subplot(111)
+        style_plot_axes(axis)
+        # Grid lines would draw over the colour map.
+        axis.grid(False)
+        axis.set_xlabel("Fraction of a₁")
+        axis.set_ylabel("Fraction of a₂")
+        if texture is not None and texture.terms:
+            nu, nv, _nw = self._grid_resolution()
+            magnitudes = np.linalg.norm(
+                evaluate_texture_grid(texture, (nu, nv, 1))[:, :, 0, :], axis=-1
+            )
+            self._magnitude_mesh = axis.pcolormesh(
+                np.linspace(0.0, 1.0, nu + 1),
+                np.linspace(0.0, 1.0, nv + 1),
+                magnitudes.T,
+                shading="flat",
+                cmap="viridis",
+            )
+            # The cell is drawn square. The layout reserves room for the colour bar
+            # and its labels; at draw time the bar is resized to the cell's height.
+            axis.set_aspect("equal")
+            colorbar = self._magnitude_figure.colorbar(self._magnitude_mesh, ax=axis)
+            colorbar.ax.set_box_aspect(None)
+            colorbar.ax.set_axes_locator(_beside_square_cell(axis))
+            colorbar.set_label("|m| (μB)", color=palette.text_primary)
+            colorbar.ax.tick_params(colors=palette.text_primary)
+            colorbar.outline.set_edgecolor(palette.border)
+        self._magnitude_canvas.draw_idle()
+
+    def _topological_charge_text(self, texture: MagneticTexture) -> str:
+        q_basis = tuple(
+            tuple(reciprocal_to_cartesian(row, self._structure.lattice_vectors))
+            for row in self.q_basis_vectors()
+        )
+        # Edits that leave the texture unchanged (label, target, map toggle) reuse
+        # the last result instead of resampling the cell.
+        key = (texture, q_basis)
+        if self._charge_cache is not None and self._charge_cache[0] == key:
+            return self._charge_cache[1]
+        try:
+            charge = topological_charge_magnetic_unit_cell(
+                texture,
+                q_basis,
+                (self._CHARGE_RESOLUTION, self._CHARGE_RESOLUTION),
+                max_resolution=self._CHARGE_MAX_RESOLUTION,
+            )
+            text = f"Topological charge per magnetic cell: {charge}."
+        except MagneticStructureError as exc:
+            text = f"Topological charge per magnetic cell: undefined ({exc})."
+        self._charge_cache = (key, text)
+        return text
 
     def _show_magnitude_pruning_info(self) -> None:
         dialog = QDialog(self)
@@ -2764,11 +2872,16 @@ class MagneticTextureDialog(QDialog):
                 "Texture: "
                 f"{before.term_count} term(s) -> {after.term_count} term(s); "
                 f"|m| mean {after.magnitude_mean:.4g} μB, std {after.magnitude_std:.4g}, "
-                f"range {after.magnitude_min:.4g}-{after.magnitude_max:.4g}."
+                f"range {after.magnitude_min:.4g}-{after.magnitude_max:.4g}.\n"
+                f"{self._topological_charge_text(texture)}"
             )
+            if self._magnitude_map_check.isChecked():
+                self._draw_magnitude_map(texture)
             self._preview_error = None
         except Exception as exc:
             self._preview.set_moments(None)
+            if self._magnitude_map_check.isChecked():
+                self._draw_magnitude_map(None)
             self._diagnostics.setText(f"Texture preview unavailable: {exc}")
             self._preview_error = str(exc)
 
