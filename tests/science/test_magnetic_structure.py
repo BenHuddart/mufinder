@@ -59,6 +59,8 @@ from mufinder.science.magnetic_structure import (
     skyrmion_q_basis_rlu,
     split_muesr_model_data_into_helices,
     texture_diagnostics,
+    topological_charge_magnetic_unit_cell,
+    topological_density_2d,
     resolve_atom_selector,
     set_magnetic_components_enabled,
     set_q_basis_vector,
@@ -1565,6 +1567,177 @@ def test_normalize_texture_with_target_magnitude_scales() -> None:
     scaled_max = texture_diagnostics(scaled, (8, 8, 1)).magnitude_mean
     unscaled_max = texture_diagnostics(unscaled, (8, 8, 1)).magnitude_mean
     assert scaled_max == pytest.approx(2.0 * unscaled_max, rel=1e-6)
+
+
+def _rotated_about(vector: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
+    return vector * np.cos(angle) + np.cross(axis, vector) * np.sin(angle)
+
+
+def _skyrmion_lattice(
+    lattice: str, *, core: tuple[float, float, float] = (0.0, 0.0, -1.0), **kwargs
+) -> tuple[MagneticTexture, np.ndarray]:
+    """Return a preset skyrmion texture and its Cartesian q basis (|q| = 0.1 Å⁻¹)."""
+
+    axis = np.asarray(core, dtype=float)
+    q1 = np.array([1.0, 0.0, 0.0])
+    angle = np.pi / 2.0 if lattice == "square" else 2.0 * np.pi / 3.0
+    q2 = _rotated_about(q1, axis, angle)
+    if lattice == "square":
+        texture = build_square_skyrmion_texture(
+            magnitude=1.0, q_directions=(q1, q2), core_direction=core, **kwargs
+        )
+    else:
+        texture = build_hexagonal_skyrmion_texture(
+            magnitude=1.0, q_directions=(q1, q2, -(q1 + q2)), core_direction=core, **kwargs
+        )
+    return texture, 0.1 * np.array([q1, q2, np.zeros(3)])
+
+
+@pytest.mark.parametrize("resolution", [(64, 64), (128, 128)])
+@pytest.mark.parametrize("skyrmion_type", ["bloch", "neel"])
+@pytest.mark.parametrize("helicity", [1, -1])
+@pytest.mark.parametrize(("core", "expected"), [((0.0, 0.0, -1.0), -1), ((0.0, 0.0, 1.0), 1)])
+def test_hexagonal_skyrmion_charge_follows_core_and_ignores_helicity(
+    resolution, skyrmion_type, helicity, core, expected
+) -> None:
+    texture, q_basis = _skyrmion_lattice(
+        "hexagonal", core=core, skyrmion_type=skyrmion_type, helicity=helicity
+    )
+
+    assert topological_charge_magnetic_unit_cell(texture, q_basis, resolution) == expected
+
+
+@pytest.mark.parametrize("resolution", [(64, 64), (128, 128)])
+@pytest.mark.parametrize("helicity", [1, -1])
+@pytest.mark.parametrize(
+    ("core", "background", "expected"),
+    [
+        ((0.0, 0.0, -1.0), -0.3, -1),
+        ((0.0, 0.0, -1.0), 0.3, 1),
+        ((0.0, 0.0, 1.0), -0.3, 1),
+        ((0.0, 0.0, -1.0), 1.5, 0),
+    ],
+)
+def test_square_skyrmion_charge_follows_core_and_background(
+    resolution, helicity, core, background, expected
+) -> None:
+    texture, q_basis = _skyrmion_lattice(
+        "square", core=core, ferromagnetic_background=background, helicity=helicity
+    )
+
+    assert topological_charge_magnetic_unit_cell(texture, q_basis, resolution) == expected
+
+
+def test_square_skyrmion_without_background_has_an_undefined_charge() -> None:
+    texture, q_basis = _skyrmion_lattice("square")
+
+    with pytest.raises(MagneticStructureError, match="magnitude vanishes"):
+        topological_charge_magnetic_unit_cell(texture, q_basis, (64, 64))
+
+
+def test_topological_charge_does_not_depend_on_the_q_basis_length_or_skew() -> None:
+    texture, q_basis = _skyrmion_lattice("hexagonal")
+    skewed = np.array([[0.37, 0.0, 0.0], [0.05, 0.21, 0.0], [0.0, 0.0, 0.0]])
+
+    assert topological_charge_magnetic_unit_cell(texture, 7.0 * q_basis) == -1
+    assert topological_charge_magnetic_unit_cell(texture, skewed[:2]) == 1
+
+
+def test_helix_and_spin_density_wave_have_zero_charge() -> None:
+    q_basis = ((0.1, 0.0, 0.0), (0.0, 0.1, 0.0))
+    helix = MagneticTexture((MagneticTextureTerm.from_vector((1, 0, 0), (0.0, 1.0, 1.0j)),))
+    spin_density_wave = MagneticTexture(
+        (
+            MagneticTextureTerm.from_vector((0, 0, 0), (0.0, 0.0, 1.0)),
+            MagneticTextureTerm.from_vector((1, 1, 0), (0.0, 0.0, 0.5)),
+        )
+    )
+
+    assert topological_charge_magnetic_unit_cell(helix, q_basis) == 0
+    assert topological_charge_magnetic_unit_cell(spin_density_wave, q_basis) == 0
+
+
+def test_pure_spin_density_wave_has_nodes_and_an_undefined_charge() -> None:
+    texture = MagneticTexture((MagneticTextureTerm.from_vector((1, 0, 0), (0.0, 0.0, 1.0)),))
+
+    with pytest.raises(MagneticStructureError, match="magnitude vanishes"):
+        topological_charge_magnetic_unit_cell(texture, ((0.1, 0, 0), (0, 0.1, 0)), (64, 64))
+
+
+def test_topological_charge_raises_on_a_coarse_grid_and_refines_on_request() -> None:
+    texture, q_basis = _skyrmion_lattice("hexagonal")
+    normalized = normalize_texture_magnitude(texture, grid_resolution=(32, 32, 1))
+
+    with pytest.raises(MagneticStructureError, match="too coarse"):
+        topological_charge_magnetic_unit_cell(normalized, q_basis, (8, 8))
+    assert (
+        topological_charge_magnetic_unit_cell(normalized, q_basis, (8, 8), max_resolution=64) == -1
+    )
+
+
+@pytest.mark.parametrize(
+    ("q_basis", "message"),
+    [
+        (((0.1, 0.0, 0.0), (0.2, 0.0, 0.0)), "not parallel"),
+        (((0.0, 0.0, 0.0), (0.0, 0.1, 0.0)), "not parallel"),
+        (((0.1, 0.0, 0.0),), "two or three rows"),
+    ],
+)
+def test_topological_charge_rejects_a_singular_q_basis(q_basis, message) -> None:
+    texture, _q_basis = _skyrmion_lattice("hexagonal")
+
+    with pytest.raises(MagneticStructureError, match=message):
+        topological_charge_magnetic_unit_cell(texture, q_basis)
+
+
+def test_topological_charge_rejects_textures_it_cannot_measure() -> None:
+    q_basis = ((0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.1))
+    uses_q3 = MagneticTexture((MagneticTextureTerm.from_vector((0, 0, 1), (1.0, 1.0j, 0.0)),))
+    fractional = MagneticTexture((MagneticTextureTerm.from_vector((0.5, 0, 0), (0.0, 1.0, 1.0j)),))
+
+    with pytest.raises(MagneticStructureError, match="not two-dimensional"):
+        topological_charge_magnetic_unit_cell(uses_q3, q_basis)
+    with pytest.raises(MagneticStructureError, match="not periodic"):
+        topological_charge_magnetic_unit_cell(fractional, q_basis)
+    with pytest.raises(MagneticStructureError, match="at least one Fourier term"):
+        topological_charge_magnetic_unit_cell(MagneticTexture(), q_basis)
+    with pytest.raises(MagneticStructureError, match="at least 3"):
+        topological_charge_magnetic_unit_cell(uses_q3, q_basis[:2], (2, 64))
+
+
+def test_topological_density_over_one_magnetic_cell_sums_to_the_charge() -> None:
+    texture, q_basis = _skyrmion_lattice("hexagonal")
+    dual = np.linalg.pinv(q_basis[:2]).T
+    density_map = topological_density_2d(
+        texture, q_basis, u_vector=dual[0], v_vector=dual[1], resolution=(65, 65)
+    )
+    swapped = topological_density_2d(
+        texture, q_basis, u_vector=dual[1], v_vector=dual[0], resolution=(65, 65)
+    )
+    cell_area = float(np.linalg.norm(np.cross(dual[0], dual[1]))) / 64**2
+
+    assert density_map.points.shape == (65, 65, 3)
+    assert density_map.density.shape == (64, 64)
+    assert density_map.charge == pytest.approx(-1.0, abs=1e-9)
+    assert float(np.sum(density_map.density)) * cell_area == pytest.approx(-1.0, abs=1e-9)
+    np.testing.assert_allclose(swapped.density, density_map.density.T, atol=1e-12)
+
+
+def test_topological_density_rejects_bad_slices() -> None:
+    texture, q_basis = _skyrmion_lattice("hexagonal")
+
+    with pytest.raises(MagneticStructureError, match="not parallel"):
+        topological_density_2d(texture, q_basis, u_vector=(1, 0, 0), v_vector=(2, 0, 0))
+    with pytest.raises(MagneticStructureError, match="too coarse"):
+        topological_density_2d(
+            texture, q_basis, u_vector=(100, 0, 0), v_vector=(0, 100, 0), resolution=(5, 5)
+        )
+    with pytest.raises(MagneticStructureError, match="rows of 3"):
+        topological_density_2d(texture, ((0.1, 0.0),), u_vector=(1, 0, 0), v_vector=(0, 1, 0))
+    with pytest.raises(MagneticStructureError, match="at least 2"):
+        topological_density_2d(
+            texture, q_basis, u_vector=(1, 0, 0), v_vector=(0, 1, 0), resolution=(1, 4)
+        )
 
 
 def test_prune_texture_terms_by_threshold() -> None:

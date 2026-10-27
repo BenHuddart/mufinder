@@ -88,6 +88,8 @@ from mufinder.science.magnetic_structure import (
     prune_texture_terms,
     skyrmion_q_basis_rlu,
     texture_diagnostics,
+    topological_charge_magnetic_unit_cell,
+    topological_density_2d,
     viable_atom_selectors,
 )
 from mufinder.science.muon_distortion import (
@@ -237,6 +239,8 @@ __all__ = [
     "prune_texture_terms",
     "skyrmion_q_basis_rlu",
     "texture_diagnostics",
+    "topological_charge_magnetic_unit_cell",
+    "topological_density_2d",
     "viable_atom_selectors",
     "MuonDistortion",
     "MuonDistortionError",

@@ -395,6 +395,52 @@ preview canvas can be switched between light and dark modes without changing
 the rest of the MuFinder interface, and the structure-viewer backgrounds and
 axis triads follow the active application palette.
 
+Tick ``Show |m| map`` in the preview header to replace the arrows with a colour
+map of the moment magnitude over one magnetic cell, with a colour bar in μB.
+The map is sampled on the ``Grid`` of the ``Magnitude and Pruning`` group, the
+same grid as the ``|m|`` statistics in the diagnostics, so it shows where a
+texture needs normalising and how flat a normalised texture is. Its axes are
+fractions of the magnetic cell vectors ``a₁`` and ``a₂`` (see below).
+
+Check the topological charge
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The diagnostics under the preview report the ``Topological charge per magnetic
+cell``: ±1 for a skyrmion lattice, 0 for a helix or a modulated ferromagnet.
+The magnetic cell is spanned by the real-space vectors ``a₁`` and ``a₂`` dual
+to the first two propagation vectors (``qᵢ · aⱼ = δᵢⱼ``). MuFinder samples the
+moment direction :math:`\hat{\mathbf{n}} = \mathbf{m}/|\mathbf{m}|` on a
+64 × 64 grid over that cell and sums the signed solid angle of every grid
+triangle,
+
+.. math::
+
+   \tan\frac{\Omega}{2} =
+   \frac{\hat{\mathbf{n}}_1\cdot(\hat{\mathbf{n}}_2\times\hat{\mathbf{n}}_3)}
+   {1 + \hat{\mathbf{n}}_1\cdot\hat{\mathbf{n}}_2
+      + \hat{\mathbf{n}}_2\cdot\hat{\mathbf{n}}_3
+      + \hat{\mathbf{n}}_3\cdot\hat{\mathbf{n}}_1},
+   \qquad Q = \frac{1}{4\pi}\sum\Omega,
+
+which gives an integer whenever neighbouring samples are less than 90° apart.
+If they are not, the grid is doubled up to 256 × 256.
+
+The sign is read looking down the normal of the texture plane oriented towards
++z (towards +y, then +x, when the plane contains z). A skyrmion whose core
+points along −z in a +z background has :math:`Q = -1`, so the hexagonal preset
+gives −1 with the default core direction (0, 0, −1) and +1 with the core along
++z; the helicity and the Bloch or Néel type do not change it. For the square
+preset the background decides which way the cores point: a ``Background``
+opposite the core direction gives the same sign as the hexagonal preset, one
+along the core direction gives the opposite sign, and a background large enough
+to stop the moments winding gives 0.
+
+The charge is reported as undefined when ``|m|`` vanishes somewhere in the
+cell, as it does for the square preset with zero background and for a pure
+spin-density wave; when the texture uses a non-zero third propagation vector
+or is not periodic on the magnetic cell; and when even the finest grid is too
+coarse.
+
 The accepted texture appears as one component row so that editing, preview
 selection, and atom targeting remain intuitive; ``Edit...`` reopens it in the
 texture dialog.

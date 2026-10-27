@@ -1729,6 +1729,155 @@ def texture_diagnostics(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TopologicalDensity2D:
+    """Topological-charge density sampled on a real-space slice of a texture.
+
+    ``points`` holds the Cartesian sample points (Å), shape ``(nu, nv, 3)``;
+    ``density`` holds the charge density of each grid cell (Å⁻²), shape
+    ``(nu - 1, nv - 1)``; ``charge`` is the total signed charge on the slice.
+    """
+
+    points: np.ndarray
+    density: np.ndarray
+    charge: float
+
+
+def topological_charge_magnetic_unit_cell(
+    texture: MagneticTexture,
+    q_basis: Sequence[Sequence[float]],
+    resolution: Sequence[int] = (64, 64),
+    *,
+    max_resolution: int | None = None,
+) -> int:
+    """Return the topological charge of one magnetic unit cell of a 2-D texture.
+
+    ``q_basis`` holds the Cartesian propagation-vector rows (Å⁻¹, in the
+    ``exp(-2πi q·r)`` convention, without a 2π factor). Rows 1 and 2 span the
+    texture plane; the magnetic cell is spanned by the in-plane real-space
+    vectors ``a_j`` dual to them (``q_i · a_j = δ_ij``). The direction field
+    ``n = m/|m|`` is sampled on an open grid over that cell and the signed solid
+    angle of each grid triangle is summed with
+    ``tan(Ω/2) = n₁·(n₂×n₃) / (1 + n₁·n₂ + n₂·n₃ + n₃·n₁)``, giving
+    ``Q = ΣΩ / 4π``.
+
+    The sign is taken looking down the plane normal oriented towards +z (towards
+    +y, then +x, for planes that contain z): a skyrmion whose core points along
+    −z in a +z background has ``Q = −1``.
+
+    The grid is under-resolved when two neighbouring samples are 90° or more
+    apart. The grid is then doubled until it exceeds ``max_resolution`` (by
+    default the grid is not refined) and an error is raised. An error is also
+    raised for a singular q pair, a texture that uses a non-zero third q vector
+    or is not periodic on the cell, and a texture whose magnitude vanishes on
+    the grid, where the charge is undefined.
+    """
+
+    if not texture.terms:
+        raise MagneticStructureError("texture must contain at least one Fourier term")
+    normal_sign = _texture_plane_sign(texture, q_basis)
+    nu, nv = _plane_grid_resolution(resolution)
+    if min(nu, nv) < 3:
+        raise MagneticStructureError("topological charge needs a grid of at least 3 × 3")
+    limit = max(nu, nv) if max_resolution is None else int(max_resolution)
+    while True:
+        moments = evaluate_texture_grid(texture, (nu, nv, 1))[:, :, 0, :]
+        directions = _unit_texture_directions(moments)
+        corners = (
+            directions,
+            np.roll(directions, -1, axis=0),
+            np.roll(np.roll(directions, -1, axis=0), -1, axis=1),
+            np.roll(directions, -1, axis=1),
+        )
+        if _directions_resolved(*corners):
+            break
+        if 2 * max(nu, nv) > limit:
+            raise MagneticStructureError(
+                f"the {nu} × {nv} grid is too coarse for this texture: neighbouring "
+                "moments are 90° or more apart; increase the resolution"
+            )
+        nu, nv = 2 * nu, 2 * nv
+    first, second, third, fourth = corners
+    solid_angle = _triangle_solid_angles(first, second, third) + _triangle_solid_angles(
+        first, third, fourth
+    )
+    charge = normal_sign * float(np.sum(solid_angle)) / (4.0 * np.pi)
+    rounded = round(charge)
+    if abs(charge - rounded) > 1e-6:
+        raise MagneticStructureError(
+            f"topological charge {charge:.6g} is not an integer; increase the resolution"
+        )
+    return int(rounded)
+
+
+def topological_density_2d(
+    texture: MagneticTexture,
+    q_basis: Sequence[Sequence[float]],
+    *,
+    origin: Sequence[float] = (0.0, 0.0, 0.0),
+    u_vector: Sequence[float],
+    v_vector: Sequence[float],
+    resolution: Sequence[int] = (64, 64),
+) -> TopologicalDensity2D:
+    """Return the topological-charge density on a real-space slice of a texture.
+
+    The slice is the parallelogram ``origin + s·u_vector + t·v_vector`` with
+    ``s, t`` in ``[0, 1]`` (Cartesian Å), sampled at ``resolution`` points per
+    side including both edges. ``q_basis`` holds the Cartesian propagation-vector
+    rows (Å⁻¹, as for :func:`topological_charge_magnetic_unit_cell`), so the
+    slice may cut a 3-D texture. Each grid cell's density is its solid angle,
+    summed over its two triangles, divided by ``4π`` times the cell area, with
+    the same sign convention as :func:`topological_charge_magnetic_unit_cell`.
+    Raises when the slice vectors are parallel, the magnitude vanishes, or
+    neighbouring samples are 90° or more apart.
+    """
+
+    basis = np.zeros((3, 3), dtype=float)
+    rows = np.asarray(q_basis, dtype=float)
+    if rows.ndim != 2 or rows.shape[1] != 3 or not 1 <= rows.shape[0] <= 3:
+        raise MagneticStructureError("q_basis must have between one and three rows of 3 values")
+    basis[: rows.shape[0]] = rows
+    u = _as_float_array(u_vector, "u_vector")
+    v = _as_float_array(v_vector, "v_vector")
+    start = _as_float_array(origin, "origin")
+    normal = np.cross(u, v)
+    area = float(np.linalg.norm(normal))
+    if area <= 1e-12 * max(float(np.linalg.norm(u) * np.linalg.norm(v)), 1e-300):
+        raise MagneticStructureError("slice vectors must be non-zero and not parallel")
+    nu, nv = _plane_grid_resolution(resolution)
+    if min(nu, nv) < 2:
+        raise MagneticStructureError("topological density needs at least 2 points per side")
+    s_axis = np.linspace(0.0, 1.0, nu)
+    t_axis = np.linspace(0.0, 1.0, nv)
+    points = start + s_axis[:, np.newaxis, np.newaxis] * u + t_axis[np.newaxis, :, np.newaxis] * v
+    phases = points @ basis.T
+    moments = np.zeros(points.shape, dtype=complex)
+    for term in texture.terms:
+        q_dot = phases @ np.asarray(term.q_coeff, dtype=float)
+        moments += term.coefficient.to_array() * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
+    directions = _unit_texture_directions(moments.real)
+    first = directions[:-1, :-1]
+    second = directions[1:, :-1]
+    third = directions[1:, 1:]
+    fourth = directions[:-1, 1:]
+    if not _directions_resolved(first, second, third, fourth):
+        raise MagneticStructureError(
+            f"the {nu} × {nv} slice grid is too coarse for this texture: neighbouring "
+            "moments are 90° or more apart; increase the resolution"
+        )
+    solid_angle = _triangle_solid_angles(first, second, third) + _triangle_solid_angles(
+        first, third, fourth
+    )
+    sign = _plane_normal_sign(normal / area)
+    cell_area = area / ((nu - 1) * (nv - 1))
+    density = sign * solid_angle / (4.0 * np.pi * cell_area)
+    return TopologicalDensity2D(
+        points=points,
+        density=density,
+        charge=float(sign * np.sum(solid_angle) / (4.0 * np.pi)),
+    )
+
+
 def normalize_texture_magnitude(
     texture: MagneticTexture,
     *,
@@ -1920,6 +2069,80 @@ def _rotate_vector(vector: Sequence[float], axis: Sequence[float], angle_rad: fl
     cos_a = float(np.cos(angle_rad))
     sin_a = float(np.sin(angle_rad))
     return v * cos_a + np.cross(a, v) * sin_a + a * float(np.dot(a, v)) * (1.0 - cos_a)
+
+
+def _plane_grid_resolution(resolution: Sequence[int]) -> tuple[int, int]:
+    values = [int(value) for value in resolution]
+    if len(values) != 2:
+        raise MagneticStructureError("resolution must have two values")
+    return values[0], values[1]
+
+
+def _plane_normal_sign(normal: np.ndarray) -> float:
+    """Return +1 when ``normal`` points towards +z (or +y, then +x, in the plane z = 0)."""
+
+    for axis in (2, 1, 0):
+        if abs(float(normal[axis])) > 1e-9:
+            return 1.0 if float(normal[axis]) > 0.0 else -1.0
+    return 1.0
+
+
+def _texture_plane_sign(texture: MagneticTexture, q_basis: Sequence[Sequence[float]]) -> float:
+    """Validate a 2-D texture's q basis and return the orientation sign of ``q1 × q2``."""
+
+    rows = np.asarray(q_basis, dtype=float)
+    if rows.ndim != 2 or rows.shape[1] != 3 or not 2 <= rows.shape[0] <= 3:
+        raise MagneticStructureError("q_basis must have two or three rows of 3 values")
+    q1, q2 = rows[0], rows[1]
+    normal = np.cross(q1, q2)
+    scale = float(np.linalg.norm(q1) * np.linalg.norm(q2))
+    if scale <= 0.0 or float(np.linalg.norm(normal)) <= 1e-9 * scale:
+        raise MagneticStructureError(
+            "the in-plane q vectors q1 and q2 must be non-zero and not parallel"
+        )
+    uses_q3 = rows.shape[0] == 3 and float(np.linalg.norm(rows[2])) > 1e-12
+    for term in texture.terms:
+        q_coeff = np.asarray(term.q_coeff, dtype=float)
+        if uses_q3 and abs(float(q_coeff[2])) > 1e-9:
+            raise MagneticStructureError(
+                "the texture uses a non-zero third q vector, so it is not two-dimensional"
+            )
+        if not np.allclose(q_coeff[:2], np.round(q_coeff[:2]), atol=1e-9, rtol=0.0):
+            raise MagneticStructureError(
+                "the texture is not periodic on the magnetic cell spanned by q1 and q2"
+            )
+    return _plane_normal_sign(normal / float(np.linalg.norm(normal)))
+
+
+def _unit_texture_directions(moments: np.ndarray) -> np.ndarray:
+    magnitudes = np.linalg.norm(moments, axis=-1)
+    largest = float(np.max(magnitudes)) if magnitudes.size else 0.0
+    if largest <= 0.0 or float(np.min(magnitudes)) <= 1e-6 * largest:
+        raise MagneticStructureError(
+            "the moment magnitude vanishes on the sampling grid, so the direction m/|m| "
+            "is undefined there"
+        )
+    return moments / magnitudes[..., np.newaxis]
+
+
+def _directions_resolved(
+    first: np.ndarray, second: np.ndarray, third: np.ndarray, fourth: np.ndarray
+) -> bool:
+    """Return whether every edge and diagonal of each grid cell is under 90°."""
+
+    pairs = ((first, second), (second, third), (third, fourth), (fourth, first), (first, third))
+    return all(float(np.min(np.sum(a * b, axis=-1))) > 0.0 for a, b in pairs)
+
+
+def _triangle_solid_angles(first: np.ndarray, second: np.ndarray, third: np.ndarray) -> np.ndarray:
+    numerator = np.sum(first * np.cross(second, third), axis=-1)
+    denominator = (
+        1.0
+        + np.sum(first * second, axis=-1)
+        + np.sum(second * third, axis=-1)
+        + np.sum(third * first, axis=-1)
+    )
+    return 2.0 * np.arctan2(numerator, denominator)
 
 
 def _texture_grid_resolution(resolution: Sequence[int]) -> tuple[int, int, int]:
