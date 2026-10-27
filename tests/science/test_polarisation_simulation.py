@@ -10,7 +10,6 @@ import pytest
 from mufinder.domain.models import Structure
 from mufinder.science.dynamics import calculate_dynamic_polarisation
 from mufinder.science.magnetic_fields import (
-    MagneticFieldResult,
     calculate_incommensurate_field_distributions,
 )
 from mufinder.science.nuclear_relaxation import calculate_nuclear_width_tensors
@@ -22,6 +21,7 @@ from mufinder.science.polarisation_simulation import (
     simulate_polarisation,
 )
 from tests.support.codata import MUON_GAMMA_RAD_S_T
+from tests.support.field_results import field_result
 from tests.support.mnsi import MNSI_MUON, mnsi_helix, mnsi_options, mnsi_structure
 
 GAMMA = MUON_GAMMA_RAD_S_T * 1e-6  # rad μs⁻¹ T⁻¹
@@ -29,9 +29,7 @@ ZERO = (0.0, 0.0, 0.0)
 CUBIC = np.eye(3) * 4.0
 
 
-def _field(total, applied=ZERO, label: str = "site 1") -> MagneticFieldResult:
-    internal = tuple(float(t) - float(a) for t, a in zip(total, applied, strict=True))
-    return MagneticFieldResult(label, ZERO, internal, ZERO, ZERO, ZERO, tuple(applied))
+_field = field_result
 
 
 # --- settings ---------------------------------------------------------------------------
@@ -355,3 +353,53 @@ def test_mnsi_powder_average_is_flat_in_field_direction(mnsi_sites) -> None:
     np.testing.assert_allclose(powder.static.polarisation, np.mean(single, axis=0), atol=1e-6)
     lower, upper = _edges_mT(powder)
     assert (lower, upper) == pytest.approx((89.0, 206.8), abs=2.0)
+
+
+def test_an_all_zero_added_field_adds_nothing_to_results_that_carry_one() -> None:
+    site = _field((0.0, 0.0, 0.01), applied=(0.0, 0.0, 0.01))
+    settings = PolarisationSettings(
+        geometry="longitudinal", added_applied_field_T=(0.0, 0.0, 0.0), time_points=101
+    )
+
+    simulation = simulate_polarisation(settings, [site], lattice_vectors=CUBIC)
+
+    np.testing.assert_allclose(simulation.static.polarisation, 1.0, atol=1e-9)
+
+
+def test_powder_in_a_field_warns_for_the_largest_grain_field() -> None:
+    # 0.3 T internal across a 0.3 T applied field: the stored total is 0.42 T, but a grain
+    # with its internal field along the applied one sees 0.6 T, 81 MHz.
+    site = _field((0.3, 0.0, 0.3), applied=(0.0, 0.0, 0.3))
+    settings = PolarisationSettings(
+        geometry="longitudinal",
+        polycrystalline=True,
+        sphere_points=50,
+        end_time_us=1.0,
+        time_points=121,  # Nyquist 60 MHz
+    )
+
+    simulation = simulate_polarisation(settings, [site], lattice_vectors=CUBIC)
+
+    assert len(simulation.warnings) == 1
+    assert "600 mT" in simulation.warnings[0]
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"polycrystalline": "false"}, "polycrystalline"),
+        ({"subtract_baseline": 1}, "subtract_baseline"),
+    ],
+)
+def test_settings_payload_needs_real_booleans(payload: dict, message: str) -> None:
+    with pytest.raises(PolarisationError, match=message):
+        PolarisationSettings.from_json(payload)
+
+
+def test_simulation_payload_with_string_warnings_is_refused() -> None:
+    settings = PolarisationSettings(time_points=11)
+    simulation = simulate_polarisation(settings, [_field((0.0, 0.0, 0.01))], lattice_vectors=CUBIC)
+    payload = {**simulation.to_json(), "warnings": "aliased"}
+
+    with pytest.raises(PolarisationError, match="warnings"):
+        PolarisationSimulation.from_json(payload, settings)

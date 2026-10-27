@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mufinder.science.magnetic_fields import MagneticFieldDistributionResult, MagneticFieldResult
+from mufinder.science.magnetic_fields import MagneticFieldDistributionResult
 from mufinder.science.nuclear_relaxation import calculate_nuclear_width_tensors
 from mufinder.science.polarisation import PolarisationError, calculate_polarisation
 from mufinder.science.polarisation_simulation import PolarisationSettings, simulate_polarisation
@@ -33,14 +33,14 @@ from mufinder.services.polarisation_simulations import (
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import MAGNETIC_FIELD_WORKSPACES_KEY
 from tests.support.controllers import muon_host_document
+from tests.support.field_results import field_result
 
 ZERO = (0.0, 0.0, 0.0)
 SETTINGS = PolarisationSettings(end_time_us=4.0, time_points=401)
 
 
 def _field(total, *, label: str = "site 1", applied=ZERO, position=(0.25, 0.25, 0.25)):
-    internal = tuple(float(t) - float(a) for t, a in zip(total, applied, strict=True))
-    return MagneticFieldResult(label, position, internal, ZERO, ZERO, ZERO, tuple(applied))
+    return field_result(total, applied, label, position)
 
 
 def _commensurate(*results, site_source: str | None = None) -> dict[str, object]:
@@ -285,3 +285,65 @@ def test_a_malformed_simulation_record_is_skipped(document) -> None:
 
     assert polarisation_simulations(document) == []
     assert polarisation_simulation(document, record.simulation_id) is None
+
+
+def test_a_source_listed_twice_is_refused(document) -> None:
+    with pytest.raises(PolarisationError, match="more than once"):
+        run_polarisation_simulation(
+            document,
+            title="x",
+            settings=SETTINGS,
+            sources=[
+                SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+                SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", ""),
+            ],
+        )
+
+
+def test_nuclear_widths_are_summed_once_per_muon_position(tmp_path: Path, monkeypatch) -> None:
+    from mufinder.services import polarisation_simulations as module
+
+    document, _host = muon_host_document(ProjectService(), tmp_path)
+    translations = [_field((0.0, 0.0, 0.01 * (n + 1)), label=f"t{n}") for n in range(5)]
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(*translations))
+    calls: list[tuple[float, ...]] = []
+    real = module.calculate_nuclear_width_tensors
+
+    def counting(host, position, **kwargs):
+        calls.append(tuple(position))
+        return real(host, position, **kwargs)
+
+    monkeypatch.setattr(module, "calculate_nuclear_width_tensors", counting)
+
+    run_polarisation_simulation(
+        document,
+        title="widths",
+        settings=PolarisationSettings(
+            sigma_from_nuclear_widths=True, end_time_us=4.0, time_points=401
+        ),
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+
+    assert calls == [(0.25, 0.25, 0.25)]
+
+
+def test_a_simulation_decodes_only_the_sources_it_uses(document, monkeypatch) -> None:
+    from mufinder.services import polarisation_simulations as module
+
+    decoded: list[str] = []
+    real = module.MagneticFieldResult.from_json
+
+    def counting(payload):
+        decoded.append(str(payload.get("site_label")))
+        return real(payload)
+
+    monkeypatch.setitem(module._FIELD_KINDS, "commensurate", counting)
+
+    run_polarisation_simulation(
+        document,
+        title="page only",
+        settings=SETTINGS,
+        sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")],
+    )
+
+    assert decoded == ["site 1"]

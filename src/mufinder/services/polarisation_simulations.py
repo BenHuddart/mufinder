@@ -35,7 +35,10 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
     MagneticFieldResult,
 )
-from mufinder.science.nuclear_relaxation import calculate_nuclear_width_tensors
+from mufinder.science.nuclear_relaxation import (
+    NuclearWidthTensors,
+    calculate_nuclear_width_tensors,
+)
 from mufinder.science.polarisation import FieldResult, PolarisationError
 from mufinder.science.polarisation_simulation import (
     PolarisationSettings,
@@ -58,6 +61,19 @@ from mufinder.services.project_summary import magnetic_field_workspaces
 SIMULATION_OWNER_PREFIX = "polarisation:"
 #: Title of the Magnetic Fields page as a source.
 MAGNETIC_FIELD_PAGE_TITLE = "Magnetic Fields"
+
+# The keys each kind of field entry needs to be decoded.
+_FIELD_KEYS = {
+    "commensurate": frozenset(
+        {"muon_position", "dipolar_T", "lorentz_T", "contact_T", "demag_T", "applied_T"}
+    ),
+    "distribution": frozenset({"fields_T"}),
+}
+# How each kind of field record decodes its entries.
+_FIELD_KINDS = {
+    "commensurate": MagneticFieldResult.from_json,
+    "distribution": MagneticFieldDistributionResult.from_json,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,13 +166,8 @@ def simulation_owner(simulation_id: str) -> str:
 def field_sources(document: ProjectDocument) -> list[FieldSource]:
     """Return the stored field results, the page first, then the workspaces in order."""
 
-    owners = [(MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_PAGE_TITLE)]
-    for workspace in magnetic_field_workspaces(document):
-        workspace_id = str(workspace.get("id", "")).strip()
-        if workspace_id:
-            owners.append((workspace_id, str(workspace.get("title") or workspace_id)))
     sources = []
-    for owner, title in owners:
+    for owner, title in _source_titles(document).items():
         source = _field_source(document, owner, title)
         if source is not None:
             sources.append(source)
@@ -191,39 +202,50 @@ def run_polarisation_simulation(
     host = active_host_structure(document)
     if host is None:
         raise PolarisationError("the project has no host structure")
-    known = {source.owner: source for source in field_sources(document)}
+    owners = [source.owner for source in sources]
+    if len(set(owners)) != len(owners):
+        raise PolarisationError("a field result is selected more than once")
+    titles = _source_titles(document)
     results: list[FieldResult] = []
     weights: list[float] = []
     used: list[SimulationSource] = []
     site_sources: list[str | None] = []
     for source in sources:
-        current = known.get(source.owner)
-        if current is None:
+        record = (
+            magnetic_field_result(document, source.owner, MAGNETIC_FIELD_RESULT_TYPE)
+            if source.owner in titles
+            else None
+        )
+        if record is None:
             raise PolarisationError(f"{source.title or source.owner} has no field results")
         if not source.weight >= 0.0:
             raise PolarisationError("source weights must be >= 0")
-        entries = field_results_for_source(document, source.owner)
+        entries = _field_results(record)
         results.extend(entries)
         weights.extend([float(source.weight) / len(entries)] * len(entries))
         used.append(
             SimulationSource(
-                owner=current.owner,
-                record_id=current.record_id,
-                title=current.title,
+                owner=source.owner,
+                record_id=str(record.id),
+                title=titles[source.owner],
                 weight=float(source.weight),
             )
         )
-        site_sources.append(current.site_source)
+        site_sources.append(field_result_site_source(record.data))
     if sum(weights) <= 0.0:
         raise PolarisationError("at least one source needs a positive weight")
     tensors = None
     if settings.sigma_from_nuclear_widths:
-        tensors = [
-            calculate_nuclear_width_tensors(
-                host, result.muon_position, site_label=result.site_label
-            )
-            for result in results
-        ]
+        # Equivalent translations of one site share a position: sum it once.
+        by_position: dict[tuple[float, ...], NuclearWidthTensors] = {}
+        tensors = []
+        for result in results:
+            key = tuple(round(float(value), 9) for value in result.muon_position)
+            if key not in by_position:
+                by_position[key] = calculate_nuclear_width_tensors(
+                    host, result.muon_position, site_label=result.site_label
+                )
+            tensors.append(by_position[key])
     simulation = simulate_polarisation(
         settings,
         results,
@@ -249,17 +271,16 @@ def store_polarisation_simulation(
     """Store ``record``, replacing the simulation of the same id, and return the record."""
 
     existing = _simulation_result(document, record.simulation_id)
+    # The static trace is "result", where polarisation_result reads it.
+    traces = record.simulation.to_json()
     data = {
         "owner": record.owner,
         "simulation_id": record.simulation_id,
         "title": record.title,
         "settings": record.settings.to_json(),
         "sources": [source.to_json() for source in record.sources],
-        "result": record.simulation.static.to_json(),
-        "dynamic": None
-        if record.simulation.dynamic is None
-        else record.simulation.dynamic.to_json(),
-        "warnings": list(record.simulation.warnings),
+        "result": traces.pop("static"),
+        **traces,
     }
     if record.site_source:
         data["site_source"] = record.site_source
@@ -316,23 +337,50 @@ def stale_sources(
 
 
 def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSource | None:
+    """Describe ``owner``'s field record from its payload, without decoding the samples."""
+
     record = magnetic_field_result(document, owner, MAGNETIC_FIELD_RESULT_TYPE)
     if record is None:
         return None
-    try:
-        results = _field_results(record)
-    except PolarisationError:
+    data = record.data if isinstance(record.data, Mapping) else {}
+    kind = str(data.get("kind", ""))
+    payloads = data.get("results")
+    if (
+        kind not in _FIELD_KINDS
+        or not isinstance(payloads, list)
+        or not payloads
+        or not all(
+            isinstance(payload, Mapping) and _FIELD_KEYS[kind] <= payload.keys()
+            for payload in payloads
+        )
+    ):
         return None
-    applied = {_applied(result) for result in results}
+    if kind == "distribution" and not all(payload["fields_T"] for payload in payloads):
+        return None
+    try:
+        applied = {_payload_applied(payload) for payload in payloads}
+    except (TypeError, ValueError):
+        return None
     return FieldSource(
         owner=owner,
         record_id=str(record.id),
         title=title,
-        kind=str(record.data.get("kind", "")),
-        site_labels=tuple(result.site_label for result in results),
-        site_source=field_result_site_source(record.data),
+        kind=kind,
+        site_labels=tuple(str(payload.get("site_label", "")) for payload in payloads),
+        site_source=field_result_site_source(data),
         applied_T=applied.pop() if len(applied) == 1 else None,
     )
+
+
+def _source_titles(document: ProjectDocument) -> dict[str, str]:
+    """The owners that can hold field results, the page first, with their titles."""
+
+    titles = {MAGNETIC_FIELD_PAGE_OWNER: MAGNETIC_FIELD_PAGE_TITLE}
+    for workspace in magnetic_field_workspaces(document):
+        workspace_id = str(workspace.get("id", "")).strip()
+        if workspace_id:
+            titles[workspace_id] = str(workspace.get("title") or workspace_id)
+    return titles
 
 
 def _field_results(record: Result) -> list[FieldResult]:
@@ -341,10 +389,7 @@ def _field_results(record: Result) -> list[FieldResult]:
     payloads = data.get("results")
     if not isinstance(payloads, list) or not payloads:
         raise PolarisationError("the field record holds no results")
-    decode = {
-        "commensurate": MagneticFieldResult.from_json,
-        "distribution": MagneticFieldDistributionResult.from_json,
-    }.get(str(kind))
+    decode = _FIELD_KINDS.get(str(kind))
     if decode is None:
         raise PolarisationError(f"unknown field result kind {kind!r}")
     try:
@@ -359,8 +404,8 @@ def _field_results(record: Result) -> list[FieldResult]:
     return results
 
 
-def _applied(result: FieldResult) -> tuple[float, float, float]:
-    applied = result.applied if isinstance(result, MagneticFieldResult) else result.applied_T
+def _payload_applied(payload: Mapping[str, Any]) -> tuple[float, float, float]:
+    applied = payload.get("applied_T")
     if applied is None:
         return (0.0, 0.0, 0.0)
     x, y, z = (float(value) for value in applied)
@@ -390,14 +435,7 @@ def _simulation_from_result(result: Result) -> PolarisationSimulationRecord | No
         return None
     try:
         settings = PolarisationSettings.from_json(data["settings"])
-        simulation = PolarisationSimulation.from_json(
-            {
-                "static": data["result"],
-                "dynamic": data.get("dynamic"),
-                "warnings": data.get("warnings"),
-            },
-            settings,
-        )
+        simulation = PolarisationSimulation.from_json({**data, "static": data["result"]}, settings)
         sources = tuple(SimulationSource.from_json(item) for item in data["sources"])
     except (KeyError, TypeError, ValueError, PolarisationError):
         return None

@@ -166,7 +166,9 @@ class PolarisationSettings:
                 elif isinstance(default, tuple):
                     values[name] = _tuple3(raw)
                 elif isinstance(default, bool):
-                    values[name] = bool(raw)
+                    if not isinstance(raw, bool):
+                        raise ValueError(f"{name} must be true or false")
+                    values[name] = raw
                 elif isinstance(default, int):
                     values[name] = _strict_int(raw, name)
                 elif isinstance(default, float):
@@ -220,7 +222,9 @@ class PolarisationSimulation:
             dynamic = (
                 None if raw_dynamic is None else DynamicPolarisationResult.from_json(raw_dynamic)
             )
-            raw_warnings = payload.get("warnings") or ()
+            raw_warnings = payload.get("warnings") or []
+            if not isinstance(raw_warnings, list):
+                raise TypeError("warnings must be a list")
             warnings = tuple(str(item) for item in raw_warnings)
         except (KeyError, TypeError) as exc:
             raise PolarisationError(f"malformed polarisation simulation: {exc}") from exc
@@ -282,11 +286,11 @@ def simulate_polarisation(
         nuclear_width_tensors is None or len(nuclear_width_tensors) != len(results)
     ):
         raise PolarisationError("the nuclear widths need one width tensor per field result")
-    adds_field = settings.added_applied_field_T is not None and any(
-        value != 0.0 for value in settings.added_applied_field_T
-    )
+    added = settings.added_applied_field_T
+    if added is not None and not any(value != 0.0 for value in added):
+        added = None
     if settings.geometry == "zero_field" and (
-        adds_field or any(_carries_applied_field(result) for result in results)
+        added is not None or any(_carries_applied_field(result) for result in results)
     ):
         raise PolarisationError(
             "the zero-field geometry needs field results without an applied field; "
@@ -298,7 +302,7 @@ def simulate_polarisation(
     )
     options: dict[str, Any] = {
         "crystal_rotation": rotation,
-        "applied_field": settings.added_applied_field_T,
+        "applied_field": added,
         "lambda_z": float(settings.lambda_z_per_us),
         "sigma_nuclear": "auto"
         if settings.sigma_from_nuclear_widths
@@ -336,7 +340,7 @@ def simulate_polarisation(
         static=static,
         dynamic=dynamic,
         spectrum=_spectrum(times, shown, settings),
-        warnings=_aliasing_warnings(results, settings),
+        warnings=_aliasing_warnings(results, added, settings),
     )
 
 
@@ -354,12 +358,26 @@ def _spectrum(
 
 
 def _aliasing_warnings(
-    results: Sequence[FieldResult], settings: PolarisationSettings
+    results: Sequence[FieldResult],
+    added: Sequence[float] | None,
+    settings: PolarisationSettings,
 ) -> tuple[str, ...]:
-    added = np.asarray(settings.added_applied_field_T or (0.0, 0.0, 0.0), dtype=float)
-    largest = max(
-        float(np.max(np.linalg.norm(_field_samples(result) + added, axis=1))) for result in results
-    )
+    """Warn when the largest field precesses faster than the time grid resolves.
+
+    A powder in an applied field turns the applied field through every
+    direction in the crystal, so a grain sees up to ``|B_int| + |B_app|``.
+    """
+
+    largest = 0.0
+    for result in results:
+        applied = np.asarray(added if added is not None else _applied(result), dtype=float)
+        samples = _field_samples(result) + (0.0 if added is None else applied)
+        if settings.polycrystalline and np.any(applied != 0.0):
+            internal = samples - applied
+            size = float(np.max(np.linalg.norm(internal, axis=1))) + float(np.linalg.norm(applied))
+        else:
+            size = float(np.max(np.linalg.norm(samples, axis=1)))
+        largest = max(largest, size)
     frequency = largest * MUON_GAMMA_OVER_2PI_MHZ_T
     nyquist = settings.nyquist_MHz
     if frequency <= nyquist:
@@ -377,9 +395,13 @@ def _field_samples(result: FieldResult) -> np.ndarray:
     return fields if fields.size else np.zeros((1, 3))
 
 
-def _carries_applied_field(result: FieldResult) -> bool:
+def _applied(result: FieldResult) -> tuple[float, float, float]:
     applied = result.applied if isinstance(result, MagneticFieldResult) else result.applied_T
-    return applied is not None and bool(np.any(np.asarray(applied, dtype=float) != 0.0))
+    return (0.0, 0.0, 0.0) if applied is None else _tuple3(applied)
+
+
+def _carries_applied_field(result: FieldResult) -> bool:
+    return any(value != 0.0 for value in _applied(result))
 
 
 def _strict_int(value: object, name: str) -> int:
