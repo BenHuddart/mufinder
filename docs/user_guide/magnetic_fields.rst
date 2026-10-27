@@ -931,6 +931,22 @@ and keeps the entered components. An incommensurate distribution records the
 value it used with its calculation parameters, or none when it used the model
 value.
 
+Applied field
+~~~~~~~~~~~~~
+
+The ``Applied field`` row of the Calculation card takes an external field in
+tesla, as three Cartesian components ``x``, ``y`` and ``z`` in the frame of the
+host lattice vectors. MuFinder adds it to the field at every muon site, so a
+result in an applied field is the internal field plus the applied one, and the
+breakdown lists it as its ``Applied`` row. The field is saved with the form; an
+empty component counts as zero, and a component that is not a finite decimal
+number stops the calculation with an error. Changing a component clears the
+shown results, like the other calculation settings.
+
+The applied field does not change the magnetic model: the moments stay as the
+model sets them, so the row describes a field small enough not to reorient
+them, such as the longitudinal or transverse field of a μSR measurement.
+
 How the demagnetizing field is calculated
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1349,7 +1365,7 @@ list of a commensurate approximant is stored as ``commensurate`` entries. A
 ``magnetic_dipolar_tensor`` record holds ``results`` and a
 ``nuclear_relaxation`` record holds ``result``. The form state saves the
 measured magnetisation as ``use_measured_magnetization`` and
-``measured_magnetization``. See :doc:`/compatibility_policy` for the persisted
+``measured_magnetization`` and the applied field as ``applied_field_T``. See :doc:`/compatibility_policy` for the persisted
 names.
 
 Dependency handling
@@ -1373,8 +1389,8 @@ The implemented workflow covers the propagation-vector data model, the
 magnetic-structure builder and multi-q texture dialogs, commensurate local
 fields with optional muon-induced distortion corrections, incommensurate field
 distributions with convergence checks, finite field lists of commensurate
-approximants, dipolar tensors, demagnetizing corrections, and nuclear dipolar
-linewidths. The page stops at field-level results; the library computes the
+approximants, dipolar tensors, demagnetizing corrections, applied fields, and
+nuclear dipolar linewidths. The page stops at field-level results; the library computes the
 muon polarisation, its powder averages, its spectrum and its strong-collision
 dynamics from them, and provides the reference relaxation functions (see
 :doc:`/api/using_mufinder`). Distortion corrections are not applied to

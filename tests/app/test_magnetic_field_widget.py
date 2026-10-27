@@ -3371,6 +3371,72 @@ def test_magnetic_field_widget_measured_magnetisation_reaches_the_options_and_ro
     restored.close()
 
 
+def test_magnetic_field_widget_applied_field_reaches_the_calculation_and_round_trips(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "applied-field.mufinder", "Applied Field")
+    service.add_structure(document, _host_structure())
+    seen_options: list[object] = []
+
+    def fake_fields(_host, _model, positions, *, options, **_kwargs):
+        seen_options.append(options)
+        return (
+            magnetic_fields_module.MagneticFieldResult(
+                site_label="muon 1",
+                muon_position=tuple(positions[0]),
+                dipolar=(0.1, 0.0, 0.0),
+                lorentz=(0.0, 0.0, 0.0),
+                contact=(0.0, 0.0, 0.0),
+                demag=(0.0, 0.0, 0.0),
+                applied=options.applied_field,
+            ),
+        )
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", fake_fields)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    emitted: list[dict] = []
+    widget.form_state_changed.connect(emitted.append)
+
+    assert widget._field_options().applied_field == (0.0, 0.0, 0.0)
+    assert all(edit.isEnabled() for edit in widget._applied_field_inputs)
+    x, y, z = widget._applied_field_inputs
+    x.setText("")
+    y.setText("0.01")
+    z.setText("-0.25")
+    assert emitted[-1]["applied_field_T"] == [0.0, 0.01, -0.25]
+
+    widget._calculate_fields()
+
+    assert seen_options[-1].applied_field == (0.0, 0.01, -0.25)
+    assert _breakdown_rows(widget)[4][:4] == ["Applied", "0", "0.01", "-0.25"]
+
+    restored = MagneticFieldWidget()
+    restored.set_document(document)
+    restored.set_form_state(widget.collect_state())
+    assert restored._field_options().applied_field == (0.0, 0.01, -0.25)
+    assert _breakdown_rows(restored)[4][:4] == ["Applied", "0", "0.01", "-0.25"]
+
+    # Changing the field invalidates the shown results.
+    restored._applied_field_inputs[2].setText("0.5")
+    assert restored.collect_state()["magnetic_field_results"] is None
+
+    restored.set_form_state({"applied_field_T": ["a", 1.0, 2.0]})
+    assert restored._field_options().applied_field == (0.0, 0.0, 0.0)
+    restored.set_form_state({})
+    assert restored.collect_state()["applied_field_T"] == [0.0, 0.0, 0.0]
+    widget.close()
+    restored.close()
+
+
 def test_magnetic_field_widget_ignores_a_malformed_saved_magnetisation(qapp, tmp_path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "bad-magnetisation.mufinder", "Bad Magnetisation")

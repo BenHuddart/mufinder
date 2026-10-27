@@ -10,7 +10,6 @@ import pytest
 from mufinder.domain.models import Structure
 from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
-    MagneticFieldResult,
     calculate_incommensurate_field_distributions,
 )
 from mufinder.science.nuclear_relaxation import calculate_nuclear_width_tensors
@@ -25,6 +24,7 @@ from mufinder.science.polarisation import (
     fibonacci_sphere,
 )
 from tests.support.codata import MUON_GAMMA_RAD_S_T
+from tests.support.field_results import field_result
 from tests.support.mnsi import MNSI_MUON, mnsi_helix, mnsi_options, mnsi_structure
 
 GAMMA = MUON_GAMMA_RAD_S_T * 1e-6  # rad μs⁻¹ T⁻¹
@@ -32,11 +32,7 @@ ZERO = (0.0, 0.0, 0.0)
 TIMES = np.linspace(0.0, 10.0, 1001)
 
 
-def _field(total, applied=ZERO, label: str = "site 1") -> MagneticFieldResult:
-    """A field result whose total is ``total`` (T), carrying ``applied`` within it."""
-
-    internal = tuple(float(t) - float(a) for t, a in zip(total, applied, strict=True))
-    return MagneticFieldResult(label, ZERO, internal, ZERO, ZERO, ZERO, tuple(applied))
+_field = field_result
 
 
 def _distribution(fields, applied=None, label: str = "site 1") -> MagneticFieldDistributionResult:

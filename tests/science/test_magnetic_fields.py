@@ -295,6 +295,40 @@ def test_magnetic_field_result_adds_the_distortion_correction_to_the_total() -> 
     assert result.to_json()["distortion_T"] == [0.5, 0.0, 0.25]
 
 
+@pytest.mark.parametrize("distortion", [None, (0.5, 0.0, 0.25)])
+def test_magnetic_field_result_json_round_trips(distortion) -> None:
+    result = MagneticFieldResult(
+        site_label="A",
+        muon_position=(0.1, 0.2, 0.3),
+        dipolar=(1.0, -2.0, 0.0),
+        lorentz=(0.1, 0.0, 0.0),
+        contact=(0.0, 0.2, 0.0),
+        demag=(0.0, 0.0, -0.3),
+        applied=(0.0, 0.0, 0.05),
+        distortion=distortion,
+    )
+
+    restored = MagneticFieldResult.from_json(json.loads(json.dumps(result.to_json())))
+
+    assert restored == result
+
+
+def test_magnetic_field_result_from_json_refuses_a_payload_without_its_terms() -> None:
+    payload = MagneticFieldResult(
+        site_label="A",
+        muon_position=(0.0, 0.0, 0.0),
+        dipolar=(1.0, 0.0, 0.0),
+        lorentz=(0.0, 0.0, 0.0),
+        contact=(0.0, 0.0, 0.0),
+        demag=(0.0, 0.0, 0.0),
+        applied=(0.0, 0.0, 0.0),
+    ).to_json()
+    del payload["dipolar_T"]
+
+    with pytest.raises(KeyError):
+        MagneticFieldResult.from_json(payload)
+
+
 def test_distribution_result_magnitudes_and_json() -> None:
     fields = np.array([[3.0, 4.0, 0.0], [0.0, 0.0, 5.0]], dtype=float)
     result = MagneticFieldDistributionResult(

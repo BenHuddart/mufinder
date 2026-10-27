@@ -29,9 +29,11 @@ inferred, and it is not shown as an estimate.
 
 A muon-polarisation record (:data:`MUON_POLARISATION_RESULT_TYPE`) holds a
 :class:`~mufinder.science.polarisation.PolarisationResult` in
-``data["result"]``, with the same ``owner`` rule. It is stored and read with
+``data["result"]``, one record per owner. It is stored and read with
 :func:`store_polarisation_result` and :func:`polarisation_result` and is not
-part of the form state.
+part of the form state. A polarisation simulation
+(:mod:`mufinder.services.polarisation_simulations`) is such a record whose
+owner is the simulation, with its settings and sources beside the result.
 """
 
 from __future__ import annotations
