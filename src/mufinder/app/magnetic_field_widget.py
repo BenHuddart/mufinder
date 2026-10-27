@@ -98,6 +98,7 @@ from mufinder.science.demagnetization import (
     principal_demagnetizing_tensor,
     sample_orientation,
 )
+from mufinder.science.lattice import reciprocal_to_cartesian
 from mufinder.science.magnetic_fields import (
     CONTACT_COUPLING_UNIT_OPTIONS,
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
@@ -1879,7 +1880,8 @@ class MagneticTextureDialog(QDialog):
     _CHARGE_MAX_RESOLUTION = 256
     _ARROW_LEGEND = "Colour shows the out-of-plane moment; arrows show the in-plane moment."
     _MAGNITUDE_LEGEND = (
-        "Colour shows the moment magnitude |m| over one magnetic cell, on the normalization grid."
+        "Colour shows the moment magnitude |m| over one magnetic cell, on the u-v plane "
+        "of the normalization grid."
     )
 
     _MODES = (
@@ -2022,6 +2024,7 @@ class MagneticTextureDialog(QDialog):
             self._magnitude_canvas, title="Moment Magnitude", parent=self
         )
         self._magnitude_mesh = None
+        self._charge_cache: tuple[object, str] | None = None
         self._preview_stack = QStackedWidget(self)
         self._preview_stack.addWidget(self._preview)
         self._preview_stack.addWidget(self._magnitude_frame)
@@ -2396,6 +2399,9 @@ class MagneticTextureDialog(QDialog):
 
     def _refresh_preview_page(self, *_args) -> None:
         show_map = self._magnitude_map_check.isChecked()
+        if not show_map and self._magnitude_frame.is_popped_out():
+            # A popped-out map would stop updating once hidden; bring it back first.
+            self._magnitude_frame.show_here()
         self._preview_stack.setCurrentIndex(1 if show_map else 0)
         self._preview_legend.setText(self._MAGNITUDE_LEGEND if show_map else self._ARROW_LEGEND)
         for button in (self._preview_light_button, self._preview_dark_button):
@@ -2438,18 +2444,27 @@ class MagneticTextureDialog(QDialog):
         self._magnitude_canvas.draw_idle()
 
     def _topological_charge_text(self, texture: MagneticTexture) -> str:
+        q_basis = tuple(
+            tuple(reciprocal_to_cartesian(row, self._structure.lattice_vectors))
+            for row in self.q_basis_vectors()
+        )
+        # Edits that leave the texture unchanged (label, target, map toggle) reuse
+        # the last result instead of resampling the cell.
+        key = (texture, q_basis)
+        if self._charge_cache is not None and self._charge_cache[0] == key:
+            return self._charge_cache[1]
         try:
-            reciprocal = np.linalg.inv(np.asarray(self._structure.lattice_vectors, dtype=float)).T
-            q_basis = np.asarray(self.q_basis_vectors(), dtype=float) @ reciprocal
             charge = topological_charge_magnetic_unit_cell(
                 texture,
                 q_basis,
                 (self._CHARGE_RESOLUTION, self._CHARGE_RESOLUTION),
                 max_resolution=self._CHARGE_MAX_RESOLUTION,
             )
+            text = f"Topological charge per magnetic cell: {charge}."
         except MagneticStructureError as exc:
-            return f"Topological charge per magnetic cell: undefined ({exc})."
-        return f"Topological charge per magnetic cell: {charge}."
+            text = f"Topological charge per magnetic cell: undefined ({exc})."
+        self._charge_cache = (key, text)
+        return text
 
     def _show_magnitude_pruning_info(self) -> None:
         dialog = QDialog(self)

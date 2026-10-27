@@ -1635,12 +1635,34 @@ def test_square_skyrmion_without_background_has_an_undefined_charge() -> None:
         topological_charge_magnetic_unit_cell(texture, q_basis, (64, 64))
 
 
-def test_topological_charge_does_not_depend_on_the_q_basis_length_or_skew() -> None:
+def test_topological_charge_ignores_q_basis_length_and_skew_but_follows_its_orientation() -> None:
     texture, q_basis = _skyrmion_lattice("hexagonal")
-    skewed = np.array([[0.37, 0.0, 0.0], [0.05, 0.21, 0.0], [0.0, 0.0, 0.0]])
+    # The preset's q2 is q1 turned 120° about the -z core, so q1 × q2 points along -z.
+    same_orientation = np.array([[0.37, 0.0, 0.0], [0.05, -0.21, 0.0]])
+    mirrored = same_orientation * np.array([1.0, -1.0, 1.0])
 
     assert topological_charge_magnetic_unit_cell(texture, 7.0 * q_basis) == -1
-    assert topological_charge_magnetic_unit_cell(texture, skewed[:2]) == 1
+    assert topological_charge_magnetic_unit_cell(texture, same_orientation) == -1
+    assert topological_charge_magnetic_unit_cell(texture, mirrored) == 1
+
+
+def test_topological_charge_folds_an_in_plane_third_q_vector_into_q1_and_q2() -> None:
+    preset, q_basis = _skyrmion_lattice("hexagonal")
+    three_row_basis = np.array([q_basis[0], q_basis[1], -(q_basis[0] + q_basis[1])])
+    on_q3 = MagneticTexture(
+        tuple(
+            MagneticTextureTerm(q_coeff=(0.0, 0.0, 1.0), coefficient=term.coefficient)
+            if term.q_coeff == (-1.0, -1.0, 0.0)
+            else term
+            for term in preset.terms
+        )
+    )
+    half_q3 = MagneticTexture((MagneticTextureTerm.from_vector((0, 0, 1), (1.0, 1.0j, 0.0)),))
+
+    assert any(term.q_coeff == (0.0, 0.0, 1.0) for term in on_q3.terms)
+    assert topological_charge_magnetic_unit_cell(on_q3, three_row_basis) == -1
+    with pytest.raises(MagneticStructureError, match="not periodic"):
+        topological_charge_magnetic_unit_cell(half_q3, [q_basis[0], q_basis[1], 0.5 * q_basis[0]])
 
 
 def test_helix_and_spin_density_wave_have_zero_charge() -> None:
@@ -1695,7 +1717,7 @@ def test_topological_charge_rejects_textures_it_cannot_measure() -> None:
     uses_q3 = MagneticTexture((MagneticTextureTerm.from_vector((0, 0, 1), (1.0, 1.0j, 0.0)),))
     fractional = MagneticTexture((MagneticTextureTerm.from_vector((0.5, 0, 0), (0.0, 1.0, 1.0j)),))
 
-    with pytest.raises(MagneticStructureError, match="not two-dimensional"):
+    with pytest.raises(MagneticStructureError, match="out of the q1-q2 plane"):
         topological_charge_magnetic_unit_cell(uses_q3, q_basis)
     with pytest.raises(MagneticStructureError, match="not periodic"):
         topological_charge_magnetic_unit_cell(fractional, q_basis)

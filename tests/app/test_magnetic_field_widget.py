@@ -917,6 +917,47 @@ def test_magnetic_texture_dialog_magnitude_map_toggles_the_preview(qapp) -> None
     dialog.close()
 
 
+def test_magnetic_texture_dialog_reuses_the_charge_while_the_texture_is_unchanged(
+    qapp, monkeypatch
+) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    calls = []
+    original = magnetic_field_widget_module.topological_charge_magnetic_unit_cell
+
+    def counting(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "topological_charge_magnetic_unit_cell", counting
+    )
+    dialog._label_edit.setText("Renamed texture")
+    dialog._magnitude_map_check.setChecked(True)
+    assert calls == []
+    assert "Topological charge per magnetic cell: -1." in dialog._diagnostics.text()
+
+    _set_direction(dialog._core_direction, (0.0, 0.0, 1.0))
+    assert len(calls) == 1
+    assert "Topological charge per magnetic cell: 1." in dialog._diagnostics.text()
+    dialog.close()
+
+
+def test_magnetic_texture_dialog_unticking_the_map_brings_a_popped_out_map_back(qapp) -> None:
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    dialog.show()
+    dialog._magnitude_map_check.setChecked(True)
+    dialog._magnitude_frame.pop_out()
+    qapp.processEvents()
+    assert dialog._magnitude_frame.is_popped_out()
+
+    dialog._magnitude_map_check.setChecked(False)
+    qapp.processEvents()
+
+    assert not dialog._magnitude_frame.is_popped_out()
+    assert dialog._preview_stack.currentWidget() is dialog._preview
+    dialog.close()
+
+
 def test_magnetic_texture_dialog_magnitude_map_of_normalized_texture_matches_reported_std(
     qapp,
 ) -> None:

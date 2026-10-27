@@ -1767,15 +1767,16 @@ def topological_charge_magnetic_unit_cell(
 
     The grid is under-resolved when two neighbouring samples are 90° or more
     apart. The grid is then doubled until it exceeds ``max_resolution`` (by
-    default the grid is not refined) and an error is raised. An error is also
-    raised for a singular q pair, a texture that uses a non-zero third q vector
-    or is not periodic on the cell, and a texture whose magnitude vanishes on
-    the grid, where the charge is undefined.
+    default the grid is not refined) and an error is raised. A third q vector
+    that lies in the plane as a combination of q1 and q2 is folded into them.
+    An error is also raised for a singular q pair, a texture that uses a third q
+    vector out of the plane or is not periodic on the cell, and a texture whose
+    magnitude vanishes on the grid, where the charge is undefined.
     """
 
     if not texture.terms:
         raise MagneticStructureError("texture must contain at least one Fourier term")
-    normal_sign = _texture_plane_sign(texture, q_basis)
+    texture, normal_sign = _planar_texture(texture, q_basis)
     nu, nv = _plane_grid_resolution(resolution)
     if min(nu, nv) < 3:
         raise MagneticStructureError("topological charge needs a grid of at least 3 × 3")
@@ -2087,8 +2088,15 @@ def _plane_normal_sign(normal: np.ndarray) -> float:
     return 1.0
 
 
-def _texture_plane_sign(texture: MagneticTexture, q_basis: Sequence[Sequence[float]]) -> float:
-    """Validate a 2-D texture's q basis and return the orientation sign of ``q1 × q2``."""
+def _planar_texture(
+    texture: MagneticTexture, q_basis: Sequence[Sequence[float]]
+) -> tuple[MagneticTexture, float]:
+    """Return a 2-D texture with q coefficients on q1 and q2 only, and the sign of ``q1 × q2``.
+
+    A term on an in-plane q3 is rewritten on q1 and q2; a term on an out-of-plane
+    q3, a singular q pair, and a non-integer coefficient (a texture that is not
+    periodic on the magnetic cell) raise.
+    """
 
     rows = np.asarray(q_basis, dtype=float)
     if rows.ndim != 2 or rows.shape[1] != 3 or not 2 <= rows.shape[0] <= 3:
@@ -2100,18 +2108,36 @@ def _texture_plane_sign(texture: MagneticTexture, q_basis: Sequence[Sequence[flo
         raise MagneticStructureError(
             "the in-plane q vectors q1 and q2 must be non-zero and not parallel"
         )
-    uses_q3 = rows.shape[0] == 3 and float(np.linalg.norm(rows[2])) > 1e-12
+    q3 = rows[2] if rows.shape[0] == 3 else np.zeros(3)
+    q3_norm = float(np.linalg.norm(q3))
+    q3_in_plane: np.ndarray | None = None
+    if q3_norm > 1e-12:
+        in_plane, *_ = np.linalg.lstsq(rows[:2].T, q3, rcond=None)
+        if float(np.linalg.norm(rows[:2].T @ in_plane - q3)) <= 1e-9 * q3_norm:
+            q3_in_plane = in_plane
+    terms: list[MagneticTextureTerm] = []
     for term in texture.terms:
         q_coeff = np.asarray(term.q_coeff, dtype=float)
-        if uses_q3 and abs(float(q_coeff[2])) > 1e-9:
-            raise MagneticStructureError(
-                "the texture uses a non-zero third q vector, so it is not two-dimensional"
-            )
-        if not np.allclose(q_coeff[:2], np.round(q_coeff[:2]), atol=1e-9, rtol=0.0):
+        planar = q_coeff[:2].copy()
+        if q3_norm > 1e-12 and abs(float(q_coeff[2])) > 1e-9:
+            if q3_in_plane is None:
+                raise MagneticStructureError(
+                    "the texture uses a third q vector out of the q1-q2 plane, "
+                    "so it is not two-dimensional"
+                )
+            planar += float(q_coeff[2]) * q3_in_plane
+        if not np.allclose(planar, np.round(planar), atol=1e-9, rtol=0.0):
             raise MagneticStructureError(
                 "the texture is not periodic on the magnetic cell spanned by q1 and q2"
             )
-    return _plane_normal_sign(normal / float(np.linalg.norm(normal)))
+        terms.append(
+            MagneticTextureTerm(
+                q_coeff=(float(round(planar[0])), float(round(planar[1])), 0.0),
+                coefficient=term.coefficient,
+            )
+        )
+    sign = _plane_normal_sign(normal / float(np.linalg.norm(normal)))
+    return MagneticTexture(tuple(terms)), sign
 
 
 def _unit_texture_directions(moments: np.ndarray) -> np.ndarray:

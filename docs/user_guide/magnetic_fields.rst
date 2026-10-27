@@ -397,8 +397,9 @@ axis triads follow the active application palette.
 
 Tick ``Show |m| map`` in the preview header to replace the arrows with a colour
 map of the moment magnitude over one magnetic cell, with a colour bar in μB.
-The map is sampled on the ``Grid`` of the ``Magnitude and Pruning`` group, the
-same grid as the ``|m|`` statistics in the diagnostics, so it shows where a
+The map is sampled on the u–v plane of the ``Grid`` in the ``Magnitude and
+Pruning`` group, the grid the ``|m|`` statistics in the diagnostics use (with
+``w`` above 1 the statistics also cover the other planes), so it shows where a
 texture needs normalising and how flat a normalised texture is. Its axes are
 fractions of the magnetic cell vectors ``a₁`` and ``a₂`` (see below).
 
@@ -435,11 +436,13 @@ opposite the core direction gives the same sign as the hexagonal preset, one
 along the core direction gives the opposite sign, and a background large enough
 to stop the moments winding gives 0.
 
-The charge is reported as undefined when ``|m|`` vanishes somewhere in the
-cell, as it does for the square preset with zero background and for a pure
-spin-density wave; when the texture uses a non-zero third propagation vector
-or is not periodic on the magnetic cell; and when even the finest grid is too
-coarse.
+A custom texture may use a third propagation vector that lies in the plane of
+the first two, such as ``k3 = −(k1 + k2)``; its terms are rewritten on ``k1``
+and ``k2``. The charge is reported as undefined when ``|m|`` vanishes somewhere
+in the cell, as it does for the square preset with zero background and for a
+pure spin-density wave; when the texture uses a third propagation vector out of
+that plane or is not periodic on the magnetic cell; and when even the finest
+grid is too coarse.
 
 The accepted texture appears as one component row so that editing, preview
 selection, and atom targeting remain intuitive; ``Edit...`` reopens it in the
