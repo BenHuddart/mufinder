@@ -2416,12 +2416,11 @@ class MagneticTextureDialog(QDialog):
         self._magnitude_figure.clear()
         self._magnitude_mesh = None
         axis = self._magnitude_figure.add_subplot(111)
-        axis.set_facecolor(palette.bg_surface_alt)
-        axis.tick_params(colors=palette.text_primary)
-        for spine in axis.spines.values():
-            spine.set_color(palette.border)
-        axis.set_xlabel("Fraction of a₁", color=palette.text_primary)
-        axis.set_ylabel("Fraction of a₂", color=palette.text_primary)
+        style_plot_axes(axis)
+        # Grid lines would draw over the colour map.
+        axis.grid(False)
+        axis.set_xlabel("Fraction of a₁")
+        axis.set_ylabel("Fraction of a₂")
         if texture is not None and texture.terms:
             nu, nv, _nw = self._grid_resolution()
             magnitudes = np.linalg.norm(
