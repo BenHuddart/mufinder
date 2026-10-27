@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.screen_utils import clamped_size
-from mufinder.app.theme import current_palette
+from mufinder.app.theme import current_palette, style_plot_axes, style_plot_legend
 from mufinder.castep_io.output_parser import (
     CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG,
     CASTEP_STRESS_PRINT_RESOLUTION_GPA,
@@ -317,30 +317,6 @@ class ConvergenceExaminerDialog(QDialog):
 
     def _annotation_text_color(self) -> str:
         return current_palette().text_primary
-
-    def _apply_axis_theme(self, axis) -> None:
-        palette = current_palette()
-        axis.set_facecolor(palette.bg_surface_alt)
-        axis.tick_params(axis="both", colors=palette.text_primary, labelcolor=palette.text_primary)
-        axis.xaxis.label.set_color(palette.text_primary)
-        axis.yaxis.label.set_color(palette.text_primary)
-        axis.title.set_color(palette.text_primary)
-        for spine in axis.spines.values():
-            spine.set_color(palette.border)
-        axis.grid(True, color=palette.border, alpha=0.35)
-
-    def _apply_legend_theme(self, axis) -> None:
-        legend = axis.get_legend()
-        if legend is None:
-            return
-
-        palette = current_palette()
-        frame = legend.get_frame()
-        frame.set_facecolor(palette.bg_surface)
-        frame.set_edgecolor(palette.border)
-        frame.set_alpha(0.95)
-        for label in legend.get_texts():
-            label.set_color(palette.text_primary)
 
     def _clear_figure(self) -> None:
         """Clear the figure and forget the hover annotation that lived on it.
@@ -797,8 +773,8 @@ class ConvergenceExaminerDialog(QDialog):
         energy_ax.set_ylabel("Energy (eV)")
         energy_ax.tick_params(axis="x", labelbottom=False)
         energy_ax.legend(loc="best") if energy_cutoffs else None
-        self._apply_axis_theme(energy_ax)
-        self._apply_legend_theme(energy_ax)
+        style_plot_axes(energy_ax)
+        style_plot_legend(energy_ax.get_legend(), frame_alpha=0.95)
 
         if force_cutoffs:
             force_ax.plot(
@@ -810,8 +786,8 @@ class ConvergenceExaminerDialog(QDialog):
         )
         force_ax.set_ylabel("Max force (eV/Ang)")
         force_ax.legend(loc="best") if force_cutoffs else None
-        self._apply_axis_theme(force_ax)
-        self._apply_legend_theme(force_ax)
+        style_plot_axes(force_ax)
+        style_plot_legend(force_ax.get_legend(), frame_alpha=0.95)
 
         self._canvas.draw_idle()
 
@@ -1340,8 +1316,8 @@ class ConvergenceExaminerDialog(QDialog):
         energy_ax.set_ylabel("Energy (eV)")
         energy_ax.tick_params(axis="x", labelbottom=False)
         energy_ax.legend(loc="best")
-        self._apply_axis_theme(energy_ax)
-        self._apply_legend_theme(energy_ax)
+        style_plot_axes(energy_ax)
+        style_plot_legend(energy_ax.get_legend(), frame_alpha=0.95)
 
         if self._sweep_kind == "kpoint":
             # n_kpoints grows as ~n^3 across a typical grid sweep, so small
@@ -1367,7 +1343,7 @@ class ConvergenceExaminerDialog(QDialog):
                     spacing_ax.set_xticklabels(labels)
                     spacing_ax.minorticks_off()
                     spacing_ax.set_xlabel("K-point spacing (1/Ang)", labelpad=8)
-                    self._apply_axis_theme(spacing_ax)
+                    style_plot_axes(spacing_ax)
                     # twiny axes inherit the energy axis's grid; suppress to avoid
                     # double-drawn vertical gridlines from the spacing tick positions.
                     spacing_ax.grid(False)
@@ -1400,7 +1376,7 @@ class ConvergenceExaminerDialog(QDialog):
         force_ax.set_ylabel("Max force (eV/Ang)")
         force_ax.yaxis.label.set_color("#b91c1c")
         force_ax.tick_params(axis="y", colors="#b91c1c", labelcolor="#b91c1c")
-        self._apply_axis_theme(force_ax)
+        style_plot_axes(force_ax)
         # The shared theme repaints the y-axis label; re-apply force color afterwards.
         force_ax.yaxis.label.set_color("#b91c1c")
         force_ax.tick_params(axis="y", colors="#b91c1c", labelcolor="#b91c1c")
@@ -1448,7 +1424,7 @@ class ConvergenceExaminerDialog(QDialog):
         handles = force_handles + stress_handles
         labels = [handle.get_label() for handle in handles]
         force_ax.legend(handles, labels, loc="best")
-        self._apply_legend_theme(force_ax)
+        style_plot_legend(force_ax.get_legend(), frame_alpha=0.95)
 
         # Mention the active thresholds in the axes titles for quick scanning.
         energy_ax.set_title(

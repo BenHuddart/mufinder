@@ -28,7 +28,12 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
-from mufinder.app.theme import current_palette, style_hint_text, use_square_top_table_corners
+from mufinder.app.theme import (
+    current_palette,
+    style_hint_text,
+    style_plot_axes,
+    use_square_top_table_corners,
+)
 from mufinder.castep_io.geometry_progress import GeometryIteration, GeometryProgress
 
 PROGRESS_COLUMN_TOOLTIP = (
@@ -210,11 +215,7 @@ class GeometryProgressDialog(QDialog):
             ]
             steps = [step for step, _criterion in points]
             unit = points[-1][1].unit
-            axis.set_facecolor(palette.bg_surface_alt)
-            axis.tick_params(colors=palette.text_primary, labelsize=8)
-            for spine in axis.spines.values():
-                spine.set_color(palette.border)
-            axis.grid(True, color=palette.border, alpha=0.35)
+            style_plot_axes(axis, tick_labelsize=8)
             # dE/ion is 0 at iteration 0 and a log axis cannot show it, so
             # non-positive values are masked rather than drawn at the axis edge.
             axis.set_yscale("log", nonpositive="mask")
@@ -233,10 +234,8 @@ class GeometryProgressDialog(QDialog):
                 linewidth=1.2,
                 color=palette.success,
             )
-            axis.set_title(
-                f"{name} ({unit})" if unit else name, color=palette.text_primary, fontsize=9
-            )
+            axis.set_title(f"{name} ({unit})" if unit else name, fontsize=9)
             if index >= len(names) - columns:
-                axis.set_xlabel("Iteration", color=palette.text_primary, fontsize=8)
+                axis.set_xlabel("Iteration", fontsize=8)
             axis.xaxis.get_major_locator().set_params(integer=True)
         self._canvas.draw_idle()
