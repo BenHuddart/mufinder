@@ -32,6 +32,7 @@
   "phonon_analysis_window": 5.0,
   "cof2_magnetic_fields_page": 3.9,
   "cof2_magnetic_structure_builder": 4.6,
+  "cof2_atom_phases": 1.8,
   "magnetic_muon_site_dialog": 3.4,
   "dipolar_tensor_dialog": 3.5,
   "nuclear_relaxation_dialog": 4.5,

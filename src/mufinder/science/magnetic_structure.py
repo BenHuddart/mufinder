@@ -7,11 +7,14 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
+from ase import Atoms
 import numpy as np
 
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import Structure
+from mufinder.science.ase_bridge import structure_to_ase_atoms
 from mufinder.science.lattice import (
+    cartesian_to_reciprocal,
     crystal_axis_to_cartesian,
     lattice_matrix,
     reciprocal_to_cartesian,
@@ -212,7 +215,12 @@ class AtomSelector:
 
 @dataclass(frozen=True, slots=True)
 class MagneticComponent:
-    """A user-facing component in a magnetic structure."""
+    """A user-facing component in a magnetic structure.
+
+    ``atom_phase_turns`` maps a unit-cell atom index to an extra phase in turns
+    that applies to that atom only, added to ``phase_turns``; it sets sublattice
+    phases without one component per atom.
+    """
 
     component_id: str
     label: str
@@ -222,6 +230,12 @@ class MagneticComponent:
     phase_turns: float = 0.0
     enabled: bool = True
     metadata: Mapping[str, object] = field(default_factory=dict)
+    atom_phase_turns: Mapping[int, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "atom_phase_turns", _normalized_atom_phase_turns(self.atom_phase_turns)
+        )
 
     @classmethod
     def from_json(cls, payload: Mapping[str, object]) -> "MagneticComponent":
@@ -240,6 +254,7 @@ class MagneticComponent:
             metadata=dict(payload.get("metadata", {}))
             if isinstance(payload.get("metadata", {}), Mapping)
             else {},
+            atom_phase_turns=_saved_atom_phase_turns(payload.get("atom_phase_turns")),
         )
 
     def to_json(self) -> dict[str, object]:
@@ -252,7 +267,44 @@ class MagneticComponent:
             "phase_turns": float(self.phase_turns),
             "enabled": bool(self.enabled),
             "metadata": dict(self.metadata),
+            "atom_phase_turns": {
+                str(index): float(phase) for index, phase in self.atom_phase_turns.items()
+            },
         }
+
+
+def _saved_atom_phase_turns(values: object) -> dict[int, float]:
+    """Return the valid entries of saved ``atom_phase_turns``, dropping malformed ones as loading does."""
+
+    if not isinstance(values, Mapping):
+        return {}
+    kept: dict[int, float] = {}
+    for raw_index, raw_phase in values.items():
+        try:
+            kept.update(_normalized_atom_phase_turns({raw_index: raw_phase}))
+        except MagneticStructureError:
+            continue
+    return kept
+
+
+def _normalized_atom_phase_turns(values: object) -> dict[int, float]:
+    if not isinstance(values, Mapping):
+        raise MagneticStructureError("atom_phase_turns must map atom indices to phases in turns")
+    normalized: dict[int, float] = {}
+    for raw_index, raw_phase in values.items():
+        try:
+            index = int(raw_index)
+            phase = float(raw_phase)
+        except (TypeError, ValueError) as exc:
+            raise MagneticStructureError(
+                "atom_phase_turns must map atom indices to phases in turns"
+            ) from exc
+        if index < 0:
+            raise MagneticStructureError("atom_phase_turns atom indices must not be negative")
+        if not np.isfinite(phase):
+            raise MagneticStructureError("atom_phase_turns phases must be finite")
+        normalized[index] = phase
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -905,6 +957,36 @@ def reciprocal_axis_q_rlu(axis: str, wavevector: float) -> tuple[float, float, f
     return (q[0], q[1], q[2])
 
 
+def reciprocal_axis_length(lattice_vectors: Sequence[Sequence[float]], axis: str) -> float:
+    """Return ``|a*|`` (or ``|b*|``, ``|c*|``) in inverse Angstrom, with ``2π``: the ``|k|`` of 1 r.l.u. along that axis."""
+
+    q = reciprocal_axis_q_rlu(axis, 1.0)
+    cartesian = reciprocal_to_cartesian(q, lattice_vectors, error=MagneticStructureError)
+    return 2.0 * np.pi * float(np.linalg.norm(cartesian))
+
+
+def wavevector_rlu_from_inverse_angstrom(
+    lattice_vectors: Sequence[Sequence[float]],
+    magnitude: float,
+    direction_rlu: Sequence[float],
+) -> tuple[float, float, float]:
+    """Return the r.l.u. wavevector of length ``magnitude`` (inverse Angstrom) along ``direction_rlu``.
+
+    ``magnitude`` follows the crystallographic convention with ``2π``, so the
+    Cartesian wavevector is ``k = magnitude x unit(direction)`` and its
+    components are ``q_i = k · a_i / 2π``.
+    """
+
+    value = float(magnitude)
+    if not np.isfinite(value) or abs(value) <= _Q_COEFF_TOLERANCE:
+        raise MagneticStructureError("the wavevector must be a non-zero number of inverse Angstrom")
+    k_cartesian = value * q_cartesian_direction(lattice_vectors, direction_rlu)
+    q = cartesian_to_reciprocal(
+        k_cartesian / (2.0 * np.pi), lattice_vectors, error=MagneticStructureError
+    )
+    return (float(q[0]), float(q[1]), float(q[2]))
+
+
 def default_preset_reference_axis(
     lattice_vectors: Sequence[Sequence[float]], q_rlu: Sequence[float]
 ) -> str:
@@ -1083,10 +1165,11 @@ def atom_resolved_fourier_components(
             continue
         index_array = np.asarray(indices, dtype=int)
         component_phase = float(model.global_phase_turns) + float(component.phase_turns)
+        atom_phases = _component_atom_phases(component, index_array, atom_count)
         for term in component.terms:
             q_rlu = model.q_coeff_to_rlu(term.q_coeff)
             fc = np.zeros((atom_count, 3), dtype=complex)
-            phase_turns = positions[index_array] @ q_rlu + component_phase
+            phase_turns = positions[index_array] @ q_rlu + component_phase + atom_phases
             phase = np.exp(-2j * np.pi * phase_turns)
             fc[index_array] = phase[:, np.newaxis] * term.coefficient.to_array()[np.newaxis, :]
             resolved.append(
@@ -1098,6 +1181,39 @@ def atom_resolved_fourier_components(
                 )
             )
     return tuple(resolved)
+
+
+def _component_atom_phases(
+    component: MagneticComponent, index_array: np.ndarray, atom_count: int
+) -> np.ndarray:
+    """Return each selected atom's extra phase in turns, in the order of ``index_array``."""
+
+    out_of_range = sorted(index for index in component.atom_phase_turns if index >= atom_count)
+    if out_of_range:
+        raise MagneticStructureError(
+            f"component '{component.label}' sets a phase on atom {out_of_range[0]}, "
+            f"but the structure has {atom_count} atoms"
+        )
+    return np.array(
+        [component.atom_phase_turns.get(int(index), 0.0) for index in index_array], dtype=float
+    )
+
+
+def atom_phases_for_selection(
+    structure: Structure, atom_phase_turns: Mapping[int, float], selector: AtomSelector
+) -> dict[int, float]:
+    """Return the non-zero ``atom_phase_turns`` on the atoms ``selector`` picks in ``structure``.
+
+    Re-targeting a component keeps the phases of the atoms it still covers and
+    drops the rest.
+    """
+
+    kept = set(resolve_atom_selector(structure, selector))
+    return {
+        int(index): float(phase)
+        for index, phase in atom_phase_turns.items()
+        if int(index) in kept and float(phase) != 0.0
+    }
 
 
 def moment_at_atom(
@@ -1177,6 +1293,41 @@ def moments_in_supercell(
         component_ids=component_ids,
     )
     return positions_cart, moments, atom_indices
+
+
+def magnetic_structure_to_ase_atoms(
+    structure: Structure,
+    model: MagneticStructureModel,
+    supercell: Sequence[int] = (1, 1, 1),
+    *,
+    component_ids: Sequence[str] | None = None,
+) -> Atoms:
+    """Return the diagonal ``supercell`` of ``structure`` as ASE ``Atoms`` carrying the model's moments.
+
+    ``initial_magnetic_moments`` is an ``(n, 3)`` array of Cartesian moments in
+    Bohr magnetons from :func:`moments_in_supercell`, in the same atom order.
+    Species labels are reduced to element symbols and kept in
+    ``atoms.info["mufinder_species_labels"]``.
+    """
+
+    repeats = _as_supercell_repeats(supercell)
+    unit_cell = structure_to_ase_atoms(
+        structure, sanitize_symbols=True, record_species_labels=True, error=MagneticStructureError
+    )
+    positions, moments, atom_indices = moments_in_supercell(
+        structure, model, repeats, component_ids=component_ids
+    )
+    symbols = unit_cell.get_chemical_symbols()
+    labels = unit_cell.info["mufinder_species_labels"]
+    atoms = Atoms(
+        symbols=[symbols[index] for index in atom_indices],
+        positions=positions,
+        cell=np.asarray(repeats, dtype=float)[:, np.newaxis] * np.asarray(unit_cell.cell),
+        pbc=True,
+    )
+    atoms.set_initial_magnetic_moments(moments)
+    atoms.info["mufinder_species_labels"] = [labels[index] for index in atom_indices]
+    return atoms
 
 
 def get_muesr_model_data(

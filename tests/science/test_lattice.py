@@ -16,6 +16,7 @@ import pytest
 from mufinder.science.lattice import (
     LatticeError,
     cartesian_to_fractional,
+    cartesian_to_reciprocal,
     cell_volume,
     crystal_axis_to_cartesian,
     deduplicate_periodic_positions,
@@ -353,6 +354,22 @@ def test_reciprocal_to_cartesian_gives_the_dual_basis() -> None:
 
     assert np.allclose(np.asarray(lattice) @ a_star, (1.0, 0.0, 0.0))
     assert np.allclose(np.asarray(lattice) @ q, (0.25, -0.5, 2.0))
+
+
+def test_cartesian_to_reciprocal_inverts_reciprocal_to_cartesian() -> None:
+    q = (0.25, -0.5, 2.0)
+
+    k = reciprocal_to_cartesian(q, _TRICLINIC)
+
+    assert cartesian_to_reciprocal(k, _TRICLINIC) == pytest.approx(q)
+
+
+def test_cartesian_to_reciprocal_rejects_a_bad_wavevector_with_the_callers_error() -> None:
+    class _Error(ValueError):
+        pass
+
+    with pytest.raises(_Error, match="3-vector"):
+        cartesian_to_reciprocal((1.0, 0.0), _CUBIC, error=_Error)
 
 
 def test_reciprocal_to_cartesian_rejects_a_singular_lattice_with_the_callers_error() -> None:

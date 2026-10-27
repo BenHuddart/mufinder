@@ -57,6 +57,7 @@ from ..render import (
     frame_viewers,
     hide_catalog_notice,
     include_every_job,
+    magnetic_project,
     new_project,
     opened,
     refuse_message_boxes,
@@ -81,6 +82,7 @@ from ..synthetic import (
 )
 
 from collections.abc import Callable
+from dataclasses import replace
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -153,6 +155,19 @@ def cof2_magnetic_model() -> MagneticStructureModel:
             ),
         ),
     )
+
+
+def cof2_single_component_model() -> MagneticStructureModel:
+    """The same antiferromagnet as one component on both Co, the body-centre Co half a turn on."""
+
+    component = build_collinear_component(
+        label="Co antiferromagnet",
+        selector=AtomSelector.species("Co"),
+        q_coeff=(0.0, 0.0, 0.0),
+        moment=(0.0, 0.0, CO_MOMENT_MU_B),
+        component_id="co-antiferromagnet",
+    )
+    return MagneticStructureModel(components=(replace(component, atom_phase_turns={1: 0.5}),))
 
 
 # --- The fixture project ----------------------------------------------------------
@@ -1210,6 +1225,18 @@ def _magnetic(open_: Callable[[Any], object]) -> Callable[[MainWindow], object]:
     return lambda window: open_(window._magnetic_field_view)
 
 
+def open_atom_phases(window: MainWindow) -> None:
+    """Open the builder, edit the one component and click ``Per-Atom Phases...``."""
+
+    def edit(builder: QWidget) -> None:
+        when_modal("MagneticComponentDialog", lambda dialog: dialog._atom_phase_button.click())
+        builder._component_table.selectRow(0)
+        builder._edit_button.click()
+
+    when_modal("MagneticStructureBuilderDialog", edit)
+    window._magnetic_field_view._edit_structure_button.click()
+
+
 SCENES: dict[str, Scene] = {
     # Getting started and setup.
     "project_home": Scene(converged_project, None, Window()),
@@ -1374,6 +1401,11 @@ SCENES: dict[str, Scene] = {
         results_project,
         "magnetic_fields",
         Dialog(_magnetic(lambda page: page._edit_structure_button.click()), size=(1180, 900)),
+    ),
+    "cof2_atom_phases": Scene(
+        magnetic_project("CoF2 one component", cof2_host(), cof2_single_component_model(), {}),
+        "magnetic_fields",
+        Dialog(open_atom_phases, kind="AtomPhaseDialog", size=(620, 400)),
     ),
     "magnetic_muon_site_dialog": Scene(
         results_project,

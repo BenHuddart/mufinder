@@ -22,6 +22,7 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.magnetic_field_widget import (
     DipolarTensorDialog,
     DipolarTensorResultsDialog,
+    AtomPhaseDialog,
     MagneticComponentDialog,
     MagneticFieldCalculationSettingsDialog,
     MagneticFieldDistributionDialog,
@@ -1109,6 +1110,189 @@ def test_magnetic_structure_builder_edit_keeps_disabled_state(
     assert dialog.model().components[0].label == "Edited"
     assert dialog.model().components[0].enabled is False
     assert dialog._component_table.item(0, 0).checkState() == Qt.CheckState.Unchecked
+    dialog.close()
+
+
+def test_magnetic_structure_builder_texture_edit_keeps_atom_phases_on_atoms_still_selected(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    original = replace(
+        _component("one", "One", 0),
+        selector=AtomSelector.all(),
+        atom_phase_turns={0: 0.1, 1: 0.5},
+        kind="texture",
+        metadata={"type": "texture", "texture_mode": "custom"},
+    )
+
+    class _Dialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def q_basis_coefficients(self):
+            return None
+
+        def q_vector(self):
+            return (0.0, 0.0, 0.0)
+
+        def q_basis_vectors(self):
+            return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+        def component(self, *_args):
+            # The texture editor rebuilds the component without atom phases, here on atom 2 only.
+            return replace(
+                original, selector=AtomSelector.indices([1]), atom_phase_turns={}, label="Edited"
+            )
+
+    monkeypatch.setattr(magnetic_field_widget_module, "MagneticTextureDialog", _Dialog)
+    dialog = _builder_with_components(tmp_path, original)
+    dialog._component_table.selectRow(0)
+
+    dialog._edit_selected_component()
+
+    assert dialog.model().components[0].label == "Edited"
+    assert dialog.model().components[0].atom_phase_turns == {1: 0.5}
+    dialog.close()
+
+
+def _phased_cobalt_component(phases: dict[int, float]) -> MagneticComponent:
+    return replace(
+        build_collinear_component(
+            label="AFM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+        ),
+        atom_phase_turns=phases,
+    )
+
+
+def _select_species_target(dialog: MagneticComponentDialog, species: str) -> None:
+    dialog._species_combo.setCurrentIndex(dialog._species_combo.findText(species))
+    dialog._species_radio.setChecked(True)
+
+
+def test_component_dialog_starts_without_atom_phases(qapp) -> None:
+    dialog = MagneticComponentDialog(_multi_species_structure())
+
+    assert dialog._atom_phase_summary.text() == "None"
+    assert dialog._atom_phase_button.text() == "Per-Atom Phases..."
+    assert dialog.component((0.0, 0.0, 0.0)).atom_phase_turns == {}
+    dialog.close()
+
+
+def test_component_dialog_atom_phases_follow_the_target(qapp) -> None:
+    dialog = MagneticComponentDialog(
+        _multi_species_structure(),
+        component=_phased_cobalt_component({1: 0.5, 2: 0.25}),
+        q_vector=(0.0, 0.0, 0.0),
+    )
+    assert dialog._atom_phase_summary.text() == "atom 2 +0.5 turns, atom 3 +0.25 turns"
+
+    _select_species_target(dialog, "Co")
+    assert dialog._atom_phase_summary.text() == "atom 3 +0.25 turns"
+    assert dialog.component((0.0, 0.0, 0.0)).atom_phase_turns == {2: 0.25}
+
+    # Phases of atoms the target drops come back when the target covers them again.
+    dialog._all_atoms_radio.setChecked(True)
+    assert dialog.component((0.0, 0.0, 0.0)).atom_phase_turns == {1: 0.5, 2: 0.25}
+    dialog.close()
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_component_dialog_edits_atom_phases_in_the_phase_dialog(
+    qapp, monkeypatch, accepted
+) -> None:
+    opened: list[tuple[tuple[int, ...], dict[int, float]]] = []
+
+    class _PhaseDialog:
+        def __init__(self, _structure, atom_indices, phases, *, parent=None):
+            opened.append((tuple(atom_indices), dict(phases)))
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+
+        def atom_phase_turns(self):
+            return {0: 0.5}
+
+    monkeypatch.setattr(magnetic_field_widget_module, "AtomPhaseDialog", _PhaseDialog)
+    dialog = MagneticComponentDialog(
+        _multi_species_structure(),
+        component=_phased_cobalt_component({1: 0.5, 2: 0.25}),
+        q_vector=(0.0, 0.0, 0.0),
+    )
+    _select_species_target(dialog, "Co")
+
+    dialog._atom_phase_button.click()
+
+    assert opened == [((0, 2), {2: 0.25})]
+    if accepted:
+        # The cobalt phases are replaced; the oxygen phase outside the target is kept.
+        assert dialog._atom_phase_summary.text() == "atom 1 +0.5 turns"
+        dialog._all_atoms_radio.setChecked(True)
+        assert dialog.component((0.0, 0.0, 0.0)).atom_phase_turns == {0: 0.5, 1: 0.5}
+    else:
+        assert dialog._atom_phase_summary.text() == "atom 3 +0.25 turns"
+    dialog.close()
+
+
+def test_atom_phase_dialog_lists_the_target_atoms_and_reads_phases(qapp) -> None:
+    dialog = AtomPhaseDialog(_multi_species_structure(), (0, 2), {2: 0.25})
+    table = dialog._table
+
+    assert table.rowCount() == 2
+    assert [table.item(row, 0).text() for row in range(2)] == ["1", "3"]
+    assert table.item(1, 1).text() == "Co"
+    assert table.item(1, 2).text() == "0.25, 0.25, 0.25"
+    assert table.item(0, 3).text() == ""
+    assert table.item(1, 3).text() == "0.25"
+    assert not table.item(0, 0).flags() & Qt.ItemFlag.ItemIsEditable
+    assert (table.currentRow(), table.currentColumn()) == (0, 3)
+    assert dialog.atom_phase_turns() == {2: 0.25}
+
+    table.item(0, 3).setText("-0.5")
+    table.item(1, 3).setText("0")
+
+    assert dialog.atom_phase_turns() == {0: -0.5}
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [("half", "must be a decimal number"), ("11", "between -10 and 10"), ("nan", "between")],
+)
+def test_atom_phase_dialog_refuses_an_invalid_phase(qapp, monkeypatch, text, message) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, body: warnings.append(body),
+    )
+    dialog = AtomPhaseDialog(_multi_species_structure(), (0, 2), {})
+    dialog._table.item(1, 3).setText(text)
+
+    dialog.accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "atom 3" in warnings[-1]
+    assert message in warnings[-1]
+    dialog.close()
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_atom_phase_dialog_clear_asks_first(qapp, monkeypatch, confirmed) -> None:
+    asked: list[str] = []
+
+    def _confirm(_parent, title, *_args, **_kwargs):
+        asked.append(title)
+        return confirmed
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _confirm)
+    dialog = AtomPhaseDialog(_multi_species_structure(), (0, 2), {0: 0.5, 2: 0.25})
+
+    dialog._clear_button.click()
+
+    assert asked == ["Clear Per-Atom Phases"]
+    assert dialog.atom_phase_turns() == ({} if confirmed else {0: 0.5, 2: 0.25})
     dialog.close()
 
 
@@ -2267,6 +2451,93 @@ def test_nuclear_relaxation_dialog_controls_follow_mode_and_distortion_state(qap
     dialog.close()
 
 
+def test_nuclear_relaxation_dialog_filters_elements(qapp) -> None:
+    calls: list[object] = []
+    dialog = NuclearRelaxationDialog(
+        muon_site=_custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        elements=("Fe", "O"),
+        calculate_callback=lambda d: calls.append(d.options()) or {"mode": "zf_polycrystal"},
+    )
+    checks = dialog._element_checks
+
+    assert list(checks) == ["Fe", "O"]
+    assert all(check.isChecked() for check in checks.values())
+    assert dialog.options().elements is None
+
+    checks["Fe"].setChecked(False)
+    assert dialog.options().elements == ("O",)
+    assert dialog.options_state()["elements"] == ["O"]
+
+    checks["O"].setChecked(False)
+    dialog._calculate_button.click()
+    assert not calls
+    assert dialog._status.text() == "Tick at least one element to include in the sum."
+
+    checks["O"].setChecked(True)
+    dialog._calculate_button.click()
+    assert calls[-1].elements == ("O",)
+    dialog.close()
+
+
+def test_nuclear_relaxation_dialog_records_the_element_filter_with_the_result(qapp) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=_custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        elements=("Fe", "O"),
+        calculate_callback=lambda _d: {"mode": "zf_polycrystal", "sigma": 0.2},
+    )
+
+    def _elements_row() -> str:
+        table = dialog._summary_table
+        row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "Elements")
+        return table.item(row, 1).text()
+
+    dialog._calculate_button.click()
+    assert "elements" not in dialog.results_state()
+    assert _elements_row() == "All"
+
+    dialog._element_checks["O"].setChecked(False)
+    dialog._calculate_button.click()
+    assert dialog.results_state()["elements"] == ["Fe"]
+    assert _elements_row() == "Fe"
+    dialog.close()
+
+
+def test_nuclear_relaxation_dialog_without_elements_keeps_a_saved_filter(qapp) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=_custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        options_state={"mode": "zf_polycrystal", "elements": ["Fe"]},
+    )
+
+    assert dialog.options().elements == ("Fe",)
+    assert dialog.options_state()["elements"] == ["Fe"]
+    dialog.close()
+
+
+def test_nuclear_relaxation_dialog_restores_the_element_filter(qapp) -> None:
+    restored = NuclearRelaxationDialog(
+        muon_site=_custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        elements=("Fe", "O"),
+        options_state={"mode": "zf_polycrystal", "elements": ["Fe"]},
+    )
+    every = NuclearRelaxationDialog(
+        muon_site=_custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        elements=("Fe", "O"),
+        options_state={"mode": "zf_polycrystal", "elements": None},
+    )
+
+    assert restored._element_checks["Fe"].isChecked()
+    assert not restored._element_checks["O"].isChecked()
+    assert restored.options().elements == ("Fe",)
+    assert every.options().elements is None
+    restored.close()
+    every.close()
+
+
 def test_magnetic_field_widget_opens_nuclear_relaxation_dialog(qapp, tmp_path, monkeypatch) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "nuclear-dialog.mufinder", "Nuclear Dialog")
@@ -2298,6 +2569,7 @@ def test_magnetic_field_widget_opens_nuclear_relaxation_dialog(qapp, tmp_path, m
     assert calls
     assert calls[0]["muon_site"].fractional_position == (0.25, 0.5, 0.75)
     assert calls[0]["distortion_available"] is False
+    assert calls[0]["elements"] == ("Fe", "O")
     assert widget.collect_state()["nuclear_relaxation_results"]["sigma"] == 0.2
     widget.close()
 
@@ -5126,7 +5398,7 @@ def test_magnetic_preset_dialog_builds_a_conical_component_on_a_stored_row(qapp)
     dialog._moment.setText("2")
 
     assert not dialog._cone_angle.isHidden()
-    assert dialog._wavevector.isHidden()
+    assert dialog._wavevector_group.isHidden()
     assert dialog.q_basis_coefficients() == (0.0, 1.0, 0.0)
     assert dialog.q_vector() == (0.5, 0.0, 0.0)
     assert dialog._reference_combo.currentData() == "b"
@@ -5204,6 +5476,77 @@ def test_magnetic_preset_dialog_ignores_a_hidden_cone_angle(qapp) -> None:
     assert dialog._cone_angle.isHidden()
     assert "Cannot build this preset" not in dialog._summary.text()
     assert dialog.component((1.0, 0.0, 0.0)).kind == "helix"
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_takes_the_wavevector_in_inverse_angstrom(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    assert dialog._wavevector_unit.currentData() == "rlu"
+    assert dialog._wavevector_row_label.text() == "Wavevector δ (r.l.u.)"
+
+    _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
+
+    # 0.25 r.l.u. along c* of the 3 Å cube is 0.25 x 2π / 3 Å⁻¹.
+    assert dialog._wavevector_row_label.text() == "Wavevector |k| (Å⁻¹)"
+    assert float(dialog._wavevector.text()) == pytest.approx(0.25 * 2.0 * np.pi / 3.0, rel=1e-5)
+    assert dialog.q_vector() == pytest.approx((0.0, 0.0, 0.25), abs=1e-6)
+
+    dialog._wavevector.setText("0.5")
+    _select_combo_data(dialog._propagation_combo, "a*")
+    assert dialog.q_vector() == pytest.approx((0.5 * 3.0 / (2.0 * np.pi), 0.0, 0.0))
+    assert "q = (0.238732, 0, 0)" in dialog._summary.text()
+
+    _select_combo_data(dialog._wavevector_unit, "rlu")
+    assert float(dialog._wavevector.text()) == pytest.approx(0.238732, rel=1e-5)
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_unit_switch_keeps_q_exactly(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+
+    _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
+    assert dialog.q_vector() == pytest.approx((0.0, 0.0, 0.25), abs=1e-14)
+
+    _select_combo_data(dialog._wavevector_unit, "rlu")
+    assert dialog._wavevector.text() == "0.25"
+    assert dialog.q_vector() == pytest.approx((0.0, 0.0, 0.25), abs=1e-14)
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("text", "message"), [("-0.5", "between 0 and 20"), ("21", "between 0 and 20")]
+)
+def test_magnetic_preset_dialog_inverse_angstrom_range(qapp, text, message) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
+
+    dialog._wavevector.setText("12")
+    assert "Cannot build" not in dialog._summary.text()
+    dialog._wavevector.setText(text)
+
+    assert message in dialog._summary.text()
+    _select_combo_data(dialog._wavevector_unit, "rlu")
+    dialog._wavevector.setText("-0.5")
+    assert dialog.q_vector() == (0.0, 0.0, -0.5)
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_refuses_a_non_finite_wavevector(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+
+    dialog._wavevector.setText("nan")
+
+    assert "between -4 and 4" in dialog._summary.text()
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_refuses_a_zero_inverse_angstrom_wavevector(qapp) -> None:
+    dialog = MagneticPresetDialog(_host_structure())
+    _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
+
+    dialog._wavevector.setText("0")
+
+    assert "non-zero number of inverse Angstrom" in dialog._summary.text()
     dialog.close()
 
 

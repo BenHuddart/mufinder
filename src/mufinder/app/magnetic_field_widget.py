@@ -91,7 +91,7 @@ from mufinder.app.workflow_table_utils import (
 )
 from mufinder.domain.models import Structure
 from mufinder.persistence.codec import to_jsonable
-from mufinder.science.ase_bridge import reduced_formula
+from mufinder.science.ase_bridge import host_elements, reduced_formula
 from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
@@ -120,6 +120,7 @@ from mufinder.science.magnetic_fields import (
 )
 from mufinder.science.magnetic_structure import (
     AtomSelector,
+    atom_phases_for_selection,
     MagneticComponent,
     MagneticStructureModel,
     MagneticStructureError,
@@ -160,6 +161,8 @@ from mufinder.science.magnetic_structure import (
     texture_diagnostics,
     topological_charge_magnetic_unit_cell,
     viable_atom_selectors,
+    reciprocal_axis_length,
+    wavevector_rlu_from_inverse_angstrom,
 )
 from mufinder.science.nuclear_relaxation import (
     NuclearRelaxationError,
@@ -395,9 +398,27 @@ class MagneticComponentDialog(QDialog):
         )
 
         self._phase = self._decimal_input("0.0", minimum=-10.0, maximum=10.0, placeholder="0.0")
+        self._atom_phase_turns: dict[int, float] = (
+            dict(component.atom_phase_turns) if component is not None else {}
+        )
+        self._atom_phase_summary = QLabel("")
+        self._atom_phase_summary.setWordWrap(True)
+        self._atom_phase_summary.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
+        )
+        style_hint_text(self._atom_phase_summary)
+        self._atom_phase_button = QPushButton("Per-Atom Phases...")
+        self._atom_phase_button.setToolTip(
+            "Give single atoms an extra phase in turns, added to the component's phase."
+        )
+        self._atom_phase_button.clicked.connect(self._edit_atom_phases)
 
         self._build_layout()
         self._refresh_target_options()
+        for button, _card, _hint in self._selector_rows:
+            button.toggled.connect(lambda *_: self._refresh_atom_phase_summary())
+        for combo in (self._species_combo, self._equivalent_combo):
+            combo.currentIndexChanged.connect(lambda *_: self._refresh_atom_phase_summary())
         self._q_source_combo.currentIndexChanged.connect(lambda *_: self._sync_q_from_basis())
         for edit in self._q_coeff_inputs:
             edit.textChanged.connect(lambda *_: self._sync_q_from_basis())
@@ -412,6 +433,7 @@ class MagneticComponentDialog(QDialog):
             self._select_q_source(q_coeff)
         self._sync_q_from_basis()
         self._refresh_texture_controls()
+        self._refresh_atom_phase_summary()
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -477,6 +499,13 @@ class MagneticComponentDialog(QDialog):
         form.addRow("q (r.l.u.)", q_group)
         form.addRow("", self._q_expression)
         form.addRow("Phase (turns)", self._phase)
+        atom_phase_group = QWidget()
+        style_inline_group(atom_phase_group)
+        atom_phase_layout = QHBoxLayout(atom_phase_group)
+        atom_phase_layout.setContentsMargins(0, 0, 0, 0)
+        atom_phase_layout.addWidget(self._atom_phase_summary, 1)
+        atom_phase_layout.addWidget(self._atom_phase_button)
+        form.addRow("Per-atom phases", atom_phase_group)
         layout.addWidget(form_group)
 
         q_basis_group = QGroupBox("Propagation-Vector Basis")
@@ -1114,7 +1143,38 @@ class MagneticComponentDialog(QDialog):
             return AtomSelector.indices(self._selected_indices)
         return AtomSelector.all()
 
+    def _target_atom_phases(self) -> dict[int, float]:
+        """Return the per-atom phases on the atoms the current target selects."""
+
+        return atom_phases_for_selection(self._structure, self._atom_phase_turns, self.selector())
+
+    def _refresh_atom_phase_summary(self) -> None:
+        phases = self._target_atom_phases()
+        self._atom_phase_summary.setText(_atom_phase_text(phases) if phases else "None")
+
+    def _edit_atom_phases(self) -> None:
+        targeted = resolve_atom_selector(self._structure, self.selector())
+        dialog = AtomPhaseDialog(self._structure, targeted, self._target_atom_phases(), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        targeted_set = set(targeted)
+        kept = {
+            index: phase
+            for index, phase in self._atom_phase_turns.items()
+            if index not in targeted_set
+        }
+        self._atom_phase_turns = {**kept, **dialog.atom_phase_turns()}
+        self._refresh_atom_phase_summary()
+
     def component(self, q_coeff: tuple[float, float, float]) -> MagneticComponent:
+        return replace(
+            self._component_without_atom_phases(q_coeff),
+            atom_phase_turns=self._target_atom_phases(),
+        )
+
+    def _component_without_atom_phases(
+        self, q_coeff: tuple[float, float, float]
+    ) -> MagneticComponent:
         amplitude = self._decimal_value(self._amplitude, "amplitude")
         label = self._label_edit.text().strip() or "Magnetic component"
         selector = self.selector()
@@ -1164,15 +1224,9 @@ class MagneticComponentDialog(QDialog):
         text = edit.text().strip()
         if not text:
             raise ValueError(f"{label} is required")
-        try:
-            value = float(text)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be a decimal number") from exc
-        minimum = float(edit.property("minimum"))
-        maximum = float(edit.property("maximum"))
-        if value < minimum or value > maximum:
-            raise ValueError(f"{label} must be between {minimum:g} and {maximum:g}")
-        return value
+        return _bounded_decimal(
+            text, label, float(edit.property("minimum")), float(edit.property("maximum"))
+        )
 
     def _unit_direction(
         self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str
@@ -1209,6 +1263,118 @@ class MagneticComponentDialog(QDialog):
                 self._decimal_value(self._cone_angle, "cone angle")
         except (MagneticStructureError, ValueError) as exc:
             QMessageBox.warning(self, "Invalid magnetic component", str(exc))
+            return
+        super().accept()
+
+
+class AtomPhaseDialog(QDialog):
+    """Table of the atoms a component targets, each with an editable extra phase in turns."""
+
+    _PHASE_COLUMN = 3
+    _PHASE_LIMIT = 10.0
+
+    def __init__(
+        self,
+        structure: Structure,
+        atom_indices: Sequence[int],
+        phases: Mapping[int, float],
+        *,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Per-Atom Phases")
+        self.resize(clamped_size(self, 620, 460))
+        self.setStyleSheet(feature_dialog_stylesheet())
+        self._atom_indices = tuple(int(index) for index in atom_indices)
+
+        self._table = create_workflow_table(
+            ("Atom", "Species", "Position (fractional)", "Extra phase (turns)"),
+            resize_to_contents_columns=(0, 1),
+            editable=True,
+            selection_behavior=QAbstractItemView.SelectionBehavior.SelectItems,
+        )
+        self._table.setRowCount(len(self._atom_indices))
+        for row, index in enumerate(self._atom_indices):
+            labels = (
+                str(index + 1),
+                str(structure.species[index]),
+                _fractional_position_label(structure.fractional_positions[index]),
+            )
+            for column, text in enumerate(labels):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._table.setItem(row, column, item)
+            phase = float(phases.get(index, 0.0))
+            self._table.setItem(
+                row, self._PHASE_COLUMN, QTableWidgetItem(f"{phase:.8g}" if phase else "")
+            )
+
+        if self._atom_indices:
+            self._table.setCurrentCell(0, self._PHASE_COLUMN)
+        self._clear_button = QPushButton("Clear Phases")
+        self._clear_button.clicked.connect(self._clear_phases)
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(14)
+        title = QLabel("Per-Atom Phases", self)
+        style_section_title(title)
+        layout.addWidget(title)
+        intro = QLabel(
+            "An extra phase in turns for single atoms, added to the component's phase and to "
+            "the q · r phase of the atom's position. A blank cell is 0. Only the atoms the "
+            "component applies to are listed."
+        )
+        intro.setWordWrap(True)
+        style_hint_text(intro)
+        layout.addWidget(intro)
+        layout.addWidget(self._table, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.addButton(self._clear_button, QDialogButtonBox.ButtonRole.ResetRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def atom_phase_turns(self) -> dict[int, float]:
+        """Return the non-zero phases by unit-cell atom index, raising ``ValueError`` for a bad cell."""
+
+        phases: dict[int, float] = {}
+        for row, index in enumerate(self._atom_indices):
+            item = self._table.item(row, self._PHASE_COLUMN)
+            text = item.text().strip() if item is not None else ""
+            if not text:
+                continue
+            value = _bounded_decimal(
+                text, f"the phase of atom {index + 1}", -self._PHASE_LIMIT, self._PHASE_LIMIT
+            )
+            if value != 0.0:
+                phases[index] = value
+        return phases
+
+    def _clear_phases(self) -> None:
+        if not workflow_table_utils.confirm_destructive(
+            self,
+            "Clear Per-Atom Phases",
+            "Clear the phase of every atom in this table?",
+            "Nothing changes until you click OK.",
+            "Clear Phases",
+        ):
+            return
+        for row in range(self._table.rowCount()):
+            self._table.setItem(row, self._PHASE_COLUMN, QTableWidgetItem(""))
+
+    def accept(self) -> None:  # noqa: D401 - Qt API override.
+        """Accept only when every phase cell holds a valid number."""
+
+        try:
+            self.atom_phase_turns()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid per-atom phase", str(exc))
             return
         super().accept()
 
@@ -1260,7 +1426,18 @@ class MagneticPresetDialog(QDialog):
         self._wavevector = MagneticComponentDialog._decimal_input(
             "0.25", minimum=-4.0, maximum=4.0, placeholder="δ"
         )
-        self._wavevector_row_label = QLabel("Wavevector δ (r.l.u.)")
+        # The exact value behind the text a unit switch wrote, so rounding the text never moves q.
+        self._converted_wavevector: tuple[str, float] | None = None
+        self._wavevector_unit = QComboBox()
+        self._wavevector_unit.addItem("r.l.u.", "rlu")
+        self._wavevector_unit.addItem("Å⁻¹", "inverse_angstrom")
+        self._wavevector_group = QWidget()
+        style_inline_group(self._wavevector_group)
+        wavevector_layout = QHBoxLayout(self._wavevector_group)
+        wavevector_layout.setContentsMargins(0, 0, 0, 0)
+        wavevector_layout.addWidget(self._wavevector, 1)
+        wavevector_layout.addWidget(self._wavevector_unit)
+        self._wavevector_row_label = QLabel("")
         self._reference_combo = QComboBox()
         for axis in ("a", "b", "c"):
             self._reference_combo.addItem(f"Crystal axis {axis}", axis)
@@ -1295,6 +1472,7 @@ class MagneticPresetDialog(QDialog):
         )
         # δ only rescales q along the same axis, so it keeps the reference axis the user chose.
         self._wavevector.textChanged.connect(lambda *_: self._refresh())
+        self._wavevector_unit.currentIndexChanged.connect(self._on_wavevector_unit_changed)
         for widget in (self._reference_combo, self._handedness_combo):
             widget.currentIndexChanged.connect(lambda *_: self._refresh())
         for edit in (self._cone_angle, self._moment):
@@ -1322,7 +1500,7 @@ class MagneticPresetDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("Structure", self._kind_combo)
         form.addRow("Propagation", self._propagation_combo)
-        form.addRow(self._wavevector_row_label, self._wavevector)
+        form.addRow(self._wavevector_row_label, self._wavevector_group)
         form.addRow(self._reference_row_label, self._reference_combo)
         form.addRow(self._handedness_row_label, self._handedness_combo)
         form.addRow(self._cone_angle_row_label, self._cone_angle)
@@ -1367,11 +1545,60 @@ class MagneticPresetDialog(QDialog):
         if isinstance(source, int):
             return _tuple3_float(self._model.q_basis_rlu[source])
         try:
-            return reciprocal_axis_q_rlu(
-                str(source), MagneticComponentDialog._decimal_value(self._wavevector, "δ")
-            )
+            if self._wavevector_in_inverse_angstrom():
+                return wavevector_rlu_from_inverse_angstrom(
+                    self._structure.lattice_vectors,
+                    self._wavevector_value("|k|"),
+                    reciprocal_axis_q_rlu(str(source), 1.0),
+                )
+            return reciprocal_axis_q_rlu(str(source), self._wavevector_value("δ"))
         except MagneticStructureError as exc:
             raise ValueError(str(exc)) from None
+
+    def _wavevector_value(self, label: str) -> float:
+        value = MagneticComponentDialog._decimal_value(self._wavevector, label)
+        converted = self._converted_wavevector
+        if converted is not None and converted[0] == self._wavevector.text():
+            return converted[1]
+        return value
+
+    def _wavevector_in_inverse_angstrom(self) -> bool:
+        return self._wavevector_unit.currentData() == "inverse_angstrom"
+
+    def _on_wavevector_unit_changed(self, *_args: object) -> None:
+        """Convert the typed wavevector to the new unit, so q stays the same."""
+
+        inverse_angstrom = self._wavevector_in_inverse_angstrom()
+        source = self._propagation_combo.currentData()
+        try:
+            previous = self._wavevector_value_in_previous_unit()
+            axis_length = reciprocal_axis_length(self._structure.lattice_vectors, str(source))
+        except (MagneticStructureError, ValueError):
+            previous = None
+        self._set_wavevector_range(inverse_angstrom)
+        if previous is not None:
+            converted = previous * axis_length if inverse_angstrom else previous / axis_length
+            text = f"{converted:.6g}"
+            self._wavevector.setText(text)
+            self._converted_wavevector = (text, converted)
+        self._refresh()
+
+    def _wavevector_value_in_previous_unit(self) -> float:
+        text = self._wavevector.text().strip()
+        converted = self._converted_wavevector
+        if converted is not None and converted[0] == text:
+            return converted[1]
+        return float(text)
+
+    def _set_wavevector_range(self, inverse_angstrom: bool) -> None:
+        """|k| is a length up to 20 Å⁻¹; δ keeps its sign and the ±4 r.l.u. range."""
+
+        minimum, maximum = (0.0, 20.0) if inverse_angstrom else (-4.0, 4.0)
+        self._wavevector.setProperty("minimum", minimum)
+        self._wavevector.setProperty("maximum", maximum)
+        validator = self._wavevector.validator()
+        if isinstance(validator, QDoubleValidator):
+            validator.setRange(minimum, maximum, 8)
 
     def _propagation_text(self) -> str:
         source = self._propagation_combo.currentData()
@@ -1403,8 +1630,13 @@ class MagneticPresetDialog(QDialog):
     def _refresh(self, *, reset_reference: bool = False) -> None:
         kind = self._kind()
         from_axis = not isinstance(self._propagation_combo.currentData(), int)
-        self._wavevector.setVisible(from_axis)
+        self._wavevector_group.setVisible(from_axis)
         self._wavevector_row_label.setVisible(from_axis)
+        inverse_angstrom = self._wavevector_in_inverse_angstrom()
+        self._wavevector_row_label.setText(
+            "Wavevector |k| (Å⁻¹)" if inverse_angstrom else "Wavevector δ (r.l.u.)"
+        )
+        self._wavevector.setPlaceholderText("|k|" if inverse_angstrom else "δ")
         rotating = kind != "spin_density_wave"
         self._handedness_combo.setVisible(rotating)
         self._handedness_row_label.setVisible(rotating)
@@ -3633,7 +3865,11 @@ class MagneticStructureBuilderDialog(QDialog):
                 "This texture needs more independent propagation-vector basis directions than are available.",
             )
             return
-        updated = replace(dialog.component(transform, q_basis), enabled=component.enabled)
+        updated = _with_kept_atom_phases(
+            self._host_structure,
+            replace(dialog.component(transform, q_basis), enabled=component.enabled),
+            component,
+        )
         components = tuple(
             updated if candidate.component_id == component.component_id else candidate
             for candidate in self._model.components
@@ -5459,6 +5695,7 @@ class NuclearRelaxationDialog(QDialog):
         *,
         muon_site: MagneticMuonSiteOption | None,
         distortion_available: bool,
+        elements: Sequence[str] = (),
         options_state: Mapping[str, object] | None = None,
         results_state: Mapping[str, object] | None = None,
         calculate_callback: Callable[["NuclearRelaxationDialog"], object] | None = None,
@@ -5488,6 +5725,14 @@ class NuclearRelaxationDialog(QDialog):
         self._radius = self._decimal_input("", minimum=0.0)
         self._radius.setPlaceholderText("auto")
         self._rtol = self._decimal_input("1e-6", minimum=0.0)
+        self._element_checks = {
+            str(element): QCheckBox(str(element), self) for element in dict.fromkeys(elements)
+        }
+        # Without checkboxes the saved filter is carried through unchanged.
+        self._saved_elements: tuple[str, ...] | None = None
+        for check in self._element_checks.values():
+            check.setChecked(True)
+            check.setToolTip("Include this element's nuclei in the second-moment sum.")
         self._quadrupolar = QCheckBox("Include ZF quadrupolar correction", self)
         self._distortion = QCheckBox("Apply muon-induced distortion correction", self)
         self._distortion.setEnabled(self._distortion_available)
@@ -5535,6 +5780,7 @@ class NuclearRelaxationDialog(QDialog):
         radius = None if not radius_text else float(radius_text)
         return NuclearRelaxationOptions(
             mode=mode,  # type: ignore[arg-type]
+            elements=self._selected_elements(),
             direction=(
                 float(self._direction_x.text() or "0"),
                 float(self._direction_y.text() or "0"),
@@ -5574,6 +5820,16 @@ class NuclearRelaxationDialog(QDialog):
         mode_form.addRow("Crystal-axis direction", direction_group)
         mode_form.addRow("Radius (Å)", self._radius)
         mode_form.addRow("Convergence rtol", self._rtol)
+        if self._element_checks:
+            elements_group = QWidget(mode_group)
+            style_inline_group(elements_group)
+            elements_layout = QHBoxLayout(elements_group)
+            elements_layout.setContentsMargins(0, 0, 0, 0)
+            elements_layout.setSpacing(24)
+            for check in self._element_checks.values():
+                elements_layout.addWidget(check)
+            elements_layout.addStretch(1)
+            mode_form.addRow("Elements", elements_group)
         mode_form.addRow("", self._quadrupolar)
         mode_form.addRow("", self._distortion)
         layout.addWidget(mode_group)
@@ -5611,8 +5867,21 @@ class NuclearRelaxationDialog(QDialog):
             "}"
         )
 
+    def _selected_elements(self) -> tuple[str, ...] | None:
+        """Return the ticked elements, or ``None`` (every element) when all are ticked."""
+
+        if not self._element_checks:
+            return self._saved_elements
+        ticked = tuple(
+            element for element, check in self._element_checks.items() if check.isChecked()
+        )
+        return None if len(ticked) == len(self._element_checks) else ticked
+
     def _calculate(self) -> None:
         if self._calculate_callback is None:
+            return
+        if self._selected_elements() == ():
+            self._status.setText("Tick at least one element to include in the sum.")
             return
         try:
             result = self._calculate_callback(self)
@@ -5624,6 +5893,9 @@ class NuclearRelaxationDialog(QDialog):
         self._results_state = dict(jsonable) if isinstance(jsonable, Mapping) else {}
         if self._results_state and self._muon_site is not None:
             self._results_state["site_source"] = self._muon_site.source
+        elements = self._selected_elements()
+        if self._results_state and elements is not None:
+            self._results_state["elements"] = list(elements)
         self._populate_results(self._results_state)
         mode = str(self._results_state.get("mode", self.options().mode))
         suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
@@ -5653,6 +5925,12 @@ class NuclearRelaxationDialog(QDialog):
             self._radius.setText(str(state.get("radius")))
         if state.get("convergence_rtol") not in {None, ""}:
             self._rtol.setText(str(state.get("convergence_rtol")))
+        saved_elements = state.get("elements")
+        if isinstance(saved_elements, (list, tuple)):
+            saved = tuple(str(value) for value in saved_elements)
+            self._saved_elements = saved
+            for element, check in self._element_checks.items():
+                check.setChecked(element in saved)
         self._quadrupolar.setChecked(bool(state.get("include_quadrupolar", False)))
         self._distortion.setChecked(
             bool(state.get("use_distortion_correction", False)) and self._distortion_available
@@ -5684,6 +5962,7 @@ class NuclearRelaxationDialog(QDialog):
             ("Δ field (T)", _format_float(result.get("delta_field_t"))),
             ("Convergence radius (Å)", _format_float(result.get("convergence_radius_a"))),
             ("Nuclei summed", str(result.get("n_nuclei_summed", ""))),
+            ("Elements", _nuclear_elements_text(result.get("elements"))),
         ]
         if result.get("sigma_perp_squared") is not None:
             rows.append(("σ⊥² (μs⁻²)", _format_float(result.get("sigma_perp_squared"))))
@@ -7290,6 +7569,7 @@ class MagneticFieldWidget(QWidget):
         dialog = NuclearRelaxationDialog(
             muon_site=site,
             distortion_available=distortion_available,
+            elements=host_elements(self._host_structure.species),
             options_state=self._nuclear_relaxation_options_state,
             results_state=self._nuclear_relaxation_results_state,
             calculate_callback=self._calculate_nuclear_relaxation_from_dialog,
@@ -8302,6 +8582,49 @@ def _preview_supercell_structure(
         },
     )
     return preview, atom_indices
+
+
+def _nuclear_elements_text(elements: object) -> str:
+    """Name the elements a nuclear sum included, or ``All`` when it was not filtered."""
+
+    if isinstance(elements, (list, tuple)):
+        return ", ".join(str(element) for element in elements)
+    return "All"
+
+
+def _bounded_decimal(text: str, label: str, minimum: float, maximum: float) -> float:
+    """Parse ``text`` as a finite decimal between ``minimum`` and ``maximum``, naming ``label`` on error."""
+
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a decimal number") from exc
+    if not np.isfinite(value) or value < minimum or value > maximum:
+        raise ValueError(f"{label} must be between {minimum:g} and {maximum:g}")
+    return value
+
+
+def _atom_phase_text(phases: Mapping[int, float]) -> str:
+    """List per-atom phases as ``atom 2 +0.5 turns, atom 4 +0.5 turns``, atoms numbered from 1."""
+
+    return ", ".join(
+        f"atom {index + 1} {phase:+.8g} turns" for index, phase in sorted(phases.items())
+    )
+
+
+def _with_kept_atom_phases(
+    structure: Structure, updated: MagneticComponent, original: MagneticComponent
+) -> MagneticComponent:
+    """Return ``updated`` with ``original``'s atom phases on the atoms it still selects."""
+
+    if not original.atom_phase_turns:
+        return updated
+    return replace(
+        updated,
+        atom_phase_turns=atom_phases_for_selection(
+            structure, original.atom_phase_turns, updated.selector
+        ),
+    )
 
 
 def _selector_label(selector: AtomSelector, structure: Structure | None = None) -> str:

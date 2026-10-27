@@ -166,6 +166,24 @@ def reciprocal_to_cartesian(
     return [inverse[row][0] * q0 + inverse[row][1] * q1 + inverse[row][2] * q2 for row in range(3)]
 
 
+def cartesian_to_reciprocal(
+    wavevector: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+    *,
+    error: type[Exception] = LatticeError,
+) -> list[float]:
+    """Convert a Cartesian wavevector (inverse Angstrom, without ``2π``) to reciprocal lattice units.
+
+    The inverse of :func:`reciprocal_to_cartesian`: component ``i`` is ``k · a_i``.
+    """
+
+    rows = lattice_rows(lattice_vectors, error=error)
+    if len(wavevector) != 3:
+        raise error("Wavevector must be a 3-vector.")
+    k0, k1, k2 = (float(value) for value in wavevector)
+    return [row[0] * k0 + row[1] * k1 + row[2] * k2 for row in rows]
+
+
 def _frac_to_cart(fractional: Sequence[float], lattice: Sequence[Sequence[float]]) -> list[float]:
     f0, f1, f2 = fractional[0], fractional[1], fractional[2]
     return [
