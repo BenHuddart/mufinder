@@ -3728,7 +3728,10 @@ def test_settings_summary_names_the_contact_shell_only_with_a_coupling(qapp, tmp
     assert "contact shell of 1 nearest magnetic ion within 2.5 Å" in (
         widget._calculation_settings_summary.text()
     )
-    widget._hyperfine_coupling.setText("not a number")
+    # The validator lets a half-typed number through; it is no coupling yet.
+    widget._hyperfine_coupling.clear()
+    QTest.keyClicks(widget._hyperfine_coupling, "-")
+    assert widget._hyperfine_coupling.text() == "-"
     assert "contact shell" not in widget._calculation_settings_summary.text()
     widget.close()
 
