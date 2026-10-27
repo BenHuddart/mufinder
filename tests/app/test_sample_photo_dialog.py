@@ -240,3 +240,26 @@ def test_photo_dialog_without_an_outline_reports_no_box(qapp) -> None:
     assert dialog._box_status.text() == ""
     assert not dialog._use_button.isEnabled()
     dialog.close()
+
+
+def test_choosing_a_photo_after_a_missing_one_reenables_segmentation(qapp, tmp_path) -> None:
+    seed = DemagnetizingSample.image_plate(
+        np.ones((20, 10), dtype=bool),
+        (4.0, 2.0),
+        0.1,
+        photo=PlatePhoto(path=str(tmp_path / "moved.png")),
+    )
+    dialog = SamplePhotoDialog(seed)
+    assert not dialog._threshold_slider.isEnabled()
+
+    dialog.load_photo(_plate_photo(tmp_path))
+
+    for widget in (
+        dialog._threshold_slider,
+        dialog._auto_button,
+        dialog._invert,
+        dialog._fill_holes,
+        dialog._match_button,
+    ):
+        assert widget.isEnabled()
+    dialog.close()

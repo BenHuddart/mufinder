@@ -737,7 +737,9 @@ MuFinder saves the outline with the project, at up to 256 pixels along its
 longer side, with the photo's path and the segmentation settings. The tensor
 needs only the saved outline, so a project still calculates after the photo
 moves; ``Edit outline...`` then shows the saved outline instead of the photo,
-and choosing the photo again re-enables the threshold controls.
+and choosing the photo again re-enables the threshold controls. An
+incommensurate distribution records the sample it was calculated with, naming
+the outline by its size and SHA-256 digest rather than storing another copy.
 
 Orient the sample
 ~~~~~~~~~~~~~~~~~

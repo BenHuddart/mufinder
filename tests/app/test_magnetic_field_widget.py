@@ -2811,6 +2811,15 @@ def test_demagnetizing_preview_draws_the_voxels_of_a_plate(qapp, monkeypatch) ->
     assert (xmax - xmin, ymax - ymin) == pytest.approx((5.0, 5.0), rel=1e-6)
     assert zmax - zmin == pytest.approx(0.2)
     assert xmin == pytest.approx(-2.5)
+    # Orienting the plate rotates the cached surface rather than rebuilding it.
+    built = []
+    build = canvas._build_voxel_mesh
+    monkeypatch.setattr(canvas, "_build_voxel_mesh", lambda s: built.append(s) or build(s))
+    canvas.set_sample(replace(plate, rotation=tuple(map(tuple, np.eye(3)[[1, 2, 0]]))))
+    assert built == []
+    # A different shape setting builds a new one.
+    canvas.set_sample(replace(plate, smoothing=0.5))
+    assert len(built) == 1
     # A plate without an outline draws only the three axis arrows and M.
     canvas._plotter.meshes.clear()
     canvas.set_sample(magnetic_field_widget_module.DemagnetizingSample(shape="image_plate"))

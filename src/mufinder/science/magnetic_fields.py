@@ -1809,7 +1809,9 @@ def _distribution_calculation_parameters(
         "include_lorentz": bool(options.include_lorentz),
         "demag_shape": options.demag_shape,
         "plate_normal_axis": options.plate_normal_axis,
-        "demag_sample": None if options.demag_sample is None else options.demag_sample.to_json(),
+        "demag_sample": (
+            None if options.demag_sample is None else options.demag_sample.summary_json()
+        ),
         "measured_magnetization": _optional_list(
             _measured_magnetization_vector(options.measured_magnetization)
         ),

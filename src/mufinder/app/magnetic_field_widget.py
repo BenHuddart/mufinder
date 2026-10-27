@@ -4755,6 +4755,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
             )
         self._sample: DemagnetizingSample | None = None
         self._lattice_vectors: np.ndarray | None = None
+        # The last voxel surface and the shape it was built for: editing the
+        # orientation only rotates it.
+        self._voxel_mesh_cache: tuple[DemagnetizingSample, object] | None = None
         self._refreshing_theme = False
         self._style_signature = self._style_signature_for_current_palette()
         # auto_update=False disables pyvistaqt's always-on render_timer; we
@@ -4887,6 +4890,15 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         sample without voxels yet (a plate with no photo) draws nothing.
         """
 
+        shape_only = replace(sample, rotation=None, normal_hkl=None, in_plane_uvw=None, photo=None)
+        cached = self._voxel_mesh_cache
+        if cached is not None and cached[0] == shape_only:
+            return cached[1]
+        mesh = self._build_voxel_mesh(shape_only)
+        self._voxel_mesh_cache = (shape_only, mesh)
+        return mesh
+
+    def _build_voxel_mesh(self, sample: DemagnetizingSample):
         try:
             if sample.shape == "image_plate":
                 sample = replace(sample, thickness_voxels=1)

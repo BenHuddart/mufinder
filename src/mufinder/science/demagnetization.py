@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -306,13 +307,10 @@ class DemagnetizingSample:
         bounding box.
         """
 
-        values = np.asarray(mask, dtype=bool)
-        if values.ndim != 2 or not np.any(values):
-            raise DemagnetizationError("a plate outline must be a 2-D mask with the sample in it")
         width, height = _positive_pair(size, "plate size")
         return cls(
             shape="image_plate",
-            plate_mask=VoxelMask.from_array(fit_mask(values, _STORED_MASK_EDGE)),
+            plate_mask=plate_outline_mask(mask),
             plate_size=(width, height),
             plate_thickness=float(thickness),
             **fields,  # type: ignore[arg-type]
@@ -333,31 +331,34 @@ class DemagnetizingSample:
                 raise DemagnetizationError("the voxel-grid sample has no voxels")
             return VoxelModel(mask=self.voxels.array(), spacing=_spacing3(self.voxel_spacing))
         if shape == "image_plate":
-            if self.plate_mask is None or len(self.plate_mask.shape) != 2:
-                raise DemagnetizationError("the plate has no outline; choose a photograph")
-            width, height = _positive_pair(self.plate_size, "plate size")
-            thickness = float(self.plate_thickness)
-            if not math.isfinite(thickness) or thickness <= 0.0:
-                raise DemagnetizationError("the plate thickness must be positive")
-            grid = _fourier_grid(self.fourier_grid)
-            layers = int(self.thickness_voxels)
-            if layers < 1:
-                raise DemagnetizationError(
-                    "the plate needs at least one voxel through its thickness"
-                )
-            longer = max(width, height)
-            counts = (
-                max(1, int(round(grid * width / longer))),
-                max(1, int(round(grid * height / longer))),
-            )
-            in_plane = resample_mask(self.plate_mask.array(), counts)
-            if not np.any(in_plane):
-                raise DemagnetizationError(
-                    "the outline vanishes at this grid; increase the Fourier grid"
-                )
-            spacing = (width / counts[0], height / counts[1], thickness / layers)
+            in_plane, layers, spacing = self._plate_layout()
             return VoxelModel(mask=extrude_plate(in_plane, layers), spacing=spacing)
         raise DemagnetizationError(f"the '{self.shape}' shape is not made of voxels")
+
+    def _plate_layout(self) -> tuple[np.ndarray, int, Triplet]:
+        """Return a plate's in-plane voxels, its layers and the voxel edges, without extruding."""
+
+        if self.plate_mask is None or len(self.plate_mask.shape) != 2:
+            raise DemagnetizationError("the plate has no outline; choose a photograph")
+        width, height = _positive_pair(self.plate_size, "plate size")
+        thickness = float(self.plate_thickness)
+        if not math.isfinite(thickness) or thickness <= 0.0:
+            raise DemagnetizationError("the plate thickness must be positive")
+        grid = _fourier_grid(self.fourier_grid)
+        layers = int(self.thickness_voxels)
+        if layers < 1:
+            raise DemagnetizationError("the plate needs at least one voxel through its thickness")
+        longer = max(width, height)
+        counts = (
+            max(1, int(round(grid * width / longer))),
+            max(1, int(round(grid * height / longer))),
+        )
+        in_plane = resample_mask(self.plate_mask.array(), counts)
+        if not np.any(in_plane):
+            raise DemagnetizationError(
+                "the outline vanishes at this grid; increase the Fourier grid"
+            )
+        return in_plane, layers, (width / counts[0], height / counts[1], thickness / layers)
 
     @property
     def is_oriented(self) -> bool:
@@ -433,6 +434,23 @@ class DemagnetizingSample:
             "thickness_voxels": int(self.thickness_voxels),
             "photo": None if self.photo is None else self.photo.to_json(),
         }
+
+    def summary_json(self) -> dict[str, object]:
+        """Return :meth:`to_json` with each voxel mask replaced by its shape and SHA-256 digest.
+
+        Results record the sample they were calculated with this way, so they
+        name the outline without carrying a copy of it.
+        """
+
+        payload = self.to_json()
+        for key in ("voxels", "plate_mask"):
+            mask = getattr(self, key)
+            if mask is not None:
+                payload[key] = {
+                    "shape": list(mask.shape),
+                    "sha256": hashlib.sha256(mask.bits).hexdigest(),
+                }
+        return payload
 
     @classmethod
     def from_json(cls, payload: object) -> "DemagnetizingSample":
@@ -977,6 +995,15 @@ def fourier_box_shape(
     return box  # type: ignore[return-value]
 
 
+def plate_outline_mask(mask: Sequence[object] | np.ndarray) -> VoxelMask:
+    """Return an in-plane outline as an ``image_plate`` stores it: at most 256 cells along its longer side."""
+
+    values = np.asarray(mask, dtype=bool)
+    if values.ndim != 2 or not np.any(values):
+        raise DemagnetizationError("a plate outline must be a 2-D mask with the sample in it")
+    return VoxelMask.from_array(fit_mask(values, _STORED_MASK_EDGE))
+
+
 def sample_fourier_box(sample: DemagnetizingSample) -> tuple[int, int, int]:
     """Return the FFT box, in voxels, the Fourier method would use for ``sample``.
 
@@ -987,10 +1014,19 @@ def sample_fourier_box(sample: DemagnetizingSample) -> tuple[int, int, int]:
 
     if not sample.uses_fourier_method:
         raise DemagnetizationError(f"the '{sample.shape}' shape has a closed-form tensor")
+    _smoothing_width(sample.smoothing)
+    if _normalize_shape(sample.shape) == "image_plate":
+        # The layers are identical, so the box follows from the in-plane voxels.
+        in_plane, layers, spacing = sample._plate_layout()
+        rows = np.flatnonzero(np.any(in_plane, axis=1))
+        columns = np.flatnonzero(np.any(in_plane, axis=0))
+        extent = (int(rows[-1] - rows[0] + 1), int(columns[-1] - columns[0] + 1), layers)
+        return _checked_box(extent, spacing, float(sample.padding))
     model = sample.voxel_model()
-    return _fourier_box(model.mask, model.spacing, float(sample.padding), float(sample.smoothing))[
-        2
-    ]
+    _voxels, _step, box = _fourier_box(
+        model.mask, model.spacing, float(sample.padding), float(sample.smoothing)
+    )
+    return box
 
 
 def _fourier_box(
@@ -1006,9 +1042,7 @@ def _fourier_box(
         raise DemagnetizationError("the voxel shape must be a 3-D array")
     if not np.any(voxels):
         raise DemagnetizationError("the voxel shape is empty")
-    sigma = float(smoothing)
-    if not math.isfinite(sigma) or sigma < 0.0:
-        raise DemagnetizationError("smoothing must be zero or positive")
+    _smoothing_width(smoothing)
     hits = [np.flatnonzero(np.any(voxels, axis=axes)) for axes in ((1, 2), (0, 2), (0, 1))]
     voxels = voxels[
         hits[0][0] : hits[0][-1] + 1,
@@ -1016,7 +1050,22 @@ def _fourier_box(
         hits[2][0] : hits[2][-1] + 1,
     ]
     step = _spacing3(spacing)
-    box = fourier_box_shape(voxels.shape, step, padding)
+    return voxels, step, _checked_box(voxels.shape, step, padding)
+
+
+def _smoothing_width(smoothing: float) -> float:
+    sigma = float(smoothing)
+    if not math.isfinite(sigma) or sigma < 0.0:
+        raise DemagnetizationError("smoothing must be zero or positive")
+    return sigma
+
+
+def _checked_box(
+    extent: Sequence[int], spacing: float | Sequence[float], padding: float
+) -> tuple[int, int, int]:
+    """Return the FFT box for a sample of ``extent`` voxels, refusing one too large to hold."""
+
+    box = fourier_box_shape(extent, spacing, padding)
     total = int(np.prod(box))
     if total > _MAX_BOX_VOXELS:
         raise DemagnetizationError(
@@ -1024,7 +1073,7 @@ def _fourier_box(
             f"{_MAX_BOX_VOXELS / 1e6:.1f} million); lower the Fourier grid, the voxels "
             "through the thickness or the padding"
         )
-    return voxels, step, box
+    return box
 
 
 def _embedded(voxels: np.ndarray, box: tuple[int, int, int]) -> np.ndarray:

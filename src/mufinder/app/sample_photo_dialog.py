@@ -36,6 +36,8 @@ from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
     PlatePhoto,
+    VoxelMask,
+    plate_outline_mask,
     sample_fourier_box,
 )
 from mufinder.science.sample_image import (
@@ -123,9 +125,10 @@ class SamplePhotoDialog(QDialog):
         photo = seed.photo if seed is not None and seed.photo is not None else PlatePhoto()
         self._grey: np.ndarray | None = None
         self._segmentation: PlateSegmentation | None = None
-        self._saved_outline = (
-            None if seed is None or seed.plate_mask is None else seed.plate_mask.array()
-        )
+        # The outline as the sample stores it: fitted once when it changes, not
+        # on every edit of a size field.
+        self._saved_outline = None if seed is None else seed.plate_mask
+        self._outline_mask: VoxelMask | None = self._saved_outline
         self._threshold: float | None = photo.threshold
         self._updating = False
 
@@ -287,13 +290,13 @@ class SamplePhotoDialog(QDialog):
         Raises :class:`DemagnetizationError` when there is no outline.
         """
 
-        outline = self._outline()
-        if outline is None:
+        if self._outline_mask is None:
             raise DemagnetizationError("choose a photo with the sample in it")
-        return DemagnetizingSample.image_plate(
-            outline,
-            (float(self._width.value()), float(self._height.value())),
-            float(self._thickness.value()),
+        return DemagnetizingSample(
+            shape="image_plate",
+            plate_mask=self._outline_mask,
+            plate_size=(float(self._width.value()), float(self._height.value())),
+            plate_thickness=float(self._thickness.value()),
             fourier_grid=int(self._grid.value()),
             thickness_voxels=int(self._layers.value()),
             padding=float(self._padding.value()),
@@ -320,6 +323,8 @@ class SamplePhotoDialog(QDialog):
             return False
         self._grey = grey
         self._saved_outline = None
+        for widget in self._segmenting_widgets():
+            widget.setEnabled(True)
         self._path.setText(str(path))
         if not keep_settings:
             self._threshold = None
@@ -356,6 +361,7 @@ class SamplePhotoDialog(QDialog):
         if self._grey is None:
             return
         self._segmentation = None
+        self._outline_mask = None
         try:
             level = otsu_threshold(self._grey) if self._threshold is None else self._threshold
             self._set_slider(level)
@@ -370,6 +376,7 @@ class SamplePhotoDialog(QDialog):
             self._render(self._grey, None)
             self._check_box()
             return
+        self._outline_mask = plate_outline_mask(self._segmentation.in_plane_mask())
         r0, r1, c0, c1 = self._segmentation.bounds
         source = "Otsu threshold" if self._threshold is None else "threshold"
         polarity = "bright" if self._segmentation.sample_is_bright else "dark"
@@ -379,21 +386,23 @@ class SamplePhotoDialog(QDialog):
         self._render(self._grey, self._segmentation.mask)
         self._check_box()
 
-    def _show_saved_outline(self, missing_path: str) -> None:
-        segmenting = (
+    def _segmenting_widgets(self) -> tuple[QWidget, ...]:
+        return (
             self._threshold_slider,
             self._auto_button,
             self._invert,
             self._fill_holes,
             self._match_button,
         )
-        for widget in segmenting:
+
+    def _show_saved_outline(self, missing_path: str) -> None:
+        for widget in self._segmenting_widgets():
             widget.setEnabled(False)
         if self._saved_outline is None:
             self._check_box()
             return
         self._path.setText(missing_path)
-        image_mask = in_plane_to_image(self._saved_outline)
+        image_mask = in_plane_to_image(self._saved_outline.array())
         self._render(np.where(image_mask, 90, 225).astype(np.uint8), image_mask)
         where = f"The photo {missing_path} is not available" if missing_path else "No photo"
         self._status.setText(
@@ -404,7 +413,7 @@ class SamplePhotoDialog(QDialog):
     def _check_box(self, *_args: object) -> None:
         """Report the FFT box the settings need; ``Use Outline`` needs an outline and a box that fits."""
 
-        if self._outline() is None:
+        if self._outline_mask is None:
             self._box_status.setText("")
             self._use_button.setEnabled(False)
             return
@@ -419,13 +428,6 @@ class SamplePhotoDialog(QDialog):
             f"The FFT box is {size}, {float(np.prod(box)) / 1e6:.1f} million voxels."
         )
         self._use_button.setEnabled(True)
-
-    def _outline(self) -> np.ndarray | None:
-        if self._segmentation is not None:
-            return self._segmentation.in_plane_mask()
-        if self._grey is None:
-            return self._saved_outline
-        return None
 
     def _set_slider(self, level: float) -> None:
         self._updating = True

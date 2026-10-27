@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 
 import numpy as np
 import pytest
@@ -1064,6 +1065,22 @@ def test_sample_from_json_reads_unusable_voxel_fields_as_defaults() -> None:
     assert sample.thickness_voxels == 1
     assert sample.smoothing == 0.0
     assert sample.photo == PlatePhoto(path="a.png", threshold=None, invert=True)
+
+
+def test_summary_json_names_each_mask_by_its_digest() -> None:
+    plate = DemagnetizingSample.image_plate(_disc(40), (5.0, 4.0), 0.1)
+    voxels = DemagnetizingSample.voxel_grid(np.ones((3, 4, 2), dtype=bool), 1.0)
+
+    summary = plate.summary_json()
+    assert summary["plate_mask"] == {
+        "shape": [40, 40],
+        "sha256": hashlib.sha256(plate.plate_mask.bits).hexdigest(),
+    }
+    assert summary["plate_size"] == [5.0, 4.0]
+    assert voxels.summary_json()["voxels"]["shape"] == [3, 4, 2]
+    assert "bits" not in str(summary)
+    sphere = DemagnetizingSample(shape="sphere")
+    assert sphere.summary_json() == sphere.to_json()
 
 
 def test_sample_from_json_non_mapping_returns_default() -> None:
