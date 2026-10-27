@@ -42,10 +42,12 @@ from mufinder.science.magnetic_structure import (
     evaluate_texture_grid,
     evaluate_texture_moment,
     get_muesr_model_data,
+    atom_phases_for_selection,
     is_texture_component,
     magnetic_builder_checklist,
     magnetic_model_from_legacy_structure,
     magnetic_period_along_axes,
+    magnetic_structure_to_ase_atoms,
     moment_at_atom,
     moments_in_supercell,
     move_magnetic_components,
@@ -55,6 +57,7 @@ from mufinder.science.magnetic_structure import (
     q_basis_slots,
     q_cartesian_direction,
     q_coeff_expression,
+    reciprocal_axis_length,
     reciprocal_axis_q_rlu,
     skyrmion_q_basis_rlu,
     split_muesr_model_data_into_helices,
@@ -65,6 +68,7 @@ from mufinder.science.magnetic_structure import (
     set_magnetic_components_enabled,
     set_q_basis_vector,
     viable_atom_selectors,
+    wavevector_rlu_from_inverse_angstrom,
 )
 from mufinder.science.magnetic_structure import _orthogonal_unit_vector
 from tests.support.structures import host_structure
@@ -810,6 +814,252 @@ def test_moments_in_supercell_shapes() -> None:
     assert positions.shape == (4, 3)
     assert moments.shape == (4, 3)
     assert atom_indices.tolist() == [0, 1, 0, 1]
+
+
+_BCC_IRON = partial(host_structure, label="Fe", lattice=2.868, species=("Fe", "Fe"))
+
+
+def test_atom_phases_build_a_two_atom_antiferromagnet_as_one_component() -> None:
+    structure = _BCC_IRON()
+    one = MagneticStructureModel(
+        components=(
+            replace(
+                build_collinear_component(
+                    label="AFM",
+                    selector=AtomSelector.all(),
+                    q_coeff=(0.0, 0.0, 0.0),
+                    moment=(0.0, 0.0, 2.2),
+                ),
+                atom_phase_turns={1: 0.5},
+            ),
+        )
+    )
+    two = MagneticStructureModel(
+        components=(
+            build_collinear_component(
+                label="Up",
+                selector=AtomSelector.indices([0]),
+                q_coeff=(0.0, 0.0, 0.0),
+                moment=(0.0, 0.0, 2.2),
+            ),
+            build_collinear_component(
+                label="Down",
+                selector=AtomSelector.indices([1]),
+                q_coeff=(0.0, 0.0, 0.0),
+                moment=(0.0, 0.0, -2.2),
+            ),
+        )
+    )
+
+    _positions, one_moments, _indices = moments_in_supercell(structure, one, (2, 2, 2))
+    _positions, two_moments, _indices = moments_in_supercell(structure, two, (2, 2, 2))
+
+    np.testing.assert_allclose(one_moments, two_moments, atol=1e-12)
+
+
+def test_atom_phases_add_to_the_component_phase_of_a_helix() -> None:
+    structure = _BCC_IRON()
+    q_basis = ((0.0, 0.0, 0.2), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    helix = partial(
+        build_helix_component,
+        q_coeff=(1.0, 0.0, 0.0),
+        real_axis_vector=(1.0, 0.0, 0.0),
+        imaginary_axis_vector=(0.0, 1.0, 0.0),
+    )
+    one = MagneticStructureModel(
+        q_basis_rlu=q_basis,
+        components=(
+            replace(
+                helix(label="Helix", selector=AtomSelector.all(), phase_turns=0.1),
+                atom_phase_turns={1: 0.25},
+            ),
+        ),
+    )
+    two = MagneticStructureModel(
+        q_basis_rlu=q_basis,
+        components=(
+            helix(label="A", selector=AtomSelector.indices([0]), phase_turns=0.1),
+            helix(label="B", selector=AtomSelector.indices([1]), phase_turns=0.35),
+        ),
+    )
+
+    _positions, one_moments, _indices = moments_in_supercell(structure, one, (1, 1, 5))
+    _positions, two_moments, _indices = moments_in_supercell(structure, two, (1, 1, 5))
+
+    np.testing.assert_allclose(one_moments, two_moments, atol=1e-12)
+
+
+def test_atom_phases_round_trip_json_with_string_keys() -> None:
+    component = replace(
+        build_collinear_component(
+            label="AFM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+        ),
+        atom_phase_turns={1: 0.5},
+    )
+
+    payload = component.to_json()
+    restored = MagneticComponent.from_json(payload)
+
+    assert payload["atom_phase_turns"] == {"1": 0.5}
+    assert restored.atom_phase_turns == {1: 0.5}
+    assert restored == component
+
+
+def test_component_json_drops_malformed_saved_atom_phases() -> None:
+    payload = build_collinear_component(
+        label="AFM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+    ).to_json()
+    payload["atom_phase_turns"] = {"two": 0.5, "-1": 0.5, "0": "nan", "3": 0.25}
+
+    assert MagneticComponent.from_json(payload).atom_phase_turns == {3: 0.25}
+    assert (
+        MagneticComponent.from_json({**payload, "atom_phase_turns": [1, 2]}).atom_phase_turns == {}
+    )
+
+
+def test_component_json_without_atom_phases_loads_with_none() -> None:
+    payload = build_collinear_component(
+        label="FM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+    ).to_json()
+    del payload["atom_phase_turns"]
+
+    assert MagneticComponent.from_json(payload).atom_phase_turns == {}
+
+
+@pytest.mark.parametrize(
+    ("phases", "message"),
+    [
+        ({-1: 0.5}, "must not be negative"),
+        ({0: float("nan")}, "must be finite"),
+        ({"one": 0.5}, "must map atom indices"),
+    ],
+)
+def test_invalid_atom_phases_are_refused(phases: dict, message: str) -> None:
+    component = build_collinear_component(
+        label="FM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+    )
+
+    with pytest.raises(MagneticStructureError, match=message):
+        replace(component, atom_phase_turns=phases)
+
+
+def test_atom_phase_on_a_missing_atom_is_reported_when_resolved() -> None:
+    component = replace(
+        build_collinear_component(
+            label="AFM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+        ),
+        atom_phase_turns={5: 0.5},
+    )
+
+    with pytest.raises(MagneticStructureError, match="phase on atom 5, but the structure has 2"):
+        atom_resolved_fourier_components(
+            _BCC_IRON(), MagneticStructureModel(components=(component,))
+        )
+
+
+def test_atom_phases_for_selection_keeps_only_the_selected_atoms() -> None:
+    component = replace(
+        build_collinear_component(
+            label="AFM", selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0, 0, 1)
+        ),
+        atom_phase_turns={0: 0.1, 1: 0.5},
+    )
+
+    kept = atom_phases_for_selection(
+        _BCC_IRON(), component.atom_phase_turns, AtomSelector.indices([1])
+    )
+    zero_dropped = atom_phases_for_selection(_BCC_IRON(), {0: 0.0, 1: 0.5}, AtomSelector.all())
+
+    assert kept == {1: 0.5}
+    assert zero_dropped == {1: 0.5}
+
+
+def test_ase_export_of_bcc_iron_carries_the_moments() -> None:
+    model = MagneticStructureModel(
+        components=(
+            build_collinear_component(
+                label="Ferromagnet",
+                selector=AtomSelector.all(),
+                q_coeff=(0.0, 0.0, 0.0),
+                moment=(0.0, 0.0, 2.2),
+            ),
+        )
+    )
+
+    atoms = magnetic_structure_to_ase_atoms(_BCC_IRON(), model)
+    supercell = magnetic_structure_to_ase_atoms(_BCC_IRON(), model, (2, 1, 3))
+
+    assert atoms.get_chemical_symbols() == ["Fe", "Fe"]
+    np.testing.assert_allclose(atoms.get_initial_magnetic_moments(), [[0.0, 0.0, 2.2]] * 2)
+    np.testing.assert_allclose(atoms.get_positions()[1], [1.434, 1.434, 1.434])
+    assert len(supercell) == 12
+    np.testing.assert_allclose(supercell.cell.lengths(), [5.736, 2.868, 8.604])
+    assert supercell.pbc.all()
+    np.testing.assert_allclose(
+        np.linalg.norm(supercell.get_initial_magnetic_moments(), axis=1), 2.2
+    )
+
+
+def test_ase_export_follows_the_supercell_atom_order_and_keeps_labels() -> None:
+    structure = host_structure(label="FeO", lattice=3.0, species=("Fe1", "O"))
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.5, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            build_collinear_component(
+                label="AFM",
+                selector=AtomSelector.species("Fe1"),
+                q_coeff=(1.0, 0.0, 0.0),
+                moment=(1.0, 0.0, 0.0),
+            ),
+        ),
+    )
+
+    atoms = magnetic_structure_to_ase_atoms(structure, model, (2, 1, 1))
+    _positions, moments, _indices = moments_in_supercell(structure, model, (2, 1, 1))
+
+    assert atoms.get_chemical_symbols() == ["Fe", "O", "Fe", "O"]
+    assert atoms.info["mufinder_species_labels"] == ["Fe1", "O", "Fe1", "O"]
+    np.testing.assert_allclose(atoms.get_initial_magnetic_moments(), moments)
+    assert atoms.get_initial_magnetic_moments()[2, 0] == pytest.approx(-1.0)
+
+
+def test_inverse_angstrom_wavevector_along_mnsi_111() -> None:
+    lattice = [[4.558, 0.0, 0.0], [0.0, 4.558, 0.0], [0.0, 0.0, 4.558]]
+
+    q = wavevector_rlu_from_inverse_angstrom(lattice, 0.035, (1.0, 1.0, 1.0))
+
+    assert q == pytest.approx((0.0147, 0.0147, 0.0147), abs=5e-5)
+    k_cartesian = 2.0 * np.pi * np.linalg.inv(np.asarray(lattice)) @ np.asarray(q)
+    assert np.linalg.norm(k_cartesian) == pytest.approx(0.035)
+
+
+def test_inverse_angstrom_wavevector_along_a_star_of_a_hexagonal_cell() -> None:
+    a = 3.21
+    lattice = [[a, 0.0, 0.0], [-a / 2.0, a * 3.0**0.5 / 2.0, 0.0], [0.0, 0.0, 5.21]]
+    a_star_length = 2.0 * np.pi * 2.0 / (a * 3.0**0.5)
+
+    q = wavevector_rlu_from_inverse_angstrom(lattice, 0.5 * a_star_length, (1.0, 0.0, 0.0))
+
+    assert q == pytest.approx((0.5, 0.0, 0.0))
+
+
+def test_reciprocal_axis_length_is_the_inverse_angstrom_of_one_rlu() -> None:
+    a = 3.21
+    lattice = [[a, 0.0, 0.0], [-a / 2.0, a * 3.0**0.5 / 2.0, 0.0], [0.0, 0.0, 5.21]]
+
+    assert reciprocal_axis_length(lattice, "a*") == pytest.approx(4.0 * np.pi / (a * 3.0**0.5))
+    assert reciprocal_axis_length(lattice, "c") == pytest.approx(2.0 * np.pi / 5.21)
+    assert wavevector_rlu_from_inverse_angstrom(
+        lattice, 0.3 * reciprocal_axis_length(lattice, "b*"), (0.0, 1.0, 0.0)
+    ) == pytest.approx((0.0, 0.3, 0.0))
+
+
+@pytest.mark.parametrize("magnitude", [0.0, float("inf")])
+def test_inverse_angstrom_wavevector_refuses_a_zero_or_infinite_length(magnitude: float) -> None:
+    with pytest.raises(MagneticStructureError, match="non-zero number of inverse Angstrom"):
+        wavevector_rlu_from_inverse_angstrom(
+            [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]], magnitude, (0.0, 0.0, 1.0)
+        )
 
 
 def test_moments_in_supercell_bad_repeat_count_raises() -> None:

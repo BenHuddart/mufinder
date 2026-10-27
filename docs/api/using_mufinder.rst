@@ -16,7 +16,7 @@ and no ``QApplication``. :doc:`/api/index` lists what each package owns, and
 :doc:`/architecture` gives the layer rule: dependencies flow inward, so a
 script can call any of them.
 
-The four examples below are complete scripts, kept in ``docs/api/examples``
+The examples below are complete scripts, kept in ``docs/api/examples``
 and run by ``tests/docs/test_api_examples.py``. Run each from the repository
 root, for example ``python docs/api/examples/parse_castep_output.py``.
 
@@ -119,6 +119,48 @@ octahedral site reproduces the ferromagnet in :ref:`magnetic-fields-worked-examp
 
 Without ``muesr`` installed the call raises
 :class:`~mufinder.science.magnetic_fields.MagneticFieldDependencyError`.
+
+Build and export a magnetic structure
+-------------------------------------
+
+A component's ``phase_turns`` shifts the phase of every atom it applies to.
+``atom_phase_turns`` on
+:class:`~mufinder.science.magnetic_structure.MagneticComponent` maps a
+unit-cell atom index (from 0) to an extra phase in turns for that atom alone,
+added to the component's phase and to the ``q · r`` phase of the atom's
+position. Sublattice phases then need one component, not one per atom. The
+component builders do not take it; set it with :func:`dataclasses.replace` or
+the constructor. An atom the component does not select ignores its phase, and
+an index past the last atom is refused when the model is evaluated. The
+Magnetic Fields page edits the same phases in its
+:ref:`Per-Atom Phases dialog <magnetic-fields-per-atom-phases>`.
+
+:func:`~mufinder.science.magnetic_structure.magnetic_structure_to_ase_atoms`
+returns a diagonal supercell as ASE ``Atoms``, ordered as
+:func:`~mufinder.science.magnetic_structure.moments_in_supercell` orders it.
+Its ``initial_magnetic_moments`` are ``(n, 3)`` Cartesian moments in
+:math:`\mu_B`, the element symbols come from the species labels, and the labels
+themselves are kept in ``atoms.info["mufinder_species_labels"]``.
+
+:func:`~mufinder.science.magnetic_structure.wavevector_rlu_from_inverse_angstrom`
+turns a wavevector length in Å⁻¹ along a direction given in r.l.u. into
+r.l.u., through :math:`q_i = \mathbf{k} \cdot \mathbf{a}_i / 2\pi`, the
+inverse of
+:func:`~mufinder.science.lattice.reciprocal_to_cartesian` with the
+:math:`2\pi` of the crystallographic convention.
+
+The example below needs only the core install. It builds the two-atom
+antiferromagnet of bcc iron as one component, exports a 2 x 2 x 2 supercell
+and converts the MnSi helix wavevector:
+
+.. literalinclude:: examples/magnetic_structure_export.py
+   :language: python
+
+.. code-block:: text
+
+   Atoms: 16 Fe16
+   Moments along c: [-2.2, 2.2] muB
+   MnSi q (r.l.u.): (0.0147, 0.0147, 0.0147)
 
 Demagnetizing tensor of any shape
 ---------------------------------

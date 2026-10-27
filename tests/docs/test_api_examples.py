@@ -62,6 +62,14 @@ def test_dipolar_field_example_matches_the_documented_iron_ferromagnet() -> None
     assert "Total Bz: -0.2018 T" in lines
 
 
+def test_magnetic_structure_export_example_builds_the_antiferromagnet() -> None:
+    lines = _run_example("magnetic_structure_export.py")
+
+    assert "Atoms: 16 Fe16" in lines
+    assert "Moments along c: [-2.2, 2.2] muB" in lines
+    assert "MnSi q (r.l.u.): (0.0147, 0.0147, 0.0147)" in lines
+
+
 def test_polarisation_example_finds_the_iron_precession_line() -> None:
     pytest.importorskip("muesr")
     pytest.importorskip("mulfc")

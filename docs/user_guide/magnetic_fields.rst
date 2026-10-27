@@ -188,10 +188,11 @@ To build a structure:
 
    - ``Edit...`` reopens the selected component in the same preset-aware dialog
      so its label, target, q vector, phase, and texture parameters can be
-     changed. Double-clicking the ``Component`` cell renames a component in
-     place.
+     changed, including its :ref:`per-atom phases
+     <magnetic-fields-per-atom-phases>`. Double-clicking the ``Component`` cell
+     renames a component in place.
    - ``Duplicate`` inserts a copy of each selected component directly below its
-     original. A copy keeps the original's target, Fourier terms, phase,
+     original. A copy keeps the original's target, Fourier terms, phases,
      enabled state and texture settings, shares its q-basis slots, and gets a
      ``(copy)`` label suffix; the copies are selected afterwards.
    - ``Remove`` deletes the selected components after a confirmation whose
@@ -323,6 +324,37 @@ vector, when:
 An unused row accepts any vector. The edited basis is saved with the model when
 the builder's ``Use Structure`` button is pressed.
 
+.. _magnetic-fields-per-atom-phases:
+
+Set per-atom phases
+~~~~~~~~~~~~~~~~~~~
+
+A component's ``Phase (turns)`` shifts every atom it applies to. A per-atom
+phase is an extra phase in turns for one atom alone, added to the component's
+phase and to the :math:`\mathbf{q} \cdot \mathbf{r}` phase of the atom's
+position, so a sublattice phase needs one component rather than one per atom.
+Half a turn reverses an atom's moment in a q = 0 component.
+
+The ``Per-atom phases`` row of the add-component dialog shows the phases set on
+the atoms the component applies to, or ``None``. ``Per-Atom Phases...`` opens a
+table of those atoms: number, species, fractional position and an editable
+``Extra phase (turns)`` cell, blank for 0. A phase must lie between -10 and 10
+turns; any other entry is refused with a warning that names the atom when
+``OK`` is clicked. ``Clear Phases`` blanks every cell after a confirmation.
+``Cancel`` leaves the phases as they were.
+
+The table lists only the atoms the current ``Apply Component To`` choice
+selects, and the component keeps only their phases. While the dialog is open,
+the phase of an atom the target drops is remembered and comes back if the
+target covers it again.
+
+.. figure:: ../_generated/screenshots/cof2_atom_phases.webp
+   :alt: The Per-Atom Phases dialog for a component on both Co atoms of CoF2,
+         with an extra phase of 0.5 turns on the body-centre Co, atom 2.
+
+   The CoF₂ antiferromagnet as one q = 0 component on both Co: half a turn on
+   the body-centre Co reverses its moment.
+
 Use the preset helper
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -332,8 +364,16 @@ any other afterwards. In the dialog, set:
 
 1. ``Structure``: ``Helix``, ``Conical``, ``Cycloid`` or ``Spin-density wave``.
 2. ``Propagation``: ``Along a*``, ``Along b*`` or ``Along c*`` with a
-   ``Wavevector δ (r.l.u.)`` (default ``Along c*`` with δ = 0.25), or a stored
-   basis row ``qN``, on which the component is then stored.
+   wavevector (default ``Along c*`` with δ = 0.25 r.l.u.), or a stored basis
+   row ``qN``, on which the component is then stored. The unit beside the
+   wavevector is ``r.l.u.`` (the default, ``Wavevector δ (r.l.u.)``) or ``Å⁻¹``
+   (``Wavevector k (Å⁻¹)``), the signed length of the wavevector along the
+   chosen axis, :math:`2\pi` included. It is converted through the lattice,
+   :math:`q_i = \mathbf{k} \cdot \mathbf{a}_i / 2\pi`, and the summary line
+   shows the resulting q in r.l.u. δ lies between -4 and 4 r.l.u., and k
+   between the same wavevectors in Å⁻¹, :math:`\pm 4 |\mathbf{a}^*|` along
+   ``a*`` (likewise ``b*`` and ``c*``), so switching the unit converts the typed
+   value and q stays the same.
 3. A reference crystal axis, ``a``, ``b`` or ``c``. It defaults to the axis
    most nearly perpendicular to q, preferring a, then b, then c, and resets to
    that default when the ``Propagation`` choice changes, but not when only δ
@@ -1193,7 +1233,10 @@ second-moment workflow with bundled natural-abundance isotope data.
    initial muon-polarisation axis. Polycrystal modes use analytical
    orientational averages and ignore the direction inputs.
 4. Optionally set ``Radius (Å)`` (the default is ``auto``) and ``Convergence
-   rtol`` (default ``1e-6``).
+   rtol`` (default ``1e-6``), and untick elements under ``Elements`` to leave
+   their nuclei out of the sum. Every element of the host is ticked by default;
+   ``Calculate`` refuses to run with none ticked. The choice is saved with the
+   other options.
 5. For a ZF mode, optionally tick ``Include ZF quadrupolar correction``. The
    quadrupolar correction is available only for ZF modes.
 6. If the selected site comes from a structural-relaxation cluster and the
@@ -1212,7 +1255,8 @@ second-moment workflow with bundled natural-abundance isotope data.
 The ``Results`` group reports :math:`\sigma` in :math:`\mu\mathrm{s}^{-1}`,
 :math:`\sigma^2` and :math:`M_2` in :math:`\mu\mathrm{s}^{-2}`, equivalent
 field width :math:`\Delta B` in Tesla, convergence radius in Å, number of
-nuclei summed, and element-resolved :math:`\sigma^2` contributions. For ZF
+nuclei summed, the elements included (``All`` when none was left out), and
+element-resolved :math:`\sigma^2` contributions. For ZF
 single-crystal calculations it also reports the perpendicular and parallel
 widths :math:`\sigma_\perp^2` and :math:`\sigma_\parallel^2`.
 

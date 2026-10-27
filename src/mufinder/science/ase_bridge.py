@@ -51,6 +51,28 @@ def element_symbol(symbol: object, *, error: type[Exception] = StructureConversi
     return match.group(1)
 
 
+def _element_counts(species: Iterable[object]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for label in species:
+        if is_muon_label(label):
+            continue
+        try:
+            counts[element_symbol(label)] += 1
+        except StructureConversionError:
+            continue
+    return counts
+
+
+def host_elements(species: Iterable[object]) -> tuple[str, ...]:
+    """Return the distinct elements of the non-muon species in first-seen order.
+
+    ``("Fe", "O")`` for ``["Fe1", "O", "Fe2", "H:mu"]``. Labels that do not
+    start with an element symbol are skipped, as in :func:`reduced_formula`.
+    """
+
+    return tuple(_element_counts(species))
+
+
 def reduced_formula(species: Iterable[object]) -> tuple[str, int]:
     """Return the reduced formula of the non-muon species and its count per cell.
 
@@ -60,14 +82,7 @@ def reduced_formula(species: Iterable[object]) -> tuple[str, int]:
     with no such atoms gives ``("", 0)``.
     """
 
-    counts: Counter[str] = Counter()
-    for label in species:
-        if is_muon_label(label):
-            continue
-        try:
-            counts[element_symbol(label)] += 1
-        except StructureConversionError:
-            continue
+    counts = _element_counts(species)
     if not counts:
         return "", 0
     divisor = math.gcd(*counts.values())
