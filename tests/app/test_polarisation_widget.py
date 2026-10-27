@@ -12,6 +12,7 @@ from PySide6.QtGui import QKeySequence
 from mufinder.app import polarisation_widget as module
 from mufinder.app import workflow_table_utils
 from mufinder.app.polarisation_widget import PolarisationWidget, export_text
+from mufinder.science.polarisation import PolarisationError
 from mufinder.science.polarisation_simulation import PolarisationSettings
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
@@ -140,22 +141,25 @@ def test_geometry_and_sample_enable_the_controls_they_use(page) -> None:
 
 
 @pytest.mark.parametrize(
-    ("geometry", "polycrystal", "detector_along_spin", "allowed"),
+    ("geometry", "polycrystal", "detector", "allowed"),
     [
-        ("zero_field", True, True, True),
-        ("longitudinal", True, True, True),
-        ("zero_field", False, True, False),
-        ("zero_field", True, False, False),
-        ("transverse", True, True, False),
+        ("zero_field", True, None, True),
+        ("longitudinal", True, None, True),
+        ("zero_field", False, None, False),
+        ("zero_field", True, (1.0, 0.0, 0.0), False),
+        ("zero_field", True, (0.0, 0.0, 2.0), True),
+        ("transverse", True, None, False),
     ],
 )
 def test_dynamics_are_offered_only_where_symmetry_allows_them(
-    page, geometry: str, polycrystal: bool, detector_along_spin: bool, allowed: bool
+    page, geometry: str, polycrystal: bool, detector, allowed: bool
 ) -> None:
     page._collision_rate.setValue(2.0)
     page._geometry.setCurrentIndex(page._geometry.findData(geometry))
     page._sample.setCurrentIndex(page._sample.findData(polycrystal))
-    page._detector_along_spin.setChecked(detector_along_spin)
+    if detector is not None:
+        page._detector_along_spin.setChecked(False)
+        page._detector.set_value(detector)
 
     assert page._collision_rate.isEnabled() is allowed
     assert page._dynamics_method.isEnabled() is allowed
@@ -374,3 +378,71 @@ def test_an_unsaved_form_keeps_the_first_field_result_ticked(page) -> None:
     page.set_form_state({})
 
     assert _checked_owners(page) == [MAGNETIC_FIELD_PAGE_OWNER]
+
+
+def test_greyed_out_directions_do_not_block_a_field_geometry(page, document) -> None:
+    _set_checked(page, {"ws-lf"})
+    page._spin.set_value((0.0, 0.0, 0.0))
+    page._geometry.setCurrentIndex(page._geometry.findData("longitudinal"))
+
+    page._add_button.click()
+
+    assert len(polarisation_simulations(document)) == 1
+    page._geometry.setCurrentIndex(page._geometry.findData("zero_field"))
+    with pytest.raises(PolarisationError, match="polarisation_direction"):
+        page.settings()
+
+
+def test_an_invalid_box_keeps_the_last_valid_settings_in_the_form(page) -> None:
+    page._end_time.setValue(7.0)
+    page._apodisation_sigma.setText("3")
+    assert page.collect_state()["settings"]["apodisation_sigma_us"] == 3.0
+
+    page._apodisation_sigma.setText("0")
+
+    state = page.collect_state()
+    assert state["settings"]["end_time_us"] == 7.0
+    assert state["settings"]["apodisation_sigma_us"] == 3.0
+
+
+def test_unnamed_simulations_take_the_first_unused_number(page, document) -> None:
+    for _ in range(3):
+        page._title_edit.setText("")
+        page._add_button.click()
+    first = next(r for r in polarisation_simulations(document) if r.title == "Simulation 1")
+    page._select_simulation(first.simulation_id)
+    page._remove_button.click()
+
+    page._title_edit.setText("")
+    page._add_button.click()
+
+    titles = sorted(record.title for record in polarisation_simulations(document))
+    assert titles == ["Simulation 1", "Simulation 2", "Simulation 3"]
+
+
+def test_export_columns_stay_distinct_when_labels_collide() -> None:
+    assert module._unique_column_labels(["site 1", "site-1", "?", "site_1"]) == [
+        "site_1",
+        "site_1_2",
+        "site3",
+        "site_1_3",
+    ]
+
+
+def test_the_table_lists_simulations_without_decoding_their_traces(page, monkeypatch) -> None:
+    page._add_button.click()
+    page._add_button.click()
+    from mufinder.services import polarisation_simulations as services
+
+    decoded: list[bool] = []
+    real = services.PolarisationSimulation.from_json
+    monkeypatch.setattr(
+        services.PolarisationSimulation,
+        "from_json",
+        staticmethod(lambda payload, settings: decoded.append(True) or real(payload, settings)),
+    )
+
+    page.refresh()
+
+    # Only the selected simulation is decoded, once.
+    assert decoded == [True]

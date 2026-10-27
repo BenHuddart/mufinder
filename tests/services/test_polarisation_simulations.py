@@ -362,3 +362,23 @@ def test_a_distribution_with_malformed_samples_is_not_offered(document, samples)
     )
 
     assert [source.owner for source in field_sources(document)] == ["ws-1"]
+
+
+def test_summaries_list_simulations_without_their_traces(document) -> None:
+    from mufinder.services.polarisation_simulations import polarisation_simulation_summaries
+
+    record = run_polarisation_simulation(
+        document,
+        title="ZF",
+        settings=SETTINGS,
+        sources=[SimulationSource("ws-1", "", "")],
+    )
+    store_polarisation_simulation(document, record)
+
+    (summary,) = polarisation_simulation_summaries(document)
+
+    assert summary.simulation_id == record.simulation_id
+    assert summary.settings == record.settings
+    assert summary.sources == record.sources
+    assert summary.estimate
+    assert stale_sources(document, summary) == []

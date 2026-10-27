@@ -46,6 +46,7 @@ from mufinder.app.theme import (
     style_plot_legend,
     style_section_subtitle,
     style_section_title,
+    style_warning_text,
 )
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
@@ -59,6 +60,7 @@ from mufinder.science.polarisation_simulation import (
     MAX_SPHERE_POINTS,
     MAX_TIME_POINTS,
     PolarisationSettings,
+    dynamics_supported,
 )
 from mufinder.services.magnetic_field_results import UNRELAXED_RESULTS_NOTE
 from mufinder.services.polarisation_simulations import (
@@ -67,7 +69,7 @@ from mufinder.services.polarisation_simulations import (
     SimulationSource,
     field_sources,
     polarisation_simulation,
-    polarisation_simulations,
+    polarisation_simulation_summaries,
     remove_polarisation_simulation,
     run_polarisation_simulation,
     stale_sources,
@@ -170,6 +172,10 @@ class PolarisationWidget(QWidget):
         self._document: ProjectDocument | None = None
         self._sources: list[FieldSource] = []
         self._restoring = False
+        # Decoded simulations by id, cleared whenever the list is re-read.
+        self._record_cache: dict[str, PolarisationSimulationRecord] = {}
+        # The last settings the form held that were valid, saved while a box is not.
+        self._last_valid_settings = PolarisationSettings()
 
         title = QLabel("Polarisation", self)
         style_section_title(title)
@@ -233,11 +239,11 @@ class PolarisationWidget(QWidget):
         style_hint_text(self._status)
         self._stale_note = QLabel("", self)
         self._stale_note.setWordWrap(True)
-        self._stale_note.setObjectName("polarisationStaleNote")
+        style_warning_text(self._stale_note)
         self._stale_note.setVisible(False)
         self._warning_note = QLabel("", self)
         self._warning_note.setWordWrap(True)
-        style_hint_text(self._warning_note)
+        style_warning_text(self._warning_note)
         self._warning_note.setVisible(False)
         self._estimate_note = unrelaxed_results_note(self)
 
@@ -285,12 +291,12 @@ class PolarisationWidget(QWidget):
         """The form: settings text, the checked sources and weights, the selection."""
 
         try:
-            settings: dict[str, object] | None = self.settings().to_json()
+            self._last_valid_settings = self.settings()
         except (ValueError, PolarisationError):
-            settings = None
+            pass
         return {
             "title": self._title_edit.text(),
-            "settings": settings,
+            "settings": self._last_valid_settings.to_json(),
             "sources": [source.to_json() for source in self._checked_sources()],
             "selected_simulation": self.selected_simulation_id(),
         }
@@ -311,6 +317,7 @@ class PolarisationWidget(QWidget):
             except PolarisationError:
                 settings = PolarisationSettings()
             self._show_settings(settings)
+            self._last_valid_settings = settings
             self._title_edit.setText(str(state.get("title") or ""))
             raw_sources = state.get("sources")
             if isinstance(raw_sources, list):
@@ -338,15 +345,17 @@ class PolarisationWidget(QWidget):
     def settings(self) -> PolarisationSettings:
         """The settings in the form; raises ``ValueError`` or ``PolarisationError`` when invalid."""
 
+        zero_field = self._geometry.currentData() == "zero_field"
+        spin = self._direction("initial polarisation", self._spin, strict=zero_field)
         detector = None
         if not self._detector_along_spin.isChecked():
-            detector = self._detector.value("detector direction")
+            detector = self._direction("detector direction", self._detector, strict=zero_field)
         added = None
         if self._added_field.isEnabled():
             added = self._added_field.value("added applied field")
         return PolarisationSettings(
             geometry=self._geometry.currentData(),
-            polarisation_direction=self._spin.value("initial polarisation"),
+            polarisation_direction=spin,
             detector_direction=detector,
             crystal_along_z_uvw=self._along_z.value("crystal direction along z"),
             crystal_along_x_uvw=self._along_x.value("crystal direction along x"),
@@ -360,7 +369,7 @@ class PolarisationWidget(QWidget):
             time_points=int(self._time_points.value()),
             # Dynamics apply only where the geometry allows them (see _dynamics_allowed).
             collision_rate_per_us=float(self._collision_rate.value())
-            if self._dynamics_allowed()
+            if self._dynamics_allowed(spin, detector)
             else 0.0,
             dynamics_method=self._dynamics_method.currentData(),
             subtract_baseline=self._subtract_baseline.isChecked(),
@@ -368,6 +377,20 @@ class PolarisationWidget(QWidget):
             apodisation_lambda_us=_optional_positive(self._apodisation_lambda, "apodisation λ"),
             padding_factor=int(self._padding.value()),
         )
+
+    @staticmethod
+    def _direction(name: str, box: VectorInput, *, strict: bool) -> tuple[float, float, float]:
+        """The direction in ``box``; when the geometry ignores it, a bad one reads as z."""
+
+        try:
+            value = box.value(name)
+        except ValueError:
+            if strict:
+                raise
+            return (0.0, 0.0, 1.0)
+        if not strict and not any(value):
+            return (0.0, 0.0, 1.0)
+        return value
 
     # --- Layout -------------------------------------------------------------------
 
@@ -698,7 +721,10 @@ class PolarisationWidget(QWidget):
     # --- Simulations --------------------------------------------------------------
 
     def _refresh_simulations(self, keep: str | None = None) -> None:
-        records = polarisation_simulations(self._document) if self._document is not None else []
+        self._record_cache.clear()
+        records = (
+            polarisation_simulation_summaries(self._document) if self._document is not None else []
+        )
         table = self._simulations_table
         table.blockSignals(True)
         try:
@@ -739,7 +765,12 @@ class PolarisationWidget(QWidget):
         simulation_id = self.selected_simulation_id()
         if self._document is None or simulation_id is None:
             return None
-        return polarisation_simulation(self._document, simulation_id)
+        record = self._record_cache.get(simulation_id)
+        if record is None:
+            record = polarisation_simulation(self._document, simulation_id)
+            if record is not None:
+                self._record_cache[simulation_id] = record
+        return record
 
     def _on_simulation_selected(self) -> None:
         record = self._selected_record()
@@ -789,10 +820,7 @@ class PolarisationWidget(QWidget):
             self._status.setText(f"Invalid settings: {exc}")
             return
         sources = self._checked_sources()
-        title = (
-            self._title_edit.text().strip()
-            or f"Simulation {self._simulations_table.rowCount() + 1}"
-        )
+        title = self._title_edit.text().strip() or self._unused_title()
         try:
             record = run_blocking_call(
                 self,
@@ -821,6 +849,18 @@ class PolarisationWidget(QWidget):
         # The form first, so the save that follows carries it.
         self._emit_form_state()
         self.simulations_changed.emit()
+
+    def _unused_title(self) -> str:
+        """``Simulation N`` with the smallest N no simulation is called."""
+
+        titles = {
+            self._simulations_table.item(row, 0).text()
+            for row in range(self._simulations_table.rowCount())
+        }
+        number = 1
+        while f"Simulation {number}" in titles:
+            number += 1
+        return f"Simulation {number}"
 
     def _remove_selected_simulation(self) -> None:
         record = self._selected_record()
@@ -914,18 +954,28 @@ class PolarisationWidget(QWidget):
         self._remove_button.setEnabled(selected)
         self._export_button.setEnabled(selected)
 
-    def _dynamics_allowed(self) -> bool:
-        """Whether symmetry reduces the strong-collision dynamics to the measured trace.
+    def _dynamics_allowed(
+        self,
+        spin: tuple[float, float, float] | None = None,
+        detector: tuple[float, float, float] | None = None,
+    ) -> bool:
+        """Whether the form's geometry allows dynamics (:func:`dynamics_supported`).
 
-        The same rule as :func:`~mufinder.science.polarisation_simulation.simulate_polarisation`:
-        a polycrystal in a longitudinal field, or in zero field measured along the spin.
+        Without ``spin`` the rule reads the form; a detector box that does not
+        parse counts as not along the spin.
         """
 
-        if not self._sample.currentData():
-            return False
-        geometry = self._geometry.currentData()
-        return geometry == "longitudinal" or (
-            geometry == "zero_field" and self._detector_along_spin.isChecked()
+        if spin is None:
+            try:
+                spin = self._spin.value("initial polarisation")
+                if not self._detector_along_spin.isChecked():
+                    detector = self._detector.value("detector direction")
+            except ValueError:
+                return False
+            if not any(spin) or (detector is not None and not any(detector)):
+                return False
+        return dynamics_supported(
+            self._geometry.currentData(), bool(self._sample.currentData()), spin, detector
         )
 
     def _emit_form_state(self) -> None:
@@ -1060,7 +1110,7 @@ def export_text(record: PolarisationSimulationRecord) -> str:
         lines.append(f"# {key}: {value}")
     for warning in record.simulation.warnings:
         lines.append(f"# Warning: {warning}")
-    labels = [_column_label(label) for label in static.site_labels]
+    labels = _unique_column_labels(static.site_labels)
     columns = ["t_us", *(f"P_{label}" for label in labels), "P_average"]
     rows = [static.times_us, *np.atleast_2d(static.site_polarisations), static.polarisation]
     if record.simulation.dynamic is not None:
@@ -1123,6 +1173,20 @@ def _optional_positive(edit: QLineEdit, name: str) -> float | None:
 
 def _optional_text(value: float | None) -> str:
     return "" if value is None else f"{value:g}"
+
+
+def _unique_column_labels(labels: Sequence[str]) -> list[str]:
+    """Column-safe site labels, numbered ``_2``, ``_3``… where two would read the same."""
+
+    unique: list[str] = []
+    for index, label in enumerate(labels, start=1):
+        base = _column_label(label) or f"site{index}"
+        name, count = base, 1
+        while name in unique:
+            count += 1
+            name = f"{base}_{count}"
+        unique.append(name)
+    return unique
 
 
 def _column_label(label: str) -> str:

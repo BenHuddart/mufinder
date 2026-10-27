@@ -445,3 +445,22 @@ def test_dynamics_run_for_a_powder_in_zero_or_longitudinal_field(geometry: str) 
     simulation = simulate_polarisation(settings, [site], lattice_vectors=CUBIC)
 
     assert simulation.dynamic is not None
+
+
+@pytest.mark.parametrize(
+    ("geometry", "polycrystalline", "detector", "supported"),
+    [
+        ("zero_field", True, None, True),
+        ("zero_field", True, (0.0, 0.0, 2.0), True),
+        ("zero_field", True, (1.0, 0.0, 0.0), False),
+        ("longitudinal", True, (1.0, 0.0, 0.0), True),
+        ("transverse", True, None, False),
+        ("zero_field", False, None, False),
+    ],
+)
+def test_dynamics_supported_names_the_symmetric_powder_geometries(
+    geometry, polycrystalline, detector, supported
+) -> None:
+    from mufinder.science.polarisation_simulation import dynamics_supported
+
+    assert dynamics_supported(geometry, polycrystalline, (0.0, 0.0, 1.0), detector) is supported
