@@ -527,6 +527,13 @@ no two workflow widgets may define the same private method.
        ``remove_magnetic_field_results``, ``magnetic_field_results``,
        ``store_polarisation_result``, ``polarisation_result``; see
        :doc:`/user_guide/magnetic_fields`).
+   * - ``mufinder.services.polarisation_simulations``
+     - The stored field results a polarisation simulation can use
+       (``field_sources``), running a weighted selection of them
+       (``run_polarisation_simulation``), each simulation's
+       ``muon_polarisation`` record (``store_polarisation_simulation``,
+       ``polarisation_simulations``, ``remove_polarisation_simulation``) and
+       whether its sources were recalculated since (``stale_sources``).
    * - ``mufinder.services.project_survey``
      - The positions each stage has found, in the active host's cell, for the
        project home's cell survey (``survey_layers``,
@@ -605,6 +612,13 @@ no two workflow widgets may define the same private method.
        ``|B|`` histogram evaluation, site weighting, powder averages
        (``calculate_polarisation``, ``calculate_lf_polarisation``,
        ``calculate_tf_polarisation``) and spectra (``calculate_spectrum``).
+   * - ``mufinder.science.polarisation_simulation``
+     - One polarisation simulation from its settings: geometry, crystal
+       orientation from lattice directions
+       (``crystal_rotation_from_directions``), sample, damping, time grid,
+       dynamics on the weighted average and spectrum processing
+       (``PolarisationSettings``, ``simulate_polarisation``,
+       ``PolarisationSimulation``).
    * - ``mufinder.science.dynamics``
      - Strong-collision dynamic polarisation from a static trace
        (``calculate_dynamic_polarisation``, ``DynamicPolarisationResult``), by

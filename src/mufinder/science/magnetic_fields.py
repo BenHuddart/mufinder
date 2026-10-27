@@ -167,6 +167,22 @@ class MagneticFieldResult:
             payload["distortion_T"] = list(self.distortion)
         return payload
 
+    @classmethod
+    def from_json(cls, payload: Mapping[str, Any]) -> MagneticFieldResult:
+        """Rebuild a result from :meth:`to_json` output; ``total_T`` and ``magnitude_T`` are derived."""
+
+        distortion = payload.get("distortion_T")
+        return cls(
+            site_label=str(payload.get("site_label", "")),
+            muon_position=_tuple3(payload["muon_position"]),
+            dipolar=_tuple3(payload["dipolar_T"]),
+            lorentz=_tuple3(payload["lorentz_T"]),
+            contact=_tuple3(payload["contact_T"]),
+            demag=_tuple3(payload["demag_T"]),
+            applied=_tuple3(payload["applied_T"]),
+            distortion=None if distortion is None else _tuple3(distortion),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DistributionConvergenceCheck:

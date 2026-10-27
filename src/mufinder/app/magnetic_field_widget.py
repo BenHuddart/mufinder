@@ -6675,6 +6675,13 @@ class MagneticFieldWidget(QWidget):
             edit.textChanged.connect(self._on_form_setting_changed)
         self._measured_magnetization_unit = QLabel("μB per formula unit")
         style_hint_text(self._measured_magnetization_unit)
+        self._applied_field_inputs = tuple(
+            self._applied_field_input(axis) for axis in ("x", "y", "z")
+        )
+        for edit in self._applied_field_inputs:
+            edit.textChanged.connect(self._on_form_setting_changed)
+        self._applied_field_unit = QLabel("T (Cartesian x, y, z)")
+        style_hint_text(self._applied_field_unit)
 
         default_supercell = MagneticFieldOptions().supercell
         self._calc_cells_a = self._calculation_cell_input(default_supercell[0])
@@ -6811,6 +6818,18 @@ class MagneticFieldWidget(QWidget):
         magnetization_row.addWidget(self._measured_magnetization_unit)
         magnetization_row.addStretch(1)
         results_layout.addLayout(magnetization_row)
+        applied_row = QHBoxLayout()
+        applied_label = QLabel("Applied field")
+        applied_label.setToolTip(
+            "Applied field added to every muon site, in the crystal Cartesian frame. "
+            "It appears as the Applied row of the field breakdown."
+        )
+        applied_row.addWidget(applied_label)
+        for edit in self._applied_field_inputs:
+            applied_row.addWidget(edit)
+        applied_row.addWidget(self._applied_field_unit)
+        applied_row.addStretch(1)
+        results_layout.addLayout(applied_row)
         settings_row = QHBoxLayout()
         settings_row.addWidget(self._calculation_settings_summary, 1)
         settings_row.addWidget(self._calculation_settings_button)
@@ -6884,8 +6903,10 @@ class MagneticFieldWidget(QWidget):
             "demag_sample": self._demag_sample.to_json(),
             "use_measured_magnetization": self._measured_magnetization_check.isChecked(),
             "measured_magnetization": [
-                self._measured_magnetization_component(edit)
-                for edit in self._measured_magnetization_inputs
+                self._vector_component_or_zero(edit) for edit in self._measured_magnetization_inputs
+            ],
+            "applied_field_T": [
+                self._vector_component_or_zero(edit) for edit in self._applied_field_inputs
             ],
             "supercell": [
                 int(self._calc_cells_a.value()),
@@ -6973,6 +6994,7 @@ class MagneticFieldWidget(QWidget):
             self._set_measured_magnetization_from_state(
                 state.get("use_measured_magnetization"), state.get("measured_magnetization")
             )
+            self._set_vector_inputs(self._applied_field_inputs, state.get("applied_field_T"))
 
             supercell = self._state_int_triplet(state.get("supercell"))
             if supercell is not None:
@@ -7049,6 +7071,7 @@ class MagneticFieldWidget(QWidget):
             self._none_radio.setChecked(True)
             self._demag_sample = DemagnetizingSample()
             self._set_measured_magnetization_from_state(False, None)
+            self._set_vector_inputs(self._applied_field_inputs, None)
             self._calc_cells_a.setValue(defaults.supercell[0])
             self._calc_cells_b.setValue(defaults.supercell[1])
             self._calc_cells_c.setValue(defaults.supercell[2])
@@ -7121,6 +7144,8 @@ class MagneticFieldWidget(QWidget):
         measured = has_host and self._measured_magnetization_check.isChecked()
         for edit in self._measured_magnetization_inputs:
             edit.setEnabled(measured)
+        for edit in self._applied_field_inputs:
+            edit.setEnabled(has_host)
 
     def _refresh_summary(self) -> None:
         if self._host_structure is None:
@@ -7298,6 +7323,14 @@ class MagneticFieldWidget(QWidget):
         )
         edit.setMaximumWidth(80)
         edit.setEnabled(False)
+        return edit
+
+    @staticmethod
+    def _applied_field_input(axis: str) -> QLineEdit:
+        edit = QLineEdit("0.0")
+        edit.setValidator(QDoubleValidator(-1_000.0, 1_000.0, 6, edit))
+        edit.setToolTip(f"Cartesian {axis} component of the applied field, in T.")
+        edit.setMaximumWidth(80)
         return edit
 
     @staticmethod
@@ -7646,6 +7679,7 @@ class MagneticFieldWidget(QWidget):
             demag_shape=self._demag_shape(),
             demag_sample=self._active_demag_sample(),
             measured_magnetization=self._measured_magnetization(),
+            applied_field=self._applied_field(),
             supercell=(
                 int(self._calc_cells_a.value()),
                 int(self._calc_cells_b.value()),
@@ -7749,31 +7783,41 @@ class MagneticFieldWidget(QWidget):
         if not self._measured_magnetization_check.isChecked():
             return None
         x, y, z = (
-            self._parse_measured_magnetization(edit.text())
+            self._parse_vector_component(edit.text(), "measured magnetisation")
             for edit in self._measured_magnetization_inputs
         )
         return (x, y, z)
 
+    def _applied_field(self) -> tuple[float, float, float]:
+        x, y, z = (
+            self._parse_vector_component(edit.text(), "applied field")
+            for edit in self._applied_field_inputs
+        )
+        return (x, y, z)
+
     @staticmethod
-    def _parse_measured_magnetization(text: str) -> float:
+    def _parse_vector_component(text: str, quantity: str) -> float:
         stripped = text.strip()
         if not stripped:
             return 0.0
         try:
             value = float(stripped)
         except ValueError as exc:
-            raise ValueError("measured magnetisation components must be decimal numbers") from exc
+            raise ValueError(f"{quantity} components must be decimal numbers") from exc
         if not np.isfinite(value):
-            raise ValueError("measured magnetisation components must be finite")
+            raise ValueError(f"{quantity} components must be finite")
         return value
 
-    def _measured_magnetization_component(self, edit: QLineEdit) -> float:
+    def _vector_component_or_zero(self, edit: QLineEdit) -> float:
         try:
-            return self._parse_measured_magnetization(edit.text())
+            return self._parse_vector_component(edit.text(), "vector")
         except ValueError:
             return 0.0
 
-    def _set_measured_magnetization_from_state(self, enabled: object, values: object) -> None:
+    @staticmethod
+    def _set_vector_inputs(edits: Sequence[QLineEdit], values: object) -> None:
+        """Show the three components of a saved vector, or zeros when it is malformed."""
+
         components = (0.0, 0.0, 0.0)
         if (
             isinstance(values, Sequence)
@@ -7786,8 +7830,11 @@ class MagneticFieldWidget(QWidget):
                 parsed = components
             if all(np.isfinite(parsed)):
                 components = parsed
-        for edit, value in zip(self._measured_magnetization_inputs, components):
+        for edit, value in zip(edits, components):
             edit.setText(f"{value:g}")
+
+    def _set_measured_magnetization_from_state(self, enabled: object, values: object) -> None:
+        self._set_vector_inputs(self._measured_magnetization_inputs, values)
         self._measured_magnetization_check.setChecked(bool(enabled))
 
     def _refresh_measured_magnetization_unit(self) -> None:

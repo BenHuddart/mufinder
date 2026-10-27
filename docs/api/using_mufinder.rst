@@ -299,8 +299,28 @@ axis and sees 2.58 T. The spectrum's strongest line is the pair of sites at
    P_z in 0.5 T, mean over the last 0.5 us: 0.71
 
 :func:`~mufinder.services.magnetic_field_results.store_polarisation_result`
-keeps a result in a project as a ``muon_polarisation`` record owned by the
-Magnetic Fields page or a saved workspace, like the field and tensor results.
+keeps a result in a project as a ``muon_polarisation`` record under an owner,
+like the field and tensor results.
+
+:func:`~mufinder.science.polarisation_simulation.simulate_polarisation` runs a
+whole simulation from one
+:class:`~mufinder.science.polarisation_simulation.PolarisationSettings`: the
+geometry (zero field with chosen spin and detector directions, longitudinal or
+transverse), the crystal orientation as the lattice directions ``[uvw]`` along
+the laboratory ``z`` and ``x`` axes
+(:func:`~mufinder.science.polarisation_simulation.crystal_rotation_from_directions`),
+the sample, the damping, the time grid, strong-collision dynamics on the
+site-weighted average and the spectrum processing. It returns a
+:class:`~mufinder.science.polarisation_simulation.PolarisationSimulation` with
+the static traces, the dynamic trace, the spectrum, and a warning when the time
+grid is too coarse for the largest field. In a project,
+:mod:`mufinder.services.polarisation_simulations` lists the stored field results
+of the Magnetic Fields page and each saved workspace as sources
+(``field_sources``), simulates a weighted selection of them
+(``run_polarisation_simulation``) and stores each simulation as a
+``muon_polarisation`` record of its own (``store_polarisation_simulation``,
+``polarisation_simulations``). A simulation records the field record of each
+source, so ``stale_sources`` names the sources recalculated or removed since.
 
 
 Model spin dynamics
