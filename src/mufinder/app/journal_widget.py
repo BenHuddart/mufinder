@@ -85,6 +85,7 @@ class JournalWidget(QWidget):
             alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
             parent=self,
         )
+        self._empty_label.hide()
 
     def set_records(self, project_name: str, records: list[ProvenanceRecord]) -> None:
         """Rebuild the visible journal from the supplied provenance stream."""
@@ -96,11 +97,15 @@ class JournalWidget(QWidget):
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             widget = item.widget()
-            if widget is not None:
+            if widget is self._empty_label:
+                # The empty-state label lives for the widget's lifetime; detach it only.
+                widget.hide()
+            elif widget is not None:
                 widget.deleteLater()
 
         if not self._journal.days:
             self._content_layout.addWidget(self._empty_label)
+            self._empty_label.show()
             self._content_layout.addStretch(1)
             return
 
