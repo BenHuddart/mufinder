@@ -242,6 +242,31 @@ def open_distribution_plot(window: MainWindow) -> None:
     page._open_distribution_button.click()
 
 
+def simulate_polarisation(title: str, *, collision_rate: float = 0.0):
+    """A scene step: calculate the four sites' fields, open ``Polarisation →`` and add a simulation.
+
+    The settings are those of the worked example: a polycrystal in zero field,
+    16 μs on 4001 points, a 6 μs Gaussian window and four-fold zero padding.
+    """
+
+    def step(window: MainWindow) -> None:
+        calculate_and_list(window)
+        window._magnetic_field_view._polarisation_button.click()
+        page = window._polarisation_view
+        page._title_edit.setText(title)
+        page._sample.setCurrentIndex(page._sample.findData(True))
+        page._end_time.setValue(16.0)
+        page._time_points.setValue(4001)
+        page._apodisation_sigma.setText("6")
+        page._padding.setValue(4)
+        page._collision_rate.setValue(collision_rate)
+        page._add_button.click()
+        if page.selected_simulation_id() is None:
+            raise RuntimeError(f"The polarisation simulation failed: {page._status.text()}")
+
+    return step
+
+
 # --- Scenes -------------------------------------------------------------------
 
 _APPROXIMANT_PERIOD = {"approximant_max_period": APPROXIMANT_PERIOD}
@@ -313,6 +338,18 @@ SCENES: dict[str, Scene] = {
         "magnetic_fields",
         Page("_magnetic_field_view", (1100, 1100)),
         setup=lambda window: calculate_field(window._magnetic_field_view),
+    ),
+    "mnsi_polarisation": Scene(
+        helix_project,
+        "magnetic_fields",
+        Page("_polarisation_view", (1400, 1000)),
+        setup=simulate_polarisation("ZF powder"),
+    ),
+    "mnsi_polarisation_dynamics": Scene(
+        helix_project,
+        "magnetic_fields",
+        Page("_polarisation_view", (1400, 1000)),
+        setup=simulate_polarisation("ZF powder, ν = 2 μs⁻¹", collision_rate=2.0),
     ),
     "mnsi_approximant_fields": Scene(
         mnsi_project(

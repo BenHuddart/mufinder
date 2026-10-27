@@ -72,6 +72,9 @@ A typical pass through the page is:
 6. Optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card (see `Calculate a dipolar tensor`_ and `Calculate
    nuclear relaxation`_).
+7. To see the signal these fields give, click ``Polarisation →``. It opens the
+   :doc:`polarisation` page with this page's field result ticked, to simulate
+   the muon polarisation and its spectrum.
 
 ``Calculate Dipolar Field`` sends the selected magnetic structure and muon site
 to the magnetic-field calculation helpers. Commensurate magnetic structures
@@ -1390,10 +1393,10 @@ magnetic-structure builder and multi-q texture dialogs, commensurate local
 fields with optional muon-induced distortion corrections, incommensurate field
 distributions with convergence checks, finite field lists of commensurate
 approximants, dipolar tensors, demagnetizing corrections, applied fields, and
-nuclear dipolar linewidths. The page stops at field-level results; the library computes the
-muon polarisation, its powder averages, its spectrum and its strong-collision
-dynamics from them, and provides the reference relaxation functions (see
-:doc:`/api/using_mufinder`). Distortion corrections are not applied to
+nuclear dipolar linewidths. The :doc:`polarisation` page simulates the muon
+polarisation and its spectrum from these results; the library also provides the
+reference relaxation functions (see :doc:`/api/using_mufinder`). Distortion
+corrections are not applied to
 incommensurate field distributions, commensurate approximants or dipolar
 tensors.
 

@@ -96,6 +96,8 @@ _MAX_LEGEND_SITES = 8
 # Sources-table columns.
 _USE_COLUMN, _SOURCE_COLUMN, _APPLIED_COLUMN, _WEIGHT_COLUMN = range(4)
 _OWNER_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+# The source and simulation tables stop growing at about five rows, then scroll.
+_TABLE_MAX_HEIGHT = 150
 _SIMULATION_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
 
@@ -116,7 +118,7 @@ class VectorInput(QWidget):
         for axis in ("x", "y", "z"):
             edit = QLineEdit(self)
             edit.setValidator(QDoubleValidator(edit))
-            edit.setMaximumWidth(80)
+            edit.setMaximumWidth(64)
             edit.setToolTip(f"{tooltip} ({axis})" if tooltip else axis)
             layout.addWidget(edit)
             self._edits.append(edit)
@@ -200,6 +202,8 @@ class PolarisationWidget(QWidget):
             stretch_last_section=False,
         )
         self._simulations_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        for table in (self._sources_table, self._simulations_table):
+            table.setMaximumHeight(_TABLE_MAX_HEIGHT)
         for column in (0, 3):
             self._simulations_table.horizontalHeader().setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Stretch
@@ -392,6 +396,7 @@ class PolarisationWidget(QWidget):
             self._sample.addItem(label, polycrystalline)
         self._sphere_points = QSpinBox(self)
         self._sphere_points.setRange(1, MAX_SPHERE_POINTS)
+        self._sphere_points.setMaximumWidth(100)
         self._sphere_points.setToolTip(
             "Orientations of the applied field in a polycrystal; the zero-field average is exact."
         )
@@ -408,8 +413,10 @@ class PolarisationWidget(QWidget):
         self._end_time.setRange(0.001, 1_000.0)
         self._end_time.setDecimals(3)
         self._end_time.setSuffix(" μs")
+        self._end_time.setMaximumWidth(130)
         self._time_points = QSpinBox(self)
         self._time_points.setRange(2, MAX_TIME_POINTS)
+        self._time_points.setMaximumWidth(100)
 
         self._collision_rate = _rate_input("Strong-collision rate ν; 0 is static")
         self._dynamics_method = QComboBox(self)
@@ -422,6 +429,7 @@ class PolarisationWidget(QWidget):
         self._padding = QSpinBox(self)
         self._padding.setRange(1, MAX_PADDING_FACTOR)
         self._padding.setPrefix("× ")
+        self._padding.setMaximumWidth(90)
 
         for combo in (self._geometry, self._sample, self._dynamics_method):
             combo.currentIndexChanged.connect(self._on_setting_changed)
@@ -481,7 +489,7 @@ class PolarisationWidget(QWidget):
         sample_layout.addWidget(self._sphere_points)
         sample_layout.addStretch(1)
         form.addRow("Sample", sample_row)
-        form.addRow("λ_z", self._lambda_z)
+        form.addRow("λ<sub>z</sub>", self._lambda_z)
         sigma_row = QWidget(settings_group)
         sigma_layout = QHBoxLayout(sigma_row)
         sigma_layout.setContentsMargins(0, 0, 0, 0)
@@ -545,11 +553,12 @@ class PolarisationWidget(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         left_scroll.setWidget(left)
-        left_scroll.setMinimumWidth(460)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(left.minimumSizeHint().width() + 4)
 
         body = QHBoxLayout()
-        body.addWidget(left_scroll, 2)
-        body.addWidget(simulations_group, 3)
+        body.addWidget(left_scroll, 1)
+        body.addWidget(simulations_group, 1)
 
         layout = QVBoxLayout(self)
         layout.addWidget(title)
@@ -612,7 +621,8 @@ class PolarisationWidget(QWidget):
                 table.setItem(row, _APPLIED_COLUMN, applied)
                 weight = QDoubleSpinBox(table)
                 weight.setRange(0.0, 1_000.0)
-                weight.setDecimals(3)
+                weight.setDecimals(2)
+                weight.setMaximumWidth(90)
                 weight.setValue(float(weights.get(source.owner, 1.0)))
                 weight.valueChanged.connect(self._on_setting_changed)
                 table.setCellWidget(row, _WEIGHT_COLUMN, weight)
@@ -932,8 +942,8 @@ class PolarisationWidget(QWidget):
                 time_axis.plot(
                     times,
                     trace,
-                    linewidth=0.8,
-                    alpha=0.35 if many else 0.7,
+                    linewidth=0.6,
+                    alpha=0.18 if many else 0.3,
                     label=None if many else label,
                 )
         dynamic = record.simulation.dynamic
@@ -942,7 +952,8 @@ class PolarisationWidget(QWidget):
                 times,
                 static.polarisation,
                 linestyle="--",
-                linewidth=1.4,
+                linewidth=1.0,
+                alpha=0.7,
                 color=palette.text_muted,
                 label="static average",
             )
@@ -1040,7 +1051,7 @@ def _spectrum_upper_limit(frequencies: np.ndarray, amplitudes: np.ndarray, nyqui
 
     if amplitudes.size == 0 or not np.any(amplitudes > 0.0):
         return max(nyquist, 1e-6)
-    significant = np.nonzero(amplitudes >= 0.01 * float(np.max(amplitudes)))[0]
+    significant = np.nonzero(amplitudes >= 0.03 * float(np.max(amplitudes)))[0]
     upper = float(frequencies[significant[-1]]) * 1.15
     return min(max(upper, 1e-6), nyquist) if nyquist > 0.0 else upper
 
@@ -1051,6 +1062,7 @@ def _rate_input(tooltip: str) -> QDoubleSpinBox:
     spin.setDecimals(4)
     spin.setSuffix(" μs⁻¹")
     spin.setToolTip(tooltip)
+    spin.setMaximumWidth(140)
     return spin
 
 

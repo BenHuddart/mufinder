@@ -79,6 +79,7 @@ The dependencies drawn are:
 - Generation, then Relaxations, then Analysis.
 - Magnetic Fields, Quantum Corrections and Energy Barriers all build on the
   distinct sites that Analysis finds.
+- Polarisation builds on the fields of Magnetic Fields.
 
 A waypoint shows its stage's progress:
 

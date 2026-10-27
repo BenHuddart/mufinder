@@ -92,7 +92,7 @@ def test_field_sources_list_the_page_then_each_workspace(document) -> None:
     assert page.applied_T == ZERO
     assert workspace.site_labels == ("B1", "B2")
     assert workspace.estimate
-    assert workspace.label == "Site B · 2 fields at B1 (unrelaxed estimate)"
+    assert workspace.label == "Site B · 2 fields (B1, …) (unrelaxed estimate)"
 
 
 def test_a_distribution_source_decodes_to_distribution_results(document) -> None:

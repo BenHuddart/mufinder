@@ -526,7 +526,8 @@ no two workflow widgets may define the same private method.
        (``store_magnetic_field_results``, ``attach_magnetic_field_results``,
        ``remove_magnetic_field_results``, ``magnetic_field_results``,
        ``store_polarisation_result``, ``polarisation_result``; see
-       :doc:`/user_guide/magnetic_fields`).
+       :doc:`/user_guide/magnetic_fields`), and the note shown beside results
+       computed at an unrelaxed UEP site (``UNRELAXED_RESULTS_NOTE``).
    * - ``mufinder.services.polarisation_simulations``
      - The stored field results a polarisation simulation can use
        (``field_sources``), running a weighted selection of them

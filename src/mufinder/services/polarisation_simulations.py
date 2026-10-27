@@ -104,7 +104,11 @@ class FieldSource:
         site = self.site_labels[0] if self.site_labels else "-"
         kind = "distribution" if self.kind == "distribution" else "field"
         noun = f"{kind}s" if count != 1 else kind
-        text = f"{self.title} · {count} {noun} at {site}"
+        text = (
+            f"{self.title} · {count} {noun} at {site}"
+            if count == 1
+            else f"{self.title} · {count} {noun} ({site}, …)"
+        )
         return f"{text} (unrelaxed estimate)" if self.estimate else text
 
 

@@ -49,6 +49,7 @@ and quality standards.
    user_guide/structural_relaxation_analysis
    user_guide/legacy_import
    user_guide/magnetic_fields
+   user_guide/polarisation
    user_guide/quantum_corrections
    user_guide/quantum_corrections_theory
    user_guide/energy_barriers
