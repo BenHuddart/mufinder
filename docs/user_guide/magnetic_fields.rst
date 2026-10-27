@@ -1426,9 +1426,9 @@ approximants, dipolar tensors, demagnetizing corrections, applied fields, and
 nuclear dipolar linewidths. The :doc:`polarisation` page simulates the muon
 polarisation and its spectrum from these results; the library also provides the
 reference relaxation functions (see :doc:`/api/using_mufinder`). Distortion
-corrections are not applied to
-incommensurate field distributions, commensurate approximants or dipolar
-tensors.
+corrections apply to commensurate fields, commensurate approximants and
+incommensurate field distributions; dipolar tensors always use the pristine
+host.
 
 .. toctree::
    :hidden:

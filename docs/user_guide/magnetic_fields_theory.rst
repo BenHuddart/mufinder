@@ -71,8 +71,9 @@ different magnetic cell.
 
 For incommensurate structures, a single muon site generally samples a
 distribution of local fields rather than one finite set of symmetry-equivalent
-values. MuFinder calculates the field distribution itself and stops there; it
-does not currently simulate spectra from that distribution.
+values. MuFinder calculates that field distribution, and the
+:doc:`polarisation` page takes it as the input for simulating the muon
+polarisation and its spectrum.
 
 Before calling ``muesr`` for an incommensurate distribution, MuFinder checks the
 atom-resolved complex Fourier coefficients. The fast ``muLFC`` incommensurate
