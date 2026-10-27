@@ -233,7 +233,11 @@ def test_a_simulation_survives_a_save_and_reload(document) -> None:
         document,
         title="dynamic",
         settings=PolarisationSettings(
-            end_time_us=4.0, time_points=401, collision_rate_per_us=1.0, padding_factor=2
+            end_time_us=4.0,
+            time_points=401,
+            collision_rate_per_us=1.0,
+            padding_factor=2,
+            polycrystalline=True,
         ),
         sources=[SimulationSource("ws-1", "", "")],
     )
@@ -347,3 +351,14 @@ def test_a_simulation_decodes_only_the_sources_it_uses(document, monkeypatch) ->
     )
 
     assert decoded == ["site 1"]
+
+
+@pytest.mark.parametrize("samples", [None, 3, "fields", []])
+def test_a_distribution_with_malformed_samples_is_not_offered(document, samples) -> None:
+    _store_fields(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {"kind": "distribution", "results": [{"site_label": "x", "fields_T": samples}]},
+    )
+
+    assert [source.owner for source in field_sources(document)] == ["ws-1"]

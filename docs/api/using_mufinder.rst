@@ -310,7 +310,10 @@ transverse), the crystal orientation as the lattice directions ``[uvw]`` along
 the laboratory ``z`` and ``x`` axes
 (:func:`~mufinder.science.polarisation_simulation.crystal_rotation_from_directions`),
 the sample, the damping, the time grid, strong-collision dynamics on the
-site-weighted average and the spectrum processing. It returns a
+site-weighted average and the spectrum processing. Dynamics need a polycrystal
+in zero field measured along the spin, or in a longitudinal field: only there
+does symmetry leave the measured component as the one that survives a redraw
+of the field, so the scalar strong-collision equation applies. It returns a
 :class:`~mufinder.science.polarisation_simulation.PolarisationSimulation` with
 the static traces, the dynamic trace, the spectrum, and a warning when the time
 grid is too coarse for the largest field. In a project,
