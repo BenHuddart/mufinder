@@ -7,6 +7,7 @@ from importlib.resources import files
 import logging
 from pathlib import Path
 import tempfile
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
@@ -20,6 +21,10 @@ from PySide6.QtWidgets import (
     QTreeWidget,
     QWidget,
 )
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.legend import Legend
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -637,6 +642,59 @@ def save_theme_mode(settings: QSettings, mode: str) -> None:
     if normalized not in {THEME_LIGHT, THEME_DARK, THEME_SYSTEM}:
         normalized = THEME_SYSTEM
     settings.setValue(THEME_MODE_KEY, normalized)
+
+
+def style_plot_axes(
+    axis: Axes,
+    *,
+    facecolor: str | None = None,
+    tick_color: str | None = None,
+    tick_labelsize: float | None = None,
+    grid_alpha: float = 0.35,
+    grid_linewidth: float | None = None,
+) -> None:
+    """Paint a matplotlib axis in the current palette.
+
+    The axis background defaults to ``bg_surface_alt`` and the ticks to
+    ``text_primary``; axis labels and the title use ``text_primary``, spines and
+    grid lines use ``border``. Label and title colours persist, so this may run
+    before or after the text is set.
+    """
+
+    palette = current_palette()
+    axis.set_facecolor(facecolor or palette.bg_surface_alt)
+    tick_kwargs: dict[str, Any] = {"colors": tick_color or palette.text_primary}
+    if tick_labelsize is not None:
+        tick_kwargs["labelsize"] = tick_labelsize
+    axis.tick_params(**tick_kwargs)
+    axis.xaxis.label.set_color(palette.text_primary)
+    axis.yaxis.label.set_color(palette.text_primary)
+    axis.title.set_color(palette.text_primary)
+    for spine in axis.spines.values():
+        spine.set_color(palette.border)
+    grid_kwargs: dict[str, Any] = {"color": palette.border, "alpha": grid_alpha}
+    if grid_linewidth is not None:
+        grid_kwargs["linewidth"] = grid_linewidth
+    axis.grid(True, **grid_kwargs)
+
+
+def style_plot_legend(legend: Legend | None, *, frame_alpha: float | None = None) -> None:
+    """Paint a matplotlib legend frame and text in the current palette.
+
+    Does nothing when ``legend`` is ``None``, so ``axis.get_legend()`` can be
+    passed straight in.
+    """
+
+    if legend is None:
+        return
+    palette = current_palette()
+    frame = legend.get_frame()
+    frame.set_facecolor(palette.bg_surface)
+    frame.set_edgecolor(palette.border)
+    if frame_alpha is not None:
+        frame.set_alpha(frame_alpha)
+    for text in legend.get_texts():
+        text.set_color(palette.text_primary)
 
 
 def style_section_title(label: QLabel) -> None:

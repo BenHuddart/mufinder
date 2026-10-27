@@ -43,6 +43,8 @@ from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
     style_hint_text,
+    style_plot_axes,
+    style_plot_legend,
     style_section_title,
     style_warning_text,
 )
@@ -486,7 +488,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         sqrt_scale = (
             hasattr(self, "_scale_combo") and self._scale_combo.currentText() == "Sqrt energy"
         )
-        palette = current_palette()
         colours = _analysis_line_colours()
         selected_indices = self._selected_single_particle_indices()
         for plot_index, result_index in enumerate(selected_indices):
@@ -526,11 +527,7 @@ class QuantumPhononAnalysisDialog(QDialog):
                 )
         axis.set_xlabel(r"Muon displacement, $q$ ($\AA$)")
         axis.set_ylabel(y_label)
-        legend = axis.legend(loc="best", fontsize="small", frameon=True)
-        legend.get_frame().set_facecolor(palette.bg_surface)
-        legend.get_frame().set_edgecolor(palette.border)
-        for text in legend.get_texts():
-            text.set_color(palette.text_primary)
+        style_plot_legend(axis.legend(loc="best", fontsize="small", frameon=True))
         self._canvas.draw_idle()
 
     def _selected_single_particle_indices(self) -> list[int]:
@@ -895,14 +892,14 @@ def _symbol_row(symbol: str, meaning: str, parent: QWidget) -> QHBoxLayout:
 def _style_energy_axis(figure: Figure, axis) -> None:
     palette = current_palette()
     figure.set_facecolor(palette.bg_primary)
-    axis.set_facecolor(palette.bg_primary)
-    axis.tick_params(colors=palette.text_muted, labelsize=9)
-    axis.xaxis.label.set_color(palette.text_primary)
-    axis.yaxis.label.set_color(palette.text_primary)
-    axis.title.set_color(palette.text_primary)
-    for spine in axis.spines.values():
-        spine.set_color(palette.border)
-    axis.grid(True, color=palette.border, linewidth=0.7, alpha=0.45)
+    style_plot_axes(
+        axis,
+        facecolor=palette.bg_primary,
+        tick_color=palette.text_muted,
+        tick_labelsize=9,
+        grid_alpha=0.45,
+        grid_linewidth=0.7,
+    )
     axis.set_axisbelow(True)
 
 
