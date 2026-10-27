@@ -5487,7 +5487,7 @@ def test_magnetic_preset_dialog_takes_the_wavevector_in_inverse_angstrom(qapp) -
     _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
 
     # 0.25 r.l.u. along c* of the 3 Å cube is 0.25 x 2π / 3 Å⁻¹.
-    assert dialog._wavevector_row_label.text() == "Wavevector |k| (Å⁻¹)"
+    assert dialog._wavevector_row_label.text() == "Wavevector k (Å⁻¹)"
     assert float(dialog._wavevector.text()) == pytest.approx(0.25 * 2.0 * np.pi / 3.0, rel=1e-5)
     assert dialog.q_vector() == pytest.approx((0.0, 0.0, 0.25), abs=1e-6)
 
@@ -5513,21 +5513,35 @@ def test_magnetic_preset_dialog_unit_switch_keeps_q_exactly(qapp) -> None:
     dialog.close()
 
 
-@pytest.mark.parametrize(
-    ("text", "message"), [("-0.5", "between 0 and 20"), ("21", "between 0 and 20")]
-)
-def test_magnetic_preset_dialog_inverse_angstrom_range(qapp, text, message) -> None:
+@pytest.mark.parametrize("delta", [-0.5, 4.0, -4.0, 0.137])
+def test_magnetic_preset_dialog_unit_switch_keeps_every_valid_wavevector(qapp, delta) -> None:
     dialog = MagneticPresetDialog(_host_structure())
+    dialog._wavevector.setText(f"{delta:g}")
+
+    _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
+    assert "Cannot build" not in dialog._summary.text()
+    assert dialog.q_vector() == pytest.approx((0.0, 0.0, delta), abs=1e-14)
+
+    _select_combo_data(dialog._wavevector_unit, "rlu")
+    assert "Cannot build" not in dialog._summary.text()
+    assert dialog.q_vector() == pytest.approx((0.0, 0.0, delta), abs=1e-14)
+    dialog.close()
+
+
+def test_magnetic_preset_dialog_k_range_follows_the_axis(qapp) -> None:
+    # A 3 x 3 x 6 Å cell: 4 r.l.u. is 4 x 2π / 3 = 8.37758 Å⁻¹ along a* and half that along c*.
+    structure = _host_structure(lattice=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 6.0]])
+    dialog = MagneticPresetDialog(structure)
     _select_combo_data(dialog._wavevector_unit, "inverse_angstrom")
 
-    dialog._wavevector.setText("12")
-    assert "Cannot build" not in dialog._summary.text()
-    dialog._wavevector.setText(text)
+    dialog._wavevector.setText("-5")
+    assert "between -4.18879 and 4.18879" in dialog._summary.text()
 
-    assert message in dialog._summary.text()
-    _select_combo_data(dialog._wavevector_unit, "rlu")
-    dialog._wavevector.setText("-0.5")
-    assert dialog.q_vector() == (0.0, 0.0, -0.5)
+    _select_combo_data(dialog._propagation_combo, "a*")
+    assert "Cannot build" not in dialog._summary.text()
+    assert dialog.q_vector() == pytest.approx((-5.0 * 3.0 / (2.0 * np.pi), 0.0, 0.0))
+    dialog._wavevector.setText("9")
+    assert "between -8.37758 and 8.37758" in dialog._summary.text()
     dialog.close()
 
 

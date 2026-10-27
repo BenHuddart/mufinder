@@ -1382,6 +1382,8 @@ class AtomPhaseDialog(QDialog):
 class MagneticPresetDialog(QDialog):
     """Guided helper that builds a helix, conical, cycloid or spin-density wave from crystal axes."""
 
+    _DELTA_LIMIT_RLU = 4.0
+
     _KINDS = {
         "Helix": "helix",
         "Conical": "conical",
@@ -1424,7 +1426,10 @@ class MagneticPresetDialog(QDialog):
                 )
         self._propagation_combo.setCurrentIndex(2)
         self._wavevector = MagneticComponentDialog._decimal_input(
-            "0.25", minimum=-4.0, maximum=4.0, placeholder="δ"
+            "0.25",
+            minimum=-self._DELTA_LIMIT_RLU,
+            maximum=self._DELTA_LIMIT_RLU,
+            placeholder="δ",
         )
         # The exact value behind the text a unit switch wrote, so rounding the text never moves q.
         self._converted_wavevector: tuple[str, float] | None = None
@@ -1548,7 +1553,7 @@ class MagneticPresetDialog(QDialog):
             if self._wavevector_in_inverse_angstrom():
                 return wavevector_rlu_from_inverse_angstrom(
                     self._structure.lattice_vectors,
-                    self._wavevector_value("|k|"),
+                    self._wavevector_value("k"),
                     reciprocal_axis_q_rlu(str(source), 1.0),
                 )
             return reciprocal_axis_q_rlu(str(source), self._wavevector_value("δ"))
@@ -1556,11 +1561,13 @@ class MagneticPresetDialog(QDialog):
             raise ValueError(str(exc)) from None
 
     def _wavevector_value(self, label: str) -> float:
-        value = MagneticComponentDialog._decimal_value(self._wavevector, label)
         converted = self._converted_wavevector
         if converted is not None and converted[0] == self._wavevector.text():
-            return converted[1]
-        return value
+            # The rounded text may sit a hair past the range its exact value lies on the edge of.
+            limit = float(self._wavevector.property("maximum"))
+            if abs(converted[1]) <= limit * (1.0 + 1e-12):
+                return converted[1]
+        return MagneticComponentDialog._decimal_value(self._wavevector, label)
 
     def _wavevector_in_inverse_angstrom(self) -> bool:
         return self._wavevector_unit.currentData() == "inverse_angstrom"
@@ -1575,7 +1582,6 @@ class MagneticPresetDialog(QDialog):
             axis_length = reciprocal_axis_length(self._structure.lattice_vectors, str(source))
         except (MagneticStructureError, ValueError):
             previous = None
-        self._set_wavevector_range(inverse_angstrom)
         if previous is not None:
             converted = previous * axis_length if inverse_angstrom else previous / axis_length
             text = f"{converted:.6g}"
@@ -1590,10 +1596,20 @@ class MagneticPresetDialog(QDialog):
             return converted[1]
         return float(text)
 
-    def _set_wavevector_range(self, inverse_angstrom: bool) -> None:
-        """|k| is a length up to 20 Å⁻¹; δ keeps its sign and the ±4 r.l.u. range."""
+    def _set_wavevector_range(self) -> None:
+        """δ spans ±4 r.l.u.; k spans the same wavevectors, ±4 |a*| along the chosen axis.
 
-        minimum, maximum = (0.0, 20.0) if inverse_angstrom else (-4.0, 4.0)
+        Matching ranges let every valid value convert to a valid value in the other unit.
+        """
+
+        limit = self._DELTA_LIMIT_RLU
+        source = self._propagation_combo.currentData()
+        if self._wavevector_in_inverse_angstrom() and not isinstance(source, int):
+            try:
+                limit *= reciprocal_axis_length(self._structure.lattice_vectors, str(source))
+            except MagneticStructureError:
+                pass
+        minimum, maximum = -limit, limit
         self._wavevector.setProperty("minimum", minimum)
         self._wavevector.setProperty("maximum", maximum)
         validator = self._wavevector.validator()
@@ -1634,9 +1650,10 @@ class MagneticPresetDialog(QDialog):
         self._wavevector_row_label.setVisible(from_axis)
         inverse_angstrom = self._wavevector_in_inverse_angstrom()
         self._wavevector_row_label.setText(
-            "Wavevector |k| (Å⁻¹)" if inverse_angstrom else "Wavevector δ (r.l.u.)"
+            "Wavevector k (Å⁻¹)" if inverse_angstrom else "Wavevector δ (r.l.u.)"
         )
-        self._wavevector.setPlaceholderText("|k|" if inverse_angstrom else "δ")
+        self._wavevector.setPlaceholderText("k" if inverse_angstrom else "δ")
+        self._set_wavevector_range()
         rotating = kind != "spin_density_wave"
         self._handedness_combo.setVisible(rotating)
         self._handedness_row_label.setVisible(rotating)

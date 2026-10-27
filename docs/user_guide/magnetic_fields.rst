@@ -367,11 +367,13 @@ any other afterwards. In the dialog, set:
    wavevector (default ``Along c*`` with δ = 0.25 r.l.u.), or a stored basis
    row ``qN``, on which the component is then stored. The unit beside the
    wavevector is ``r.l.u.`` (the default, ``Wavevector δ (r.l.u.)``) or ``Å⁻¹``
-   (``Wavevector |k| (Å⁻¹)``). A length in Å⁻¹ is converted through the
-   lattice, :math:`q_i = \mathbf{k} \cdot \mathbf{a}_i / 2\pi`, and the
-   summary line shows the resulting q in r.l.u. δ lies between -4 and 4 r.l.u.;
-   ``|k|`` is a length between 0 and 20 Å⁻¹. Switching the unit converts the typed
-   value, so q stays the same.
+   (``Wavevector k (Å⁻¹)``), the signed length of the wavevector along the
+   chosen axis, :math:`2\pi` included. It is converted through the lattice,
+   :math:`q_i = \mathbf{k} \cdot \mathbf{a}_i / 2\pi`, and the summary line
+   shows the resulting q in r.l.u. δ lies between -4 and 4 r.l.u., and k
+   between the same wavevectors in Å⁻¹, :math:`\pm 4 |\mathbf{a}^*|` along
+   ``a*`` (likewise ``b*`` and ``c*``), so switching the unit converts the typed
+   value and q stays the same.
 3. A reference crystal axis, ``a``, ``b`` or ``c``. It defaults to the axis
    most nearly perpendicular to q, preferring a, then b, then c, and resets to
    that default when the ``Propagation`` choice changes, but not when only δ
