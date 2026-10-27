@@ -41,6 +41,7 @@ from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     current_palette,
     style_hint_text,
+    style_inline_group,
     style_plot_axes,
     style_plot_legend,
     style_section_subtitle,
@@ -112,6 +113,7 @@ class VectorInput(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        style_inline_group(self)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._edits = []
@@ -475,6 +477,7 @@ class PolarisationWidget(QWidget):
         form.addRow("Geometry", self._geometry)
         form.addRow("Initial polarisation", self._spin)
         detector_row = QWidget(settings_group)
+        style_inline_group(detector_row)
         detector_layout = QHBoxLayout(detector_row)
         detector_layout.setContentsMargins(0, 0, 0, 0)
         detector_layout.addWidget(self._detector_along_spin)
@@ -485,6 +488,7 @@ class PolarisationWidget(QWidget):
         form.addRow("Applied field", self._applied_summary)
         form.addRow("Add applied field (T)", self._added_field)
         sample_row = QWidget(settings_group)
+        style_inline_group(sample_row)
         sample_layout = QHBoxLayout(sample_row)
         sample_layout.setContentsMargins(0, 0, 0, 0)
         sample_layout.addWidget(self._sample)
@@ -494,6 +498,7 @@ class PolarisationWidget(QWidget):
         form.addRow("Sample", sample_row)
         form.addRow("λ<sub>z</sub>", self._lambda_z)
         sigma_row = QWidget(settings_group)
+        style_inline_group(sigma_row)
         sigma_layout = QHBoxLayout(sigma_row)
         sigma_layout.setContentsMargins(0, 0, 0, 0)
         sigma_layout.addWidget(self._sigma)
@@ -501,6 +506,7 @@ class PolarisationWidget(QWidget):
         sigma_layout.addStretch(1)
         form.addRow("σ", sigma_row)
         time_row = QWidget(settings_group)
+        style_inline_group(time_row)
         time_layout = QHBoxLayout(time_row)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.addWidget(self._end_time)
@@ -509,6 +515,7 @@ class PolarisationWidget(QWidget):
         time_layout.addStretch(1)
         form.addRow("End time", time_row)
         dynamics_row = QWidget(settings_group)
+        style_inline_group(dynamics_row)
         dynamics_layout = QHBoxLayout(dynamics_row)
         dynamics_layout.setContentsMargins(0, 0, 0, 0)
         dynamics_layout.addWidget(self._collision_rate)
@@ -517,6 +524,7 @@ class PolarisationWidget(QWidget):
         form.addRow("Collision rate ν", dynamics_row)
         form.addRow("Spectrum", self._subtract_baseline)
         apodisation_row = QWidget(settings_group)
+        style_inline_group(apodisation_row)
         apodisation_layout = QHBoxLayout(apodisation_row)
         apodisation_layout.setContentsMargins(0, 0, 0, 0)
         apodisation_layout.addWidget(QLabel("σ", apodisation_row))
