@@ -423,8 +423,11 @@ triangle,
       + \hat{\mathbf{n}}_3\cdot\hat{\mathbf{n}}_1},
    \qquad Q = \frac{1}{4\pi}\sum\Omega,
 
-which gives an integer whenever neighbouring samples are less than 90° apart.
-If they are not, the grid is doubled up to 256 × 256.
+which gives the right integer once the grid resolves the texture: more than
+twice as many points along each cell vector as the highest Fourier frequency
+along it, so that no term aliases, and neighbouring samples less than 90° apart.
+Until both hold, the grid is doubled up to 256 × 256; beyond that the charge is
+reported as undefined.
 
 The sign is read looking down the normal of the texture plane oriented towards
 +z (towards +y, then +x, when the plane contains z). A skyrmion whose core

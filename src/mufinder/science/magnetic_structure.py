@@ -1765,8 +1765,10 @@ def topological_charge_magnetic_unit_cell(
     +y, then +x, for planes that contain z): a skyrmion whose core points along
     −z in a +z background has ``Q = −1``.
 
-    The grid is under-resolved when two neighbouring samples are 90° or more
-    apart. The grid is then doubled until it exceeds ``max_resolution`` (by
+    The grid is under-resolved when it has no more than twice as many points
+    along an axis as the highest Fourier frequency along it (the samples would
+    alias), or when two neighbouring samples are 90° or more apart. The grid is
+    then doubled until it exceeds ``max_resolution`` (by
     default the grid is not refined) and an error is raised. A third q vector
     that lies in the plane as a combination of q1 and q2 is folded into them.
     An error is also raised for a singular q pair, a texture that uses a third q
@@ -1781,21 +1783,27 @@ def topological_charge_magnetic_unit_cell(
     if min(nu, nv) < 3:
         raise MagneticStructureError("topological charge needs a grid of at least 3 × 3")
     limit = max(nu, nv) if max_resolution is None else int(max_resolution)
+    frequencies = np.abs(np.array([term.q_coeff[:2] for term in texture.terms], dtype=float))
+    highest_u, highest_v = (float(value) for value in np.max(frequencies, axis=0))
     while True:
-        moments = evaluate_texture_grid(texture, (nu, nv, 1))[:, :, 0, :]
-        directions = _unit_texture_directions(moments)
-        corners = (
-            directions,
-            np.roll(directions, -1, axis=0),
-            np.roll(np.roll(directions, -1, axis=0), -1, axis=1),
-            np.roll(directions, -1, axis=1),
-        )
-        if _directions_resolved(*corners):
-            break
+        # Below the Nyquist limit of every harmonic the samples cannot alias, so
+        # the neighbour-angle test sees the texture itself.
+        if nu > 2.0 * highest_u and nv > 2.0 * highest_v:
+            moments = evaluate_texture_grid(texture, (nu, nv, 1))[:, :, 0, :]
+            directions = _unit_texture_directions(moments)
+            corners = (
+                directions,
+                np.roll(directions, -1, axis=0),
+                np.roll(np.roll(directions, -1, axis=0), -1, axis=1),
+                np.roll(directions, -1, axis=1),
+            )
+            if _directions_resolved(*corners):
+                break
         if 2 * max(nu, nv) > limit:
             raise MagneticStructureError(
-                f"the {nu} × {nv} grid is too coarse for this texture: neighbouring "
-                "moments are 90° or more apart; increase the resolution"
+                f"the {nu} × {nv} grid is too coarse for this texture: it needs more than "
+                f"{2.0 * highest_u:g} × {2.0 * highest_v:g} points to resolve every Fourier "
+                "term, with neighbouring moments under 90° apart; increase the resolution"
             )
         nu, nv = 2 * nu, 2 * nv
     first, second, third, fourth = corners
@@ -1829,8 +1837,9 @@ def topological_density_2d(
     slice may cut a 3-D texture. Each grid cell's density is its solid angle,
     summed over its two triangles, divided by ``4π`` times the cell area, with
     the same sign convention as :func:`topological_charge_magnetic_unit_cell`.
-    Raises when the slice vectors are parallel, the magnitude vanishes, or
-    neighbouring samples are 90° or more apart.
+    Raises when the slice vectors are parallel, the magnitude vanishes, the grid
+    has no more than two intervals per Fourier cycle along a side (the samples
+    would alias), or neighbouring samples are 90° or more apart.
     """
 
     basis = np.zeros((3, 3), dtype=float)
@@ -1851,6 +1860,17 @@ def topological_density_2d(
     s_axis = np.linspace(0.0, 1.0, nu)
     t_axis = np.linspace(0.0, 1.0, nv)
     points = start + s_axis[:, np.newaxis, np.newaxis] * u + t_axis[np.newaxis, :, np.newaxis] * v
+    q_cartesian = np.array([term.q_coeff for term in texture.terms], dtype=float) @ basis
+    # Fourier cycles of each term along each side of the slice; fewer than two
+    # intervals per cycle would alias.
+    highest_u = float(np.max(np.abs(q_cartesian @ u))) if texture.terms else 0.0
+    highest_v = float(np.max(np.abs(q_cartesian @ v))) if texture.terms else 0.0
+    if nu - 1 <= 2.0 * highest_u or nv - 1 <= 2.0 * highest_v:
+        raise MagneticStructureError(
+            f"the {nu} × {nv} slice grid is too coarse for this texture: it needs more than "
+            f"{2.0 * highest_u:.4g} × {2.0 * highest_v:.4g} intervals to resolve every "
+            "Fourier term; increase the resolution"
+        )
     phases = points @ basis.T
     moments = np.zeros(points.shape, dtype=complex)
     for term in texture.terms:

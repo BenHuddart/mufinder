@@ -1697,6 +1697,43 @@ def test_topological_charge_raises_on_a_coarse_grid_and_refines_on_request() -> 
     )
 
 
+@pytest.mark.parametrize(("scale", "expected"), [(63, -(63**2)), (64, -(64**2))])
+def test_topological_charge_refines_past_aliasing_of_high_frequency_terms(scale, expected) -> None:
+    preset, q_basis = _skyrmion_lattice("hexagonal")
+    # Every q coefficient times `scale` tiles the magnetic cell with scale² skyrmions.
+    scaled = MagneticTexture(
+        tuple(
+            MagneticTextureTerm(
+                q_coeff=tuple(scale * value for value in term.q_coeff),
+                coefficient=term.coefficient,
+            )
+            for term in preset.terms
+        )
+    )
+
+    with pytest.raises(MagneticStructureError, match="too coarse"):
+        topological_charge_magnetic_unit_cell(scaled, q_basis, (64, 64))
+    assert (
+        topological_charge_magnetic_unit_cell(scaled, q_basis, (64, 64), max_resolution=1024)
+        == expected
+    )
+
+
+def test_topological_density_rejects_a_slice_grid_that_aliases() -> None:
+    texture, q_basis = _skyrmion_lattice("hexagonal")
+    dual = np.linalg.pinv(q_basis[:2]).T
+
+    # Ten magnetic cells along each side need more than 20 intervals per side.
+    with pytest.raises(MagneticStructureError, match="too coarse"):
+        topological_density_2d(
+            texture, q_basis, u_vector=10 * dual[0], v_vector=10 * dual[1], resolution=(21, 21)
+        )
+    tiled = topological_density_2d(
+        texture, q_basis, u_vector=10 * dual[0], v_vector=10 * dual[1], resolution=(641, 641)
+    )
+    assert tiled.charge == pytest.approx(-100.0, abs=1e-6)
+
+
 @pytest.mark.parametrize(
     ("q_basis", "message"),
     [
