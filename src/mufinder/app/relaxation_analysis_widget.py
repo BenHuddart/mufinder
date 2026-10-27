@@ -64,6 +64,8 @@ from mufinder.app.theme import (
     current_palette,
     status_brush,
     style_hint_text,
+    style_plot_axes,
+    style_plot_legend,
     style_section_subtitle,
     style_section_title,
     use_tabbed_table_corners,
@@ -1093,18 +1095,6 @@ class RelaxationClusteringDialog(QDialog):
     ) -> dict[int, tuple[float, float]]:
         return pack_graph_components(cls._graph_component_layouts(result), target_aspect)
 
-    @staticmethod
-    def _apply_convergence_axis_theme(axis) -> None:
-        palette = current_palette()
-        axis.set_facecolor(palette.bg_surface_alt)
-        axis.tick_params(axis="both", colors=palette.text_primary, labelcolor=palette.text_primary)
-        axis.xaxis.label.set_color(palette.text_primary)
-        axis.yaxis.label.set_color(palette.text_primary)
-        axis.title.set_color(palette.text_primary)
-        for spine in axis.spines.values():
-            spine.set_color(palette.border)
-        axis.grid(True, color=palette.border, alpha=0.35)
-
     def _graph_target_aspect(self) -> float:
         box = self._graph_figure.bbox
         return float(box.width) / float(box.height) if box.height > 0 else 1.6
@@ -1235,7 +1225,7 @@ class RelaxationClusteringDialog(QDialog):
         self._scan_figure.clear()
         self._scan_figure.set_facecolor(current_palette().bg_surface)
         scan_axis = self._scan_figure.add_subplot(111)
-        self._apply_convergence_axis_theme(scan_axis)
+        style_plot_axes(scan_axis)
         scan_rows = parse_tolerance_scan(self._tolerance_scan)
         if scan_rows:
             x_values, y_values = zip(*scan_rows, strict=False)
@@ -1604,12 +1594,7 @@ class DisplacementAnalysisDialog(QDialog):
                 borderaxespad=0.0,
                 frameon=True,
             )
-            frame = legend.get_frame()
-            frame.set_facecolor(current_palette().bg_surface)
-            frame.set_edgecolor(current_palette().border)
-            frame.set_alpha(0.96)
-            for label in legend.get_texts():
-                label.set_color(current_palette().text_primary)
+            style_plot_legend(legend, frame_alpha=0.96)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
         axis.spines["left"].set_color(current_palette().border)

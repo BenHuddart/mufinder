@@ -24,6 +24,7 @@ from mufinder.app.theme import (
     current_palette,
     make_empty_state_label,
     style_hint_text,
+    style_plot_axes,
     style_section_subtitle,
     style_section_title,
 )
@@ -176,17 +177,6 @@ class _PinnedPlotWidget(QWidget):
         self._placeholder.hide()
         self._canvas_frame.show()
         self._canvas.show()
-
-    def _apply_axis_theme(self, axis) -> None:
-        palette = current_palette()
-        axis.set_facecolor(palette.bg_surface)
-        axis.tick_params(axis="both", colors=palette.text_primary, labelcolor=palette.text_primary)
-        axis.xaxis.label.set_color(palette.text_primary)
-        axis.yaxis.label.set_color(palette.text_primary)
-        axis.title.set_color(palette.text_primary)
-        for spine in axis.spines.values():
-            spine.set_color(palette.border)
-        axis.grid(True, color=palette.border, alpha=0.35)
 
     def _draw_plot(
         self,
@@ -353,8 +343,8 @@ class _PinnedPlotWidget(QWidget):
                 color="#b91c1c",
                 bbox=badge_box,
             )
-        self._apply_axis_theme(energy_ax)
-        self._apply_axis_theme(force_ax)
+        style_plot_axes(energy_ax, facecolor=current_palette().bg_surface)
+        style_plot_axes(force_ax, facecolor=current_palette().bg_surface)
         self._canvas.draw_idle()
 
 

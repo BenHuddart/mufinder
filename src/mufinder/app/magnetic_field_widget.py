@@ -74,6 +74,8 @@ from mufinder.app.theme import (
     style_hint_text,
     style_inline_group,
     style_option_card,
+    style_plot_axes,
+    style_plot_legend,
     style_section_subtitle,
     style_section_title,
     style_small_checked_tool_button,
@@ -4147,14 +4149,10 @@ class MagneticFieldDistributionDialog(QDialog):
         palette = current_palette()
         self._figure.clear()
         axis = self._figure.add_subplot(111)
-        axis.set_facecolor(palette.bg_surface_alt)
-        axis.tick_params(colors=palette.text_primary)
-        for spine in axis.spines.values():
-            spine.set_color(palette.border)
-        axis.set_xlabel(r"$B$ (T)", color=palette.text_primary)
-        axis.set_ylabel(r"$p(B)$", color=palette.text_primary)
-        axis.set_title(self._title_label(), color=palette.text_primary)
-        axis.grid(True, color=palette.border, alpha=0.35)
+        style_plot_axes(axis)
+        axis.set_xlabel(r"$B$ (T)")
+        axis.set_ylabel(r"$p(B)$")
+        axis.set_title(self._title_label())
         x_formatter = ScalarFormatter(useOffset=False)
         x_formatter.set_scientific(False)
         axis.xaxis.set_major_formatter(x_formatter)
@@ -4206,11 +4204,7 @@ class MagneticFieldDistributionDialog(QDialog):
             axis.set_xlim(low, high)
             axis.set_ylim(0.0, max(1.05, y_max * 1.08))
             if len(self._results) > 1:
-                legend = axis.legend(loc="best", frameon=True)
-                legend.get_frame().set_facecolor(palette.bg_surface)
-                legend.get_frame().set_edgecolor(palette.border)
-                for text in legend.get_texts():
-                    text.set_color(palette.text_primary)
+                style_plot_legend(axis.legend(loc="best", frameon=True))
         else:
             axis.text(
                 0.5,

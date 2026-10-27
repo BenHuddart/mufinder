@@ -384,6 +384,8 @@ no two workflow widgets may define the same private method.
        ``track_item_view_corners``; the shared table helpers call it, and any
        ``QTableWidget`` or ``QTreeWidget`` built without them calls it directly,
        because no application-wide event filter discovers views.
+       Matplotlib axes and legends take the palette through
+       ``style_plot_axes`` and ``style_plot_legend``.
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).

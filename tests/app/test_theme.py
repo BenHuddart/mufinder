@@ -574,3 +574,75 @@ def test_disabled_inputs_and_labels_are_drawn_muted(qapp, mode: str) -> None:
         container.deleteLater()
     finally:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_style_plot_axes_paints_axis_in_the_active_palette(qapp, mode: str) -> None:
+    from matplotlib.colors import to_rgba
+    from matplotlib.figure import Figure
+
+    theme_module.apply_theme(qapp, mode)
+    palette = theme_module.current_palette()
+    axis = Figure().add_subplot(111)
+    axis.set_xlabel("x")
+
+    theme_module.style_plot_axes(axis)
+    axis.set_ylabel("y")
+    axis.set_title("title")
+
+    assert axis.get_facecolor() == to_rgba(palette.bg_surface_alt)
+    assert axis.xaxis.label.get_color() == palette.text_primary
+    assert axis.yaxis.label.get_color() == palette.text_primary
+    assert axis.title.get_color() == palette.text_primary
+    assert all(spine.get_edgecolor() == to_rgba(palette.border) for spine in axis.spines.values())
+    tick = axis.xaxis.get_major_ticks()[0]
+    assert tick.label1.get_color() == palette.text_primary
+    gridline = tick.gridline
+    assert gridline.get_visible()
+    assert gridline.get_color() == palette.border
+    assert gridline.get_alpha() == pytest.approx(0.35)
+
+
+def test_style_plot_axes_accepts_per_plot_overrides(qapp) -> None:
+    from matplotlib.colors import to_rgba
+    from matplotlib.figure import Figure
+
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    palette = theme_module.current_palette()
+    axis = Figure().add_subplot(111)
+
+    theme_module.style_plot_axes(
+        axis,
+        facecolor=palette.bg_primary,
+        tick_color=palette.text_muted,
+        tick_labelsize=9,
+        grid_alpha=0.45,
+        grid_linewidth=0.7,
+    )
+
+    assert axis.get_facecolor() == to_rgba(palette.bg_primary)
+    tick = axis.yaxis.get_major_ticks()[0]
+    assert tick.label1.get_color() == palette.text_muted
+    assert tick.label1.get_fontsize() == 9
+    assert tick.gridline.get_alpha() == pytest.approx(0.45)
+    assert tick.gridline.get_linewidth() == pytest.approx(0.7)
+
+
+def test_style_plot_legend_paints_frame_and_text(qapp) -> None:
+    from matplotlib.colors import to_rgba
+    from matplotlib.figure import Figure
+
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    palette = theme_module.current_palette()
+    axis = Figure().add_subplot(111)
+    axis.plot([0, 1], [0, 1], label="line")
+    legend = axis.legend(frameon=True)
+
+    theme_module.style_plot_legend(legend, frame_alpha=0.95)
+
+    frame = legend.get_frame()
+    assert frame.get_facecolor()[:3] == to_rgba(palette.bg_surface)[:3]
+    assert frame.get_edgecolor()[:3] == to_rgba(palette.border)[:3]
+    assert frame.get_alpha() == pytest.approx(0.95)
+    assert [text.get_color() for text in legend.get_texts()] == [palette.text_primary]
+    theme_module.style_plot_legend(None)
