@@ -724,10 +724,16 @@ def _contact_shell_mean(
     shell = ordered[: int(nnn)]
     reach = float(distances[shell[-1]]) if shell.size == int(nnn) else rcont
     if reach >= reach_limit:
+        remedy = (
+            "fewer Contact neighbours or a smaller Contact radius"
+            if shell.size == int(nnn)
+            else f"a smaller Contact radius (only {shell.size} magnetic ions lie within it, "
+            f"fewer than its {int(nnn)} Contact neighbours, so the shell reaches the radius)"
+        )
         raise MagneticFieldError(
             f"the contact shell reaches {reach:.2f} Å from the muon but the relaxed supercell only holds "
-            f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell, or a smaller "
-            "Contact radius or fewer Contact neighbours in Calculation Settings"
+            f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell, or {remedy} in "
+            "Calculation Settings"
         )
     if ordered.size > shell.size:
         # muLFC keeps whichever tied ion its parallel lattice walk meets first, so a tie

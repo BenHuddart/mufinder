@@ -3755,6 +3755,19 @@ def test_form_state_without_a_valid_contact_shell_uses_the_defaults(qapp, tmp_pa
     widget.close()
 
 
+def test_form_state_rounds_the_contact_radius_to_what_the_dialog_shows(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "contact-rounding.mufinder", "Contact Rounding")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+
+    widget.set_form_state({"contact_rcont": 3.456})
+
+    assert widget._field_options().rcont == 3.46
+    widget.close()
+
+
 def test_contact_shell_survives_save_and_reopen_with_its_result(
     qapp, tmp_path, monkeypatch
 ) -> None:

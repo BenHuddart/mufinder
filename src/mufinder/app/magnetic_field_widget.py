@@ -216,6 +216,7 @@ MAX_APPROXIMANT_PERIOD = 64
 MAX_CONTACT_NEIGHBOURS = 64
 MIN_CONTACT_RADIUS_ANG = 0.1
 MAX_CONTACT_RADIUS_ANG = 100.0
+CONTACT_RADIUS_DECIMALS = 2
 CONVERGENCE_GUIDANCE_TEXT = (
     "Each distribution is checked after it is calculated: halving the lookup angles or the samples "
     "must shift the field distribution by at most 1%, and every occupied histogram bin needs at "
@@ -5009,7 +5010,7 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
             "field. Used only when a hyperfine coupling is set."
         )
         self._contact_rcont = QDoubleSpinBox(contact_group)
-        self._contact_rcont.setDecimals(2)
+        self._contact_rcont.setDecimals(CONTACT_RADIUS_DECIMALS)
         self._contact_rcont.setRange(MIN_CONTACT_RADIUS_ANG, MAX_CONTACT_RADIUS_ANG)
         self._contact_rcont.setSingleStep(0.5)
         self._contact_rcont.setValue(float(contact_rcont))
@@ -7798,7 +7799,8 @@ class MagneticFieldWidget(QWidget):
         except (TypeError, ValueError):
             return default
         in_range = MIN_CONTACT_RADIUS_ANG <= rcont <= MAX_CONTACT_RADIUS_ANG
-        return rcont if np.isfinite(rcont) and in_range else default
+        # The settings dialog shows the radius to CONTACT_RADIUS_DECIMALS places.
+        return round(rcont, CONTACT_RADIUS_DECIMALS) if np.isfinite(rcont) and in_range else default
 
     def _phase_sampling_label(self) -> str:
         method = self._normalize_phase_sampling_method(self._phase_sampling_method)

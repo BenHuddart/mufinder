@@ -908,14 +908,35 @@ def test_contact_distortion_needs_the_shell_inside_the_relaxed_supercell(monkeyp
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
     relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
 
+    # Fewer than 50 ions lie within 10 Å of the muon, so the shell reaches the radius.
     with pytest.raises(
-        MagneticFieldError, match=r"contact shell reaches 10\.00 Å.*smaller Contact radius"
+        MagneticFieldError,
+        match=r"contact shell reaches 10\.00 Å.*a smaller Contact radius \(only \d+ magnetic ions",
     ):
         calculate_commensurate_fields(
             _structure(),
             _antiferromagnet(),
             [_MU_X],
             options=MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=50),
+            distorted_structures=[relaxed],
+        )
+
+
+def test_a_full_contact_shell_past_the_relaxed_supercell_asks_for_fewer_neighbours(
+    monkeypatch,
+) -> None:
+    # The four Fe after the two 1.5 Å from the muon lie 3.35 Å away, past the 2x2x2 supercell.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(_structure(), (2, 2, 2), _MU_X)
+
+    with pytest.raises(
+        MagneticFieldError, match=r"contact shell reaches 3\.35 Å.*fewer Contact neighbours"
+    ):
+        calculate_commensurate_fields(
+            _structure(),
+            _antiferromagnet(),
+            [_MU_X],
+            options=MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=6),
             distorted_structures=[relaxed],
         )
 
@@ -2970,7 +2991,9 @@ def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_mue
         _structure(),
         model,
         [_GENERAL_SITE],
-        options=MagneticFieldOptions(supercell=(15, 15, 15), radius=_RADIUS),
+        options=MagneticFieldOptions(
+            supercell=(15, 15, 15), radius=_RADIUS, contact_coupling=0.1, nnn=3, rcont=4.0
+        ),
     )
 
     assert [result.site_label for result in results] == [
@@ -2979,6 +3002,7 @@ def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_mue
     for result in results:
         expected = _direct_lattice_field(_structure(), model, result.muon_position, _RADIUS)
         np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
+        assert result.calculation_parameters == {"contact_coupling": 0.1, "nnn": 3, "rcont": 4.0}
 
 
 @pytest.mark.parametrize(
