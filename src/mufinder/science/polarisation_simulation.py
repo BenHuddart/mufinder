@@ -12,7 +12,12 @@ shown, the dynamic one when there is one.
 
 Strong collisions redraw the field from the whole static distribution, every
 site included, so the dynamics act on the site-weighted average and not on
-each site.
+each site. The scalar strong-collision equation holds only where symmetry
+leaves the measured component the only one that survives a redraw: a
+polycrystal in zero field, measured along the spin, and a polycrystal in a
+longitudinal field, whose average is axial about the field. Dynamics are
+refused in every other geometry, where they would need the whole spin
+evolution rather than one projected trace.
 
 The crystal orientation is given as the two lattice directions ``[uvw]`` that
 lie along the laboratory ``z`` axis (the beam and the initial spin in a
@@ -80,7 +85,9 @@ class PolarisationSettings:
     ``added_applied_field_T`` (crystal frame) adds an applied field to field
     results computed without one. ``sigma_from_nuclear_widths`` replaces
     ``sigma_per_us`` with the transverse width along each sample's local
-    field. ``collision_rate_per_us`` zero means static. The apodisation times
+    field. ``collision_rate_per_us`` zero means static; a non-zero rate needs
+    a polycrystal in zero field measured along the spin, or in a longitudinal
+    field (see the module notes). The apodisation times
     ``None`` mean no window.
     """
 
@@ -296,6 +303,11 @@ def simulate_polarisation(
             "the zero-field geometry needs field results without an applied field; "
             "choose the longitudinal or transverse geometry"
         )
+    if settings.collision_rate_per_us > 0.0 and not _dynamics_reduce_to_one_component(settings):
+        raise PolarisationError(
+            "strong-collision dynamics need a polycrystal in zero field with the detector along "
+            "the spin, or a polycrystal in a longitudinal field"
+        )
     times = settings.times_us
     rotation = crystal_rotation_from_directions(
         lattice_vectors, settings.crystal_along_z_uvw, settings.crystal_along_x_uvw
@@ -355,6 +367,26 @@ def _spectrum(
         apodisation_lambda_us=settings.apodisation_lambda_us,
         padding_factor=int(settings.padding_factor),
     )
+
+
+def _dynamics_reduce_to_one_component(settings: PolarisationSettings) -> bool:
+    """Whether symmetry reduces the strong-collision dynamics to the measured trace alone."""
+
+    if not settings.polycrystalline:
+        return False
+    if settings.geometry == "longitudinal":
+        return True
+    if settings.geometry != "zero_field":
+        return False
+    detector = settings.detector_direction
+    if detector is None:
+        return True
+    spin = np.asarray(settings.polarisation_direction, dtype=float)
+    detector_unit = np.asarray(detector, dtype=float)
+    cosine = float(spin @ detector_unit) / float(
+        np.linalg.norm(spin) * np.linalg.norm(detector_unit)
+    )
+    return cosine > 1.0 - _PARALLEL_TOLERANCE
 
 
 def _aliasing_warnings(

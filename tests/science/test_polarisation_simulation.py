@@ -245,7 +245,9 @@ def test_nuclear_widths_damp_each_field_with_its_own_width() -> None:
 
 def test_dynamics_act_on_the_weighted_average() -> None:
     sites = [_field((0.0, 0.0, 0.01), label="a"), _field((0.01, 0.0, 0.0), label="b")]
-    settings = PolarisationSettings(time_points=401, end_time_us=4.0, collision_rate_per_us=1.5)
+    settings = PolarisationSettings(
+        time_points=401, end_time_us=4.0, collision_rate_per_us=1.5, polycrystalline=True
+    )
 
     simulation = simulate_polarisation(settings, sites, lattice_vectors=CUBIC)
 
@@ -268,7 +270,11 @@ def test_coarse_time_grid_warns_that_the_largest_field_aliases() -> None:
 
 def test_simulation_round_trips_and_recomputes_its_spectrum() -> None:
     settings = PolarisationSettings(
-        time_points=401, end_time_us=4.0, collision_rate_per_us=0.5, padding_factor=2
+        time_points=401,
+        end_time_us=4.0,
+        collision_rate_per_us=0.5,
+        padding_factor=2,
+        polycrystalline=True,
     )
     simulation = simulate_polarisation(settings, [_field((0.01, 0.0, 0.01))], lattice_vectors=CUBIC)
 
@@ -403,3 +409,39 @@ def test_simulation_payload_with_string_warnings_is_refused() -> None:
 
     with pytest.raises(PolarisationError, match="warnings"):
         PolarisationSimulation.from_json(payload, settings)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},  # a single crystal
+        {"polycrystalline": True, "detector_direction": (1.0, 0.0, 0.0)},
+        {"polycrystalline": True, "geometry": "transverse"},
+    ],
+)
+def test_dynamics_are_refused_where_the_spin_does_not_reduce_to_one_component(changes) -> None:
+    # One field across the spin: every redraw gives the same field, so a scalar renewal
+    # of the projected cosine would invent relaxation that the model does not have.
+    applied = (0.0, 0.0, 0.01) if changes.get("geometry") == "transverse" else ZERO
+    site = _field((0.02, 0.0, applied[2]), applied=applied)
+    settings = PolarisationSettings(time_points=101, collision_rate_per_us=1.0, **changes)
+
+    with pytest.raises(PolarisationError, match="strong-collision dynamics"):
+        simulate_polarisation(settings, [site], lattice_vectors=CUBIC)
+
+
+@pytest.mark.parametrize("geometry", ["zero_field", "longitudinal"])
+def test_dynamics_run_for_a_powder_in_zero_or_longitudinal_field(geometry: str) -> None:
+    applied = (0.0, 0.0, 0.01) if geometry == "longitudinal" else ZERO
+    site = _field((0.02, 0.0, applied[2]), applied=applied)
+    settings = PolarisationSettings(
+        geometry=geometry,
+        polycrystalline=True,
+        sphere_points=50,
+        time_points=101,
+        collision_rate_per_us=1.0,
+    )
+
+    simulation = simulate_polarisation(settings, [site], lattice_vectors=CUBIC)
+
+    assert simulation.dynamic is not None

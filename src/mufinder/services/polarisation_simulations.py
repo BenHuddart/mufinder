@@ -355,7 +355,9 @@ def _field_source(document: ProjectDocument, owner: str, title: str) -> FieldSou
         )
     ):
         return None
-    if kind == "distribution" and not all(payload["fields_T"] for payload in payloads):
+    if kind == "distribution" and not all(
+        isinstance(payload["fields_T"], list) and payload["fields_T"] for payload in payloads
+    ):
         return None
     try:
         applied = {_payload_applied(payload) for payload in payloads}
