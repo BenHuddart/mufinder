@@ -678,7 +678,7 @@ off-diagonal elements along its edges.
 Outline a plate in a photograph
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Real crystals are rarely ellipsoids or prisms. A plate-like crystal is usually
+Real crystals are rarely ellipsoids or prisms. A plate-like crystal is often
 photographed, and its size and thickness measured, so MuFinder can take its
 outline from the photo:
 
