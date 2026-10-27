@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -22,6 +24,7 @@ from mufinder.science.demagnetization import (
     principal_demagnetizing_tensor,
     rectangular_prism_shape,
     rectangular_prism_tensor,
+    sample_fourier_box,
     sample_orientation,
     voxel_demagnetizing_tensor,
 )
@@ -740,6 +743,18 @@ def test_voxel_tensor_rejects_empty_and_flat_masks() -> None:
         voxel_demagnetizing_tensor(np.zeros((3, 3, 3), dtype=bool), 1.0)
     with pytest.raises(DemagnetizationError, match="3-D"):
         voxel_demagnetizing_tensor(np.ones((3, 3), dtype=bool), 1.0)
+
+
+def test_sample_fourier_box_matches_the_calculation_and_checks_its_size() -> None:
+    plate = DemagnetizingSample.image_plate(
+        np.ones((30, 20), dtype=bool), (6.0, 4.0), 0.5, fourier_grid=24, padding=2.0
+    )
+
+    assert sample_fourier_box(plate) == fourier_demagnetizing_result(plate).box_shape
+    with pytest.raises(DemagnetizationError, match="million voxels"):
+        sample_fourier_box(replace(plate, plate_thickness=1e-5, thickness_voxels=64))
+    with pytest.raises(DemagnetizationError, match="closed-form"):
+        sample_fourier_box(DemagnetizingSample(shape="sphere"))
 
 
 def test_voxel_tensor_rejects_a_box_too_large_to_hold() -> None:

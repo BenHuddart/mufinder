@@ -36,6 +36,7 @@ from mufinder.science.demagnetization import (
     DemagnetizationError,
     DemagnetizingSample,
     PlatePhoto,
+    sample_fourier_box,
 )
 from mufinder.science.sample_image import (
     PlateSegmentation,
@@ -196,6 +197,9 @@ class SamplePhotoDialog(QDialog):
         self._status = QLabel("", self)
         self._status.setWordWrap(True)
         style_hint_text(self._status)
+        self._box_status = QLabel("", self)
+        self._box_status.setWordWrap(True)
+        style_hint_text(self._box_status)
 
         title = QLabel("Plate from Photo", self)
         style_section_title(title)
@@ -241,6 +245,7 @@ class SamplePhotoDialog(QDialog):
         left.addLayout(segment_form)
         left.addLayout(size_form)
         left.addWidget(self._status)
+        left.addWidget(self._box_status)
         left.addStretch(1)
         body = QHBoxLayout()
         body.addLayout(left, 0)
@@ -257,6 +262,16 @@ class SamplePhotoDialog(QDialog):
         layout.addLayout(body)
         layout.addWidget(buttons)
 
+        for spinbox in (
+            self._width,
+            self._height,
+            self._thickness,
+            self._grid,
+            self._layers,
+            self._padding,
+            self._smoothing,
+        ):
+            spinbox.valueChanged.connect(self._check_box)
         self._threshold_slider.valueChanged.connect(self._on_threshold_moved)
         self._invert.toggled.connect(self._resegment)
         self._fill_holes.toggled.connect(self._resegment)
@@ -353,7 +368,7 @@ class SamplePhotoDialog(QDialog):
         except SampleImageError as exc:
             self._status.setText(f"No outline: {exc}.")
             self._render(self._grey, None)
-            self._use_button.setEnabled(False)
+            self._check_box()
             return
         r0, r1, c0, c1 = self._segmentation.bounds
         source = "Otsu threshold" if self._threshold is None else "threshold"
@@ -362,7 +377,7 @@ class SamplePhotoDialog(QDialog):
             f"The outline is {c1 - c0} x {r1 - r0} pixels, a {polarity} sample at the {source}."
         )
         self._render(self._grey, self._segmentation.mask)
-        self._use_button.setEnabled(True)
+        self._check_box()
 
     def _show_saved_outline(self, missing_path: str) -> None:
         segmenting = (
@@ -375,7 +390,7 @@ class SamplePhotoDialog(QDialog):
         for widget in segmenting:
             widget.setEnabled(False)
         if self._saved_outline is None:
-            self._use_button.setEnabled(False)
+            self._check_box()
             return
         self._path.setText(missing_path)
         image_mask = in_plane_to_image(self._saved_outline)
@@ -383,6 +398,25 @@ class SamplePhotoDialog(QDialog):
         where = f"The photo {missing_path} is not available" if missing_path else "No photo"
         self._status.setText(
             f"{where}; the saved outline is shown and kept. Choose a photo to outline it again."
+        )
+        self._check_box()
+
+    def _check_box(self, *_args: object) -> None:
+        """Report the FFT box the settings need; ``Use Outline`` needs an outline and a box that fits."""
+
+        if self._outline() is None:
+            self._box_status.setText("")
+            self._use_button.setEnabled(False)
+            return
+        try:
+            box = sample_fourier_box(self.selected_sample())
+        except DemagnetizationError as exc:
+            self._box_status.setText(f"Cannot calculate: {exc}.")
+            self._use_button.setEnabled(False)
+            return
+        size = " x ".join(str(n) for n in box)
+        self._box_status.setText(
+            f"The FFT box is {size}, {float(np.prod(box)) / 1e6:.1f} million voxels."
         )
         self._use_button.setEnabled(True)
 

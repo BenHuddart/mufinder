@@ -207,3 +207,36 @@ def test_photo_dialog_choose_cancelled_changes_nothing(qapp, monkeypatch) -> Non
     assert dialog._path.text() == ""
     assert not dialog._use_button.isEnabled()
     dialog.close()
+
+
+def test_photo_dialog_reports_the_fft_box_and_refuses_one_too_large(qapp, tmp_path) -> None:
+    dialog = SamplePhotoDialog()
+    dialog.load_photo(_plate_photo(tmp_path))
+    dialog._width.setValue(6.0)
+    dialog._match_photo_aspect()
+    dialog._thickness.setValue(0.1)
+    dialog._grid.setValue(64)
+
+    assert dialog._box_status.text().startswith("The FFT box is 160 x 160 x 150,")
+    assert dialog._use_button.isEnabled()
+
+    dialog._thickness.setValue(0.0001)
+    dialog._layers.setValue(64)
+
+    assert "Cannot calculate: the FFT box would hold" in dialog._box_status.text()
+    assert "lower the Fourier grid" in dialog._box_status.text()
+    assert not dialog._use_button.isEnabled()
+
+    dialog._layers.setValue(1)
+    dialog._thickness.setValue(0.5)
+    assert dialog._box_status.text().startswith("The FFT box is")
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_photo_dialog_without_an_outline_reports_no_box(qapp) -> None:
+    dialog = SamplePhotoDialog()
+
+    assert dialog._box_status.text() == ""
+    assert not dialog._use_button.isEnabled()
+    dialog.close()

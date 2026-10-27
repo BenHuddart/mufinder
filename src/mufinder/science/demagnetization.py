@@ -977,6 +977,22 @@ def fourier_box_shape(
     return box  # type: ignore[return-value]
 
 
+def sample_fourier_box(sample: DemagnetizingSample) -> tuple[int, int, int]:
+    """Return the FFT box, in voxels, the Fourier method would use for ``sample``.
+
+    It applies the same checks as the calculation, without the FFT, so a
+    dialog can report a box too large to hold before anything is computed:
+    :class:`DemagnetizationError` names the settings to lower.
+    """
+
+    if not sample.uses_fourier_method:
+        raise DemagnetizationError(f"the '{sample.shape}' shape has a closed-form tensor")
+    model = sample.voxel_model()
+    return _fourier_box(model.mask, model.spacing, float(sample.padding), float(sample.smoothing))[
+        2
+    ]
+
+
 def _fourier_box(
     mask: Sequence[object] | np.ndarray,
     spacing: float | Sequence[float],

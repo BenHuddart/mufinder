@@ -704,7 +704,9 @@ outline from the photo:
    so again after the width changes.
 6. Set the resolution: ``Fourier grid`` voxels span the longer in-plane edge,
    ``Voxels through thickness`` the thickness, and ``Padding`` and
-   ``Smoothing`` are described in `How the Fourier method works`_.
+   ``Smoothing`` are described in `How the Fourier method works`_. The line
+   under the fields gives the FFT box these settings need, or says the box is
+   too large to calculate, in which case ``Use Outline`` stays disabled.
 7. Click ``Use Outline``, then ``Use Shape``.
 
 The photo's ``x`` axis is the sample ``a`` axis, its ``y`` axis, up the photo,
