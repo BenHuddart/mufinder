@@ -446,3 +446,22 @@ def test_the_table_lists_simulations_without_decoding_their_traces(page, monkeyp
 
     # Only the selected simulation is decoded, once.
     assert decoded == [True]
+
+
+def test_a_greyed_out_collision_rate_is_kept_in_the_saved_form(page, document) -> None:
+    page._sample.setCurrentIndex(page._sample.findData(True))
+    page._collision_rate.setValue(2.0)
+    page._sample.setCurrentIndex(page._sample.findData(False))
+    assert page.settings().collision_rate_per_us == 0.0
+
+    state = page.collect_state()
+
+    assert state["settings"]["collision_rate_per_us"] == 2.0
+    restored = PolarisationWidget()
+    restored.set_document(document)
+    restored.set_form_state(state)
+    assert restored._collision_rate.value() == 2.0
+    assert restored.settings().collision_rate_per_us == 0.0
+    restored._sample.setCurrentIndex(restored._sample.findData(True))
+    assert restored.settings().collision_rate_per_us == 2.0
+    restored.close()

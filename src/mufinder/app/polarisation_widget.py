@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -291,7 +292,11 @@ class PolarisationWidget(QWidget):
         """The form: settings text, the checked sources and weights, the selection."""
 
         try:
-            self._last_valid_settings = self.settings()
+            # The form keeps the rate in the box even where the geometry runs static,
+            # so returning to a geometry with dynamics brings it back.
+            self._last_valid_settings = replace(
+                self.settings(), collision_rate_per_us=float(self._collision_rate.value())
+            )
         except (ValueError, PolarisationError):
             pass
         return {
