@@ -170,6 +170,7 @@ from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
+from mufinder.app.polarisation_widget import PolarisationWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip, ProjectDefaultsSummary
@@ -468,6 +469,7 @@ class MainWindow(QMainWindow):
     _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
     _UEP_POTENTIAL_GRID_RESULT_TYPE = "uep_potential_grid"
     _MAGNETIC_FIELD_FORM_KEY = "magnetic_field_form"
+    _POLARISATION_FORM_KEY = "polarisation_form"
     _MAGNETIC_FIELD_WORKSPACES_KEY = "magnetic_field_workspaces"
     _HOME_STAGE_KEYS = frozenset(stage.key for stage in WORKFLOW_STAGES)
     _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
@@ -889,6 +891,17 @@ class MainWindow(QMainWindow):
         self._magnetic_field_view.open_muon_sites_requested.connect(
             lambda: self._set_active_route("muon_sites")
         )
+        self._magnetic_field_view.open_polarisation_requested.connect(
+            lambda: self._open_polarisation_for(MAGNETIC_FIELD_PAGE_OWNER)
+        )
+        self._polarisation_view = PolarisationWidget()
+        self._polarisation_view.form_state_changed.connect(self._on_polarisation_form_state_changed)
+        self._polarisation_view.simulations_changed.connect(
+            self._on_polarisation_simulations_changed
+        )
+        self._polarisation_view.open_magnetic_fields_requested.connect(
+            lambda: self._set_active_route("magnetic_fields")
+        )
         self._quantum_corrections_view = QuantumCorrectionsWidget()
         self._quantum_corrections_view.configure_requested.connect(
             self._on_configure_quantum_corrections_source
@@ -954,6 +967,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._relaxation_analysis_view)
         self._main_stack.addWidget(self._muon_sites_summary_view)
         self._main_stack.addWidget(self._magnetic_field_view)
+        self._main_stack.addWidget(self._polarisation_view)
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
 
@@ -1873,6 +1887,8 @@ class MainWindow(QMainWindow):
                 self._refresh_host_structure_view()
             with trace.stage("_refresh_magnetic_field_view"):
                 self._refresh_magnetic_field_view()
+            with trace.stage("_refresh_polarisation_view"):
+                self._refresh_polarisation_view()
             with trace.stage("_refresh_muon_generation_table"):
                 self._refresh_muon_generation_table()
             with trace.stage("convergence views"):
@@ -2330,6 +2346,7 @@ class MainWindow(QMainWindow):
                 ),
             ),
             stage("magnetic_fields", "Build magnetic model", magnetic_workspaces),
+            stage("polarisation", "Simulate the μSR signal"),
             stage("quantum_corrections"),
             stage("energy_barriers"),
             WorkflowDefinition(key="provenance_log", title="Journal", route="provenance_log"),
@@ -3229,6 +3246,9 @@ class MainWindow(QMainWindow):
                 target = self._magnetic_field_workspace_widgets.get(
                     workspace_id, self._magnetic_field_view
                 )
+        elif route == "polarisation":
+            self._polarisation_view.refresh()
+            target = self._polarisation_view
         elif route == "quantum_corrections":
             self._refresh_quantum_corrections_view()
             target = self._quantum_corrections_view
@@ -3364,6 +3384,9 @@ class MainWindow(QMainWindow):
             )
             widget.pin_requested.connect(self._on_magnetic_field_pin_requested)
             widget.open_muon_sites_requested.connect(lambda: self._set_active_route("muon_sites"))
+            widget.open_polarisation_requested.connect(
+                lambda workspace_id=workspace_id: self._open_polarisation_for(workspace_id)
+            )
             widget.delete_requested.connect(
                 lambda workspace_id=workspace_id: self._delete_magnetic_field_workspace(
                     workspace_id
@@ -10924,6 +10947,32 @@ class MainWindow(QMainWindow):
         if host is not None:
             host.properties["magnetic_structure"] = payload
         self._refresh_workflow_stage_icons()
+
+    def _refresh_polarisation_view(self) -> None:
+        self._polarisation_view.set_document(self._document)
+        if self._document is not None:
+            self._polarisation_view.set_form_state(
+                self._document.ui_state.get(self._POLARISATION_FORM_KEY, {})
+            )
+
+    def _open_polarisation_for(self, owner: str) -> None:
+        """Show the Polarisation page with ``owner``'s field results selected."""
+
+        self._set_active_route("polarisation")
+        self._polarisation_view.select_sources([owner])
+
+    def _on_polarisation_form_state_changed(self, state: dict) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        self._document.ui_state[self._POLARISATION_FORM_KEY] = state
+
+    def _on_polarisation_simulations_changed(self) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        self._refresh_workflow_stage_icons()
+        self._persist_document_ui_state(
+            failure_message="The polarisation simulation was kept, but autosave failed."
+        )
 
     def _on_magnetic_field_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:

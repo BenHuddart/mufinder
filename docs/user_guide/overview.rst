@@ -51,7 +51,7 @@ Application shell
   ``Supercell Editor``, ``Convergence Testing`` (``Cutoff Energy`` and
   ``K-Point Grid``), ``Pristine Relaxation``, ``UEP``, ``Muon Sites``
   (``Generation``, ``Relaxations`` and ``Analysis``), ``Magnetic Fields``,
-  ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button
+  ``Polarisation``, ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button
   above it returns to the project home. Analysis-workspace and saved
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
@@ -272,6 +272,18 @@ calculates the distortion-corrected field of an antiferromagnet and its nuclear
 width, :doc:`/user_guide/examples/fe` the field of a ferromagnet at two
 interstitial sites, and :doc:`/user_guide/examples/mnsi` the field distribution
 of an incommensurate helix.
+
+Polarisation
+~~~~~~~~~~~~
+
+The ``Polarisation`` page simulates the muon polarisation :math:`P(t)` and its
+spectrum from the field results of the Magnetic Fields page and its saved
+workspaces, weighted and combined: in zero, longitudinal or transverse field,
+for a single crystal in a chosen orientation or a polycrystal, with
+phenomenological or nuclear-dipolar damping and optional strong-collision
+dynamics. Every simulation is kept in the project, is marked stale when its
+fields are recalculated, and can be exported. See
+:doc:`/user_guide/polarisation`.
 
 Quantum Corrections
 ~~~~~~~~~~~~~~~~~~~

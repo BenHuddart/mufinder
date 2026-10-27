@@ -59,6 +59,8 @@
   "mnsi_calculation_settings": 0.8,
   "mnsi_field_distribution": 3.0,
   "mnsi_distribution_breakdown": 1.8,
+  "mnsi_polarisation": 4.6,
+  "mnsi_polarisation_dynamics": 4.4,
   "mnsi_approximant_fields": 14.1,
   "n2_host_structure": 1.9,
   "n2_relaxation_workspace": 4.6,

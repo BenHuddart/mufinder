@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import tempfile
 from uuid import uuid4
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -17,7 +18,7 @@ from matplotlib.patches import PathPatch
 from matplotlib.transforms import Bbox
 import numpy as np
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QDialog, QSizePolicy
+from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout
 import pytest
 
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
@@ -28,6 +29,7 @@ from mufinder.app.magnetic_field_widget import (
     MagneticTextureDialog,
 )
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
+from mufinder.app.polarisation_widget import PolarisationWidget
 from mufinder.app.relaxation_analysis_widget import (
     GRAPH_NODE_GID,
     GRAPH_NODE_MAX_RADIUS_PT,
@@ -238,6 +240,46 @@ def _geometry_progress() -> QDialog:
     return GeometryProgressDialog("Si2", parse_geometry_progress(fixture))
 
 
+def _polarisation_page() -> QDialog:
+    """The Polarisation page, in a dialog, showing a dynamic simulation of three sites."""
+
+    from mufinder.services.magnetic_field_results import (
+        MAGNETIC_FIELD_PAGE_OWNER,
+        store_magnetic_field_results,
+    )
+    from mufinder.services.project_service import ProjectService
+    from tests.support.field_results import field_result
+
+    directory = tempfile.TemporaryDirectory()
+    service = ProjectService()
+    document = service.create_project(Path(directory.name) / "plot.mufinder", "Plot")
+    host = _cubic_host()
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    fields = [field_result((0.0, 0.0, 0.1 * n), label=f"site {n}") for n in (1, 2, 3)]
+    store_magnetic_field_results(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [f.to_json() for f in fields],
+            }
+        },
+    )
+    dialog = QDialog()
+    # The project lives as long as the dialog.
+    dialog.project_directory = directory
+    page = PolarisationWidget(dialog)
+    QVBoxLayout(dialog).addWidget(page)
+    page.set_document(document)
+    page._sample.setCurrentIndex(page._sample.findData(True))
+    page._collision_rate.setValue(0.5)
+    page._add_button.click()
+    assert page._figure.axes[0].lines, "polarisation fixture drew no trace"
+    return dialog
+
+
 PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "relaxation-clustering-connected": lambda: _relaxation_clustering(0),
     "relaxation-clustering-hierarchical": lambda: _relaxation_clustering(1),
@@ -249,6 +291,7 @@ PLOT_DIALOGS: dict[str, Callable[[], QDialog]] = {
     "magnetic-texture-magnitude-map": _texture_magnitude_map,
     "convergence-examiner": _convergence_examiner,
     "geometry-progress": _geometry_progress,
+    "polarisation-page": _polarisation_page,
 }
 
 

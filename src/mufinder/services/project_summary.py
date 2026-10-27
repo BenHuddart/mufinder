@@ -30,9 +30,13 @@ from mufinder.domain.charge_states import (
     muon_relaxation_calc_type,
 )
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result, Structure
 from mufinder.science.ase_bridge import is_muon_label, reduced_formula
 from mufinder.services import supercell_assets
+from mufinder.services.magnetic_field_results import (
+    MUON_POLARISATION_RESULT_TYPE,
+    SIMULATION_OWNER_PREFIX,
+)
 from mufinder.services.project_document import (
     ProjectDocument,
     active_definition,
@@ -228,6 +232,13 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
         "Needs a magnetic model and distinct sites from Analysis; UEP clusters give unrelaxed estimates.",
     ),
     WorkflowStageInfo(
+        "polarisation",
+        "Polarisation",
+        "Run at least one polarisation simulation.",
+        "Simulate the muon polarisation and its spectrum from the field results of Magnetic Fields "
+        "and its saved workspaces. Needs calculated fields.",
+    ),
+    WorkflowStageInfo(
         "quantum_corrections",
         "Quantum Corrections",
         "Complete at least one quantum phonon analysis.",
@@ -257,6 +268,7 @@ STAGE_DEPENDENCIES: tuple[StageDependency, ...] = (
     StageDependency("muon_analysis", "quantum_corrections", DependencyKind.REQUIRED),
     StageDependency("muon_analysis", "energy_barriers", DependencyKind.REQUIRED),
     StageDependency("uep", "magnetic_fields", DependencyKind.OPTIONAL),
+    StageDependency("magnetic_fields", "polarisation", DependencyKind.REQUIRED),
 )
 
 _STAGE_JOB_STAGES: dict[str, tuple[WorkflowStage, ...]] = {
@@ -385,6 +397,16 @@ def magnetic_structure_has_components(magnetic_structure: object) -> bool:
     return isinstance(moments, list) and bool(moments)
 
 
+def polarisation_complete(document: ProjectDocument) -> bool:
+    return any(_is_polarisation_simulation(result) for result in document.results.values())
+
+
+def _is_polarisation_simulation(result: Result) -> bool:
+    if result.result_type != MUON_POLARISATION_RESULT_TYPE or not isinstance(result.data, Mapping):
+        return False
+    return str(result.data.get("owner", "")).startswith(SIMULATION_OWNER_PREFIX)
+
+
 def quantum_corrections_complete(document: ProjectDocument) -> bool:
     return any(
         result.result_type == QUANTUM_PHONON_CALC_TYPE for result in document.results.values()
@@ -416,6 +438,7 @@ COMPLETION_CHECKS: dict[str, Callable[[ProjectDocument], bool]] = {
     "muon_relaxations": muon_relaxations_complete,
     "muon_analysis": relaxation_analysis_complete,
     "magnetic_fields": magnetic_fields_complete,
+    "polarisation": polarisation_complete,
     "quantum_corrections": quantum_corrections_complete,
     "energy_barriers": energy_barriers_complete,
 }
@@ -761,6 +784,11 @@ def _magnetic_facts(document: ProjectDocument) -> tuple[str, ...]:
     return tuple(facts) or ("No magnetic model yet",)
 
 
+def _polarisation_facts(document: ProjectDocument) -> tuple[str, ...]:
+    count = sum(1 for result in document.results.values() if _is_polarisation_simulation(result))
+    return (_count(count, "simulation"),) if count else ("No polarisation simulations yet",)
+
+
 def _quantum_facts(document: ProjectDocument) -> tuple[str, ...]:
     results = [
         result
@@ -798,6 +826,7 @@ _FACTS: dict[str, Callable[[ProjectDocument], tuple[str, ...]]] = {
     "muon_relaxations": _relaxation_facts,
     "muon_analysis": _analysis_facts,
     "magnetic_fields": _magnetic_facts,
+    "polarisation": _polarisation_facts,
     "quantum_corrections": _quantum_facts,
     "energy_barriers": _barrier_facts,
 }

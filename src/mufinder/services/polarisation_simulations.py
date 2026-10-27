@@ -49,6 +49,7 @@ from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     MAGNETIC_FIELD_RESULT_TYPE,
     MUON_POLARISATION_RESULT_TYPE,
+    SIMULATION_OWNER_PREFIX,
     UEP_SITE_SOURCE,
     field_result_site_source,
     is_unrelaxed_site_source,
@@ -57,8 +58,6 @@ from mufinder.services.magnetic_field_results import (
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 from mufinder.services.project_summary import magnetic_field_workspaces
 
-#: Prefix of a simulation record's ``data["owner"]``; the simulation id follows it.
-SIMULATION_OWNER_PREFIX = "polarisation:"
 #: Title of the Magnetic Fields page as a source.
 MAGNETIC_FIELD_PAGE_TITLE = "Magnetic Fields"
 
@@ -105,7 +104,11 @@ class FieldSource:
         site = self.site_labels[0] if self.site_labels else "-"
         kind = "distribution" if self.kind == "distribution" else "field"
         noun = f"{kind}s" if count != 1 else kind
-        text = f"{self.title} · {count} {noun} at {site}"
+        text = (
+            f"{self.title} · {count} {noun} at {site}"
+            if count == 1
+            else f"{self.title} · {count} {noun} ({site}, …)"
+        )
         return f"{text} (unrelaxed estimate)" if self.estimate else text
 
 
@@ -151,6 +154,21 @@ class PolarisationSimulationRecord:
     @property
     def owner(self) -> str:
         return simulation_owner(self.simulation_id)
+
+    @property
+    def estimate(self) -> bool:
+        return is_unrelaxed_site_source(self.site_source)
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationSummary:
+    """What a stored simulation was asked for, without its traces."""
+
+    simulation_id: str
+    title: str
+    settings: PolarisationSettings
+    sources: tuple[SimulationSource, ...]
+    site_source: str | None = None
 
     @property
     def estimate(self) -> bool:
@@ -323,8 +341,22 @@ def remove_polarisation_simulation(document: ProjectDocument, simulation_id: str
         del document.results[result.id]
 
 
+def polarisation_simulation_summaries(document: ProjectDocument) -> list[SimulationSummary]:
+    """Return the stored simulations without decoding their traces, oldest first.
+
+    Malformed records are skipped, as by :func:`polarisation_simulations`.
+    """
+
+    summaries = []
+    for result in sorted(document.results.values(), key=lambda item: item.created_at):
+        decoded = _simulation_header(result)
+        if decoded is not None:
+            summaries.append(decoded[0])
+    return summaries
+
+
 def stale_sources(
-    document: ProjectDocument, record: PolarisationSimulationRecord
+    document: ProjectDocument, record: PolarisationSimulationRecord | SimulationSummary
 ) -> list[SimulationSource]:
     """Return the sources whose fields were recalculated or removed since ``record`` ran."""
 
@@ -428,7 +460,9 @@ def _simulation_result(document: ProjectDocument, simulation_id: str) -> Result 
     )
 
 
-def _simulation_from_result(result: Result) -> PolarisationSimulationRecord | None:
+def _simulation_header(result: Result) -> tuple[SimulationSummary, Mapping[str, Any]] | None:
+    """The summary of a simulation record and its data, or ``None`` when it is not one."""
+
     data = result.data
     if result.result_type != MUON_POLARISATION_RESULT_TYPE or not isinstance(data, Mapping):
         return None
@@ -437,16 +471,39 @@ def _simulation_from_result(result: Result) -> PolarisationSimulationRecord | No
         return None
     try:
         settings = PolarisationSettings.from_json(data["settings"])
-        simulation = PolarisationSimulation.from_json({**data, "static": data["result"]}, settings)
         sources = tuple(SimulationSource.from_json(item) for item in data["sources"])
+        # A record whose traces are missing is malformed for both readers.
+        if not isinstance(data["result"], Mapping):
+            return None
     except (KeyError, TypeError, ValueError, PolarisationError):
         return None
-    return PolarisationSimulationRecord(
+    summary = SimulationSummary(
         simulation_id=owner.removeprefix(SIMULATION_OWNER_PREFIX),
         title=str(data.get("title", "Simulation")),
         settings=settings,
         sources=sources,
-        simulation=simulation,
         site_source=str(data["site_source"]) if data.get("site_source") else None,
+    )
+    return summary, data
+
+
+def _simulation_from_result(result: Result) -> PolarisationSimulationRecord | None:
+    decoded = _simulation_header(result)
+    if decoded is None:
+        return None
+    summary, data = decoded
+    try:
+        simulation = PolarisationSimulation.from_json(
+            {**data, "static": data["result"]}, summary.settings
+        )
+    except (KeyError, TypeError, ValueError, PolarisationError):
+        return None
+    return PolarisationSimulationRecord(
+        simulation_id=summary.simulation_id,
+        title=summary.title,
+        settings=summary.settings,
+        sources=summary.sources,
+        simulation=simulation,
+        site_source=summary.site_source,
         created_at=result.created_at,
     )

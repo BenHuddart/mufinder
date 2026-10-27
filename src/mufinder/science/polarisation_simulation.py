@@ -369,24 +369,38 @@ def _spectrum(
     )
 
 
-def _dynamics_reduce_to_one_component(settings: PolarisationSettings) -> bool:
-    """Whether symmetry reduces the strong-collision dynamics to the measured trace alone."""
+def dynamics_supported(
+    geometry: str,
+    polycrystalline: bool,
+    polarisation_direction: Sequence[float] = (0.0, 0.0, 1.0),
+    detector_direction: Sequence[float] | None = None,
+) -> bool:
+    """Whether symmetry reduces the strong-collision dynamics to the measured trace alone.
 
-    if not settings.polycrystalline:
+    True for a polycrystal in a longitudinal field, and for a polycrystal in
+    zero field measured along the spin (``detector_direction`` ``None`` or
+    parallel to ``polarisation_direction``).
+    """
+
+    if not polycrystalline:
         return False
-    if settings.geometry == "longitudinal":
+    if geometry == "longitudinal":
         return True
-    if settings.geometry != "zero_field":
-        return False
-    detector = settings.detector_direction
-    if detector is None:
-        return True
-    spin = np.asarray(settings.polarisation_direction, dtype=float)
-    detector_unit = np.asarray(detector, dtype=float)
-    cosine = float(spin @ detector_unit) / float(
-        np.linalg.norm(spin) * np.linalg.norm(detector_unit)
-    )
+    if geometry != "zero_field" or detector_direction is None:
+        return geometry == "zero_field"
+    spin = np.asarray(polarisation_direction, dtype=float)
+    detector = np.asarray(detector_direction, dtype=float)
+    cosine = float(spin @ detector) / float(np.linalg.norm(spin) * np.linalg.norm(detector))
     return cosine > 1.0 - _PARALLEL_TOLERANCE
+
+
+def _dynamics_reduce_to_one_component(settings: PolarisationSettings) -> bool:
+    return dynamics_supported(
+        settings.geometry,
+        settings.polycrystalline,
+        settings.polarisation_direction,
+        settings.detector_direction,
+    )
 
 
 def _aliasing_warnings(

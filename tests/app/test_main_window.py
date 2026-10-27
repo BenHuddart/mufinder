@@ -2945,6 +2945,7 @@ def test_project_home_shows_the_workflow_chart_and_opens_the_journal(qapp, tmp_p
         "muon_relaxations",
         "muon_analysis",
         "magnetic_fields",
+        "polarisation",
         "quantum_corrections",
         "energy_barriers",
     ]

@@ -61,9 +61,19 @@ MUON_POLARISATION_RESULT_TYPE = "muon_polarisation"
 #: workspace's results use the workspace id instead.
 MAGNETIC_FIELD_PAGE_OWNER = "magnetic_fields"
 
+#: Prefix of a polarisation simulation's ``data["owner"]``; the simulation id follows it
+#: (see :mod:`mufinder.services.polarisation_simulations`).
+SIMULATION_OWNER_PREFIX = "polarisation:"
+
 #: Site source of a muon site taken from UEP clustering: an unrelaxed UEP
 #: minimum or batch cluster, so fields computed there are estimates.
 UEP_SITE_SOURCE = "uep_clustering"
+
+#: The note shown beside results computed at an unrelaxed UEP site.
+UNRELAXED_RESULTS_NOTE = (
+    "Computed at an unrelaxed UEP site, so these are estimates: "
+    "the relaxed muon site can sit some distance from the UEP minimum."
+)
 
 MAGNETIC_FIELD_RESULT_TYPES = (
     MAGNETIC_FIELD_RESULT_TYPE,
