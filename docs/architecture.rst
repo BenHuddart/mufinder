@@ -135,11 +135,15 @@ policy, move the reusable part into the appropriate shared layer:
   clustering of its optimized positions in
   ``mufinder.science.uep_clustering``, pairing a relaxed muon supercell with
   its pristine host for finite-cell distortion corrections in
-  ``mufinder.science.muon_distortion`` and every ``muesr`` import in
+  ``mufinder.science.muon_distortion``, the hyperfine sign convention, unit
+  conversions and spin density at the muon in ``mufinder.science.hyperfine``
+  (which takes the contact-shell mean from ``mufinder.science.magnetic_fields``)
+  and every ``muesr`` import in
   ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
-  formatted density, pseudopotential reports and cell charge the UEP analysis
-  needs (``mufinder.castep_io.charge_density``); the keyword schema keeps
+  formatted charge and spin density, pseudopotential reports and cell charge
+  (``mufinder.castep_io.charge_density``) and the ``.magres`` hyperfine tensors
+  (``mufinder.castep_io.magres``); the keyword schema keeps
   catalog discovery, loading and the lookup API in
   ``mufinder.castep_io.schema`` and the bundled starter-catalog translation in
   ``mufinder.castep_io.starter_catalog``
@@ -174,9 +178,11 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   ``kpoints_list_reset`` sentinel (``()`` for convergence to clear an inherited
   list layer, ``None`` for relaxation/UEP to inherit).
   :func:`~mufinder.app.adapter_common.build_workflow_settings_template` is the
-  same parser with the settings the quantum-corrections and energy-barriers
-  rows use: the structure-controlled cell keywords are refused and a scalar
-  k-point grid or spacing clears an inherited list.
+  same parser with the settings the quantum-corrections, hyperfine-coupling and
+  energy-barriers rows use: the structure-controlled cell keywords are refused,
+  as are the parameters a workflow names in ``workflow_controlled`` because it
+  sets them on every job, and a scalar k-point grid or spacing clears an
+  inherited list.
 - :func:`~mufinder.app.adapter_common.rescale_kpoint_grid` rescales a project
   k-point grid to an equivalent reciprocal-space density for supercell rows.
   Convergence sweeps a fixed structure and never rescales.
@@ -232,7 +238,7 @@ Every CASTEP job MuFinder runs is generated the same way:
 - ``mufinder.workflow`` has one keyword-only ``expand_*`` function per
   workflow: convergence sweeps over ``CUT_OFF_ENERGY`` and
   ``KPOINT_MP_GRID``, muon-site sweeps over initial fractional muon positions,
-  pristine and muon relaxation jobs, quantum-correction phonon jobs, and
+  pristine and muon relaxation jobs, quantum-correction phonon jobs, hyperfine magres jobs, and
   nudged-elastic-band energy-barrier jobs.
 - Job names are deterministic and filesystem-safe, and each resolved job has
   its own output directory.
@@ -265,7 +271,8 @@ no two workflow widgets may define the same private method.
      - Owns
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
-       ``set_workflow_table_item``), the shared right-click menu
+       ``set_workflow_table_item``, ``fill_workflow_table`` for a table of
+       display text, ``set_header_tooltips``), the shared right-click menu
        (``standard_row_actions``, ``bind_reset_failed_context_menu``; a
        ``RowMenuAction`` may carry a tooltip and a submenu),
        the supercell column and its k-point suggestions (``SupercellColumn``),
@@ -321,8 +328,9 @@ no two workflow widgets may define the same private method.
        relaxation and UEP subclass (``RowTableWidget``, and
        ``RelaxationRowTableWidget`` for the two geometry relaxations; see Row
        table widgets), and the source-keyed table base that quantum
-       corrections and energy barriers subclass (``SourceTableWidget``; see
-       Source table widgets).
+       corrections, hyperfine coupling and energy barriers subclass
+       (``SourceTableWidget``, and ``RelaxedSiteSourceTableWidget`` for the two
+       whose sources are relaxed muon sites; see Source table widgets).
    * - ``mufinder.app.sweep_convergence_widget``
      - The sweep-keyed widget base that the cutoff and k-point convergence
        widgets subclass (``SweepConvergenceWidget``; see Sweep convergence
@@ -374,8 +382,10 @@ no two workflow widgets may define the same private method.
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
        ``jobs_for_keys`` returns, the active-host guard on a submission's
-       structures and sites (``confirm_active_host``), derived-structure
-       upsert and row-parameter mirroring.
+       structures and sites (``confirm_active_host``), the one-line reason a
+       source Configure dialog opens read-only
+       (``locked_configuration_reason``), derived-structure upsert and
+       row-parameter mirroring.
    * - ``mufinder.app.workflow_controllers.sweep_convergence``
      - The cycle the two convergence sweeps share
        (``SweepConvergenceController``).
@@ -779,7 +789,7 @@ subclass to change it; add the hook.
 Source table widgets
 ~~~~~~~~~~~~~~~~~~~~
 
-Quantum corrections and energy barriers subclass one base,
+Quantum corrections, hyperfine coupling and energy barriers subclass one base,
 ``mufinder.app.workflow_row_widget.SourceTableWidget``. Their rows are not
 staged by the user: each row is a source read from the project through
 ``mufinder.services.source_candidates`` (a relaxed muon site, a diffusion
@@ -801,9 +811,12 @@ the Configure button and the names of its configure and run signals as class
 attributes, so each widget keeps its own signal names. It implements three
 public hooks: ``source_row_values`` (the text of the leading columns),
 ``create_source_row_cells`` (its own cells) and ``refresh_source_actions``
-(its own actions for the selected rows). Quantum corrections adds the farm
-column, the editable site label and a "Reset Failed Jobs..." button beside the
-run buttons; energy barriers adds the endpoint pair that generates paths, the View column, path
+(its own actions for the selected rows). Quantum corrections and hyperfine
+coupling share ``RelaxedSiteSourceTableWidget`` on top of it, which adds the
+source count label, the pinned-sites scope bar, the editable site label and a
+"Reset Failed Jobs..." button beside the run buttons; quantum corrections adds
+the farm column and hyperfine coupling the ``Use in Magnetic Fields`` action;
+energy barriers adds the endpoint pair that generates paths, the View column, path
 removal and the NEB inspector, and its view is created lazily (see
 Construction).
 
@@ -1172,6 +1185,18 @@ Controller summary
        a row's legacy singlepoint so the reset may clean the directory it
        shares with the phonon job. It also owns the Configure dialog's lock
        explanation (``configure_request``).
+   * - ``HyperfineCouplingController``
+     - One magres job per relaxed-site source, bound through
+       ``job_ids_by_label`` and written to ``<output>/<job label>``; row
+       state is the shared projection of that job, and its source rows are the
+       quantum-corrections candidates from
+       :mod:`mufinder.services.source_candidates`. ``materialize`` expands
+       through ``expand_hyperfine_jobs``; ``validate_artifacts`` fails a job
+       without a readable ``.magres``; ``build_result`` stores the muon's
+       sign-corrected tensor, contact field and pseudo spin density, and the
+       contact-shell inputs from the source relaxation's Mulliken spins
+       (:mod:`mufinder.services.hyperfine_results`, which also owns the
+       hand-off to the Magnetic Fields forms).
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints

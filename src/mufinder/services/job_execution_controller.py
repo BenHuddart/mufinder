@@ -955,6 +955,7 @@ def _legacy_retrieval_flags(
         retrieve_out_cell=bool(flags.get("retrieve_out_cell", False)),
         retrieve_phonon=bool(flags.get("retrieve_phonon", False)),
         retrieve_ts=bool(flags.get("retrieve_ts", False)),
+        retrieve_magres=bool(flags.get("retrieve_magres", False)),
         task_farming_enabled=task_farming_enabled,
         num_farms=num_farms,
     )

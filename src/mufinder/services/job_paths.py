@@ -59,6 +59,7 @@ _OUTPUT_FILE_SUFFIXES = (
     ".phonon",
     ".ts",
     "_farm001.ts",
+    ".magres",
 )
 
 

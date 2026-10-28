@@ -109,6 +109,8 @@ key. Each key selects the navigator entry beside it:
      - ``Relaxations``
    * - ``muon_analysis``
      - ``Analysis``
+   * - ``hyperfine_coupling``
+     - ``Hyperfine Coupling``
    * - ``magnetic_fields``
      - ``Magnetic Fields``
    * - ``quantum_corrections``

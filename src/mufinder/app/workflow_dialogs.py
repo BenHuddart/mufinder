@@ -257,6 +257,29 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         return max(1, int(self._num_farms_spin.value()))
 
 
+class HyperfineCouplingConfigDialog(ParameterDialog):
+    """Parameter dialog for Hyperfine Coupling rows: one magres job each, task locked to MAGRES."""
+
+    def __init__(
+        self,
+        *,
+        specs: list[KeywordSpec],
+        intro_text: str | None = None,
+        read_only: bool = False,
+        species_options: Sequence[str] = (),
+        parent=None,
+    ) -> None:
+        super().__init__(
+            specs=specs,
+            workflow_stage="hyperfine_coupling",
+            locked_values={"task": "MAGRES"},
+            intro_text=intro_text,
+            read_only=read_only,
+            species_options=species_options,
+            parent=parent,
+        )
+
+
 class NudgedElasticBandConfigDialog(ParameterDialog):
     """NEB parameter dialog with a CASTEP task-farm control.
 

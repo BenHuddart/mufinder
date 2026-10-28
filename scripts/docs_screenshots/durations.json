@@ -49,6 +49,7 @@
   "fe_photographed_plate": 1.1,
   "fe_measured_magnetisation": 1.4,
   "fe_select_muon_site": 1.0,
+  "fe_hyperfine_coupling_page": 3.7,
   "fe_magnetic_workspaces": 2.2,
   "mnsi_host_structure": 1.8,
   "mnsi_magnetic_structure_builder": 4.1,

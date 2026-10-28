@@ -184,6 +184,7 @@ from mufinder.app.project_home_trail import (
     ProjectHomeWidget,
     WorkflowDefinition,
 )
+from mufinder.app.hyperfine_coupling_widget import HyperfineCouplingWidget
 from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
@@ -221,6 +222,7 @@ from mufinder.app.workflow_config_codecs import (
 from mufinder.app.workflow_dialogs import (
     EnergyBarrierPathViewerDialog,
     NudgedElasticBandConfigDialog,
+    HyperfineCouplingConfigDialog,
     QuantumCorrectionsConfigDialog,
     run_source_configure_dialog,
 )
@@ -244,6 +246,8 @@ from mufinder.app.workflow_controllers import (
     MuonRelaxationDeps,
     PristineRelaxationController,
     PristineRelaxationDeps,
+    HyperfineCouplingController,
+    HyperfineCouplingDeps,
     QuantumCorrectionsController,
     QuantumCorrectionsDeps,
     UepController,
@@ -307,6 +311,10 @@ from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase, partial_count_suffix
+from mufinder.services.hyperfine_results import (
+    apply_magnetic_field_handoff,
+    plan_magnetic_field_handoff,
+)
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     attach_magnetic_field_results,
@@ -352,6 +360,7 @@ from mufinder.services.ssh_client import (
     save_trusted_host_key,
 )
 from mufinder.science.kpoint_grids import kpoint_count, most_uniform_grid
+from mufinder.science.hyperfine import HyperfineError
 from mufinder.science.quantum_phonons import PhononParseError
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import (
@@ -902,6 +911,40 @@ class MainWindow(QMainWindow):
         self._polarisation_view.open_magnetic_fields_requested.connect(
             lambda: self._set_active_route("magnetic_fields")
         )
+        self._hyperfine_coupling_view = HyperfineCouplingWidget()
+        self._hyperfine_coupling_view.configure_requested.connect(
+            self._on_configure_hyperfine_coupling_source
+        )
+        self._hyperfine_coupling_view.source_label_renamed.connect(
+            self._on_hyperfine_coupling_source_label_renamed
+        )
+        # Hyperfine-coupling controller: one magres job per relaxed site, in the
+        # result-dispatch registry so completed castep_hyperfine jobs route
+        # through its validate_artifacts and build_result.
+        self._hyperfine_coupling_controller = HyperfineCouplingController(
+            self._build_workflow_controller_context(),
+            self._build_hyperfine_coupling_deps(),
+            self._hyperfine_coupling_view,
+        )
+        self._workflow_controllers.append(self._hyperfine_coupling_controller)
+        self._hyperfine_coupling_view.submit_local_requested.connect(
+            lambda values: self._hyperfine_coupling_controller.submit(values, target="local")
+        )
+        self._hyperfine_coupling_view.submit_cluster_requested.connect(
+            lambda values: self._hyperfine_coupling_controller.submit(values, target="cluster")
+        )
+        self._hyperfine_coupling_view.show_every_site_toggled.connect(
+            self._hyperfine_coupling_controller.set_show_every_site
+        )
+        self._hyperfine_coupling_view.open_muon_sites_requested.connect(
+            lambda: self._set_active_route("muon_sites")
+        )
+        self._connect_workflow_row_actions(
+            self._hyperfine_coupling_view, self._hyperfine_coupling_controller
+        )
+        self._hyperfine_coupling_view.use_in_magnetic_fields_requested.connect(
+            self._on_use_hyperfine_in_magnetic_fields
+        )
         self._quantum_corrections_view = QuantumCorrectionsWidget()
         self._quantum_corrections_view.configure_requested.connect(
             self._on_configure_quantum_corrections_source
@@ -966,6 +1009,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._muon_relaxation_view)
         self._main_stack.addWidget(self._relaxation_analysis_view)
         self._main_stack.addWidget(self._muon_sites_summary_view)
+        self._main_stack.addWidget(self._hyperfine_coupling_view)
         self._main_stack.addWidget(self._magnetic_field_view)
         self._main_stack.addWidget(self._polarisation_view)
         self._main_stack.addWidget(self._quantum_corrections_view)
@@ -2345,6 +2389,7 @@ class MainWindow(QMainWindow):
                     stage("muon_analysis", children=analysis_workspaces),
                 ),
             ),
+            stage("hyperfine_coupling", "Contact field and muonium"),
             stage("magnetic_fields", "Build magnetic model", magnetic_workspaces),
             stage("polarisation", "Simulate the μSR signal"),
             stage("quantum_corrections"),
@@ -3098,6 +3143,8 @@ class MainWindow(QMainWindow):
             self._refresh_host_structure_view()
         with trace.stage("_refresh_muon_generation_table"):
             self._refresh_muon_generation_table()
+        with trace.stage("_refresh_hyperfine_coupling_view"):
+            self._refresh_hyperfine_coupling_view()
         with trace.stage("_refresh_quantum_corrections_view"):
             self._refresh_quantum_corrections_view()
         with trace.stage("_refresh_energy_barriers_view"):
@@ -3249,6 +3296,9 @@ class MainWindow(QMainWindow):
         elif route == "polarisation":
             self._polarisation_view.refresh()
             target = self._polarisation_view
+        elif route == "hyperfine_coupling":
+            self._refresh_hyperfine_coupling_view()
+            target = self._hyperfine_coupling_view
         elif route == "quantum_corrections":
             self._refresh_quantum_corrections_view()
             target = self._quantum_corrections_view
@@ -4754,6 +4804,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
+        self._refresh_hyperfine_coupling_view()
         self._refresh_quantum_corrections_view()
         if outcome.journal_changed:
             self._refresh_journal_view()
@@ -4860,6 +4911,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
+        self._refresh_hyperfine_coupling_view()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
 
@@ -5525,6 +5577,7 @@ class MainWindow(QMainWindow):
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
         self._refresh_energy_barriers_view()
+        self._refresh_hyperfine_coupling_view()
         self._refresh_quantum_corrections_view()
 
     def _apply_failed_job_reset(
@@ -6061,6 +6114,16 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _build_hyperfine_coupling_deps(self) -> HyperfineCouplingDeps:
+        """Build the hyperfine controller's deps: the host-mismatch dialogs."""
+
+        return HyperfineCouplingDeps(
+            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(
+                mismatch
+            ),
+            handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
+        )
+
     def _build_quantum_corrections_deps(self) -> QuantumCorrectionsDeps:
         """Build the quantum-corrections controller's deps: its window dialogs."""
 
@@ -6281,6 +6344,11 @@ class MainWindow(QMainWindow):
             if result.calculation_run_id == run_id
         ]
 
+    def _refresh_hyperfine_coupling_view(self) -> None:
+        """Re-render the hyperfine-coupling view via its controller."""
+
+        self._hyperfine_coupling_controller.refresh_view()
+
     def _refresh_quantum_corrections_view(self) -> None:
         """Re-render the quantum-corrections view via its controller.
 
@@ -6350,6 +6418,7 @@ class MainWindow(QMainWindow):
             self._refresh_jobs_table()
             self._convergence_controller.refresh_view()
             self._kpoint_convergence_controller.refresh_view()
+            self._refresh_hyperfine_coupling_view()
             self._refresh_quantum_corrections_view()
             self._refresh_energy_barriers_view()
             self._persist_document_ui_state(
@@ -6396,6 +6465,7 @@ class MainWindow(QMainWindow):
                 want_out_cell=bool(flags.get("retrieve_out_cell", False)),
                 want_phonon=bool(flags.get("retrieve_phonon", False)),
                 want_ts=bool(flags.get("retrieve_ts", False)),
+                want_magres=bool(flags.get("retrieve_magres", False)),
                 num_farms=farm_count or 1,
             )
 
@@ -6891,6 +6961,7 @@ class MainWindow(QMainWindow):
             "retrieve_out_cell": flags.retrieve_out_cell,
             "retrieve_phonon": flags.retrieve_phonon,
             "retrieve_ts": flags.retrieve_ts,
+            "retrieve_magres": flags.retrieve_magres,
         }
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
@@ -7584,6 +7655,7 @@ class MainWindow(QMainWindow):
         # Quantum corrections and energy barriers list the pinned sites by
         # default, so a pin change re-renders them; the Magnetic Fields site
         # dialog reads the pins each time it opens.
+        self._refresh_hyperfine_coupling_view()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
 
@@ -10268,10 +10340,118 @@ class MainWindow(QMainWindow):
             return
         if not self._quantum_corrections_controller.rename_source(key, label):
             return
+        self._refresh_hyperfine_coupling_view()
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(
             failure_message="Quantum Corrections site label was updated, but autosave failed."
         )
+
+    def _on_configure_hyperfine_coupling_source(self, payload: object) -> None:
+        controller = self._hyperfine_coupling_controller
+        request = controller.configure_request(_ordered_string_list(payload))
+        if request is None:
+            return
+        dialog = HyperfineCouplingConfigDialog(
+            specs=controller.parameter_specs(),
+            intro_text=request.intro_text,
+            read_only=request.read_only,
+            species_options=request.species_options,
+            parent=self,
+        )
+        result = run_source_configure_dialog(dialog, request)
+        if result is not None:
+            controller.apply_configuration(request.keys, result)
+
+    def _on_hyperfine_coupling_source_label_renamed(self, key: str, label: str) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        if not self._hyperfine_coupling_controller.rename_source(key, label):
+            return
+        self._refresh_quantum_corrections_view()
+        self._refresh_energy_barriers_view()
+        self._persist_document_ui_state(
+            failure_message="Hyperfine Coupling site label was updated, but autosave failed."
+        )
+
+    def _store_unedited_magnetic_field_forms(self) -> None:
+        """Store the state of each Magnetic Fields form that has none, as its page shows it.
+
+        A form never edited stores nothing, though its page shows a default
+        muon site; the hyperfine hand-off reads the stored forms, so it must
+        see that site too.
+        """
+
+        if self._document is None:
+            return
+        if not self._document.ui_state.get(self._MAGNETIC_FIELD_FORM_KEY):
+            self._on_magnetic_field_form_state_changed(self._magnetic_field_view.collect_state())
+        for workspace in self._magnetic_field_workspaces_state():
+            workspace_id = str(workspace.get("id", "")).strip()
+            widget = self._magnetic_field_workspace_widgets.get(workspace_id)
+            if widget is not None and not workspace.get("form"):
+                self._on_magnetic_field_workspace_form_state_changed(
+                    workspace_id, widget.collect_state()
+                )
+
+    def _on_use_hyperfine_in_magnetic_fields(self, result_id: str) -> None:
+        """Fill the Hyperfine coupling of every Magnetic Fields form showing the result's site.
+
+        Nothing changes when no form shows the site. A form holding a different
+        coupling is overwritten only after confirmation; a form whose contact
+        shell cannot give a coupling is skipped and named.
+        """
+
+        if self._document is None or self._shutting_down:
+            return
+        result = self._hyperfine_coupling_controller.hyperfine_result(result_id)
+        if result is None:
+            return
+        title = "Use in Magnetic Fields"
+        self._store_unedited_magnetic_field_forms()
+        try:
+            targets = plan_magnetic_field_handoff(self._document, result)
+        except HyperfineError as exc:
+            QMessageBox.information(self, title, str(exc))
+            return
+        if not targets:
+            QMessageBox.information(
+                self,
+                title,
+                "No Magnetic Fields form shows this muon site. Select the site on the Magnetic "
+                "Fields page or in a saved workspace first; nothing was changed.",
+            )
+            return
+        overwritten = [target for target in targets if target.overwrites]
+        if overwritten:
+            listing = "\n".join(
+                f"  - {target.title}: {target.existing_display} → {target.new_text} Å⁻³"
+                for target in overwritten
+            )
+            if not workflow_table_utils.confirm_destructive(
+                self,
+                "Replace hyperfine coupling",
+                "These Magnetic Fields forms already hold a different hyperfine coupling:",
+                detail=f"{listing}\n\nReplace it with the computed value?",
+                accept_label="Replace",
+            ):
+                return
+        changed = apply_magnetic_field_handoff(self._document, targets)
+        self._refresh_magnetic_field_view()
+        self._persist_document_ui_state(
+            failure_message="The hyperfine coupling was handed to Magnetic Fields, but autosave failed."
+        )
+        lines = [
+            f"{target.title}: {target.new_text} Å⁻³"
+            for target in targets
+            if target.coupling is not None
+        ]
+        skipped = [f"{target.title}: {target.error}" for target in targets if target.error]
+        message = f"Filled the hyperfine coupling of {changed} Magnetic Fields form(s)."
+        if lines:
+            message += "\n\n" + "\n".join(lines)
+        if skipped:
+            message += "\n\nSkipped:\n" + "\n".join(skipped)
+        QMessageBox.information(self, title, message)
 
     def _on_configure_energy_barrier_result(self, payload: object) -> None:
         controller = self._energy_barriers_controller

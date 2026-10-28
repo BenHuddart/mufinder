@@ -43,8 +43,8 @@ The staged workflow is:
 3. optional pristine host relaxation
 4. muon-site generation and structural relaxation
 5. relaxation analysis and clustering to distinct muon sites
-6. downstream workflows consuming completed relaxed sites: magnetic fields,
-   quantum corrections and energy barriers
+6. downstream workflows consuming completed relaxed sites: hyperfine coupling,
+   magnetic fields, quantum corrections and energy barriers
 
 Dependency policy:
 
@@ -55,7 +55,8 @@ Dependency policy:
   relaxation computed at a UEP site are labelled as estimates wherever they are
   shown, and the workflow offers relaxation-analysis clusters before UEP sites
   once they exist for the host
-- quantum corrections, energy barriers and magnetic fields list the distinct
+- hyperfine coupling, quantum corrections, energy barriers and magnetic fields
+  list the distinct
   sites pinned to the Muon Sites summary by default, one per pinned site of the
   matching charge state; a per-workflow ``Show every relaxed site`` option
   lists every eligible relaxed site instead
@@ -478,6 +479,30 @@ Magnetic fields
   sites and muon-induced distortion corrections available; optional
   ``muesr`` / ``muLFC`` backends are used where installed, with clear errors
   otherwise (see :doc:`/user_guide/magnetic_fields`).
+
+Hyperfine coupling
+~~~~~~~~~~~~~~~~~~
+
+- Hyperfine jobs start from the same completed structural muon relaxations as
+  quantum corrections, under the same eligibility rules, and are row-driven:
+  each eligible relaxed site runs one CASTEP job whose status is the row's.
+- Each job writes ``TASK : MAGRES``, ``MAGRES_TASK : HYPERFINE``,
+  ``SPIN_POLARIZED : TRUE``, ``WRITE_FORMATTED_DENSITY : TRUE`` and the
+  ``H:mu`` ``SPECIES_MASS`` / ``SPECIES_GAMMA`` blocks; muonium sites run
+  neutral with ``SPIN=1`` seeded on the muon. Row settings cannot override the
+  workflow-controlled keywords.
+- A completed job reports the muon's hyperfine tensor in the physical sign
+  convention (CASTEP's is the opposite), its isotropic and dipolar parts in
+  MHz, the contact field in tesla, and the contact field from the pseudo spin
+  density of the job's ``.den_fmt`` as a cross-check. A missing or unreadable
+  ``.magres`` fails the job; a missing ``.den_fmt`` only leaves the cross-check
+  empty.
+- A result's coupling, in Å⁻³ per μB, can be written into every Magnetic
+  Fields form whose selected muon site is the result's site, divided by the
+  ``1/r^3``-weighted mean Mulliken moment of that form's contact shell from the
+  source relaxation. A form's default site counts before the form is first
+  edited. Overwriting a different nonzero coupling is confirmed first; nothing
+  changes when no form shows the site.
 
 Quantum corrections
 ~~~~~~~~~~~~~~~~~~~

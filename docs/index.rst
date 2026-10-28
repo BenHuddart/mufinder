@@ -48,6 +48,8 @@ and quality standards.
    user_guide/site_generation
    user_guide/structural_relaxation_analysis
    user_guide/legacy_import
+   user_guide/hyperfine_coupling
+   user_guide/hyperfine_coupling_theory
    user_guide/magnetic_fields
    user_guide/polarisation
    user_guide/quantum_corrections

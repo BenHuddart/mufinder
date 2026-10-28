@@ -60,6 +60,17 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1016/0304-8853(83)90058-6",
     ),
     "user_guide/overview.rst": ("10.1016/j.cpc.2022.108488",),
+    "user_guide/hyperfine_coupling.rst": (
+        "10.1039/d4dd00314d",
+        "10.1088/2516-1075/adcb7c",
+        "10.1103/PhysRevB.97.174414",
+        "10.1103/PhysRevMaterials.3.073804",
+    ),
+    "user_guide/hyperfine_coupling_theory.rst": (
+        "10.1021/cr300108a",
+        "10.1103/PhysRevB.97.174414",
+        "10.1103/PhysRevMaterials.3.073804",
+    ),
     "user_guide/magnetic_fields.rst": (
         "10.1007/BF02198293",
         "10.1016/S0304-8853(03)00238-5",

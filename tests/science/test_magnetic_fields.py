@@ -2969,7 +2969,7 @@ def test_real_muesr_contact_shell_matches_the_contact_field(real_muesr) -> None:
         model_data.fc[distortion.atom_indices]
         * np.exp(-2j * np.pi * (distortion.cell_offsets @ model_data.k_rlu))[:, np.newaxis]
     )
-    shell = module._contact_shell_mean(
+    shell = module.contact_shell_mean(
         distortion.pristine_vectors,
         coefficients,
         np.ones(len(coefficients), dtype=bool),

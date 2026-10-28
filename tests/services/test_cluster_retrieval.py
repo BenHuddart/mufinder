@@ -262,6 +262,7 @@ def test_incomplete_output_without_a_castep_error_has_a_default_message(
         (RetrievalFlags(retrieve_phonon=True), "seed.phonon", b"phonon output"),
         (RetrievalFlags(retrieve_ts=True), "seed.ts", b"ts output"),
         (RetrievalFlags(retrieve_out_cell=True), "seed-out.cell", b"relaxed cell"),
+        (RetrievalFlags(retrieve_magres=True), "seed.magres", b"magres output"),
     ],
 )
 def test_requested_secondary_output_is_downloaded(
@@ -290,13 +291,14 @@ def test_secondary_outputs_are_skipped_when_not_requested(
     ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
     ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
     ssh.remote_files["/remote/job/seed.ts"] = b"ts output"
+    ssh.remote_files["/remote/job/seed.magres"] = b"magres output"
     _parse_as(monkeypatch, _COMPLETED)
 
     _retrieve(
         ssh, tmp_path, retrieval=RetrievalFlags(retrieve_den_fmt=False, retrieve_out_cell=False)
     )
 
-    for name in ("seed.den_fmt", "seed-out.cell", "seed.phonon", "seed.ts"):
+    for name in ("seed.den_fmt", "seed-out.cell", "seed.phonon", "seed.ts", "seed.magres"):
         assert not (tmp_path / name).exists()
 
 
@@ -517,6 +519,40 @@ def test_previously_downloaded_out_cell_is_left_untouched(
 
     assert local_out_cell.read_bytes() == b"previous run geometry"
     assert local_out_cell.stat().st_mtime == modified_before
+
+
+@pytest.mark.parametrize(
+    ("retrieval", "name"),
+    [
+        (RetrievalFlags(retrieve_magres=True), "seed.magres"),
+        (RetrievalFlags(retrieve_den_fmt=True), "seed.den_fmt"),
+    ],
+)
+@pytest.mark.parametrize(("offset", "downloaded"), [(-3600.0, False), (60.0, True)])
+def test_magres_and_density_are_downloaded_only_when_written_by_this_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    retrieval: RetrievalFlags,
+    name: str,
+    offset: float,
+    downloaded: bool,
+) -> None:
+    """A reused remote directory still holds the previous run's ``.magres`` and
+    ``.den_fmt``; like ``-out.cell`` they are skipped when older than this
+    submission, so the local staleness guard sees the old copy's mtime."""
+
+    ssh = TimestampedFakeSSH()
+    _seed_continuation_files(
+        ssh, submitted_at=1_700_000_000.0, castep_offset=120.0, out_cell_offset=120.0
+    )
+    ssh.remote_files[f"/remote/job/{name}"] = b"output"
+    ssh.mtimes[f"/remote/job/{name}"] = 1_700_000_000.0 + offset
+    _parse_as(monkeypatch, _COMPLETED)
+
+    _retrieve(ssh, tmp_path, remote_job_id="900", retrieval=retrieval)
+
+    assert (("get", f"/remote/job/{name}") in ssh.commands) is downloaded
+    assert (tmp_path / name).exists() is downloaded
 
 
 @pytest.mark.parametrize("out_cell_offset", [0.0, 60.0, 3600.0])

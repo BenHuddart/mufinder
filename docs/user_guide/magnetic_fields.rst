@@ -38,7 +38,9 @@ A typical pass through the page is:
 1. In the ``Magnetic Structure`` card, click ``Edit Magnetic Structure...`` to
    open the ``Magnetic Structure Builder`` and define the magnetic model (see
    `Define the magnetic structure`_). Optionally enter a ``Hyperfine
-   coupling`` in ``Å⁻³``, ``T/μB``, or ``MHz/μB`` for the contact term.
+   coupling`` in ``Å⁻³``, ``T/μB``, or ``MHz/μB`` for the contact term, or
+   compute it on the :doc:`/user_guide/hyperfine_coupling` page and hand it
+   over from there.
 2. In the ``Muon Site`` card, click ``Select Muon Site...`` (see `Choose the
    muon site`_). Tick ``Include equivalent sites`` to calculate all
    symmetry-equivalent positions of that site.

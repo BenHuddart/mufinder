@@ -285,6 +285,25 @@ def set_workflow_table_item(table: QTableWidget, row: int, column: int, text: st
     item.setText(text)
 
 
+def fill_workflow_table(table: QTableWidget, rows: Sequence[Sequence[str]]) -> None:
+    """Replace ``table``'s rows with ``rows`` of display text, one tuple per row."""
+
+    table.setRowCount(len(rows))
+    for row_index, values in enumerate(rows):
+        for column, value in enumerate(values):
+            set_workflow_table_item(table, row_index, column, value)
+    table.resizeRowsToContents()
+
+
+def set_header_tooltips(table: QTableWidget, tooltips: dict[str, str]) -> None:
+    """Give each header whose label ``tooltips`` names that tooltip."""
+
+    for column in range(table.columnCount()):
+        item = table.horizontalHeaderItem(column)
+        if item is not None and item.text() in tooltips:
+            item.setToolTip(tooltips[item.text()])
+
+
 def workflow_row_status_text(table: QTableWidget, row: int, column: int) -> str:
     """Return the normalized status string a workflow table row is displaying.
 

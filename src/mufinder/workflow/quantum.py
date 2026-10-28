@@ -37,8 +37,8 @@ _METHOD_TO_CASTEP = {
 }
 
 
-def _seed_muonium_spin(structure: StructureSpec, muon_species: str) -> StructureSpec:
-    """Seed +1 on the muon so a muonium phonon job stays open-shell.
+def seed_muonium_spin(structure: StructureSpec, muon_species: str) -> StructureSpec:
+    """Seed +1 on the muon so a muonium job stays open-shell.
 
     Mirrors the muon-relaxation adapter: neutral muonium binds one unpaired electron
     (S = 1/2, ~1 muB). Host moments are preserved, and this is idempotent if the relaxed
@@ -237,7 +237,7 @@ def expand_quantum_phonon_jobs(
 
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
-            structure = _seed_muonium_spin(structure, config.muon_species)
+            structure = seed_muonium_spin(structure, config.muon_species)
         base = InputTemplate(cell=_cell_base_template(config), param=_param_base_template(config))
         patch_template = compose_patch(
             base,
@@ -323,7 +323,7 @@ def expand_quantum_singlepoint_jobs(
             raise ValueError("Quantum singlepoint source labels must not be empty.")
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
-            structure = _seed_muonium_spin(structure, config.muon_species)
+            structure = seed_muonium_spin(structure, config.muon_species)
         keywords = [KeywordAssignment("task", "SINGLEPOINT")]
         if config.source.charge_state:
             keywords.append(
@@ -332,7 +332,7 @@ def expand_quantum_singlepoint_jobs(
         if is_muonium(config.source.charge_state):
             keywords.append(KeywordAssignment("spin_polarized", True))
         base = InputTemplate(
-            cell=CellTemplate(extra_blocks=_muon_species_blocks(config)),
+            cell=CellTemplate(extra_blocks=muon_species_blocks(config.muon_species)),
             param=ParamTemplate(keywords=tuple(keywords)),
         )
         patch_template = compose_patch(
@@ -378,27 +378,26 @@ def expand_quantum_singlepoint_jobs(
     return resolved
 
 
-def _muon_species_blocks(config: QuantumPhononJobConfig) -> tuple[BlockSection, ...]:
+def muon_species_blocks(muon_species: str) -> tuple[BlockSection, ...]:
     """Return the muon ``SPECIES_MASS`` / ``SPECIES_GAMMA`` blocks.
 
-    Without them CASTEP gives ``H:mu`` the default hydrogen mass, and because
-    omega scales as 1/sqrt(mass) the frequencies and the muon ZPE come out
-    roughly a factor of three too low. A fresh run reads them from the job's own
-    ``.cell``.
+    Without them CASTEP gives ``H:mu`` the default hydrogen mass and gyromagnetic
+    ratio: phonon frequencies and the muon ZPE come out roughly a factor of three
+    too low (omega scales as 1/sqrt(mass)), and a hyperfine tensor is scaled by
+    the proton's gamma instead of the muon's. A fresh run reads them from the
+    job's own ``.cell``.
     """
 
     return (
-        BlockSection("species_mass", ((config.muon_species, MUON_MASS_AMU),), unit="AMU"),
-        BlockSection(
-            "species_gamma", ((config.muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"
-        ),
+        BlockSection("species_mass", ((muon_species, MUON_MASS_AMU),), unit="AMU"),
+        BlockSection("species_gamma", ((muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"),
     )
 
 
 def _cell_base_template(config: QuantumPhononJobConfig) -> CellTemplate:
     return CellTemplate(
         extra_scalars=(KeywordAssignment("phonon_kpoint_mp_grid", (1, 1, 1)),),
-        extra_blocks=_muon_species_blocks(config),
+        extra_blocks=muon_species_blocks(config.muon_species),
     )
 
 

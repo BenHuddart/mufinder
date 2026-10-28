@@ -13,6 +13,7 @@ KNOWN_WORKFLOWS: tuple[str, ...] = (
     "muon_relaxation",
     "site_analysis",
     "magnetic_field",
+    "hyperfine_coupling",
     "quantum_corrections",
     "energy_barriers",
 )

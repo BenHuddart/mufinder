@@ -61,6 +61,7 @@ The ``.param`` entries in the starter catalog are:
   ``TSSEARCH_NEB_TANGENT_MODE``, ``TSSEARCH_NEB_CLIMBING``,
   ``TSSEARCH_NEB_NORMED``.
 - Phonon settings: ``PHONON_METHOD``.
+- Magnetic-resonance settings: ``MAGRES_TASK`` (``HYPERFINE`` only).
 - Output and property flags: ``WRITE_CELL_STRUCTURE``,
   ``WRITE_FORMATTED_DENSITY``, ``CALCULATE_STRESS``,
   ``CALCULATE_POLARIZATION``.

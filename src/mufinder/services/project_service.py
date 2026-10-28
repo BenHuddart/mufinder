@@ -1140,6 +1140,31 @@ class ProjectService:
             input_site_ids=input_site_ids,
         )
 
+    def register_hyperfine_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+    ) -> CalculationDefinition:
+        """Persist one Hyperfine Coupling configuration (one magres job per relaxed site)."""
+
+        _require_known_inputs(document, input_structure_ids, input_site_ids)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.HYPERFINE_COUPLING,
+            calc_type="castep_hyperfine_set",
+            action="configure_hyperfine_coupling",
+            description=f"Configured Hyperfine Coupling with {len(input_site_ids)} relaxed site(s)",
+            configuration=to_jsonable(parameters),
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": {}},
+            input_structure_ids=input_structure_ids,
+            input_site_ids=input_site_ids,
+        )
+
     def register_nudged_elastic_band_definition(
         self,
         document: ProjectDocument,

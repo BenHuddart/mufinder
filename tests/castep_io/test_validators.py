@@ -326,6 +326,31 @@ def test_validate_param_rejects_task_mismatch() -> None:
         validate_param_file(param_file)
 
 
+def test_magres_task_accepts_hyperfine_under_task_magres_only() -> None:
+    validate_param_file(
+        ParamFile(
+            keywords=(
+                KeywordAssignment("task", "MAGRES"),
+                KeywordAssignment("magres_task", "HYPERFINE"),
+                KeywordAssignment("spin_polarized", True),
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="TASK=SINGLEPOINT"):
+        validate_param_file(
+            ParamFile(
+                keywords=(
+                    KeywordAssignment("task", "SINGLEPOINT"),
+                    KeywordAssignment("magres_task", "HYPERFINE"),
+                )
+            )
+        )
+    # MuFinder implements the hyperfine run only; other magres properties are refused.
+    with pytest.raises(CastepValidationError):
+        validate_keyword_value("param", "magres_task", "SHIELDING")
+
+
 def test_validate_param_rejects_basis_precision_and_cutoff_combination() -> None:
     param_file = ParamFile(
         keywords=(

@@ -44,6 +44,9 @@ BOHR_MAGNETON_J_PER_T: float = physical_constants["Bohr magneton"][0]
 #: Nuclear magneton, in J T^-1. Source: CODATA.
 NUCLEAR_MAGNETON_J_PER_T: float = physical_constants["nuclear magneton"][0]
 
+#: Magnitude of the free-electron g-factor (dimensionless). Source: CODATA.
+ELECTRON_G_FACTOR: float = abs(physical_constants["electron g factor"][0])
+
 #: Atomic mass constant (one dalton), in kg. Source: CODATA.
 ATOMIC_MASS_KG: float = physical_constants["atomic mass constant"][0]
 

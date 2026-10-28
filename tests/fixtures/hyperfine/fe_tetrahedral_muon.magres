@@ -1,0 +1,87 @@
+#$magres-abinitio-v1.0
+# See http://www.ccpnc.ac.uk/pmwiki.php/CCPNC/Fileformat for format definition and code samples and libraries
+[calculation]
+calc_code CASTEP
+calc_code_version  26.1
+calc_code_hgversion b7f537205  Castep261_branch  Tue Feb 24 20:22:20 2026 +0000     
+calc_code_platform linux_x86_64_gfortran10                                         
+calc_name fe
+calc_comment                                                                                 
+calc_xcfunctional PBE 
+calc_cutoffenergy    700.00000000 eV
+calc_pspot Fe 3|2.4|2.4|1.0|8|9|10|40:41:32U2U2(qc=5.5)
+calc_pspot H:mu 1|0.6|13|15|17|10(qc=8)
+calc_kpoint_mp_grid 8 8 8
+calc_kpoint_mp_offset       0.00000000      0.00000000      0.00000000
+[/calculation]
+[atoms]
+units lattice Angstrom
+lattice           5.6600000000000001E+00          0.0000000000000000E+00          0.0000000000000000E+00          0.0000000000000000E+00          5.6600000000000001E+00          0.0000000000000000E+00          0.0000000000000000E+00          0.0000000000000000E+00          5.6600000000000001E+00
+units atom Angstrom
+symmetry x,y,z
+atom Fe      Fe   1          0.0000000000000000E+00          0.0000000000000000E+00          0.0000000000000000E+00
+atom Fe      Fe   2          1.4150000000000000E+00          1.4150000000000000E+00          1.4150000000000000E+00
+atom Fe      Fe   3          0.0000000000000000E+00          0.0000000000000000E+00          2.8300000000000001E+00
+atom Fe      Fe   4          1.4150000000000000E+00          1.4150000000000000E+00          4.2450000000000001E+00
+atom Fe      Fe   5          0.0000000000000000E+00          2.8300000000000001E+00          0.0000000000000000E+00
+atom Fe      Fe   6          1.4150000000000000E+00          4.2450000000000001E+00          1.4150000000000000E+00
+atom Fe      Fe   7          0.0000000000000000E+00          2.8300000000000001E+00          2.8300000000000001E+00
+atom Fe      Fe   8          1.4150000000000000E+00          4.2450000000000001E+00          4.2450000000000001E+00
+atom Fe      Fe   9          2.8300000000000001E+00          0.0000000000000000E+00          0.0000000000000000E+00
+atom Fe      Fe  10          4.2450000000000001E+00          1.4150000000000000E+00          1.4150000000000000E+00
+atom Fe      Fe  11          2.8300000000000001E+00          0.0000000000000000E+00          2.8300000000000001E+00
+atom Fe      Fe  12          4.2450000000000001E+00          1.4150000000000000E+00          4.2450000000000001E+00
+atom Fe      Fe  13          2.8300000000000001E+00          2.8300000000000001E+00          0.0000000000000000E+00
+atom Fe      Fe  14          4.2450000000000001E+00          4.2450000000000001E+00          1.4150000000000000E+00
+atom Fe      Fe  15          2.8300000000000001E+00          2.8300000000000001E+00          2.8300000000000001E+00
+atom Fe      Fe  16          4.2450000000000001E+00          4.2450000000000001E+00          4.2450000000000001E+00
+atom H:mu    H:mu   1          1.4150000000000000E+00          7.0750000000000002E-01          0.0000000000000000E+00
+[/atoms]
+[magres]
+[/magres]
+[magres_old]
+==========================================================================
+  Using the following values of the magnetogyric ratio                    
+  Fe     Isotope  57             GAMMA =  8.6806E+06 rad T-1 s-1
+  H:mu    User defined.            GAMMA =  8.5162E+08 rad T-1 s-1
+==========================================================================
+
+============
+Atom: Fe      16
+============
+Fe      16 Coordinates      4.245    4.245    4.245   A
+
+TOTAL tensor
+
+              -1.5149     -0.0000      0.0000
+              -0.0000     -1.9004      0.6287
+               0.0000      0.6287     -1.4516
+
+Fe      16 Eigenvalue  A_xx      -1.0085      
+Fe      16 Eigenvector A_xx       0.0000      0.5761      0.8174
+Fe      16 Eigenvalue  A_yy      -1.5149      
+Fe      16 Eigenvector A_yy      -1.0000      0.0000      0.0000
+Fe      16 Eigenvalue  A_zz      -2.3435      
+Fe      16 Eigenvector A_zz      -0.0000     -0.8174      0.5761
+
+Fe      16 Iso:       -1.6223 (MHz)
+============
+Atom: H:mu     1
+============
+H:mu     1 Coordinates      1.415    0.708    0.000   A
+
+TOTAL tensor
+
+             255.4107     -0.0001     -0.0000
+              -0.0001    461.8211     -0.0001
+              -0.0000     -0.0001    255.4048
+
+H:mu     1 Eigenvalue  A_xx     255.4048      
+H:mu     1 Eigenvector A_xx       0.0001      0.0000      1.0000
+H:mu     1 Eigenvalue  A_yy     255.4107      
+H:mu     1 Eigenvector A_yy       1.0000      0.0000     -0.0001
+H:mu     1 Eigenvalue  A_zz     461.8211      
+H:mu     1 Eigenvector A_zz      -0.0000      1.0000     -0.0000
+
+H:mu     1 Iso:      324.2122 (MHz)
+[/magres_old]

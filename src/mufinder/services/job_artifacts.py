@@ -3,7 +3,9 @@
 When a CASTEP job finishes, MuFinder parses several *secondary* output files
 beyond the primary ``.castep`` result: the relaxed ``-out.cell`` (relaxation
 workflows), the ``.phonon`` file plus its derived quantum quantities (quantum
-corrections), and the ``.ts`` transition-state file (energy barriers). These
+corrections), the ``.ts`` transition-state file (energy barriers), and the
+``.magres`` hyperfine tensors with the spin density at the muon from the
+``.den_fmt`` (hyperfine coupling). These
 parses used to run twice on the GUI thread per completed job — once as a
 failure-detection guard in ``MainWindow._on_local_job_finished`` and again in
 the owning workflow controller's ``build_result`` — serializing N jobs'
@@ -34,8 +36,15 @@ from pathlib import Path
 from typing import Any
 
 from mufinder.castep_io.cell_parser import ParsedCell, parse_cell_file
+from mufinder.castep_io.charge_density import parse_formatted_density
+from mufinder.castep_io.magres import (
+    HyperfineTensor,
+    hyperfine_tensor_for_species,
+    parse_magres_hyperfine,
+)
 from mufinder.castep_io.ts_parser import TransitionStatePath, parse_transition_state_file
 from mufinder.domain.charge_states import is_muon_relaxation_calc_type
+from mufinder.science.hyperfine import spin_density_at
 from mufinder.science.kpoint_grids import lattice_parameters
 from mufinder.science.quantum_phonons import (
     PhononCalculation,
@@ -47,6 +56,7 @@ from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
 )
+from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE, HYPERFINE_MUON_SPECIES
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 
 _UEP_SOURCE_CALC_TYPE = "castep_uep_source"
@@ -96,10 +106,25 @@ class ParsedJobArtifacts:
     #: ``True`` when the requested ``.ts`` file was absent on disk.
     ts_missing: bool = False
 
+    #: The muon's tensor from the ``.magres`` hyperfine output (hyperfine
+    #: coupling), exactly as CASTEP prints it. ``None`` when ``magres_error`` is
+    #: set or no magres output was requested.
+    magres: HyperfineTensor | None = None
+    magres_error: str | None = None
+    #: ``True`` when the requested ``.magres`` file was absent on disk.
+    magres_missing: bool = False
+    #: Pseudo spin density at the muon, in Å^-3, from the job's ``.den_fmt``
+    #: and the muon position in its ``.cell``. ``None`` with
+    #: ``spin_density_error`` set when either could not be read; a missing
+    #: density is a warning, not a failure.
+    pseudo_spin_density_angstrom3: float | None = None
+    spin_density_error: str | None = None
+
     #: Source file paths the collector inspected (for diagnostics / provenance).
     out_cell_path: Path | None = None
     phonon_path: Path | None = None
     ts_path: Path | None = None
+    magres_path: Path | None = None
 
 
 def effective_num_farms(task_farming_enabled: bool, num_farms: int | None) -> int:
@@ -138,6 +163,7 @@ class RetrievalFlags:
     retrieve_out_cell: bool = False
     retrieve_phonon: bool = False
     retrieve_ts: bool = False
+    retrieve_magres: bool = False
     task_farming_enabled: bool = False
     num_farms: int | None = None
 
@@ -147,6 +173,7 @@ class RetrievalFlags:
             "retrieve_out_cell",
             "retrieve_phonon",
             "retrieve_ts",
+            "retrieve_magres",
             "task_farming_enabled",
         ):
             object.__setattr__(self, name, bool(getattr(self, name)))
@@ -164,19 +191,21 @@ class RetrievalFlags:
         """Return the flags for a job of ``calc_type``.
 
         UEP source jobs keep their ``.den_fmt``; pristine and muon relaxations
-        their ``-out.cell``; quantum-phonon jobs their ``.phonon``; and
-        transition-state and NEB jobs their ``.ts``. Every other calc type
+        their ``-out.cell``; quantum-phonon jobs their ``.phonon``;
+        transition-state and NEB jobs their ``.ts``; and hyperfine jobs their
+        ``.magres`` and ``.den_fmt``. Every other calc type
         produces only the primary ``.castep``. The farm count is per job, not
         per calc type, so the caller supplies it.
         """
 
         return cls(
-            retrieve_den_fmt=calc_type == _UEP_SOURCE_CALC_TYPE,
+            retrieve_den_fmt=calc_type in {_UEP_SOURCE_CALC_TYPE, HYPERFINE_CALC_TYPE},
             retrieve_out_cell=calc_type == _PRISTINE_RELAXATION_CALC_TYPE
             or is_muon_relaxation_calc_type(calc_type),
             retrieve_phonon=calc_type == QUANTUM_PHONON_CALC_TYPE,
             retrieve_ts=calc_type
             in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
+            retrieve_magres=calc_type == HYPERFINE_CALC_TYPE,
             task_farming_enabled=task_farming_enabled,
             num_farms=num_farms,
         )
@@ -201,6 +230,7 @@ class RetrievalFlags:
             want_out_cell=self.retrieve_out_cell,
             want_phonon=self.retrieve_phonon,
             want_ts=self.retrieve_ts,
+            want_magres=self.retrieve_magres,
             num_farms=self.farm_count,
         )
 
@@ -235,13 +265,14 @@ def collect_job_artifacts(
     want_out_cell: bool = False,
     want_phonon: bool = False,
     want_ts: bool = False,
+    want_magres: bool = False,
     num_farms: int = 1,
 ) -> ParsedJobArtifacts:
     """Parse a completed job's requested secondary outputs, capturing errors.
 
-    ``want_out_cell`` / ``want_phonon`` / ``want_ts`` mirror the runner's
-    per-calc-type retrieval flags (relaxation, quantum-phonon, and TS/NEB
-    respectively), so collection is driven by which outputs the job actually
+    ``want_out_cell`` / ``want_phonon`` / ``want_ts`` / ``want_magres`` mirror
+    the runner's per-calc-type retrieval flags (relaxation, quantum-phonon,
+    TS/NEB and hyperfine respectively), so collection is driven by which outputs the job actually
     produced. This runs on a runner worker thread; it never raises — every
     failure is captured on the returned :class:`ParsedJobArtifacts` as data.
 
@@ -256,6 +287,7 @@ def collect_job_artifacts(
     out_cell_path: Path | None = None
     phonon_path: Path | None = None
     ts_path: Path | None = None
+    magres_path: Path | None = None
     if output_dir is not None:
         if want_out_cell:
             out_cell_path = output_dir / f"{seed_name}-out.cell"
@@ -263,6 +295,8 @@ def collect_job_artifacts(
             phonon_path = output_dir / f"{seed_name}.phonon"
         if want_ts:
             ts_path = _resolve_ts_path(output_dir, seed_name, num_farms)
+        if want_magres:
+            magres_path = output_dir / f"{seed_name}.magres"
 
     relaxed_cell: ParsedCell | None = None
     lattice_abc: tuple[float, float, float] | None = None
@@ -325,6 +359,30 @@ def collect_job_artifacts(
                 transition_state = None
                 ts_error = str(exc)
 
+    magres: HyperfineTensor | None = None
+    magres_error: str | None = None
+    magres_missing = False
+    pseudo_spin_density: float | None = None
+    spin_density_error: str | None = None
+    if want_magres:
+        if magres_path is None or not magres_path.exists():
+            magres_missing = True
+        else:
+            try:
+                magres = hyperfine_tensor_for_species(
+                    parse_magres_hyperfine(magres_path), HYPERFINE_MUON_SPECIES
+                )
+            except Exception as exc:
+                # Broader than MagresInputError for the same never-raise reason
+                # as the cell branch.
+                magres = None
+                magres_error = str(exc)
+        # The density only matters beside a tensor; a job without one fails anyway.
+        if output_dir is not None and magres is not None:
+            pseudo_spin_density, spin_density_error = _muon_pseudo_spin_density(
+                output_dir, seed_name
+            )
+
     return ParsedJobArtifacts(
         relaxed_cell=relaxed_cell,
         lattice_abc=lattice_abc,
@@ -336,10 +394,41 @@ def collect_job_artifacts(
         transition_state=transition_state,
         ts_error=ts_error,
         ts_missing=ts_missing,
+        magres=magres,
+        magres_error=magres_error,
+        magres_missing=magres_missing,
+        pseudo_spin_density_angstrom3=pseudo_spin_density,
+        spin_density_error=spin_density_error,
         out_cell_path=out_cell_path,
         phonon_path=phonon_path,
         ts_path=ts_path,
+        magres_path=magres_path,
     )
+
+
+def _muon_pseudo_spin_density(output_dir: Path, seed_name: str) -> tuple[float | None, str | None]:
+    """Return the pseudo spin density at the muon in Å^-3, or ``None`` and why not.
+
+    The muon position is read from the job's own ``.cell``, the input the run
+    used; the density from its ``.den_fmt``.
+    """
+
+    density_path = output_dir / f"{seed_name}.den_fmt"
+    if not density_path.exists():
+        return None, f"Formatted density {density_path.name} was not found."
+    try:
+        cell = parse_cell_file(output_dir / f"{seed_name}.cell", geometry_only=True)
+        muon_positions = [
+            position
+            for species, position in zip(cell.species, cell.fractional_positions, strict=True)
+            if species == HYPERFINE_MUON_SPECIES
+        ]
+        if len(muon_positions) != 1:
+            return None, f"Expected one {HYPERFINE_MUON_SPECIES} atom in {seed_name}.cell."
+        return spin_density_at(parse_formatted_density(density_path), muon_positions[0]), None
+    except Exception as exc:
+        # Never raise on the worker thread: an unreadable density is a warning.
+        return None, str(exc)
 
 
 __all__ = [
