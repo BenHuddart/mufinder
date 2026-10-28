@@ -49,6 +49,8 @@ _FAILURE_MARKERS = (
     re.compile(r"\bpanic\b", re.IGNORECASE),
 )
 _WARNING_RE = re.compile(r"\bWARNING\b", re.IGNORECASE)
+_WARNING_BOX_RULE_RE = re.compile(r"^\?{10,}$")
+_WARNING_BOX_HEADING_RE = re.compile(r"^Warning\s+in\s+\S+", re.IGNORECASE)
 _SCF_RE = re.compile(r"\bSCF(?:\s+cycle|\s+iteration)?\s*[:#=]?\s*(\d+)\b", re.IGNORECASE)
 _WALL_SECONDS_RE = re.compile(
     rf"(?:Total\s+time|Wall\s+time)[^\n=]*=\s*({_FLOAT_RE})\s*s(?:ec(?:onds?)?)?", re.IGNORECASE
@@ -494,9 +496,22 @@ def _stress_requested(lines: list[str]) -> bool:
 
 
 def _find_error_message(lines: list[str]) -> str | None:
+    # CASTEP boxes each warning between rules of "?" under a "Warning in
+    # <routine>" heading. A warning's wording ("Failed to identify 3
+    # eigenvectors with acoustic character") is not a failure of the run.
+    in_box = False
+    in_warning = False
     for line in lines:
         trimmed = line.strip()
         if not trimmed:
+            continue
+        if _WARNING_BOX_RULE_RE.match(trimmed):
+            in_box = not in_box
+            in_warning = False
+            continue
+        if in_box and _WARNING_BOX_HEADING_RE.match(trimmed):
+            in_warning = True
+        if in_warning:
             continue
         for marker in _FAILURE_MARKERS:
             if marker.search(trimmed):
