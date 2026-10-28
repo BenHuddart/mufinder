@@ -217,7 +217,8 @@ endpoint's relaxation then override them where its output ``.cell`` and
 ``.param`` are available: its k-point grid, cut-off energy, exchange-correlation
 functional, and spin treatment (read from the source files as for
 :doc:`/user_guide/quantum_corrections`), so the band is computed on the same numerical
-footing as the structures it connects. Row-level configuration remains
+footing as the structures it connects. A spin-polarised band writes the
+reactant relaxation's per-atom ``SPIN=`` values on every image. Row-level configuration remains
 authoritative, so a specific path can still override any of these without
 affecting the rest of the project.
 
