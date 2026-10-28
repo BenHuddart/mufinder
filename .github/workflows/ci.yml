@@ -98,6 +98,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: test-shard
     if: always()
+    # Deleting this run's artifacts once they are consumed needs `actions: write`.
+    permissions:
+      actions: write
+      contents: read
     steps:
       - name: Require every shard to pass
         if: needs.test-shard.result != 'success'
@@ -127,6 +131,14 @@ jobs:
 
       - name: Combine coverage and enforce the gate
         run: make coverage
+
+      # Kept on failure so "Re-run failed jobs" can download them again. A pull
+      # request from a fork gets a read-only token and leaves them to expire.
+      - name: Delete the coverage artifacts
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: ./.github/actions/delete-run-artifacts
+        with:
+          name-pattern: ^coverage-shard-
 
   # The documentation screenshots are rendered in four shares of about equal
   # measured duration (scripts/docs_screenshots/durations.json) on separate
@@ -208,6 +220,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: docs-screenshots
     if: always()
+    # Deleting this run's artifacts once they are consumed needs `actions: write`.
+    permissions:
+      actions: write
+      contents: read
     steps:
       - name: Require every screenshot share to render
         if: needs.docs-screenshots.result != 'success'
@@ -259,3 +275,10 @@ jobs:
 
       - name: Build Sphinx documentation
         run: make docs
+
+      # Kept on failure for the same reason as the coverage artifacts.
+      - name: Delete the screenshot artifacts
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: ./.github/actions/delete-run-artifacts
+        with:
+          name-pattern: ^docs-screenshots-
