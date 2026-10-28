@@ -464,6 +464,19 @@ keywords:
       default_value: SINGLEPOINT
       basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
+  - name: MAGRES_TASK
+    canonical_name: magres_task
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - HYPERFINE
+    mutually_exclusive_with: []
+    requires: [TASK=MAGRES]
+    example: MAGRES_TASK : HYPERFINE
+    notes: CASTEP accepts SHIELDING, EFG, NMR, GTENSOR, HYPERFINE, EPR and JCOUPLING (CASTEP 26.11 keyword metadata). MuFinder implements HYPERFINE only; the Hyperfine Coupling workflow sets it together with TASK=MAGRES and SPIN_POLARIZED, so it is not offered in any parameter dialog. CASTEP stops a hyperfine run that is not spin polarised or uses non-collinear spins.
+
   - name: XC_FUNCTIONAL
     canonical_name: xc_functional
     file: param

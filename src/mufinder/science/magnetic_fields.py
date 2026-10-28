@@ -679,9 +679,9 @@ def _component_distortion_changes(
     if contact_options is not None and contact_options.contact_coupling is not None:
         # muesr drops an atom from the call when its coefficients are all close to zero.
         magnetic = ~np.all(np.abs(fc) <= 1e-8, axis=1)
-        reach = _contact_shell_reach_limit(distortion.supercell_lattice)
+        reach = contact_shell_reach_limit(distortion.supercell_lattice)
         shells = [
-            _contact_shell_mean(
+            contact_shell_mean(
                 vectors,
                 coefficients,
                 magnetic,
@@ -699,7 +699,7 @@ def _component_distortion_changes(
     return dipolar, contact
 
 
-def _contact_shell_mean(
+def contact_shell_mean(
     vectors: np.ndarray,
     coefficients: np.ndarray,
     magnetic: np.ndarray,
@@ -758,7 +758,7 @@ _CONTACT_SHELL_TIE_ANG = 1e-6
 """Distance difference within which two ions tie for a place in the contact shell."""
 
 
-def _contact_shell_reach_limit(supercell_lattice: np.ndarray) -> float:
+def contact_shell_reach_limit(supercell_lattice: np.ndarray) -> float:
     """Return the radius of the largest sphere about the muon that the wrapped relaxed supercell holds."""
 
     lattice = np.asarray(supercell_lattice, dtype=float)

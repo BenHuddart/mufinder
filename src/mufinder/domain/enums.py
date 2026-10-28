@@ -16,6 +16,7 @@ class WorkflowStage(StrEnum):
     MUON_RELAXATION = "muon_relaxation"
     SITE_ANALYSIS = "site_analysis"
     MAGNETIC_FIELD = "magnetic_field"
+    HYPERFINE_COUPLING = "hyperfine_coupling"
     QUANTUM_CORRECTIONS = "quantum_corrections"
     ENERGY_BARRIERS = "energy_barriers"
 

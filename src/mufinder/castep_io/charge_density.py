@@ -34,7 +34,13 @@ class ChargeDensityInputError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class FormattedDensity:
-    """Parsed CASTEP formatted density grid."""
+    """Parsed CASTEP formatted density grid.
+
+    ``values[..., 0]`` is the charge and, for a collinear spin-polarised run
+    (``nspins == 2``), ``values[..., 1]`` is the spin density ρ↑ − ρ↓. Both are in
+    CASTEP's units of electrons per grid point times the number of grid points,
+    that is the density times the cell volume.
+    """
 
     lattice_vectors: tuple[
         tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
@@ -117,11 +123,16 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
         parts = line.split()
         if len(parts) < 4:
             continue
+        if nspins == 2 and len(parts) < 5:
+            raise ChargeDensityInputError(
+                f"Spin-polarised density '{source.name}' has no spin column: {line.strip()}"
+            )
         try:
             ia = int(parts[0]) - 1
             ib = int(parts[1]) - 1
             ic = int(parts[2]) - 1
             charge = float(parts[3])
+            spin = float(parts[4]) if nspins == 2 else 0.0
         except ValueError as exc:
             raise ChargeDensityInputError(
                 f"Invalid density row in '{source.name}': {line.strip()}"
@@ -131,6 +142,8 @@ def parse_formatted_density(path: str | Path) -> FormattedDensity:
                 f"Density row index out of range in '{source.name}': {line.strip()}"
             )
         values[ia, ib, ic, 0] = charge
+        if nspins == 2:
+            values[ia, ib, ic, 1] = spin
         count += 1
 
     if count != expected_count:
