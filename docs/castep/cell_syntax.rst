@@ -76,10 +76,14 @@ the package.
 - A full parse validates the whole file against the loaded keyword catalog, so
   a keyword outside it raises ``CellParseError``. With ``geometry_only=True``
   only the lattice and position blocks are read and validated, and every other
-  keyword and block is skipped. Structure import
-  (``mufinder.science.structure_io.load_structure_file``) uses this mode, so a
-  CASTEP ``-out.cell`` imports regardless of the calculation keywords it
-  carries.
+  keyword and block is skipped. Every reader of a CASTEP ``-out.cell`` uses
+  this mode: structure import
+  (``mufinder.science.structure_io.load_structure_file``), the relaxed cell of a
+  finished job (``mufinder.services.job_artifacts.collect_job_artifacts``) and
+  the legacy relaxation import, which also falls back to it for an input
+  ``.cell`` whose full parse fails. A relaxed structure therefore reads regardless
+  of the calculation keywords CASTEP echoes into it, such as
+  ``EXTERNAL_PRESSURE`` or ``QUANTISATION_AXIS``.
 
 Starter subset
 --------------

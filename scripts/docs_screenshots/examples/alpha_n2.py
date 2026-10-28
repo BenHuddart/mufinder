@@ -1,31 +1,28 @@
 """Solid α-nitrogen: the Quantum Corrections worked example.
 
-α-N2 is a molecular crystal (Pa-3, a = 5.660 Å; Venables and English 1974):
-the N2 molecule centres sit on the fcc 4a sites and the N atoms at 8c
-(x, x, x) with x = 0.056, so each N≡N bond is 1.098 Å long and points along
-one of the four <111> directions. The positive muon stops midway between two
-neighbouring molecules, at the (0, 1/4, 1/4)-type site, and binds them into a
-linear [N2-mu-N2]+ complex along [011] (Gomilšek et al. 2023).
+α-N2 is a molecular crystal in space group Pa-3: the N2 molecule centres sit
+on the fcc 4a sites and the N atoms at 8c (x, x, x), so each N≡N bond points
+along one of the four <111> directions. The positive muon stops midway between
+two neighbouring molecules, at the (0, 1/4, 1/4)-type site, and binds them into
+a linear [N2-mu-N2]+ complex along [011] (Gomilšek et al. 2023).
 ``docs/user_guide/examples/alpha_n2.rst`` tells the story these scenes
 illustrate.
 
-:func:`results_project` drives a project in a ``MainWindow`` as the buttons
-do: a 2x2x2 supercell (64 N and the muon), an adopted 1200 eV cutoff and a
-unit-cell grid that becomes 2x2x2 in the supercell, seeded random positive-muon
-starts relaxed in the supercell, one analysis workspace, clustered and pinned,
-and the phonon job of the pinned site, configured with ultrasoft
-pseudopotentials, ``FINITEDISPLACEMENT`` and a 1e-10 eV SCF tolerance. No
-scene runs CASTEP: each job's outputs are synthetic (see
-:func:`~docs_screenshots.render.synthetic_runs`):
+The CASTEP outputs are the paper's own, kept under ``tests/fixtures/alpha_n2``
+(see its ``README.md``): the relaxed muon supercell and its Gamma-point phonon
+run. The host is the pristine cell of that calculation, its lattice edge half
+the supercell's and its x from the molecules far from the muon.
 
-- every start relaxes to the nearest (0, 1/4, 1/4)-type site, where the two
-  molecules either side turn to point at the muon, 1.29 Å from their near
-  nitrogens, with their bonds stretched to 1.115 Å, and the molecules around
-  them move 0.03 Å towards it (``COMPLEX``);
-- the phonon run embeds the five-atom chain spring model of
-  ``tests/support/phonon_fixtures.py``, tuned to the paper's harmonic numbers,
-  in the relaxed supercell, with every other molecule vibrating on its own
-  (``N2_BANDS_CM``).
+:func:`results_project` drives a project in a ``MainWindow`` as the buttons
+do: a 2x2x2 supercell (64 N and the muon), the paper's 1200 eV cutoff and
+2x2x2 grid set by hand, one manual start at (0, 1/4, 1/4) relaxed as a positive
+muon, one analysis workspace, clustered and pinned, and the phonon job of the
+pinned site, configured with ultrasoft pseudopotentials,
+``FINITEDISPLACEMENT`` and a 1e-10 eV SCF tolerance. No scene runs CASTEP: the
+relaxation's ``-out.cell`` and the phonon job's ``.phonon`` and ``.castep`` are
+the fixture files (see :func:`~docs_screenshots.render.synthetic_runs`). The
+data set holds no log of the relaxation, so its ``.castep`` is a short one
+ending on the dispersion-corrected energy of the undisplaced cell.
 
 :func:`configured_project` stops before the phonon job is submitted, for the
 configuration dialog of a row that is still editable.
@@ -35,12 +32,13 @@ from __future__ import annotations
 
 # The render module configures Qt and VTK, so it is imported before them.
 from ..render import (
+    PROJECT_ROOT,
     XC_FUNCTIONAL,
     Dialog,
     Floating,
-    Outputs,
     Page,
     Scene,
+    cluster_and_pin,
     focus_default_button,
     frame_viewers,
     hide_catalog_notice,
@@ -51,10 +49,9 @@ from ..render import (
     synthetic_runs,
     when_modal,
 )
-from ..synthetic import bridged_diatomic_cell, bridged_diatomic_phonon_text, castep_text, cell_text
+from ..synthetic import castep_text
 
 from collections.abc import Callable
-from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -69,10 +66,19 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 if TYPE_CHECKING:
     from mufinder.app.main_window import MainWindow
 
+FIXTURES = PROJECT_ROOT / "tests" / "fixtures" / "alpha_n2"
+SEED = "aN2_mu_phonon"
+
 # --- The host -------------------------------------------------------------------
 
-N2_A = 5.660  # Å, Venables and English 1974
-N2_X = 0.056  # N at 8c (x, x, x): an N≡N bond of 1.098 Å
+# The calculation's cell: half the 11.3270639 Å edge of the relaxed supercell,
+# which the paper held at the experimental volume (Venables and English 1974
+# give a = 5.660 Å and x = 0.056).
+N2_A = 5.66353193
+# N at 8c (x, x, x), for the 1.1037 Å N≡N bond of the 22 molecules more than
+# 4.5 Å from the muon in the relaxed supercell. Their bonds no longer lie along
+# <111>: the charged complex turns every molecule of the supercell.
+N2_X = 0.05626
 # Each molecule's centre (4a) and the <111> direction its bond points along:
 # the 8c orbit of (x, x, x) under the Pa-3 generators.
 N2_MOLECULES = (
@@ -104,111 +110,48 @@ def n2_host() -> Structure:
 # --- The results project ------------------------------------------------------------
 
 CUTOFF_EV = 1200.0
-UNIT_CELL_GRID = (4, 4, 4)  # 2x2x2 in the supercell
-RANDOM_STARTS = 6
-RANDOM_SEED = "205"
-SITE = (0.0, 0.25, 0.25)  # midway between the molecules at (0, 0, 0) and (0, 1/2, 1/2)
-# The relaxed complex: the muon to each near nitrogen, the stretched N≡N bond
-# of the two complex molecules, and how far (Å) every other molecule whose
-# centre lies within NEIGHBOUR_RADIUS of the muon moves towards it.
-COMPLEX = {
-    "muon_bond": 1.29,
-    "molecule_bond": 1.115,
-    "neighbour_shift": 0.03,
-    "neighbour_radius": 4.5,
-}
-POSITIVE_ENERGY_EV = -17318.4271  # the relaxed supercell
-# The phonon bands (cm^-1) of the molecules outside the complex: the N≡N
-# stretch, the librations and the translations.
-N2_BANDS_CM = {
-    "stretch_band_cm": (2330.0, 2350.0),
-    "libration_band_cm": (30.0, 70.0),
-    "translation_band_cm": (15.0, 95.0),
-}
+SUPERCELL_GRID = (2, 2, 2)
+START = (0.0, 0.25, 0.25)  # midway between the molecules at (0, 0, 0) and (0, 1/2, 1/2)
+# The dispersion-corrected energy of the undisplaced cell, the phonon run's
+# first SCF solve.
+RELAXED_ENERGY_EV = -17718.38090479
 SCF_TOLERANCE_EV = 1e-10
 
 
-@cache
-def _site_orbit() -> tuple[tuple[float, float, float], ...]:
-    """The 24 positions equivalent to ``SITE`` in the host cell."""
-
-    from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
-
-    host = n2_host()
-    operations = symmetry_operations(spglib_cell(host), symprec=1e-5)
-    orbit = symmetry_orbit(SITE, operations, lattice_vectors=host.lattice_vectors, tolerance=1e-4)
-    return tuple(tuple(float(value) for value in image) for image in orbit)
+def _fixture_text(name: str) -> str:
+    return (FIXTURES / name).read_text(encoding="utf-8")
 
 
-def nearest_site(start: Any) -> np.ndarray:
-    """The member of ``SITE``'s orbit nearest ``start``, both in host fractional coordinates."""
-
-    lattice = np.asarray(n2_host().lattice_vectors, dtype=float)
-    shifts = [(np.asarray(image) - np.asarray(start) + 0.5) % 1.0 - 0.5 for image in _site_orbit()]
-    shift = min(shifts, key=lambda value: float(np.linalg.norm(value @ lattice)))
-    return np.asarray(start, dtype=float) + shift
-
-
-def _job_cell(job_dir: Path, seed: str):
+def _job_species(job_dir: Path, seed: str) -> list[str]:
     from mufinder.castep_io.cell_parser import parse_cell_file
 
-    return parse_cell_file(job_dir / f"{seed}.cell")
+    return list(parse_cell_file(job_dir / f"{seed}.cell").species)
 
 
-def _muon_outputs(window: MainWindow) -> Outputs:
-    """The relaxed complex and a CASTEP output for each start; later rows sit a little higher."""
+def _relaxation_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
+    """The paper's relaxed supercell, and a log ending on its real energy."""
 
-    def write(job: Any, job_dir: Path, seed: str) -> bool:
-        from types import SimpleNamespace
-
-        _definition, row = window._muon_relaxation_definition_and_row_for_job(job)
-        start = np.asarray(row.initial_fractional_position, dtype=float)
-        cell = _job_cell(job_dir, seed)
-        fractional = np.asarray(cell.fractional_positions, dtype=float)
-        muon = list(cell.species).index("H:mu")
-        fractional[muon] += (nearest_site(start) - start) / 2.0
-        moved = SimpleNamespace(
-            lattice_vectors=cell.lattice_vectors,
-            species=list(cell.species),
-            fractional_positions=fractional % 1.0,
-        )
-        relaxed = bridged_diatomic_cell(moved, **COMPLEX)
-        (job_dir / f"{seed}-out.cell").write_text(
-            cell_text(cell.lattice_vectors, cell.species, relaxed), encoding="utf-8"
-        )
-        number = int("".join(character for character in row.label if character.isdigit()) or 1)
-        energy = POSITIVE_ENERGY_EV + 0.0005 * (number - 1)
-        text = castep_text(
-            energy=energy,
-            species=list(cell.species),
-            geometry=True,
-            wall_time=31204.6 + 1213.0 * number,
-        )
-        (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
-        return True
-
-    return write
-
-
-def _phonon_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
-    """The phonon run of the pinned site: the chain model of the complex in the relaxed supercell."""
-
-    cell = _job_cell(job_dir, seed)
-    (job_dir / f"{seed}.phonon").write_text(
-        bridged_diatomic_phonon_text(cell, **N2_BANDS_CM), encoding="utf-8"
-    )
+    (job_dir / f"{seed}-out.cell").write_text(_fixture_text(f"{SEED}-out.cell"), encoding="utf-8")
     text = castep_text(
-        energy=POSITIVE_ENERGY_EV - 0.0003,
-        species=list(cell.species),
-        geometry=False,
-        wall_time=172418.9,
+        energy=RELAXED_ENERGY_EV,
+        species=_job_species(job_dir, seed),
+        geometry=True,
+        wall_time=48210.7,
     )
     (job_dir / f"{seed}.castep").write_text(text, encoding="utf-8")
     return True
 
 
+def _phonon_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
+    """The paper's Gamma-point ``.phonon`` file and the log of its run."""
+
+    for suffix in (".phonon", ".castep"):
+        (job_dir / f"{seed}{suffix}").write_text(_fixture_text(f"{SEED}{suffix}"), encoding="utf-8")
+    return True
+
+
 def _fixture(directory: Path) -> tuple[ProjectService, ProjectDocument]:
-    """The host, the supercell, the adopted cutoff and grid, and the random starts."""
+    """The host, the supercell, the paper's cutoff and grid, and the one start."""
 
     host = n2_host()
     service, document = new_project(directory, "alpha-N2", host)
@@ -221,32 +164,31 @@ def _fixture(directory: Path) -> tuple[ProjectService, ProjectDocument]:
         label=SUPERCELL_LABEL,
     )
     document.project.supercell_matrix = [list(row) for row in SUPERCELL_2X2X2]
-    criteria = {
-        "method": "delta-threshold",
-        "cell_id": str(host.id),
-        "xc_functional": XC_FUNCTIONAL,
-    }
-    service.set_recommended_cutoff(document, CUTOFF_EV, **criteria)
-    service.set_recommended_kpoint_grid(
-        document, UNIT_CELL_GRID, lattice_vectors=host.lattice_vectors, **criteria
+    # The paper's settings, set by hand: no convergence sweep ran in this project.
+    supercell_lattice = (
+        np.asarray(SUPERCELL_2X2X2, dtype=float) @ np.asarray(host.lattice_vectors)
+    ).tolist()
+    service.set_recommended_cutoff(
+        document, CUTOFF_EV, method="manual", xc_functional=XC_FUNCTIONAL
     )
+    service.set_recommended_kpoint_grid(
+        document,
+        SUPERCELL_GRID,
+        lattice_vectors=supercell_lattice,
+        method="manual",
+        xc_functional=XC_FUNCTIONAL,
+    )
+    x, y, z = START
     service.generate_candidate_sites(
         document,
-        method="random",
-        parameters={
-            "selection_mode": "count",
-            "count": RANDOM_STARTS,
-            "min_muon_atom": 1.0,
-            "max_attempts": 50000,
-            "seed": RANDOM_SEED,
-            "include_symmetry_equivalents": False,
-        },
+        method="manual",
+        parameters={"coord_system": "fractional", "x": x, "y": y, "z": z},
     )
     return service, document
 
 
 def host_project(directory: Path) -> Path:
-    """The α-N2 host with its supercell and random starts, before any job runs."""
+    """The α-N2 host with its supercell and its one start, before any job runs."""
 
     service, document = _fixture(directory)
     service.save_project(document)
@@ -278,43 +220,25 @@ def _build_results(directory: Path, *, submit_phonon: bool) -> Path:
     service, document = _fixture(directory)
     service.save_project(document)
 
-    # The relaxations run in the 2x2x2 supercell, so configuring them rescales
-    # the adopted unit-cell k-point grid and says so.
-    with (
-        opened(app, document.project_root) as window,
-        refuse_message_boxes(app, expected=("K-point grids adjusted",)),
-    ):
+    with opened(app, document.project_root) as window, refuse_message_boxes(app):
         document = window._document
         relaxations = window._muon_relaxation_view
         when_modal(
             "MuonChargeStateDialog",
             lambda dialog: (dialog._positive.setChecked(True), dialog.accept()),
         )
-        sites = sorted(
-            document.sites.values(), key=lambda site: window._natural_label_sort_key(site.label)
+        window._on_create_muon_relaxation_jobs_requested(
+            [str(site.id) for site in document.sites.values()]
         )
-        window._on_create_muon_relaxation_jobs_requested([str(site.id) for site in sites])
         for entry in list(relaxations._row_entries()):
             relaxations.set_row_supercell(entry.row_id, [list(row) for row in SUPERCELL_2X2X2])
         relaxations._charge_tabs.setCurrentWidget(
             relaxations._table_for_charge_state(POSITIVE_MUON_CHARGE_STATE)
         )
         relaxations._active_table().clearSelection()
-        with synthetic_runs(window, _muon_outputs(window)):
+        with synthetic_runs(window, _relaxation_outputs):
             relaxations._run_local_selected_rows()
-
-        # One analysis workspace, clustered and pinned.
-        window._set_active_route("muon_relaxations")
-        relaxations._active_table().selectAll()
-        when_modal(
-            "QInputDialog",
-            lambda dialog: (dialog.setTextValue("Positive muon sites"), dialog.accept()),
-        )
-        relaxations._create_analysis_button.click()
-        workspace_id = str(window._relaxation_analysis_workspaces()[-1]["id"])
-        when_modal("RelaxationClusteringDialog", lambda dialog: dialog._apply_button.click())
-        window._relaxation_analysis_view._open_clustering(workspace_id)
-        window._on_muon_sites_pin_requested(workspace_id)
+        cluster_and_pin(window, POSITIVE_MUON_CHARGE_STATE, "Positive muon sites")
 
         # Quantum corrections: configure the pinned site's row, then run it.
         window._set_active_route("quantum_corrections")
@@ -362,8 +286,7 @@ def open_displacements(window: MainWindow) -> None:
 def show_molecules(axis: str) -> Callable[[QWidget], None]:
     """A step: draw the bonds in every 3D viewer, so each N2 molecule shows as one, and view down ``axis``.
 
-    The pinned site's representative relaxation has its complex along [110],
-    so the complex lies in the plane of a view down c.
+    The relaxed complex lies along [011], in the plane of a view down a.
     """
 
     def show(widget: QWidget) -> None:
@@ -412,7 +335,7 @@ def show_muon_modes(analysis: QWidget) -> None:
     analysis._phonon_show_vectors_checkbox.setChecked(True)
     analysis._phonon_mode_table.scrollToBottom()
     settle(QApplication.instance())
-    show_molecules("c")(analysis)
+    show_molecules("a")(analysis)
 
 
 def show_longitudinal_well(analysis: QWidget) -> None:
@@ -474,7 +397,7 @@ SCENES: dict[str, Scene] = {
             open_displacements,
             kind="DisplacementAnalysisDialog",
             size=(1180, 720),
-            prepare=show_molecules("c"),
+            prepare=show_molecules("a"),
         ),
     ),
     "n2_muon_sites_summary": Scene(

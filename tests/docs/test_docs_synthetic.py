@@ -18,21 +18,15 @@ from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.science.quantum_phonons import (
     muon_zpe,
     parse_phonon_text,
-    w1_entanglement_witness,
-    w2_entanglement_witness,
     zpe_from_frequency_cm,
 )
 from mufinder.science.uep import UepField, load_uep_source
 from mufinder.services.job_progress import GeometryProgressReader
-from tests.support.phonon_fixtures import N2_MU_N2_FORCE_CONSTANTS, n2_mu_n2_modes
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from docs_screenshots.synthetic import (  # noqa: E402
-    N2_MU_N2_SPRINGS,
     bfgs_log_text,
-    bridged_diatomic_cell,
-    bridged_diatomic_phonon_text,
     den_fmt_text,
     final_configuration,
     triatomic_phonon_text,
@@ -268,145 +262,4 @@ def test_a_density_too_narrow_for_its_grid_is_refused() -> None:
             COF2_FRACTIONAL,
             grid=(8, 8, 6),
             shells={"Co": ((17.0, 0.05),), "F": ((7.0, 0.05),)},
-        )
-
-
-# --- alpha-N2: the [N2-mu-N2]+ complex and its phonon ----------------------------------
-
-# Venables and English, Acta Cryst. B 30, 929 (1974): Pa-3, a = 5.660 Å, N at
-# 8c (x, x, x). Each molecule's centre and the <111> direction of its bond.
-N2_A = 5.660
-N2_X = 0.056
-N2_MOLECULES = (
-    ((0.0, 0.0, 0.0), (1, 1, 1)),
-    ((0.5, 0.0, 0.5), (-1, -1, 1)),
-    ((0.0, 0.5, 0.5), (-1, 1, -1)),
-    ((0.5, 0.5, 0.0), (1, -1, -1)),
-)
-N2_COMPLEX = {
-    "muon_bond": 1.29,
-    "molecule_bond": 1.115,
-    "neighbour_shift": 0.03,
-    "neighbour_radius": 4.5,
-}
-N2_BANDS_CM = {
-    "stretch_band_cm": (2330.0, 2350.0),
-    "libration_band_cm": (30.0, 70.0),
-    "translation_band_cm": (15.0, 95.0),
-}
-
-
-def _n2_supercell() -> SimpleNamespace:
-    """The 2x2x2 alpha-N2 supercell, 64 N, with a muon at (0, 1/4, 1/4) between two molecules."""
-
-    host = [
-        (np.asarray(centre) + sign * N2_X * np.asarray(axis)) % 1.0
-        for centre, axis in N2_MOLECULES
-        for sign in (1.0, -1.0)
-    ]
-    fractional = [(position + shift) / 2.0 for shift in np.ndindex(2, 2, 2) for position in host]
-    return SimpleNamespace(
-        lattice_vectors=(2.0 * N2_A * np.eye(3)).tolist(),
-        species=["N"] * len(fractional) + ["H:mu"],
-        fractional_positions=[*np.asarray(fractional).tolist(), [0.0, 0.125, 0.125]],
-    )
-
-
-def _n2_relaxed() -> SimpleNamespace:
-    cell = _n2_supercell()
-    return SimpleNamespace(
-        lattice_vectors=cell.lattice_vectors,
-        species=cell.species,
-        fractional_positions=bridged_diatomic_cell(cell, **N2_COMPLEX),
-    )
-
-
-def _vectors_from_muon(cell: SimpleNamespace) -> np.ndarray:
-    fractional = np.asarray(cell.fractional_positions)
-    return ((fractional - fractional[-1] + 0.5) % 1.0 - 0.5) @ np.asarray(cell.lattice_vectors)
-
-
-def _n2_phonon():
-    return parse_phonon_text(bridged_diatomic_phonon_text(_n2_relaxed(), **N2_BANDS_CM))
-
-
-def test_the_muon_bridges_two_molecules_into_a_linear_complex_along_011() -> None:
-    vectors = _vectors_from_muon(_n2_relaxed())
-    distances = np.linalg.norm(vectors, axis=1)
-    order = np.argsort(distances)
-
-    # The muon (itself, at zero) and its two nearest nitrogens, each 1.29 Å away.
-    assert distances[order[1]] == pytest.approx(1.29, abs=1e-6)
-    assert distances[order[2]] == pytest.approx(1.29, abs=1e-6)
-    assert distances[order[3]] == pytest.approx(1.29 + 1.115, abs=1e-6)
-    axis = np.array([0.0, 1.0, 1.0]) / np.sqrt(2.0)
-    for index in order[1:5]:
-        assert abs(np.dot(vectors[index], axis)) == pytest.approx(distances[index], abs=1e-6)
-    # The molecules around the complex move rigidly 0.03 Å towards the muon.
-    original = _vectors_from_muon(_n2_supercell())
-    moved = np.linalg.norm(vectors - original, axis=1)
-    assert np.count_nonzero(moved > 1e-6) > 4
-    assert moved[order[5:]].max() == pytest.approx(0.03, abs=1e-6)
-
-
-def test_the_complex_phonon_keeps_the_chain_springs_of_the_phonon_fixture() -> None:
-    assert N2_MU_N2_SPRINGS == {
-        "muon_nitrogen_stretch": N2_MU_N2_FORCE_CONSTANTS.muon_nitrogen_stretch,
-        "muon_nitrogen_bend": N2_MU_N2_FORCE_CONSTANTS.muon_nitrogen_bend,
-        "nitrogen_stretch": N2_MU_N2_FORCE_CONSTANTS.nitrogen_stretch,
-        "nitrogen_bend": N2_MU_N2_FORCE_CONSTANTS.nitrogen_bend,
-        "nitrogen_lattice": N2_MU_N2_FORCE_CONSTANTS.nitrogen_lattice,
-    }
-    frequencies = np.asarray(_n2_phonon().gamma_point().frequencies_cm)
-    chain, _vectors = n2_mu_n2_modes()
-    for frequency in chain:
-        assert np.isclose(frequencies, frequency, atol=1e-6).any()
-
-
-def test_the_complex_phonon_has_orthonormal_eigenvectors_and_the_n2_bands() -> None:
-    gamma = _n2_phonon().gamma_point()
-    count = 65
-
-    vectors = np.asarray(gamma.eigenvectors).reshape(3 * count, 3 * count)
-    np.testing.assert_allclose(vectors @ vectors.conj().T, np.eye(3 * count), atol=1e-9)
-    frequencies = np.asarray(gamma.frequencies_cm)
-    assert list(frequencies) == sorted(frequencies)
-    # The 30 molecules outside the complex: one stretch each in the band, and
-    # their librations and translations below 100 cm^-1.
-    assert np.count_nonzero((frequencies >= 2330.0) & (frequencies <= 2350.0)) == 30
-    assert np.count_nonzero(frequencies < 100.0) >= 150
-
-
-def test_the_complex_phonon_gives_the_harmonic_numbers_of_gomilsek_et_al() -> None:
-    phonon = _n2_phonon()
-    zpe = muon_zpe(phonon)
-
-    assert zpe.warnings == ()
-    assert zpe.total_eV == pytest.approx(0.58, abs=0.01)
-    assert [round(mode.zpe_eV, 2) for mode in zpe.modes] == [0.17, 0.20, 0.20]
-    assert [mode.frequency_cm for mode in zpe.modes] == pytest.approx(
-        [2807.05, 3274.32, 3274.32], abs=0.01
-    )
-    assert [round(mode.width_A, 2) for mode in zpe.modes] == [0.23, 0.21, 0.21]
-    assert w1_entanglement_witness(phonon) == pytest.approx(-0.14, abs=0.01)
-    # The muon is the last atom; its nearest nitrogens are the near atoms of the complex.
-    distances = np.linalg.norm(_vectors_from_muon(_n2_relaxed()), axis=1)
-    nearest = int(np.argsort(distances)[1]) + 1
-    assert w2_entanglement_witness(phonon, 65, nearest) == pytest.approx(-0.26, abs=0.01)
-
-
-def test_a_muon_between_molecules_of_two_species_is_refused() -> None:
-    cell = _n2_relaxed()
-    distances = np.linalg.norm(_vectors_from_muon(cell), axis=1)
-    species = list(cell.species)
-    for index in np.argsort(distances)[1:4:2]:
-        species[int(index)] = "F"
-    with pytest.raises(ValueError, match="share a species"):
-        bridged_diatomic_phonon_text(
-            SimpleNamespace(
-                lattice_vectors=cell.lattice_vectors,
-                species=species,
-                fractional_positions=cell.fractional_positions,
-            ),
-            **N2_BANDS_CM,
         )

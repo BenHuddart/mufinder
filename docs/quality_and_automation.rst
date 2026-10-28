@@ -247,9 +247,6 @@ The package
   single-point output the UEP analysis reads beside it (``uep_castep_text``),
   a Gamma-point ``.phonon`` file for a linear X–μ–X complex embedded in a
   supercell (``triatomic_phonon_text``) and legacy-run outputs. It imports no Qt, so tests import it directly.
-  ``bridged_diatomic_cell`` turns the two molecules nearest a muon to point at
-  it, and ``bridged_diatomic_phonon_text`` writes a Gamma-point ``.phonon``
-  file for that [X₂–μ–X₂] complex in a supercell of diatomic molecules.
 - ``examples/`` holds one module per example project. Each defines its
   project builders, the scene steps only its scenes use, and ``SCENES``, a
   dictionary from screenshot name to ``Scene``.
@@ -362,7 +359,7 @@ cites the values they reproduce, and the workflow pages and the
 - ``mnsi.py``: the MnSi helix, the incommensurate scenes of the Magnetic Fields
   page and its theory page.
 - ``alpha_n2.py``: solid nitrogen, every scene of the Quantum Corrections page
-  and its theory page.
+  and its theory page, from real CASTEP outputs.
 - ``gdru2si2.py``: GdRu₂Si₂, every scene of the Energy Barriers page, from
   real CASTEP outputs.
 
@@ -472,30 +469,31 @@ The α-N₂ example
 
 ``examples/alpha_n2.py`` holds the scenes of the solid nitrogen worked example
 (:doc:`/user_guide/examples/alpha_n2`), which the Quantum Corrections pages
-show. ``host_project`` saves the eight-atom Pa-3 cell, built from the
-molecule centres and bond directions, with a saved 2x2x2 supercell, an adopted
-1200 eV cutoff and 4x4x4 grid, and six random starts with a fixed seed.
-``results_project`` drives that project in a ``MainWindow`` as the CoF₂
-results project does: the starts staged as positive-muon relaxations in the
-supercell, one analysis workspace, clustered and pinned, and the pinned site's
-phonon row configured through its dialog (ultrasoft pseudopotentials, a
-``1e-10`` eV SCF tolerance) and run. ``configured_project`` stops before the
-phonon job is submitted, for the editable configuration dialog.
+show. Its outputs are real: the relaxed muon supercell and its Γ-point phonon
+run from the data set of Gomilšek *et al.* (2023), kept unchanged under
+``tests/fixtures/alpha_n2`` with a ``README.md`` naming their source. The data
+set holds no log of the relaxation, so only that ``.castep`` is synthesised,
+with ``castep_text`` around the dispersion-corrected energy of the undisplaced
+cell; the phonon job gets the real ``.castep`` and ``.phonon``.
 
-Each start relaxes to the nearest image of the (0, 1/4, 1/4) site, where
-``bridged_diatomic_cell`` turns the two molecules either side to point at the
-muon, 1.29 Å from their near nitrogens. The phonon run is
-``bridged_diatomic_phonon_text``: the complex vibrates as the five-atom chain
-spring model of ``tests/support/phonon_fixtures.py``, whose constants were
-tuned to the harmonic numbers of Gomilšek *et al.*, so the window's analysis
-gives their zero-point energy, widths, ``w1`` and ``w2``; every other molecule
-vibrates on its own, its stretch in a band at 2330 to 2350 cm⁻¹ and its
-librations and translations below 100 cm⁻¹. ``synthetic.py`` copies the chain
-constants, and ``tests/docs/test_docs_synthetic.py`` keeps the copy equal to
-the fixture's and pins the geometry and the harmonic numbers. The scenes show
-the host, the clustered relaxations, the displacements of the complex, the
-Muon Sites summary, the configuration dialog, the completed result, and the
-three tabs of the analysis window with the help of ``Muon Coupling``.
+``host_project`` saves the eight-atom Pa-3 cell of the calculation, its edge
+half the relaxed supercell's and its x from the bond of the molecules away from
+the muon, with a saved 2x2x2 supercell, the paper's 1200 eV and 2x2x2 grid set
+by hand as the project defaults, and one manual start at (0, 1/4, 1/4).
+``results_project`` drives that project in a ``MainWindow`` as the CoF₂
+results project does: the start staged as a positive-muon relaxation in the
+supercell whose local runner writes the real relaxed cell, one analysis
+workspace clustered and pinned, and the pinned site's phonon row configured
+through its dialog (ultrasoft pseudopotentials, a ``1e-10`` eV SCF tolerance)
+and run. ``configured_project`` stops before the phonon job is submitted, for
+the editable configuration dialog. The 3D viewers of the displacements and the
+phonon modes look down a, in which plane the [011] complex lies.
+``tests/docs/test_docs_alpha_n2.py`` checks the fixtures against the data
+set's checksums and pins the geometry, the displacements, the zero-point
+energies, mode frequencies, widths and witnesses that the pages report. The
+scenes show the host, the relaxation workspace, the displacements, the Muon
+Sites summary, the configuration dialog, the completed result, and the three
+tabs of the analysis window with the help of ``Muon Coupling``.
 
 The GdRu₂Si₂ example
 ^^^^^^^^^^^^^^^^^^^^
