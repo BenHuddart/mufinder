@@ -435,6 +435,14 @@ no two workflow widgets may define the same private method.
        (``total_energy_for_job``, ``max_force_for_job``,
        ``max_stress_for_job``) and the payload extractors behind them, and the
        structure a job's completion derived (``find_job_derived_structure``).
+   * - ``mufinder.services.relaxed_structure_spins``
+     - The ``SPIN=`` values a relaxation leaves on its relaxed structure:
+       reading them from a parsed cell (``relaxed_cell_spins``), storing them
+       on the structure at completion (``apply_relaxed_cell_spins``) and
+       recovering them from a job's ``-out.cell`` or input ``.cell``
+       (``relaxation_run_spins``), which ``ProjectService.load_project`` uses
+       to backfill a project stored below schema 6
+       (``backfill_relaxed_structure_spins``).
    * - ``mufinder.services.structure_export``
      - A relaxation's relaxed structure ready to export
        (``relaxed_structure_export_for_job``,

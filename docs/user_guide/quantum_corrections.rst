@@ -82,9 +82,9 @@ row is submitted once.
 
    .. figure:: ../_generated/screenshots/n2_quantum_corrections_page.webp
       :alt: The Quantum Corrections page with one pinned alpha-N2 site, its
-            phonon job completed, and a result row: ZPE 0.580 eV, muon modes
-            2807.1, 3274.3 and 3274.3 cm-1, widths 0.23, 0.21 and 0.21
-            Angstrom, and w1 -0.1401.
+            phonon job completed, and a result row: ZPE 0.576 eV, muon modes
+            2749.6, 3246.4 and 3301.1 cm-1, widths 0.23, 0.21 and 0.21
+            Angstrom, and w1 -0.1377.
 
       The pinned site of :doc:`/user_guide/examples/alpha_n2` with its
       completed phonon job and its result under ``Completed Results``.
@@ -295,8 +295,11 @@ state the site was not first relaxed in adds its prefix, as in
   (γ\ :sub:`μ` / 2π ≈ 135.53881 MHz T⁻¹), both taken from ``scipy.constants``;
 - ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium).
 
-For a muonium source the job also defaults to ``SPIN_POLARIZED : TRUE`` and
-seeds a spin of +1 on the muon, as the muon relaxation does.
+A spin-polarised job writes the relaxed structure's per-atom ``SPIN=`` values,
+which are the source relaxation's, so a magnetic host starts from the moments
+it was relaxed with. For a muonium source the job also defaults to
+``SPIN_POLARIZED : TRUE`` and seeds a spin of +1 on the muon, as the muon
+relaxation does.
 
 Source eligibility
 ------------------
@@ -442,10 +445,10 @@ appears above the tabs.
 
 .. figure:: ../_generated/screenshots/n2_phonon_modes.webp
    :alt: The Phonon Modes tab of the phonon analysis window for the alpha-N2
-         site, scrolled to the highest modes: the N2 stretch band up to
-         2350 cm-1, and the three muon modes at 2807.1 and 3274.3 cm-1 with
-         their participation highlighted, beside the supercell with the
-         muon's mode vector.
+         site, scrolled to the highest modes: the N2 stretches up to
+         2428.7 cm-1, and the three muon modes at 2749.6, 3246.4 and
+         3301.1 cm-1 with their participation highlighted, beside the
+         supercell with the muon's mode vector.
 
    The ``Phonon Modes`` tab for the α-N₂ site of :doc:`/user_guide/examples/alpha_n2`,
    with the longitudinal muon mode selected.
@@ -483,8 +486,9 @@ appears above the tabs.
 
    .. figure:: ../_generated/screenshots/n2_mode_wells.webp
       :alt: The Mode wells and widths tab for the alpha-N2 site with the three
-            muon modes, ZPE 0.174169 and 0.203192 eV and widths 0.230083 and
-            0.213032 Angstrom, and the plot of the selected L well.
+            muon modes, ZPE 0.170603, 0.201457 and 0.204853 eV and widths
+            0.232474, 0.213947 and 0.212168 Angstrom, and the plot of the
+            selected L well.
 
       The three muon wells of the α-N₂ site, with the longitudinal one
       plotted.
@@ -493,7 +497,8 @@ appears above the tabs.
    Pick ``Atom A`` and ``Atom B`` by their one-based CASTEP index (Atom A
    defaults to the muon) and click ``Calculate``. MuFinder shows the zero-point
    displacement covariance tensor ``C_ab`` (Å²) and the normalized correlation
-   tensor ``rho_ab``, built from the Gamma-point modes at zero temperature, and
+   tensor ``rho_ab``, built from the stable Gamma-point modes at zero
+   temperature (modes with imaginary frequencies are left out), and
    the pairwise witness ``w2 = -|Tr C_ab| / sqrt(Tr C_aa Tr C_bb)``. ``w2`` lies
    between ``-1`` and ``0``; values closer to ``-1`` mean the two atoms'
    zero-point motions are more strongly correlated. It complements the
@@ -503,8 +508,8 @@ appears above the tabs.
    displacements.
 
    .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
-      :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 3: N, w2 =
-            -0.259975, and the covariance tensor in square angstrom and the
+      :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 57: N, w2 =
+            -0.310498, and the covariance tensor in square angstrom and the
             correlation tensor.
 
       The muon of the α-N₂ site and its nearest nitrogen.

@@ -63,10 +63,11 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
     monkeypatch.setattr(
         job_artifacts_module,
         "parse_cell_file",
-        lambda _path: SimpleNamespace(
+        lambda _path, **_kwargs: SimpleNamespace(
             lattice_vectors=((5.1, 0.0, 0.0), (0.0, 5.2, 0.0), (0.0, 0.0, 5.3)),
             species=("Si",),
             fractional_positions=((0.0, 0.0, 0.0),),
+            atomic_spins=None,
         ),
     )
     monkeypatch.setattr(

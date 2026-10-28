@@ -1,0 +1,67 @@
+!task                    : SinglePoint
+!task                    : BandStructure
+!task                    : GeometryOptimisation
+!task                    : MolecularDynamics
+!task                    : MagRes
+task                    : Phonon
+!iprint                  : 2
+!continuation            : default
+
+xc_functional           : PBE
+!xc_functional           : TEMPLATE_XC_FUNC
+!fix_occupancy           : true
+!sedc_scheme             : TS
+sedc_scheme             : TS
+cut_off_energy          : 1200 eV
+calculate_stress        : true
+write_formatted_density : true
+
+charge                  : +1
+!spin_polarized          : true
+!spin                    : TEMPLATE_SPIN_TOTAL
+!spin_unit               : muB
+
+elec_energy_tol         : 1e-10 eV
+!grid_scale              : TEMPLATE_GRID_SCALE
+!nextra_bands            : 10
+nextra_bands            : 20
+!smearing_width          : 0.025 eV
+smearing_width          : 0.012 eV
+
+!elec_method             : EDFT
+max_scf_cycles          : 150
+!mix_charge_amp          : TEMPLATE_MIX_CHARGE_AMP
+!mix_charge_amp          : 0.4
+mix_charge_amp          : 0.3
+opt_strategy            : speed
+
+geom_max_iter           : 250
+num_backup_iter         : 3
+!geom_force_tol          : TEMPLATE_GEOM_FORCE_TOL eV/ANG
+write_cell_structure    : true
+write_cif_structure     : true
+
+!md_ensemble             : NVT
+!md_temperature          : TEMPLATE_TEMPERATURE K
+!md_thermostat           : Langevin
+!md_delta_t              : TEMPLATE_MD_DELTAT fs
+!md_num_iter             : TEMPLATE_MD_NUM
+
+!md_use_pathint          : true
+!md_num_beads            : TEMPLATE_PIMD_BEADS
+!num_farms               : TEMPLATE_PIMD_BEADS
+!md_pathint_staging      : true
+!md_pathint_num_stages   : TEMPLATE_PIMD_STAGES
+!md_extrap               : none                    ! IMPORTANT: this for some reason (a bug in CASTEP) massively with PIMD performance on farms 2+ (but slightly hinders performance of farm 1)!!! Though, if CASTEP wasn't buggy this option should not be used (for performance reasons) ...
+
+!magres_task             : TEMPLATE_MAGRES_TASK
+!magres_task             : NMR
+!magres_task             : hyperfine
+
+!phonon_fine_method      : interpolate
+phonon_fine_method      : supercell                ! For the supercell phonon_method. NOT to be used when doing a DFPT calculation (only with normconserving), but NECESSARY when doing finite displacement (with ultrasoft)!
+phonon_sum_rule_method  : real-recip
+
+!%BLOCK DEVEL_CODE
+!PROF:*:ENDPROF                                    ! Enables the CASTEP profiler (for debugging and speeed optimization purposes)
+!%ENDBLOCK DEVEL_CODE

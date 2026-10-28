@@ -49,6 +49,7 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
     ),
     "user_guide/examples/alpha_n2.rst": (
         "10.1038/s42005-023-01260-7",
+        "10.6084/m9.figshare.23203037.v1",
         "10.1016/0370-1573(76)90032-6",
         "10.1103/PhysRevB.59.10559",
         "10.1107/S0567740874004067",
@@ -82,6 +83,7 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
     "user_guide/quantum_corrections.rst": ("10.1038/s42005-023-01260-7",),
     "user_guide/quantum_corrections_theory.rst": (
         "10.1038/s42005-023-01260-7",
+        "10.6084/m9.figshare.23203037.v1",
         "10.1107/S0567740874004067",
     ),
     "user_guide/site_generation.rst": ("10.1016/j.cpc.2022.108488",),

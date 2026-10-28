@@ -100,8 +100,12 @@ What MuFinder writes
 Each job runs in its own folder under the project's
 ``files/pristine_relaxation`` folder. On completion MuFinder retrieves the
 ``<seed>.castep`` and ``<seed>-out.cell`` outputs and reads the relaxed
-geometry (lattice, species and fractional coordinates) from ``-out.cell``.
-Each successful job adds one relaxed structure to the project. These are the
+geometry (lattice, species and fractional coordinates) and the run's per-atom
+``SPIN=`` values from ``-out.cell``. Each successful job adds one relaxed
+structure to the project, and continuing a job updates that structure in place.
+The structure keeps the run's spins, so a spin-polarised calculation started
+from it, such as UEP, site generation or a muon relaxation on the relaxed host,
+starts from the same moments. These are the
 structures the :doc:`/user_guide/comparison_table` compares with the
 experimental host, and they can be the comparison host in `Displacement
 analysis`_.
@@ -428,11 +432,10 @@ typed without that extension gets it added.
    labelled ``Mu1``, so it stays distinct from any hydrogen in the host.
 ``CASTEP cell (.cell)``
    ``LATTICE_CART`` in Å and ``POSITIONS_FRAC``. The muon keeps its ``H:mu``
-   species label, so the file reopens in MuFinder. A relaxation imported from
-   a legacy project also gets ``SPIN=`` values, from its converged Mulliken
-   spins. A relaxation run in MuFinder keeps no spins with its relaxed
-   structure, so its file has no ``SPIN=`` values; add them before using the
-   file to start a spin-polarised CASTEP run.
+   species label, so the file reopens in MuFinder. A spin-polarised
+   relaxation run in MuFinder writes the run's ``SPIN=`` values, so the file
+   can seed a spin-polarised CASTEP run as it is. A relaxation imported from a
+   legacy project gets ``SPIN=`` values from its converged Mulliken spins.
 
 Both formats start with comment lines that record the project, the structure,
 the source job and its workflow, the charge state, the final energy in eV and

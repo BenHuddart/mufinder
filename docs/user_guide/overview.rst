@@ -26,7 +26,7 @@ short tutorial on the first of them.
   calculated.
 - :doc:`/user_guide/examples/alpha_n2`: solid nitrogen, the Quantum
   Corrections numbers and analysis window for a muon bound to a molecular
-  crystal.
+  crystal, from the real CASTEP outputs of a published study.
 - :doc:`/user_guide/examples/gdru2si2`: GdRu₂Si₂, energy barriers between two
   muon sites from the real CASTEP outputs of a published study.
 

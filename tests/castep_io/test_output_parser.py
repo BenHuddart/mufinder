@@ -118,6 +118,68 @@ def test_geometry_optimization_failure_sets_geom_converged_false(tmp_path: Path)
     assert "failed" in parsed.error_message.lower()
 
 
+_ACOUSTIC_WARNING_BOX = """\
+???????????????????????????????????????????????????????????????????????
+                     Warning in secondd_find_acoustics
+    Failed to identify 3 eigenvectors with acoustic character
+    Acoustic sum rule correction will only be applied to 0 mode(s)
+????????????????????????????????????????????????????????????????????????
+"""
+
+
+def test_a_boxed_castep_warning_does_not_fail_a_finished_run(tmp_path: Path) -> None:
+    """CASTEP boxes its warnings in ``?`` rules; their wording is not a failure.
+
+    A phonon run of a molecular crystal can find no acoustic-like modes at Gamma
+    and say so with "Failed to identify ...", then finish normally.
+    """
+
+    output = _write(
+        tmp_path,
+        "phonon.castep",
+        " Run started: Wed, 04 Mar 2020 19:36:03 +0000\n"
+        + _ACOUSTIC_WARNING_BOX
+        + "Final energy, E             =  -17715.64280048     eV\n"
+        + "Total time          =  30603.64 s\n",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.error_message is None
+    assert parsed.completed is True
+    assert any("secondd_find_acoustics" in line for line in parsed.warnings)
+
+
+def test_a_stray_rule_does_not_hide_a_later_failure(tmp_path: Path) -> None:
+    """An unbalanced rule must not turn the next boxed warning inside out."""
+
+    output = _write(
+        tmp_path,
+        "stray.castep",
+        "????????????????????????????????????????\n"
+        + _ACOUSTIC_WARNING_BOX
+        + "Geometry optimization failed\nTotal time = 4.0 s\n",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is False
+    assert parsed.error_message == "Geometry optimization failed"
+
+
+def test_a_failure_outside_a_warning_box_still_fails_the_run(tmp_path: Path) -> None:
+    output = _write(
+        tmp_path,
+        "failed.castep",
+        _ACOUSTIC_WARNING_BOX + "Geometry optimization failed\nTotal time = 4.0 s\n",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is False
+    assert parsed.error_message == "Geometry optimization failed"
+
+
 def test_earlier_restart_failure_does_not_shadow_later_completion(tmp_path: Path) -> None:
     # A resubmitted/continued calculation appends to the same .castep file,
     # so an early restart's transient failure (e.g. running out of geometry

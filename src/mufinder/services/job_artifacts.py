@@ -310,9 +310,11 @@ def collect_job_artifacts(
             # via Path.read_text, so OSError / UnicodeDecodeError can also
             # surface here, and this function must never raise on the worker
             # thread — an escaping exception would skip the job_finished emit
-            # and leave the job stuck.
+            # and leave the job stuck. Only the geometry is read: an -out.cell
+            # echoes the run's settings, which may lie outside the loaded
+            # keyword catalog (EXTERNAL_PRESSURE, for one).
             try:
-                relaxed_cell = parse_cell_file(out_cell_path)
+                relaxed_cell = parse_cell_file(out_cell_path, geometry_only=True)
                 a, b, c = lattice_parameters(relaxed_cell.lattice_vectors)[:3]
                 lattice_abc = (a, b, c)
             except Exception as exc:

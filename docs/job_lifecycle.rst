@@ -276,6 +276,13 @@ also have printed a stress tensor. An earlier restart's tensor does not count.
 A cut-off output now resolves to ``failed`` with "CASTEP did not report
 successful completion" and can be continued or resubmitted.
 
+*Failure markers.* A line of the last restart containing ``ERROR``, ``FAILED``,
+``did not converge`` or ``panic`` marks the run as failed, except inside a
+boxed CASTEP warning: the lines between two rules of ``?`` under a
+``Warning in <routine>`` heading. A phonon run of a molecular crystal can warn
+that it "Failed to identify 3 eigenvectors with acoustic character" and then
+finish normally; its heading line is kept in ``warnings``.
+
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

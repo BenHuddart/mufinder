@@ -131,6 +131,24 @@ class TestEligibility:
         structure = document.structures[outcome.imported[0].structure_id]
         assert "H:mu" in structure.species
 
+    def test_an_out_cell_with_calculation_keywords_is_committed(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        """The relaxed geometry is read past keywords outside the built-in set."""
+
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        out_cell = next(folder.glob("results/*-out.cell"))
+        out_cell.write_text(
+            out_cell.read_text(encoding="utf-8")
+            + "\n%BLOCK EXTERNAL_PRESSURE\nGPa\n0.5 0.0 0.0\n0.5 0.0\n0.5\n%ENDBLOCK EXTERNAL_PRESSURE\n",
+            encoding="utf-8",
+        )
+        _scan, outcome = _commit(document, folder, host_structure)
+
+        assert outcome.skipped == ()
+        structure = document.structures[outcome.imported[0].structure_id]
+        assert "H:mu" in structure.species
+
     def test_a_bare_hydrogen_muon_is_relabelled(
         self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
     ) -> None:

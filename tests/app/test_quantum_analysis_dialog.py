@@ -359,6 +359,7 @@ def test_muon_coupling_help_describes_w2_as_harmonic_witness_estimate(
     text = " ".join(label.text() for label in help_dialog.findChildren(QLabel))
     assert "harmonic (phonon-covariance) estimate" in text
     assert "0.30(4)" in text
+    assert "every stable mode" in text
 
     help_dialog.close()
     dialog.close()

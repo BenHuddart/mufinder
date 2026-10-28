@@ -25,7 +25,7 @@ def _definition(
 
 
 def test_new_projects_are_written_at_the_current_schema_version() -> None:
-    assert PROJECT_SCHEMA_VERSION == 5
+    assert PROJECT_SCHEMA_VERSION == 6
     assert Project().schema_version == PROJECT_SCHEMA_VERSION
 
 

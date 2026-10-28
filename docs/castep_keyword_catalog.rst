@@ -15,12 +15,12 @@ Without a catalog MuFinder runs on the small starter catalog in
 ``docs/castep/keyword_catalog.yaml``. That is enough to write the inputs MuFinder
 generates, but not to read everything CASTEP writes back:
 
-- The cell parser rejects keywords the active schema does not list. CASTEP
-  writes ``QUANTISATION_AXIS`` into ``-out.cell`` whenever the axis is non-zero,
-  which it is automatically for any calculation with a ``HUBBARD_U`` block. On
-  the starter catalog that one line makes the relaxed structure unreadable in
-  every workflow that parses an output cell (UEP, pristine relaxation, muon
-  relaxation). With a catalog loaded the same file parses.
+- A full cell parse rejects keywords the active schema does not list, so an
+  input ``.cell`` carrying a keyword outside the starter subset cannot be read
+  for its settings. A relaxed ``-out.cell`` is read for its geometry only (see
+  :doc:`castep/cell_syntax`), so the calculation keywords CASTEP echoes into it,
+  such as ``QUANTISATION_AXIS`` or ``EXTERNAL_PRESSURE``, never block a
+  workflow.
 - Parameter dialogs offer only the starter subset of CASTEP parameters.
   ``Spin Polarized`` is in that subset for every workflow. ``SPIN`` (``Initial
   Spin``, the net spin of the whole cell) is not offered: MuFinder sets spins
