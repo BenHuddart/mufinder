@@ -42,6 +42,7 @@ from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, S
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_file_cleanup import JobFileCleanup
+from mufinder.services.job_file_export import JobFilesExport, job_files_export
 from mufinder.services.job_results import find_job_derived_structure
 from mufinder.services.structure_export import (
     RelaxedStructureExport,
@@ -331,6 +332,20 @@ class WorkflowJobController:
 
         jobs = self.jobs_for_keys([key])
         return relaxed_structure_export_for_job(self._context.document(), jobs[0] if jobs else None)
+
+    def job_files_exports(self, keys: Sequence[object]) -> list[JobFilesExport]:
+        """Return the CASTEP files of the jobs behind ``keys``, one entry per job.
+
+        Rows without a job yet contribute nothing. Called live each time a row
+        menu opens, for Open Containing Folder and Export Inputs/Outputs….
+        """
+
+        return [
+            job_files_export(
+                job, self._context.job_output_directory(job), self._context.job_seed_name(job)
+            )
+            for job in self.jobs_for_keys(list(keys))
+        ]
 
     def materialize(self, keys: list[object]) -> list[Job]:
         """Create (and return) jobs for the ready keys that lack one."""

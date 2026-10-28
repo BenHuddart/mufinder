@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.convergence_types import ConvergenceConfig, SweepKeyCodec, SweepPointRunState
+from mufinder.app.export_dialogs import JobFilesMenu
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
@@ -174,6 +175,8 @@ class SweepConvergenceWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
+        #: Open Containing Folder / Export Inputs/Outputs… in the row menu.
+        self.job_files_menu = JobFilesMenu()
         self._add_button = QPushButton(self._ADD_BUTTON_TEXT)
         self._generate_button = QPushButton(self._GENERATE_BUTTON_TEXT)
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
@@ -421,7 +424,7 @@ class SweepConvergenceWidget(QWidget):
             status_for_row=self._row_status,
             emit_reset=self.reset_failed_requested.emit,
             leading_actions=leading_actions,
-            additional_actions=trailing_actions,
+            additional_actions=(*trailing_actions, *self.job_files_menu.row_actions(self)),
         )
         selection_model = self._table.selectionModel()
         if selection_model is not None:

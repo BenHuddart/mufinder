@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.export_dialogs import STRUCTURE_FORMATS, export_relaxed_structure
+from mufinder.app.export_dialogs import STRUCTURE_FORMATS, JobFilesMenu, export_relaxed_structure
 from mufinder.app.adapter_common import coerce_supercell_matrix
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.relaxation_types import SupercellMatrix
@@ -180,6 +180,8 @@ class RowTableWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
+        #: Open Containing Folder / Export Inputs/Outputs… in every row menu.
+        self.job_files_menu = JobFilesMenu()
         self._restoring_form_state = False
         self._suppress_state_emission = False
         self._next_row_id = 1
@@ -490,7 +492,11 @@ class RowTableWidget(QWidget):
                 status_for_row=lambda row, bound=table: self._row_status(row, table=bound),
                 emit_reset=self.reset_failed_requested.emit,
                 leading_actions=leading_actions,
-                additional_actions=(*trailing_actions, *self._extra_row_actions()),
+                additional_actions=(
+                    *trailing_actions,
+                    *self._extra_row_actions(),
+                    *self.job_files_menu.row_actions(self),
+                ),
             )
             # The count label and run/remove buttons are shared by every table;
             # whichever is on show drives them.
@@ -1441,6 +1447,8 @@ class SourceTableWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._source_rows: list[Any] = []
+        #: Open Containing Folder / Export Inputs/Outputs… in the row menu.
+        self.job_files_menu = JobFilesMenu()
 
     # -- hooks -------------------------------------------------------------
 
@@ -1533,7 +1541,11 @@ class SourceTableWidget(QWidget):
             status_for_row=self._source_row_status,
             emit_reset=emit_reset,
             leading_actions=leading_actions,
-            additional_actions=(*trailing_actions, *extra_actions),
+            additional_actions=(
+                *trailing_actions,
+                *extra_actions,
+                *self.job_files_menu.row_actions(self),
+            ),
         )
 
     # -- table -------------------------------------------------------------

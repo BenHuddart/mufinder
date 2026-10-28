@@ -791,6 +791,8 @@ def test_uep_row_menu_uses_the_shared_core(qapp, monkeypatch) -> None:
         "Reset Failed Jobs...",
         "Configure...",
         "Remove",
+        "Open Containing Folder",
+        "Export Inputs/Outputs…",
     ]
 
 

@@ -285,7 +285,11 @@ no two workflow widgets may define the same private method.
        per export format (``add_format_actions``), and the relaxed-structure
        flows built on them (``export_relaxed_structure`` for one file,
        ``export_relaxed_structures_to_folder`` for one file per structure in a
-       chosen folder).
+       chosen folder). The job-folder row-menu entries every workflow table
+       shows (``JobFilesMenu``: ``Open Containing Folder`` through
+       ``open_containing_folder`` and ``Export Inputs/Outputs…`` through
+       ``export_job_files_to_folder``), fed by the controller's
+       ``job_files_exports``.
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -432,6 +436,11 @@ no two workflow widgets may define the same private method.
        file name, the provenance header (project, job, charge state, final
        energy) and, when there is none, the reason shown to the user. The file
        is written by ``mufinder.science.structure_io`` (``export_structure``).
+   * - ``mufinder.services.job_file_export``
+     - A job's standard CASTEP input and output files in its folder, without
+       checkpoints (``job_files_export``), or why there are none; where each
+       goes in a chosen folder, one sub-folder per job seed
+       (``plan_job_file_copy``); and the copy itself (``copy_job_files``).
    * - ``mufinder.services.quantum_results``
      - Readings from a stored quantum-phonon result payload: the ``w1``
        witness as ``P - 3``, recomputed from the stored mode participations

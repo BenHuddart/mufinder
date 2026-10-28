@@ -1010,6 +1010,8 @@ def test_convergence_widget_context_menu_has_the_shared_order(
         "Reset Failed Jobs...",
         "Configure...",
         "Remove",
+        "Open Containing Folder",
+        "Export Inputs/Outputs…",
     ]
     enabled = {action.text for action in menu.actions if action.enabled}
     assert enabled == {"Run Local", "Run on Cluster", "Configure...", "Remove"}

@@ -8818,12 +8818,14 @@ class MainWindow(QMainWindow):
         """Route a workflow table's row-menu Cancel / Inspect Failure / Reset signals.
 
         Each signal carries the selected row keys; the generic handlers below
-        resolve them to jobs through ``controller.jobs_for_keys``.
+        resolve them to jobs through ``controller.jobs_for_keys``. The row
+        menu's job-folder entries ask ``controller.job_files_exports``.
         """
 
         view.cancel_requested.connect(partial(self._cancel_workflow_rows, controller))
         view.inspect_failed_requested.connect(partial(self._inspect_workflow_rows, controller))
         view.reset_failed_requested.connect(partial(self._reset_workflow_rows, controller))
+        view.job_files_menu.set_provider(controller.job_files_exports)
 
     def _cancel_workflow_rows(self, controller, keys: object) -> None:
         """Cancel the jobs behind a workflow table's rows (row menu "Cancel")."""

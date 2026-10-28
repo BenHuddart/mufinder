@@ -1007,6 +1007,8 @@ def test_quantum_row_menu_offers_the_shared_failed_job_reset_and_no_remove(
         "Inspect Failure",
         "Reset Failed Jobs...",
         "Configure...",
+        "Open Containing Folder",
+        "Export Inputs/Outputs…",
     ]
     assert "Reset Failed Jobs... (2 of 3)" in texts
     menu.action("Cancel (1 of 3)").triggered.emit()
@@ -1090,6 +1092,8 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
         "Reset Failed Jobs...",
         "Configure...",
         "Remove",
+        "Open Containing Folder",
+        "Export Inputs/Outputs…",
     ]
     menu.action("Inspect Failure").triggered.emit()
     assert inspected == [["path-a", "path-b"]]

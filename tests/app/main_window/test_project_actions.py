@@ -644,3 +644,20 @@ def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(
     assert archived.exists()
     assert not source.exists()
     window.close()
+
+
+def test_every_workflow_table_resolves_job_files_through_its_controller(main_window) -> None:
+    """Open Containing Folder / Export Inputs/Outputs… in each row menu ask its controller."""
+
+    window = main_window
+    pairs = [
+        (window._convergence_view, window._convergence_controller),
+        (window._kpoint_convergence_view, window._kpoint_convergence_controller),
+        (window._pristine_relaxation_view, window._pristine_relaxation_controller),
+        (window._uep_view, window._uep_controller),
+        (window._muon_relaxation_view, window._muon_relaxation_controller),
+        (window._quantum_corrections_view, window._quantum_corrections_controller),
+        (window._ensure_energy_barriers_view(), window._energy_barriers_controller),
+    ]
+    for view, controller in pairs:
+        assert view.job_files_menu._provider == controller.job_files_exports
