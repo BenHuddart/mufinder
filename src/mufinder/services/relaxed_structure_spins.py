@@ -72,9 +72,11 @@ def apply_relaxed_cell_spins(structure: Structure, cell: ParsedCell) -> None:
 def relaxation_run_spins(output_dir: Path, seed_name: str, atom_count: int) -> list[float] | None:
     """Return the ``SPIN=`` values of the relaxation run in ``output_dir``.
 
-    Reads ``{seed_name}-out.cell``, then the input ``{seed_name}.cell``. A file
-    that is missing, cannot be parsed, has a different atom count or carries no
-    nonzero spin is skipped.
+    Reads ``{seed_name}-out.cell``, then the input ``{seed_name}.cell``. Only the
+    geometry and spins are parsed, as relaxation completion does: an
+    ``-out.cell`` echoes run settings that may lie outside the loaded keyword
+    catalog. A file that is missing, cannot be parsed, has a different atom
+    count or carries no nonzero spin is skipped.
     """
 
     for name in (f"{seed_name}-out.cell", f"{seed_name}.cell"):
@@ -82,7 +84,7 @@ def relaxation_run_spins(output_dir: Path, seed_name: str, atom_count: int) -> l
         if not path.is_file():
             continue
         try:
-            cell = parse_cell_file(path)
+            cell = parse_cell_file(path, geometry_only=True)
         except (CellParseError, OSError, ValueError):
             continue
         if len(cell.species) != atom_count:

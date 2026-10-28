@@ -155,6 +155,20 @@ def test_backfill_finds_the_job_through_its_runs_result(tmp_path: Path) -> None:
     assert reopened.structures[structure.id].properties["atomic_spins"] == [2.2, 2.2]
 
 
+def test_backfill_reads_an_out_cell_that_echoes_uncatalogued_settings(tmp_path: Path) -> None:
+    # CASTEP echoes run settings into -out.cell; a keyword outside the loaded
+    # catalog must not hide the SPIN= values.
+    _service, document, structure, job_dir = _relaxed_project(tmp_path)
+    echoed = (
+        _SPIN_CELL + "\n%BLOCK EXTERNAL_PRESSURE\nGPa\n0 0 0\n0 0\n0\n%ENDBLOCK EXTERNAL_PRESSURE\n"
+    )
+    (job_dir / "relax_fe-out.cell").write_text(echoed, encoding="utf-8")
+
+    reopened = _reopen_schema_5(document)
+
+    assert reopened.structures[structure.id].properties["atomic_spins"] == [2.2, 2.2]
+
+
 def test_backfill_falls_back_to_the_input_cell(tmp_path: Path) -> None:
     _service, document, structure, job_dir = _relaxed_project(
         tmp_path, stage=WorkflowStage.MUON_RELAXATION
