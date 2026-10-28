@@ -132,10 +132,11 @@ jobs:
       - name: Combine coverage and enforce the gate
         run: make coverage
 
-      # Kept on failure so "Re-run failed jobs" can download them again. A pull
-      # request from a fork gets a read-only token and leaves them to expire.
+      # Kept on failure so "Re-run failed jobs" can download them again. Pull
+      # requests from forks and from Dependabot get a read-only token and leave
+      # them to expire.
       - name: Delete the coverage artifacts
-        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: success() && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'))
         uses: ./.github/actions/delete-run-artifacts
         with:
           name-pattern: ^coverage-shard-
@@ -278,7 +279,7 @@ jobs:
 
       # Kept on failure for the same reason as the coverage artifacts.
       - name: Delete the screenshot artifacts
-        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: success() && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'))
         uses: ./.github/actions/delete-run-artifacts
         with:
           name-pattern: ^docs-screenshots-

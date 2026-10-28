@@ -824,16 +824,17 @@ continuous integration and tag-driven publishing:
   removes it otherwise.
 
 Artifacts carry files between the jobs of one run and are not kept after it.
-In ``CI`` and ``Release Publish`` the job that consumes them deletes them
-through the composite action ``.github/actions/delete-run-artifacts``, which
-deletes the current run's artifacts whose names match a regular expression.
-The ``tests`` and ``docs`` jobs delete the ``coverage-shard-*`` and
-``docs-screenshots-*`` artifacts only when they succeed, so "Re-run failed
-jobs" can still download them; ``Release Publish`` deletes the installers once
-they are attached to the release. An artifact that is not deleted, from a
-failed run or from a pull request opened from a fork (whose token is
-read-only), expires under its ``retention-days``: one day for the CI shards and
-three for preview builds.
+In ``CI`` the ``tests`` and ``docs`` jobs delete the ``coverage-shard-*`` and
+``docs-screenshots-*`` artifacts through the composite action
+``.github/actions/delete-run-artifacts``, which deletes the current run's
+artifacts whose names match a regular expression. They delete only when they
+succeed, so "Re-run failed jobs" can still download them. ``Release Publish``
+deletes the installers once they are attached to the release, with its own
+inline step: it checks out the release's source, which for an older tag does
+not contain the composite action. An artifact that is not deleted, from a
+failed run or from a pull request opened from a fork or by Dependabot (whose
+token is read-only), expires under its ``retention-days``: one day for the CI
+shards and three for preview builds.
 
 The repository's default ``GITHUB_TOKEN`` permission for workflows is
 read-only. A workflow that needs to write (``Pages``, ``Release Publish``)
