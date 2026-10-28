@@ -257,15 +257,14 @@ def test_build_result_warns_without_mulliken_spins_or_density(tmp_path: Path) ->
     assert any("pseudo spin density" in warning for warning in contribution.warnings)
 
 
-def test_materialize_carries_the_source_relaxation_initial_spins(tmp_path: Path) -> None:
+def test_materialize_starts_from_the_relaxed_structure_spins(tmp_path: Path) -> None:
     document, controller, _view, key, output_root = _setup(tmp_path)
-    # The relaxation runs under its directory's name, the seed its .cell is read by.
-    (tmp_path / "relax" / "relax.cell").write_text(
-        "%BLOCK LATTICE_CART\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n"
-        "%BLOCK POSITIONS_FRAC\nFe 0 0 0 SPIN=2.2\nFe 0.5 0.5 0.5 SPIN=-2.2\n"
-        "H:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n",
-        encoding="utf-8",
+    (relaxed,) = (
+        structure
+        for structure in document.structures.values()
+        if structure.properties.get("source_workflow_stage") == "muon_relaxation"
     )
+    relaxed.properties["atomic_spins"] = [2.2, -2.2, 0.0]
 
     controller.materialize([key])
 

@@ -612,32 +612,6 @@ def source_relaxation_parameter_values(
     return values
 
 
-def source_relaxation_atomic_spins(
-    job: Job,
-    output_directory: Callable[[Job], Path | None],
-) -> tuple[float, ...] | None:
-    """Return the per-atom ``SPIN=`` values of the source relaxation's ``.cell``.
-
-    A relaxed structure keeps no initial spins, so a follow-on calculation
-    reads them from the relaxation's input to start from the same magnetic
-    state. The values are in the relaxation's atom order, which its relaxed
-    structure keeps. ``None`` when the ``.cell`` is missing, does not parse or
-    sets no spins.
-    """
-
-    output_dir = output_directory(job)
-    if output_dir is None:
-        return None
-    cell_path = output_dir / f"{job_seed_name(job, output_directory)}.cell"
-    if not cell_path.is_file():
-        return None
-    try:
-        parsed_cell = parse_cell_file(cell_path)
-    except (CellParseError, OSError, ValueError):
-        return None
-    return parsed_cell.atomic_spins
-
-
 # --- energy-barrier sources ---------------------------------------------------
 
 

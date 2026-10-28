@@ -32,7 +32,6 @@ from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.magnetic_properties import has_nonzero_spins
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.hyperfine_results import (
     NO_MULLIKEN_SPINS_WARNING,
@@ -57,15 +56,9 @@ from mufinder.services.source_candidates import (
     quantum_source_candidate_by_key,
     quantum_source_label,
     serialize_quantum_sources,
-    source_relaxation_atomic_spins,
     source_relaxation_parameter_values,
 )
-from mufinder.workflow import (
-    StructureBridgeError,
-    StructureSpec,
-    structure_to_spec,
-    write_job_directory,
-)
+from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 from mufinder.workflow.hyperfine import (
     HYPERFINE_CALC_TYPE,
     HYPERFINE_CONTROLLED_PARAM_KEYWORDS,
@@ -210,22 +203,6 @@ class HyperfineCouplingController(WorkflowJobController):
             values.pop(name, None)
         values.setdefault("elec_energy_tol", _DEFAULT_ELEC_ENERGY_TOL)
         return values
-
-    def _with_source_spins(
-        self, structure: StructureSpec, candidate: QuantumSourceCandidate
-    ) -> StructureSpec:
-        """Give ``structure`` its source relaxation's initial spins when it has none.
-
-        Without them a magnetic host starts the hyperfine SCF unpolarised and can
-        settle in a different magnetic state from the relaxation it came from.
-        """
-
-        if has_nonzero_spins(structure.atomic_spins):
-            return structure
-        spins = source_relaxation_atomic_spins(candidate.job, self._context.job_output_directory)
-        if not has_nonzero_spins(spins) or len(spins) != len(structure.positions_frac.positions):
-            return structure
-        return replace(structure, atomic_spins=spins)
 
     def ensure_definition(self, source_keys: Sequence[str]) -> CalculationDefinition | None:
         """Return the active definition with the selected sources added, creating one if needed."""
@@ -466,9 +443,7 @@ class HyperfineCouplingController(WorkflowJobController):
             if candidate is None or not workflow_row_state_is_ready(states, key):
                 continue
             try:
-                structure = self._with_source_spins(
-                    structure_to_spec(candidate.structure), candidate
-                )
+                structure = structure_to_spec(candidate.structure)
                 overrides = build_workflow_settings_template(
                     {
                         name: value
