@@ -9,10 +9,10 @@ property, so the ``.cell`` export, quantum corrections, energy barriers and any
 workflow that takes a relaxed pristine structure as its host render the run's
 spins.
 
-Structures saved before the relaxed structure kept its spins have none.
-:func:`backfill_relaxed_structure_spins` recovers them when a project is
-opened, from the source job's ``-out.cell`` or, failing that, its input
-``.cell``.
+A project stored below schema :data:`SPINS_KEPT_SCHEMA_VERSION` has relaxed
+structures without spins. ``ProjectService.load_project`` calls
+:func:`backfill_relaxed_structure_spins` for such a project, which reads them
+from the source job's ``-out.cell`` or, failing that, its input ``.cell``.
 
 Layering: this lives in ``mufinder.services`` and imports ``castep_io``,
 ``domain`` and ``services.job_paths``.
@@ -35,9 +35,10 @@ if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
 
 #: Workflow stages whose completion derives a relaxed structure from ``-out.cell``.
-RELAXATION_STAGES = frozenset(
-    {WorkflowStage.PRISTINE_RELAXATION.value, WorkflowStage.MUON_RELAXATION.value}
-)
+RELAXATION_STAGES = frozenset({WorkflowStage.PRISTINE_RELAXATION, WorkflowStage.MUON_RELAXATION})
+
+#: The first saved-project schema whose relaxed structures keep their spins.
+SPINS_KEPT_SCHEMA_VERSION = 6
 
 
 def relaxed_cell_spins(cell: ParsedCell) -> list[float] | None:
@@ -98,23 +99,25 @@ def backfill_relaxed_structure_spins(
 ) -> list[UUID]:
     """Give relaxed structures saved without spins their run's ``SPIN=`` values.
 
-    Only structures a relaxation derived (``source_workflow_stage`` is a
-    relaxation stage and ``source_job_id`` names a job in ``document``) that
-    have no ``atomic_spins`` key are considered; a structure that already has
-    the key, even with no nonzero value, is left as it is. Returns the ids of the
-    structures that gained spins.
+    A structure is considered when it has no ``atomic_spins`` key and a
+    relaxation job derived it: the job its ``source_job_id`` names, else the job
+    whose run's result lists it in ``derived_structure_ids`` (as
+    ``job_results.find_job_derived_structure`` resolves it). A structure that
+    already has the key, even with no nonzero value, is left as it is. Returns
+    the ids of the structures that gained spins.
     """
 
     changed: list[UUID] = []
     jobs_by_id = {str(job.id): job for job in document.jobs.values()}
+    jobs_by_structure = _jobs_by_derived_structure(document)
     for structure in document.structures.values():
         properties = structure.properties
         if "atomic_spins" in properties:
             continue
-        if properties.get("source_workflow_stage") not in RELAXATION_STAGES:
-            continue
-        job = jobs_by_id.get(str(properties.get("source_job_id", "")))
-        if job is None:
+        job = jobs_by_id.get(str(properties.get("source_job_id", ""))) or jobs_by_structure.get(
+            structure.id
+        )
+        if job is None or job.workflow_stage not in RELAXATION_STAGES:
             continue
         output_dir = output_directory(job)
         if output_dir is None:
@@ -128,8 +131,26 @@ def backfill_relaxed_structure_spins(
     return changed
 
 
+def _jobs_by_derived_structure(document: ProjectDocument) -> dict[UUID, Job]:
+    """Map each derived structure id to the job whose run's result lists it.
+
+    Runs are taken in ``run_index`` order and the first job found wins.
+    """
+
+    jobs: dict[UUID, Job] = {}
+    for run in sorted(document.runs.values(), key=lambda run: run.run_index):
+        result = document.results.get(run.result_id) if run.result_id else None
+        job = document.jobs.get(run.job_id)
+        if result is None or job is None:
+            continue
+        for structure_id in result.derived_structure_ids:
+            jobs.setdefault(structure_id, job)
+    return jobs
+
+
 __all__ = [
     "RELAXATION_STAGES",
+    "SPINS_KEPT_SCHEMA_VERSION",
     "apply_relaxed_cell_spins",
     "backfill_relaxed_structure_spins",
     "relaxation_run_spins",

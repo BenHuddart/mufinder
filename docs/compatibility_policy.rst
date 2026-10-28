@@ -469,21 +469,14 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that rewrites the stored witness of each
        quantum-phonon result, or indefinitely.
-   * - Relaxed structures without ``atomic_spins``
+   * - Relaxed structures without ``atomic_spins`` in a project stored below
+       schema 6
      - ``mufinder.services.relaxed_structure_spins``
        (``backfill_relaxed_structure_spins``), called by
        ``ProjectService.load_project``
-     - A pristine or muon relaxation stores its run's ``SPIN=`` values on its
-       relaxed structure as ``properties["atomic_spins"]``. A structure saved
-       before that has no key; on load it gains the nonzero ``SPIN=`` values
-       of its source job's ``-out.cell``, else its input ``.cell``, when one
-       has the structure's atom count, and the next save writes them. A
-       structure whose job files are gone, or whose run had no spins, keeps no
-       key and is checked again on the next load. A structure that has the key
-       is never touched.
-     - Load-time repair that reads job files, so it is not a schema step.
-       Keep while projects saved before relaxed structures kept their spins
-       may still be opened, or indefinitely.
+     - The job-file half of the 5 to 6 step (see the table below), which a
+       payload migration cannot do because it never sees the job folders.
+     - Keep while schema 5 projects may still be opened, or indefinitely.
 
 Saved-project schema migrations
 -------------------------------
@@ -564,6 +557,23 @@ version or a newer one is loaded as it is. A manifest without
      - The dipolar tensor dialog reads ``dipolar_tensor_T_per_muB`` as T/μB,
        and ``calculate_dipolar_tensors_for_atoms`` applies the same factor to
        new tensors. Saved commensurate field results are not rewritten.
+   * - 5 to 6
+     - Relaxed structures (``structures`` entities). Schema 5 did not store a
+       relaxation's ``SPIN=`` values on its relaxed structure. They live in the
+       job folders, which payloads cannot reach, so the payload step changes
+       nothing; ``ProjectService.load_project`` instead calls
+       ``backfill_relaxed_structure_spins`` for a project stored below schema
+       6. Each structure a pristine or muon relaxation job derived (through
+       ``source_job_id`` or its run's ``derived_structure_ids``) and that has
+       no ``atomic_spins`` key gains the nonzero ``SPIN=`` values of that job's
+       ``-out.cell``, else its input ``.cell``, when the file has the
+       structure's atom count. Those structures are rewritten by the next
+       save. A structure whose job files are gone, or whose run had no spins,
+       keeps no key and is not checked again once the project is saved at
+       schema 6.
+     - ``workflow.bridge.structure_to_spec`` prefers ``atomic_spins``, so the
+       ``.cell`` export and every job started from a relaxed structure write
+       the run's spins. Relaxation completion stores them for new runs.
 
 A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
 ``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table

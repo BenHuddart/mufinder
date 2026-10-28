@@ -431,7 +431,7 @@ no two workflow widgets may define the same private method.
        on the structure at completion (``apply_relaxed_cell_spins``) and
        recovering them from a job's ``-out.cell`` or input ``.cell``
        (``relaxation_run_spins``), which ``ProjectService.load_project`` uses
-       to backfill structures saved without spins
+       to backfill a project stored below schema 6
        (``backfill_relaxed_structure_spins``).
    * - ``mufinder.services.structure_export``
      - A relaxation's relaxed structure ready to export

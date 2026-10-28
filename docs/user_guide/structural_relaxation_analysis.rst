@@ -105,10 +105,7 @@ geometry (lattice, species and fractional coordinates) and the run's per-atom
 structure to the project, and continuing a job updates that structure in place.
 The structure keeps the run's spins, so a spin-polarised calculation started
 from it, such as UEP, site generation or a muon relaxation on the relaxed host,
-starts from the same moments. A project saved before relaxed structures kept
-their spins gets them back when it is opened, read from each job's
-``-out.cell`` or, failing that, its input ``.cell``; a structure whose job
-files are gone stays without spins. These are the
+starts from the same moments. These are the
 structures the :doc:`/user_guide/comparison_table` compares with the
 experimental host, and they can be the comparison host in `Displacement
 analysis`_.

@@ -30,12 +30,15 @@ from mufinder.domain.models import (
 from mufinder.persistence import project_codec
 from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
-from mufinder.persistence.migrations import migrate_project_payloads
+from mufinder.persistence.migrations import migrate_project_payloads, stored_schema_version
 from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.job_paths import job_output_directory
 from mufinder.services.perf_trace import PerfTrace
-from mufinder.services.relaxed_structure_spins import backfill_relaxed_structure_spins
+from mufinder.services.relaxed_structure_spins import (
+    SPINS_KEPT_SCHEMA_VERSION,
+    backfill_relaxed_structure_spins,
+)
 
 # The document aggregate, its read-only queries and the supercell records are
 # re-exported: callers import them from this module.
@@ -286,6 +289,7 @@ class ProjectService:
         # files (and ui_state) a migration changed are left out of the
         # dirty-tracking cache below so the next save writes them with the new
         # manifest version.
+        stored_version = stored_schema_version(manifest)
         migrated_keys = migrate_project_payloads(manifest, payloads, ui_state)
 
         project = project_codec.project_from_dict(manifest)
@@ -312,15 +316,16 @@ class ProjectService:
             provenance=provenance,
             ui_state=ui_state,
         )
-        # Relaxed structures saved before they kept their run's SPIN= values get
-        # them from the job's files; left out of the cache so the next save
-        # writes them.
-        unsaved_keys |= {
-            ("structures", str(structure_id))
-            for structure_id in backfill_relaxed_structure_spins(
-                document, lambda job: self._job_output_directory(document, job)
-            )
-        }
+        # Below schema 6 relaxed structures did not keep their run's SPIN=
+        # values; they are read back from the job files and left out of the
+        # cache so the next save writes them with the new schema version.
+        if stored_version < SPINS_KEPT_SCHEMA_VERSION:
+            unsaved_keys |= {
+                ("structures", str(structure_id))
+                for structure_id in backfill_relaxed_structure_spins(
+                    document, lambda job: self._job_output_directory(document, job)
+                )
+            }
 
         # Reset then seed the dirty-tracking cache from the payloads just loaded
         # off disk so the first save after opening a project does not rewrite
