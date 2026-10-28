@@ -35,6 +35,11 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldError,
     MagneticFieldOptions,
 )
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_PAGE_OWNER,
+    MAGNETIC_FIELD_RESULT_TYPE,
+    magnetic_field_result,
+)
 from mufinder.services.project_service import ProjectDocument
 from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE
 
@@ -271,7 +276,10 @@ def apply_magnetic_field_handoff(
 ) -> int:
     """Write each target's coupling into its Magnetic Fields form; return how many changed.
 
-    Targets with an error are skipped.
+    Targets with an error are skipped. A form whose coupling changes loses its
+    stored field results, as when the coupling is edited on the page: they were
+    computed with the old contact term. Its dipolar tensors and nuclear results
+    do not depend on the coupling and are kept.
     """
 
     by_workspace = {
@@ -282,8 +290,17 @@ def apply_magnetic_field_handoff(
         target = by_workspace.get(workspace_id)
         if target is None:
             continue
+        unchanged = (
+            str(form.get("hyperfine_coupling", "") or "").strip() == target.new_text
+            and form.get("hyperfine_coupling_unit") == HANDOFF_COUPLING_UNIT
+        )
         form["hyperfine_coupling"] = target.new_text
         form["hyperfine_coupling_unit"] = HANDOFF_COUPLING_UNIT
+        if not unchanged:
+            owner = MAGNETIC_FIELD_PAGE_OWNER if workspace_id is None else workspace_id
+            stale = magnetic_field_result(document, owner, MAGNETIC_FIELD_RESULT_TYPE)
+            if stale is not None:
+                del document.results[stale.id]
         changed += 1
     return changed
 

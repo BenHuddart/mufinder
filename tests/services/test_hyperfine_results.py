@@ -195,3 +195,53 @@ def test_a_result_without_mulliken_spins_cannot_be_handed_over(tmp_path: Path) -
     assert handoff_unavailable_reason(result) == NO_MULLIKEN_SPINS_WARNING
     with pytest.raises(HyperfineError, match="no Mulliken spins"):
         plan_magnetic_field_handoff(_document(tmp_path), result)
+
+
+def test_handoff_clears_field_results_only_of_forms_whose_coupling_changes(
+    tmp_path: Path,
+) -> None:
+    from mufinder.domain.models import Result as StoredResult
+    from mufinder.services.magnetic_field_results import (
+        MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        MAGNETIC_FIELD_RESULT_TYPE,
+        magnetic_field_result,
+    )
+
+    document = _document(tmp_path)
+    relaxation_job = str(uuid4())
+    result = _result(
+        contact_shell_inputs(_structure(), (2.2, -0.02, 2.0)),
+        site_job=relaxation_job,
+        structure_id=str(uuid4()),
+    )
+    document.ui_state["magnetic_field_form"] = {
+        "selected_muon_site": _site_state(job_id=relaxation_job),
+        "contact_nnn": 1,
+    }
+    for result_type in (MAGNETIC_FIELD_RESULT_TYPE, MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE):
+        stored = StoredResult(result_type=result_type, data={"owner": MAGNETIC_FIELD_PAGE_OWNER})
+        document.results[stored.id] = stored
+
+    targets = plan_magnetic_field_handoff(document, result)
+    apply_magnetic_field_handoff(document, targets)
+
+    # The field results used the old contact term; the dipolar tensors did not.
+    assert (
+        magnetic_field_result(document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_FIELD_RESULT_TYPE)
+        is None
+    )
+    assert (
+        magnetic_field_result(
+            document, MAGNETIC_FIELD_PAGE_OWNER, MAGNETIC_DIPOLAR_TENSOR_RESULT_TYPE
+        )
+        is not None
+    )
+
+    # Handing the same coupling over again changes nothing, so a new result stays.
+    fresh = StoredResult(
+        result_type=MAGNETIC_FIELD_RESULT_TYPE, data={"owner": MAGNETIC_FIELD_PAGE_OWNER}
+    )
+    document.results[fresh.id] = fresh
+    apply_magnetic_field_handoff(document, plan_magnetic_field_handoff(document, result))
+    assert fresh.id in document.results

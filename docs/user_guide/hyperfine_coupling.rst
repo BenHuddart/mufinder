@@ -212,9 +212,10 @@ form's current and new value and asks before overwriting; ``Cancel`` is the
 default. A form whose contact shell cannot give a coupling (for example a shell
 that reaches past the relaxed supercell) is skipped and named. If no form
 shows the site, nothing changes and MuFinder says so: select the site on the
-Magnetic Fields page or in a saved workspace first. Magnetic Fields results
-computed before the hand-off keep their old contact term until they are
-recalculated.
+Magnetic Fields page or in a saved workspace first. As when the coupling is
+edited on the page, a form whose coupling changes loses its field results,
+which used the old contact term; calculate them again. Its dipolar tensors and
+nuclear results are kept.
 
 Because the coupling is per unit of DFT moment, Magnetic Fields rescales the
 contact field by the moments of its own magnetic structure. When DFT
