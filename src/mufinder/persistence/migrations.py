@@ -290,10 +290,25 @@ def _is_numeric_3x3(value: object) -> bool:
     )
 
 
+def _relaxed_structure_spins_are_read_from_job_files(
+    entities: EntityPayloads, ui_state: dict[str, Any]
+) -> set[EntityKey]:
+    """Schema 5 to 6: relaxed structures keep their run's ``SPIN=`` values.
+
+    The values live in each relaxation's job files, which payloads cannot
+    reach, so this step changes nothing. ``ProjectService.load_project``
+    recovers them for a project stored below schema 6
+    (``mufinder.services.relaxed_structure_spins``).
+    """
+
+    return set()
+
+
 _MIGRATIONS: dict[int, MigrationStep] = {
     1: _sweep_values_replace_cutoff_energies,
     2: _site_positions_split_initial_and_relaxed,
     3: _magnetic_field_results_become_results,
     4: _dipolar_tensors_convert_to_tesla_per_mu_b,
+    5: _relaxed_structure_spins_are_read_from_job_files,
 }
 """The step that upgrades payloads saved at each version to the next one."""

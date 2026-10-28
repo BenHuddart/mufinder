@@ -44,6 +44,7 @@ from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.job_file_export import JobFilesExport, job_files_export
 from mufinder.services.job_results import find_job_derived_structure
+from mufinder.services.relaxed_structure_spins import apply_relaxed_cell_spins
 from mufinder.services.structure_export import (
     RelaxedStructureExport,
     relaxed_structure_export_for_job,
@@ -604,6 +605,11 @@ def upsert_job_derived_structure(
     ``parent_structure_id`` is left alone when the caller cannot resolve one, so
     a missing active definition never wipes a good parent.
 
+    Both paths store the ``-out.cell``'s ``SPIN=`` values as
+    ``properties["atomic_spins"]`` and drop spins the new cell does not carry
+    (:func:`~mufinder.services.relaxed_structure_spins.apply_relaxed_cell_spins`),
+    so jobs started from the relaxed structure inherit the run's spins.
+
     On first completion this is exactly the former behaviour: a new
     :class:`~mufinder.domain.models.Structure` registered through
     ``ProjectService.add_structure``.
@@ -628,6 +634,7 @@ def upsert_job_derived_structure(
             parent_structure_id=parent_structure_id,
             properties=properties,
         )
+        apply_relaxed_cell_spins(structure, relaxed)
         project_service.add_structure(document, structure)
         return structure
 
@@ -637,6 +644,7 @@ def upsert_job_derived_structure(
     if parent_structure_id is not None:
         existing.parent_structure_id = parent_structure_id
     existing.properties.update(properties)
+    apply_relaxed_cell_spins(existing, relaxed)
     return existing
 
 

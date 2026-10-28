@@ -1865,6 +1865,38 @@ def test_schema_4_project_tensor_is_converted_once_across_save_and_reload(tmp_pa
     assert _schema_4_tensor(ProjectService().load_project(root)) == stored
 
 
+_SCHEMA_5_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v5_relaxed_spins"
+_SCHEMA_5_RELAXED_ID = UUID("c3d4e5f6-a7b8-4c9d-8e1f-2a3b4c5d6e7f")
+
+
+def test_schema_5_project_loads_with_relaxed_spins_read_from_the_out_cell(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "schema_v5.mufinder"
+    shutil.copytree(_SCHEMA_5_FIXTURE, root)
+
+    loaded = ProjectService().load_project(root)
+
+    assert loaded.project.schema_version == PROJECT_SCHEMA_VERSION
+    assert loaded.structures[_SCHEMA_5_RELAXED_ID].properties["atomic_spins"] == [2.2, 2.2]
+
+
+def test_schema_5_project_keeps_its_relaxed_spins_across_save_and_reload(tmp_path: Path) -> None:
+    root = tmp_path / "schema_v5.mufinder"
+    shutil.copytree(_SCHEMA_5_FIXTURE, root)
+    service = ProjectService()
+
+    service.save_project(service.load_project(root))
+    # The job files are gone: the saved spins, not a second backfill, must carry them.
+    shutil.rmtree(root / "files")
+
+    assert (
+        json.loads((root / "project.json").read_text())["schema_version"] == PROJECT_SCHEMA_VERSION
+    )
+    reloaded = ProjectService().load_project(root)
+    assert reloaded.structures[_SCHEMA_5_RELAXED_ID].properties["atomic_spins"] == [2.2, 2.2]
+
+
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:
     service, doc, host = _document_with_host(tmp_path)
     # An output directory outside the project root is stored as an absolute path.

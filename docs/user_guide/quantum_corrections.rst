@@ -295,8 +295,11 @@ state the site was not first relaxed in adds its prefix, as in
   (γ\ :sub:`μ` / 2π ≈ 135.53881 MHz T⁻¹), both taken from ``scipy.constants``;
 - ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium).
 
-For a muonium source the job also defaults to ``SPIN_POLARIZED : TRUE`` and
-seeds a spin of +1 on the muon, as the muon relaxation does.
+A spin-polarised job writes the relaxed structure's per-atom ``SPIN=`` values,
+which are the source relaxation's, so a magnetic host starts from the moments
+it was relaxed with. For a muonium source the job also defaults to
+``SPIN_POLARIZED : TRUE`` and seeds a spin of +1 on the muon, as the muon
+relaxation does.
 
 Source eligibility
 ------------------
