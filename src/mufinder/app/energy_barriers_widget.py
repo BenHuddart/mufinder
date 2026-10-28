@@ -7,10 +7,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
-    QDesktopServices,
     QFontMetricsF,
     QKeyEvent,
     QMouseEvent,
@@ -38,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import (
     arrow_icon,
@@ -980,7 +980,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         menu = QMenu(self._neb_results_table)
         action = menu.addAction("Open Containing Folder")
         action.triggered.connect(
-            lambda _checked=False, path=trajectory: _open_containing_folder(path)
+            lambda _checked=False, path=trajectory: open_containing_folder(Path(path).parent)
         )
         menu.exec(self._neb_results_table.viewport().mapToGlobal(position))
 
@@ -1193,10 +1193,6 @@ class EnergyBarriersWidget(SourceTableWidget):
 # create_workflow_table call); the row tuple writes path, charge, length, barriers, ΔE,
 # images, then status.
 _NEB_RESULT_STATUS_COLUMN = 7
-
-
-def _open_containing_folder(path_text: str) -> None:
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path_text).parent)))
 
 
 def _muon_atom_indexes(structure: Structure) -> list[int]:

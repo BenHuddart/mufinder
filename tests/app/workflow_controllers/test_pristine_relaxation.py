@@ -1013,6 +1013,38 @@ def test_pristine_controller_relaxed_structure_export_follows_the_rows_job(
     assert controller.relaxed_structure_export("row2").structure is None
 
 
+def test_pristine_controller_job_files_exports_lists_the_rows_job_files(tmp_path: Path) -> None:
+    """Open Containing Folder / Export Inputs/Outputs resolve the row's job folder."""
+
+    import dataclasses
+
+    from mufinder.services.job_file_export import NO_FOLDER_REASON
+
+    service = ProjectService()
+    document, _definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    job_dir = tmp_path / "jobs" / job.label
+    controller = _pristine_edit_controller(service, document, deps, view, output_root, [])
+    controller._context = dataclasses.replace(
+        controller._context, job_output_directory=lambda _job: job_dir
+    )
+
+    [missing] = controller.job_files_exports(["row1"])
+    assert missing.job is job
+    assert missing.unavailable_reason == NO_FOLDER_REASON
+
+    job_dir.mkdir(parents=True)
+    for suffix in (".cell", ".castep", ".check"):
+        (job_dir / f"{job.label}{suffix}").write_text(suffix, encoding="utf-8")
+    [export] = controller.job_files_exports(["row1"])
+    assert export.directory == job_dir
+    assert [path.name for path in export.files] == [f"{job.label}.castep", f"{job.label}.cell"]
+
+    # A row with no bound job contributes nothing.
+    assert controller.job_files_exports(["row2"]) == []
+
+
 def test_pristine_controller_render_row_param_text_previews_without_persisting(
     tmp_path: Path,
 ) -> None:

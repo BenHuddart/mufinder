@@ -33,10 +33,35 @@ The same actions are in a row's right-click menu, which opens the same menu in
 every workflow table, in this order: ``Run Local``, ``Run on Cluster``,
 ``Cancel``, ``Inspect Failure``, ``Reset Failed Jobs...``, ``Configure...``,
 ``Remove``, then any table-specific entries below a separator (``Continue
-relaxation…`` in the relaxation tables). Quantum Corrections has no
-``Remove``. Right-clicking a row outside the selection selects it first.
-``Reset Failed Jobs...`` acts on the selected rows that are ``failed``,
-``stopped`` or ``cancelled`` (see :ref:`per-row-reset-affordance`).
+relaxation…`` and ``Export Relaxed Structure`` in the relaxation tables), and
+last, below another separator, ``Open Containing Folder`` and ``Export
+Inputs/Outputs…``. Quantum Corrections has no ``Remove``. Right-clicking a row
+outside the selection selects it first. ``Reset Failed Jobs...`` acts on the
+selected rows that are ``failed``, ``stopped`` or ``cancelled`` (see
+:ref:`per-row-reset-affordance`).
+
+The last two entries reach a job's files on disk, whatever its status, and
+work for completed jobs, which the Job Dashboard does not list:
+
+``Open Containing Folder``
+   Opens the selected row's job folder in the file manager. It needs exactly
+   one selected row whose job folder exists on this computer; a cluster job's
+   folder appears once its outputs are retrieved.
+``Export Inputs/Outputs…``
+   Asks for a folder and copies the CASTEP input and output files of every
+   selected row's job into it, one sub-folder per job named after its seed
+   (``_2``, ``_3``… are added when two jobs share a seed). The files copied
+   are ``.cell``, ``.param``, ``-in.cell``, ``.castep``, ``-out.cell``, ``-out.cif``,
+   ``.geom``, ``.md``, ``.ts``, ``.bands``, ``.phonon``, ``.den_fmt`` and the
+   ``.err`` and ``.NNNN.err`` error files, including task-farmed ``_farmNNN`` copies.
+   Checkpoints (``.check``, ``.castep_bin``) are left out. Replacing files
+   already in the folder is confirmed first, and files that cannot be copied
+   are listed when the copy ends. A folder that already holds the jobs' own
+   folders (such as ``files/pristine_relaxation``) is refused, since the files
+   would be copied onto themselves.
+
+When an entry does not apply, it is greyed out and its tooltip says why: the
+row has no job yet, or its job has no local folder or no CASTEP files.
 
 The button row below each table also offers ``Configure Selected
 Parameters...`` and ``Remove Selected``. Quantum Corrections has no ``Remove
