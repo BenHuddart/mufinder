@@ -1,0 +1,29 @@
+name: Delete this run's artifacts
+description: >
+  Delete the artifacts of the current workflow run whose names match a regular
+  expression. The calling job needs the `actions: write` permission.
+inputs:
+  name-pattern:
+    description: jq regular expression matched against each artifact name.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Delete matching artifacts
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NAME_PATTERN: ${{ inputs.name-pattern }}
+      run: |
+        artifact_ids="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+          --jq '.artifacts[] | select(.name | test(env.NAME_PATTERN)) | "\(.id) \(.name)"')"
+
+        if [ -z "$artifact_ids" ]; then
+          echo "No artifacts of this run match ${NAME_PATTERN}."
+          exit 0
+        fi
+
+        while read -r artifact_id artifact_name; do
+          gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+          echo "Deleted artifact ${artifact_name} (${artifact_id})."
+        done <<< "$artifact_ids"

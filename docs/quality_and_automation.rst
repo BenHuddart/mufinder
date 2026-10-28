@@ -129,7 +129,9 @@ CI runs on 4-vCPU runners. Keep these in place when changing the test setup:
   at a time in test-ID order, which keeps the groups within a few seconds of
   each other; each group then runs in collection order. Coverage is
   measured per shard and combined before the gate, so the threshold applies to
-  the whole suite exactly as in ``make test``.
+  the whole suite exactly as in ``make test``. Each shard uploads its
+  ``.coverage.shard-n`` file as a ``coverage-shard-n`` artifact, and the
+  ``tests`` job deletes them once the gate passes (see `Automation policy`_).
 - **Work-stealing workers.** ``make test`` and ``make test-shard`` run
   ``pytest-xdist`` with ``--dist worksteal``: an idle worker takes queued tests
   from a busy one, so a handful of slow tests at the end does not leave one
@@ -568,7 +570,8 @@ as an artifact. The ``docs`` job waits for all four, downloads the shares into
 ``docs/_generated/screenshots`` and touches ``.stamp``, so ``make docs`` runs
 Sphinx alone. A pull request that changes only pages therefore renders
 nothing. ``tests/docs/test_docs_screenshots.py`` checks that the four shares
-together render every screenshot exactly once.
+together render every screenshot exactly once. Once ``make docs`` passes, the
+``docs`` job deletes the ``docs-screenshots`` artifacts (see `Automation policy`_).
 
 A ``docs-screenshots`` job stops after 20 minutes and the Pages build after 30,
 so a hang outside a scene, which ``--scene-timeout`` does not cover, fails the
@@ -820,10 +823,24 @@ continuous integration and tag-driven publishing:
   artifact so the deploy job can be re-run, and the upload's one-day retention
   removes it otherwise.
 
+Artifacts carry files between the jobs of one run and are not kept after it.
+In ``CI`` the ``tests`` and ``docs`` jobs delete the ``coverage-shard-*`` and
+``docs-screenshots-*`` artifacts through the composite action
+``.github/actions/delete-run-artifacts``, which deletes the current run's
+artifacts whose names match a regular expression. They delete only when they
+succeed, so "Re-run failed jobs" can still download them. ``Release Publish``
+deletes the installers once they are attached to the release, with its own
+inline step: it checks out the release's source, which for an older tag does
+not contain the composite action. An artifact that is not deleted, from a
+failed run or from a pull request opened from a fork or by Dependabot (whose
+token is read-only), expires under its ``retention-days``: one day for the CI
+shards and three for preview builds.
+
 The repository's default ``GITHUB_TOKEN`` permission for workflows is
 read-only. A workflow that needs to write (``Pages``, ``Release Publish``)
 declares the exact permissions it needs in a ``permissions`` block; ``CI``
-declares ``contents: read``. No workflow runs a coding agent on GitHub; agents
+declares ``contents: read``, and its ``tests`` and ``docs`` jobs add
+``actions: write`` to delete their artifacts. No workflow runs a coding agent on GitHub; agents
 work locally and open pull requests like any other contributor.
 
 Merges should be blocked when either gate fails.
