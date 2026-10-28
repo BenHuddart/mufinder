@@ -660,4 +660,4 @@ def test_every_workflow_table_resolves_job_files_through_its_controller(main_win
         (window._ensure_energy_barriers_view(), window._energy_barriers_controller),
     ]
     for view, controller in pairs:
-        assert view.job_files_menu._provider == controller.job_files_exports
+        assert view.job_files_menu._source == controller.job_files_exports

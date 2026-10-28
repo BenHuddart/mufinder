@@ -56,7 +56,9 @@ work for completed jobs, which the Job Dashboard does not list:
    ``.NNNN.err`` error files, including task-farmed ``_farmNNN`` copies.
    Checkpoints (``.check``, ``.castep_bin``) are left out. Replacing files
    already in the folder is confirmed first, and files that cannot be copied
-   are listed when the copy ends.
+   are listed when the copy ends. A folder that already holds the jobs' own
+   folders (such as ``files/pristine_relaxation``) is refused, since the files
+   would be copied onto themselves.
 
 When an entry does not apply, it is greyed out and its tooltip says why: the
 row has no job yet, or its job has no local folder or no CASTEP files.

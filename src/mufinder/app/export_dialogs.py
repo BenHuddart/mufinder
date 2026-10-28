@@ -15,17 +15,22 @@ folder, and :func:`open_containing_folder` shows a folder in the file manager;
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QWidget
 
 from mufinder.app import workflow_table_utils
 from mufinder.science.structure_io import export_structure
-from mufinder.services.job_file_export import JobFilesExport, copy_job_files, plan_job_file_copy
+from mufinder.services.job_file_export import (
+    JobFilesExport,
+    copies_onto_source,
+    copy_job_files,
+    plan_job_file_copy,
+)
 from mufinder.services.structure_export import RelaxedStructureExport
 
 
@@ -228,13 +233,18 @@ def export_job_files_to_folder(parent: QWidget, exports: Sequence[JobFilesExport
             "\n".join(sorted(reasons)) or "No job files are available to export.",
         )
         return []
-    start = available[0].directory.parent if available[0].directory is not None else None
-    folder = QFileDialog.getExistingDirectory(
-        parent, "Choose a folder for the job files", str(start or "")
-    )
+    folder = QFileDialog.getExistingDirectory(parent, "Choose a folder for the job files")
     if not folder:
         return []
     pairs = plan_job_file_copy(available, Path(folder))
+    if copies_onto_source(pairs):
+        QMessageBox.warning(
+            parent,
+            "Choose another folder",
+            f"{folder} already holds these job folders, so the files would be copied onto "
+            "themselves. Choose a folder outside the project's job folders.",
+        )
+        return []
     if not _confirm_replacing(parent, Path(folder), [target for _source, target in pairs]):
         return []
     copied, failures = copy_job_files(pairs)
@@ -260,10 +270,23 @@ class JobFilesMenu:
     """
 
     def __init__(self) -> None:
-        self._provider: JobFilesProvider = lambda _keys: ()
+        self._source: JobFilesProvider = lambda _keys: ()
+        # One menu asks about the same keys several times (enabled state and
+        # tooltip of each entry); answers are kept until control returns to
+        # the event loop, so each menu resolves its rows once.
+        self._cache: dict[tuple[object, ...], Sequence[JobFilesExport]] = {}
 
     def set_provider(self, provider: JobFilesProvider) -> None:
-        self._provider = provider
+        self._source = provider
+        self._cache.clear()
+
+    def _provider(self, keys: Sequence[object]) -> Sequence[JobFilesExport]:
+        cache_key = tuple(keys)
+        if cache_key not in self._cache:
+            if not self._cache:
+                QTimer.singleShot(0, self._cache.clear)
+            self._cache[cache_key] = self._source(keys)
+        return self._cache[cache_key]
 
     def row_actions(self, parent: QWidget) -> tuple[workflow_table_utils.RowMenuAction, ...]:
         """Return Open Containing Folder (one row) and Export Inputs/Outputs… (any rows)."""
@@ -334,9 +357,21 @@ def _confirm_replacing(parent: QWidget, folder: Path, targets: Sequence[Path]) -
         "Replace files",
         f"Replace {workflow_table_utils.count_phrase(len(existing), ('file', 'files'))} "
         f"in {folder}?",
-        "\n".join(str(path.relative_to(folder)) for path in existing),
+        _listed(str(path.relative_to(folder)) for path in existing),
         "Replace",
     )
+
+
+#: Most file names a confirmation lists before summarising the rest.
+_MAX_LISTED_FILES = 10
+
+
+def _listed(names: Iterable[str]) -> str:
+    names = list(names)
+    shown = names[:_MAX_LISTED_FILES]
+    if len(names) > len(shown):
+        shown.append(f"… and {len(names) - len(shown)} more")
+    return "\n".join(shown)
 
 
 def _report_folder_export(

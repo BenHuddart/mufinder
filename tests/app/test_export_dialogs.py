@@ -446,3 +446,55 @@ def test_job_files_menu_opens_one_jobs_folder_and_exports_any_with_files(
     assert files.tooltip_for(["remote"]) == NO_FOLDER_REASON
     files.trigger(["si", "remote"])
     assert exported == [[with_files, no_folder]]
+
+
+def test_job_files_export_refuses_to_copy_files_onto_themselves(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    messages = _Messages(monkeypatch)
+    export = _job_files(tmp_path, "Si", "Si.cell")
+    _patch_folder(monkeypatch, str(export.directory.parent))
+
+    assert export_job_files_to_folder(None, [export]) == []
+    assert [title for title, _text in messages.warning] == ["Choose another folder"]
+    assert (export.directory / "Si.cell").read_text(encoding="utf-8") == "Si.cell"
+
+
+def test_job_files_export_replace_prompt_lists_at_most_ten_files(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    _Messages(monkeypatch)
+    names = [f"Si.{index:04d}.err" for index in range(12)]
+    export = _job_files(tmp_path, "Si", *names)
+    destination = tmp_path / "out"
+    (destination / "Si").mkdir(parents=True)
+    for name in names:
+        (destination / "Si" / name).write_text("old", encoding="utf-8")
+    _patch_folder(monkeypatch, str(destination))
+    details: list[str] = []
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, _title, _text, detail, *_args: details.append(detail) or False,
+    )
+
+    export_job_files_to_folder(None, [export])
+
+    lines = details[0].splitlines()
+    assert len(lines) == 11
+    assert lines[-1] == "… and 2 more"
+
+
+def test_job_files_menu_resolves_rows_once_per_menu(qapp) -> None:
+    calls: list[tuple[object, ...]] = []
+    menu = JobFilesMenu()
+    menu.set_provider(lambda keys: calls.append(tuple(keys)) or ())
+
+    for action in menu.row_actions(None):
+        action.is_enabled(["row1"])
+        action.tooltip_for(["row1"])
+    assert calls == [("row1",)]
+
+    qapp.processEvents()
+    menu.row_actions(None)[0].is_enabled(["row1"])
+    assert calls == [("row1",), ("row1",)]

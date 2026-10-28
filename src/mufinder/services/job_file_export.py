@@ -63,16 +63,21 @@ def job_files_export(job: Job, directory: Path | None, seed: str) -> JobFilesExp
 
     if directory is None or not directory.is_dir():
         return JobFilesExport(job, seed, None, (), NO_FOLDER_REASON)
-    files = tuple(
-        sorted(
-            (
-                path
-                for path in directory.iterdir()
-                if path.is_file() and _is_export_file(path, seed)
-            ),
-            key=lambda path: path.name,
+    try:
+        files = tuple(
+            sorted(
+                (
+                    path
+                    for path in directory.iterdir()
+                    if path.is_file() and _is_export_file(path, seed)
+                ),
+                key=lambda path: path.name,
+            )
         )
-    )
+    except OSError as exc:
+        return JobFilesExport(
+            job, seed, directory, (), f"Could not read this job's folder: {exc.strerror or exc}"
+        )
     return JobFilesExport(job, seed, directory, files, None if files else NO_FILES_REASON)
 
 
@@ -116,6 +121,12 @@ def _folder_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9.\-]+", "_", text.strip()).strip("_.")
 
 
+def copies_onto_source(pairs: Sequence[tuple[Path, Path]]) -> bool:
+    """Return whether any target in ``pairs`` is its own source (the folder holds the job folders)."""
+
+    return any(source.resolve() == target.resolve() for source, target in pairs)
+
+
 def copy_job_files(pairs: Sequence[tuple[Path, Path]]) -> tuple[list[Path], list[str]]:
     """Copy each ``(source, target)`` pair; return the written targets and the failures.
 
@@ -140,6 +151,7 @@ __all__ = [
     "NO_FILES_REASON",
     "NO_FOLDER_REASON",
     "JobFilesExport",
+    "copies_onto_source",
     "copy_job_files",
     "job_files_export",
     "plan_job_file_copy",

@@ -10,6 +10,7 @@ from mufinder.services.job_file_export import (
     NO_FILES_REASON,
     NO_FOLDER_REASON,
     JobFilesExport,
+    copies_onto_source,
     copy_job_files,
     job_files_export,
     plan_job_file_copy,
@@ -121,3 +122,30 @@ def test_plan_job_file_copy_names_a_folder_without_a_seed_after_the_job(
     pairs = plan_job_file_copy([export], tmp_path / "out")
 
     assert pairs == [(job_dir / "x.cell", tmp_path / "out" / "Mu_1" / "x.cell")]
+
+
+def test_job_files_export_explains_a_folder_it_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_dir = tmp_path / "Si"
+    _touch(job_dir, "Si.cell")
+
+    def refuse(_self):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+
+    export = job_files_export(make_job("Si"), job_dir, "Si")
+
+    assert export.files == ()
+    assert export.directory == job_dir
+    assert export.unavailable_reason == "Could not read this job's folder: Permission denied"
+
+
+def test_copies_onto_source_spots_a_destination_that_holds_the_job_folder(tmp_path: Path) -> None:
+    job_dir = tmp_path / "files" / "Si"
+    _touch(job_dir, "Si.cell")
+    export = job_files_export(make_job("Si"), job_dir, "Si")
+
+    assert copies_onto_source(plan_job_file_copy([export], job_dir.parent))
+    assert not copies_onto_source(plan_job_file_copy([export], tmp_path / "out"))
