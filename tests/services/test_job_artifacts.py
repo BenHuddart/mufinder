@@ -117,6 +117,37 @@ def test_collect_out_cell_success_carries_cell_and_lattice(tmp_path: Path) -> No
     assert artifacts.out_cell_path == tmp_path / "seed-out.cell"
 
 
+def test_collect_out_cell_reads_the_geometry_past_calculation_keywords(tmp_path: Path) -> None:
+    """A real ``-out.cell`` echoes the run's settings; only the geometry is read.
+
+    ``EXTERNAL_PRESSURE`` is outside the built-in keyword set, so validating the
+    whole file against the catalog would report a finished relaxation as failed.
+    """
+
+    text = (
+        _OUT_CELL_TEXT
+        + """
+%BLOCK EXTERNAL_PRESSURE
+GPa
+0.5 0.0 0.0
+    0.5 0.0
+        0.5
+%ENDBLOCK EXTERNAL_PRESSURE
+
+FIX_COM : true
+SYMMETRY_TOL :     0.001000
+"""
+    )
+    (tmp_path / "seed-out.cell").write_text(text, encoding="utf-8")
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_out_cell=True)
+
+    assert artifacts.cell_error is None
+    assert artifacts.relaxed_cell is not None
+    assert list(artifacts.relaxed_cell.species) == ["Si", "H:mu"]
+    assert artifacts.lattice_abc == pytest.approx((5.1, 5.2, 5.3))
+
+
 def test_collect_out_cell_missing_sets_flag_not_error(tmp_path: Path) -> None:
     artifacts = collect_job_artifacts(tmp_path, "seed", want_out_cell=True)
 
@@ -270,7 +301,7 @@ def test_collect_out_cell_io_error_captured_not_raised(
 ) -> None:
     (tmp_path / "seed-out.cell").write_text("irrelevant", encoding="utf-8")
 
-    def _io_boom(_path):
+    def _io_boom(_path, **_kwargs):
         raise OSError("disk unplugged")
 
     monkeypatch.setattr(job_artifacts_module, "parse_cell_file", _io_boom)

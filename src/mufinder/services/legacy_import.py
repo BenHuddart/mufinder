@@ -402,7 +402,9 @@ def _detect_run(
     out_cell: ParsedCell | None = None
     if out_cell_path is not None:
         try:
-            out_cell = parse_cell_file(out_cell_path)
+            # Geometry only: the run's settings echoed in an -out.cell may lie
+            # outside the loaded keyword catalog.
+            out_cell = parse_cell_file(out_cell_path, geometry_only=True)
         except Exception as exc:  # noqa: BLE001 - see the input-cell note above
             warnings.append(f"Could not read {out_cell_path.name}: {exc}")
             blockers.append("The relaxed -out.cell could not be parsed.")
