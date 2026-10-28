@@ -1414,8 +1414,10 @@ def test_relaxation_row_menu_has_shared_core_then_continue_and_export(qapp, monk
         "Remove",
         "Continue relaxation…",
         "Export Relaxed Structure",
+        "Open Containing Folder",
+        "Export Inputs/Outputs…",
     ]
-    assert menu.separators_before == [7]
+    assert menu.separators_before == [7, 9]
 
 
 def test_relaxation_row_menu_cancel_and_inspect_emit_row_labels(qapp, monkeypatch) -> None:
