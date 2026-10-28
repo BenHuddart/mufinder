@@ -88,6 +88,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowJobController,
     confirm_active_host,
     dedupe_jobs,
+    output_predates_run,
     locked_configuration_reason,
 )
 from mufinder.app.workflow_dialogs import SourceConfigureRequest, SourceConfigureResult
@@ -516,15 +517,27 @@ class HyperfineCouplingController(WorkflowJobController):
         run: CalculationRun,
         artifacts: ParsedJobArtifacts,
     ) -> str | None:
-        """Fail a hyperfine job whose ``.magres`` is missing or holds no muon tensor."""
+        """Fail a hyperfine job without a readable ``.magres`` from this run.
+
+        When CASTEP stopped before writing one, its own error (for example an
+        unconverged ground state) is the reason given. A ``.magres`` older than
+        the run's start was left by an earlier run and fails the job too.
+        """
 
         if job.calc_type != HYPERFINE_CALC_TYPE:
             return None
+        seed_name = self._context.job_seed_name(job)
         if artifacts.magres_missing:
-            seed_name = self._context.job_seed_name(job)
+            if parsed.error_message:
+                return parsed.error_message
             return f"Expected CASTEP magres output was not found: {seed_name}.magres"
         if artifacts.magres_error is not None or artifacts.magres is None:
             return f"Failed to read CASTEP magres output: {artifacts.magres_error}"
+        if output_predates_run(artifacts.magres_path, run.started_at or job.started_at):
+            return (
+                f"{seed_name}.magres predates this run: CASTEP wrote no hyperfine "
+                "tensors, so the previous run's are still in place."
+            )
         return None
 
     def build_result(

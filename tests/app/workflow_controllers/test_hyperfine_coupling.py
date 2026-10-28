@@ -167,6 +167,41 @@ def test_validate_artifacts_fails_a_missing_or_unreadable_magres(tmp_path: Path)
     assert broken == "Failed to read CASTEP magres output: bad"
 
 
+def test_validate_artifacts_reports_castep_error_and_stale_magres(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+    import os
+
+    from mufinder.castep_io.magres import parse_magres_hyperfine
+
+    document, controller, _view, key, _output_root = _setup(tmp_path)
+    (job,) = controller.materialize([key])
+    run = _run(document, job)
+    unconverged = replace(
+        completed_castep_result(),
+        error_message="electronic_minimisation of initial cell failed.",
+    )
+
+    # CASTEP stopped before writing a .magres: its own error is the reason.
+    assert (
+        controller.validate_artifacts(
+            job, unconverged, run, ParsedJobArtifacts(magres_missing=True)
+        )
+        == "electronic_minimisation of initial cell failed."
+    )
+
+    # A .magres left by an earlier run is not this run's result.
+    stale = tmp_path / "stale.magres"
+    shutil.copy(FIXTURES / "muonium_vacuum.magres", stale)
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(stale, (old, old))
+    run.started_at = datetime.now(UTC)
+    (tensor,) = parse_magres_hyperfine(stale)
+    artifacts = ParsedJobArtifacts(magres=tensor, magres_path=stale)
+    message = controller.validate_artifacts(job, completed_castep_result(), run, artifacts)
+    assert message is not None and "predates this run" in message
+
+
 def test_build_result_stores_the_coupling_pseudo_density_and_contact_shell(
     tmp_path: Path,
 ) -> None:
