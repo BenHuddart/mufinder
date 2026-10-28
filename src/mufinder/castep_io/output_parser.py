@@ -499,18 +499,22 @@ def _find_error_message(lines: list[str]) -> str | None:
     # CASTEP boxes each warning between rules of "?" under a "Warning in
     # <routine>" heading. A warning's wording ("Failed to identify 3
     # eigenvectors with acoustic character") is not a failure of the run.
-    in_box = False
+    # A warning starts at a heading right after a rule and ends at the next
+    # rule, so a stray or missing rule cannot invert the state for the rest
+    # of the output.
+    after_rule = False
     in_warning = False
     for line in lines:
         trimmed = line.strip()
         if not trimmed:
             continue
         if _WARNING_BOX_RULE_RE.match(trimmed):
-            in_box = not in_box
+            after_rule = True
             in_warning = False
             continue
-        if in_box and _WARNING_BOX_HEADING_RE.match(trimmed):
+        if after_rule and _WARNING_BOX_HEADING_RE.match(trimmed):
             in_warning = True
+        after_rule = False
         if in_warning:
             continue
         for marker in _FAILURE_MARKERS:

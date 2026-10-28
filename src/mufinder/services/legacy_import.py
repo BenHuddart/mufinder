@@ -391,11 +391,21 @@ def _detect_run(
         # and a parser reading third-party files can fail in ways its own error
         # type does not cover (a species label ASE rejects, a decode error).
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Could not read {input_cell_path.name}: {exc}")
-            # Blocking, not merely a warning: the initial muon position and the
-            # supercell matrix are both recovered from this file, so without it
-            # there is nothing to anchor the imported site to.
-            blockers.append("The input .cell could not be parsed.")
+            # A keyword outside the loaded catalog costs only the settings read
+            # from the cell (its k-point grid); the geometry still anchors the run.
+            try:
+                input_cell = parse_cell_file(input_cell_path, geometry_only=True)
+            except Exception:  # noqa: BLE001
+                warnings.append(f"Could not read {input_cell_path.name}: {exc}")
+                # Blocking, not merely a warning: the initial muon position and
+                # the supercell matrix are both recovered from this file, so
+                # without it there is nothing to anchor the imported site to.
+                blockers.append("The input .cell could not be parsed.")
+            else:
+                warnings.append(
+                    f"Read only the geometry of {input_cell_path.name}; a k-point grid "
+                    f"it states that the .castep does not report is not imported: {exc}"
+                )
     else:
         blockers.append("No input .cell was found for this site.")
 

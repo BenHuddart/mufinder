@@ -794,7 +794,7 @@ def _initial_positions(run: DetectedRun) -> list[list[float]]:
     if run.input_cell_path is None:
         return []
     try:
-        parsed = parse_cell_file(run.input_cell_path)
+        parsed = parse_cell_file(run.input_cell_path, geometry_only=True)
     except Exception:  # noqa: BLE001
         return []
     return [[float(value) for value in row] for row in parsed.fractional_positions]

@@ -1,0 +1,4 @@
+# Published CASTEP outputs, kept byte for byte as the data sets hold them
+# (tests/docs/test_docs_alpha_n2.py checks their checksums).
+tests/fixtures/alpha_n2/** -text
+tests/fixtures/gdru2si2/** -text

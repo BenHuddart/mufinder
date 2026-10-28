@@ -175,8 +175,10 @@ a 3 × 3 tensor, and :math:`c_i = \mathrm{Tr}\, C_{\mu i} /
 uses every stable mode, so it is the many-body harmonic answer rather than a
 statement about three modes. Modes with imaginary frequencies have no harmonic
 ground state and are left out. The soft modes of the host that barely move the
-muon still widen the nuclei's motion, so leaving them out as well, as a cutoff
-on the muon participation does, gives a smaller :math:`|c_i|`.
+muon still add to each nucleus's own variance, so the answer depends on which
+modes the sum keeps: in the worked example below, leaving them out as well, as
+a cutoff on the muon participation does, lowers :math:`|c_i|` from about 30 % to
+about 26 %.
 
 .. _quantum-corrections-adiabatic:
 

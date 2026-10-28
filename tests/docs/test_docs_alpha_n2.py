@@ -208,7 +208,7 @@ def test_the_hybridised_stretch_and_the_unstable_librations() -> None:
     assert frequencies[160] == pytest.approx(2345.2, abs=0.05)
     assert participation[160] == pytest.approx(0.118, abs=5e-4)
     assert int(np.argsort(participation)[-4]) == 160
-    assert frequencies[161:191] == pytest.approx(np.clip(frequencies[161:191], 2355.65, 2363.55))
+    assert np.all((frequencies[161:191] > 2355.65) & (frequencies[161:191] < 2363.55))
     assert frequencies[191] == pytest.approx(2428.7, abs=0.05)
     assert participation[191] < 1e-3
     # Eighteen librations come out imaginary, the softest at -38.9 cm^-1;

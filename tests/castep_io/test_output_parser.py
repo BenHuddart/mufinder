@@ -150,6 +150,23 @@ def test_a_boxed_castep_warning_does_not_fail_a_finished_run(tmp_path: Path) -> 
     assert any("secondd_find_acoustics" in line for line in parsed.warnings)
 
 
+def test_a_stray_rule_does_not_hide_a_later_failure(tmp_path: Path) -> None:
+    """An unbalanced rule must not turn the next boxed warning inside out."""
+
+    output = _write(
+        tmp_path,
+        "stray.castep",
+        "????????????????????????????????????????\n"
+        + _ACOUSTIC_WARNING_BOX
+        + "Geometry optimization failed\nTotal time = 4.0 s\n",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is False
+    assert parsed.error_message == "Geometry optimization failed"
+
+
 def test_a_failure_outside_a_warning_box_still_fails_the_run(tmp_path: Path) -> None:
     output = _write(
         tmp_path,

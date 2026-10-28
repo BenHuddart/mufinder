@@ -80,7 +80,8 @@ the package.
   this mode: structure import
   (``mufinder.science.structure_io.load_structure_file``), the relaxed cell of a
   finished job (``mufinder.services.job_artifacts.collect_job_artifacts``) and
-  the legacy relaxation import. A relaxed structure therefore reads regardless
+  the legacy relaxation import, which also falls back to it for an input
+  ``.cell`` whose full parse fails. A relaxed structure therefore reads regardless
   of the calculation keywords CASTEP echoes into it, such as
   ``EXTERNAL_PRESSURE`` or ``QUANTISATION_AXIS``.
 

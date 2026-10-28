@@ -393,6 +393,25 @@ class TestScanLegacyFolder:
         assert run.importable, run.blockers
         assert run.final_muon_fractional_supercell == pytest.approx((0.11, 0.21, 0.31))
 
+    def test_an_input_cell_with_calculation_keywords_anchors_the_run(self, tmp_path: Path) -> None:
+        """A keyword outside the built-in set loses only the settings, not the geometry."""
+
+        root = build_folder(tmp_path, sites=(1,))
+        input_cell = root / "input" / "Host_1.cell"
+        input_cell.write_text(
+            input_cell.read_text(encoding="utf-8")
+            + "\n%BLOCK EXTERNAL_PRESSURE\nGPa\n0.5 0.0 0.0\n0.5 0.0\n0.5\n%ENDBLOCK EXTERNAL_PRESSURE\n",
+            encoding="utf-8",
+        )
+
+        run = scan_legacy_folder(root, host_lattice=HOST_LATTICE).runs[0]
+
+        assert run.importable, run.blockers
+        assert run.initial_muon_fractional_supercell == pytest.approx((0.1, 0.2, 0.3))
+        assert any("Host_1.cell" in item and "k-point grid" in item for item in run.warnings), (
+            run.warnings
+        )
+
     def test_an_unparseable_cell_does_not_end_the_scan(self, tmp_path: Path) -> None:
         """One bad run must never discard the rest of the directory."""
 

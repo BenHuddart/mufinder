@@ -63,7 +63,10 @@ What can be imported
 - A run cannot be imported when it has no ``.castep`` output, its CASTEP
   calculation did not complete, its input cell cannot be parsed, or its lattice
   is not an integer supercell of the host. Such runs are listed unticked and
-  disabled, with the reason in ``Notes``.
+  disabled, with the reason in ``Notes``. An input cell with a keyword outside
+  the loaded keyword catalog, such as ``EXTERNAL_PRESSURE``, still imports: its
+  geometry is read, ``Notes`` says so, and a k-point grid that only the cell
+  states, and the ``.castep`` does not report, is not imported.
 - A completed but unconverged run can be ticked. It is imported as completed,
   with geometry convergence recorded as not achieved; nothing is imported as
   failed.
