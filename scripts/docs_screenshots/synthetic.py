@@ -58,8 +58,19 @@ def final_configuration(castep: Path) -> tuple[list[list[float]], list[str], lis
     return lattice, species, fractional
 
 
-def castep_text(*, energy: float, species: list[str], geometry: bool, wall_time: float) -> str:
-    """A CASTEP output with the lines MuFinder reads: final energy, forces and timing."""
+def castep_text(
+    *,
+    energy: float,
+    species: list[str],
+    geometry: bool,
+    wall_time: float,
+    mulliken_spins: Sequence[float] | None = None,
+) -> str:
+    """A CASTEP output with the lines MuFinder reads: final energy, forces and timing.
+
+    ``mulliken_spins`` adds a spin-polarised Mulliken population table with
+    those per-atom spins, in μB, in ``species`` order.
+    """
 
     forces = "\n".join(
         f" * {symbol:<6} {index:4d} {0.004 * np.sin(1.7 * index):12.5f} {0.003 * np.cos(2.3 * index):12.5f}"
@@ -75,7 +86,33 @@ def castep_text(*, energy: float, species: list[str], geometry: bool, wall_time:
         f"{forces}\n"
         " ************************************************************\n\n"
         f"{converged}"
+        f"{_mulliken_text(species, mulliken_spins) if mulliken_spins is not None else ''}"
         f" Total time          =    {wall_time:.2f} s\n"
+    )
+
+
+def _mulliken_text(species: Sequence[str], spins: Sequence[float]) -> str:
+    """CASTEP's spin-polarised Mulliken table: an up and a down row per ion, the spin on the up row."""
+
+    rule = " " + "=" * 94
+    rows: list[str] = []
+    counts: dict[str, int] = {}
+    for symbol, spin in zip(species, spins, strict=True):
+        counts[symbol] = counts.get(symbol, 0) + 1
+        up, down = 4.0 + 0.5 * spin, 4.0 - 0.5 * spin
+        rows.append(
+            f"  {symbol:<6} {counts[symbol]:9d}   up:  {0.0:6.3f}  {0.0:6.3f}  {up:6.3f}  {0.0:6.3f}"
+            f"  {up:6.3f}  {0.0:7.3f}  {spin:7.3f}"
+        )
+        rows.append(
+            f"  {'':<6} {'':9}   dn:  {0.0:6.3f}  {0.0:6.3f}  {down:6.3f}  {0.0:6.3f}  {down:6.3f}"
+        )
+    return (
+        "     Atomic Populations (Mulliken)\n"
+        "     -----------------------------\n"
+        "Species          Ion Spin      s       p       d       f      Total   Charge (e)"
+        "  Spin (hbar/2)\n"
+        f"{rule}\n" + "\n".join(rows) + f"\n{rule}\n\n"
     )
 
 
@@ -416,8 +453,13 @@ def den_fmt_text(
     *,
     grid: tuple[int, int, int],
     shells: dict[str, Sequence[tuple[float, float]]],
+    spin_density_angstrom3: float | None = None,
 ) -> str:
     """A CASTEP ``.den_fmt`` of superposed spherical Gaussian atomic densities.
+
+    With ``spin_density_angstrom3`` the file is spin polarised, with that
+    uniform spin density in its spin column: a model that only fixes the
+    value read at any point, such as the muon's.
 
     ``shells`` gives, per species, ``(electrons, width in Å)`` pairs: each atom
     carries one normalised Gaussian of that width per pair. The density is
@@ -450,13 +492,19 @@ def den_fmt_text(
         "           Real Lattice(A)               Lattice parameters(A)    Cell Angles",
         *(f"  {row[0]:12.7f}  {row[1]:12.7f}  {row[2]:12.7f}" for row in vectors),
         " ",
-        "   1                            ! nspins",
+        f"   {1 if spin_density_angstrom3 is None else 2}                            ! nspins",
         f"  {grid[0]:3d}  {grid[1]:3d}  {grid[2]:3d}                ! fine FFT grid along <a,b,c>",
         ' END header: data is "<a b c> charge" in units of electrons/grid_point * number of grid_points',
         " ",
     ]
+    # CASTEP writes the spin column, like the charge, times the cell volume.
+    spin = (
+        ""
+        if spin_density_angstrom3 is None
+        else f"{spin_density_angstrom3 * abs(np.linalg.det(vectors)):20.6f}"
+    )
     lines += [
-        f"{a + 1:6d}{b + 1:6d}{c + 1:6d}{density[a, b, c]:20.6f}"
+        f"{a + 1:6d}{b + 1:6d}{c + 1:6d}{density[a, b, c]:20.6f}{spin}"
         for c in range(grid[2])
         for b in range(grid[1])
         for a in range(grid[0])

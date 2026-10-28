@@ -75,6 +75,17 @@ read-only and says why. A failed, stopped or cancelled job recovers through
 The workflow page
 -----------------
 
+.. figure:: ../_generated/screenshots/fe_hyperfine_coupling_page.webp
+   :alt: The Hyperfine Coupling page for a muon in bcc iron, with the tetrahedral
+         and octahedral sites as jobs and the tetrahedral site's completed
+         result selected.
+
+   A positive muon in bcc iron (:doc:`/user_guide/examples/fe`): the
+   tetrahedral (12d) site's magres job has completed and the octahedral (6b)
+   site is ready to submit. The result is the run worked through on
+   :doc:`/user_guide/hyperfine_coupling_theory`; selecting it enables
+   ``Use in Magnetic Fields``.
+
 ``Hyperfine Jobs`` lists the sites pinned to the ``Muon Sites`` summary, or
 every eligible relaxed site when ``Show every relaxed site`` is ticked, with
 the same notice as Quantum Corrections when nothing is pinned. Its columns are
