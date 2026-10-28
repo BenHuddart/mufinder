@@ -199,9 +199,8 @@ magnetisation`` takes it from magnetometry instead.
 The contact field
 -----------------
 
-The contact field at the muon is not computed from first principles by
-MuFinder. It is the ``Hyperfine coupling`` times the moments of the muon's
-nearest Fe, and the coupling is an input. Low-temperature measurements of the
+On the Magnetic Fields page the contact field is the ``Hyperfine coupling``
+times the moments of the muon's nearest Fe, and the coupling is an input. Low-temperature measurements of the
 muon's field in iron give -1.11 T, antiparallel to the magnetisation (Nishida
 *et al.* 1977). The nearest two Fe carry 2.2 μB each, so a coupling of
 -0.5045455 T/μB in the ``T/μB`` unit gives a contact field of -1.11 T, which is
@@ -211,6 +210,11 @@ Density functional theory predicts the coupling rather than taking it. For the
 tetrahedral site Onuorah *et al.* (2018, 2019) find -1.25 T for a static muon
 and -1.07 T once the muon's zero-point motion is included, the latter close to
 the measured -1.11 T.
+
+:doc:`/user_guide/hyperfine_coupling` computes the coupling with CASTEP. For
+the unrelaxed tetrahedral site in a 2 × 2 × 2 supercell it gives -1.20 T, and
+handing it to Magnetic Fields enters -0.070 Å⁻³, or -0.54 T/μB (worked through on
+:doc:`/user_guide/hyperfine_coupling_theory`).
 
 The site question
 -----------------

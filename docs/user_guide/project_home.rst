@@ -77,8 +77,9 @@ The dependencies drawn are:
 - UEP is an optional route into site generation, and an optional source of
   estimated sites for magnetic fields.
 - Generation, then Relaxations, then Analysis.
-- Magnetic Fields, Quantum Corrections and Energy Barriers all build on the
-  distinct sites that Analysis finds.
+- Hyperfine Coupling, Magnetic Fields, Quantum Corrections and Energy
+  Barriers all build on the distinct sites that Analysis finds; Magnetic
+  Fields can take its contact coupling from Hyperfine Coupling.
 - Polarisation builds on the fields of Magnetic Fields.
 
 A waypoint shows its stage's progress:

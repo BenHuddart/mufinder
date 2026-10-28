@@ -50,8 +50,8 @@ Application shell
 - The project navigator lists the workflow stages: ``Host Structure``,
   ``Supercell Editor``, ``Convergence Testing`` (``Cutoff Energy`` and
   ``K-Point Grid``), ``Pristine Relaxation``, ``UEP``, ``Muon Sites``
-  (``Generation``, ``Relaxations`` and ``Analysis``), ``Magnetic Fields``,
-  ``Polarisation``, ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button
+  (``Generation``, ``Relaxations`` and ``Analysis``), ``Hyperfine Coupling``,
+  ``Magnetic Fields``, ``Polarisation``, ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button
   above it returns to the project home. Analysis-workspace and saved
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
@@ -225,6 +225,17 @@ See :doc:`/user_guide/structural_relaxation_analysis`.
 :doc:`/user_guide/examples/alpha_n2` finds one site and its displacements in
 solid nitrogen, and :doc:`/user_guide/examples/gdru2si2` pins two sites for
 its energy barriers.
+
+Hyperfine Coupling
+~~~~~~~~~~~~~~~~~~
+
+``Hyperfine Coupling`` runs one spin-polarised CASTEP ``MAGRES`` hyperfine job
+for each relaxed muon site and reports the muon's isotropic and dipolar
+hyperfine couplings and its contact field, with the contact field from the
+pseudo spin density alongside as a cross-check. A result's coupling can be
+handed to the Magnetic Fields forms that show its site. See
+:doc:`/user_guide/hyperfine_coupling` and
+:doc:`/user_guide/hyperfine_coupling_theory`.
 
 Magnetic Fields
 ~~~~~~~~~~~~~~~

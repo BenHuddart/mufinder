@@ -135,11 +135,15 @@ policy, move the reusable part into the appropriate shared layer:
   clustering of its optimized positions in
   ``mufinder.science.uep_clustering``, pairing a relaxed muon supercell with
   its pristine host for finite-cell distortion corrections in
-  ``mufinder.science.muon_distortion`` and every ``muesr`` import in
+  ``mufinder.science.muon_distortion``, the hyperfine sign convention, unit
+  conversions and spin density at the muon in ``mufinder.science.hyperfine``
+  (which takes the contact-shell mean from ``mufinder.science.magnetic_fields``)
+  and every ``muesr`` import in
   ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
-  formatted density, pseudopotential reports and cell charge the UEP analysis
-  needs (``mufinder.castep_io.charge_density``); the keyword schema keeps
+  formatted charge and spin density, pseudopotential reports and cell charge
+  (``mufinder.castep_io.charge_density``) and the ``.magres`` hyperfine tensors
+  (``mufinder.castep_io.magres``); the keyword schema keeps
   catalog discovery, loading and the lookup API in
   ``mufinder.castep_io.schema`` and the bundled starter-catalog translation in
   ``mufinder.castep_io.starter_catalog``
@@ -232,7 +236,7 @@ Every CASTEP job MuFinder runs is generated the same way:
 - ``mufinder.workflow`` has one keyword-only ``expand_*`` function per
   workflow: convergence sweeps over ``CUT_OFF_ENERGY`` and
   ``KPOINT_MP_GRID``, muon-site sweeps over initial fractional muon positions,
-  pristine and muon relaxation jobs, quantum-correction phonon jobs, and
+  pristine and muon relaxation jobs, quantum-correction phonon jobs, hyperfine magres jobs, and
   nudged-elastic-band energy-barrier jobs.
 - Job names are deterministic and filesystem-safe, and each resolved job has
   its own output directory.
