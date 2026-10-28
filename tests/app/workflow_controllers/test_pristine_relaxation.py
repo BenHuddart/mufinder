@@ -313,6 +313,103 @@ def test_pristine_controller_recompletion_updates_derived_structure_in_place(
     assert service.validate_document(document) == []
 
 
+_SPIN_OUT_CELL_TEXT = """
+%BLOCK LATTICE_CART
+ang
+2.87 0.0 0.0
+0.0 2.87 0.0
+0.0 0.0 2.87
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Fe 0.0 0.0 0.0 SPIN= 2.000
+Fe 0.5 0.5 0.5 SPIN= 2.000
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _fe_completion_fixture(tmp_path: Path):
+    """Return ``complete(run_index, cell_text)`` for a spin-polarised bcc Fe relaxation."""
+
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Fe",
+        lattice_vectors=[[2.86, 0.0, 0.0], [0.0, 2.86, 0.0], [0.0, 0.0, 2.86]],
+        species=["Fe", "Fe"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        properties={"atomic_spins": [2.0, 2.0]},
+    )
+    service.add_structure(document, host)
+    service.register_pristine_relaxation_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "pristine_relax", "rows": []},
+        output_directory=document.project_root / "files" / "pristine_relaxation",
+    )
+    job = _pristine_job(service, document, "pristine_relax_fe")
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    context = make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
+    controller = PristineRelaxationController(context, stub_pristine_deps(), FakeRelaxationView())
+
+    def complete(run_index: int, cell_text: str):
+        run = CalculationRun(job_id=job.id, run_index=run_index)
+        document.runs[run.id] = run
+        (output_dir / f"{job.label}-out.cell").write_text(cell_text, encoding="utf-8")
+        artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+        parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
+        result = controller.build_result(job, parsed, run, artifacts)
+        return document.structures[result.derived_structure_ids[0]]
+
+    return complete
+
+
+def test_pristine_controller_keeps_the_runs_spins_on_the_relaxed_structure(
+    tmp_path: Path,
+) -> None:
+    complete = _fe_completion_fixture(tmp_path)
+
+    derived = complete(1, _SPIN_OUT_CELL_TEXT)
+
+    assert derived.properties["atomic_spins"] == [2.0, 2.0]
+
+
+def test_relaxed_structure_cell_export_carries_the_runs_spins(tmp_path: Path) -> None:
+    from mufinder.castep_io.cell_parser import parse_cell_file
+    from mufinder.science.structure_io import export_structure
+
+    derived = _fe_completion_fixture(tmp_path)(1, _SPIN_OUT_CELL_TEXT)
+    destination = tmp_path / "exported.cell"
+
+    export_structure(derived, destination)
+
+    assert "SPIN=2" in destination.read_text(encoding="utf-8")
+    assert parse_cell_file(destination).atomic_spins == (2.0, 2.0)
+
+
+def test_pristine_controller_continuation_refreshes_the_relaxed_structures_spins(
+    tmp_path: Path,
+) -> None:
+    complete = _fe_completion_fixture(tmp_path)
+    first = complete(1, _SPIN_OUT_CELL_TEXT)
+
+    second = complete(2, _SPIN_OUT_CELL_TEXT.replace("SPIN= 2.000", "SPIN= 2.500"))
+    assert second.id == first.id
+    assert second.properties["atomic_spins"] == [2.5, 2.5]
+
+    # A continuation whose ``-out.cell`` has no SPIN= values leaves no stale spins.
+    third = complete(3, _SPIN_OUT_CELL_TEXT.replace(" SPIN= 2.000", ""))
+    assert third.id == first.id
+    assert "atomic_spins" not in third.properties
+
+
 def test_pristine_controller_recompletion_refreshes_result_payload(
     tmp_path: Path,
 ) -> None:

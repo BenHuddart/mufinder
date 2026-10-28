@@ -469,6 +469,21 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that rewrites the stored witness of each
        quantum-phonon result, or indefinitely.
+   * - Relaxed structures without ``atomic_spins``
+     - ``mufinder.services.relaxed_structure_spins``
+       (``backfill_relaxed_structure_spins``), called by
+       ``ProjectService.load_project``
+     - A pristine or muon relaxation stores its run's ``SPIN=`` values on its
+       relaxed structure as ``properties["atomic_spins"]``. A structure saved
+       before that has no key; on load it gains the nonzero ``SPIN=`` values
+       of its source job's ``-out.cell``, else its input ``.cell``, when one
+       has the structure's atom count, and the next save writes them. A
+       structure whose job files are gone, or whose run had no spins, keeps no
+       key and is checked again on the next load. A structure that has the key
+       is never touched.
+     - Load-time repair that reads job files, so it is not a schema step.
+       Keep while projects saved before relaxed structures kept their spins
+       may still be opened, or indefinitely.
 
 Saved-project schema migrations
 -------------------------------

@@ -33,7 +33,9 @@ from mufinder.persistence.json_store import ProjectStore
 from mufinder.persistence.migrations import migrate_project_payloads
 from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
+from mufinder.services.job_paths import job_output_directory
 from mufinder.services.perf_trace import PerfTrace
+from mufinder.services.relaxed_structure_spins import backfill_relaxed_structure_spins
 
 # The document aggregate, its read-only queries and the supercell records are
 # re-exported: callers import them from this module.
@@ -310,6 +312,15 @@ class ProjectService:
             provenance=provenance,
             ui_state=ui_state,
         )
+        # Relaxed structures saved before they kept their run's SPIN= values get
+        # them from the job's files; left out of the cache so the next save
+        # writes them.
+        unsaved_keys |= {
+            ("structures", str(structure_id))
+            for structure_id in backfill_relaxed_structure_spins(
+                document, lambda job: self._job_output_directory(document, job)
+            )
+        }
 
         # Reset then seed the dirty-tracking cache from the payloads just loaded
         # off disk so the first save after opening a project does not rewrite
@@ -337,6 +348,19 @@ class ProjectService:
         if issues:
             document.ui_state["_integrity_warnings"] = issues
         return document
+
+    @staticmethod
+    def _job_output_directory(document: ProjectDocument, job: Job) -> Path | None:
+        # Deferred: ``source_candidates`` imports this module.
+        from mufinder.services.source_candidates import quantum_seed_name_for_key
+
+        return job_output_directory(
+            document,
+            job,
+            quantum_seed_name=lambda definition, key: quantum_seed_name_for_key(
+                document, definition, key
+            ),
+        )
 
     def save_project(self, document: ProjectDocument) -> None:
         """Persist all mutable project entities to disk."""
