@@ -59,6 +59,7 @@ from mufinder.services.source_candidates import (
     serialize_energy_barrier_source_candidates,
     serialize_quantum_sources,
     site_charge_state_relaxation_jobs,
+    source_relaxation_atomic_spins,
     source_relaxation_parameter_values,
     uuid_from_source,
 )
@@ -359,6 +360,28 @@ def test_unreadable_source_param_defaults_only_muonium_to_spin_polarised(
 
     assert source_relaxation_parameter_values(job, lambda _job: tmp_path / job.label) == expected
     assert source_relaxation_parameter_values(job, lambda _job: None) == {}
+
+
+def test_follow_on_rows_read_the_source_relaxation_initial_spins(tmp_path: Path) -> None:
+    job = _relaxation_job_with_inputs(
+        tmp_path, param=None, cell=_SPIN_SOURCE_CELL.format(spin=" SPIN=2")
+    )
+
+    assert source_relaxation_atomic_spins(job, lambda _job: tmp_path / job.label) == (2.0, 2.0)
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [None, "%BLOCK POSITIONS_FRAC\nFe 0 0\n%ENDBLOCK POSITIONS_FRAC\n", _SPIN_SOURCE_CELL],
+    ids=["missing", "unparsable", "no-spins"],
+)
+def test_source_relaxation_without_readable_spins_gives_none(tmp_path: Path, cell) -> None:
+    job = _relaxation_job_with_inputs(
+        tmp_path, param=None, cell=cell.format(spin="") if cell == _SPIN_SOURCE_CELL else cell
+    )
+
+    assert source_relaxation_atomic_spins(job, lambda _job: tmp_path / job.label) is None
+    assert source_relaxation_atomic_spins(job, lambda _job: None) is None
 
 
 # --- energy-barrier sources ---------------------------------------------------

@@ -39,8 +39,8 @@ Hyperfine Coupling needs:
   to the ``Muon Sites`` summary, or every eligible relaxed site with
   ``Show every relaxed site`` ticked.
 - **A spin-polarised description of the host.** For a magnetic host, the
-  relaxed structure carries the per-atom spins its relaxation started from,
-  and the hyperfine job starts from them too. To hand a coupling to Magnetic
+  hyperfine job starts from the per-atom ``SPIN=`` values in its source
+  relaxation's ``.cell``, so it settles in the same magnetic state. To hand a coupling to Magnetic
   Fields, the source relaxation must itself have been spin polarised, because
   the moments come from its Mulliken populations (see
   `Using the coupling in Magnetic Fields`_).
@@ -146,6 +146,8 @@ Each job is a fresh CASTEP run with:
   polarised) and ``WRITE_FORMATTED_DENSITY : TRUE``;
 - ``CHARGE : 1`` for a diamagnetic muon and ``CHARGE : 0`` for muonium, with
   ``SPIN=1`` seeded on the muon of a muonium site so the run stays open-shell;
+- the source relaxation's per-atom ``SPIN=`` values, when its ``.cell`` sets
+  them and the relaxed structure carries none of its own;
 - ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``. The gyromagnetic ratio is
   the CODATA muon value, so CASTEP scales the muon's tensor by the muon's
   gyromagnetic ratio rather than the proton's.

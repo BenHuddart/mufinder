@@ -255,3 +255,20 @@ def test_build_result_warns_without_mulliken_spins_or_density(tmp_path: Path) ->
     assert contribution.payload["pseudo_contact_field_T"] is None
     assert NO_MULLIKEN_SPINS_WARNING in contribution.warnings
     assert any("pseudo spin density" in warning for warning in contribution.warnings)
+
+
+def test_materialize_carries_the_source_relaxation_initial_spins(tmp_path: Path) -> None:
+    document, controller, _view, key, output_root = _setup(tmp_path)
+    # The relaxation runs under its directory's name, the seed its .cell is read by.
+    (tmp_path / "relax" / "relax.cell").write_text(
+        "%BLOCK LATTICE_CART\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n"
+        "%BLOCK POSITIONS_FRAC\nFe 0 0 0 SPIN=2.2\nFe 0.5 0.5 0.5 SPIN=-2.2\n"
+        "H:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n",
+        encoding="utf-8",
+    )
+
+    controller.materialize([key])
+
+    cell = (output_root / "hyperfine_siteA" / "hyperfine_siteA.cell").read_text(encoding="utf-8")
+    fe_lines = [line for line in cell.splitlines() if line.startswith("Fe ")]
+    assert [line.rsplit(" ", 1)[-1] for line in fe_lines] == ["SPIN=2.2", "SPIN=-2.2"]
