@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -271,3 +272,43 @@ def test_materialize_starts_from_the_relaxed_structure_spins(tmp_path: Path) -> 
     cell = (output_root / "hyperfine_siteA" / "hyperfine_siteA.cell").read_text(encoding="utf-8")
     fe_lines = [line for line in cell.splitlines() if line.startswith("Fe ")]
     assert [line.rsplit(" ", 1)[-1] for line in fe_lines] == ["SPIN=2.2", "SPIN=-2.2"]
+
+
+def test_results_name_a_pinned_site_as_the_jobs_table_does(tmp_path: Path) -> None:
+    from mufinder.domain.models import Result
+    from mufinder.services.muon_sites_summary import (
+        build_muon_sites_summary_snapshot,
+        store_muon_sites_summary_snapshot,
+    )
+
+    from tests.support.muon_sites import ClusterSpec, clustered_workspace, store_workspaces
+    from tests.support.structures import host_structure
+
+    document, controller, view, key, _output_root = _setup(tmp_path)
+    host = host_structure()
+    document.structures[host.id] = host
+    document.project.host_structure_id = host.id
+    relaxation = document.jobs[relaxation_job_id(document, document.sites[UUID(key)])]
+    workspace = clustered_workspace(
+        host,
+        [ClusterSpec(cluster_index=1, representative_job_id=relaxation.id, wyckoff_label="12d")],
+    )
+    store_workspaces(document, workspace)
+    snapshot = build_muon_sites_summary_snapshot(workspace)
+    store_muon_sites_summary_snapshot(document, str(snapshot["charge_state"]), snapshot)
+    result = Result(
+        result_type=HYPERFINE_CALC_TYPE,
+        data={
+            "source_site_id": key,
+            "source_relaxation_job_id": str(relaxation.id),
+            "charge_state": "positive_muon",
+        },
+    )
+    document.results[result.id] = result
+
+    controller.refresh_view()
+
+    (source,) = view.sources[-1]
+    (row,) = view.results[-1]
+    assert source.pinned_label
+    assert row.site == source.pinned_label

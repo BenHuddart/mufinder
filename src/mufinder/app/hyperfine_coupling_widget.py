@@ -74,7 +74,7 @@ class HyperfineResultRow:
 
 #: Completed Results column headers and their tooltips, in column order.
 RESULT_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("Site", "The relaxed site the magres job ran on"),
+    ("Site", "The relaxed site the magres job ran on, named as in the jobs table"),
     ("Charge state", "Charge state of the source relaxation"),
     (
         "A_iso (MHz)",

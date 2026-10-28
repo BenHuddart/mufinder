@@ -95,7 +95,8 @@ its definition:
    * - Column
      - Meaning
    * - ``Site``
-     - The relaxed site the job ran on.
+     - The relaxed site the job ran on, named as in the jobs table: its pinned
+       summary label while pinned sites are listed, otherwise its own label.
    * - ``Charge state``
      - ``positive muon`` or ``muonium``.
    * - ``A_iso (MHz)``

@@ -45,6 +45,7 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.muon_sites_summary import (
     HYPERFINE_COUPLING_SCOPE,
+    DownstreamSiteScope,
     downstream_site_scope,
     set_show_every_relaxed_site,
 )
@@ -54,6 +55,7 @@ from mufinder.services.source_candidates import (
     charge_state_label_for_job,
     eligible_quantum_source_candidates,
     quantum_source_candidate_by_key,
+    quantum_source_key,
     quantum_source_label,
     serialize_quantum_sources,
     source_relaxation_parameter_values,
@@ -637,20 +639,32 @@ class HyperfineCouplingController(WorkflowJobController):
         ]
         self._view.set_sources(source_rows)
         self._view.set_results(
-            [_result_row(document, result) for result in hyperfine_results(document)]
+            [_result_row(document, result, scope) for result in hyperfine_results(document)]
         )
 
 
-def _result_row(document, result: Result) -> HyperfineResultRow:
+def _document_entity(entities: Mapping[UUID, object], raw_id: object):
+    """Return the entity ``raw_id`` names in ``entities``, or ``None``."""
+
+    if not raw_id:
+        return None
+    try:
+        return entities.get(UUID(str(raw_id)))
+    except ValueError:
+        return None
+
+
+def _result_row(document, result: Result, scope: DownstreamSiteScope) -> HyperfineResultRow:
+    """Return ``result``'s row, naming its site as the jobs table names the source."""
+
     data = result.data if isinstance(result.data, Mapping) else {}
     site_label = ""
-    site_id = data.get("source_site_id")
-    if site_id:
-        try:
-            site = document.sites.get(UUID(str(site_id)))
-        except ValueError:
-            site = None
-        site_label = site.label if site is not None else ""
+    site = _document_entity(document.sites, data.get("source_site_id"))
+    if site is not None:
+        source_job = _document_entity(document.jobs, data.get("source_relaxation_job_id"))
+        site_label = (
+            scope.pinned_label(quantum_source_key(document, site, source_job)) or site.label
+        )
     if not site_label:
         run = (
             document.runs.get(result.calculation_run_id)
