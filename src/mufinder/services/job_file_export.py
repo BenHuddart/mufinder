@@ -38,8 +38,8 @@ _EXPORT_SUFFIXES = (
     ".phonon",
     ".den_fmt",
 )
-#: CASTEP's per-process error files: ``<seed>.0001.err``.
-_ERROR_FILE_SUFFIX = re.compile(r"\.\d+\.err")
+#: Error files: the run's ``<seed>.err`` and CASTEP's per-process ``<seed>.0001.err``.
+_ERROR_FILE_SUFFIX = re.compile(r"(\.\d+)?\.err")
 _FARM_PREFIX = re.compile(r"_farm\d+")
 
 

@@ -53,7 +53,7 @@ work for completed jobs, which the Job Dashboard does not list:
    (``_2``, ``_3``… are added when two jobs share a seed). The files copied
    are ``.cell``, ``.param``, ``-in.cell``, ``.castep``, ``-out.cell``, ``-out.cif``,
    ``.geom``, ``.md``, ``.ts``, ``.bands``, ``.phonon``, ``.den_fmt`` and the
-   ``.NNNN.err`` error files, including task-farmed ``_farmNNN`` copies.
+   ``.err`` and ``.NNNN.err`` error files, including task-farmed ``_farmNNN`` copies.
    Checkpoints (``.check``, ``.castep_bin``) are left out. Replacing files
    already in the folder is confirmed first, and files that cannot be copied
    are listed when the copy ends. A folder that already holds the jobs' own
