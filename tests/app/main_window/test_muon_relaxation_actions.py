@@ -738,7 +738,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     monkeypatch.setattr(
         job_artifacts_module,
         "parse_cell_file",
-        lambda _path: SimpleNamespace(
+        lambda _path, **_kwargs: SimpleNamespace(
             lattice_vectors=((8.0, 0.0, 0.0), (0.0, 8.0, 0.0), (0.0, 0.0, 4.0)),
             species=("Si", "H:mu"),
             fractional_positions=((0.0, 0.0, 0.0), (0.3, 0.4, 0.5)),
