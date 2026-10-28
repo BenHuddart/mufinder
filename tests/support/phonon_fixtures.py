@@ -2,9 +2,9 @@
 
 ``n2_mu_n2_phonon_text`` returns the Gamma-point ``.phonon`` file of a reduced
 [N2-mu-N2]+ complex: five atoms (N, N, H:mu, N, N) on a line along ``x`` in a
-cubic box, the muon midway between two N2 molecules. It stands in for the
-alpha-N2 worked example on ``docs/user_guide/quantum_corrections_theory.rst``,
-whose harmonic numbers come from Gomilsek *et al.*, Commun. Phys. 6, 142 (2023).
+cubic box, the muon midway between two N2 molecules. It is a toy model of the
+complex of Gomilsek *et al.*, Commun. Phys. 6, 142 (2023), small enough for the
+science tests to check every mode of.
 
 The force constants are pair springs plus a lattice tether on every nitrogen:
 
@@ -26,7 +26,8 @@ The constants in ``N2_MU_N2_FORCE_CONSTANTS`` were tuned once, offline, so that
 the three muon-dominated modes carry a zero-point energy of 0.174, 0.203 and
 0.203 eV (0.17, 0.20 and 0.20 eV, 0.58 eV in total), their summed muon
 participation is 2.86, and the harmonic muon-nearest-nitrogen correlation
-``|w2|`` is about 0.26. Nothing is tuned at test time.
+``|w2|`` is about 0.26: the paper's harmonic numbers. Nothing is tuned at test
+time.
 """
 
 from __future__ import annotations

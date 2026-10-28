@@ -163,7 +163,7 @@ displacement is fixed by the muon's (the strongly-bound limit),
 :math:`|c_i| = 1`. Gomilšek *et al.* evaluate the averages by path-integral
 molecular dynamics. MuFinder's ``Muon Coupling`` tab gives the harmonic
 estimate: at zero temperature the displacement covariance of atoms :math:`a`
-and :math:`b` summed over every Γ-point mode is
+and :math:`b` summed over every stable Γ-point mode (:math:`\omega_n > 0`) is
 
 .. math::
 
@@ -172,8 +172,11 @@ and :math:`b` summed over every Γ-point mode is
 
 a 3 × 3 tensor, and :math:`c_i = \mathrm{Tr}\, C_{\mu i} /
 \sqrt{\mathrm{Tr}\, C_{\mu\mu}\, \mathrm{Tr}\, C_{ii}}`. Unlike :math:`w_1`, this
-uses every mode, so it is the many-body harmonic answer rather than a statement
-about three modes.
+uses every stable mode, so it is the many-body harmonic answer rather than a
+statement about three modes. Modes with imaginary frequencies have no harmonic
+ground state and are left out. The soft modes of the host that barely move the
+muon still widen the nuclei's motion, so leaving them out as well, as a cutoff
+on the muon participation does, gives a smaller :math:`|c_i|`.
 
 .. _quantum-corrections-adiabatic:
 
@@ -289,18 +292,18 @@ Worked example: solid nitrogen
 Gomilšek *et al.* study the positive muon in α-N₂, where every rung of the
 ladder is visible. :doc:`/user_guide/examples/alpha_n2` follows the example
 through MuFinder step by step; the figures below show where each harmonic
-number appears. They come from a synthetic phonon run that embeds, in the
-relaxed 65-atom supercell, a five-atom [N₂–μ–N₂]⁺ spring model whose force
-constants reproduce the paper's harmonic row. The harmonic numbers are pinned
-by ``tests/docs/test_docs_synthetic.py`` for the supercell and by
-``tests/science/test_quantum_phonons.py`` for the five-atom model; the other
-rows are the paper's results and are not computed by MuFinder.
+number appears. They come from the paper's own phonon run, the relaxed
+65-atom supercell and its Γ-point ``.phonon`` file from the published data
+set, analysed by MuFinder. The harmonic numbers are pinned by
+``tests/docs/test_docs_alpha_n2.py``; the other rows of the table below are
+the paper's results and are not computed by MuFinder.
 
 Setup
 ~~~~~
 
 - **Host.** α-N₂ in space group Pa-3 (No. 205), a = 5.660 Å (Venables and
-  English 1974), in a 2 × 2 × 2 supercell of 64 nitrogens.
+  English 1974), in a 2 × 2 × 2 supercell of 64 nitrogens. The calculation
+  holds the cell at a = 5.6635 Å.
 - **Calculation.** CASTEP with the PBE functional, the Tkatchenko–Scheffler
   dispersion correction, ultrasoft pseudopotentials, a 1200 eV cutoff, a
   2 × 2 × 2 Monkhorst–Pack grid, a charge of +1 per muonated supercell, an SCF
@@ -311,7 +314,7 @@ Setup
   ``Connected Components`` clustering of ``Muon Sites > Analysis``. A single
   cluster remains: the muon sits midway between two N₂ molecules, near
   (0, ¼, ¼), forming a near-linear [N₂–μ–N₂]⁺ complex along [011] with the
-  nearest nitrogen 1.29 Å away.
+  nearest nitrogens 1.27 and 1.29 Å away.
 
 In MuFinder this is one pinned site on the Quantum Corrections page. The
 ultrasoft pseudopotentials call for the default ``FINITEDISPLACEMENT`` phonon
@@ -324,7 +327,9 @@ method, and the tighter SCF tolerance is set as ``SCF Energy Tolerance``
          tolerance 1e-10 eV, a 2 x 2 x 2 k-point grid, PBE, and the
          FINITEDISPLACEMENT phonon method.
 
-   The α-N₂ row configured as Gomilšek *et al.* ran it.
+   The α-N₂ row configured as Gomilšek *et al.* ran it, apart from the
+   dispersion correction and the pressure on the cell, which MuFinder's
+   starter keyword catalog does not include.
 
 Where the numbers appear
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -334,26 +339,26 @@ transverse modes T1 and T2 across it.
 
 .. figure:: ../_generated/screenshots/n2_quantum_corrections_page.webp
    :alt: The Quantum Corrections page with the pinned alpha-N2 site completed,
-         and a result row: ZPE 0.580 eV, muon modes 2807.1, 3274.3 and
-         3274.3 cm-1, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.1401.
+         and a result row: ZPE 0.576 eV, muon modes 2749.6, 3246.4 and
+         3301.1 cm-1, widths 0.23, 0.21 and 0.21 Angstrom, and w1 -0.1377.
 
    ``Completed Results`` for the α-N₂ site: the ZPE, the three muon modes,
    their widths and ``w1``.
 
 ``Completed Results``
-   ``ZPE`` reads 0.580 eV, the sum of 0.174 (L), 0.203 (T1) and 0.203 eV (T2),
+   ``ZPE`` reads 0.576 eV, the sum of 0.170 (L), 0.201 (T1) and 0.205 eV (T2),
    the paper's 0.17, 0.20 and 0.20 eV. ``Muon modes (cm⁻¹)`` lists the modes
-   at :math:`\hbar\omega_j = 2\,\mathrm{ZPE}_j`: 2807.1 cm⁻¹ for L and
-   3274.3 cm⁻¹ for the degenerate T pair (1 eV is 8065.5 cm⁻¹). ``w1`` is
+   at :math:`\hbar\omega_j = 2\,\mathrm{ZPE}_j`: 2749.6 cm⁻¹ for L and
+   3246.4 and 3301.1 cm⁻¹ for the T pair (1 eV is 8065.5 cm⁻¹). ``w1`` is
    :math:`P - 3 = -0.14`: the three modes carry 2.86 of the muon's total
    participation of 3. ``Width (Å)`` lists the zero-point widths 0.23, 0.21
    and 0.21 Å derived below.
 
 .. figure:: ../_generated/screenshots/n2_phonon_modes.webp
-   :alt: The Phonon Modes tab scrolled to the highest modes: the N2 stretch
-         band up to 2350 cm-1, mode 191 at 2616.4 cm-1 with muon participation
-         0.130, and the muon modes 193 at 2807.1 (0.868), 194 and 195 at
-         3274.3 cm-1 (0.996).
+   :alt: The Phonon Modes tab scrolled to the highest modes: N2 stretches
+         from 2358.4 to 2363.5 cm-1, mode 192 at 2428.7 cm-1, and the muon
+         modes 193 at 2749.6 (0.878), 194 at 3246.4 (0.992) and 195 at
+         3301.1 cm-1 (0.992).
 
    The highest Γ-point modes: the three muon modes, highlighted, above the
    N₂ stretches.
@@ -362,37 +367,41 @@ transverse modes T1 and T2 across it.
    The three highlighted modes are the muon modes, and the stiffest modes of
    the supercell, so the participation and highest-frequency rules agree. The
    L mode is hybridised with the intramolecular stretch of the complex: L
-   keeps a participation of 0.868, and an N₂ stretch of the complex, mode 191,
-   takes 0.130, while T1 and T2 stay nearly pure at 0.996. (In the spring model
-   the complex's stretches lie above the band of the other molecules; in the
-   paper's DFT phonons the hybridised stretch lies near 2350 cm⁻¹.)
+   keeps a participation of 0.878, and a stretch of the complex molecules,
+   mode 161 at 2345.2 cm⁻¹, takes 0.118, the paper's "near 2350 cm⁻¹, about
+   12 %". T1 and T2 stay nearly pure at 0.992. Eighteen librations come out
+   with imaginary frequencies; they carry under 0.1 % of the muon's motion and
+   are left out of every zero-point sum.
 
 .. figure:: ../_generated/screenshots/n2_mode_wells.webp
-   :alt: The Mode wells and widths tab with the three muon modes, ZPE 0.174169
-         and 0.203192 eV and widths 0.230083 and 0.213032 Angstrom, and the
-         plot of the L well.
+   :alt: The Mode wells and widths tab with the three muon modes, ZPE
+         0.170603, 0.201457 and 0.204853 eV and widths 0.232474, 0.213947
+         and 0.212168 Angstrom, and the plot of the L well.
 
    The harmonic L well, its ground-state level and the muon's density.
 
 ``Mode wells and widths``
    For each selected mode the solver reproduces the ZPE above and the
    harmonic widths
-   :math:`\Delta x = \sqrt{0.01842 / 0.348} \approx 0.230` Å for L and
-   :math:`\sqrt{0.01842 / 0.406} \approx 0.213` Å for T1 and T2. The width is
-   a sizeable fraction of the 1.29 Å muon–nitrogen distance.
+   :math:`\Delta x = \sqrt{0.01842 / 0.341} \approx 0.232` Å for L and
+   about 0.213 Å for T1 and T2. The width is a sizeable fraction of the
+   1.27 Å muon–nitrogen distance.
 
 .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
-   :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 3: N, w2 =
-         -0.259975, and the covariance and correlation tensors.
+   :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 57: N, w2 =
+         -0.310498, and the covariance and correlation tensors.
 
    The muon and its nearest nitrogen.
 
 ``Muon Coupling``
    With ``Atom A`` the muon and ``Atom B`` one of the two nearest nitrogens,
-   ``w2`` is −0.26: the harmonic correlation :math:`|c| \approx 26\,\%`.
-   The paper's PIMD correlation decays with distance from the muon, so expect
-   smaller values for nitrogens further away. The ``?`` button gives the
-   equations:
+   ``w2`` is −0.31 (and −0.30 for the other): a harmonic correlation
+   :math:`|c| \approx 30\,\%`. The paper's harmonic estimate, about 26 %,
+   keeps only the 20 modes with a muon participation of at least 10⁻⁴ (see
+   :ref:`quantum-corrections-w2`); with that cutoff MuFinder's covariance
+   gives 0.26 and 0.24 for the same two nitrogens. The paper's PIMD
+   correlation decays with distance from the muon, so expect smaller values
+   for nitrogens further away. The ``?`` button gives the equations:
 
    .. figure:: ../_generated/screenshots/n2_coupling_help.webp
       :alt: The Muon coupling tensors help dialog with the covariance,
@@ -442,7 +451,7 @@ The other diagnostics are :math:`w_1 = -0.14`, a stiffness ratio
 :math:`k_\mu/k_n \approx 7, 12, 9` along L, T1 and T2, an anharmonicity
 :math:`a \approx 1.8` along L at :math:`2\delta x = 0.24` Å, and a PIMD
 correlation with the two nearest nitrogens of :math:`|c| = 30(4)\,\%`, against
-the harmonic estimate of about 26 %.
+the paper's harmonic estimate of about 26 %.
 
 Conclusion
 ~~~~~~~~~~
@@ -459,14 +468,15 @@ The example reaches the last rung of the ladder:
   heavier ones, so the muon does not drag the nuclei fully either: the PIMD
   widths, larger than in both limits, confirm a partially entangled state.
 - The L well is strongly anharmonic (:math:`a \approx 1.8`, and the anharmonic
-  L width is more than 40 % below the harmonic one), so the harmonic many-body
+  L width is more than 30 % below the harmonic one), so the harmonic many-body
   result fails too. Only PIMD is reliable here.
 
 Measured against PIMD, the harmonic ZPE of 0.58 eV overestimates the
-0.43(11) eV result, and the harmonic :math:`|c| \approx 26\,\%` slightly
-underestimates the 30(4) % entanglement. MuFinder's harmonic numbers flagged
-correctly that the site needs more than a harmonic treatment, and gave a
-starting estimate of the size of the effect.
+0.43(11) eV result. The harmonic correlation depends on which modes the sum
+keeps: about 30 % over every stable mode, as MuFinder reports, and about 26 %
+over the modes that move the muon, against 30(4) % from PIMD. MuFinder's
+harmonic numbers flagged correctly that the site needs more than a harmonic
+treatment, and gave a starting estimate of the size of the effect.
 
 References
 ----------
@@ -474,5 +484,8 @@ References
 - M. Gomilšek, F. L. Pratt, S. P. Cottrell, S. J. Clark, and T. Lancaster,
   *Many-body quantum muon effects and quadrupolar coupling in solids*,
   Commun. Phys. **6**, 142 (2023), DOI: ``10.1038/s42005-023-01260-7``.
+- M. Gomilšek *et al.*, *Many-Body Quantum Muon Effects and Quadrupolar
+  Coupling in Solids: Data and Code*, figshare (2023), DOI:
+  ``10.6084/m9.figshare.23203037.v1``.
 - J. A. Venables and C. A. English, *Electron diffraction and the structure of
   α-N₂*, Acta Cryst. B **30**, 929 (1974), DOI: ``10.1107/S0567740874004067``.

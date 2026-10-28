@@ -547,13 +547,13 @@ def test_correlation_matrix_zero_denominator_yields_zeros() -> None:
     assert np.all(corr == 0.0)
 
 
-# Worked example: the [N2-mu-N2]+ complex of solid nitrogen
+# A toy model: the [N2-mu-N2]+ complex of solid nitrogen
 #
-# The numbers below are the harmonic (weakly-bound) row of the worked example in
-# docs/user_guide/quantum_corrections_theory.rst, section "Worked example: solid
-# nitrogen", taken from Gomilsek et al., Commun. Phys. 6, 142 (2023), Table 1.
-# The fixture is a five-atom toy model tuned to reproduce them (see
-# tests/support/phonon_fixtures.py).
+# The numbers below are the harmonic (weakly-bound) row of Gomilsek et al.,
+# Commun. Phys. 6, 142 (2023), Table 1. The fixture is a five-atom toy model
+# tuned to reproduce them (see tests/support/phonon_fixtures.py); the worked
+# example of the documentation reads the paper's own phonon run instead (see
+# tests/docs/test_docs_alpha_n2.py).
 
 
 def _n2_mu_n2():
@@ -575,7 +575,7 @@ def test_n2_mu_n2_fixture_parses_as_a_gamma_only_muon_run() -> None:
     assert sum(muon_mode_participations(calculation)) == pytest.approx(3.0, abs=1e-9)
 
 
-def test_n2_mu_n2_zero_point_energies_match_the_worked_example() -> None:
+def test_n2_mu_n2_zero_point_energies_match_the_paper() -> None:
     result = muon_zpe(_n2_mu_n2())
 
     assert result.warnings == ()
@@ -602,7 +602,7 @@ def test_n2_mu_n2_selected_modes_carry_most_but_not_all_muon_motion() -> None:
     assert max(unselected) == participation[10] == pytest.approx(0.13, abs=0.01)
 
 
-def test_n2_mu_n2_harmonic_widths_match_the_worked_example() -> None:
+def test_n2_mu_n2_harmonic_widths_match_the_paper() -> None:
     modes = select_muon_modes(_n2_mu_n2())
 
     muon_mass_kg = ATOMIC_MASS_KG * MUON_MASS_AMU
