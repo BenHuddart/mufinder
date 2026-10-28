@@ -339,9 +339,10 @@ def test_starter_catalog_offers_spin_polarized_but_not_net_spin_in_every_workflo
     _cell, param_specs, _source_names = schema_module._build_starter_schema()
 
     for workflow in KNOWN_WORKFLOWS:
+        # Hyperfine Coupling always runs spin polarised, so it does not offer the choice.
         assert keyword_visible_in_workflow(
             param_specs["spin_polarized"], workflow_stage=workflow, include_advanced=True
-        ), workflow
+        ) == (workflow != "hyperfine_coupling"), workflow
         # SPIN is the net spin of the cell; MuFinder sets spins per atom instead,
         # and CASTEP stops when an explicit SPIN disagrees with their sum.
         assert not keyword_visible_in_workflow(

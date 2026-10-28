@@ -44,6 +44,7 @@ SHOW_EVERY_RELAXED_SITE_KEY = "downstream_show_every_relaxed_site"
 
 #: Workflow identifiers of the downstream pages that read the summary.
 QUANTUM_CORRECTIONS_SCOPE = "quantum_corrections"
+HYPERFINE_COUPLING_SCOPE = "hyperfine_coupling"
 ENERGY_BARRIERS_SCOPE = "energy_barriers"
 MAGNETIC_FIELDS_SCOPE = "magnetic_fields"
 
@@ -545,6 +546,7 @@ __all__ = [
     "DownstreamSiteScope",
     "downstream_site_scope",
     "ENERGY_BARRIERS_SCOPE",
+    "HYPERFINE_COUPLING_SCOPE",
     "MAGNETIC_FIELDS_SCOPE",
     "MUON_SITES_SUMMARY_SNAPSHOTS_KEY",
     "NO_PINNED_SITES_NOTICE",

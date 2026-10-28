@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGroupBox,
@@ -13,8 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -26,13 +23,13 @@ from mufinder.app.theme import (
     style_section_subtitle,
     style_section_title,
 )
-from mufinder.app.workflow_row_widget import SourceTableWidget
+from mufinder.app.workflow_row_widget import RelaxedSiteSourceTableWidget
 from mufinder.app.workflow_table_utils import (
     RESET_FAILED_ACTION_TEXT,
-    RESETTABLE_ROW_STATUSES,
     SelectionFeedback,
     create_workflow_table,
-    set_workflow_table_item,
+    fill_workflow_table,
+    set_header_tooltips,
 )
 
 
@@ -52,13 +49,6 @@ _SOURCE_HEADER_TOOLTIPS: dict[str, str] = {
     "Status": "Status of the row's current job",
     "Parameters": "Configure the row; locked once its first job has been submitted",
 }
-
-
-def _set_header_tooltips(table: QTableWidget, tooltips: dict[str, str]) -> None:
-    for column in range(table.columnCount()):
-        item = table.horizontalHeaderItem(column)
-        if item is not None and item.text() in tooltips:
-            item.setToolTip(tooltips[item.text()])
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,13 +111,13 @@ RESULT_STATUS_COLUMN = 5
 RESULT_ANALYSIS_COLUMN = 6
 
 
-class QuantumCorrectionsWidget(SourceTableWidget):
+class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
     """Display eligible relaxed muon sources and completed phonon analyses.
 
-    The source table and its targeting come from :class:`SourceTableWidget`;
-    this widget adds the farm column, the editable site label and a
-    "Reset Failed Jobs..." button beside the run buttons, which the shared
-    failed-job reset handles like the row-menu entry.
+    The source table, its targeting, the editable site label, the pinned-sites
+    scope and the "Reset Failed Jobs..." button come from
+    :class:`RelaxedSiteSourceTableWidget`; this widget adds the farm column and
+    the completed phonon results.
     """
 
     configure_requested = Signal(object)
@@ -152,14 +142,10 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         super().__init__(parent)
         self.setAccessibleName("Quantum Corrections workflow")
         self._source_rows: list[QuantumSourceRow]
-        # Flush-path guards: cache the last-rendered rows so set_sources /
-        # set_results can skip the table rebuild when nothing changed. The rows
-        # are frozen dataclasses, so list equality is an exact value compare.
-        self._source_rows_valid = False
+        # Flush-path guard: cache the last-rendered results so set_results can
+        # skip the table rebuild when nothing changed.
         self._result_rows: list[QuantumResultRow] = []
         self._result_rows_valid = False
-        self._updating_sources = False
-        self._show_every_site = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -225,7 +211,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
             ),
             resize_to_contents_columns=(7,),
         )
-        _set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
+        set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
@@ -308,36 +294,6 @@ class QuantumCorrectionsWidget(SourceTableWidget):
 
         layout.addStretch(1)
 
-    def set_sources(self, rows: list[QuantumSourceRow]) -> None:
-        """Replace the displayed eligible-source rows.
-
-        Skips the table rebuild when the rows are unchanged since the last
-        render; ``QuantumSourceRow`` is a frozen dataclass so list equality is an
-        exact value compare. Skipping the rebuild also preserves the user's
-        current selection across dashboard flushes.
-        """
-
-        if self._source_rows_valid and list(rows) == self._source_rows:
-            return
-        self._source_rows_valid = True
-        self._update_source_label(len(rows))
-        self._updating_sources = True
-        try:
-            self._set_source_rows(rows)
-        finally:
-            self._updating_sources = False
-
-    def set_site_scope(self, *, show_every_site: bool, notice: str = "") -> None:
-        """Show whether every relaxed site is listed, and the pinned-sites notice."""
-
-        self._show_every_site = bool(show_every_site)
-        self._site_scope.set_state(show_every_site=show_every_site, notice=notice)
-        self._update_source_label(len(self._source_rows))
-
-    def _update_source_label(self, count: int) -> None:
-        title = "Eligible relaxed sites" if self._show_every_site else "Pinned muon sites"
-        self._source_label.setText(f"{title} ({count})")
-
     def set_results(self, rows: list[QuantumResultRow]) -> None:
         """Replace the displayed quantum-result rows.
 
@@ -352,7 +308,7 @@ class QuantumCorrectionsWidget(SourceTableWidget):
         self._result_rows = list(rows)
         self._result_rows_valid = True
         self._result_label.setText(f"Completed phonon analyses ({len(rows)})")
-        _fill_table(
+        fill_workflow_table(
             self._results_table,
             [
                 (row.label, row.zpe, row.muon_modes, row.widths, row.witness, row.status)
@@ -407,45 +363,3 @@ class QuantumCorrectionsWidget(SourceTableWidget):
             row.num_farms_display,
             row.status,
         )
-
-    def create_source_row_cells(self, row_index: int, row: QuantumSourceRow) -> None:
-        # The site label is renamed in place (``source_label_renamed``). A pinned
-        # row shows its summary label instead, so it is renamed from the full list.
-        label_item = self._sources_table.item(row_index, 0)
-        if label_item is None:
-            return
-        if row.pinned_label:
-            label_item.setToolTip(f"Relaxed site: {row.label}")
-            return
-        label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
-
-    def refresh_source_actions(self, selected_rows: Sequence[QuantumSourceRow]) -> None:
-        self._reset_failed_button.setEnabled(
-            any(row.status in RESETTABLE_ROW_STATUSES for row in selected_rows)
-        )
-
-    def _emit_reset_failed_selection(self) -> None:
-        """Emit the selected failed, stopped or cancelled rows for the shared reset."""
-
-        keys = [
-            row.key for row in self._selected_source_rows() if row.status in RESETTABLE_ROW_STATUSES
-        ]
-        if keys:
-            self.reset_failed_requested.emit(keys)
-
-    def _on_source_item_changed(self, item: QTableWidgetItem) -> None:
-        if self._updating_sources or item.column() != 0:
-            return
-        row = item.row()
-        if not (0 <= row < len(self._source_rows)):
-            return
-        key = self._source_rows[row].key
-        self.source_label_renamed.emit(key, item.text())
-
-
-def _fill_table(table: QTableWidget, rows: list[tuple[str, ...]]) -> None:
-    table.setRowCount(len(rows))
-    for row_index, values in enumerate(rows):
-        for column, value in enumerate(values):
-            set_workflow_table_item(table, row_index, column, value)
-    table.resizeRowsToContents()

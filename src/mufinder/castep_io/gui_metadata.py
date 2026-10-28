@@ -24,6 +24,7 @@ WORKFLOW_TASK_MAP: dict[str, str] = {
     "muon_relaxation": "GEOMETRYOPTIMIZATION",
     "site_analysis": "SINGLEPOINT",
     "magnetic_field": "SINGLEPOINT",
+    "hyperfine_coupling": "MAGRES",
     "quantum_corrections": "SINGLEPOINT",
     "energy_barriers": "TRANSITIONSTATESEARCH",
 }

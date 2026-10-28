@@ -262,6 +262,7 @@ def test_incomplete_output_without_a_castep_error_has_a_default_message(
         (RetrievalFlags(retrieve_phonon=True), "seed.phonon", b"phonon output"),
         (RetrievalFlags(retrieve_ts=True), "seed.ts", b"ts output"),
         (RetrievalFlags(retrieve_out_cell=True), "seed-out.cell", b"relaxed cell"),
+        (RetrievalFlags(retrieve_magres=True), "seed.magres", b"magres output"),
     ],
 )
 def test_requested_secondary_output_is_downloaded(
@@ -290,13 +291,14 @@ def test_secondary_outputs_are_skipped_when_not_requested(
     ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
     ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
     ssh.remote_files["/remote/job/seed.ts"] = b"ts output"
+    ssh.remote_files["/remote/job/seed.magres"] = b"magres output"
     _parse_as(monkeypatch, _COMPLETED)
 
     _retrieve(
         ssh, tmp_path, retrieval=RetrievalFlags(retrieve_den_fmt=False, retrieve_out_cell=False)
     )
 
-    for name in ("seed.den_fmt", "seed-out.cell", "seed.phonon", "seed.ts"):
+    for name in ("seed.den_fmt", "seed-out.cell", "seed.phonon", "seed.ts", "seed.magres"):
         assert not (tmp_path / name).exists()
 
 

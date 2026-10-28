@@ -25,6 +25,7 @@ from .quantum import QuantumPhononSource, muon_species_blocks, seed_muonium_spin
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate
 
 HYPERFINE_CALC_TYPE = "castep_hyperfine"
+HYPERFINE_SET_CALC_TYPE = "castep_hyperfine_set"
 
 #: Parameters the workflow sets on every job; a row's settings may not override them.
 HYPERFINE_CONTROLLED_PARAM_KEYWORDS = (

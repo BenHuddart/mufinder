@@ -37,7 +37,7 @@ from uuid import UUID
 
 from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
@@ -55,6 +55,7 @@ from mufinder.services.project_service import (
     job_for_mapping_key,
 )
 
+from mufinder.app.workflow_table_utils import RESET_FAILED_ACTION_TEXT
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
     WorkflowSubmissionPlan,
@@ -487,6 +488,34 @@ class WorkflowJobController:
         """Re-render this workflow's runtime view from current state."""
 
         raise NotImplementedError
+
+
+def locked_configuration_reason(
+    jobs: Sequence[Job | None], statuses: Sequence[str], *, job_noun: str
+) -> str:
+    """Return why a source Configure dialog opens read-only for rows in ``statuses``.
+
+    ``jobs`` are the rows' jobs and ``statuses`` their projected row statuses,
+    in the same order; ``job_noun`` names the job ("phonon job"). The reason is
+    one line naming what unlocks the first locked row; it is empty when every
+    row is ready.
+    """
+
+    for job, status in zip(jobs, statuses, strict=True):
+        if job is None or status in {"ready", "defined"}:
+            continue
+        if job.status in ACTIVE_JOB_STATUSES:
+            return (
+                f"Parameters are read-only while a selected row's {job_noun} is {status}; "
+                f"cancel it, then use {RESET_FAILED_ACTION_TEXT} to edit them."
+            )
+        if job.status == JobStatus.COMPLETED:
+            return (
+                f"A selected row's {job_noun} has completed; delete it from the Job Dashboard "
+                "to run the row again with other parameters."
+            )
+        return f"A selected row's {job_noun} is {status}; use {RESET_FAILED_ACTION_TEXT} to edit its parameters."
+    return ""
 
 
 def dedupe_jobs(jobs: Sequence[Job]) -> list[Job]:

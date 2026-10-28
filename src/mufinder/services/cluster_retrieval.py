@@ -130,6 +130,7 @@ def retrieve_job_outputs(
     remote_den_fmt, local_den_fmt = path(f"{seed_name}.den_fmt")
     remote_out_cell, local_out_cell = path(f"{seed_name}-out.cell")
     remote_phonon, local_phonon = path(f"{seed_name}.phonon")
+    remote_magres, local_magres = path(f"{seed_name}.magres")
     # Task farming renames every output to <seed>_farmNNN.<ext>, so a farmed
     # NEB run writes no <seed>.ts at all. Every farm writes an identical,
     # complete band; farm 001 is the canonical copy. Download it under the
@@ -183,6 +184,8 @@ def retrieve_job_outputs(
             ssh.get(remote_phonon, local_phonon)
         if retrieval.retrieve_ts and ssh.exists(remote_ts):
             ssh.get(remote_ts, local_ts)
+        if retrieval.retrieve_magres and ssh.exists(remote_magres):
+            ssh.get(remote_magres, local_magres)
     except Exception as exc:  # noqa: BLE001
         # Output-unavailable failure (SFTP download error, missing remote
         # .castep, connection hiccup). For a scheduler-missing job the output

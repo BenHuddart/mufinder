@@ -113,6 +113,7 @@ class ProjectHomeChartWidget(QWidget):
         "muon_candidates": (0.52, 0.42),
         "muon_relaxations": (0.635, 0.42),
         "muon_analysis": (0.75, 0.42),
+        "hyperfine_coupling": (0.865, 0.27),
         "magnetic_fields": (0.80, 0.12),
         "polarisation": (0.94, 0.12),
         "quantum_corrections": (0.94, 0.42),

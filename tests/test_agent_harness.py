@@ -98,6 +98,7 @@ WORKFLOW_WIDGET_MODULES = (
     "relaxation_widget.py",
     "muon_relaxation_widget.py",
     "uep_widget.py",
+    "hyperfine_coupling_widget.py",
     "quantum_corrections_widget.py",
     "energy_barriers_widget.py",
 )

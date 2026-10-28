@@ -15,7 +15,7 @@ It stays free of PySide imports so it can live alongside the adapters in the
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from mufinder.app.relaxation_types import SupercellMatrix
@@ -389,22 +389,32 @@ def build_input_template(
     return InputTemplate(cell=cell_template, param=param_template)
 
 
-def build_workflow_settings_template(values: Mapping[str, object]) -> InputTemplate:
-    """Parse quantum-corrections and energy-barriers row values into a template.
+def build_workflow_settings_template(
+    values: Mapping[str, object], *, workflow_controlled: Sequence[str] = ()
+) -> InputTemplate:
+    """Parse quantum-corrections, hyperfine and energy-barriers row values into a template.
 
     These workflows take their structure from the relaxed source, so the
     structure-controlled cell keywords are refused, and a scalar
     ``kpoint_mp_grid`` / ``kpoint_mp_spacing`` clears any inherited
-    ``kpoints_list`` (``kpoints_list_reset=()``).
+    ``kpoints_list`` (``kpoints_list_reset=()``). ``workflow_controlled`` names
+    the parameters the workflow itself sets on every job, which are refused too.
     """
 
+    forbidden = {
+        name: f"{name} is controlled by the workflow structure and cannot be overridden."
+        for name in STRUCTURE_CONTROLLED_CELL_KEYWORDS
+    }
+    forbidden.update(
+        {
+            name: f"{name} is set by the workflow and cannot be overridden."
+            for name in workflow_controlled
+        }
+    )
     return build_input_template(
         values,
         context_label="workflow settings",
-        forbidden={
-            name: f"{name} is controlled by the workflow structure and cannot be overridden."
-            for name in STRUCTURE_CONTROLLED_CELL_KEYWORDS
-        },
+        forbidden=forbidden,
         kpoints_list_reset=(),
     )
 

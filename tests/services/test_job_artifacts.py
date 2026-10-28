@@ -23,6 +23,7 @@ from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
 )
+from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 
 
@@ -353,11 +354,53 @@ def test_retrieval_flags_for_calc_type_selects_one_secondary_output(
 
     requested = {
         name
-        for name in ("retrieve_den_fmt", "retrieve_out_cell", "retrieve_phonon", "retrieve_ts")
+        for name in (
+            "retrieve_den_fmt",
+            "retrieve_out_cell",
+            "retrieve_phonon",
+            "retrieve_ts",
+            "retrieve_magres",
+        )
         if getattr(flags, name)
     }
     assert requested == ({expected} if expected else set())
     assert flags.farm_count == 1
+
+
+def test_retrieval_flags_keep_the_magres_and_density_of_a_hyperfine_job() -> None:
+    flags = RetrievalFlags.for_calc_type(HYPERFINE_CALC_TYPE)
+
+    assert flags.retrieve_magres and flags.retrieve_den_fmt
+    assert not (flags.retrieve_out_cell or flags.retrieve_phonon or flags.retrieve_ts)
+
+
+_HYPERFINE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "hyperfine"
+
+
+def test_collect_magres_carries_the_muon_tensor_and_warns_without_density(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "seed.magres").write_text(
+        (_HYPERFINE_FIXTURES / "muonium_vacuum.magres").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    artifacts = RetrievalFlags(retrieve_magres=True).collect(tmp_path, "seed")
+
+    assert artifacts.magres is not None
+    assert artifacts.magres.isotropic_mhz == pytest.approx(-4628.4054)
+    assert artifacts.magres_path == tmp_path / "seed.magres"
+    assert artifacts.pseudo_spin_density_angstrom3 is None
+    assert artifacts.spin_density_error == "Formatted density seed.den_fmt was not found."
+
+
+def test_collect_magres_missing_or_unreadable(tmp_path: Path) -> None:
+    missing = collect_job_artifacts(tmp_path, "seed", want_magres=True)
+    (tmp_path / "bad.magres").write_text("[magres]\n[/magres]\n", encoding="utf-8")
+    unreadable = collect_job_artifacts(tmp_path, "bad", want_magres=True)
+
+    assert missing.magres_missing and missing.magres is None
+    assert unreadable.magres is None and "no hyperfine tensors" in (unreadable.magres_error or "")
 
 
 def test_retrieval_flags_normalise_and_round_trip_as_runner_keywords() -> None:

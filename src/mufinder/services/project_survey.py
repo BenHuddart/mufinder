@@ -63,6 +63,7 @@ from mufinder.workflow.energy_barriers import (
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
 )
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
+from mufinder.workflow.hyperfine import HYPERFINE_SET_CALC_TYPE
 from mufinder.workflow.quantum import QUANTUM_PHONON_SET_CALC_TYPE
 
 UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
@@ -334,6 +335,35 @@ def _quantum_layers(document: ProjectDocument, host: Structure) -> list[SurveyLa
     ]
 
 
+def _hyperfine_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
+    markers = []
+    for definition in definitions_for_stage(
+        document, WorkflowStage.HYPERFINE_COUPLING, calc_type=HYPERFINE_SET_CALC_TYPE
+    ):
+        for site_key, job in _mapped_jobs(document, definition, "job_ids_by_label"):
+            site_id = _uuid(str(site_key).split(":", 1)[0])
+            site = document.sites.get(site_id) if site_id else None
+            result = latest_result_for_job(document, job.id)
+            if site is None or result is None or not isinstance(result.data, Mapping):
+                continue
+            field = _float(result.data.get("contact_field_T"))
+            if field is None:
+                continue
+            markers.append(
+                SurveyMarker(
+                    _wrap(site.current_fractional_position()),
+                    SurveyMarkerKind.SITE,
+                    f"B_c {field:.2f} T",
+                    f"{site.label or 'Site'} · contact field {field:.3f} T",
+                )
+            )
+    return [
+        SurveyLayer(
+            "hyperfine_coupling", f"{len(markers)} sites with contact fields", tuple(markers)
+        )
+    ]
+
+
 def _barrier_layers(document: ProjectDocument, host: Structure) -> list[SurveyLayer]:
     definitions = [
         definition
@@ -413,6 +443,7 @@ _LAYER_BUILDERS = {
     "muon_candidates": _candidate_layers,
     "muon_relaxations": _relaxation_layers,
     "muon_analysis": _analysis_layers,
+    "hyperfine_coupling": _hyperfine_layers,
     "quantum_corrections": _quantum_layers,
     "energy_barriers": _barrier_layers,
     "magnetic_fields": _magnetic_layers,

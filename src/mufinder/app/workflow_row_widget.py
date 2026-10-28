@@ -84,6 +84,7 @@ from mufinder.app.workflow_parameters import (
 )
 from mufinder.app.workflow_table_utils import (
     EXPORT_RELAXED_STRUCTURE_ACTION_TEXT,
+    RESETTABLE_ROW_STATUSES,
     REMOVE_SELECTED_TEXT,
     RowMenuAction,
     SelectionFeedback,
@@ -1596,3 +1597,95 @@ class SourceTableWidget(QWidget):
 
         button.clicked.connect(_on_configure_clicked)
         table.setCellWidget(row_index, self._SOURCE_CONFIGURE_COLUMN, button)
+
+
+class RelaxedSiteSourceTableWidget(SourceTableWidget):
+    """Base for a workflow whose source rows are relaxed muon sites, one job each.
+
+    Quantum Corrections and Hyperfine Coupling list the eligible relaxed sites
+    (pinned to the Muon Sites summary, or every one) with the same table
+    behaviour on top of :class:`SourceTableWidget`: a source count label that
+    names the scope, a pinned-sites scope bar, a site label renamed in place
+    unless the row shows its pinned summary label, and a "Reset Failed Jobs..."
+    button for the selected failed, stopped or cancelled rows.
+
+    Besides what :class:`SourceTableWidget` asks for, a subclass declares the
+    ``source_label_renamed(str, str)`` and ``reset_failed_requested(object)``
+    signals, builds ``_source_label``, ``_site_scope`` (a
+    :class:`~mufinder.app.pinned_sites_scope.PinnedSitesScopeBar`) and
+    ``_reset_failed_button`` (connected to :meth:`_emit_reset_failed_selection`),
+    and connects the table's ``itemChanged`` to :meth:`_on_source_item_changed`.
+    Its source rows carry ``label`` and ``pinned_label``.
+    """
+
+    _source_label: QLabel
+    _site_scope: Any
+    _reset_failed_button: QPushButton
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # Flush-path guard: the last-rendered rows, so set_sources skips an
+        # unchanged rebuild (and keeps the selection across dashboard flushes).
+        self._source_rows_valid = False
+        self._updating_sources = False
+        self._show_every_site = False
+
+    def set_sources(self, rows: Sequence[Any]) -> None:
+        """Replace the displayed source rows, skipping the rebuild when unchanged.
+
+        Rows are frozen dataclasses, so list equality is an exact value compare.
+        """
+
+        if self._source_rows_valid and list(rows) == self._source_rows:
+            return
+        self._source_rows_valid = True
+        self._update_source_label(len(rows))
+        self._updating_sources = True
+        try:
+            self._set_source_rows(rows)
+        finally:
+            self._updating_sources = False
+
+    def set_site_scope(self, *, show_every_site: bool, notice: str = "") -> None:
+        """Show whether every relaxed site is listed, and the pinned-sites notice."""
+
+        self._show_every_site = bool(show_every_site)
+        self._site_scope.set_state(show_every_site=show_every_site, notice=notice)
+        self._update_source_label(len(self._source_rows))
+
+    def _update_source_label(self, count: int) -> None:
+        title = "Eligible relaxed sites" if self._show_every_site else "Pinned muon sites"
+        self._source_label.setText(f"{title} ({count})")
+
+    def create_source_row_cells(self, row_index: int, row: Any) -> None:
+        # The site label is renamed in place (``source_label_renamed``). A pinned
+        # row shows its summary label instead, so it is renamed from the full list.
+        label_item = self._sources_table.item(row_index, 0)
+        if label_item is None:
+            return
+        if row.pinned_label:
+            label_item.setToolTip(f"Relaxed site: {row.label}")
+            return
+        label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
+
+    def refresh_source_actions(self, selected_rows: Sequence[Any]) -> None:
+        self._reset_failed_button.setEnabled(
+            any(row.status in RESETTABLE_ROW_STATUSES for row in selected_rows)
+        )
+
+    def _emit_reset_failed_selection(self) -> None:
+        """Emit the selected failed, stopped or cancelled rows for the shared reset."""
+
+        keys = [
+            row.key for row in self._selected_source_rows() if row.status in RESETTABLE_ROW_STATUSES
+        ]
+        if keys:
+            getattr(self, "reset_failed_requested").emit(keys)
+
+    def _on_source_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_sources or item.column() != 0:
+            return
+        row = item.row()
+        if not (0 <= row < len(self._source_rows)):
+            return
+        getattr(self, "source_label_renamed").emit(self._source_rows[row].key, item.text())

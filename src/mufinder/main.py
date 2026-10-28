@@ -120,6 +120,7 @@ PAGE_ROUTES = (
     "muon_candidates",
     "muon_relaxations",
     "muon_analysis",
+    "hyperfine_coupling",
     "magnetic_fields",
     "polarisation",
     "quantum_corrections",

@@ -51,6 +51,7 @@ from mufinder.workflow.muon_site import (
     ACTIVE_MUON_RELAXATION_DEFINITION_KEY,
     MUON_RELAXATION_DEFINITION_CALC_TYPE,
 )
+from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 
 #: ``ui_state`` key holding the relaxation-analysis workspaces.
@@ -226,6 +227,13 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
         group="muon_sites",
     ),
     WorkflowStageInfo(
+        "hyperfine_coupling",
+        "Hyperfine Coupling",
+        "Complete at least one hyperfine calculation.",
+        "Contact hyperfine field and muonium coupling of each distinct relaxed site, from a CASTEP "
+        "magres run. Needs relaxed muon sites.",
+    ),
+    WorkflowStageInfo(
         "magnetic_fields",
         "Magnetic Fields",
         "Define at least one magnetic component.",
@@ -264,6 +272,7 @@ STAGE_DEPENDENCIES: tuple[StageDependency, ...] = (
     StageDependency("uep", "muon_candidates", DependencyKind.OPTIONAL),
     StageDependency("muon_candidates", "muon_relaxations", DependencyKind.REQUIRED),
     StageDependency("muon_relaxations", "muon_analysis", DependencyKind.REQUIRED),
+    StageDependency("muon_analysis", "hyperfine_coupling", DependencyKind.REQUIRED),
     StageDependency("muon_analysis", "magnetic_fields", DependencyKind.REQUIRED),
     StageDependency("muon_analysis", "quantum_corrections", DependencyKind.REQUIRED),
     StageDependency("muon_analysis", "energy_barriers", DependencyKind.REQUIRED),
@@ -277,6 +286,7 @@ _STAGE_JOB_STAGES: dict[str, tuple[WorkflowStage, ...]] = {
     "pristine_relaxation": (WorkflowStage.PRISTINE_RELAXATION,),
     "uep": (WorkflowStage.UEP,),
     "muon_relaxations": (WorkflowStage.MUON_RELAXATION,),
+    "hyperfine_coupling": (WorkflowStage.HYPERFINE_COUPLING,),
     "magnetic_fields": (WorkflowStage.MAGNETIC_FIELD,),
     "quantum_corrections": (WorkflowStage.QUANTUM_CORRECTIONS,),
     "energy_barriers": (WorkflowStage.ENERGY_BARRIERS,),
@@ -407,6 +417,10 @@ def _is_polarisation_simulation(result: Result) -> bool:
     return str(result.data.get("owner", "")).startswith(SIMULATION_OWNER_PREFIX)
 
 
+def hyperfine_coupling_complete(document: ProjectDocument) -> bool:
+    return any(result.result_type == HYPERFINE_CALC_TYPE for result in document.results.values())
+
+
 def quantum_corrections_complete(document: ProjectDocument) -> bool:
     return any(
         result.result_type == QUANTUM_PHONON_CALC_TYPE for result in document.results.values()
@@ -437,6 +451,7 @@ COMPLETION_CHECKS: dict[str, Callable[[ProjectDocument], bool]] = {
     "muon_candidates": muon_candidates_complete,
     "muon_relaxations": muon_relaxations_complete,
     "muon_analysis": relaxation_analysis_complete,
+    "hyperfine_coupling": hyperfine_coupling_complete,
     "magnetic_fields": magnetic_fields_complete,
     "polarisation": polarisation_complete,
     "quantum_corrections": quantum_corrections_complete,
@@ -789,6 +804,15 @@ def _polarisation_facts(document: ProjectDocument) -> tuple[str, ...]:
     return (_count(count, "simulation"),) if count else ("No polarisation simulations yet",)
 
 
+def _hyperfine_facts(document: ProjectDocument) -> tuple[str, ...]:
+    count = sum(
+        1 for result in document.results.values() if result.result_type == HYPERFINE_CALC_TYPE
+    )
+    facts = [_count(count, "hyperfine result")] if count else []
+    facts.extend(_job_facts(document, WorkflowStage.HYPERFINE_COUPLING, "job", completed=False))
+    return tuple(facts) or ("No hyperfine calculations yet",)
+
+
 def _quantum_facts(document: ProjectDocument) -> tuple[str, ...]:
     results = [
         result
@@ -825,6 +849,7 @@ _FACTS: dict[str, Callable[[ProjectDocument], tuple[str, ...]]] = {
     "muon_candidates": _candidate_facts,
     "muon_relaxations": _relaxation_facts,
     "muon_analysis": _analysis_facts,
+    "hyperfine_coupling": _hyperfine_facts,
     "magnetic_fields": _magnetic_facts,
     "polarisation": _polarisation_facts,
     "quantum_corrections": _quantum_facts,

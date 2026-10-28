@@ -50,31 +50,43 @@ Hyperfine Coupling needs:
 Running the workflow
 --------------------
 
-1. **Open the page.** Choose ``Hyperfine Coupling`` in the navigator; it sits
-   before ``Magnetic Fields``.
-2. **Configure the rows.** Select one or more rows in ``Hyperfine Coupling
-   Jobs`` and choose ``Configure``. The dialog starts from the source
-   relaxation's settings (see `Configuration dialog`_).
-3. **Submit.** Choose ``Submit Local`` or ``Submit to Cluster``. Each row runs
-   as one job; its state follows the job in the Job Dashboard.
-4. **Review the result.** When a job completes, its row in ``Results`` shows
-   the coupling, the contact field and the cross-check (see
-   `Outputs and interpretation`_).
+1. **Open the page.** Select ``Hyperfine Coupling`` in the workflow navigator;
+   it sits before ``Magnetic Fields``. The ``Hyperfine Jobs`` table lists the
+   pinned sites with ``Status`` = ``ready``.
+2. **Configure before submitting.** Click a row's ``Configure...`` button, or
+   select several rows and click ``Configure Selected Parameters...``. The
+   settings start from the source relaxation (see `Configuration dialog`_) and
+   stay editable until the row's job is submitted.
+3. **Submit.** Select the rows and click ``Run Selected Locally`` or
+   ``Run Selected on Cluster``; with nothing selected the buttons submit every
+   ready row. The row's ``Status`` then follows the job.
+4. **Review the result.** When the job completes and its ``.magres`` file
+   parses, a row appears under ``Completed Results`` (see
+   `Outputs and interpretation`_). Check the jobs dashboard for warnings: a
+   missing pseudo spin density, or a source relaxation without Mulliken spins.
 5. **Optionally hand the coupling to Magnetic Fields.** Select one result and
-   choose ``Use in Magnetic Fields``.
+   click ``Use in Magnetic Fields`` (see `Using the coupling in Magnetic
+   Fields`_).
+
+A submitted row's parameters are locked; ``Configure...`` then opens them
+read-only and says why. A failed, stopped or cancelled job recovers through
+``Reset Failed Jobs...``, which asks for confirmation first.
 
 The workflow page
 -----------------
 
-``Hyperfine Coupling Jobs`` lists one row per eligible site with its label,
-charge state, relative energy, status and a ``Configure`` button, exactly as
-on the Quantum Corrections page. Double-click a label to rename it. The
-right-click menu offers ``Configure``, ``Submit``, ``Cancel``, ``Inspect
-failed job`` and the shared reset of failed rows; every cancel and reset asks
-for confirmation first, and the Delete and Backspace keys act on the selected
-rows.
+``Hyperfine Jobs`` lists the sites pinned to the ``Muon Sites`` summary, or
+every eligible relaxed site when ``Show every relaxed site`` is ticked, with
+the same notice as Quantum Corrections when nothing is pinned. Its columns are
+``Site`` (double-click a relaxed site's label to rename it), ``Charge``
+(``positive muon`` or ``muonium``), ``Source Job`` (the muon relaxation the
+row was built from), ``Status`` (``ready`` before the row has a job, then its
+job's status) and ``Parameters`` (``Configure...``). Right-click selected rows
+to run, cancel, inspect a failure, reset failed jobs or configure them. There
+is no ``Remove``: rows are derived from completed relaxations.
 
-``Results`` has one row per completed job:
+``Completed Results`` has one row per completed job; hover a column header for
+its definition:
 
 .. list-table::
    :header-rows: 1
@@ -83,14 +95,15 @@ rows.
    * - Column
      - Meaning
    * - ``Site``
-     - The row's label.
+     - The relaxed site the job ran on.
    * - ``Charge state``
-     - Diamagnetic muon or muonium.
+     - ``positive muon`` or ``muonium``.
    * - ``A_iso (MHz)``
      - The isotropic coupling from CASTEP's reconstructed tensor, in the
-       physical sign convention.
+       physical sign convention, to two decimals.
    * - ``B_c (T)``
-     - The contact field that :math:`A_\mathrm{iso}` corresponds to.
+     - The contact field that :math:`A_\mathrm{iso}` corresponds to, to four
+       decimals.
    * - ``B_c pseudo (T)``
      - The contact field from the pseudo spin density at the muon; empty when
        the job wrote no readable formatted density.
@@ -100,6 +113,10 @@ rows.
      - The three principal values of the traceless anisotropic part, in
        ascending order.
 
+``Use in Magnetic Fields`` sits under the table. It is enabled when exactly one
+result is selected and that result has contact-shell moments; otherwise its
+tooltip says why.
+
 Configuration dialog
 --------------------
 
@@ -108,11 +125,13 @@ The dialog shows the shared parameters first, ``basis_precision``,
 of the CASTEP keywords the catalog allows for a ``MAGRES`` task. The defaults
 come from the source relaxation, with ``elec_energy_tol`` tightened to
 ``1e-9 eV``: the spin density at the muon is a small difference of two large
-densities and needs a well-converged ground state. ``TASK`` is fixed to
-``MAGRES``.
+densities and needs a well-converged ground state. The dialog is titled
+``Configure Hyperfine Coupling Parameters`` (``Inspect Hyperfine Coupling
+Parameters`` for a locked row).
 
-The dialog refuses ``MAGRES_TASK``, ``SPIN_POLARIZED`` (in either spelling) and
-``WRITE_FORMATTED_DENSITY``, which the workflow sets. The k-point mesh matters
+The workflow sets ``TASK``, ``MAGRES_TASK``, ``SPIN_POLARIZED`` (in either
+spelling) and ``WRITE_FORMATTED_DENSITY`` itself: the dialog does not offer
+them, and the source relaxation's values for them are not carried over. The k-point mesh matters
 more here than for a relaxation, especially in metals: Onuorah *et al.* found
 the contact field converged only with meshes equivalent to 16 × 16 × 16 for
 the bcc Fe unit cell.
@@ -135,6 +154,11 @@ The job writes ``<seed>.magres``, which holds the tensors, and
 ``<seed>.den_fmt``, which holds the charge and spin density on CASTEP's fine
 grid. Both are retrieved from a cluster with the ``.castep`` output. The
 formatted density of a large supercell runs to hundreds of megabytes.
+
+A job without a readable ``.magres`` fails, with ``Expected CASTEP magres
+output was not found`` or ``Failed to read CASTEP magres output`` in the Job
+Dashboard. A missing or unreadable ``.den_fmt`` does not fail the job: the
+``B_c pseudo (T)`` cell stays empty and the run carries a warning.
 
 Outputs and interpretation
 --------------------------
@@ -178,11 +202,16 @@ relaxation. An ion counts as magnetic when its Mulliken moment is at least
 Each Magnetic Fields form, the main page and every saved workspace, has its
 own selected muon site and its own contact shell. ``Use in Magnetic Fields``
 fills the ``Hyperfine coupling`` of every form whose selected site is this
-result's site, in ``Å⁻³``, computed with that form's ``Contact neighbours
-(nnn)`` and ``Contact radius``. If a form already holds a different coupling,
-MuFinder lists the forms and asks before overwriting; the default answer keeps
-them. If no form shows the site, nothing changes and MuFinder says so: select
-the site on the Magnetic Fields page first.
+result's site, in ``Å⁻³`` to six significant figures, computed with that
+form's ``Contact neighbours (nnn)`` and ``Contact radius``. If a form already
+holds a different coupling, a ``Replace hyperfine coupling`` dialog lists each
+form's current and new value and asks before overwriting; ``Cancel`` is the
+default. A form whose contact shell cannot give a coupling (for example a shell
+that reaches past the relaxed supercell) is skipped and named. If no form
+shows the site, nothing changes and MuFinder says so: select the site on the
+Magnetic Fields page or in a saved workspace first. Magnetic Fields results
+computed before the hand-off keep their old contact term until they are
+recalculated.
 
 Because the coupling is per unit of DFT moment, Magnetic Fields rescales the
 contact field by the moments of its own magnetic structure. When DFT

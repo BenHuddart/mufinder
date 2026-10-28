@@ -49,6 +49,7 @@ _WORKFLOW_LABELS: dict[WorkflowStage, str] = {
     WorkflowStage.MUON_GENERATION: "Muon Sites",
     WorkflowStage.MUON_RELAXATION: "Muon Relaxations",
     WorkflowStage.SITE_ANALYSIS: "Site Analysis",
+    WorkflowStage.HYPERFINE_COUPLING: "Hyperfine Coupling",
     WorkflowStage.MAGNETIC_FIELD: "Magnetic Fields",
     WorkflowStage.QUANTUM_CORRECTIONS: "Quantum Corrections",
     WorkflowStage.ENERGY_BARRIERS: "Energy Barriers",

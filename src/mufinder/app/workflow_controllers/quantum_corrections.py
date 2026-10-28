@@ -119,6 +119,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowJobController,
     confirm_active_host,
     dedupe_jobs,
+    locked_configuration_reason,
 )
 from mufinder.app.workflow_dialogs import SourceConfigureRequest, SourceConfigureResult
 from mufinder.app.workflow_parameters import (
@@ -127,7 +128,6 @@ from mufinder.app.workflow_parameters import (
     workflow_basic_parameter_names,
 )
 from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
-from mufinder.app.workflow_table_utils import RESET_FAILED_ACTION_TEXT
 
 _CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
 _GUI_TO_METHOD = {
@@ -254,9 +254,9 @@ def _unverified_method_question(rows: list[tuple[str, str]]) -> tuple[str, str]:
 def _locked_reason(jobs: Sequence[Job | None], statuses: Sequence[str]) -> str:
     """Return why the Configure dialog opens read-only for rows in ``statuses``.
 
-    ``jobs`` are the rows' jobs and ``statuses`` their projected row statuses,
-    in the same order. The reason is one line naming what unlocks the first
-    locked row; it is empty when every row is ready.
+    A row whose only job is a legacy singlepoint names that job; every other
+    row gets the shared reason for its phonon job (see
+    :func:`~mufinder.app.workflow_controllers.base.locked_configuration_reason`).
     """
 
     for job, status in zip(jobs, statuses, strict=True):
@@ -267,17 +267,7 @@ def _locked_reason(jobs: Sequence[Job | None], statuses: Sequence[str]) -> str:
                 f"A selected row's singlepoint from an older MuFinder version is {status}; "
                 "wait for it to finish or cancel it to edit the parameters."
             )
-        if job.status in ACTIVE_JOB_STATUSES:
-            return (
-                f"Parameters are read-only while a selected row's phonon job is {status}; "
-                f"cancel it, then use {RESET_FAILED_ACTION_TEXT} to edit them."
-            )
-        if job.status == JobStatus.COMPLETED:
-            return (
-                "A selected row's phonon job has completed; delete it from the Job Dashboard "
-                "to run the row again with other parameters."
-            )
-        return f"A selected row's phonon job is {status}; use {RESET_FAILED_ACTION_TEXT} to edit its parameters."
+        return locked_configuration_reason([job], [status], job_noun="phonon job")
     return ""
 
 
