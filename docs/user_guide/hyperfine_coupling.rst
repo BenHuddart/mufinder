@@ -142,7 +142,8 @@ densities and needs a well-converged ground state. The dialog is titled
 Parameters`` for a locked row).
 
 The workflow sets ``TASK``, ``MAGRES_TASK``, ``SPIN_POLARIZED`` (in either
-spelling) and ``WRITE_FORMATTED_DENSITY`` itself: the dialog does not offer
+spelling), ``WRITE_FORMATTED_DENSITY`` and ``CHARGE`` (from the source's charge
+state) itself: the dialog does not offer
 them, and the source relaxation's values for them are not carried over. The k-point mesh matters
 more here than for a relaxation, especially in metals: Onuorah *et al.* found
 the contact field converged only with meshes equivalent to 16 × 16 × 16 for

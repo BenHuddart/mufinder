@@ -56,7 +56,7 @@ from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
 )
-from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE
+from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE, HYPERFINE_MUON_SPECIES
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 
 _UEP_SOURCE_CALC_TYPE = "castep_uep_source"
@@ -370,14 +370,15 @@ def collect_job_artifacts(
         else:
             try:
                 magres = hyperfine_tensor_for_species(
-                    parse_magres_hyperfine(magres_path), _MUON_SPECIES
+                    parse_magres_hyperfine(magres_path), HYPERFINE_MUON_SPECIES
                 )
             except Exception as exc:
                 # Broader than MagresInputError for the same never-raise reason
                 # as the cell branch.
                 magres = None
                 magres_error = str(exc)
-        if output_dir is not None:
+        # The density only matters beside a tensor; a job without one fails anyway.
+        if output_dir is not None and magres is not None:
             pseudo_spin_density, spin_density_error = _muon_pseudo_spin_density(
                 output_dir, seed_name
             )
@@ -405,9 +406,6 @@ def collect_job_artifacts(
     )
 
 
-_MUON_SPECIES = "H:mu"
-
-
 def _muon_pseudo_spin_density(output_dir: Path, seed_name: str) -> tuple[float | None, str | None]:
     """Return the pseudo spin density at the muon in Å^-3, or ``None`` and why not.
 
@@ -423,10 +421,10 @@ def _muon_pseudo_spin_density(output_dir: Path, seed_name: str) -> tuple[float |
         muon_positions = [
             position
             for species, position in zip(cell.species, cell.fractional_positions, strict=True)
-            if species == _MUON_SPECIES
+            if species == HYPERFINE_MUON_SPECIES
         ]
         if len(muon_positions) != 1:
-            return None, f"Expected one {_MUON_SPECIES} atom in {seed_name}.cell."
+            return None, f"Expected one {HYPERFINE_MUON_SPECIES} atom in {seed_name}.cell."
         return spin_density_at(parse_formatted_density(density_path), muon_positions[0]), None
     except Exception as exc:
         # Never raise on the worker thread: an unreadable density is a warning.

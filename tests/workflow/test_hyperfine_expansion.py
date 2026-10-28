@@ -82,7 +82,7 @@ def test_row_settings_are_layered_but_controlled_keywords_are_refused() -> None:
     )
     assert "ELEC_ENERGY_TOL : 1e-08 eV" in write_param(job.param_file)
 
-    for name, value in (("task", "SINGLEPOINT"), ("spin_polarized", False)):
+    for name, value in (("task", "SINGLEPOINT"), ("spin_polarized", False), ("charge", 0)):
         override = ParamTemplate(keywords=(KeywordAssignment(name, value),))
         with pytest.raises(ValueError, match="set by the Hyperfine Coupling workflow"):
             expand_hyperfine_jobs(

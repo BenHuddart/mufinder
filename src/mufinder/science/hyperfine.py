@@ -112,10 +112,16 @@ def spin_density_from_contact_field(contact_field_t: float) -> float:
     return float(contact_field_t) / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
 
 
-def angstrom3_to_bohr3(density_angstrom3: float) -> float:
+def per_angstrom3_to_per_bohr3(density_angstrom3: float) -> float:
     """Convert a density in Å^-3 to atomic units, a0^-3."""
 
     return float(density_angstrom3) * BOHR_RADIUS_ANGSTROM**3
+
+
+def per_bohr3_to_per_angstrom3(density_bohr3: float) -> float:
+    """Convert a density in atomic units, a0^-3, to Å^-3."""
+
+    return float(density_bohr3) / BOHR_RADIUS_ANGSTROM**3
 
 
 def spin_density_at(density: FormattedDensity, fractional: Sequence[float]) -> float:
@@ -168,6 +174,8 @@ def contact_coupling_from_moments(
         raise HyperfineError("Every host ion needs one moment for the contact shell.")
     inverse = np.linalg.inv(lattice)
     delta = (ions - np.asarray(muon_cartesian, dtype=float)) @ inverse
+    # Rounding gives the nearest image of every ion within half the smallest
+    # plane spacing, the reach contact_shell_mean allows, in any cell shape.
     delta -= np.round(delta)
     vectors = delta @ lattice
     magnetic = np.abs(moments) >= MAGNETIC_MOMENT_THRESHOLD_MUB

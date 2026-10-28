@@ -10,7 +10,8 @@ from mufinder.castep_io.magres import hyperfine_tensor_for_species, parse_magres
 from mufinder.domain.constants import BOHR_RADIUS_ANGSTROM
 from mufinder.science.hyperfine import (
     HyperfineError,
-    angstrom3_to_bohr3,
+    per_angstrom3_to_per_bohr3,
+    per_bohr3_to_per_angstrom3,
     contact_coupling_from_moments,
     contact_field_from_spin_density,
     muon_hyperfine_from_castep,
@@ -43,7 +44,10 @@ def test_iron_contact_field_matches_the_reconstructed_spin_density() -> None:
 
     assert iron.isotropic_mhz == pytest.approx(-324.2122)
     assert iron.contact_field_t == pytest.approx(-1.1946, abs=1e-3)
-    assert angstrom3_to_bohr3(iron.spin_density_angstrom3) == pytest.approx(-0.0228, abs=1e-4)
+    assert per_angstrom3_to_per_bohr3(iron.spin_density_angstrom3) == pytest.approx(
+        -0.0228, abs=1e-4
+    )
+    assert per_bohr3_to_per_angstrom3(per_angstrom3_to_per_bohr3(-0.15)) == pytest.approx(-0.15)
     # The traceless dipolar part, axial along y.
     assert iron.dipolar_principal_mhz == pytest.approx((-137.61, 68.80, 68.81), abs=0.02)
     assert iron.tensor_mhz[1][1] == pytest.approx(-461.8211)

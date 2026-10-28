@@ -24,7 +24,8 @@ from mufinder.castep_io.output_parser import parse_castep_mulliken_atomic_spins
 from mufinder.domain.models import Result, Structure
 from mufinder.science.hyperfine import (
     HyperfineError,
-    angstrom3_to_bohr3,
+    per_angstrom3_to_per_bohr3,
+    per_bohr3_to_per_angstrom3,
     contact_coupling_from_moments,
     contact_field_from_spin_density,
     muon_hyperfine_from_castep,
@@ -41,9 +42,7 @@ from mufinder.services.magnetic_field_results import (
     magnetic_field_result,
 )
 from mufinder.services.project_service import ProjectDocument
-from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE
-
-MUON_SPECIES = "H:mu"
+from mufinder.workflow.hyperfine import HYPERFINE_CALC_TYPE, HYPERFINE_MUON_SPECIES
 
 #: ``ui_state`` keys of the Magnetic Fields main form and saved workspaces.
 MAGNETIC_FIELD_FORM_KEY = "magnetic_field_form"
@@ -105,7 +104,9 @@ def contact_shell_inputs(
     if spins is None:
         return None
     muon_indices = [
-        index for index, species in enumerate(structure.species) if species == MUON_SPECIES
+        index
+        for index, species in enumerate(structure.species)
+        if species == HYPERFINE_MUON_SPECIES
     ]
     if len(muon_indices) != 1:
         return None
@@ -147,11 +148,11 @@ def hyperfine_result_payload(
         "isotropic_mhz": muon.isotropic_mhz,
         "dipolar_principal_mhz": list(muon.dipolar_principal_mhz),
         "contact_field_T": muon.contact_field_t,
-        "spin_density_bohr3": angstrom3_to_bohr3(muon.spin_density_angstrom3),
+        "spin_density_bohr3": per_angstrom3_to_per_bohr3(muon.spin_density_angstrom3),
         "pseudo_spin_density_bohr3": (
             None
             if pseudo_spin_density_angstrom3 is None
-            else angstrom3_to_bohr3(pseudo_spin_density_angstrom3)
+            else per_angstrom3_to_per_bohr3(pseudo_spin_density_angstrom3)
         ),
         "pseudo_contact_field_T": pseudo_field,
         "contact_shell": dict(shell) if shell is not None else None,
@@ -246,7 +247,7 @@ def plan_magnetic_field_handoff(document: ProjectDocument, result: Result) -> li
         raise HyperfineError(reason)
     data = result.data
     shell = data["contact_shell"]
-    spin_density_angstrom3 = float(data["spin_density_bohr3"]) / angstrom3_to_bohr3(1.0)
+    spin_density_angstrom3 = per_bohr3_to_per_angstrom3(data["spin_density_bohr3"])
     targets: list[HandoffTarget] = []
     for title, workspace_id, form in _magnetic_field_forms(document):
         if not _form_shows_site(form, data):
@@ -283,7 +284,7 @@ def plan_magnetic_field_handoff(document: ProjectDocument, result: Result) -> li
 def apply_magnetic_field_handoff(
     document: ProjectDocument, targets: Sequence[HandoffTarget]
 ) -> int:
-    """Write each target's coupling into its Magnetic Fields form; return how many changed.
+    """Write each target's coupling into its Magnetic Fields form; return how many were filled.
 
     Targets with an error are skipped. A form whose coupling changes loses its
     stored field results, as when the coupling is edited on the page: they were

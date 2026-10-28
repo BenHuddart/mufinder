@@ -27,13 +27,18 @@ from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate
 HYPERFINE_CALC_TYPE = "castep_hyperfine"
 HYPERFINE_SET_CALC_TYPE = "castep_hyperfine_set"
 
+#: The muon's species label in every hyperfine job; its outputs are read by it.
+HYPERFINE_MUON_SPECIES = "H:mu"
+
 #: Parameters the workflow sets on every job; a row's settings may not override them.
+#: ``CHARGE`` follows the source relaxation's charge state, which the result records.
 HYPERFINE_CONTROLLED_PARAM_KEYWORDS = (
     "task",
     "magres_task",
     "spin_polarized",
     "spin_polarised",
     "write_formatted_density",
+    "charge",
 )
 
 
@@ -42,7 +47,7 @@ class HyperfineJobConfig:
     """Configuration of one generated Hyperfine Coupling job."""
 
     source: QuantumPhononSource
-    muon_species: str = "H:mu"
+    muon_species: str = HYPERFINE_MUON_SPECIES
     cell_overrides: CellTemplate | None = None
     param_overrides: ParamTemplate | None = None
 

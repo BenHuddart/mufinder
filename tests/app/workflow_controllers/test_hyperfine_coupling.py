@@ -144,7 +144,13 @@ def test_configure_request_hides_workflow_controlled_parameters(tmp_path: Path) 
     assert request is not None
     assert not request.read_only
     assert "spin_polarized" not in request.row_values[0]
-    assert {"task", "magres_task", "spin_polarized", "write_formatted_density"}.isdisjoint(names)
+    assert {
+        "task",
+        "magres_task",
+        "spin_polarized",
+        "write_formatted_density",
+        "charge",
+    }.isdisjoint(names)
 
 
 def _run(document, job) -> CalculationRun:

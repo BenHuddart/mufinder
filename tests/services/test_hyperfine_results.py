@@ -9,7 +9,7 @@ import pytest
 
 from mufinder.castep_io.magres import hyperfine_tensor_for_species, parse_magres_hyperfine
 from mufinder.domain.models import Result, Structure
-from mufinder.science.hyperfine import HyperfineError, angstrom3_to_bohr3
+from mufinder.science.hyperfine import HyperfineError, per_bohr3_to_per_angstrom3
 from mufinder.services.hyperfine_results import (
     HANDOFF_COUPLING_UNIT,
     HandoffTarget,
@@ -142,7 +142,7 @@ def test_handoff_fills_every_form_showing_the_site_with_its_own_shell(tmp_path: 
     targets = plan_magnetic_field_handoff(document, result)
 
     assert [target.title for target in targets] == ["Magnetic Fields", "Workspace"]
-    rho = result.data["spin_density_bohr3"] / angstrom3_to_bohr3(1.0)
+    rho = per_bohr3_to_per_angstrom3(result.data["spin_density_bohr3"])
     # nnn=1 takes the nearer Fe (0.5 Å along x is 1.92 Å away, moment 2.0).
     assert targets[0].coupling == pytest.approx(rho / 2.0)
     assert not targets[0].overwrites

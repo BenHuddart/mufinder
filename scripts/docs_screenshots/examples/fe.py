@@ -64,7 +64,7 @@ from typing import Any
 
 from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.enums import WorkflowStage
-from mufinder.science.hyperfine import angstrom3_to_bohr3
+from mufinder.science.hyperfine import per_bohr3_to_per_angstrom3
 
 if TYPE_CHECKING:
     from mufinder.app.main_window import MainWindow
@@ -334,7 +334,7 @@ def _hyperfine_outputs(_job: Any, job_dir: Path, seed: str) -> bool:
             fractional,
             grid=DENSITY_GRID,
             shells=DENSITY_SHELLS,
-            spin_density_angstrom3=PSEUDO_SPIN_DENSITY_BOHR3 / angstrom3_to_bohr3(1.0),
+            spin_density_angstrom3=per_bohr3_to_per_angstrom3(PSEUDO_SPIN_DENSITY_BOHR3),
         ),
         encoding="utf-8",
     )

@@ -432,6 +432,10 @@ def test_collect_magres_missing_or_unreadable(tmp_path: Path) -> None:
 
     assert missing.magres_missing and missing.magres is None
     assert unreadable.magres is None and "no hyperfine tensors" in (unreadable.magres_error or "")
+    # Without a tensor the job fails, so its density is not read at all.
+    for artifacts in (missing, unreadable):
+        assert artifacts.pseudo_spin_density_angstrom3 is None
+        assert artifacts.spin_density_error is None
 
 
 def test_retrieval_flags_normalise_and_round_trip_as_runner_keywords() -> None:
