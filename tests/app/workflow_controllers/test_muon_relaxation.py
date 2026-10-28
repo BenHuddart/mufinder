@@ -947,10 +947,14 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     document.runs[run.id] = run
 
     # A REAL -out.cell fixture (2x2x1 supercell of the 4 A host) on disk, fed
-    # through the controller's parse + position-extraction helpers.
+    # through the controller's parse + position-extraction helpers. As a
+    # spin-polarised muonium run, it echoes its SPIN= values.
     output_dir = tmp_path / "job_out"
     output_dir.mkdir()
-    (output_dir / f"{job.label}-out.cell").write_text(_MUON_OUT_CELL_TEXT, encoding="utf-8")
+    spin_cell_text = _MUON_OUT_CELL_TEXT.replace(
+        "Si 0.0 0.0 0.0", "Si 0.0 0.0 0.0 SPIN= 1.5"
+    ).replace("H:mu 0.3 0.4 0.5", "H:mu 0.3 0.4 0.5 SPIN= 1.0")
+    (output_dir / f"{job.label}-out.cell").write_text(spin_cell_text, encoding="utf-8")
 
     deps = _stub_muon_deps(
         muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
@@ -989,6 +993,8 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     assert derived.properties["source_job_id"] == str(job.id)
     assert derived.properties["source_workflow_stage"] == WorkflowStage.MUON_RELAXATION.value
     assert any(str(s).strip().casefold() == "h:mu" for s in derived.species)
+    # The run's spins, the muonium seed included, stay on the relaxed structure.
+    assert derived.properties["atomic_spins"] == [1.5, 1.0]
 
     # Sanctioned document side effect: the source site is marked relaxed and
     # linked to this run with the job's total energy and host-cell final

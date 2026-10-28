@@ -21,6 +21,7 @@ from pathlib import Path
 from uuid import UUID
 
 import mufinder.castep_io.schema as _schema_module
+from mufinder.app.adapter_common import build_workflow_settings_template
 from mufinder.app.convergence_adapter import expand_convergence_jobs
 from mufinder.app.convergence_types import ConvergenceConfig
 from mufinder.app.relaxation_adapter import (
@@ -35,8 +36,10 @@ from mufinder.app.relaxation_types import (
 )
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepSourceRow
+from mufinder.castep_io.cell_parser import parse_cell_text
 from mufinder.castep_io.types import AtomicPosition, LatticeCart, PositionBlock
 from mufinder.domain.models import Structure
+from mufinder.services.relaxed_structure_spins import apply_relaxed_cell_spins
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.energy_barriers import (
     NudgedElasticBandJobConfig,
@@ -98,6 +101,59 @@ def _relaxed_muon_structure() -> Structure:
         fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
         properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
     )
+
+
+def _relaxed_from_out_cell(label: str, origin: str, out_cell_text: str) -> Structure:
+    """A relaxed structure as a completed relaxation derives it from its ``-out.cell``.
+
+    Mirrors ``upsert_job_derived_structure``: geometry from the parsed cell, and
+    its ``SPIN=`` values stored through ``apply_relaxed_cell_spins``.
+    """
+
+    cell = parse_cell_text(out_cell_text)
+    structure = Structure(
+        label=label,
+        origin=origin,
+        lattice_vectors=[list(vector) for vector in cell.lattice_vectors],
+        species=list(cell.species),
+        fractional_positions=[list(position) for position in cell.fractional_positions],
+        properties={"source_workflow_stage": origin},
+    )
+    apply_relaxed_cell_spins(structure, cell)
+    return structure
+
+
+# A spin-polarised bcc Fe relaxation's -out.cell, and a muon relaxation in it.
+_FE_PRISTINE_OUT_CELL = """
+%BLOCK LATTICE_CART
+ang
+2.87 0.0 0.0
+0.0 2.87 0.0
+0.0 0.0 2.87
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Fe 0.0 0.0 0.0 SPIN= 2.200
+Fe 0.5 0.5 0.5 SPIN= 2.200
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _fe_muon_out_cell(*, muon_spin: str) -> str:
+    return f"""
+%BLOCK LATTICE_CART
+ang
+2.87 0.0 0.0
+0.0 2.87 0.0
+0.0 0.0 2.87
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Fe 0.0 0.0 0.0 SPIN= 2.200
+Fe 0.5 0.5 0.5 SPIN= 2.200
+H:mu 0.5 0.25 0.0 SPIN= {muon_spin}
+%ENDBLOCK POSITIONS_FRAC
+"""
 
 
 # --------------------------------------------------------------------------
@@ -231,13 +287,40 @@ def _quantum_source(*, muonium: bool) -> QuantumPhononSource:
     )
 
 
+def _fe_quantum_source(*, muonium: bool) -> QuantumPhononSource:
+    # A relaxed muon in spin-polarised Fe: the phonon job inherits the
+    # relaxation's host spins, and muonium keeps its +1 muon seed.
+    relaxed = _relaxed_from_out_cell(
+        "fe relaxed site",
+        "muon_relaxation",
+        _fe_muon_out_cell(muon_spin="1.000" if muonium else "0.000"),
+    )
+    return QuantumPhononSource(
+        label="fe_mu1" if muonium else "fe_site1",
+        structure=structure_to_spec(relaxed),
+        source_site_id=_SITE_B,
+        source_relaxation_run_id=_RUN_B,
+        source_relaxation_job_id=_JOB_B,
+        charge_state="muonium" if muonium else "positive_muon",
+        total_energy_eV=-20.0,
+    )
+
+
 def build_quantum_phonon() -> list[tuple[str, JobSpec]]:
     # One job per site: the farmed positive-muon case pins NUM_FARMS, the
-    # muonium case the neutral, spin-polarised, unfarmed inputs.
+    # muonium case the neutral, spin-polarised, unfarmed inputs. The Fe cases
+    # start from relaxed structures that carry their run's SPIN= values.
     jobs = expand_quantum_phonon_jobs(
         jobs=(
             QuantumPhononJobConfig(source=_quantum_source(muonium=False), num_farms=4),
             QuantumPhononJobConfig(source=_quantum_source(muonium=True)),
+            # Spin-polarised as the source relaxation was; the Quantum Corrections
+            # controller reads that from the relaxation's .param.
+            QuantumPhononJobConfig(
+                source=_fe_quantum_source(muonium=False),
+                param_overrides=build_workflow_settings_template({"spin_polarized": True}).param,
+            ),
+            QuantumPhononJobConfig(source=_fe_quantum_source(muonium=True)),
         ),
         name_prefix="quantum_phonon",
     )
@@ -317,15 +400,87 @@ def build_neb() -> list[tuple[str, JobSpec]]:
     )
     # Task-farmed case: same band, split across CASTEP farms via NUM_FARMS.
     farmed = replace(plain, label="siteA_to_siteB_farmed_neb")
+    # A band from a relaxed muon in spin-polarised Fe. As the Energy Barriers
+    # controller does, every image takes the relaxed reactant's spins.
+    fe_reactant = structure_to_spec(
+        _relaxed_from_out_cell(
+            "fe relaxed site", "muon_relaxation", _fe_muon_out_cell(muon_spin="0.000")
+        )
+    )
+    fe_band = NudgedElasticBandSource(
+        label="fe_siteA_to_siteB_neb",
+        reactant_structure=fe_reactant,
+        product_positions_frac=PositionBlock(
+            positions=(
+                AtomicPosition("Fe", (0.0, 0.0, 0.0)),
+                AtomicPosition("Fe", (0.5, 0.5, 0.5)),
+                AtomicPosition("H:mu", (0.5, 0.0, 0.25)),
+            )
+        ),
+        intermediate_positions_frac=None,
+        product_atomic_spins=fe_reactant.atomic_spins,
+        intermediate_atomic_spins=fe_reactant.atomic_spins,
+        source_site_ids=(_SITE_A, _SITE_B),
+        source_relaxation_run_ids=(_RUN_A, _RUN_B),
+        source_relaxation_job_ids=(_JOB_A, _JOB_B),
+        path_length_ang=1.0,
+    )
     jobs = expand_nudged_elastic_band_jobs(
         jobs=[
             NudgedElasticBandJobConfig(source=plain),
             NudgedElasticBandJobConfig(source=spin),
             NudgedElasticBandJobConfig(source=farmed, num_farms=3),
+            NudgedElasticBandJobConfig(source=fe_band),
         ],
         name_prefix="barrier",
     )
     return [(job.name, job) for job in jobs]
+
+
+# --------------------------------------------------------------------------
+# Workflows hosted on a relaxed magnetic pristine structure
+# --------------------------------------------------------------------------
+def build_relaxed_magnetic_host() -> list[tuple[str, JobSpec]]:
+    # A relaxed pristine structure used as the host carries its run's spins
+    # into the UEP and muon-relaxation jobs started from it.
+    host = _relaxed_from_out_cell(
+        "fe_pristine relaxed", "pristine_relaxation", _FE_PRISTINE_OUT_CELL
+    )
+    muon_config = MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=_SITE_A,
+                label="fe_site_a",
+                initial_fractional_position=(0.5, 0.25, 0.0),
+                charge_state="positive_muon",
+                parameter_values={"spin_polarized": True},
+            ),
+            MuonRelaxationRow(
+                site_id=_SITE_B,
+                label="fe_site_b",
+                initial_fractional_position=(0.25, 0.25, 0.25),
+                charge_state="muonium",
+            ),
+        )
+    )
+    muon_jobs = expand_muon_relaxation_jobs(
+        host_structure=host,
+        config=muon_config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(8, 8, 8),
+        project_kpoint_reference_lattice=host.lattice_vectors,
+    ).jobs
+    uep_jobs = expand_uep_jobs(
+        host_structure=host,
+        config=UepConfig(
+            name_prefix="uep",
+            rows=(UepSourceRow(label="fe_relaxed", parameter_values={"spin_polarized": True}),),
+        ),
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(8, 8, 8),
+        project_kpoint_reference_lattice=host.lattice_vectors,
+    ).jobs
+    return [(job.name, job) for job in (*muon_jobs, *uep_jobs)]
 
 
 # Workflow name -> builder. The workflow name is the golden subdirectory.
@@ -337,6 +492,7 @@ BUILDERS = {
     "uep": build_uep,
     "quantum_phonon": build_quantum_phonon,
     "neb": build_neb,
+    "relaxed_magnetic_host": build_relaxed_magnetic_host,
 }
 
 
