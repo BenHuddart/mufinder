@@ -318,3 +318,27 @@ def test_results_name_a_pinned_site_as_the_jobs_table_does(tmp_path: Path) -> No
     (row,) = view.results[-1]
     assert source.pinned_label
     assert row.site == source.pinned_label
+
+
+def test_build_result_ignores_a_density_left_by_an_earlier_run(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+    import os
+
+    document, controller, _view, key, output_root = _setup(tmp_path)
+    (job,) = controller.materialize([key])
+    job_dir = output_root / job.label
+    shutil.copy(FIXTURES / "fe_tetrahedral_muon.magres", job_dir / f"{job.label}.magres")
+    density = job_dir / f"{job.label}.den_fmt"
+    _write_spin_density(density)
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    os.utime(density, (old, old))
+    artifacts = collect_job_artifacts(job_dir, job.label, want_magres=True)
+    run = _run(document, job)
+    run.started_at = datetime.now(UTC)
+
+    contribution = controller.build_result(job, completed_castep_result(), run, artifacts)
+
+    assert artifacts.pseudo_spin_density_angstrom3 is not None
+    assert contribution.payload["pseudo_spin_density_bohr3"] is None
+    assert contribution.payload["pseudo_contact_field_T"] is None
+    assert any("predates this run" in warning for warning in contribution.warnings)

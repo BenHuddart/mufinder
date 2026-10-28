@@ -236,7 +236,7 @@ def test_job_output_files_lists_present_files_in_order(tmp_path: Path) -> None:
     root = tmp_path / "project"
     output_dir = root / "files" / "job"
     output_dir.mkdir(parents=True)
-    for name in ("seed.castep", "seed.cell", "seed_farm001.ts", "other.castep"):
+    for name in ("seed.castep", "seed.cell", "seed_farm001.ts", "seed.magres", "other.castep"):
         (output_dir / name).write_text("")
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -246,6 +246,7 @@ def test_job_output_files_lists_present_files_in_order(tmp_path: Path) -> None:
         "files/job/seed.cell",
         "files/job/seed.castep",
         "files/job/seed_farm001.ts",
+        "files/job/seed.magres",
     ]
     assert job_output_files(root, outside, "seed") == [str(outside / "seed.param")]
     assert job_output_files(root, None, "seed") == []

@@ -173,8 +173,9 @@ stopped before writing one, for example because the ground state did not
 converge, the Job Dashboard shows CASTEP's error; otherwise it shows
 ``Expected CASTEP magres output was not found``, ``Failed to read CASTEP magres
 output``, or, for a ``.magres`` older than the run, that the file predates
-this run. A missing or unreadable ``.den_fmt`` does not fail the job: the
-``B_c pseudo (T)`` cell stays empty and the run carries a warning.
+this run. A missing or unreadable ``.den_fmt``, or one older than the run, does
+not fail the job: the ``B_c pseudo (T)`` cell stays empty and the run carries a
+warning.
 
 Outputs and interpretation
 --------------------------

@@ -554,10 +554,23 @@ class HyperfineCouplingController(WorkflowJobController):
         if job.calc_type != HYPERFINE_CALC_TYPE or artifacts.magres is None:
             return ControllerResult()
         warnings: list[str] = []
+        pseudo_spin_density = artifacts.pseudo_spin_density_angstrom3
         if artifacts.spin_density_error is not None:
             warnings.append(
                 "The pseudo spin density at the muon could not be read: "
                 f"{artifacts.spin_density_error}"
+            )
+        density_path = (
+            None if artifacts.magres_path is None else artifacts.magres_path.with_suffix(".den_fmt")
+        )
+        if pseudo_spin_density is not None and output_predates_run(
+            density_path, run.started_at or job.started_at
+        ):
+            # A density left by an earlier run would not match this run's tensor.
+            pseudo_spin_density = None
+            warnings.append(
+                f"{density_path.name} predates this run, so the pseudo spin density "
+                "cross-check is left empty."
             )
         candidate = self._source_candidate_for_job(job)
         shell = None
@@ -588,7 +601,7 @@ class HyperfineCouplingController(WorkflowJobController):
             warnings.append(NO_MULLIKEN_SPINS_WARNING)
         payload = hyperfine_result_payload(
             artifacts.magres,
-            pseudo_spin_density_angstrom3=artifacts.pseudo_spin_density_angstrom3,
+            pseudo_spin_density_angstrom3=pseudo_spin_density,
             shell=shell,
             source=source,
         )
