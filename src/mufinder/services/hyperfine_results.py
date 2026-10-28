@@ -209,10 +209,19 @@ class HandoffTarget:
 
     @property
     def overwrites(self) -> bool:
-        """Whether the form holds a different non-empty coupling the hand-off would replace."""
+        """Whether the form holds a different nonzero coupling the hand-off would replace.
+
+        An empty or zero coupling, the form's default for no contact term, is
+        filled without asking.
+        """
 
         if self.coupling is None or not self.existing_text.strip():
             return False
+        try:
+            if float(self.existing_text) == 0.0:
+                return False
+        except ValueError:
+            pass
         return (
             self.existing_text.strip() != self.new_text
             or self.existing_unit != HANDOFF_COUPLING_UNIT

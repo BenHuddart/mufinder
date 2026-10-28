@@ -205,11 +205,12 @@ relaxation. An ion counts as magnetic when its Mulliken moment is at least
 Each Magnetic Fields form, the main page and every saved workspace, has its
 own selected muon site and its own contact shell. ``Use in Magnetic Fields``
 fills the ``Hyperfine coupling`` of every form whose selected site is this
-result's site, in ``Å⁻³`` to six significant figures, computed with that
+result's site, including the site a form shows by default before it is first
+edited, in ``Å⁻³`` to six significant figures, computed with that
 form's ``Contact neighbours (nnn)`` and ``Contact radius``. If a form already
-holds a different coupling, a ``Replace hyperfine coupling`` dialog lists each
+holds a different nonzero coupling, a ``Replace hyperfine coupling`` dialog lists each
 form's current and new value and asks before overwriting; ``Cancel`` is the
-default. A form whose contact shell cannot give a coupling (for example a shell
+default. An empty or zero coupling, a form's default, is filled without asking. A form whose contact shell cannot give a coupling (for example a shell
 that reaches past the relaxed supercell) is skipped and named. If no form
 shows the site, nothing changes and MuFinder says so: select the site on the
 Magnetic Fields page or in a saved workspace first. As when the coupling is

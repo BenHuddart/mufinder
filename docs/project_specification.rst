@@ -500,8 +500,9 @@ Hyperfine coupling
 - A result's coupling, in Å⁻³ per μB, can be written into every Magnetic
   Fields form whose selected muon site is the result's site, divided by the
   ``1/r^3``-weighted mean Mulliken moment of that form's contact shell from the
-  source relaxation. Overwriting a different coupling is confirmed first;
-  nothing changes when no form shows the site.
+  source relaxation. A form's default site counts before the form is first
+  edited. Overwriting a different nonzero coupling is confirmed first; nothing
+  changes when no form shows the site.
 
 Quantum corrections
 ~~~~~~~~~~~~~~~~~~~

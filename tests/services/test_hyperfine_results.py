@@ -12,6 +12,7 @@ from mufinder.domain.models import Result, Structure
 from mufinder.science.hyperfine import HyperfineError, angstrom3_to_bohr3
 from mufinder.services.hyperfine_results import (
     HANDOFF_COUPLING_UNIT,
+    HandoffTarget,
     NO_MULLIKEN_SPINS_WARNING,
     apply_magnetic_field_handoff,
     contact_shell_inputs,
@@ -153,6 +154,30 @@ def test_handoff_fills_every_form_showing_the_site_with_its_own_shell(tmp_path: 
     assert float(main["hyperfine_coupling"]) == pytest.approx(rho / 2.0, rel=1e-5)
     other = document.ui_state["magnetic_field_workspaces"][1]["form"]
     assert "hyperfine_coupling" not in other
+
+
+@pytest.mark.parametrize(
+    ("existing_text", "existing_unit", "overwrites"),
+    [
+        pytest.param("", "angstrom^-3", False, id="empty"),
+        pytest.param("0.0", "angstrom^-3", False, id="widget-default-zero"),
+        pytest.param("0", "T_per_muB", False, id="zero-in-another-unit"),
+        pytest.param("-0.5", "T_per_muB", True, id="different-value"),
+        pytest.param("not a number", "angstrom^-3", True, id="unreadable"),
+    ],
+)
+def test_handoff_confirms_only_replacing_a_nonzero_coupling(
+    existing_text: str, existing_unit: str, overwrites: bool
+) -> None:
+    target = HandoffTarget(
+        title="Magnetic Fields",
+        workspace_id=None,
+        existing_text=existing_text,
+        existing_unit=existing_unit,
+        coupling=-0.02,
+    )
+
+    assert target.overwrites is overwrites
 
 
 def test_handoff_without_a_matching_form_changes_nothing(tmp_path: Path) -> None:

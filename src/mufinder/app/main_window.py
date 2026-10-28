@@ -10371,6 +10371,26 @@ class MainWindow(QMainWindow):
             failure_message="Hyperfine Coupling site label was updated, but autosave failed."
         )
 
+    def _store_unedited_magnetic_field_forms(self) -> None:
+        """Store the state of each Magnetic Fields form that has none, as its page shows it.
+
+        A form never edited stores nothing, though its page shows a default
+        muon site; the hyperfine hand-off reads the stored forms, so it must
+        see that site too.
+        """
+
+        if self._document is None:
+            return
+        if not self._document.ui_state.get(self._MAGNETIC_FIELD_FORM_KEY):
+            self._on_magnetic_field_form_state_changed(self._magnetic_field_view.collect_state())
+        for workspace in self._magnetic_field_workspaces_state():
+            workspace_id = str(workspace.get("id", "")).strip()
+            widget = self._magnetic_field_workspace_widgets.get(workspace_id)
+            if widget is not None and not workspace.get("form"):
+                self._on_magnetic_field_workspace_form_state_changed(
+                    workspace_id, widget.collect_state()
+                )
+
     def _on_use_hyperfine_in_magnetic_fields(self, result_id: str) -> None:
         """Fill the Hyperfine coupling of every Magnetic Fields form showing the result's site.
 
@@ -10385,6 +10405,7 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         title = "Use in Magnetic Fields"
+        self._store_unedited_magnetic_field_forms()
         try:
             targets = plan_magnetic_field_handoff(self._document, result)
         except HyperfineError as exc:

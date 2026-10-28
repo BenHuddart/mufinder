@@ -119,3 +119,39 @@ def test_use_in_magnetic_fields_without_a_matching_form_says_so(
     assert len(messages) == 1
     assert messages[0].startswith("No Magnetic Fields form shows this muon site.")
     assert "hyperfine_coupling" not in document.ui_state["magnetic_field_form"]
+
+
+def test_use_in_magnetic_fields_sees_the_site_an_unedited_form_shows(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    _service, document, _host = open_project_with_host(window, tmp_path)
+    relaxation_job_id = str(uuid4())
+    result = _hyperfine_result(document, relaxation_job_id)
+    # A form never edited stores nothing, though its page shows a default site.
+    document.ui_state.pop("magnetic_field_form", None)
+    shown = {
+        **window._magnetic_field_view.collect_state(),
+        "selected_muon_site": _selected_site(relaxation_job_id),
+    }
+    monkeypatch.setattr(window._magnetic_field_view, "collect_state", lambda: dict(shown))
+    prompts: list[tuple] = []
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt, **kwargs: prompts.append(prompt) or True,
+    )
+    messages: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    window._on_use_hyperfine_in_magnetic_fields(str(result.id))
+
+    form = document.ui_state["magnetic_field_form"]
+    assert float(form["hyperfine_coupling"]) < 0
+    # The widget's default 0.0 coupling is empty, not a value to confirm replacing.
+    assert prompts == []
+    assert messages and messages[-1].startswith("Filled the hyperfine coupling of 1")
