@@ -742,6 +742,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
             lattice_vectors=((8.0, 0.0, 0.0), (0.0, 8.0, 0.0), (0.0, 0.0, 4.0)),
             species=("Si", "H:mu"),
             fractional_positions=((0.0, 0.0, 0.0), (0.3, 0.4, 0.5)),
+            atomic_spins=None,
         ),
     )
     monkeypatch.setattr(
