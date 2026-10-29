@@ -99,6 +99,41 @@ def hydrogen_host(a: float = 2.0, *, label: str = "H host", **overrides: Any) ->
     )
 
 
+def magnetic_silicon_oxide_host(**overrides: Any) -> Structure:
+    """Si and O in a 5 x 6 x 7 Å box with spins ``[1.0, -1.5]`` and ``k = (0, 0, 1/4)``."""
+
+    values: dict[str, Any] = {
+        "lattice": [[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
+        "species": ("Si", "O"),
+        "positions": ((0.0, 0.0, 0.0), (0.25, 0.5, 0.75)),
+        "source_file": "imports/host.cif",
+        "properties": {
+            "pbc": [True, True, True],
+            "atomic_spins": [1.0, -1.5],
+            "propagation_vector": [0.0, 0.0, 0.25],
+        },
+    }
+    values.update(overrides)
+    return host_structure(**values)
+
+
+def hexagonal_magnesium_oxide_host(**overrides: Any) -> Structure:
+    """Mg and O in a hexagonal cell (a = 4.2 Å, c = 6.8 Å, gamma = 120°)."""
+
+    a = 4.2
+    c = 6.8
+    values: dict[str, Any] = {
+        "label": "Hex",
+        "lattice": [[a, 0.0, 0.0], [-0.5 * a, 0.5 * np.sqrt(3.0) * a, 0.0], [0.0, 0.0, c]],
+        "species": ("Mg", "O"),
+        "positions": ((0.0, 0.0, 0.0), (1.0 / 3.0, 2.0 / 3.0, 0.25)),
+        "source_file": "imports/hex.cif",
+        "properties": {"pbc": [True, True, True]},
+    }
+    values.update(overrides)
+    return host_structure(**values)
+
+
 def relaxed_muon_supercell(
     host: Structure,
     repeats: Sequence[int],

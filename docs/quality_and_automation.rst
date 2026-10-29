@@ -627,7 +627,10 @@ the call site or binds them once with ``functools.partial``.
   ``Structure`` from a lattice (cubic edge or explicit vectors), species and
   fractional positions, returning fresh lists on every call. Presets:
   ``si_pair_host`` (two Si atoms, 4.0 Å cube by default), ``silicon_oxide_host``
-  (O-Si-O in a 10 Å cube) and ``hydrogen_host`` (one H atom).
+  (O-Si-O in a 10 Å cube), ``hydrogen_host`` (one H atom),
+  ``magnetic_silicon_oxide_host`` (Si and O in an orthorhombic box with spins
+  and a propagation vector) and ``hexagonal_magnesium_oxide_host`` (Mg and O in
+  a hexagonal cell).
 - ``tests/support/symmetry_hosts.py``: hosts that exercise the symmetry code.
 - ``tests/support/jobs.py``: ``make_job(...)`` builds a bare ``Job``, or, given
   ``service`` and ``document``, registers one through ``ProjectService.add_job``.
@@ -651,7 +654,9 @@ the call site or binds them once with ``functools.partial``.
   ``FakePyVistaTriadCanvas`` for the structure viewer's canvases, which
   ``tests/conftest.py`` installs in every Qt test;
   ``count_created_interactors`` gives viewers their production canvases and
-  records each interactor (each VTK render window) they create.
+  records each interactor (each VTK render window) they create;
+  ``install_fake_picker`` gives a viewer a canvas whose VTK picker hits a
+  chosen point, or nothing, for click-selection tests.
 - ``tests/support/controllers.py``: ``RecordingBackend`` and ``make_context``
   stand in for the submit backends and the ``WorkflowControllerContext`` a
   workflow controller is built from; ``FakeRowState``, ``no_artifacts``,
