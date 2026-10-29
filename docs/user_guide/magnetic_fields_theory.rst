@@ -464,7 +464,9 @@ Worked Examples
 The ferromagnet is bcc iron and the helix is MnSi. The antiferromagnet uses one
 magnetic ion of 1 μB in a simple cubic cell with ``a = 3 Å``. All use the
 default ``Calculation Settings`` (``100 x 100 x 100`` cells, Lorentz sphere
-chosen by ``muesr``) except iron, which uses ``80 x 80 x 80`` cells. Positions
+chosen by ``muesr``) except iron, which uses ``80 x 80 x 80`` cells, and MnSi,
+whose contact shell is its three tied nearest Mn (``Contact neighbours (nnn)``
+3). Positions
 are fractional. Each number comes from the calculation and is pinned by
 ``tests/science/test_magnetic_fields.py``.
 
@@ -568,8 +570,8 @@ The helix's ``q = 0.0147`` lies 0.0009 r.l.u. from 1/64, so with ``Longest
 period`` 64 its approximant is ``q = (1/64, 1/64, 1/64)`` with a
 ``64 x 64 x 64`` magnetic supercell. ``Report finite fields for
 near-commensurate q`` then lists 64 fields for each site, one per translation
-``r + T`` with a distinct phase. At site II their magnitudes run from 90.0 mT
-to 207.3 mT, the edges of the sampled distribution, and the 64 phases sample the
+``r + T`` with a distinct phase. At site II their magnitudes run from 89.7 mT
+to 207.2 mT, the edges of the sampled distribution, and the 64 phases sample the
 same two-horned lineshape. At the default period of 12 no fraction is within
 0.001 r.l.u., so the page samples the distribution.
 

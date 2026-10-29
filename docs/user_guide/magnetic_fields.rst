@@ -62,17 +62,14 @@ A typical pass through the page is:
 
    .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
       :alt: The Magnetic Fields page with the MnSi helix distribution at site
-            II selected: a mean |B| of 0.154303 T, every term mean 0, RMS
+            II selected: a mean |B| of 0.154144 T, every term mean 0, RMS
             magnitudes of 0.0811718 T dipolar including Lorentz,
-            0.194362 T contact and 0.159547 T in total, a contact-shell
-            warning that two neighbours split the three Mn tied at 1.760 Å,
-            and three passing convergence checks.
+            0.194286 T contact and 0.159397 T in total, and three passing
+            convergence checks.
 
       The distribution of the helix in :doc:`/user_guide/examples/mnsi` at
       site II. Every term averages to zero over the phase of the helix; the
-      RMS column shows that the contact term is the largest. The warning under
-      the breakdown is explained in :ref:`Choose the contact shell
-      <magnetic-fields-contact-shell>`.
+      RMS column shows that the contact term is the largest.
 
 6. Optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card (see `Calculate a dipolar tensor`_ and `Calculate
@@ -723,14 +720,12 @@ coupling and shell it used.
    :alt: The Calculation Settings dialog with 100 x 100 x 100 cells, 32768 lookup
          angles per q, 200000 distribution samples, Auto sampling, 512 histogram
          bins, the approximant option ticked with tolerance 0.001 r.l.u. and
-         longest period 64, a contact shell of 2 neighbours within 10 Å, and a
-         warning that 2 neighbours split the 3 Mn tied at 1.760 Å from site 1
-         equiv 2 and two more sites.
+         longest period 64, and a contact shell of 3 neighbours within 10 Å.
 
    The settings of the helix in :doc:`/user_guide/examples/mnsi`, whose q lies
    0.0009 r.l.u. from 1/64, so a period of 64 is needed for its approximant.
-   Its default of 2 contact neighbours splits the three nearest Mn at sites
-   II to IV, and the warning under the values says so.
+   Its contact shell is the three Mn that tie nearest the muon; the default of
+   2 neighbours would split them, and the dialog would warn under the values.
 
 With the option on and an approximant found, ``Calculate Dipolar Field`` lists
 the finite fields of the approximant, one row per translation of its magnetic
@@ -740,8 +735,8 @@ the full term breakdown of a commensurate result.
 .. figure:: ../_generated/screenshots/mnsi_approximant_fields.webp
    :alt: The Magnetic Fields page listing 64 fields of the commensurate
          approximant q = (1/64, 1/64, 1/64) of the MnSi helix at site II, the
-         first row's field of 0.118082 T, its dipolar (incl. Lorentz), contact,
-         demagnetizing and applied terms, and a contact-shell warning.
+         first row's field of 0.116387 T and its dipolar (incl. Lorentz), contact,
+         demagnetizing and applied terms.
 
    The 64 fields of the approximant of the helix in
    :doc:`/user_guide/examples/mnsi` at site II, labelled ``site 1 + (n, 0, 0)``

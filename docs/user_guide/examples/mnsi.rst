@@ -109,19 +109,19 @@ and lists one row per site, showing the mean ``|B|`` of the distribution.
 .. figure:: ../../_generated/screenshots/mnsi_magnetic_fields_page.webp
    :alt: The Magnetic Fields page for the MnSi helix: four distribution rows,
          site 1 equiv 1 with a mean of 0.0879129 T and the other three with
-         0.154303 T, and the field terms and three convergence checks of the
+         0.154144 T, and the field terms and three convergence checks of the
          selected row.
 
    The four 4a sites of one magnetic domain, computed by MuFinder from the model
    above. Site I has a mean field magnitude of 0.0879 T. The other three have a mean of
-   0.1543 T. The selected row's field terms and convergence checks are listed
+   0.1541 T. The selected row's field terms and convergence checks are listed
    under the table: every term averages to zero over the phase, and the RMS
    column shows the contact field, 0.194 T, outweighing the dipolar field,
    0.081 T.
 
 Site I, on the axis, sees a circle: its field has the same magnitude at every
 phase, 87.9 mT, an isolated line. Sites II to IV see an ellipse, so their
-field magnitude runs between two limits, 90.3 mT and 206.8 mT, and spends most of its time
+field magnitude runs between two limits, 90.1 mT and 206.6 mT, and spends most of its time
 near them.
 
 .. figure:: ../../_generated/screenshots/mnsi_field_distribution.webp
@@ -150,11 +150,11 @@ measure 91 mT, 96 mT and 207 mT at 5 K. The table puts the numbers side by side.
      - 88.0
      - 91
    * - Lower edge of II to IV
-     - 90.3
+     - 90.1
      - 90.0
      - 96
    * - Upper edge of II to IV
-     - 206.8
+     - 206.6
      - 206.5
      - 207
 
@@ -193,8 +193,7 @@ that needs discrete fields.
 
 .. figure:: ../../_generated/screenshots/mnsi_calculation_settings.webp
    :alt: The Calculation Settings dialog with the approximant option ticked,
-         a longest period of 64, and a warning that 2 contact neighbours split
-         the 3 Mn tied at 1.760 Å.
+         a longest period of 64, and 3 contact neighbours.
 
    The approximant needs ``Longest period`` 64, since 1/64 is the nearest
    fraction to 0.0147, 0.0009 r.l.u. away and inside the default tolerance of
@@ -211,16 +210,16 @@ cells along a, that the row's field belongs to.
 .. figure:: ../../_generated/screenshots/mnsi_approximant_fields.webp
    :alt: The Magnetic Fields page for the MnSi approximant at site II: 64 rows
          labelled site 1 + (n, 0, 0), and the term breakdown of the first, with
-         a total of 0.118082 T and a contact-shell warning.
+         a total of 0.116387 T.
 
    The 64 fields of the approximant at site II, computed by MuFinder. The
-   first row's 0.1181 T is the sum of 0.0988 T dipolar, 0.1943 T contact and
+   first row's 0.1164 T is the sum of 0.0988 T dipolar, 0.1943 T contact and
    no demagnetizing field. The helix is modulated, so its dipolar row includes
    the Lorentz field: only their sum is independent of the Lorentz sphere.
 
-Their magnitudes run from 90.0 mT to 207.3 mT, and the 64 phases sample the
-same two-horned lineshape as the distribution, whose edges are 90.3 mT and
-206.8 mT. The approximant is the coarse view of the same field: its q is 6 %
+Their magnitudes run from 89.7 mT to 207.2 mT, and the 64 phases sample the
+same two-horned lineshape as the distribution, whose edges are 90.1 mT and
+206.6 mT. The approximant is the coarse view of the same field: its q is 6 %
 larger and its phases are 64 rather than 32,768, so its edges are within
 0.5 mT of the distribution's.
 
@@ -237,29 +236,27 @@ approximant's rows list it as the ``Contact`` term.
 
 MuFinder does not compute the coupling. The one Amato *et al.* (2014) find from
 transverse-field measurements, -0.9276 mol/emu, is -0.518 T/μB for a moment of
-1 μB per Mn, and that gives 92.9 mT at site I and 95.3 mT to 211.7 mT at sites II
+1 μB per Mn, and that gives 92.9 mT at site I and 95.1 mT to 211.5 mT at sites II
 to IV, about 5 mT above the predicted edges. The calculation above uses
--0.505 T/μB, 2.5 % smaller, which puts all three edges within 0.3 mT of the
+-0.505 T/μB, 2.5 % smaller, which puts all three edges within 0.15 mT of the
 predicted ones. This is one parameter fitted to three numbers, so the
 agreement of the edges is partly by construction. The coupling does more than
 move the continuum: the contact field at the muon rotates with the helix
 phase like the dipolar field, so it changes the semi-axes of the ellipse, and
 with it the width. Without the contact term the continuum runs from 47.8 to
-104.4 mT, 56.6 mT wide; with it, from 90.3 to 206.8 mT, 116.5 mT wide. What
+104.4 mT, 56.6 mT wide; with it, from 90.1 to 206.6 mT, 116.5 mT wide. What
 the coupling does not change is the topology, which the dipolar sum, the
 helix sense and the geometry fix: a circle at site I, so an isolated line, and
 an ellipse at sites II to IV, so a two-horned continuum.
 
-The calculation keeps MuFinder's default of two ``Contact neighbours (nnn)``
-while the literature sums three. The three nearest Mn lie in one shell, 1.760 Å
-from the muon. At site I, on the helix axis, they share one phase of the helix
-and so one moment, and any two of them give the same field. At sites II to IV
-their moments differ, two neighbours split the shell, and the page warns under
-those rows' term breakdowns that ``nnn = 3`` includes them all (see
-:ref:`Choose the contact shell <magnetic-fields-contact-shell>`). Here the
-split matters little, because the three moments are nearly parallel: with three
-neighbours the continuum runs from 90.1 mT to 206.6 mT, 0.2 mT below the edges
-above and within 0.1 mT of the predicted ones.
+The contact shell is the three nearest Mn, which tie 1.760 Å from the muon, so
+the example sets ``Contact neighbours (nnn)`` to 3 in ``Calculation Settings``,
+as the literature sums three. At MuFinder's default of two, the shell would
+split the tied set: at sites II to IV, where the three moments differ, the
+lattice sum would keep an arbitrary two of them, and the page warns of that
+(see :ref:`Choose the contact shell <magnetic-fields-contact-shell>`). The
+moments are nearly parallel, so the split moves the edges by only 0.2 mT, to
+90.3 mT and 206.8 mT.
 
 References
 ----------

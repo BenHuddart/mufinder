@@ -3576,8 +3576,8 @@ def test_worked_example_mnsi_distribution_edges_match_the_amato_prediction(real_
     # Sites II-IV are equivalent and span 90 mT to 207 mT, the two horns of the lineshape.
     assert len(others) == 3
     for site in others:
-        assert site.magnitudes_T.min() == pytest.approx(0.0903, abs=5e-4)
-        assert site.magnitudes_T.max() == pytest.approx(0.2068, abs=5e-4)
+        assert site.magnitudes_T.min() == pytest.approx(0.0901, abs=5e-4)
+        assert site.magnitudes_T.max() == pytest.approx(0.2066, abs=5e-4)
     # The singleton lies below the continuum's lower edge, as measured (91 mT and 96 mT).
     assert site_one.magnitudes_T.max() < others[0].magnitudes_T.min()
     assert all(check.converged for check in site_one.convergence)
@@ -3597,9 +3597,9 @@ def test_worked_example_mnsi_site_two_terms_average_to_zero_but_not_their_size(
     for name in ("dipolar", "lorentz", "contact"):
         assert np.linalg.norm(site_two.terms[name].mean_T) < 1e-9
     assert site_two.terms["dipolar"].rms_T == pytest.approx(0.0810, abs=5e-4)
-    assert site_two.terms["contact"].rms_T == pytest.approx(0.1944, abs=5e-4)
+    assert site_two.terms["contact"].rms_T == pytest.approx(0.1943, abs=5e-4)
     assert site_two.terms["lorentz"].rms_T == pytest.approx(0.00036, abs=5e-5)
-    assert site_two.total_rms_T == pytest.approx(0.1595, abs=5e-4)
+    assert site_two.total_rms_T == pytest.approx(0.1594, abs=5e-4)
 
 
 def test_worked_example_mnsi_contact_term_is_applied_to_the_sampled_distribution(
@@ -3625,8 +3625,8 @@ def test_worked_example_mnsi_the_helix_sense_matters_for_sites_two_to_four(real_
 
     # Site I is on the k axis and does not tell the senses apart; sites II-IV do.
     np.testing.assert_allclose(right[0].magnitudes_T, 0.0879, atol=5e-4)
-    assert right[1].magnitudes_T.min() == pytest.approx(0.0857, abs=5e-4)
-    assert right[1].magnitudes_T.max() == pytest.approx(0.2087, abs=5e-4)
+    assert right[1].magnitudes_T.min() == pytest.approx(0.0856, abs=5e-4)
+    assert right[1].magnitudes_T.max() == pytest.approx(0.2086, abs=5e-4)
 
 
 def test_worked_example_mnsi_has_a_commensurate_approximant_of_period_64(real_muesr) -> None:
@@ -3658,8 +3658,8 @@ def test_worked_example_mnsi_approximant_fields_span_the_continuum(real_muesr) -
     assert results[1].site_label == "site 1 + (1, 0, 0)"
     assert results[1].muon_position == pytest.approx((1.968, 0.468, 0.032))
     # The 64 sampled phases come within 0.7 mT of the analytic edges of the sampled distribution.
-    assert magnitudes.min() == pytest.approx(0.0900, abs=1e-3)
-    assert magnitudes.max() == pytest.approx(0.2073, abs=1e-3)
+    assert magnitudes.min() == pytest.approx(0.0897, abs=1e-3)
+    assert magnitudes.max() == pytest.approx(0.2072, abs=1e-3)
 
 
 # --- CoF2, the user guide's worked example ----------------------------------------
