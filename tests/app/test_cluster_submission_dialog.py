@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from PySide6.QtWidgets import QLabel
 
 import mufinder.app.cluster_submission_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
@@ -260,7 +261,6 @@ def test_cluster_submission_dialog_applies_initial_config_for_matching_cluster(q
         cluster_name="redwood",
         working_directory="/mnt/redwoodfs/custom/project_a",
         username="charlie",
-        job_name_prefix="pristine_relax",
         num_processes=24,
         walltime="",
         queue_name="redwood-priority",
@@ -278,7 +278,6 @@ def test_cluster_submission_dialog_applies_initial_config_for_matching_cluster(q
     assert dialog.selected_cluster_name() == "redwood"
     assert config.working_directory == "/mnt/redwoodfs/custom/project_a"
     assert config.username == "charlie"
-    assert config.job_name_prefix == "pristine_relax"
     assert config.num_processes == 24
     assert config.queue_name == "redwood-priority"
     assert config.memory_gb == 12.0
@@ -291,7 +290,6 @@ def test_cluster_submission_dialog_does_not_apply_initial_config_to_other_cluste
         cluster_name="redwood",
         working_directory="/mnt/redwoodfs/custom/project_a",
         username="charlie",
-        job_name_prefix="pristine_relax",
         num_processes=24,
         walltime="",
         queue_name="redwood-priority",
@@ -310,9 +308,24 @@ def test_cluster_submission_dialog_does_not_apply_initial_config_to_other_cluste
     assert dialog.selected_cluster_name() == "alpha"
     assert config.working_directory == "/work/alice"
     assert config.username == "alice"
-    assert config.job_name_prefix == "convergence"
     assert config.num_processes == 64
     assert config.walltime == "02:00:00"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_has_no_job_name_prefix_field(qapp) -> None:
+    # The scheduler names each job after its CASTEP seed, so the dialog asks for
+    # no prefix and its config carries none.
+    dialog = ClusterSubmissionDialog(
+        job_labels=["quantum_phonon_site_1"],
+        cluster_configs=_configs(),
+        workflow_type="quantum_corrections",
+    )
+
+    labels = [label.text() for label in dialog.findChildren(QLabel)]
+    assert "Job name prefix" not in labels
+    assert "Processor cores per job" in labels
+    assert not hasattr(dialog.config(), "job_name_prefix")
     dialog.close()
 
 
@@ -328,7 +341,7 @@ def test_cluster_submission_dialog_builds_project_workflow_workdir(qapp) -> None
     dialog.close()
 
 
-def test_cluster_submission_dialog_defaults_pristine_relaxation_prefix(qapp) -> None:
+def test_cluster_submission_dialog_builds_pristine_relaxation_workdir(qapp) -> None:
     dialog = ClusterSubmissionDialog(
         job_labels=["relax_1"],
         cluster_configs=_configs(),
@@ -339,11 +352,10 @@ def test_cluster_submission_dialog_defaults_pristine_relaxation_prefix(qapp) -> 
     config = dialog.config()
 
     assert config.working_directory == "/work/alice/My_Project/pristine_relaxation"
-    assert config.job_name_prefix == "pristine_relax"
     dialog.close()
 
 
-def test_cluster_submission_dialog_defaults_uep_prefix(qapp) -> None:
+def test_cluster_submission_dialog_builds_uep_workdir(qapp) -> None:
     dialog = ClusterSubmissionDialog(
         job_labels=["uep_1"],
         cluster_configs=_configs(),
@@ -354,11 +366,10 @@ def test_cluster_submission_dialog_defaults_uep_prefix(qapp) -> None:
     config = dialog.config()
 
     assert config.working_directory == "/work/alice/My_Project/uep"
-    assert config.job_name_prefix == "uep"
     dialog.close()
 
 
-def test_cluster_submission_dialog_preserves_nested_muon_workdir_and_prefix(qapp) -> None:
+def test_cluster_submission_dialog_preserves_nested_muon_workdir(qapp) -> None:
     dialog = ClusterSubmissionDialog(
         job_labels=["Random Site 1"],
         cluster_configs=_configs(),
@@ -369,7 +380,6 @@ def test_cluster_submission_dialog_preserves_nested_muon_workdir_and_prefix(qapp
     config = dialog.config()
 
     assert config.working_directory == "/work/alice/My_Project/muon_relaxation/positivemuon"
-    assert config.job_name_prefix == "positivemuon"
     dialog.close()
 
 
@@ -529,7 +539,6 @@ def test_cluster_submission_dialog_restores_mem_per_cpu_from_initial_config(qapp
         cluster_name="alpha",
         working_directory="/work/alice/project_a",
         username="alice",
-        job_name_prefix="positivemuon",
         num_processes=144,
         walltime="12:00:00",
         mem_per_cpu_gb=6.0,
@@ -669,7 +678,6 @@ def test_slurm_submission_restores_the_last_used_queue(qapp) -> None:
         cluster_name="PSI",
         working_directory="/data/dana/project",
         username="dana",
-        job_name_prefix="convergence",
         num_processes=22,
         walltime="00:30:00",
         queue_name="hourly",

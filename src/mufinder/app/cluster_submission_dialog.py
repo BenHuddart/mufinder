@@ -48,7 +48,6 @@ class ClusterSubmissionConfig:
     cluster_name: str
     working_directory: str
     username: str
-    job_name_prefix: str
     num_processes: int
     walltime: str
     queue_name: str = ""
@@ -124,10 +123,6 @@ class ClusterSubmissionDialog(QDialog):
 
         self._username_edit = QLineEdit(form_group)
         form.addRow("Username", self._username_edit)
-
-        self._job_name_prefix_edit = QLineEdit(form_group)
-        self._job_name_prefix_edit.setText(self._default_job_name_prefix())
-        form.addRow("Job name prefix", self._job_name_prefix_edit)
 
         self._num_processes_spin = QSpinBox(form_group)
         self._num_processes_spin.setRange(1, 4096)
@@ -265,8 +260,6 @@ class ClusterSubmissionDialog(QDialog):
             cluster_name=self.selected_cluster_name(),
             working_directory=self._working_directory_edit.text().strip(),
             username=self._username_edit.text().strip(),
-            job_name_prefix=self._job_name_prefix_edit.text().strip()
-            or self._default_job_name_prefix(),
             num_processes=self._num_processes_spin.value(),
             walltime=self._walltime_edit.text().strip(),
             queue_name=self.selected_queue_name(),
@@ -410,8 +403,6 @@ class ClusterSubmissionDialog(QDialog):
             self._working_directory_edit.setText(config.working_directory.strip())
         if config.username.strip():
             self._username_edit.setText(config.username.strip())
-        if config.job_name_prefix.strip():
-            self._job_name_prefix_edit.setText(config.job_name_prefix.strip())
         if int(config.num_processes) > 0:
             self._num_processes_spin.setValue(int(config.num_processes))
         self._walltime_edit.setText(config.walltime.strip())
@@ -582,19 +573,6 @@ class ClusterSubmissionDialog(QDialog):
             cls._sanitize_path_component(part) for part in value.strip().split("/") if part.strip()
         ]
         return "/".join(part for part in parts if part)
-
-    def _default_job_name_prefix(self) -> str:
-        normalized = self._workflow_type.strip("/")
-        workflow_defaults = {
-            "pristine_relaxation": "pristine_relax",
-            "uep": "uep",
-        }
-        if normalized in workflow_defaults:
-            return workflow_defaults[normalized]
-        last_component = normalized.rsplit("/", 1)[-1]
-        if last_component in {"positivemuon", "muonium"}:
-            return last_component
-        return "convergence"
 
     def _accept_if_valid(self) -> None:
         config = self.config()

@@ -94,7 +94,6 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -240,7 +239,6 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
                 cluster_name="Redwood",
                 working_directory="/mnt/redwoodfs/glam-user",
                 username="glam-user",
-                job_name_prefix="conv",
                 num_processes=24,
                 walltime="01:00:00",
             )
@@ -362,7 +360,6 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -497,7 +494,6 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=32,
                 walltime="168:00:00",
                 mem_per_cpu_gb=8.0,
@@ -579,6 +575,7 @@ def test_main_window_submit_jobs_on_cluster_prefills_from_last_submission_defaul
         "cluster_name": "Redwood",
         "working_directory": "/mnt/redwoodfs/alice/project_x",
         "username": "alice",
+        # Legacy key: the retired ``Job name prefix`` field was saved here.
         "job_name_prefix": "kpoint",
         "num_processes": 32,
         "walltime": "",
@@ -662,7 +659,6 @@ def test_main_window_submit_jobs_on_cluster_prefills_same_workflow_without_reset
         "cluster_name": "Redwood",
         "working_directory": "/mnt/redwoodfs/alice/project_x/convergence_cutoff/custom",
         "username": "alice",
-        "job_name_prefix": "cutoff_scan",
         "num_processes": 40,
         "walltime": "",
         "queue_name": "redwood-priority",
@@ -709,7 +705,6 @@ def test_main_window_submit_jobs_on_cluster_prefills_same_workflow_without_reset
         initial_config.working_directory
         == "/mnt/redwoodfs/alice/project_x/convergence_cutoff/custom"
     )
-    assert initial_config.job_name_prefix == "cutoff_scan"
     assert initial_config.username == "alice"
     assert initial_config.num_processes == 40
     assert initial_config.queue_name == "redwood-priority"
@@ -718,8 +713,26 @@ def test_main_window_submit_jobs_on_cluster_prefills_same_workflow_without_reset
     window.close()
 
 
-def test_main_window_submit_jobs_on_cluster_resets_workdir_and_prefix_on_workflow_switch(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("label", "stage", "calc_type", "workflow_type"),
+    [
+        (
+            "pristine_relax_01",
+            "PRISTINE_RELAXATION",
+            "castep_pristine_relaxation",
+            "pristine_relaxation",
+        ),
+        ("uep_01", "UEP", "castep_uep_source", "uep"),
+    ],
+)
+def test_main_window_submit_jobs_on_cluster_resets_workdir_on_workflow_switch(
+    main_window,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    stage: str,
+    calc_type: str,
+    workflow_type: str,
 ) -> None:
     window = main_window
     service = ProjectService()
@@ -728,15 +741,14 @@ def test_main_window_submit_jobs_on_cluster_resets_workdir_and_prefix_on_workflo
     )
     job = service.add_job(
         doc,
-        label="pristine_relax_01",
-        workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
-        calc_type="castep_pristine_relaxation",
+        label=label,
+        workflow_stage=main_window_module.WorkflowStage[stage],
+        calc_type=calc_type,
     )
     doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY] = {
         "cluster_name": "Redwood",
         "working_directory": "/mnt/redwoodfs/alice/project_x/convergence_cutoff/custom",
         "username": "alice",
-        "job_name_prefix": "cutoff_scan",
         "num_processes": 40,
         "walltime": "",
         "queue_name": "redwood-priority",
@@ -780,83 +792,11 @@ def test_main_window_submit_jobs_on_cluster_resets_workdir_and_prefix_on_workflo
     initial_config = captured_kwargs["initial_config"]
     assert initial_config is not None
     assert initial_config.working_directory == ""
-    assert initial_config.job_name_prefix == "pristine_relax"
     assert initial_config.username == "alice"
     assert initial_config.num_processes == 40
     assert initial_config.queue_name == "redwood-priority"
     assert initial_config.memory_gb == 10.0
-    assert captured_kwargs["workflow_type"] == "pristine_relaxation"
-    window.close()
-
-
-def test_main_window_submit_uep_jobs_on_cluster_resets_stale_prefix_on_workflow_switch(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "cluster_prefill_uep_switch.mufinder", "ClusterPrefillUepSwitch"
-    )
-    job = service.add_job(
-        doc,
-        label="uep_01",
-        workflow_stage=main_window_module.WorkflowStage.UEP,
-        calc_type="castep_uep_source",
-    )
-    doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY] = {
-        "cluster_name": "Redwood",
-        "working_directory": "/mnt/redwoodfs/alice/project_x/convergence_cutoff/custom",
-        "username": "alice",
-        "job_name_prefix": "cutoff_scan",
-        "num_processes": 40,
-        "walltime": "",
-        "queue_name": "redwood-priority",
-        "memory_gb": 10.0,
-        "comment": "batch-b",
-        "workflow_type": "convergence_cutoff",
-    }
-    window._document = doc
-
-    redwood = ClusterConfig(
-        name="Redwood",
-        hostname="redwood.example",
-        username="alice",
-        auth_method="key",
-        key_path="/tmp/key",
-        default_working_directory="/mnt/redwoodfs/alice",
-        queue_system="addqueue",
-        cores_per_node=32,
-        default_walltime="",
-        template_script_path="",
-        default_queue_name="redwood",
-        default_memory_gb=7.5,
-    )
-
-    captured_kwargs: dict[str, object] = {}
-
-    class _FakeDialog:
-        DialogCode = SimpleNamespace(Accepted=1)
-
-        def __init__(self, **kwargs) -> None:
-            captured_kwargs.update(kwargs)
-
-        def exec(self) -> int:
-            return 0
-
-    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
-    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
-
-    window._submit_jobs_on_cluster([job])
-
-    initial_config = captured_kwargs["initial_config"]
-    assert initial_config is not None
-    assert initial_config.working_directory == ""
-    assert initial_config.job_name_prefix == "uep"
-    assert initial_config.username == "alice"
-    assert initial_config.num_processes == 40
-    assert initial_config.queue_name == "redwood-priority"
-    assert initial_config.memory_gb == 10.0
-    assert captured_kwargs["workflow_type"] == "uep"
+    assert captured_kwargs["workflow_type"] == workflow_type
     window.close()
 
 
@@ -872,6 +812,11 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
         calc_type="castep_convergence_cutoff",
     )
+    # Legacy key: the retired ``Job name prefix`` field was saved here.
+    doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY] = {
+        "cluster_name": "Redwood",
+        "job_name_prefix": "conv",
+    }
     window._document = doc
 
     redwood = ClusterConfig(
@@ -903,7 +848,6 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
                 cluster_name="Redwood",
                 working_directory="/mnt/redwoodfs/alice/project_y",
                 username="alice",
-                job_name_prefix="pristine_relax",
                 num_processes=24,
                 walltime="",
                 queue_name="redwood-priority",
@@ -936,7 +880,7 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
     assert persisted["cluster_name"] == "Redwood"
     assert persisted["working_directory"] == "/mnt/redwoodfs/alice/project_y"
     assert persisted["username"] == "alice"
-    assert persisted["job_name_prefix"] == "pristine_relax"
+    assert "job_name_prefix" not in persisted
     assert persisted["num_processes"] == 24
     assert persisted["queue_name"] == "redwood-priority"
     assert persisted["memory_gb"] == 12.0
@@ -986,7 +930,6 @@ def test_main_window_submit_jobs_on_cluster_connection_failure_warns(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -1057,7 +1000,6 @@ def test_main_window_submit_jobs_on_cluster_blocks_unsafe_remote_labels(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -1147,7 +1089,6 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -1283,7 +1224,6 @@ def test_main_window_submit_jobs_on_cluster_sends_a_quantum_phonon_job_to_its_ow
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="quantum",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -1722,7 +1662,6 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -2049,7 +1988,6 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -2159,7 +2097,6 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -2269,7 +2206,6 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )
@@ -2336,7 +2272,6 @@ def test_main_window_round_trips_mem_per_cpu_in_last_submission_config(
             cluster_name="SCARF",
             working_directory="/work4/isis/alice/project_z",
             username="alice",
-            job_name_prefix="positivemuon",
             num_processes=144,
             walltime="12:00:00",
             mem_per_cpu_gb=6.0,
@@ -2463,7 +2398,6 @@ def test_main_window_cluster_submission_sends_a_legacy_phonon_job_to_any_cluster
                 cluster_name="beta",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="quantum",
                 num_processes=16,
                 walltime="01:00:00",
             )

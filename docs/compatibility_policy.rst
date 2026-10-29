@@ -635,6 +635,21 @@ migration; code that imported one switches to the replacement named.
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
 
+The setting below was removed without a deprecation period, because nothing
+read it and it has no replacement.
+
+- ``job_name_prefix``: the cluster submission dialog's ``Job name prefix``
+  field, the ``ClusterSubmissionConfig.job_name_prefix`` field (``mufinder.app``,
+  not in the API reference), the key of the ``last_cluster_submission_config``
+  entry in project ``ui_state`` that saved it, and the helper
+  ``default_cluster_job_name_prefix`` (``mufinder.workflow.naming``, never
+  re-exported from ``mufinder.workflow``). No submission read the value: the
+  scheduler names each job after its CASTEP seed. A project that still carries
+  the key loads unchanged; the key is ignored and dropped the next time a
+  cluster submission saves its settings, so no shim or schema migration is
+  needed. Code that built ``ClusterSubmissionConfig`` drops the argument; the
+  fields after ``username`` move up one place, so pass them by keyword.
+
 The private forwarders below were removed without a deprecation period. They
 were one-line ``MainWindow`` methods, not part of any public import path, and
 only MuFinder's own code and tests called them.

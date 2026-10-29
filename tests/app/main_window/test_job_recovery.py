@@ -1220,7 +1220,6 @@ class _FakeClusterSubmissionDialogForContinue:
             cluster_name="alpha",
             working_directory="/remote/work",
             username="alice",
-            job_name_prefix="continue",
             num_processes=16,
             walltime="01:00:00",
         )
@@ -1742,7 +1741,6 @@ class _FakeClusterSubmissionDialogSelectsCluster:
             cluster_name=type(self).selected_cluster_name,
             working_directory="/remote/work",
             username="bob",
-            job_name_prefix="continue",
             num_processes=16,
             walltime="01:00:00",
         )

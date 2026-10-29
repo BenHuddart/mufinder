@@ -376,10 +376,7 @@ from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
 )
-from mufinder.workflow.naming import (
-    cluster_workflow_directory_fragment,
-    default_cluster_job_name_prefix,
-)
+from mufinder.workflow.naming import cluster_workflow_directory_fragment
 from mufinder.workflow.quantum import (
     QUANTUM_PHONON_CALC_TYPE,
 )
@@ -5215,7 +5212,6 @@ class MainWindow(QMainWindow):
             or not persisted_workflow_type
             or workflow_type == persisted_workflow_type
         )
-        default_job_name_prefix = default_cluster_job_name_prefix(workflow_type)
 
         return ClusterSubmissionConfig(
             cluster_name=cluster_name,
@@ -5223,12 +5219,6 @@ class MainWindow(QMainWindow):
             if same_workflow
             else "",
             username=str(payload.get("username", "")).strip(),
-            job_name_prefix=(
-                str(payload.get("job_name_prefix", default_job_name_prefix)).strip()
-                if same_workflow
-                else default_job_name_prefix
-            )
-            or default_job_name_prefix,
             num_processes=num_processes,
             walltime=str(payload.get("walltime", "")).strip(),
             queue_name=str(payload.get("queue_name", "")).strip(),
@@ -5249,7 +5239,6 @@ class MainWindow(QMainWindow):
             "cluster_name": config.cluster_name,
             "working_directory": config.working_directory,
             "username": config.username,
-            "job_name_prefix": config.job_name_prefix,
             "num_processes": int(config.num_processes),
             "walltime": config.walltime,
             "queue_name": str(getattr(config, "queue_name", "")),
