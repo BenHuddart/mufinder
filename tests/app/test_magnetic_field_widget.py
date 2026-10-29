@@ -3837,9 +3837,12 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
             approximant_max_period,
             contact_nnn,
             contact_rcont,
+            contact_tie_check=None,
             parent=None,
         ):
             assert supercell == (100, 100, 100)
+            # The page's host has no hyperfine coupling, so there is no shell to check.
+            assert contact_tie_check is None
             assert nangles == 32_768
             assert phase_sample_count == 200_000
             assert histogram_bins == 512
@@ -6090,4 +6093,204 @@ def test_magnetic_preset_dialog_keeps_the_reference_axis_while_the_wavevector_ch
     _select_combo_data(dialog._reference_combo, "c")
     _select_combo_data(dialog._propagation_combo, "b*")
     assert dialog._reference_combo.currentData() == "a"
+    dialog.close()
+
+
+# --- Contact-shell tie warnings ---------------------------------------------------
+#
+# B2 FeMn with Fe up and Mn down: at the tetrahedral site (1/2, 1/4, 0) two Fe
+# and two Mn tie at 1.603 Å, so two Contact neighbours split them.
+
+
+def _b2_document(tmp_path):
+    service = ProjectService()
+    document = service.create_project(tmp_path / "b2-tie.mufinder", "B2 tie")
+    service.add_structure(
+        document,
+        host_structure(
+            label="B2",
+            lattice=2.868,
+            species=("Fe", "Mn"),
+            positions=((0.0, 0.0, 0.0), (0.5, 0.5, 0.5)),
+        ),
+    )
+    return document
+
+
+def _b2_widget(tmp_path, *, coupling: str = "-0.5") -> MagneticFieldWidget:
+    widget = MagneticFieldWidget()
+    widget.set_document(_b2_document(tmp_path))
+    widget._set_model(
+        MagneticStructureModel(
+            components=(
+                build_collinear_component(
+                    label="Fe",
+                    selector=AtomSelector.species("Fe"),
+                    q_coeff=(0, 0, 0),
+                    moment=(0.0, 0.0, 2.0),
+                ),
+                build_collinear_component(
+                    label="Mn",
+                    selector=AtomSelector.species("Mn"),
+                    q_coeff=(0, 0, 0),
+                    moment=(0.0, 0.0, -2.0),
+                ),
+            )
+        )
+    )
+    widget.set_form_state(
+        {
+            "selected_muon_site": {
+                "source": "custom",
+                "label": "Tetrahedral",
+                "fractional_position": [0.5, 0.25, 0.0],
+            },
+            "hyperfine_coupling": coupling,
+            "hyperfine_coupling_unit": "T_per_muB",
+        }
+    )
+    return widget
+
+
+def test_calculation_settings_dialog_warns_while_the_contact_shell_splits_a_tie(qapp) -> None:
+    calls: list[tuple[int, float]] = []
+
+    def _check(nnn: int, rcont: float) -> tuple[str, ...]:
+        calls.append((nnn, rcont))
+        return ("First site splits a tie.", "Second site too.") if nnn < 4 else ()
+
+    dialog = MagneticFieldCalculationSettingsDialog(
+        supercell=(100, 100, 100),
+        nangles=32_768,
+        phase_sample_count=200_000,
+        histogram_bins=512,
+        contact_tie_check=_check,
+    )
+    warning = dialog._contact_tie_warning
+
+    assert not warning.isHidden()
+    assert warning.text() == "First site splits a tie. The same holds at 1 more site."
+    dialog._contact_nnn.setValue(4)
+    assert warning.isHidden()
+    dialog._contact_rcont.setValue(3.5)
+    dialog._contact_nnn.setValue(3)
+    assert not warning.isHidden()
+    assert calls[-1] == (3, 3.5)
+    # Warning only: the values still go through.
+    assert dialog.values()["contact_nnn"] == 3
+    dialog.close()
+
+
+def test_calculation_settings_dialog_without_a_tie_check_shows_no_warning(qapp) -> None:
+    dialog = MagneticFieldCalculationSettingsDialog(
+        supercell=(100, 100, 100), nangles=32_768, phase_sample_count=200_000, histogram_bins=512
+    )
+
+    assert dialog._contact_tie_warning.isHidden()
+    dialog.close()
+
+
+def test_the_page_checks_the_selected_site_contact_shell_only_with_a_coupling(
+    qapp, tmp_path
+) -> None:
+    widget = _b2_widget(tmp_path)
+
+    check = widget._contact_tie_checker()
+
+    (warning,) = check(2, 10.0)
+    assert "keeps 2 of the 4 magnetic ions" in warning
+    assert "(2 × Fe 1, 2 × Mn 2)" in warning
+    assert check(4, 10.0) == ()
+    widget._include_equivalent_sites.setChecked(True)
+    assert len(widget._contact_tie_checker()(2, 10.0)) == 12
+    widget._hyperfine_coupling.setText("")
+    assert widget._contact_tie_checker() is None
+    widget.close()
+
+
+def test_the_settings_dialog_opened_from_the_page_warns_of_its_site(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    shown: list[str] = []
+
+    def _exec(dialog) -> int:
+        shown.append(
+            "" if dialog._contact_tie_warning.isHidden() else dialog._contact_tie_warning.text()
+        )
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(MagneticFieldCalculationSettingsDialog, "exec", _exec)
+    widget = _b2_widget(tmp_path)
+
+    widget._open_calculation_settings_dialog()
+
+    (text,) = shown
+    assert text.startswith("Contact neighbours (nnn) = 2 keeps 2 of the 4 magnetic ions")
+    widget.close()
+
+
+@pytest.mark.parametrize(("nnn", "warned"), [(2, True), (4, False)])
+def test_the_breakdown_warns_of_a_result_whose_contact_shell_splits_a_tie(
+    qapp, tmp_path, monkeypatch, nnn, warned
+) -> None:
+    _fake_muesr_without_lattice_field(monkeypatch)
+    widget = _b2_widget(tmp_path)
+    widget.set_form_state({**widget.collect_state(), "contact_nnn": nnn})
+
+    widget._calculate_fields()
+    widget._result_table.selectRow(0)
+
+    warning = widget._breakdown_contact_warning
+    assert warning.isHidden() is not warned
+    if warned:
+        assert warning.text().startswith(
+            "Contact shell: Contact neighbours (nnn) = 2 keeps 2 of the 4 magnetic ions"
+        )
+    widget._clear_results(clear_state=True)
+    assert warning.isHidden()
+    widget.close()
+
+
+def test_the_breakdown_shows_a_saved_tie_warning_without_its_terms(qapp, tmp_path) -> None:
+    widget = _b2_widget(tmp_path)
+    state = widget.collect_state()
+    state["magnetic_field_results"] = {
+        "kind": "commensurate",
+        "site_source": "custom",
+        "results": [
+            {
+                "site_label": "site 1",
+                "muon_position": [0.5, 0.25, 0.0],
+                "total_T": [0.0, 0.0, -1.0],
+                "magnitude_T": 1.0,
+                "calculation_parameters": {"contact_shell_warnings": ["A tie."]},
+            }
+        ],
+    }
+    widget.set_form_state(state)
+    widget._result_table.selectRow(0)
+
+    assert "recalculate" in widget._breakdown_hint.text()
+    assert not widget._breakdown_contact_warning.isHidden()
+    assert widget._breakdown_contact_warning.text() == "Contact shell: A tie."
+    widget.close()
+
+
+def test_the_contact_settings_check_ties_when_a_typed_value_is_finished(qapp) -> None:
+    calls: list[tuple[int, float]] = []
+    dialog = MagneticFieldCalculationSettingsDialog(
+        supercell=(100, 100, 100),
+        nangles=32_768,
+        phase_sample_count=200_000,
+        histogram_bins=512,
+        contact_tie_check=lambda nnn, rcont: calls.append((nnn, rcont)) or (),
+    )
+    calls.clear()
+
+    dialog._contact_rcont.lineEdit().selectAll()
+    QTest.keyClicks(dialog._contact_rcont, "25.5")
+
+    assert calls == []
+    QTest.keyClick(dialog._contact_rcont, Qt.Key.Key_Return)
+    assert calls == [(2, 25.5)]
     dialog.close()

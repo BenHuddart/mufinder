@@ -80,6 +80,7 @@ from mufinder.app.theme import (
     style_section_subtitle,
     style_section_title,
     style_small_checked_tool_button,
+    style_warning_text,
     use_square_top_table_corners,
     track_item_view_corners,
 )
@@ -116,6 +117,7 @@ from mufinder.science.magnetic_fields import (
     calculate_incommensurate_field_distributions,
     classify_magnetic_model,
     contact_coupling_to_angstrom_minus3,
+    contact_shell_tie_checker,
     find_commensurate_approximant,
     muon_site_clearance_error,
 )
@@ -4944,10 +4946,15 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         approximant_max_period: int = MagneticFieldOptions().approximant_max_period,
         contact_nnn: int = MagneticFieldOptions().nnn,
         contact_rcont: float = MagneticFieldOptions().rcont,
+        contact_tie_check: Callable[[int, float], Sequence[str]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """``contact_tie_check`` returns the contact-shell tie warnings for a
+        Contact neighbours and radius pair; without it no warning is shown."""
+
         super().__init__(parent)
         self.setWindowTitle("Calculation Settings")
+        self._contact_tie_check = contact_tie_check
         self.resize(460, 360)
 
         self._calc_cells_a = self._calculation_cell_input(supercell[0])
@@ -5034,6 +5041,17 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         contact_form.addRow("Contact neighbours (nnn)", self._contact_nnn)
         contact_form.addRow("Contact radius (Å)", self._contact_rcont)
         layout.addWidget(contact_group)
+        self._contact_tie_warning = QLabel(self)
+        self._contact_tie_warning.setWordWrap(True)
+        style_warning_text(self._contact_tie_warning)
+        # Inside the group box the wrapped warning would not get the height its text needs.
+        layout.addWidget(self._contact_tie_warning)
+        # Each check searches the shell of every site, so a typed value is
+        # checked once it is finished, not at every keystroke.
+        for spinbox in (self._contact_nnn, self._contact_rcont):
+            spinbox.setKeyboardTracking(False)
+            spinbox.valueChanged.connect(self._refresh_contact_tie_warning)
+        self._refresh_contact_tie_warning()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -5041,6 +5059,27 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _refresh_contact_tie_warning(self) -> None:
+        """Show whether the Contact neighbours split a tie of the nearest magnetic ions."""
+
+        warnings = (
+            tuple(
+                self._contact_tie_check(
+                    int(self._contact_nnn.value()), float(self._contact_rcont.value())
+                )
+            )
+            if self._contact_tie_check is not None
+            else ()
+        )
+        text = ""
+        if warnings:
+            text = warnings[0]
+            if len(warnings) > 1:
+                others = len(warnings) - 1
+                text += f" The same holds at {others} more {'site' if others == 1 else 'sites'}."
+        self._contact_tie_warning.setText(text)
+        self._contact_tie_warning.setVisible(bool(text))
 
     def values(self) -> dict[str, object]:
         return {
@@ -6796,6 +6835,10 @@ class MagneticFieldWidget(QWidget):
         self._breakdown_hint = QLabel("")
         self._breakdown_hint.setWordWrap(True)
         style_hint_text(self._breakdown_hint)
+        self._breakdown_contact_warning = QLabel("")
+        self._breakdown_contact_warning.setWordWrap(True)
+        style_warning_text(self._breakdown_contact_warning)
+        self._breakdown_contact_warning.setVisible(False)
 
         self._apply_page_styles()
         self._build_layout()
@@ -6901,6 +6944,7 @@ class MagneticFieldWidget(QWidget):
         results_layout.addWidget(self._result_table)
         results_layout.addWidget(self._breakdown_label)
         results_layout.addWidget(self._breakdown_table)
+        results_layout.addWidget(self._breakdown_contact_warning)
         results_layout.addWidget(self._breakdown_hint)
         layout.addWidget(results_group, 1)
         layout.addStretch(1)
@@ -7604,6 +7648,7 @@ class MagneticFieldWidget(QWidget):
             approximant_max_period=self._approximant_max_period,
             contact_nnn=self._contact_nnn,
             contact_rcont=self._contact_rcont,
+            contact_tie_check=self._contact_tie_checker(),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -7790,6 +7835,30 @@ class MagneticFieldWidget(QWidget):
             )
             + "."
         )
+
+    def _contact_tie_checker(self) -> Callable[[int, float], tuple[str, ...]] | None:
+        """Return the contact-shell tie check of the selected site, or ``None`` when there is nothing to check.
+
+        There is nothing to check without a host, a contact coupling or a usable muon site.
+        """
+
+        if self._host_structure is None or not self._has_contact_coupling():
+            return None
+        try:
+            site = self.selected_muon_site()
+        except ValueError:
+            return None
+        if site is None or self._muon_site_unavailable_reason() is not None:
+            return None
+        try:
+            return contact_shell_tie_checker(
+                self._host_structure,
+                self._model,
+                [site.fractional_position],
+                find_equivalent_sites=self._include_equivalent_sites.isChecked(),
+            )
+        except ValueError:
+            return None
 
     def _has_contact_coupling(self) -> bool:
         try:
@@ -8141,6 +8210,7 @@ class MagneticFieldWidget(QWidget):
 
         rows: list[tuple[str, ...]] = []
         hint = ""
+        contact_warnings: list[str] = []
         headers = self._BREAKDOWN_HEADERS
         selected_rows = sorted({item.row() for item in self._result_table.selectedItems()})
         state = self._field_results_state
@@ -8164,6 +8234,7 @@ class MagneticFieldWidget(QWidget):
             else:
                 payload = results[selected_rows[0]]
                 rows = self._distribution_breakdown_rows(payload)
+                contact_warnings = self._contact_shell_warning_lines(payload)
                 lines = []
                 checks = self._convergence_lines(payload.get("convergence"))
                 if checks:
@@ -8179,6 +8250,7 @@ class MagneticFieldWidget(QWidget):
             hint = "Select a result row to see its field terms."
         else:
             payload = results[selected_rows[0]]
+            contact_warnings = self._contact_shell_warning_lines(payload)
             merge = self._merges_dipolar_and_lorentz(payload)
             for label, key in self._BREAKDOWN_TERMS:
                 if merge and key == "lorentz_T":
@@ -8218,6 +8290,8 @@ class MagneticFieldWidget(QWidget):
         self._breakdown_table.setVisible(bool(rows))
         self._breakdown_hint.setText(hint)
         self._breakdown_hint.setVisible(bool(hint))
+        self._breakdown_contact_warning.setText("\n".join(contact_warnings))
+        self._breakdown_contact_warning.setVisible(bool(contact_warnings))
 
     @classmethod
     def _distribution_breakdown_rows(cls, payload: Mapping[str, object]) -> list[tuple[str, ...]]:
@@ -8261,6 +8335,18 @@ class MagneticFieldWidget(QWidget):
 
         parameters = payload.get("calculation_parameters")
         return isinstance(parameters, Mapping) and bool(parameters.get("modulated", False))
+
+    @staticmethod
+    def _contact_shell_warning_lines(payload: Mapping[str, object]) -> list[str]:
+        """Return the saved contact-shell tie warnings of a result, each as one line."""
+
+        parameters = payload.get("calculation_parameters")
+        warnings = (
+            parameters.get("contact_shell_warnings") if isinstance(parameters, Mapping) else None
+        )
+        if not isinstance(warnings, Sequence) or isinstance(warnings, (str, bytes)):
+            return []
+        return [f"Contact shell: {warning}" for warning in warnings if isinstance(warning, str)]
 
     @staticmethod
     def _convergence_lines(raw_checks: object) -> list[str]:

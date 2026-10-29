@@ -60,6 +60,9 @@ MN_MOMENT_MU_B = 0.385  # per Mn at 5 K (Dalmas de Réotier et al. 2016)
 # -0.9276 mol/emu, is -0.518 T/μB for a moment of 1 μB per Mn; -0.505 T/μB is
 # 2.5 % smaller.
 CONTACT_COUPLING_T_PER_MU_B = "-0.505"
+# The three nearest Mn tie 1.760 Å from every 4a muon position, so the contact
+# shell takes all three; the default of two would split them.
+MNSI_CONTACT_NEIGHBOURS = 3
 # Site II of the four 4a positions, which are equivalent to III and IV and
 # stand apart from site I on the k axis.
 SITE_II = (0.968, 0.468, 0.032)
@@ -128,7 +131,8 @@ def mnsi_project(
     """A builder for the MnSi host, its helix (or ``model``) and a Magnetic Fields ``form``.
 
     ``form`` extends the common one: the muon site at 4a, every equivalent
-    site, the contact coupling and a sample without a demagnetizing field.
+    site, the contact coupling and its three-ion shell, and a sample without a
+    demagnetizing field.
     """
 
     host = mnsi_host()
@@ -137,6 +141,8 @@ def mnsi_project(
         "include_equivalent_sites": True,
         "hyperfine_coupling": CONTACT_COUPLING_T_PER_MU_B,
         "hyperfine_coupling_unit": "T_per_muB",
+        # The contact shell: the three Mn that tie 1.760 Å from the muon.
+        "contact_nnn": MNSI_CONTACT_NEIGHBOURS,
         "selected_muon_site": custom_site(host, (MUON_X, MUON_X, MUON_X)),
         **form,
     }

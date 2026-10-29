@@ -329,7 +329,7 @@ def test_mnsi_four_sites_give_the_two_edged_spectrum(mnsi_sites) -> None:
 
     lower, upper = _edges_mT(simulation)
     assert lower == pytest.approx(89.0, abs=2.0)
-    assert upper == pytest.approx(206.8, abs=2.0)
+    assert upper == pytest.approx(206.6, abs=2.0)
     assert simulation.warnings == ()
 
 
@@ -358,7 +358,7 @@ def test_mnsi_powder_average_is_flat_in_field_direction(mnsi_sites) -> None:
 
     np.testing.assert_allclose(powder.static.polarisation, np.mean(single, axis=0), atol=1e-6)
     lower, upper = _edges_mT(powder)
-    assert (lower, upper) == pytest.approx((89.0, 206.8), abs=2.0)
+    assert (lower, upper) == pytest.approx((89.0, 206.6), abs=2.0)
 
 
 def test_an_all_zero_added_field_adds_nothing_to_results_that_carry_one() -> None:

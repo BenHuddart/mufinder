@@ -492,7 +492,7 @@ def test_worked_example_mnsi_spectrum_has_its_two_edges_at_90_and_207_mT(real_mu
     assert fields_mT[np.argmax(amplitudes)] == pytest.approx(89.0, abs=2.0)
     # The upper edge, at 207 mT, is the second horn.
     upper = (fields_mT > 150.0) & (fields_mT < 250.0)
-    assert fields_mT[upper][np.argmax(amplitudes[upper])] == pytest.approx(206.8, abs=2.0)
+    assert fields_mT[upper][np.argmax(amplitudes[upper])] == pytest.approx(206.6, abs=2.0)
     # Outside the two edges only the window's wings remain.
     outside = (fields_mT < 70.0) | (fields_mT > 230.0)
     assert np.max(amplitudes[outside]) < 0.02 * np.max(amplitudes)

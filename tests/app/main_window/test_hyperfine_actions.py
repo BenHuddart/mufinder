@@ -18,11 +18,16 @@ from tests.support.main_window import open_project_with_host
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "hyperfine"
 
 
-def _hyperfine_result(document, relaxation_job_id: str) -> Result:
+def _hyperfine_result(document, relaxation_job_id: str, *, tied: bool = False) -> Result:
+    # ``tied`` puts the muon halfway between the two Fe, whose moments differ.
     relaxed = Structure(
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
         species=["Fe", "Fe", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0] if tied else [0.1, 0.0, 0.0],
+            [0.25, 0.0, 0.0] if tied else [0.25, 0.25, 0.25],
+        ],
     )
     tensor = hyperfine_tensor_for_species(
         parse_magres_hyperfine(FIXTURES / "fe_tetrahedral_muon.magres"), "H:mu"
@@ -155,3 +160,29 @@ def test_use_in_magnetic_fields_sees_the_site_an_unedited_form_shows(
     # The widget's default 0.0 coupling is empty, not a value to confirm replacing.
     assert prompts == []
     assert messages and messages[-1].startswith("Filled the hyperfine coupling of 1")
+
+
+def test_use_in_magnetic_fields_warns_when_the_form_shell_splits_a_tie(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    _service, document, _host = open_project_with_host(window, tmp_path)
+    relaxation_job_id = str(uuid4())
+    result = _hyperfine_result(document, relaxation_job_id, tied=True)
+    document.ui_state["magnetic_field_form"] = {
+        "selected_muon_site": _selected_site(relaxation_job_id),
+        "contact_nnn": 1,
+    }
+    messages: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, _title, text: messages.append(text),
+    )
+
+    window._on_use_hyperfine_in_magnetic_fields(str(result.id))
+
+    (message,) = messages
+    assert message.startswith("Filled the hyperfine coupling of 1 Magnetic Fields form(s).")
+    assert "\n\nWarning:\nMagnetic Fields: Contact neighbours (nnn) = 1 keeps 1 of the 2" in message
+    assert "nnn = 2 includes them all" in message
