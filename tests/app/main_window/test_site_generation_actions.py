@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 
 import pytest
 
@@ -229,4 +231,215 @@ def test_main_window_generate_requested_without_project_shows_info(
     window._on_generate_requested("random", {"count": 1})
 
     assert infos == ["No project"]
+    window.close()
+
+
+_HELD_RANDOM_PARAMETERS = {
+    "selection_mode": "count",
+    "count": 2,
+    "min_muon_atom": 0.8,
+    "max_attempts": 5000,
+    "seed": "3",
+    "include_symmetry_equivalents": False,
+}
+
+
+def _window_with_cubic_host(window, tmp_path: Path, name: str) -> Structure:
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / f"{name}.mufinder", name)
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(window._document, host)
+    return host
+
+
+@pytest.fixture
+def held_worker(monkeypatch: pytest.MonkeyPatch) -> tuple[threading.Event, threading.Event]:
+    """Hold each generation worker once it has computed its sites, until released.
+
+    Returns ``(computed, release)``: ``computed`` is set when the worker holds,
+    and setting ``release`` lets it hand its sites back.
+    """
+
+    computed = threading.Event()
+    release = threading.Event()
+    original = ProjectService.compute_candidate_sites
+
+    def held(request, **kwargs):
+        outcome = original(request, **kwargs)
+        computed.set()
+        release.wait(10)
+        return outcome
+
+    monkeypatch.setattr(ProjectService, "compute_candidate_sites", staticmethod(held))
+    yield computed, release
+    release.set()
+
+
+def _finish_worker(qapp, window) -> None:
+    for _ in range(2000):
+        qapp.processEvents()
+        if window._muon_generation_thread is None:
+            return
+        time.sleep(0.005)
+    raise AssertionError("the generation worker did not finish")
+
+
+def test_generation_adds_no_site_to_the_document_until_the_worker_has_finished(
+    main_window, qapp, tmp_path: Path, held_worker
+) -> None:
+    window = main_window
+    _window_with_cubic_host(window, tmp_path, "HeldGeneration")
+    computed, release = held_worker
+
+    window._on_generate_requested("random", dict(_HELD_RANDOM_PARAMETERS))
+    assert computed.wait(10)
+    qapp.processEvents()
+
+    # The worker holds its finished sites; the document has none of them.
+    assert window._document.sites == {}
+    assert not any(record.action == "generate_candidates" for record in window._document.provenance)
+
+    release.set()
+    _finish_worker(qapp, window)
+
+    assert len(window._document.sites) == 2
+    assert [record.action for record in window._document.provenance][-1] == ("generate_candidates")
+    window.close()
+
+
+def test_cancelling_generation_discards_its_sites(
+    main_window, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_worker
+) -> None:
+    window = main_window
+    _window_with_cubic_host(window, tmp_path, "CancelGeneration")
+    computed, release = held_worker
+    view = window._muon_generation_view
+    questions: list[str] = []
+
+    def confirm(_parent, title, *_args, **_kwargs) -> bool:
+        questions.append(title)
+        return True
+
+    monkeypatch.setattr(main_window_module.workflow_table_utils, "confirm_destructive", confirm)
+
+    window._on_generate_requested("random", dict(_HELD_RANDOM_PARAMETERS))
+    assert computed.wait(10)
+    assert view._cancel_generation_btn.isVisibleTo(view)
+    assert not view._generate_btn.isEnabled()
+
+    view._cancel_generation_btn.click()
+    release.set()
+    _finish_worker(qapp, window)
+
+    assert questions == ["Cancel generation"]
+    assert window._document.sites == {}
+    assert view._generation_progress.format() == "Generation cancelled"
+    assert view._generate_btn.isEnabled()
+    assert not view._cancel_generation_btn.isVisibleTo(view)
+    window.close()
+
+
+def test_declining_to_cancel_generation_keeps_it_running(
+    main_window, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_worker
+) -> None:
+    window = main_window
+    _window_with_cubic_host(window, tmp_path, "KeepGeneration")
+    computed, release = held_worker
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False
+    )
+
+    window._on_generate_requested("random", dict(_HELD_RANDOM_PARAMETERS))
+    assert computed.wait(10)
+    window._muon_generation_view._cancel_generation_btn.click()
+    release.set()
+    _finish_worker(qapp, window)
+
+    assert len(window._document.sites) == 2
+    window.close()
+
+
+def test_a_host_change_is_refused_while_generation_runs(
+    main_window, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_worker
+) -> None:
+    window = main_window
+    host = _window_with_cubic_host(window, tmp_path, "HostDuringGeneration")
+    other = Structure(
+        label="Other",
+        lattice_vectors=[[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    window._document.structures[other.id] = other
+    computed, release = held_worker
+    refusals: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, *_args, **_kwargs: refusals.append(title),
+    )
+
+    window._on_generate_requested("random", dict(_HELD_RANDOM_PARAMETERS))
+    assert computed.wait(10)
+    window._on_active_host_change_requested(str(other.id))
+
+    assert refusals == ["Generation in progress"]
+    assert window._document.project.host_structure_id == host.id
+
+    release.set()
+    _finish_worker(qapp, window)
+    assert len(window._document.sites) == 2
+
+    # Once the run has finished, the host can change.
+    window._on_active_host_change_requested(str(other.id))
+    assert window._document.project.host_structure_id == other.id
+    window.close()
+
+
+def test_closing_the_window_cancels_a_running_generation(
+    main_window, qapp, tmp_path: Path, held_worker
+) -> None:
+    window = main_window
+    _window_with_cubic_host(window, tmp_path, "CloseDuringGeneration")
+    computed, release = held_worker
+
+    window._on_generate_requested("random", dict(_HELD_RANDOM_PARAMETERS))
+    assert computed.wait(10)
+    thread = window._muon_generation_thread
+    document = window._document
+    cancels: list[bool] = []
+    original_cancel = thread.cancel
+    thread.cancel = lambda: (cancels.append(True), original_cancel())
+    release.set()
+    window.close()
+
+    assert cancels == [True]
+    assert window._muon_generation_thread is None
+    qapp.processEvents()
+    assert document.sites == {}
+
+
+def test_a_run_started_in_a_closed_project_is_discarded(
+    main_window, qapp, tmp_path: Path, held_worker
+) -> None:
+    window = main_window
+    _window_with_cubic_host(window, tmp_path, "FirstProject")
+    first = window._document
+    computed, release = held_worker
+
+    window._on_generate_requested("random", dict(_HELD_RANDOM_PARAMETERS))
+    assert computed.wait(10)
+    second = ProjectService().create_project(tmp_path / "second.mufinder", "SecondProject")
+    window._document = second
+    release.set()
+    _finish_worker(qapp, window)
+
+    assert first.sites == {}
+    assert second.sites == {}
+    assert window._muon_generation_view._generation_progress.format() == "Ready"
     window.close()

@@ -86,9 +86,19 @@ number-of-positions mode its maximum is the requested number of sites. In
 separation mode the maximum is a prediction of the likely number of accepted
 sites that only scales the bar, so the label shows a running count such as
 ``Generated 6 sites`` rather than a target like ``Generated 6/13 sites``.
-Generated rows are committed only after generation completes successfully. If
-fewer sites are generated than requested, the Journal records an ``Attention``
-entry suggesting more attempts, smaller distance limits, or a larger cell.
+Generated rows are added to the project only after generation completes
+successfully. If fewer sites are generated than requested, the Journal records
+an ``Attention`` entry suggesting more attempts, smaller distance limits, or a
+larger cell.
+
+While a run is in progress, ``Cancel Generation`` appears beside ``Generate
+Sites``. After you confirm, the run stops and adds no sites; the progress bar
+reads ``Generation cancelled``. Closing the window cancels a running
+generation the same way. While a run is in progress you cannot choose another
+active host or load a new one: wait for the run to finish, or cancel it, first.
+If the host changes anyway before the run finishes (a pristine relaxation that
+completes refreshes its relaxed structure, for example), the run's sites are
+not added and a message asks you to generate them again for the new host.
 
 Generation stops with an explicit error, shown in the generation tab, when the
 distance constraints cannot be satisfied or the requested element is not in the

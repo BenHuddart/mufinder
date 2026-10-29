@@ -135,6 +135,7 @@ class MuonGenerationWidget(QWidget):
     """Form-based UI for generated muon sites."""
 
     generate_requested = Signal(str, dict)
+    cancel_generation_requested = Signal()
     cluster_positions_requested = Signal(object)
     delete_candidates_requested = Signal(object)
     create_jobs_requested = Signal(object)
@@ -359,6 +360,13 @@ class MuonGenerationWidget(QWidget):
         self._generate_btn = QPushButton("Generate Sites")
         self._generate_btn.clicked.connect(self._emit_generate)
         action_row.addWidget(self._generate_btn)
+        # Shown only while a random or element-attached run is in progress.
+        self._cancel_generation_btn = QPushButton("Cancel Generation")
+        self._cancel_generation_btn.setObjectName("muonGenerationCancelButton")
+        self._cancel_generation_btn.setToolTip("Stop the running generation and discard its sites.")
+        self._cancel_generation_btn.setVisible(False)
+        self._cancel_generation_btn.clicked.connect(self.cancel_generation_requested)
+        action_row.addWidget(self._cancel_generation_btn)
         self._cluster_btn = QPushButton("Cluster Positions...")
         self._cluster_btn.setEnabled(False)
         self._cluster_btn.clicked.connect(self._open_cluster_positions_dialog)
@@ -596,7 +604,10 @@ class MuonGenerationWidget(QWidget):
         self.set_generation_controls_enabled(not busy)
 
     def set_generation_controls_enabled(self, enabled: bool) -> None:
+        """Enable the generation controls, or disable them and offer Cancel while a run is busy."""
         self._generate_btn.setEnabled(enabled)
+        self._cancel_generation_btn.setVisible(not enabled)
+        self._cancel_generation_btn.setEnabled(not enabled)
         self._cluster_btn.setEnabled(enabled and bool(self._selected_site_ids()))
         self._delete_btn.setEnabled(enabled and bool(self._selected_site_ids()))
         self._create_jobs_btn.setEnabled(enabled and bool(self._selected_site_ids()))

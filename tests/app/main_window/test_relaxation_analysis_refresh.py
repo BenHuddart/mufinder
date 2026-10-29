@@ -9,7 +9,7 @@ navigating to the page, and a job-status refresh.
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -128,9 +128,10 @@ def test_a_job_status_refresh_does_not_rebuild_the_hidden_analysis_page(
 
     assert rebuilds == {"set_context": 0, "_rebuild_tabs": 0}
 
-    # The skipped refresh is not lost: the page catches up when it is shown.
+    # The skipped refresh is not lost: the page catches up when it is shown,
+    # here finding nothing changed.
     window._set_active_route("muon_analysis")
-    assert rebuilds == {"set_context": 1, "_rebuild_tabs": 1}
+    assert rebuilds == {"set_context": 1, "_rebuild_tabs": 0}
 
 
 def test_a_job_status_refresh_keeps_the_showing_analysis_page_current(
@@ -144,7 +145,8 @@ def test_a_job_status_refresh_keeps_the_showing_analysis_page_current(
 
     window._refresh_jobs_table()
 
-    assert rebuilds == {"set_context": 1, "_rebuild_tabs": 1}
+    # The page is handed the context, which it finds unchanged.
+    assert rebuilds == {"set_context": 1, "_rebuild_tabs": 0}
     assert window._relaxation_analysis_view._workspace_tabs.count() == len(workspaces)
 
 
@@ -160,7 +162,8 @@ def test_a_project_change_rebuilds_the_analysis_page_at_most_once(
     window._refresh_ui_after_project_change()
     window._set_active_route("muon_analysis")
 
-    assert rebuilds == {"set_context": 1, "_rebuild_tabs": 1}
+    # The document is unchanged, so its single refresh finds nothing to rebuild.
+    assert rebuilds == {"set_context": 1, "_rebuild_tabs": 0}
 
 
 def test_a_workspace_route_on_a_stale_page_builds_only_that_tabs_viewer(
@@ -178,3 +181,89 @@ def test_a_workspace_route_on_a_stale_page_builds_only_that_tabs_viewer(
     assert [
         len(tabs.widget(index).findChildren(AtomicStructureViewer)) for index in range(tabs.count())
     ] == [0, 0, 1]
+
+
+@pytest.fixture
+def constructed_viewers(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record every ``AtomicStructureViewer`` constructed."""
+
+    from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+
+    created: list[object] = []
+    original = AtomicStructureViewer.__init__
+
+    def counted(self, *args, **kwargs):
+        created.append(self)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(AtomicStructureViewer, "__init__", counted)
+    return created
+
+
+def _flush(window: MainWindow) -> None:
+    window._dashboard_flush_pending = True
+    window._flush_dashboard()
+
+
+def test_a_dashboard_flush_with_an_unchanged_analysis_context_builds_no_viewer(
+    qapp, tmp_path: Path, rebuilds: dict[str, int], constructed_viewers: list[object]
+) -> None:
+    root, workspaces = _saved_project_with_workspaces(tmp_path)
+    window = MainWindow()
+    assert window.open_project(root)
+    window._set_active_route(window._relaxation_analysis_workspace_route(str(workspaces[1]["id"])))
+    view = window._relaxation_analysis_view
+    pages = [view._workspace_tabs.widget(index) for index in range(len(workspaces))]
+    built = len(constructed_viewers)
+    _reset(rebuilds)
+
+    for _ in range(3):
+        _flush(window)
+
+    assert len(constructed_viewers) == built
+    assert rebuilds["_rebuild_tabs"] == 0
+    assert [view._workspace_tabs.widget(index) for index in range(len(workspaces))] == pages
+    assert view.current_workspace_id() == str(workspaces[1]["id"])
+
+
+def test_a_dashboard_flush_after_a_new_completed_relaxation_updates_the_existing_tab(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rebuilds: dict[str, int],
+    constructed_viewers: list[object],
+) -> None:
+    from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+    from mufinder.app.relaxation_analysis_widget import CompletedRelaxationAnalysisSource
+    from PySide6.QtWidgets import QTreeWidget
+
+    root, workspaces = _saved_project_with_workspaces(tmp_path)
+    window = MainWindow()
+    assert window.open_project(root)
+    window._set_active_route(window._relaxation_analysis_workspace_route(str(workspaces[0]["id"])))
+    view = window._relaxation_analysis_view
+    page = view._workspace_tabs.widget(0)
+    viewer = page.findChild(AtomicStructureViewer)
+    table = page.findChild(QTreeWidget)
+    assert table.topLevelItemCount() == 0
+    built = len(constructed_viewers)
+    _reset(rebuilds)
+
+    # The workspace's relaxation completes.
+    source = CompletedRelaxationAnalysisSource(
+        job_id=UUID(workspaces[0]["job_ids"][0]),
+        job_label="Site A",
+        charge_state=POSITIVE_MUON_CHARGE_STATE,
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.25, 0.25, 0.25),
+        total_energy_ev=-10.0,
+    )
+    monkeypatch.setattr(window, "_completed_muon_relaxation_sources", lambda: [source])
+    _flush(window)
+
+    assert rebuilds["_rebuild_tabs"] == 0
+    assert len(constructed_viewers) == built
+    assert view._workspace_tabs.widget(0) is page
+    assert page.findChild(AtomicStructureViewer) is viewer
+    assert table.topLevelItemCount() == 1

@@ -591,8 +591,16 @@ no two workflow widgets may define the same private method.
        clustering generated sites near an anchor, removing and staging
        generated sites, and the generated-site statuses. Each entry point
        changes the document in memory and returns its provenance records in a
-       ``SiteGenerationOutcome``; ``ProjectService`` appends them. The
-       placement maths is ``mufinder.science.site_generation``.
+       ``SiteGenerationOutcome``; ``ProjectService`` appends them. Random and
+       element-attached generation also split into three steps for a worker
+       thread: ``prepare_candidate_sites`` copies the active host and the site
+       labels on the GUI thread, ``compute_candidate_sites`` computes the sites
+       from that copy alone and stops with ``SiteGenerationCancelled`` when
+       cancelled, and ``apply_candidate_sites`` adds them on the GUI thread,
+       refusing them if the active host or its geometry changed and
+       renumbering a label another site took meanwhile. The main window's
+       ``MuonGenerationThread`` runs only the middle step. The placement maths
+       is ``mufinder.science.site_generation``.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
        submission: the workflow directory fragment, the default scheduler
@@ -1123,10 +1131,16 @@ dashboard flush therefore never rebuilds a hidden viewer page.
   cascade of refresh requests from the jobs table, the muon relaxation rows and
   the form restore to one request at its end, so the page is rebuilt at most
   once per project change. Within the page, each workspace tab builds its
-  ``AtomicStructureViewer`` the first time the tab is current, and a rebuild
-  shuts down the viewers of the tabs it replaces. An edit to one workspace
-  (renaming it, showing shifted positions, clustering it, adding structures)
-  updates that tab in place and keeps its viewer and camera.
+  ``AtomicStructureViewer`` the first time the tab is current. The page keeps
+  a fingerprint of what each tab shows (the workspace's stored state and the
+  completed relaxations it uses), so a refresh with an unchanged context, such
+  as a dashboard flush while the page is showing, returns without touching a
+  tab. A changed workspace refills its tab in place, keeping its viewer and
+  camera; a new workspace adds a tab, and a deleted one shuts down its tab's
+  viewer. Only a change of host structure, or of the host's cell or atoms,
+  rebuilds every tab, shutting down the viewers it replaces. An edit made on the page (renaming a workspace,
+  showing shifted positions, clustering it, adding structures) updates that tab
+  in place the same way.
 - The Muon Sites summary's panels are refreshed on every project, host and pin
   change; its viewers draw the change only when the page is shown (see below).
 - The project-change refresh and the dashboard flush time their stages with

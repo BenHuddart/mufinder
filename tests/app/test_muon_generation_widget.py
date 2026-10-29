@@ -260,6 +260,11 @@ def test_widget_generation_progress_and_random_distance_update(qapp) -> None:
     assert widget._generation_progress.maximum() == 0
     assert widget._generation_progress.format() == "Generating random sites..."
     assert not widget._generate_btn.isEnabled()
+    assert widget._cancel_generation_btn.isVisibleTo(widget)
+    cancels: list[bool] = []
+    widget.cancel_generation_requested.connect(lambda: cancels.append(True))
+    widget._cancel_generation_btn.click()
+    assert cancels == [True]
 
     widget.set_random_muon_muon_distance(1.234)
     assert widget._random_min_muon_muon.value() == 1.234
@@ -268,6 +273,7 @@ def test_widget_generation_progress_and_random_distance_update(qapp) -> None:
     assert widget._generation_progress.maximum() == 1
     assert widget._generation_progress.format() == "Ready"
     assert widget._generate_btn.isEnabled()
+    assert not widget._cancel_generation_btn.isVisibleTo(widget)
 
     widget.set_generation_busy(True, "Preparing random generation...")
     widget.set_generation_progress(2, 5)

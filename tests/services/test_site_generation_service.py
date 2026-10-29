@@ -231,3 +231,143 @@ def test_remove_and_stage_accept_the_legacy_candidate_status(tmp_path: Path) -> 
     assert removed.sites == [to_remove]
     assert [record.action for record in removed.provenance] == ["delete_candidates"]
     assert list(document.sites) == [to_stage.id]
+
+
+_RANDOM_REQUEST = {"selection_mode": "count", "count": 2, "seed": 1, "min_muon_atom": 0.8}
+
+
+def test_a_worker_request_computes_sites_without_touching_the_document(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    existing = MuonSite(label="Random Site 4", status="generated")
+    document.sites[existing.id] = existing
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="random", parameters=_RANDOM_REQUEST
+    )
+
+    outcome = site_generation_service.compute_candidate_sites(request)
+
+    assert list(document.sites) == [existing.id]
+    assert [site.label for site in outcome.sites] == ["Random Site 5", "Random Site 6"]
+    assert [record.action for record in outcome.provenance] == ["generate_candidates"]
+
+    site_generation_service.apply_candidate_sites(document, request, outcome)
+
+    assert list(document.sites) == [existing.id, *(site.id for site in outcome.sites)]
+    assert document.provenance == []
+
+
+def test_a_worker_request_reads_a_copy_of_the_host(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    host = document.structures[document.project.host_structure_id]
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="near_element", parameters={"element": "O"}
+    )
+
+    host.fractional_positions[0][0] = 0.99
+    host.species.append("Si")
+
+    assert request.host.positions[0][0] != 0.99
+    assert len(request.host.species) == len(host.species) - 1
+    assert request.host_structure_id == host.id
+
+
+def test_cancelling_a_worker_request_discards_its_sites(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="random", parameters=_RANDOM_REQUEST
+    )
+    reports: list[tuple[int, int]] = []
+
+    with pytest.raises(site_generation_service.SiteGenerationCancelled):
+        site_generation_service.compute_candidate_sites(
+            request,
+            progress_callback=lambda generated, expected: reports.append((generated, expected)),
+            should_cancel=lambda: bool(reports),
+        )
+
+    # The first report went through; the next one found the run cancelled.
+    assert reports == [(0, 2)]
+    assert document.sites == {}
+
+
+def test_cancelling_after_the_last_report_still_discards_the_sites(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="random", parameters=_RANDOM_REQUEST
+    )
+    reports: list[tuple[int, int]] = []
+    finished = [False]
+
+    def report(generated: int, expected: int) -> None:
+        reports.append((generated, expected))
+        finished[0] = generated >= expected
+
+    with pytest.raises(site_generation_service.SiteGenerationCancelled):
+        site_generation_service.compute_candidate_sites(
+            request,
+            progress_callback=report,
+            # Cancelled only once every site has been reported.
+            should_cancel=lambda: finished[0] and len(reports) > 2,
+        )
+    assert reports[-1] == (2, 2)
+
+
+def test_applying_a_worker_request_after_a_host_change_adds_nothing(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="random", parameters=_RANDOM_REQUEST
+    )
+    outcome = site_generation_service.compute_candidate_sites(request)
+    other = cof2_host()
+    document.structures[other.id] = other
+    document.project.host_structure_id = other.id
+
+    with pytest.raises(SiteGenerationError, match="active host structure changed"):
+        site_generation_service.apply_candidate_sites(document, request, outcome)
+    assert document.sites == {}
+
+
+@pytest.mark.parametrize("method", ["manual", "uep_clusters", "bogus"])
+def test_only_random_and_attached_generation_prepare_a_worker_request(
+    tmp_path: Path, method: str
+) -> None:
+    with pytest.raises(SiteGenerationError, match="cannot run on a worker thread"):
+        site_generation_service.prepare_candidate_sites(
+            _document(tmp_path), method=method, parameters={}
+        )
+
+
+def test_applying_a_worker_request_after_an_edit_to_the_host_adds_nothing(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path)
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="random", parameters=_RANDOM_REQUEST
+    )
+    outcome = site_generation_service.compute_candidate_sites(request)
+    # The same host object takes a new geometry, as a refreshed relaxed host does.
+    host = document.structures[document.project.host_structure_id]
+    host.fractional_positions[0] = [0.4, 0.4, 0.4]
+
+    with pytest.raises(SiteGenerationError, match="active host structure changed"):
+        site_generation_service.apply_candidate_sites(document, request, outcome)
+    assert document.sites == {}
+
+
+def test_applying_a_worker_request_renumbers_labels_taken_meanwhile(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    request = site_generation_service.prepare_candidate_sites(
+        document, method="random", parameters=_RANDOM_REQUEST
+    )
+    outcome = site_generation_service.compute_candidate_sites(request)
+    assert [site.label for site in outcome.sites] == ["Random Site 1", "Random Site 2"]
+    taken = MuonSite(label="Random Site 1", status="generated")
+    document.sites[taken.id] = taken
+
+    site_generation_service.apply_candidate_sites(document, request, outcome)
+
+    assert sorted(site.label for site in document.sites.values()) == [
+        "Random Site 1",
+        "Random Site 2",
+        "Random Site 3",
+    ]
