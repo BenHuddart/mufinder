@@ -48,7 +48,12 @@ from mufinder.castep_setup import (
     save_castep_setup,
 )
 from mufinder.castep_io.keyword_catalog_file import KeywordCatalogValidationError
-from mufinder.castep_io.schema import keyword_catalog_status, refresh_keyword_catalog
+from mufinder.castep_io.schema import (
+    OVERRIDE_CATALOG_ORIGIN,
+    OVERRIDE_KEYWORDS_JSON_ENV_VAR,
+    keyword_catalog_status,
+    refresh_keyword_catalog,
+)
 from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationWorker,
     validate_cluster_keyword_config,
@@ -375,10 +380,10 @@ class CastepSetupDialog(QDialog):
         self._refresh_catalog_status()
         message = f"Keyword catalog {action}: {summary.describe()}."
         status = keyword_catalog_status()
-        if status.origin.startswith("env_json:"):
+        if status.origin == OVERRIDE_CATALOG_ORIGIN:
             message += (
                 "\n\nIt is not in use yet: the "
-                f"{status.origin.split(':', maxsplit=1)[1]} environment variable overrides CASTEP setup."
+                f"{OVERRIDE_KEYWORDS_JSON_ENV_VAR} environment variable overrides CASTEP setup."
             )
         QMessageBox.information(self, "Keyword catalog installed", message)
         return True

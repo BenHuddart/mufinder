@@ -18,7 +18,7 @@ from mufinder.app.theme import cleanup_theme_runtime
 
 
 # Process-wide CASTEP keyword-schema state. Several tests rebuild it (refresh_keyword_catalog,
-# swapping _candidate_catalog_sources, or pointing the *_KEYWORDS_JSON env vars at a stub) and
+# swapping _candidate_catalog_sources, or pointing the keyword-catalog env vars at a stub) and
 # restore it manually after their assertions. A mid-test assertion failure, or an env var leaked
 # by another test, would skip that restore and strand the reduced starter catalog globally,
 # cascading failures into every later test that reads the schema. The autouse fixture below makes
@@ -38,7 +38,6 @@ _SCHEMA_GLOBAL_NAMES = (
 )
 _SCHEMA_ENV_VARS = (
     "MUFINDER_CASTEP_KEYWORDS_JSON",
-    "CASTEP_KEYWORDS_JSON",
     "MUFINDER_CASTEP_KEYWORDS_JSON_SETUP",
 )
 

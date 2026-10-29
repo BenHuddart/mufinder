@@ -35,20 +35,18 @@ Which catalog is used
 
 ``mufinder.castep_io.schema`` picks the first usable file from this list:
 
-1. ``MUFINDER_CASTEP_KEYWORDS_JSON``, then ``CASTEP_KEYWORDS_JSON``. These
-   environment variables are an explicit override, intended for developers, and
-   always win.
+1. The file named by the ``MUFINDER_CASTEP_KEYWORDS_JSON`` environment
+   variable. It is the one override, intended for developers, and always wins;
+   the catalog status says the catalog was set by this variable.
 2. The catalog installed through ``Setup > CASTEP`` (see below).
-3. ``Test/Utilities/ReadTS/castep_keywords.json`` under ``MUFINDER_CASTEP_ROOT``
-   or ``CASTEP_ROOT``.
-4. The same relative path in a ``CASTEP-*`` source tree next to the repository
-   or under ``~/Source``.
-5. The bundled starter catalog.
+3. The bundled starter catalog.
 
-A candidate that is missing, unreadable, not JSON, or not a keyword catalog is
-skipped rather than fatal, so a deleted or corrupted file can never stop the
-application starting. When an *explicitly configured* candidate (items 1 and 2)
-is skipped, the reason is kept and shown to the user. When the starter catalog
+MuFinder does not search CASTEP source trees or any other location for a
+catalog: only these three sources are used. A candidate that is missing,
+unreadable, not JSON, or not a keyword catalog is skipped rather than fatal, so
+a deleted or corrupted file can never stop the application starting. When the
+override or the installed catalog is skipped, the reason is kept and shown to
+the user. When the starter catalog
 is used, ``mufinder.castep_io.starter_catalog`` translates its YAML entries,
 merged with ``catalog_overrides``, into the same keyword specs a full catalog
 produces. ``keyword_catalog_status()`` reports the origin, path, CASTEP version, keyword

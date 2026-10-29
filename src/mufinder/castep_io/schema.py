@@ -35,14 +35,15 @@ ValueType = Literal[
     "block",
 ]
 
-_ENV_JSON_VARS = ("MUFINDER_CASTEP_KEYWORDS_JSON", "CASTEP_KEYWORDS_JSON")
+#: The one developer override: a catalog file that wins over the installed one.
+OVERRIDE_KEYWORDS_JSON_ENV_VAR = "MUFINDER_CASTEP_KEYWORDS_JSON"
+#: The catalog origin reported when the override variable supplied the catalog.
+OVERRIDE_CATALOG_ORIGIN = f"env_json:{OVERRIDE_KEYWORDS_JSON_ENV_VAR}"
 #: Set by ``mufinder.castep_setup`` from the saved CASTEP setup. Kept separate from
-#: the user-facing ``*_KEYWORDS_JSON`` variables so that those stay a genuine
-#: override: an explicitly exported variable wins over the catalog MuFinder manages.
+#: the override variable so that it stays a genuine override: an explicitly
+#: exported variable wins over the catalog MuFinder manages.
 SETUP_KEYWORDS_JSON_ENV_VAR = "MUFINDER_CASTEP_KEYWORDS_JSON_SETUP"
 _SETUP_CATALOG_ORIGIN = "setup"
-_ENV_ROOT_VARS = ("MUFINDER_CASTEP_ROOT", "CASTEP_ROOT")
-_CATALOG_RELATIVE_PATH = Path("Test/Utilities/ReadTS/castep_keywords.json")
 _STARTER_CATALOG_PATH = starter_keyword_catalog_path()
 _STARTER_CATALOG_ORIGIN = "bundled_starter_catalog"
 _ALLOWED_VALUES_RE = re.compile(
@@ -152,69 +153,25 @@ CATALOG_CASTEP_VERSION: str = ""
 
 
 def _candidate_catalog_sources() -> tuple[CatalogSourceInfo, ...]:
+    """Return the catalog files to try, in order: the override, then the installed one.
+
+    The bundled starter catalog is not a candidate; ``refresh_keyword_catalog``
+    falls back to it when neither of these yields a usable catalog.
+    """
+
     candidates: list[CatalogSourceInfo] = []
-
-    for env_name in _ENV_JSON_VARS:
+    for env_name, origin in (
+        (OVERRIDE_KEYWORDS_JSON_ENV_VAR, OVERRIDE_CATALOG_ORIGIN),
+        (SETUP_KEYWORDS_JSON_ENV_VAR, _SETUP_CATALOG_ORIGIN),
+    ):
         raw = os.environ.get(env_name)
-        if raw:
-            candidates.append(
-                CatalogSourceInfo(
-                    path=Path(raw).expanduser(),
-                    origin=f"env_json:{env_name}",
-                )
-            )
-
-    raw_setup = os.environ.get(SETUP_KEYWORDS_JSON_ENV_VAR)
-    if raw_setup:
-        candidates.append(
-            CatalogSourceInfo(
-                path=Path(raw_setup).expanduser(),
-                origin=_SETUP_CATALOG_ORIGIN,
-            )
-        )
-
-    for env_name in _ENV_ROOT_VARS:
-        raw = os.environ.get(env_name)
-        if raw:
-            candidates.append(
-                CatalogSourceInfo(
-                    path=Path(raw).expanduser() / _CATALOG_RELATIVE_PATH,
-                    origin=f"env_root:{env_name}",
-                )
-            )
-
-    repo_root = Path(__file__).resolve().parents[3]
-    search_roots = (
-        repo_root.parent,
-        Path.home() / "Source",
-    )
-    for root in search_roots:
-        if not root.exists():
+        if not raw:
             continue
-        for entry in sorted(root.glob("CASTEP-*")):
-            candidates.append(
-                CatalogSourceInfo(
-                    path=entry / _CATALOG_RELATIVE_PATH,
-                    origin="auto_discovery",
-                )
-            )
-
-    # Preserve order while removing duplicates.
-    unique: list[CatalogSourceInfo] = []
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.path.expanduser()
-        if resolved in seen:
+        path = Path(raw).expanduser()
+        if any(candidate.path.resolve() == path.resolve() for candidate in candidates):
             continue
-        seen.add(resolved)
-        unique.append(CatalogSourceInfo(path=resolved, origin=candidate.origin))
-    return tuple(unique)
-
-
-def _is_explicit_origin(origin: str) -> bool:
-    """Return whether ``origin`` names a catalog the user configured by path."""
-
-    return origin.startswith("env_json:") or origin == _SETUP_CATALOG_ORIGIN
+        candidates.append(CatalogSourceInfo(path=path, origin=origin))
+    return tuple(candidates)
 
 
 def _load_base_catalog() -> dict[str, Any]:
@@ -222,8 +179,9 @@ def _load_base_catalog() -> dict[str, Any]:
 
     A candidate that is missing or not a keyword catalog is skipped rather than
     fatal: the app must still start when a configured file was moved, deleted,
-    or corrupted. Skipped *explicit* candidates are recorded in
-    ``CATALOG_ISSUE`` so the UI can say why the session is degraded.
+    or corrupted. Every candidate is one the user configured, so each skipped
+    one is recorded in ``CATALOG_ISSUE`` and the UI can say why the session is
+    degraded.
 
     Raises:
         FileNotFoundError: If no candidate yields a usable catalog.
@@ -237,10 +195,7 @@ def _load_base_catalog() -> dict[str, Any]:
     candidates = _candidate_catalog_sources()
     for candidate in candidates:
         if not candidate.path.is_file():
-            if _is_explicit_origin(candidate.origin):
-                issues.append(
-                    f"The configured keyword catalog '{candidate.path}' no longer exists."
-                )
+            issues.append(f"The configured keyword catalog '{candidate.path}' no longer exists.")
             continue
         try:
             payload, summary = read_keyword_catalog_file(candidate.path, require_complete=False)
@@ -270,10 +225,9 @@ def _load_base_catalog() -> dict[str, Any]:
     CATALOG_ISSUE = " ".join(issues) or None
     searched = "\n".join(f"  - {source.path}" for source in candidates)
     raise FileNotFoundError(
-        "MuFinder requires a local CASTEP metadata file at "
-        "`Test/Utilities/ReadTS/castep_keywords.json`, but it is not bundled with the repository. "
-        "Set MUFINDER_CASTEP_KEYWORDS_JSON or MUFINDER_CASTEP_ROOT, or place a CASTEP checkout next to this repo.\n"
-        f"Searched:\n{searched}"
+        "No CASTEP keyword catalog (castep_keywords.json) could be loaded. "
+        "Open Setup > CASTEP to generate the catalog or import an existing one.\n"
+        f"Searched:\n{searched or '  (no catalog is configured)'}"
     )
 
 
