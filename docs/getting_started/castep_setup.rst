@@ -138,6 +138,6 @@ For developers
 --------------
 
 The order in which MuFinder looks for a catalog (including the
-``MUFINDER_CASTEP_KEYWORDS_JSON`` and ``CASTEP_KEYWORDS_JSON`` environment
-variables, which override a catalog installed here), the validation rules, and
-how cluster generation works are described in :doc:`/castep_keyword_catalog`.
+``MUFINDER_CASTEP_KEYWORDS_JSON`` environment variable, which overrides a
+catalog installed here), the validation rules, and how cluster generation works
+are described in :doc:`/castep_keyword_catalog`.

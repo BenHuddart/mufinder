@@ -8,7 +8,7 @@ explanation of what a keyword catalog is, and why it matters, stays consistent.
 
 from __future__ import annotations
 
-from mufinder.castep_io.schema import KeywordCatalogStatus
+from mufinder.castep_io.schema import OVERRIDE_KEYWORDS_JSON_ENV_VAR, KeywordCatalogStatus
 
 
 LIMITED_CATALOG_EXPLANATION = (
@@ -48,10 +48,11 @@ def catalog_source_description(status: KeywordCatalogStatus) -> str:
     counts = f"{status.cell_count} cell and {status.param_count} param keywords"
     if status.origin == "setup":
         source = "installed through CASTEP setup"
-    elif status.origin.startswith("env_json:"):
-        source = f"set by the {status.origin.split(':', maxsplit=1)[1]} environment variable, which overrides CASTEP setup"
     else:
-        source = "found automatically in a CASTEP source tree"
+        source = (
+            f"set by the {OVERRIDE_KEYWORDS_JSON_ENV_VAR} environment variable, "
+            "which overrides CASTEP setup"
+        )
     return f"Keyword catalog for {version} ({counts}), {source}:\n{status.path}"
 
 

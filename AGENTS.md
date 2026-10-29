@@ -91,8 +91,7 @@ duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
 ## CASTEP rules
 
 - `castep_keywords.json` is never committed. Metadata is discovered at runtime through
-  `MUFINDER_CASTEP_KEYWORDS_JSON`, `CASTEP_KEYWORDS_JSON`, `MUFINDER_CASTEP_ROOT` and
-  `CASTEP_ROOT`; see `docs/castep_keyword_catalog.rst`.
+  `MUFINDER_CASTEP_KEYWORDS_JSON` and `Setup > CASTEP`; see `docs/castep_keyword_catalog.rst`.
 - `docs/castep/keyword_catalog.yaml` is the authoritative list of implemented keywords and
   their formatting rules. Never invent keywords, block names, values, units or syntax;
   leave a gap unimplemented and note it in the catalog.

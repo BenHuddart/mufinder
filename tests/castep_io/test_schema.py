@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -36,6 +35,7 @@ from mufinder.castep_io.starter_catalog import (
     _starter_parse_requirements,
     _starter_sequence,
 )
+from tests.support.keyword_catalogs import write_complete_catalog
 
 
 def test_repo_does_not_vendor_castep_keyword_json_copy() -> None:
@@ -70,9 +70,6 @@ def test_refresh_keyword_catalog_uses_updated_env_json(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    original_mufinder_env = os.environ.get("MUFINDER_CASTEP_KEYWORDS_JSON")
-    original_castep_env = os.environ.get("CASTEP_KEYWORDS_JSON")
-
     custom_catalog = tmp_path / "custom_keywords.json"
     custom_catalog.write_text(
         (
@@ -92,16 +89,6 @@ def test_refresh_keyword_catalog_uses_updated_env_json(
     assert source is not None
     assert source.origin == "env_json:MUFINDER_CASTEP_KEYWORDS_JSON"
     assert source.path == custom_catalog
-
-    if original_mufinder_env is None:
-        monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
-    else:
-        monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", original_mufinder_env)
-    if original_castep_env is None:
-        monkeypatch.delenv("CASTEP_KEYWORDS_JSON", raising=False)
-    else:
-        monkeypatch.setenv("CASTEP_KEYWORDS_JSON", original_castep_env)
-    refresh_keyword_catalog(allow_fallback=True)
 
 
 def test_refresh_keyword_catalog_falls_back_to_bundled_starter_catalog_when_missing(
@@ -136,7 +123,7 @@ def test_refresh_keyword_catalog_stays_strict_without_fallback_when_missing(
             CatalogSourceInfo(path=tmp_path / "missing.json", origin="test_missing"),
         )
 
-        with pytest.raises(FileNotFoundError, match="requires a local CASTEP metadata file"):
+        with pytest.raises(FileNotFoundError, match=r"Open Setup > CASTEP"):
             refresh_keyword_catalog()
     finally:
         schema_module._candidate_catalog_sources = original_candidate_sources
@@ -184,7 +171,6 @@ def test_setup_catalog_is_used_but_exported_env_var_overrides_it(
     managed = _write("managed.json", "25.1")
     override = _write("override.json", "26.1")
     monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
-    monkeypatch.delenv("CASTEP_KEYWORDS_JSON", raising=False)
     monkeypatch.setenv(schema_module.SETUP_KEYWORDS_JSON_ENV_VAR, str(managed))
 
     refresh_keyword_catalog()
@@ -198,6 +184,60 @@ def test_setup_catalog_is_used_but_exported_env_var_overrides_it(
     status = schema_module.keyword_catalog_status()
     assert status.origin == "env_json:MUFINDER_CASTEP_KEYWORDS_JSON"
     assert status.castep_version == "26.1"
+
+
+def test_retired_catalog_sources_are_ignored_and_starter_catalog_is_used(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Only the override and the installed catalog are sources; nothing is discovered."""
+
+    tree_catalog = Path("Test/Utilities/ReadTS/castep_keywords.json")
+    castep_root = tmp_path / "castep-root"
+    write_complete_catalog(castep_root / tree_catalog)
+    home = tmp_path / "home"
+    write_complete_catalog(home / "Source" / "CASTEP-26.1" / tree_catalog)
+    legacy_json = write_complete_catalog(tmp_path / "legacy" / "castep_keywords.json")
+
+    monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
+    monkeypatch.delenv(schema_module.SETUP_KEYWORDS_JSON_ENV_VAR, raising=False)
+    monkeypatch.setenv("CASTEP_KEYWORDS_JSON", str(legacy_json))
+    monkeypatch.setenv("MUFINDER_CASTEP_ROOT", str(castep_root))
+    monkeypatch.setenv("CASTEP_ROOT", str(castep_root))
+    monkeypatch.setenv("HOME", str(home))
+
+    assert schema_module._candidate_catalog_sources() == ()
+
+    refresh_keyword_catalog(allow_fallback=True)
+    status = schema_module.keyword_catalog_status()
+    assert status.is_starter is True
+    assert status.origin == "bundled_starter_catalog"
+    assert status.issue is None
+
+    with pytest.raises(FileNotFoundError, match=r"Open Setup > CASTEP") as excinfo:
+        refresh_keyword_catalog()
+    assert "no catalog is configured" in str(excinfo.value)
+
+
+def test_override_and_installed_catalog_are_tried_in_that_order(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    override = tmp_path / "override.json"
+    installed = tmp_path / "installed.json"
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(override))
+    monkeypatch.setenv(schema_module.SETUP_KEYWORDS_JSON_ENV_VAR, str(installed))
+
+    assert schema_module._candidate_catalog_sources() == (
+        CatalogSourceInfo(path=override, origin="env_json:MUFINDER_CASTEP_KEYWORDS_JSON"),
+        CatalogSourceInfo(path=installed, origin="setup"),
+    )
+
+    # The same file named twice is tried once, as the override.
+    monkeypatch.setenv(schema_module.SETUP_KEYWORDS_JSON_ENV_VAR, str(override))
+    assert schema_module._candidate_catalog_sources() == (
+        CatalogSourceInfo(path=override, origin="env_json:MUFINDER_CASTEP_KEYWORDS_JSON"),
+    )
 
 
 def test_unknown_keyword_error_points_at_castep_setup_on_starter_catalog(
@@ -578,18 +618,15 @@ def test_refresh_skips_unusable_catalogs_and_reports_explicit_ones(
         lambda: (
             CatalogSourceInfo(path=corrupt_catalog, origin="setup"),
             CatalogSourceInfo(path=tmp_path / "missing.json", origin="env_json:test"),
-            CatalogSourceInfo(path=tmp_path / "undiscovered.json", origin="auto_discovery"),
         ),
     )
 
-    with pytest.raises(FileNotFoundError, match="requires a local CASTEP metadata file"):
+    with pytest.raises(FileNotFoundError, match=r"Open Setup > CASTEP"):
         refresh_keyword_catalog()
     issue = schema_module.keyword_catalog_status().issue
     assert issue is not None
     assert "is not valid JSON" in issue
     assert "missing.json' no longer exists" in issue
-    # Auto-discovery misses are routine, not something to report.
-    assert "undiscovered.json" not in issue
 
 
 def test_starter_catalog_entries_parse_requirement_strings_and_renamed_keywords() -> None:

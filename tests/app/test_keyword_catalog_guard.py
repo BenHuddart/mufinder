@@ -298,16 +298,13 @@ def test_catalog_wording_for_each_origin() -> None:
     )
     assert catalog_detail_text(setup) == catalog_source_description(setup)
 
-    override = catalog_source_description(_status("env_json:CASTEP_KEYWORDS_JSON"))
-    assert (
-        "set by the CASTEP_KEYWORDS_JSON environment variable, which overrides CASTEP setup"
-        in override
+    override = _status("env_json:MUFINDER_CASTEP_KEYWORDS_JSON", version="")
+    assert catalog_short_label(override) == "CASTEP keywords: loaded"
+    assert catalog_source_description(override) == (
+        "Keyword catalog for an unrecorded CASTEP version (118 cell and 449 param keywords), "
+        "set by the MUFINDER_CASTEP_KEYWORDS_JSON environment variable, which overrides "
+        "CASTEP setup:\n/data/castep_keywords.json"
     )
-
-    discovered = _status("auto_discovery", version="")
-    assert catalog_short_label(discovered) == "CASTEP keywords: loaded"
-    assert "an unrecorded CASTEP version" in catalog_source_description(discovered)
-    assert "found automatically in a CASTEP source tree" in catalog_source_description(discovered)
 
     starter = _status(
         "bundled_starter_catalog", version="", issue="The configured keyword catalog is gone."

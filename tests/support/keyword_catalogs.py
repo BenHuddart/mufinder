@@ -9,7 +9,6 @@ one here: the sentinel keywords plus enough filler to clear the size floors.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -50,34 +49,20 @@ def write_complete_catalog(path: Path, castep_version: str = "26.11") -> Path:
 
 
 def isolate_catalog_sources(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start from a machine with no catalog configured or discoverable.
+    """Start from a machine with no catalog configured.
 
-    Only ``MUFINDER_CASTEP_KEYWORDS_JSON`` and the saved setup path remain as
-    catalog sources, so a CASTEP tree on the developer's machine cannot leak in.
-    The schema is rebuilt on the starter catalog.
+    The override variable and the saved setup path are cleared, so the
+    developer's own catalog cannot leak in, and the schema is rebuilt on the
+    starter catalog. Tests then set either variable to configure a catalog.
     """
 
     import mufinder.castep_io.schema as schema_module
 
     for name in (
-        "MUFINDER_CASTEP_KEYWORDS_JSON",
-        "CASTEP_KEYWORDS_JSON",
+        schema_module.OVERRIDE_KEYWORDS_JSON_ENV_VAR,
         schema_module.SETUP_KEYWORDS_JSON_ENV_VAR,
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(schema_module, "_ENV_ROOT_VARS", ())
-    monkeypatch.setattr(
-        schema_module,
-        "_candidate_catalog_sources",
-        lambda: tuple(
-            schema_module.CatalogSourceInfo(path=Path(os.environ[name]), origin=origin)
-            for name, origin in (
-                ("MUFINDER_CASTEP_KEYWORDS_JSON", "env_json:MUFINDER_CASTEP_KEYWORDS_JSON"),
-                (schema_module.SETUP_KEYWORDS_JSON_ENV_VAR, "setup"),
-            )
-            if os.environ.get(name)
-        ),
-    )
     schema_module.refresh_keyword_catalog(allow_fallback=True)
 
 

@@ -500,9 +500,9 @@ BUILDERS = {
 def pinned_starter_catalog() -> Iterator[None]:
     """Pin the CASTEP keyword schema to the bundled starter catalog.
 
-    Rendered keyword order follows the source order of the discovered keyword
-    catalog, which differs between machines (a local ``CASTEP-*`` checkout vs
-    CI's bundled starter catalog). Golden files must be generated and compared
+    Rendered keyword order follows the source order of the
+    active keyword catalog, which differs between machines (an installed or
+    overriding catalog vs CI's bundled starter catalog). Golden files must be generated and compared
     against the one catalog that is guaranteed identical everywhere: the
     bundled starter catalog. Prior schema state is always restored.
     """
@@ -512,8 +512,8 @@ def pinned_starter_catalog() -> Iterator[None]:
         for name in _SCHEMA_GLOBAL_NAMES
         if hasattr(_schema_module, name)
     }
-    # Suppress catalog discovery entirely so refresh falls back to the bundled
-    # starter schema — the same path CI takes when no CASTEP checkout exists.
+    # Suppress every catalog source so refresh falls back to the bundled
+    # starter schema — the same path CI takes when no catalog is configured.
     # The renderers read the order/schema live via schema.serialization_order()
     # and keyword_specs(), so refreshing the schema module reaches them directly;
     # no per-module binding sync is needed.

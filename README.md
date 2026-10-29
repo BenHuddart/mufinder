@@ -54,12 +54,7 @@ MuFinder needs a keyword catalog to recognise every keyword your CASTEP version 
 
 Open `Setup > CASTEP` and either generate the catalog from a cluster or a local CASTEP, or import a `castep_keywords.json` you already have. MuFinder validates it and keeps its own copy, so there is no location to choose. The status bar shows which catalog is in use, and MuFinder warns at startup and before submitting jobs when none is loaded.
 
-Developers can override the installed catalog with environment variables:
-
-- `MUFINDER_CASTEP_KEYWORDS_JSON` or `CASTEP_KEYWORDS_JSON` (a catalog file)
-- `MUFINDER_CASTEP_ROOT` or `CASTEP_ROOT` (a CASTEP source tree)
-
-See `docs/castep_keyword_catalog.rst` for the full behaviour.
+Developers can override the installed catalog by setting `MUFINDER_CASTEP_KEYWORDS_JSON` to a catalog file. See `docs/castep_keyword_catalog.rst` for the full behaviour.
 
 ## Install From Source
 
