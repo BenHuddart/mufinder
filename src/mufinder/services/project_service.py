@@ -1742,6 +1742,17 @@ class ProjectService:
         )
         return self._record_site_change(document, outcome)
 
+    def requested_site_count(
+        self, document: ProjectDocument, *, method: str, parameters: dict[str, Any]
+    ) -> int | None:
+        """Return how many sites a generation request asks for, or ``None`` when it sets none.
+
+        See :func:`mufinder.services.site_generation_service.requested_site_count`.
+        """
+        return site_generation_service.requested_site_count(
+            document, method=method, parameters=parameters
+        )
+
     def _record_site_change(
         self,
         document: ProjectDocument,

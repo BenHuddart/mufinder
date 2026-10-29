@@ -17,19 +17,25 @@ from mufinder.science import spglib_compat
 from mufinder.science.lattice import minimum_image_distance, minimum_image_distance_matrix
 from mufinder.science.magnetic_fields import find_equivalent_muon_sites
 from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
     get_crystal_symmetry,
+    get_crystal_symmetry_dataset,
     operation_images,
+    species_element_symbol,
     species_to_atomic_numbers,
     spglib_cell,
+    symmetry_detection_warning,
     symmetry_operations,
     symmetry_orbit,
 )
 from tests.support.symmetry_hosts import (
     bcc_host,
+    cof2_host,
     fcc_primitive_host,
     hcp_host,
     rutile_host,
     triclinic_host,
+    zno_host,
 )
 
 _HOSTS = [bcc_host, triclinic_host, hcp_host, rutile_host, fcc_primitive_host]
@@ -61,9 +67,78 @@ def _operations(host: Structure) -> tuple[np.ndarray, np.ndarray]:
 
 def test_species_to_atomic_numbers_strips_and_capitalises_and_rejects_non_elements() -> None:
     assert species_to_atomic_numbers(["Fe", " o ", "SI"]) == [26, 8, 14]
-    assert species_to_atomic_numbers(["Fe", "H:mu"]) is None
-    assert species_to_atomic_numbers(["Fe1"]) is None
+    assert species_to_atomic_numbers(["Xx"]) is None
+    assert species_to_atomic_numbers(["Fe", "Mu"]) is None
+    assert species_to_atomic_numbers(["X"]) is None
     assert species_to_atomic_numbers([]) == []
+
+
+@pytest.mark.parametrize(
+    ("label", "element"),
+    [
+        ("Co:1", "Co"),
+        ("Fe1", "Fe"),
+        ("fe2", "Fe"),
+        ("H:mu", "H"),
+        ("O2a", "O"),
+        ("C1", "C"),
+        ("Cs", "Cs"),
+        (" Sc ", "Sc"),
+        ("Xx", None),
+        ("1Fe", None),
+        ("", None),
+    ],
+)
+def test_labelled_species_read_as_their_element(label: str, element: str | None) -> None:
+    assert species_element_symbol(label) == element
+
+
+def test_labelled_species_host_keeps_its_space_group() -> None:
+    plain = symmetry_operations(spglib_cell(cof2_host()), symprec=SYMMETRY_TOLERANCE_ANG)
+    labelled = symmetry_operations(
+        spglib_cell(cof2_host(cobalt_label="Co:1")), symprec=SYMMETRY_TOLERANCE_ANG
+    )
+    cif_labelled = spglib_cell(cof2_host(cobalt_label="Co1"))
+
+    assert plain is not None and labelled is not None
+    assert len(labelled[0]) == len(plain[0]) == 16
+    assert cif_labelled is not None
+    assert cif_labelled[2].tolist() == [27, 27, 9, 9, 9, 9]
+    assert symmetry_detection_warning(cof2_host(cobalt_label="Co:1")) is None
+
+
+def test_cif_rounded_zno_is_found_to_be_p63mc() -> None:
+    dataset = get_crystal_symmetry_dataset(spglib_cell(zno_host(cif_rounded=True)))
+
+    assert dataset is not None
+    assert (dataset.number, dataset.international) == (186, "P6_3mc")
+    assert len(dataset.rotations) == 12
+    # The default the symmetry callers use, not only spglib's.
+    operations = symmetry_operations(
+        spglib_cell(zno_host(cif_rounded=True)), symprec=SYMMETRY_TOLERANCE_ANG
+    )
+    assert operations is not None and len(operations[0]) == 12
+
+
+def test_symmetry_detection_warning_names_why_the_host_is_treated_as_p1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lattice = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]
+
+    unknown = symmetry_detection_warning(
+        lattice_vectors=lattice, species=["Si", "Xx", "Xx"], fractional_positions=[[0.0] * 3] * 3
+    )
+    mismatched = symmetry_detection_warning(
+        lattice_vectors=lattice, species=["Si", "Si"], fractional_positions=[[0.0, 0.0, 0.0]]
+    )
+    monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", lambda cell, *, symprec: None)
+    undetected = symmetry_detection_warning(
+        lattice_vectors=lattice, species=["Si"], fractional_positions=[[0.0, 0.0, 0.0]]
+    )
+
+    assert unknown is not None and "'Xx' name no element" in unknown and "P1" in unknown
+    assert mismatched is not None and "2 species for 1 positions" in mismatched
+    assert undetected is not None and "spglib" in undetected and "0.001" in undetected
 
 
 def test_spglib_cell_matches_the_ase_numbers_the_magnetic_modules_used() -> None:

@@ -12,15 +12,15 @@ from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import match_structures
 from mufinder.science.lattice import (
     minimum_image_distance,
-    minimum_image_distance_matrix,
-    near_minimum_indexes,
     nearest_image_cartesian_delta,
     nearest_image_delta,
+    nearest_image_distance_matrix,
 )
 from mufinder.science.site_generation import (
     closest_symmetry_equivalent_position,
     symmetry_equivalent_positions,
 )
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG
 from mufinder.science.supercell_matching import NormalizedStructurePair, normalize_for_comparison
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
 from mufinder.science.uep_clustering import (
@@ -243,12 +243,14 @@ def symmetry_distance_matrix(
     sites: Sequence[RelaxedMuonSite],
     host_structure: Structure,
     *,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> tuple[tuple[float, ...], ...]:
     """Return MuFinder-paper distances between relaxed sites.
 
     Each distance is minimized over symmetry-equivalent positions of the second
-    site, with periodic minimum-image translations included in the metric.
+    site and over periodic images, with the nearest image found by the lattice
+    metric (:func:`~mufinder.science.lattice.nearest_image_distance_matrix`), so
+    it is right in skewed cells too.
     """
 
     count = len(sites)
@@ -266,25 +268,13 @@ def symmetry_distance_matrix(
     ]
     positions = [site.folded_fractional_position for site in sites]
     for right_index in range(1, count):
-        equivalents = equivalents_by_index[right_index]
         # Every earlier site against every equivalent of this one, in one broadcast.
-        screened = (
-            minimum_image_distance_matrix(positions[:right_index], equivalents, lattice)
-            if equivalents
-            else None
-        )
-        for left_index in range(right_index):
-            left = positions[left_index]
-            if screened is None:
-                distance = minimum_image_distance(left, positions[right_index], lattice)
-            else:
-                # Re-measure the near-minimal equivalents with the scalar helper so the value is bit-identical.
-                distance = min(
-                    minimum_image_distance(left, equivalents[index], lattice)
-                    for index in near_minimum_indexes(screened[left_index]).tolist()
-                )
-            matrix[left_index, right_index] = distance
-            matrix[right_index, left_index] = distance
+        equivalents = equivalents_by_index[right_index] or [positions[right_index]]
+        distances = nearest_image_distance_matrix(
+            positions[:right_index], equivalents, lattice
+        ).min(axis=1)
+        matrix[:right_index, right_index] = distances
+        matrix[right_index, :right_index] = distances
     return tuple(tuple(float(value) for value in row) for row in matrix.tolist())
 
 
@@ -390,7 +380,7 @@ def cluster_connected_components(
     host_structure: Structure,
     *,
     tolerance_ang: float,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> ConnectedComponentsResult:
     """Cluster relaxed sites with the graph method described in MuFinder."""
 
@@ -435,7 +425,7 @@ def scan_connected_component_tolerances(
     start_ang: float = 0.0,
     stop_ang: float = 1.0,
     points: int = 51,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> tuple[tuple[float, int], ...]:
     """Return cluster counts across a tolerance scan."""
 
@@ -465,7 +455,7 @@ def anchored_sites(
     host_structure: Structure,
     cluster_labels: Sequence[int],
     *,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     tolerance: float = 1e-6,
 ) -> tuple[AnchoredRelaxedSite, ...]:
     """Return non-mutating symmetry-shifted positions clumped by cluster."""
@@ -550,7 +540,7 @@ def cluster_soprano_style(
     method: str,
     hierarchical_t: float = 0.3,
     kmeans_k: int = 4,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> UepClusteringResult:
     """Cluster structural-relaxation endpoints with pymuon-suite-style features."""
 

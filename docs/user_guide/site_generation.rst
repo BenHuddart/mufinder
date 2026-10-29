@@ -132,6 +132,10 @@ accepting every position that satisfies:
 - the same muon-muon and muon-atom constraints for the full symmetry-equivalent
   orbit of the trial position when symmetry handling is enabled.
 
+Each periodic distance is to the nearest periodic image, found with the cell's
+metric, so the limits hold in hexagonal, primitive-centred, monoclinic and
+other non-orthogonal cells as well as in orthogonal ones.
+
 This mode is useful when the desired candidate-start density is known, when you
 want to reproduce a known random-start setup, when you want to compare sampling
 density between related cells, or when you want to explore how a fixed
@@ -190,12 +194,17 @@ associated with a particular species.
    1.0 Å) and ``Min muon-atom distance (Å)`` (default 1.0 Å).
 4. Click ``Generate Sites``.
 
-For each atom of the selected element, MuFinder places ``Muons per atom``
-generated starts at the ``Muon-element distance (Å)`` along directions derived
-from the local neighbour geometry. Directions are ranked by clearance from the
+MuFinder takes one atom of the selected element from each set of
+symmetry-equivalent atoms in the active host (spglib's equivalent atoms), since
+starts on equivalent atoms are symmetry images of one another. For each such
+atom, MuFinder places ``Muons per atom`` generated starts at the
+``Muon-element distance (Å)`` along directions derived from the local
+neighbour geometry. In CoF₂, for example, all four F atoms are equivalent, so
+attaching to F gives ``Muons per atom`` starts in total. Directions are ranked by clearance from the
 surrounding host structure and filtered by ``Min muon-atom distance (Å)``, and
-the best ranked directions are retained for every matching atom in the active
-host. Each is a separate one-muon relaxation start; this setup has no muon-muon
+the best ranked directions are retained for each of those atoms. If the host's
+symmetry cannot be detected, every atom of the element gets starts. Each is a
+separate one-muon relaxation start; this setup has no muon-muon
 spacing field. The method is a deterministic seeding heuristic that gives
 chemically sensible starts near the selected species. The generated positions
 are still only initial guesses and must be validated by relaxation.
@@ -276,7 +285,7 @@ jobs are staged.
 For each selected row, MuFinder asks spglib for the symmetry operations of the
 active host structure, applies those operations to the row's current fractional
 position, wraps the resulting orbit into the unit cell, and picks the orbit
-member with the shortest periodic distance to the anchor. The row's fractional
+member whose nearest periodic image is closest to the anchor. The row's fractional
 and Cartesian coordinates are updated in the generated table and a provenance
 entry records the anchor and affected site labels.
 
@@ -415,14 +424,16 @@ described in the MuFinder CPC paper:
   stopping sites``, *Computer Physics Communications* **280**, 108488 (2022),
   DOI: ``10.1016/j.cpc.2022.108488``.
 
-Each trial is first checked on its own. Host atoms and accepted orbits are both
-symmetry-invariant, so a trial position that fails its own distance checks
-fails as an orbit too. MuFinder therefore builds the symmetry-equivalent orbit
-only for the few trials that pass. The distance checks run as vectorised passes
-against all host atoms and accepted positions. Comparisons that land within
-rounding error of a distance limit are re-measured exactly. A seeded run
-therefore accepts the same positions as a position-by-position check. This keeps
-the default 20000-attempt budget practical even for high-symmetry supercells.
+Only the trial position itself is checked. Host atoms and the accepted orbits
+are symmetry-invariant and so are distances, so a trial that satisfies both
+limits satisfies them for its whole orbit; MuFinder builds the
+symmetry-equivalent orbit only for trials it accepts. Each check is one
+vectorised pass against all host atoms and accepted positions. Folding each
+fractional component into half a cell never gives a distance shorter than the
+nearest image, so a fold inside the limit rejects the trial at once, and the
+search of the 27 neighbouring cells for the nearest image runs only for trials
+no fold rejects. This keeps the default 20000-attempt budget practical even for
+high-symmetry supercells.
 
 Estimating the separation from a count
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -480,6 +491,12 @@ Limitations
   not expose it.
 - ``Cluster Positions...`` only changes which symmetry-equivalent coordinate a
   row uses; it does not merge rows or judge which final sites are distinct.
+- Host symmetry is detected with spglib at a tolerance of 0.001 Å, loose enough
+  for coordinates written to four decimals, as in most CIF files. Labelled
+  species read as their element, so ``Co:1`` counts as Co and ``Fe1`` as Fe.
+  When the symmetry still cannot be detected, for example because a species
+  names no element, generation treats the host as having no symmetry (P1) and
+  the :doc:`/user_guide/journal` records an ``Attention`` entry saying why.
 
 For developers
 --------------

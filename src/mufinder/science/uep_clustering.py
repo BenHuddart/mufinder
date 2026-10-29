@@ -23,7 +23,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import distance as spdistance
 
 from mufinder.science.ase_bridge import structure_to_ase_atoms
-from mufinder.science.spglib_compat import configure_spglib_error_handling
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, configure_spglib_error_handling
 from mufinder.science.uep import UepError, UepOptimizationResult
 
 
@@ -77,7 +77,7 @@ class UepClusteringConfig:
     clustering_hier_t: float = 0.3
     clustering_kmeans_k: int = 4
     clustering_linkage_method: str = "single"
-    symprec: float = 1e-5
+    symprec: float = SYMMETRY_TOLERANCE_ANG
     feature_mode: str = "soprano_defect_asymmetric_fpos"
 
 

@@ -20,7 +20,12 @@ from mufinder.domain.constants import (
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
 from mufinder.science.lattice import nearest_image_distance
-from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
+from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
+    spglib_cell,
+    symmetry_operations,
+    symmetry_orbit,
+)
 from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
 from mufinder.science._muesr_compat import muesr_imports
 from mufinder.science.magnetic_structure import (
@@ -640,7 +645,7 @@ def find_equivalent_muon_sites(
         raise MagneticFieldError(
             "spglib could not determine symmetry operations: a species is not an element"
         )
-    operations = symmetry_operations(cell, symprec=1e-5)
+    operations = symmetry_operations(cell, symprec=SYMMETRY_TOLERANCE_ANG)
     if operations is None:
         raise MagneticFieldError("spglib could not determine symmetry operations")
     # ``tolerance`` is a fractional-coordinate distance, so the orbit is deduplicated without a lattice.

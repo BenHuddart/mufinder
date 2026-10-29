@@ -547,12 +547,13 @@ feature representation of the UEP batch-search workflow. The free parameters
 are the dendrogram threshold ``Hierarchical t`` and the requested number of
 clusters ``Clusters k``.
 
-The symmetry-aware distances do not depend on the tolerance, so ``Scan
-Tolerances`` measures them once and reuses them at every grid point. Host
-symmetry operations are cached per host, and each site's symmetry-equivalent
-positions are compared in one vectorised pass. Near ties are re-measured
-exactly, so the distances, cluster counts and anchored positions match a
-site-by-site evaluation.
+Each distance is to the nearest periodic image, found with the cell's metric,
+so it is right in hexagonal and other non-orthogonal cells. Host symmetry is
+detected with spglib at a tolerance of 0.001 Å, and labelled species such as
+``Co:1`` read as their element. The symmetry-aware distances do not depend on
+the tolerance, so ``Scan Tolerances`` measures them once and reuses them at
+every grid point. Host symmetry operations are cached per host, and each site's
+symmetry-equivalent positions are compared in one vectorised pass.
 
 The graph sizes its nodes, their border rings, their numbers and its edges in
 data units. Node size follows the closest pair of nodes, and large components

@@ -127,9 +127,10 @@ policy, move the reusable part into the appropriate shared layer:
   ``mufinder.domain.constants``, taken from ``scipy.constants`` with their units
   in their names; a module that needs one imports it from there
 - scientific calculation behavior belongs in ``mufinder.science``; within it,
-  lattice maths (fractional/Cartesian conversion, minimum-image distances,
+  lattice maths (fractional/Cartesian conversion, periodic distances,
   periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
-  plumbing (spglib cells, cached symmetry operations, orbits) in
+  plumbing (spglib cells, the symmetry tolerance, cached symmetry operations,
+  orbits) in
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
   ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
   clustering of its optimized positions in
@@ -600,10 +601,13 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.science.lattice``
      - Lattice algebra: scalar and broadcast fractional/Cartesian conversion,
        reciprocal-lattice-unit to Cartesian wavevectors
-       (``reciprocal_to_cartesian``), lattice inversion, minimum-image displacements and distances
-       (``minimum_image_distance``, ``minimum_image_distance_matrix``,
-       ``nearest_image_distance``) and periodic deduplication
-       (``deduplicate_periodic_positions``).
+       (``reciprocal_to_cartesian``), lattice inversion, lattice reduction
+       (``reduced_lattice``), nearest-image displacements and distances
+       (``nearest_image_distance``, ``nearest_image_distance_matrix``), which
+       every distance that decides something uses, the per-component minimum-image fold
+       (``minimum_image_distance``, ``minimum_image_distance_matrix``), which is
+       exact only below about 0.4 of the shortest lattice vector, and periodic
+       deduplication (``deduplicate_periodic_positions``).
    * - ``mufinder.science.demagnetization``
      - Demagnetizing tensors of a sample: the shapes (``DemagnetizingSample``),
        the closed forms for ellipsoids and rectangular prisms, the Fourier
@@ -616,10 +620,13 @@ no two workflow widgets may define the same private method.
        (``cell_projection``, ``CellProjection``) and the periodic images of an
        atom on the cell faces (``periodic_boundary_images``).
    * - ``mufinder.science.spglib_compat``
-     - spglib access: the ``(lattice, positions, numbers)`` cell
-       (``spglib_cell``), cached symmetry operations
-       (``symmetry_operations``) and symmetry orbits (``symmetry_orbit``),
-       with tolerances passed by each caller.
+     - spglib access: the one symmetry tolerance every symmetry caller uses
+       (``SYMMETRY_TOLERANCE_ANG``), the ``(lattice, positions, numbers)`` cell
+       (``spglib_cell``, reading labelled species such as ``Co:1`` as their
+       element), the reason a host's symmetry cannot be detected
+       (``symmetry_detection_warning``), cached symmetry operations
+       (``symmetry_operations``) and symmetry orbits (``symmetry_orbit``), with
+       deduplication tolerances passed by each caller.
    * - ``mufinder.science.ase_bridge``
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``),

@@ -264,3 +264,19 @@ def test_journal_counts_cutoffs_under_either_configuration_key() -> None:
     assert bodies == [
         f"Prepared a cutoff convergence sweep with {count} cutoff value(s)." for count in (2, 3, 4)
     ]
+
+
+def test_symmetry_unavailable_entry_warns_with_the_recorded_reason() -> None:
+    record = ProvenanceRecord(
+        timestamp=datetime(2026, 10, 29, 9, 0, tzinfo=UTC),
+        action="symmetry_unavailable",
+        workflow_stage=WorkflowStage.MUON_GENERATION,
+        actor="system",
+        description="Host symmetry was not detected: species 'Xx' name no element.",
+    )
+
+    entry = build_journal("Symmetry", [record]).days[0].entries[0]
+
+    assert entry.title == "Host symmetry not detected"
+    assert entry.stamp_kind == "warning"
+    assert entry.body == record.description

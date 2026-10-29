@@ -57,7 +57,8 @@ reconstructing what happened during a project, including:
   default was converged with, any change to the project default XC
   functional, and defaults entered or cleared by hand
 - muon candidate generation (with an ``Attention`` entry when fewer sites were
-  generated than requested) and UEP promotion
+  generated than requested, and one when the host's symmetry could not be
+  detected so generation treated it as having none) and UEP promotion
 - calculation submission milestones and continuation runs
 - terminal calculation outcomes such as completed, failed, stopped, cancelled,
   and reset

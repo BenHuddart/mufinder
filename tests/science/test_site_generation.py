@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from itertools import combinations
+from itertools import combinations, product
 import math
 
 import numpy as np
 import pytest
 
 from mufinder.science import site_generation, spglib_compat
-from mufinder.science.lattice import minimum_image_distance
+from mufinder.science.lattice import nearest_image_distance_matrix
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -21,8 +21,10 @@ from mufinder.science.site_generation import (
     generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
+    symmetry_distinct_atom_indexes,
     symmetry_equivalent_positions,
 )
+from tests.support.symmetry_hosts import cof2_host, si_primitive_host, zno_host
 
 CUBIC_8 = [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]]
 _CUBIC = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
@@ -36,6 +38,17 @@ def _pbc_distance(a: list[float], b: list[float], lattice: list[list[float]]) ->
     delta = [d - round(d) for d in delta]
     cart = lattice_frac_to_cart(delta, lattice)
     return math.sqrt(sum(v * v for v in cart))
+
+
+_BRUTE_FORCE_OFFSETS = np.asarray(list(product((-2, -1, 0, 1, 2), repeat=3)), dtype=float)
+
+
+def _brute_force_distance(a, b, lattice) -> float:
+    """Shortest distance between ``a`` and any image of ``b`` within two cells, by enumeration."""
+
+    delta = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    cartesian = (delta + _BRUTE_FORCE_OFFSETS) @ np.asarray(lattice, dtype=float)
+    return float(np.min(np.linalg.norm(cartesian, axis=1)))
 
 
 # Lattice conversions
@@ -133,7 +146,7 @@ def test_host_symmetry_is_detected_once_per_host(monkeypatch: pytest.MonkeyPatch
 
     assert len(first) == 16
     assert len(second) == 96
-    assert calls == [1e-5]
+    assert calls == [spglib_compat.SYMMETRY_TOLERANCE_ANG]
     assert operations is not None
     # Shared cached arrays must not be writable by callers.
     assert all(not rotation.flags.writeable for rotation in operations[0])
@@ -157,15 +170,28 @@ def test_symmetry_equivalents_fall_back_to_input_when_spglib_finds_nothing(
     assert equivalents == [pytest.approx([0.1, 0.8, 0.3])]
 
 
-def test_identity_leads_requires_identity_rotation_and_zero_translation() -> None:
-    identity, mirror = np.eye(3), np.diag([-1.0, 1.0, 1.0])
-    zero, shift = np.zeros(3), np.asarray([0.5, 0.0, 0.0])
+def test_cluster_positions_picks_the_true_nearest_image_in_a_hexagonal_cell() -> None:
+    host = zno_host()
+    rng = np.random.default_rng(320)
 
-    assert site_generation._identity_leads(([identity, mirror], [zero, shift])) is True
-    assert site_generation._identity_leads(([mirror, identity], [zero, zero])) is False
-    assert site_generation._identity_leads(([identity], [shift])) is False
-    assert site_generation._identity_leads(([], [])) is False
-    assert site_generation._identity_leads(None) is False
+    for position, anchor in rng.uniform(0.0, 1.0, size=(400, 2, 3)):
+        chosen = closest_symmetry_equivalent_position(
+            position.tolist(),
+            anchor_frac=anchor.tolist(),
+            lattice_vectors=host.lattice_vectors,
+            host_species=host.species,
+            host_positions_frac=host.fractional_positions,
+        )
+        orbit = symmetry_equivalent_positions(
+            position.tolist(),
+            lattice_vectors=host.lattice_vectors,
+            host_species=host.species,
+            host_positions_frac=host.fractional_positions,
+        )
+        closest = min(_brute_force_distance(image, anchor, host.lattice_vectors) for image in orbit)
+        assert _brute_force_distance(chosen, anchor, host.lattice_vectors) == pytest.approx(
+            closest, abs=1e-9
+        )
 
 
 # Free volume, site-count and separation estimates
@@ -389,7 +415,7 @@ def test_generate_random_sites_symmetry_without_species_falls_back() -> None:
     assert len(points) == 2
 
 
-def test_random_generation_checks_whole_orbits_when_identity_is_not_first(
+def test_random_generation_keeps_whole_orbits_apart_when_identity_is_not_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = {
@@ -405,7 +431,7 @@ def test_random_generation_checks_whole_orbits_when_identity_is_not_first(
 
     monkeypatch.setattr(site_generation, "_symmetry_operations", identity_last)
 
-    points, _attempts = generate_random_sites_by_distance(
+    points, _attempts = generate_random_sites(
         **host,
         min_muon_muon=0.8,
         min_muon_atom=1.0,
@@ -544,16 +570,16 @@ def test_generate_random_sites_raises_when_nothing_can_be_placed() -> None:
         )
 
 
-# Random generation by distance
+# Random filling (no count)
 
 
-def test_generate_random_sites_by_distance_fills_until_attempt_limit() -> None:
+def test_generate_random_sites_without_a_count_fills_until_attempt_limit() -> None:
     lattice = [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]]
     host_positions = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
     min_muon_atom = 0.8
     min_muon_muon = 1.2
 
-    points, attempts = generate_random_sites_by_distance(
+    points, attempts = generate_random_sites(
         lattice_vectors=lattice,
         host_positions_frac=host_positions,
         min_muon_muon=min_muon_muon,
@@ -572,10 +598,28 @@ def test_generate_random_sites_by_distance_fills_until_attempt_limit() -> None:
             assert _pbc_distance(point.fractional, other.fractional, lattice) >= min_muon_muon
 
 
-def test_random_generation_by_distance_uses_predicted_progress_total() -> None:
+def test_deprecated_distance_generator_fills_the_cell_like_count_none() -> None:
+    options = {
+        "lattice_vectors": CUBIC_8,
+        "host_positions_frac": [[0.0, 0.0, 0.0]],
+        "min_muon_muon": 1.5,
+        "min_muon_atom": 1.0,
+        "max_attempts": 300,
+        "seed": 4,
+    }
+
+    with pytest.warns(DeprecationWarning, match="count=None"):
+        old_points, old_attempts = generate_random_sites_by_distance(**options)
+    points, attempts = generate_random_sites(count=None, **options)
+
+    assert old_attempts == attempts == 300
+    assert [point.fractional for point in old_points] == [point.fractional for point in points]
+
+
+def test_random_filling_uses_the_predicted_progress_total() -> None:
     updates: list[tuple[int, int]] = []
 
-    points, _attempts = generate_random_sites_by_distance(
+    points, _attempts = generate_random_sites(
         lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
         host_positions_frac=[],
         min_muon_muon=1.4,
@@ -592,9 +636,9 @@ def test_random_generation_by_distance_uses_predicted_progress_total() -> None:
     assert updates[-1][1] >= 5
 
 
-def test_generate_by_distance_rejects_nonpositive_muon_muon() -> None:
+def test_random_filling_rejects_nonpositive_muon_muon() -> None:
     with pytest.raises(SiteGenerationError, match="greater than zero"):
-        generate_random_sites_by_distance(
+        generate_random_sites(
             lattice_vectors=TINY_2,
             host_positions_frac=[],
             min_muon_muon=0.0,
@@ -602,9 +646,9 @@ def test_generate_by_distance_rejects_nonpositive_muon_muon() -> None:
         )
 
 
-def test_generate_by_distance_rejects_negative_muon_atom() -> None:
+def test_random_filling_rejects_negative_muon_atom() -> None:
     with pytest.raises(SiteGenerationError, match="non-negative"):
-        generate_random_sites_by_distance(
+        generate_random_sites(
             lattice_vectors=TINY_2,
             host_positions_frac=[],
             min_muon_muon=1.0,
@@ -612,9 +656,9 @@ def test_generate_by_distance_rejects_negative_muon_atom() -> None:
         )
 
 
-def test_generate_by_distance_raises_when_nothing_can_be_placed() -> None:
+def test_random_filling_raises_when_nothing_can_be_placed() -> None:
     with pytest.raises(SiteGenerationError, match="Could not generate any"):
-        generate_random_sites_by_distance(
+        generate_random_sites(
             lattice_vectors=TINY_2,
             host_positions_frac=[[0.5, 0.5, 0.5]],
             min_muon_muon=0.5,
@@ -622,6 +666,53 @@ def test_generate_by_distance_raises_when_nothing_can_be_placed() -> None:
             max_attempts=200,
             seed=1,
         )
+
+
+@pytest.mark.parametrize("symmetry", [False, True], ids=["no-symmetry", "symmetry"])
+@pytest.mark.parametrize(
+    ("host_factory", "min_muon_muon"),
+    [(zno_host, 2.2), (si_primitive_host, 2.0)],
+    ids=["hexagonal-ZnO", "fcc-primitive-Si"],
+)
+def test_random_generation_keeps_both_distances_in_skewed_cells(
+    host_factory, min_muon_muon: float, symmetry: bool
+) -> None:
+    host = host_factory()
+    lattice = host.lattice_vectors
+    min_muon_atom = 1.0
+
+    points, _attempts = generate_random_sites(
+        lattice_vectors=lattice,
+        host_positions_frac=host.fractional_positions,
+        host_species=host.species,
+        min_muon_muon=min_muon_muon,
+        min_muon_atom=min_muon_atom,
+        max_attempts=2000,
+        seed=0,
+        include_symmetry_equivalents=symmetry,
+    )
+
+    orbits = [
+        symmetry_equivalent_positions(
+            point.fractional,
+            lattice_vectors=lattice,
+            host_species=host.species,
+            host_positions_frac=host.fractional_positions,
+        )
+        if symmetry
+        else [point.fractional]
+        for point in points
+    ]
+    # At these spacings one symmetric orbit can fill the cell on its own.
+    assert len(points) >= (1 if symmetry else 2)
+    for orbit in orbits:
+        for image in orbit:
+            for atom in host.fractional_positions:
+                assert _brute_force_distance(image, atom, lattice) >= min_muon_atom
+    for first, second in combinations(orbits, 2):
+        for a in first:
+            for b in second:
+                assert _brute_force_distance(a, b, lattice) >= min_muon_muon
 
 
 # Attached-element sites
@@ -724,6 +815,48 @@ def test_generate_attached_element_sites_raises_when_requested_count_cannot_be_m
         )
 
 
+def test_attached_sites_take_one_atom_from_each_symmetry_equivalent_set() -> None:
+    host = cof2_host()
+
+    distinct = symmetry_distinct_atom_indexes(
+        lattice_vectors=host.lattice_vectors,
+        host_species=host.species,
+        host_positions_frac=host.fractional_positions,
+        target_element="F",
+    )
+    points, _attempts = generate_attached_element_sites(
+        lattice_vectors=host.lattice_vectors,
+        host_species=host.species,
+        host_positions_frac=host.fractional_positions,
+        target_element="F",
+        muons_per_atom=2,
+        bond_distance=1.0,
+        min_muon_atom=0.8,
+    )
+
+    # The four F of CoF2 are one 4f orbit, so only the first carries starts.
+    assert distinct == [2]
+    assert len(points) == 2
+    anchor = host.fractional_positions[2]
+    for point in points:
+        assert _brute_force_distance(point.fractional, anchor, host.lattice_vectors) == (
+            pytest.approx(1.0)
+        )
+
+
+def test_attached_sites_use_every_atom_when_symmetry_is_not_detected() -> None:
+    host = cof2_host(cobalt_label="Xx")
+
+    distinct = symmetry_distinct_atom_indexes(
+        lattice_vectors=host.lattice_vectors,
+        host_species=host.species,
+        host_positions_frac=host.fractional_positions,
+        target_element="F",
+    )
+
+    assert distinct == [2, 3, 4, 5]
+
+
 def test_attached_sites_rejects_empty_element() -> None:
     with pytest.raises(SiteGenerationError, match="cannot be empty"):
         generate_attached_element_sites(
@@ -774,27 +907,39 @@ def test_attached_sites_raises_when_no_candidate_clears_hosts() -> None:
 # Spacing checks
 
 
-def test_broadcast_spacing_check_decides_exactly_at_the_limit() -> None:
-    point, reference = [0.1, 0.2, 0.3], [0.4, 0.45, 0.9]
-    limit = minimum_image_distance(point, reference, _CUBIC)
-    points, references = np.asarray([point]), np.asarray([reference])
-
-    # ``_pbc_distance(point, reference) < limit`` decides, so the exact distance is not "closer".
-    assert site_generation._any_closer_than(points, references, _CUBIC, limit) is False
-    assert (
-        site_generation._any_closer_than(points, references, _CUBIC, math.nextafter(limit, 10.0))
-        is True
+def _violates(point, references, lattice, limit) -> bool:
+    return site_generation._violates_spacing(
+        np.asarray(point, dtype=float), ((np.asarray(references, dtype=float), limit),), lattice
     )
-    assert site_generation._any_closer_than(points, np.empty((0, 3)), _CUBIC, limit) is False
 
 
-def test_broadcast_spacing_check_scans_large_inputs_in_blocks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(site_generation, "_DISTANCE_CHECK_BLOCK", 4)
-    references = np.asarray([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
-    far = np.asarray([[0.25, 0.25, 0.0]] * 9)
-    near = np.vstack([far, [[0.51, 0.5, 0.5]]])
+def test_spacing_check_measures_the_nearest_image_in_a_skewed_cell() -> None:
+    lattice = zno_host().lattice_vectors
+    point, reference = [0.0, 0.0, 0.0], [[0.45, 0.55, 0.0]]
 
-    assert site_generation._any_closer_than(far, references, _CUBIC, 1.0) is False
-    assert site_generation._any_closer_than(near, references, _CUBIC, 1.0) is True
+    # The per-component fold puts these 2.53 A apart; the nearest image is 1.65 A away.
+    assert _brute_force_distance(point, reference[0], lattice) == pytest.approx(
+        3.25 * math.sqrt(0.2575)
+    )
+    assert _violates(point, reference, lattice, 2.0) is True
+    assert _violates(point, reference, lattice, 1.6) is False
+    assert _violates(point, np.empty((0, 3)), _CUBIC, 1.0) is False
+
+
+def test_spacing_check_is_strict_at_the_limit() -> None:
+    point, reference = [0.1, 0.2, 0.3], [[0.4, 0.45, 0.9]]
+    limit = float(nearest_image_distance_matrix(point, reference, _CUBIC)[0, 0])
+
+    assert _violates(point, reference, _CUBIC, limit) is False
+    assert _violates(point, reference, _CUBIC, math.nextafter(limit, 10.0)) is True
+
+
+def test_spacing_check_applies_each_limit_to_its_own_references() -> None:
+    lattice = zno_host().lattice_vectors
+    point = np.asarray([0.0, 0.0, 0.0])
+    near = np.asarray([[0.45, 0.55, 0.0]])
+    far = np.asarray([[0.5, 0.0, 0.5]])
+
+    # The near reference only breaks the larger limit; the far one breaks neither.
+    assert site_generation._violates_spacing(point, ((near, 1.6), (far, 2.0)), lattice) is False
+    assert site_generation._violates_spacing(point, ((far, 1.6), (near, 2.0)), lattice) is True

@@ -1,9 +1,21 @@
 """Lattice algebra shared by the science modules.
 
 This is the one home for fractional/Cartesian conversion, lattice inversion,
-minimum-image displacements and distances, and greedy deduplication of
-periodic positions. A lattice is three row vectors in Angstrom, so a
-fractional row vector ``f`` maps to ``f @ lattice``.
+periodic displacements and distances, and greedy deduplication of periodic
+positions. A lattice is three row vectors in Angstrom, so a fractional row
+vector ``f`` maps to ``f @ lattice``.
+
+Two periodic distances live here. The *nearest-image* helpers
+(:func:`nearest_image_distance`, :func:`nearest_image_distance_matrix`, ...)
+fold in a reduced basis of the lattice (:func:`reduced_lattice`) and search
+the 27 cells around the fold with the lattice metric, so they find the
+shortest distance in hexagonal, primitive-centred, monoclinic and sheared
+cells; every distance that decides something (a minimum spacing, a grouping or
+matching tolerance) uses them. The *minimum-image* helpers
+(:func:`minimum_image_distance`, ...) only fold each fractional component into
+``[-0.5, 0.5]``. That is exact in an orthogonal cell and for any distance below
+about 0.4 of the shortest lattice vector, so they serve the deduplication of
+symmetry images, whose tolerances are far smaller than that.
 
 Two families of helpers agree with each other to the last bit:
 
@@ -25,6 +37,7 @@ its own exception type.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import lru_cache
 import math
 
 import numpy as np
@@ -246,6 +259,81 @@ def minimum_image_distance(
 _NEIGHBOUR_CELL_OFFSETS = np.array(
     [(x, y, z) for x in (-1.0, 0.0, 1.0) for y in (-1.0, 0.0, 1.0) for z in (-1.0, 0.0, 1.0)]
 )
+#: Pairs measured at once by :func:`nearest_image_distance_matrix` (27 candidates each).
+_NEAREST_IMAGE_BLOCK = 8192
+#: Relative shortening a basis vector must gain for :func:`reduced_lattice` to take it.
+_REDUCTION_RTOL = 1e-12
+_REDUCTION_MAX_PASSES = 1000
+_PAIR_COMBINATIONS = tuple((s, t) for s in (-1, 0, 1) for t in (-1, 0, 1) if (s, t) != (0, 0))
+
+
+@lru_cache(maxsize=64)
+def _reduced_basis(
+    lattice: tuple[tuple[float, ...], ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    basis = np.asarray(lattice, dtype=float)
+    transform = np.eye(3, dtype=int)
+    for _ in range(_REDUCTION_MAX_PASSES):
+        changed = False
+        for i in range(3):
+            j, k = (index for index in range(3) if index != i)
+            # Lagrange steps against each other vector, then the +-1 combinations of both.
+            trials: list[np.ndarray] = []
+            for other in (j, k):
+                norm = float(basis[other] @ basis[other])
+                coefficient = round(float(basis[i] @ basis[other]) / norm) if norm else 0
+                if coefficient:
+                    step = np.zeros(3, dtype=int)
+                    step[other] = -coefficient
+                    trials.append(step)
+            for s, t in _PAIR_COMBINATIONS:
+                step = np.zeros(3, dtype=int)
+                step[j], step[k] = s, t
+                trials.append(step)
+            length = float(basis[i] @ basis[i])
+            for step in trials:
+                candidate = basis[i] + step @ basis
+                candidate_length = float(candidate @ candidate)
+                if candidate_length < length * (1.0 - _REDUCTION_RTOL):
+                    basis[i] = candidate
+                    transform[i] = transform[i] + step @ transform
+                    length = candidate_length
+                    changed = True
+        if not changed:
+            break
+    inverse = np.rint(np.linalg.inv(transform)).astype(float)
+    for array in (basis, inverse):
+        array.setflags(write=False)
+    return basis, transform.astype(float), inverse
+
+
+def reduced_lattice(
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+    *,
+    error: type[Exception] = LatticeError,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a reduced basis of the same lattice and the integer matrix that makes it.
+
+    ``reduced = transform @ lattice`` with ``transform`` integer and unimodular,
+    and no reduced vector can be shortened by an integer multiple of another or by
+    adding or subtracting the other two. The nearest-image helpers search the
+    27 cells around a fold in this basis, which finds the nearest image even for
+    a valid but strongly sheared input cell.
+    """
+
+    lattice = lattice_matrix(lattice_vectors, error=error)
+    if math.isclose(determinant3(lattice.tolist()), 0.0, abs_tol=1e-12):
+        raise error("Lattice matrix is singular and cannot be reduced.")
+    basis, transform, _inverse = _reduced_basis(
+        tuple(tuple(float(v) for v in row) for row in lattice)
+    )
+    return basis.copy(), transform.astype(int)
+
+
+def _reduction(lattice: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Reduced basis, ``transform`` and its integer inverse for a validated lattice."""
+
+    return _reduced_basis(tuple(tuple(float(value) for value in row) for row in lattice))
 
 
 def nearest_image_delta(
@@ -255,17 +343,23 @@ def nearest_image_delta(
 ) -> list[float]:
     """Return the fractional displacement from ``b``'s nearest periodic image to ``a``.
 
-    The per-component minimum-image displacement (:func:`minimum_image_delta`)
-    is searched over its 27 neighbouring cells with the lattice metric, which
-    finds the nearest image in skewed cells too; ``b + delta`` is that image.
+    The displacement is folded in a reduced basis of the lattice
+    (:func:`reduced_lattice`) and searched over its 27 neighbouring cells with
+    the lattice metric, so the nearest image is found in hexagonal,
+    primitive-centred, monoclinic and sheared cells alike. ``b + delta`` is that
+    image: ``delta`` differs from ``a - b`` by whole lattice vectors.
     """
 
     lattice = lattice_matrix(lattice_vectors)
-    delta = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
-    delta -= np.round(delta)
-    candidates = delta[None, :] + _NEIGHBOUR_CELL_OFFSETS
-    lengths = np.linalg.norm(candidates @ lattice, axis=1)
-    return [float(value) for value in candidates[int(np.argmin(lengths))]]
+    reduced, transform, inverse = _reduction(lattice)
+    difference = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    folded = difference @ inverse
+    folded -= np.round(folded)
+    candidates = folded[None, :] + _NEIGHBOUR_CELL_OFFSETS
+    lengths = np.linalg.norm(candidates @ reduced, axis=1)
+    best = candidates[int(np.argmin(lengths))] @ transform
+    delta = difference + np.rint(best - difference)
+    return [float(value) for value in delta]
 
 
 def nearest_image_cartesian_delta(
@@ -289,6 +383,38 @@ def nearest_image_distance(
     """
 
     return vector_length(nearest_image_cartesian_delta(a, b, lattice_vectors))
+
+
+def nearest_image_distance_matrix(
+    left: Sequence[Sequence[float]] | np.ndarray,
+    right: Sequence[Sequence[float]] | np.ndarray,
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+) -> np.ndarray:
+    """Return the nearest-image distance from ``left[i]`` to ``right[j]`` for every pair (Angstrom).
+
+    The broadcast counterpart of :func:`nearest_image_distance`, with the same
+    search in a reduced basis; it may differ from the scalar helper in the last
+    bit or so. The result has shape ``(len(left), len(right))``; rows are
+    measured in blocks so the 27-cell search stays within a few megabytes
+    however large the inputs.
+    """
+
+    lattice = lattice_matrix(lattice_vectors)
+    reduced, _transform, inverse = _reduction(lattice)
+    left_array = np.asarray(left, dtype=float).reshape(-1, 3) @ inverse
+    right_array = np.asarray(right, dtype=float).reshape(-1, 3) @ inverse
+    shifts = (_NEIGHBOUR_CELL_OFFSETS @ reduced)[None, None]
+    distances = np.empty((len(left_array), len(right_array)), dtype=float)
+    rows = max(1, _NEAREST_IMAGE_BLOCK // max(1, len(right_array)))
+    for start in range(0, len(left_array), rows):
+        block = left_array[start : start + rows]
+        delta = right_array[None, :, :] - block[:, None, :]
+        delta -= np.round(delta)
+        candidates = (delta @ reduced)[:, :, None, :] + shifts
+        distances[start : start + rows] = np.sqrt(
+            np.min(np.einsum("ijkl,ijkl->ijk", candidates, candidates), axis=-1)
+        )
+    return distances
 
 
 def vector_length(vector: Sequence[float]) -> float:
@@ -469,6 +595,8 @@ __all__ = [
     "nearest_image_cartesian_delta",
     "nearest_image_delta",
     "nearest_image_distance",
+    "nearest_image_distance_matrix",
+    "reduced_lattice",
     "vector_length",
     "wrap_fractional",
 ]

@@ -139,6 +139,15 @@ Compatibility ledger
        ``DemagnetizingSample`` stay current: the Fourier method uses them.
      - Deprecated public arguments. Keep for one minor release (through 0.9.x)
        or until the next major release, whichever comes first; then drop them.
+   * - ``generate_random_sites_by_distance``
+     - ``mufinder.science.site_generation``, also exported from
+       ``mufinder.science``
+     - Public helper that filled the cell with random sites at a minimum
+       spacing. ``generate_random_sites`` with ``count=None`` does the same, and
+       the helper now calls it and raises a ``DeprecationWarning``. No in-repo
+       code calls it; one test checks the warning and the result. Not persisted.
+     - Public helper, deprecated. Keep for one minor release (through 0.9.x)
+       or until the next major release, whichever comes first; then drop it.
    * - ``singlepoint_job_ids_by_label`` /
        ``singlepoint_seed_names_by_label`` definition keys
      - Quantum Corrections ``castep_quantum_phonon_set`` definitions;
