@@ -18,6 +18,7 @@ from mufinder.science.site_generation import (
     estimate_random_site_count_from_separation,
     generate_attached_element_sites,
     generate_random_sites,
+    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
     symmetry_distinct_atom_indexes,
@@ -595,6 +596,24 @@ def test_generate_random_sites_without_a_count_fills_until_attempt_limit() -> No
             assert _pbc_distance(point.fractional, host, lattice) >= min_muon_atom
         for other in points[idx + 1 :]:
             assert _pbc_distance(point.fractional, other.fractional, lattice) >= min_muon_muon
+
+
+def test_deprecated_distance_generator_fills_the_cell_like_count_none() -> None:
+    options = {
+        "lattice_vectors": CUBIC_8,
+        "host_positions_frac": [[0.0, 0.0, 0.0]],
+        "min_muon_muon": 1.5,
+        "min_muon_atom": 1.0,
+        "max_attempts": 300,
+        "seed": 4,
+    }
+
+    with pytest.warns(DeprecationWarning, match="count=None"):
+        old_points, old_attempts = generate_random_sites_by_distance(**options)
+    points, attempts = generate_random_sites(count=None, **options)
+
+    assert old_attempts == attempts == 300
+    assert [point.fractional for point in old_points] == [point.fractional for point in points]
 
 
 def test_random_filling_uses_the_predicted_progress_total() -> None:

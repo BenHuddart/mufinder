@@ -35,6 +35,7 @@ from mufinder.science.lattice import (
     nearest_image_distance,
     nearest_image_distance_matrix,
     reciprocal_to_cartesian,
+    reduced_lattice,
     vector_length,
     wrap_fractional,
 )
@@ -349,6 +350,34 @@ def test_nearest_image_distance_matrix_measures_large_inputs_in_blocks(
 
     assert blocked.tolist() == whole.tolist()
     assert nearest_image_distance_matrix(np.empty((0, 3)), right, _SKEWED).shape == (0, 4)
+
+
+_SHEARED = [[1.0, 0.0, 0.0], [10.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def test_reduced_lattice_is_an_integer_change_of_basis_to_short_vectors() -> None:
+    reduced, transform = reduced_lattice(_SHEARED)
+
+    assert transform.dtype.kind == "i"
+    assert abs(round(np.linalg.det(transform))) == 1
+    assert reduced == pytest.approx(transform @ np.asarray(_SHEARED))
+    assert sorted(np.linalg.norm(reduced, axis=1).tolist()) == pytest.approx([1.0, 1.0, 1.0])
+    with pytest.raises(LatticeError, match="singular"):
+        reduced_lattice(_SINGULAR)
+
+
+def test_nearest_image_reaches_beyond_the_adjacent_cells_of_a_sheared_cell() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.0, 0.49, 0.0]
+    # 0.49 b is (4.9, 0.49, 0) A; five cells along a bring it to (-0.1, 0.49, 0).
+    expected = math.hypot(0.1, 0.49)
+
+    delta = nearest_image_delta(a, b, _SHEARED)
+
+    assert nearest_image_distance(a, b, _SHEARED) == pytest.approx(expected)
+    assert nearest_image_distance_matrix([b], [a], _SHEARED)[0, 0] == pytest.approx(expected)
+    assert delta == pytest.approx([5.0, -0.49, 0.0])
+    shift = np.asarray(delta) - (np.asarray(a) - np.asarray(b))
+    assert shift.tolist() == np.round(shift).tolist()
 
 
 def test_near_minimum_indexes_keeps_every_near_tie() -> None:

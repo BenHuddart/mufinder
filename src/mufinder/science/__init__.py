@@ -132,6 +132,7 @@ from mufinder.science.site_generation import (
     estimate_random_site_count_from_separation,
     generate_attached_element_sites,
     generate_random_sites,
+    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
 )
@@ -280,6 +281,7 @@ __all__ = [
     "estimate_random_site_count_from_separation",
     "generate_attached_element_sites",
     "generate_random_sites",
+    "generate_random_sites_by_distance",
     "lattice_cart_to_frac",
     "lattice_frac_to_cart",
     "LoadedStructure",

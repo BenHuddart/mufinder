@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import random
+import warnings
 from collections.abc import Callable
 from typing import Sequence
 
@@ -471,6 +472,48 @@ def generate_random_sites(
         )
 
     return accepted_points, attempts
+
+
+def generate_random_sites_by_distance(
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None,
+    host_positions_frac: Sequence[Sequence[float]],
+    min_muon_muon: float,
+    min_muon_atom: float,
+    max_attempts: int = 20000,
+    seed: int | None = None,
+    include_symmetry_equivalents: bool = False,
+    host_species: Sequence[str] | None = None,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+    expected_count: int | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> tuple[list[GeneratedPoint], int]:
+    """Deprecated: call :func:`generate_random_sites` with ``count=None``.
+
+    Kept for external callers (see the compatibility ledger); raises a
+    ``DeprecationWarning``.
+    """
+
+    warnings.warn(
+        "generate_random_sites_by_distance is deprecated; "
+        "call generate_random_sites with count=None instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return generate_random_sites(
+        lattice_vectors=lattice_vectors,
+        host_positions_frac=host_positions_frac,
+        count=None,
+        min_muon_muon=min_muon_muon,
+        min_muon_atom=min_muon_atom,
+        max_attempts=max_attempts,
+        seed=seed,
+        include_symmetry_equivalents=include_symmetry_equivalents,
+        host_species=host_species,
+        symprec=symprec,
+        expected_count=expected_count,
+        progress_callback=progress_callback,
+    )
 
 
 def _fibonacci_sphere_directions(count: int) -> list[list[float]]:
