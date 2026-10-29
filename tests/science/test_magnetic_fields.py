@@ -27,6 +27,7 @@ from mufinder.science.demagnetization import DemagnetizingSample, principal_dema
 from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3,
+    MIN_MUON_ATOM_DISTANCE_ANG,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     DipolarTensorResult,
     MagneticFieldDependencyError,
@@ -47,6 +48,8 @@ from mufinder.science.magnetic_fields import (
     find_commensurate_approximant,
     find_equivalent_muon_sites,
     is_commensurate_propagation_vector,
+    muon_site_clearance_error,
+    nearest_host_atom,
     regenerate_phase_samples,
 )
 from mufinder.science.magnetic_structure import (
@@ -529,6 +532,59 @@ def test_commensurate_fields_require_a_muon_position(monkeypatch) -> None:
         calculate_commensurate_fields(_structure(), _model([0.0, 0.0, 0.5]), [])
 
 
+def test_nearest_host_atom_finds_the_closest_periodic_image() -> None:
+    # Fe sits at the origin of a 3 Å cube, so (0.95, 0, 0) is 0.15 Å from its image at (1, 0, 0).
+    nearest = nearest_host_atom(_two_atom_structure(), [0.95, 0.0, 0.0])
+
+    assert nearest is not None
+    assert nearest.index == 0
+    assert nearest.species == "Fe"
+    assert nearest.distance_ang == pytest.approx(0.15)
+    assert nearest_host_atom(_structure(species=(), positions=()), [0.1, 0.1, 0.1]) is None
+
+
+def test_muon_site_clearance_names_the_nearest_atom_and_its_distance() -> None:
+    message = muon_site_clearance_error(_two_atom_structure(), [0.5, 0.5, 0.55], label="Mu1")
+
+    assert message == (
+        "Mu1 is 0.15 Å from O (atom 2); a muon site must be at least 0.5 Å from every atom."
+    )
+    assert muon_site_clearance_error(_two_atom_structure(), [0.25, 0.25, 0.25]) is None
+    assert MIN_MUON_ATOM_DISTANCE_ANG == 0.5
+
+
+@pytest.mark.parametrize(
+    "calculate",
+    [
+        calculate_commensurate_fields,
+        calculate_commensurate_approximant_fields,
+        calculate_incommensurate_field_distributions,
+    ],
+)
+def test_field_calculations_refuse_a_muon_site_on_an_atom(monkeypatch, calculate) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon())
+
+    with pytest.raises(MagneticFieldError, match=r"site 1 is 0\.00 Å from Fe \(atom 1\)"):
+        calculate(
+            _two_atom_structure(),
+            _model([0.0, 0.0, 0.5]),
+            [[0.0, 0.0, 0.0]],
+            options=MagneticFieldOptions(supercell=(1, 1, 1)),
+        )
+
+
+def test_dipolar_tensors_refuse_a_muon_site_within_the_minimum_distance(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, dipten=lambda *_args: [np.eye(3)])
+
+    with pytest.raises(MagneticFieldError, match=r"Mu is 0\.30 Å from O \(atom 2\)"):
+        calculate_dipolar_tensors_for_atoms(
+            _two_atom_structure(),
+            [MuonSite(label="Mu", initial_fractional_position=[0.6, 0.5, 0.5])],
+            magnetic_ion_indices=[0],
+            options=MagneticFieldOptions(supercell=(1, 1, 1)),
+        )
+
+
 def test_commensurate_field_calculation_merges_equivalent_k_calls(monkeypatch) -> None:
     model = MagneticStructureModel(
         q_basis_rlu=((0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
@@ -831,7 +887,7 @@ def test_commensurate_fields_report_an_invalid_distorted_structure(monkeypatch) 
         calculate_commensurate_fields(
             _structure(),
             _model(),
-            [(0.0, 0.0, 0.0)],
+            [(0.25, 0.25, 0.25)],
             distorted_structures=[relaxed],
         )
 

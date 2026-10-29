@@ -117,6 +117,7 @@ from mufinder.science.magnetic_fields import (
     classify_magnetic_model,
     contact_coupling_to_angstrom_minus3,
     find_commensurate_approximant,
+    muon_site_clearance_error,
 )
 from mufinder.science.magnetic_structure import (
     AtomSelector,
@@ -4257,6 +4258,13 @@ class MuonSiteSelectionDialog(QDialog):
         if site is None:
             QMessageBox.warning(self, "Select Muon Site", "Select a muon site before continuing.")
             return
+        if self._host_structure is not None:
+            clearance_error = muon_site_clearance_error(
+                self._host_structure, site.fractional_position, label=site.label
+            )
+            if clearance_error is not None:
+                QMessageBox.warning(self, "Invalid Muon Site", clearance_error)
+                return
         self._accepted_site = site
         super().accept()
 
@@ -7170,11 +7178,20 @@ class MagneticFieldWidget(QWidget):
         self._edit_structure_button.setEnabled(has_host)
         self._select_site_button.setEnabled(has_host)
         self._include_equivalent_sites.setEnabled(has_host)
-        self._calculate_button.setEnabled(
-            has_host and bool(enabled_magnetic_components(self._model))
-        )
-        self._dipolar_tensor_button.setEnabled(has_host)
-        self._nuclear_relaxation_button.setEnabled(has_host)
+        site_reason = self._muon_site_unavailable_reason() if has_host else None
+        has_components = bool(enabled_magnetic_components(self._model))
+        self._calculate_button.setEnabled(has_host and has_components and site_reason is None)
+        self._dipolar_tensor_button.setEnabled(has_host and site_reason is None)
+        self._nuclear_relaxation_button.setEnabled(has_host and site_reason is None)
+        for button in (self._dipolar_tensor_button, self._nuclear_relaxation_button):
+            button.setToolTip(site_reason or "")
+        if site_reason is None and has_host and not has_components:
+            site_reason = (
+                "Enable at least one magnetic-structure component first."
+                if self._model.components
+                else "Build or import a magnetic structure first."
+            )
+        self._calculate_button.setToolTip(site_reason or "")
         self._calculation_settings_button.setEnabled(has_host)
         for spinbox in (
             self._calc_cells_a,
@@ -7257,6 +7274,7 @@ class MagneticFieldWidget(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._selected_muon_site = dialog.accepted_site()
+        self._sync_enabled_state()
         self._refresh_site_summary()
         self._clear_results(clear_state=True)
         self._emit_form_state_changed()
@@ -7274,12 +7292,18 @@ class MagneticFieldWidget(QWidget):
         ):
             if options:
                 return options[0]
-        fractional = (0.0, 0.0, 0.0)
-        return MagneticMuonSiteOption(
-            source="custom",
-            label="Custom site",
-            fractional_position=fractional,
-            cartesian_position=_fractional_to_cartesian(fractional, self._host_structure),
+        return None
+
+    def _muon_site_unavailable_reason(self) -> str | None:
+        """Return why the selected muon site cannot be calculated, or ``None`` when it can."""
+
+        site = self._selected_muon_site
+        if site is None:
+            return "Choose a muon site first."
+        if self._host_structure is None:
+            return None
+        return muon_site_clearance_error(
+            self._host_structure, site.fractional_position, label=site.label
         )
 
     def _refresh_site_summary(self) -> None:
@@ -7287,7 +7311,7 @@ class MagneticFieldWidget(QWidget):
             self._site_summary.setText("Muon site: load a host structure first.")
             return
         if self._selected_muon_site is None:
-            self._site_summary.setText("Muon site: no site selected.")
+            self._site_summary.setText("Choose a muon site.")
             return
         site = self._selected_muon_site
         source = site.source_label or _site_source_label(site.source)
@@ -7298,10 +7322,12 @@ class MagneticFieldWidget(QWidget):
             else ""
         )
         estimate = f" {_UNRELAXED_ESTIMATE_NOTE}" if is_unrelaxed_site_source(site.source) else ""
+        clearance_error = self._muon_site_unavailable_reason()
+        refused = f" {clearance_error}" if clearance_error else ""
         self._site_summary.setText(
             f"Muon site: {site.label}{cluster} from {source} at "
             f"({site.fractional_position[0]:.4f}, {site.fractional_position[1]:.4f}, "
-            f"{site.fractional_position[2]:.4f}).{distortion}{estimate}"
+            f"{site.fractional_position[2]:.4f}).{distortion}{estimate}{refused}"
         )
 
     @staticmethod
@@ -7449,6 +7475,10 @@ class MagneticFieldWidget(QWidget):
         if site is None:
             self._calculation_status.setText("Results: select a muon site first.")
             return
+        site_reason = self._muon_site_unavailable_reason()
+        if site_reason is not None:
+            self._calculation_status.setText(f"Results: {site_reason}")
+            return
 
         try:
             options = self._field_options()
@@ -7469,6 +7499,7 @@ class MagneticFieldWidget(QWidget):
                     options=options,
                     distorted_structures=distorted_structures,
                 )
+                _raise_for_non_finite_fields(results)
                 self._populate_commensurate_results(results, site_source=site.source)
                 self._calculation_status.setText(
                     f"Results: calculated {len(results)} commensurate field value(s){corrected}."
@@ -7490,6 +7521,7 @@ class MagneticFieldWidget(QWidget):
                         options=options,
                         distorted_structures=distorted_structures,
                     )
+                    _raise_for_non_finite_fields(results)
                     self._populate_commensurate_results(results, site_source=site.source)
                     self._calculation_status.setText(
                         f"Results: calculated {len(results)} field value(s) of the commensurate approximant "
@@ -7504,6 +7536,7 @@ class MagneticFieldWidget(QWidget):
                         options=options,
                         distorted_structures=distorted_structures,
                     )
+                    _raise_for_non_finite_fields(results)
                     self._populate_distribution_results(results, site_source=site.source)
                     status = f"Results: sampled {len(results)} incommensurate field distribution(s){corrected}"
                     flagged = sum(
@@ -7606,6 +7639,10 @@ class MagneticFieldWidget(QWidget):
         if site is None:
             QMessageBox.information(self, "Dipolar Tensor", "Select a muon site first.")
             return
+        site_reason = self._muon_site_unavailable_reason()
+        if site_reason is not None:
+            QMessageBox.information(self, "Dipolar Tensor", site_reason)
+            return
         include_equivalent = bool(
             self._dipolar_tensor_selector_state.get(
                 "include_equivalent_sites",
@@ -7665,6 +7702,10 @@ class MagneticFieldWidget(QWidget):
         if site is None:
             QMessageBox.information(self, "Nuclear Relaxation", "Select a muon site first.")
             return
+        site_reason = self._muon_site_unavailable_reason()
+        if site_reason is not None:
+            QMessageBox.information(self, "Nuclear Relaxation", site_reason)
+            return
         distortion_available = (
             self._document is not None
             and site.distortion_structure_id is not None
@@ -7690,6 +7731,9 @@ class MagneticFieldWidget(QWidget):
         site = self.selected_muon_site()
         if site is None:
             raise NuclearRelaxationError("select a muon site first")
+        site_reason = self._muon_site_unavailable_reason()
+        if site_reason is not None:
+            raise NuclearRelaxationError(site_reason)
         options = dialog.options()
         if options.use_distortion_correction:
             if self._document is None or site.distortion_structure_id is None:
@@ -8252,6 +8296,14 @@ class MagneticFieldWidget(QWidget):
             self._sync_distribution_plot_button()
             return
         result_payloads = [dict(result) for result in results if isinstance(result, Mapping)]
+        non_finite_label = _non_finite_field_label(result_payloads)
+        if non_finite_label is not None:
+            self._calculation_status.setText(
+                f"Results: the saved field at {non_finite_label} is not a finite number "
+                "(NaN or infinity), so it is not shown."
+            )
+            self._sync_distribution_plot_button()
+            return
         if kind == "commensurate":
             for result in result_payloads:
                 total = np.asarray(result.get("total_T", (0.0, 0.0, 0.0)), dtype=float)
@@ -8414,8 +8466,15 @@ class MagneticFieldWidget(QWidget):
     def _sync_distribution_plot_button(self) -> None:
         self._open_distribution_button.setEnabled(bool(self._selected_distribution_results()))
         state = self._field_results_state
+        results = state.get("results") if isinstance(state, Mapping) else None
         self._polarisation_button.setEnabled(
-            isinstance(state, Mapping) and bool(state.get("results"))
+            isinstance(results, Sequence)
+            and not isinstance(results, (str, bytes))
+            and bool(results)
+            and _non_finite_field_label(
+                [result for result in results if isinstance(result, Mapping)]
+            )
+            is None
         )
 
     def _open_distribution_plot(self) -> None:
@@ -8684,6 +8743,42 @@ def _tuple3(value: object) -> tuple[float, float, float]:
     if len(values) != 3:
         raise ValueError("expected a three-vector")
     return (float(values[0]), float(values[1]), float(values[2]))
+
+
+def _non_finite_field_label(results: Sequence[object]) -> str | None:
+    """Return the site label of the first result whose field is not finite, or ``None``.
+
+    A result is a calculated field object or a saved payload: its total field
+    and magnitude, or its sampled distribution fields, must all be finite.
+    """
+
+    for index, result in enumerate(results, start=1):
+        if isinstance(result, Mapping):
+            label = result.get("site_label")
+            arrays = [result.get(key) for key in ("total_T", "magnitude_T", "fields_T")]
+        else:
+            label = getattr(result, "site_label", None)
+            arrays = [getattr(result, key, None) for key in ("total", "magnitude", "fields_T")]
+        for values in arrays:
+            if values is None:
+                continue
+            try:
+                finite = bool(np.all(np.isfinite(np.asarray(values, dtype=float))))
+            except (TypeError, ValueError):
+                continue
+            if not finite:
+                return str(label or f"site {index}")
+    return None
+
+
+def _raise_for_non_finite_fields(results: Sequence[object]) -> None:
+    """Refuse calculated fields that contain a NaN or an infinity, naming the site."""
+
+    label = _non_finite_field_label(results)
+    if label is not None:
+        raise MagneticFieldError(
+            f"the field at {label} is not a finite number (NaN or infinity), so it is not shown"
+        )
 
 
 def _fractional_to_cartesian(
