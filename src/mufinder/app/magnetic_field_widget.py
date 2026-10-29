@@ -4102,6 +4102,11 @@ class MagneticStructureBuilderDialog(QDialog):
                 self._preview_atom_indices = np.empty((0,), dtype=int)
                 self._viewer.set_structure(None)
             return
+        # One viewer render for the supercell and its moment arrows.
+        with self._viewer.batch_update():
+            self._show_preview_structure()
+
+    def _show_preview_structure(self) -> None:
         component_ids = self._selected_component_ids() or None
         try:
             repeats = self._supercell_repeats()

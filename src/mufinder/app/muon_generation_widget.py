@@ -948,9 +948,10 @@ class MuonGenerationWidget(QWidget):
         elif elements:
             self._near_element.setCurrentIndex(0)
         self._near_element.blockSignals(previous)
-        self._viewer.set_structure(structure)
-        self._sync_random_count_spacing()
-        self._sync_viewer_overlays()
+        with self._viewer.batch_update():
+            self._viewer.set_structure(structure)
+            self._sync_random_count_spacing()
+            self._sync_viewer_overlays()
 
     def set_uep_cluster_sources(self, rows: list[dict[str, Any]]) -> None:
         """Render available clustered UEP results that can become generated sites.

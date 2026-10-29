@@ -248,8 +248,9 @@ class SupercellPreviewDialog(QDialog):
             self._viewer.set_structure(None)
             return
 
-        self._viewer.set_structure(expanded_structure)
-        self._viewer.set_spins(expanded_spins)
+        with self._viewer.batch_update():
+            self._viewer.set_structure(expanded_structure)
+            self._viewer.set_spins(expanded_spins)
         self._status_label.setText(
             "Matrix "
             f"[{matrix[0][0]} {matrix[0][1]} {matrix[0][2]}; "
@@ -808,8 +809,9 @@ class SupercellEditorDialog(QDialog):
             self._viewer.set_structure(None)
             return
 
-        self._viewer.set_structure(expanded_structure)
-        self._viewer.set_spins(expanded_spins)
+        with self._viewer.batch_update():
+            self._viewer.set_structure(expanded_structure)
+            self._viewer.set_spins(expanded_spins)
         self._status_label.setText(
             f"Previewing {self._matrix_label(matrix)} -> {len(expanded_structure.species)} atoms."
         )

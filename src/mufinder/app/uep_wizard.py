@@ -3167,14 +3167,15 @@ class UepAnalysisDialog(QDialog):
             if live_pyvista_snapshot is not None
             else getattr(viewer, "_pyvista_camera_snapshot", None)
         )
-        viewer.set_structure(structure)
-        if viewer._show_spins.isChecked() != previous_show_spins:
-            blocked = viewer._show_spins.blockSignals(True)
-            viewer._show_spins.setChecked(previous_show_spins)
-            viewer._show_spins.blockSignals(blocked)
-        self._restore_viewer_camera(
-            viewer, previous_camera, previous_limits, previous_pyvista_snapshot
-        )
+        with viewer.batch_update():
+            viewer.set_structure(structure)
+            if viewer._show_spins.isChecked() != previous_show_spins:
+                blocked = viewer._show_spins.blockSignals(True)
+                viewer._show_spins.setChecked(previous_show_spins)
+                viewer._show_spins.blockSignals(blocked)
+            self._restore_viewer_camera(
+                viewer, previous_camera, previous_limits, previous_pyvista_snapshot
+            )
 
     def _sync_isosurface_viewer_muon_selection(self) -> None:
         indexes = self._viewer_muon_atom_indexes("isosurface")
@@ -3546,8 +3547,9 @@ class UepAnalysisDialog(QDialog):
     def _sync_batch_structure_viewer(self) -> None:
         payloads = self._selected_batch_payloads()
         result_indexes = self._batch_selection_result_indexes()
-        self._batch_viewer.set_structure(self._viewer_host_structure)
-        self._batch_viewer.set_point_overlays(self._batch_point_overlay_for_selection())
+        with self._batch_viewer.batch_update():
+            self._batch_viewer.set_structure(self._viewer_host_structure)
+            self._batch_viewer.set_point_overlays(self._batch_point_overlay_for_selection())
         if not payloads or not result_indexes:
             self._batch_viewer_summary.setText(_BATCH_VIEWER_IDLE_TEXT)
             return
@@ -4025,6 +4027,11 @@ class UepAnalysisDialog(QDialog):
         return surfaces
 
     def _sync_slice_viewer(self, *, preview: bool = False) -> None:
+        # Structure, planes, hiding, camera restore and highlight draw once.
+        with self._slice_viewer.batch_update():
+            self._show_slice_viewer_state(preview=preview)
+
+    def _show_slice_viewer_state(self, *, preview: bool) -> None:
         previous_camera = deepcopy(getattr(self._slice_viewer, "_camera_state", None))
         previous_limits = deepcopy(getattr(self._slice_viewer, "_limits", None))
         live_pyvista_snapshot = getattr(
@@ -4365,12 +4372,13 @@ class UepAnalysisDialog(QDialog):
 
     def _sync_isosurface_viewer_layers(self) -> None:
         self._isosurface_viewer_structure = self._build_structure_with_viewer_muons("isosurface")
-        self._set_viewer_structure_preserving_view(
-            self._isosurface_viewer, self._isosurface_viewer_structure
-        )
-        surfaces = self._viewer_isosurface_surfaces()
-        self._isosurface_viewer.set_isosurfaces(surfaces)
-        self._sync_isosurface_viewer_muon_selection()
+        with self._isosurface_viewer.batch_update():
+            self._set_viewer_structure_preserving_view(
+                self._isosurface_viewer, self._isosurface_viewer_structure
+            )
+            surfaces = self._viewer_isosurface_surfaces()
+            self._isosurface_viewer.set_isosurfaces(surfaces)
+            self._sync_isosurface_viewer_muon_selection()
         self._refresh_isosurface_legend()
 
     def _sync_isosurface_viewer_state(self) -> None:

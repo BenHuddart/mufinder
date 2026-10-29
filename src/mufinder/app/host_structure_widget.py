@@ -257,55 +257,57 @@ class HostStructureWidget(QWidget):
         self._structure_fingerprint_valid = True
         self._current_structure = structure
         self._atom_table.setRowCount(0)
-        self._viewer.set_structure(structure)
-        self._updating = True
-        if structure is None:
-            self._summary.setText("No host structure loaded.")
-            self._file_label.setText("Source: -")
-            self._atom_count_label.setText("Atoms: -")
-            self._species_label.setText("Species: -")
-            self._atomic_spins = []
-            self._propagation_vector = [0.0, 0.0, 0.0]
+        # One viewer render for the structure and its spins.
+        with self._viewer.batch_update():
+            self._viewer.set_structure(structure)
+            self._updating = True
+            if structure is None:
+                self._summary.setText("No host structure loaded.")
+                self._file_label.setText("Source: -")
+                self._atom_count_label.setText("Atoms: -")
+                self._species_label.setText("Species: -")
+                self._atomic_spins = []
+                self._propagation_vector = [0.0, 0.0, 0.0]
+                self._set_propagation_inputs(self._propagation_vector)
+                self._viewer.set_spins(None)
+                self._supercell_button.setEnabled(False)
+                self._lock_table_width()
+                self._updating = False
+                return
+
+            self._supercell_button.setEnabled(True)
+
+            self._summary.setText(f"Loaded structure: {structure.label}")
+            self._file_label.setText(f"Source: {structure.source_file or 'external/unspecified'}")
+            self._atom_count_label.setText(f"Atoms: {len(structure.species)}")
+
+            counts = Counter(structure.species)
+            species_summary = ", ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
+            self._species_label.setText(f"Species: {species_summary}")
+
+            self._atomic_spins = self._load_spins(structure)
+            self._propagation_vector = self._load_propagation_vector(structure)
             self._set_propagation_inputs(self._propagation_vector)
-            self._viewer.set_spins(None)
-            self._supercell_button.setEnabled(False)
+
+            for index, (species, frac) in enumerate(
+                zip(structure.species, structure.fractional_positions),
+                start=1,
+            ):
+                row = self._atom_table.rowCount()
+                self._atom_table.insertRow(row)
+                self._atom_table.setVerticalHeaderItem(row, QTableWidgetItem(str(index)))
+                self._set_readonly_item(row, 0, species)
+                self._set_readonly_item(row, 1, f"{float(frac[0]):.4f}")
+                self._set_readonly_item(row, 2, f"{float(frac[1]):.4f}")
+                self._set_readonly_item(row, 3, f"{float(frac[2]):.4f}")
+                self._set_spin_item(row, self._atomic_spins[row])
+
+                if row >= 199:
+                    break
+
             self._lock_table_width()
+            self._viewer.set_spins(self._atomic_spins)
             self._updating = False
-            return
-
-        self._supercell_button.setEnabled(True)
-
-        self._summary.setText(f"Loaded structure: {structure.label}")
-        self._file_label.setText(f"Source: {structure.source_file or 'external/unspecified'}")
-        self._atom_count_label.setText(f"Atoms: {len(structure.species)}")
-
-        counts = Counter(structure.species)
-        species_summary = ", ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
-        self._species_label.setText(f"Species: {species_summary}")
-
-        self._atomic_spins = self._load_spins(structure)
-        self._propagation_vector = self._load_propagation_vector(structure)
-        self._set_propagation_inputs(self._propagation_vector)
-
-        for index, (species, frac) in enumerate(
-            zip(structure.species, structure.fractional_positions),
-            start=1,
-        ):
-            row = self._atom_table.rowCount()
-            self._atom_table.insertRow(row)
-            self._atom_table.setVerticalHeaderItem(row, QTableWidgetItem(str(index)))
-            self._set_readonly_item(row, 0, species)
-            self._set_readonly_item(row, 1, f"{float(frac[0]):.4f}")
-            self._set_readonly_item(row, 2, f"{float(frac[1]):.4f}")
-            self._set_readonly_item(row, 3, f"{float(frac[2]):.4f}")
-            self._set_spin_item(row, self._atomic_spins[row])
-
-            if row >= 199:
-                break
-
-        self._lock_table_width()
-        self._viewer.set_spins(self._atomic_spins)
-        self._updating = False
 
     def set_promotable_hosts(
         self,

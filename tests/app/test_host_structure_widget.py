@@ -1772,34 +1772,6 @@ def test_plot_cylinder_segment_handles_degenerate_and_vertical_segments() -> Non
     assert axis.calls[0]["kwargs"]["alpha"] == pytest.approx(0.55)
 
 
-def test_atomic_structure_viewer_draws_pyvista_unit_cell_edges(qapp) -> None:
-    widget = HostStructureWidget()
-    widget.set_structure(_sample_structure())
-    viewer = widget._viewer
-
-    add_calls: list[dict[str, object]] = []
-
-    class _FakePlotter:
-        def add_mesh(self, mesh, **kwargs):
-            add_calls.append({"mesh": mesh, "kwargs": kwargs})
-            return f"edge-{len(add_calls)}"
-
-    class _FakePv:
-        @staticmethod
-        def Line(start, end):
-            return (
-                "line",
-                tuple(np.asarray(start, dtype=float)),
-                tuple(np.asarray(end, dtype=float)),
-            )
-
-    viewer._draw_pyvista_unit_cell(_FakePlotter(), _FakePv)
-
-    assert len(add_calls) == 12
-    assert all(call["kwargs"]["opacity"] == pytest.approx(0.62) for call in add_calls)
-    widget.close()
-
-
 def test_atomic_structure_viewer_draws_pyvista_isosurfaces_and_tracks_primary_actor(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

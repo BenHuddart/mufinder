@@ -446,8 +446,9 @@ class EnergyBarrierPathViewerDialog(QDialog):
 
         layout.addWidget(self._viewer, 1)
 
-        self._viewer.set_structure(structure)
-        self._refresh_overlays()
+        with self._viewer.batch_update():
+            self._viewer.set_structure(structure)
+            self._refresh_overlays()
 
     def _shutdown_viewer(self) -> None:
         if self._viewer_shutdown:
@@ -477,6 +478,10 @@ class EnergyBarrierPathViewerDialog(QDialog):
         )
 
     def _refresh_overlays(self) -> None:
+        with self._viewer.batch_update():
+            self._set_endpoint_overlays()
+
+    def _set_endpoint_overlays(self) -> None:
         start, end = self._overlay_positions()
         self._viewer.set_point_overlays(
             [

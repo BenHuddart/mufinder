@@ -1133,6 +1133,22 @@ dashboard flush therefore never rebuilds a hidden viewer page.
   ``PerfTrace`` (``mufinder.services.perf_trace``), which logs a WARNING naming
   the slow stage when either runs long.
 
+One render per structure-viewer change
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``AtomicStructureViewer`` draws each change with one VTK render. A render pass
+adds every mesh with ``render=False`` and ends with a single ``render()``; the
+cell outline is one polyline actor. Each public setter (``set_structure``,
+``set_spins``, the overlay setters, ``select_atoms`` and the rest) renders the
+scene and the axis triad at most once. A caller that makes several changes for
+one update, such as a structure with its spins, overlays or muon highlight,
+wraps them in ``with viewer.batch_update():``. Inside the block the setters
+record their state and defer drawing; the outermost block's exit rebuilds the
+scene once, or only redraws when every change was applied to existing actors.
+The host page, the Supercell Editor, Muon Sites generation, the analysis
+workspaces, Magnetic Fields, Energy Barriers, Quantum Corrections and the UEP
+viewers all batch their multi-step updates this way.
+
 Controller summary
 ~~~~~~~~~~~~~~~~~~
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from copy import deepcopy
+from functools import wraps
+import logging
 import math
 
 from ase import Atoms
@@ -29,6 +32,8 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.theme import body_font_family, current_palette, style_hint_text
 from mufinder.domain.models import Structure
+
+_LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_VIEW = (20.0, 45.0)
 _DEFAULT_VIEW_ROLL = 0.0
@@ -380,6 +385,25 @@ def _unit_cell_geometry(cell: np.ndarray) -> tuple[np.ndarray, list[tuple[int, i
         (6, 7),
     ]
     return corners, edges
+
+
+def _renders_once(method):
+    """Run a viewer method as one batch, so its scene and triad draw at most once."""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self.batch_update():
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _build_pyvista_unit_cell_mesh(pv, cell: np.ndarray):
+    """Return the cell outline as one polyline mesh, so it is a single actor."""
+
+    corners, edges = _unit_cell_geometry(cell)
+    lines = np.array([[2, start, end] for start, end in edges], dtype=np.int64).reshape(-1)
+    return pv.PolyData(corners, lines=lines)
 
 
 def _get_atom_style(numbers: np.ndarray, symbols: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1571,6 +1595,7 @@ class _PyVistaTriadCanvas(QWidget):
             specular_power=1.0,
             pbr=False,
             pickable=False,
+            render=False,
         )
 
         for direction, color in zip(directions, colors):
@@ -1604,6 +1629,7 @@ class _PyVistaTriadCanvas(QWidget):
                     specular_power=1.0,
                     pbr=False,
                     pickable=False,
+                    render=False,
                 )
             label_points.append(direction * (shaft_length + cone_length + label_offset))
 
@@ -1790,6 +1816,12 @@ class AtomicStructureViewer(QWidget):
         self._refreshing_theme = False
         self._theme_refresh_pending = False
         self._style_signature = _viewer_style_signature()
+        # batch_update() nesting depth and the work it has deferred: a full scene
+        # rebuild, a redraw of in-place actor changes, and a redraw of the triad.
+        self._batch_depth = 0
+        self._render_pending = False
+        self._draw_pending = False
+        self._triad_draw_pending = False
 
         self._backend_name = _require_pyvista_backend()
         self._canvas = _PyVistaCanvas(self)
@@ -2075,8 +2107,12 @@ class AtomicStructureViewer(QWidget):
         plotter.iren.add_observer("LeftButtonPressEvent", self._on_pyvista_left_button_press)
         plotter.iren.add_observer("LeftButtonReleaseEvent", self._on_pyvista_left_button_release)
 
+    @_renders_once
     def set_structure(self, structure: Structure | None) -> None:
         """Load a new structure into the viewer."""
+        # Deferred to the end of this batch; marking it first skips in-place updates
+        # (such as the spin toggle below) that the rebuild would discard.
+        self._render()
         self._structure = structure
         self._atoms = self._to_atoms(structure) if structure is not None else None
         self._spins = self._extract_spins(structure)
@@ -2121,6 +2157,7 @@ class AtomicStructureViewer(QWidget):
         self._selection_label.setText("Selected atom: -")
         self._render()
 
+    @_renders_once
     def set_structure_preserving_view(self, structure: Structure | None) -> None:
         """Load a new structure while preserving camera, zoom, and spin visibility."""
 
@@ -2169,6 +2206,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_camera_snapshot = previous_pyvista_snapshot
         self._render()
 
+    @_renders_once
     def update_structure_geometry_preserving_view(self, structure: Structure | None) -> None:
         """Update atom positions for a structurally equivalent model without resetting the current view."""
 
@@ -2191,10 +2229,13 @@ class AtomicStructureViewer(QWidget):
         )
         self._update_selection_label()
 
+        if self._render_deferred():
+            return
         if self._try_update_pyvista_atom_geometry():
             return
         self.set_structure_preserving_view(structure)
 
+    @_renders_once
     def set_spins(self, spins: list[float] | tuple[float, ...] | np.ndarray | None) -> None:
         """Replace current per-atom scalar spins or vector moments and redraw."""
         if self._atoms is None or spins is None:
@@ -2206,10 +2247,11 @@ class AtomicStructureViewer(QWidget):
                 3,
             )
             self._spins = spin_array.copy() if valid_shape else None
+        self._store_view()
+        # Deferred: the rebuild also draws the spin toggle below.
+        self._render()
         if self._spins is not None and np.any(np.abs(self._spins) > 1e-10):
             self._show_spins.setChecked(True)
-        self._store_view()
-        self._render()
 
     def set_moment_vectors(
         self,
@@ -2242,6 +2284,7 @@ class AtomicStructureViewer(QWidget):
             ]
         )
 
+    @_renders_once
     def set_isosurfaces(self, surfaces: Iterable[Mapping[str, object]] | None) -> None:
         """Attach zero or more isosurface triangle mesh overlays."""
 
@@ -2287,10 +2330,9 @@ class AtomicStructureViewer(QWidget):
             self._isosurface_color = _viewer_style().isosurface
             self._isosurface_alpha = 0.24
         self._store_view()
-        if self._try_update_pyvista_isosurface_overlay():
-            return
-        self._render()
+        self._update_scene(self._try_update_pyvista_isosurface_overlay)
 
+    @_renders_once
     def set_slice_planes(self, slices: Iterable[Mapping[str, object]] | None) -> None:
         """Attach zero or more slice overlays."""
 
@@ -2334,10 +2376,9 @@ class AtomicStructureViewer(QWidget):
                 )
         self._slice_specs = specs
         self._store_view()
-        if self._try_update_pyvista_slice_overlay():
-            return
-        self._render()
+        self._update_scene(self._try_update_pyvista_slice_overlay)
 
+    @_renders_once
     def set_point_overlays(self, overlays: Iterable[Mapping[str, object]] | None) -> None:
         """Attach zero or more free-position point overlays."""
 
@@ -2408,10 +2449,9 @@ class AtomicStructureViewer(QWidget):
 
         self._point_overlay_specs = specs
         self._store_view()
-        if self._try_update_pyvista_point_overlay():
-            return
-        self._render()
+        self._update_scene(self._try_update_pyvista_point_overlay)
 
+    @_renders_once
     def set_line_overlays(self, overlays: Iterable[Mapping[str, object]] | None) -> None:
         """Attach zero or more line or arrow overlays."""
 
@@ -2469,10 +2509,9 @@ class AtomicStructureViewer(QWidget):
 
         self._line_overlay_specs = specs
         self._store_view()
-        if self._try_update_pyvista_line_overlay():
-            return
-        self._render()
+        self._update_scene(self._try_update_pyvista_line_overlay)
 
+    @_renders_once
     def set_hide_atoms_in_front_of_planes(self, hide: bool) -> None:
         """Hide atoms on the camera-facing side of all active slice planes."""
 
@@ -2483,6 +2522,7 @@ class AtomicStructureViewer(QWidget):
         self._store_view()
         self._render()
 
+    @_renders_once
     def set_pyvista_light_direction(
         self,
         direction: np.ndarray | tuple[float, float, float] | list[float],
@@ -2531,14 +2571,9 @@ class AtomicStructureViewer(QWidget):
         self._selected_index = None if not normalized else int(normalized[-1])
         self._update_selection_label()
 
-        self._store_view()
-        if self._try_update_pyvista_selection_overlay():
-            if emit_signal:
-                self.selected_atoms_changed.emit(list(self._selected_indexes))
-                if self._selected_index is not None:
-                    self.atom_selected.emit(self._selected_index)
-            return
-        self._render()
+        with self.batch_update():
+            self._store_view()
+            self._update_scene(self._try_update_pyvista_selection_overlay)
 
         if emit_signal:
             self.selected_atoms_changed.emit(list(self._selected_indexes))
@@ -2629,11 +2664,9 @@ class AtomicStructureViewer(QWidget):
         )
 
     def _redraw_preserving_view(self) -> None:
-        self._store_view()
-        if self._try_update_pyvista_visibility_overlay():
-            self.view_state_changed.emit()
-            return
-        self._render()
+        with self.batch_update():
+            self._store_view()
+            self._update_scene(self._try_update_pyvista_visibility_overlay)
         self.view_state_changed.emit()
 
     def _reset_view(self) -> None:
@@ -2934,11 +2967,92 @@ class AtomicStructureViewer(QWidget):
             return np.empty((0, 3), dtype=float)
         return np.vstack(tips)
 
-    def _render(self) -> None:
+    @contextmanager
+    def batch_update(self) -> Iterator[None]:
+        """Group several viewer changes so the scene renders once, at the end.
+
+        Inside the block every setter records its state but defers drawing; leaving
+        the outermost block rebuilds the scene once if any change needed a rebuild,
+        otherwise redraws once if any change updated actors in place. Blocks nest.
+        """
+
+        self._batch_depth += 1
+        try:
+            yield
+        except BaseException:
+            self._batch_depth -= 1
+            if self._batch_depth == 0:
+                # Draw what was recorded, but never let a render failure on the
+                # half-applied state hide the caller's exception.
+                try:
+                    self._flush_batched_render()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Deferred viewer render failed", exc_info=True)
+            raise
+        else:
+            self._batch_depth -= 1
+            if self._batch_depth == 0:
+                self._flush_batched_render()
+
+    def _flush_batched_render(self) -> None:
+        render_pending = self._render_pending
+        draw_pending = self._draw_pending
+        triad_draw_pending = self._triad_draw_pending
+        self._render_pending = False
+        self._draw_pending = False
+        self._triad_draw_pending = False
         if self._shutting_down:
+            return
+        if render_pending:
+            self._render()
+            return
+        if draw_pending:
+            self._canvas.draw_idle()
+        if triad_draw_pending:
+            self._triad_canvas.draw_idle()
+
+    def _render(self) -> None:
+        """Rebuild and draw the whole scene, or defer it to the end of a batch."""
+
+        if self._shutting_down:
+            return
+        if self._batch_depth:
+            self._render_pending = True
             return
         self._render_pyvista()
         self._draw_crystallographic_axes()
+
+    def _update_scene(self, update_in_place: Callable[[], bool]) -> None:
+        """Apply a change through ``update_in_place`` when it can, else rebuild the scene.
+
+        A rebuild already pending in a batch draws the change too, so the in-place
+        update is skipped rather than built and then thrown away.
+        """
+
+        if self._render_deferred():
+            return
+        if update_in_place():
+            return
+        self._render()
+
+    def _render_deferred(self) -> bool:
+        """Whether a scene rebuild is waiting for the current batch to end."""
+
+        return bool(self._batch_depth and self._render_pending)
+
+    def _draw_canvas(self) -> None:
+        """Draw in-place actor changes, or defer the draw to the end of a batch."""
+
+        if self._batch_depth:
+            self._draw_pending = True
+            return
+        self._canvas.draw_idle()
+
+    def _draw_triad(self) -> None:
+        if self._batch_depth:
+            self._triad_draw_pending = True
+            return
+        self._triad_canvas.draw_idle()
 
     def _render_pyvista(self) -> None:
         if self._shutting_down:
@@ -2972,6 +3086,7 @@ class AtomicStructureViewer(QWidget):
                 position="upper_left",
                 font_size=12,
                 color=_viewer_style().text_primary,
+                render=False,
             )
             self._pyvista_last_camera_signature = None
             self._canvas.draw_idle()
@@ -3025,6 +3140,7 @@ class AtomicStructureViewer(QWidget):
             specular=0.0,
             specular_power=1.0,
             pbr=False,
+            render=False,
         )
 
         pick_points = pv.PolyData(draw_positions)
@@ -3037,6 +3153,7 @@ class AtomicStructureViewer(QWidget):
             render_points_as_spheres=True,
             pickable=True,
             name="atom-pick-points",
+            render=False,
         )
 
         if self._show_bonds.isChecked():
@@ -3081,6 +3198,10 @@ class AtomicStructureViewer(QWidget):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
         if self._backend_name != "pyvista" or self._shutting_down:
             return None
+        if self._render_deferred():
+            # The live camera still shows the scene before this batch; the deferred
+            # rebuild shows this one (None until it fits a new structure).
+            return self._pyvista_camera_snapshot
         camera = getattr(getattr(self._canvas, "plotter", None), "camera", None)
         if camera is None:
             return None
@@ -3328,11 +3449,15 @@ class AtomicStructureViewer(QWidget):
 
     def _draw_pyvista_unit_cell(self, plotter, pv) -> None:
         assert self._atoms is not None
-        style = _viewer_style()
-        corners, edges = _unit_cell_geometry(np.asarray(self._atoms.cell, dtype=float))
-        for start, end in edges:
-            line = pv.Line(corners[start], corners[end])
-            plotter.add_mesh(line, color=style.unit_cell, line_width=2.0, opacity=0.62)
+        outline = _build_pyvista_unit_cell_mesh(pv, np.asarray(self._atoms.cell, dtype=float))
+        plotter.add_mesh(
+            outline,
+            color=_viewer_style().unit_cell,
+            line_width=2.0,
+            opacity=0.62,
+            name="unit-cell-outline",
+            render=False,
+        )
 
     def _draw_pyvista_isosurfaces(self, plotter, pv) -> None:
         self._pyvista_isosurface_actors = []
@@ -3347,6 +3472,7 @@ class AtomicStructureViewer(QWidget):
                 opacity=float(spec.alpha),
                 smooth_shading=False,
                 name=f"isosurface-overlay-{index}",
+                render=False,
             )
             self._pyvista_isosurface_actors.append(actor)
             if self._pyvista_isosurface_actor is None:
@@ -3506,7 +3632,7 @@ class AtomicStructureViewer(QWidget):
         if not has_overlay:
             if not self._remove_pyvista_isosurface_overlay():
                 return False
-            self._canvas.draw_idle()
+            self._draw_canvas()
             return True
 
         self._remove_pyvista_isosurface_overlay()
@@ -3527,7 +3653,7 @@ class AtomicStructureViewer(QWidget):
             self._pyvista_isosurface_actors.append(actor)
             if self._pyvista_isosurface_actor is None:
                 self._pyvista_isosurface_actor = actor
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _remove_pyvista_slice_overlay(self) -> bool:
@@ -3551,7 +3677,7 @@ class AtomicStructureViewer(QWidget):
         if not has_overlay:
             removed = self._remove_pyvista_slice_overlay()
             if removed or not self._slice_specs:
-                self._canvas.draw_idle()
+                self._draw_canvas()
                 return True
             return False
 
@@ -3561,7 +3687,7 @@ class AtomicStructureViewer(QWidget):
 
         self._remove_pyvista_slice_overlay()
         self._draw_pyvista_slices(plotter, pv)
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _remove_pyvista_point_overlay(self) -> bool:
@@ -3604,7 +3730,7 @@ class AtomicStructureViewer(QWidget):
         if not self._point_overlay_specs:
             if not self._remove_pyvista_point_overlay():
                 return False
-            self._canvas.draw_idle()
+            self._draw_canvas()
             return True
 
         pv, _qt_interactor = _pyvista_modules()
@@ -3613,7 +3739,7 @@ class AtomicStructureViewer(QWidget):
 
         self._remove_pyvista_point_overlay()
         self._draw_pyvista_point_overlays(plotter, pv)
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _try_update_pyvista_line_overlay(self) -> bool:
@@ -3632,7 +3758,7 @@ class AtomicStructureViewer(QWidget):
         if not self._line_overlay_specs:
             if not self._remove_pyvista_line_overlay():
                 return False
-            self._canvas.draw_idle()
+            self._draw_canvas()
             return True
 
         pv, _qt_interactor = _pyvista_modules()
@@ -3641,7 +3767,7 @@ class AtomicStructureViewer(QWidget):
 
         self._remove_pyvista_line_overlay()
         self._draw_pyvista_line_overlays(plotter, pv)
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _remove_pyvista_selection_overlay(self) -> bool:
@@ -3679,7 +3805,7 @@ class AtomicStructureViewer(QWidget):
         if not has_selection:
             if not self._remove_pyvista_selection_overlay():
                 return False
-            self._canvas.draw_idle()
+            self._draw_canvas()
             return True
 
         pv, _qt_interactor = _pyvista_modules()
@@ -3690,7 +3816,7 @@ class AtomicStructureViewer(QWidget):
         self._draw_pyvista_selection(
             plotter, pv, self._pyvista_all_atom_positions, self._pyvista_all_atom_radii
         )
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _try_update_pyvista_atom_geometry(self) -> bool:
@@ -3756,6 +3882,7 @@ class AtomicStructureViewer(QWidget):
             specular=0.0,
             specular_power=1.0,
             pbr=False,
+            render=False,
         )
 
         pick_points = pv.PolyData(draw_positions)
@@ -3768,6 +3895,7 @@ class AtomicStructureViewer(QWidget):
             render_points_as_spheres=True,
             pickable=True,
             name="atom-pick-points",
+            render=False,
         )
 
         self._try_update_pyvista_spin_overlay() if self._show_spins.isChecked() and visible_spins is not None else self._remove_pyvista_actor_group(
@@ -3783,7 +3911,7 @@ class AtomicStructureViewer(QWidget):
         if self._selected_indexes:
             self._try_update_pyvista_selection_overlay()
         self._pyvista_last_camera_signature = self._pyvista_camera_signature()
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _remove_pyvista_actor_group(self, actors: list[object]) -> bool:
@@ -3827,7 +3955,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_bond_actors = []
         if not self._show_bonds.isChecked():
             if removed:
-                self._canvas.draw_idle()
+                self._draw_canvas()
             return removed
 
         if (
@@ -3872,7 +4000,7 @@ class AtomicStructureViewer(QWidget):
             visible_mask=visible_mask,
             alpha=bond_alpha,
         )
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _try_update_pyvista_spin_overlay(self) -> bool:
@@ -3899,7 +4027,7 @@ class AtomicStructureViewer(QWidget):
             if self._show_bonds.isChecked():
                 self._try_update_pyvista_bond_overlay()
             if removed or updated_atoms:
-                self._canvas.draw_idle()
+                self._draw_canvas()
             return removed or updated_atoms
 
         pv, _qt_interactor = _pyvista_modules()
@@ -3931,7 +4059,7 @@ class AtomicStructureViewer(QWidget):
         )
         if self._show_bonds.isChecked():
             self._try_update_pyvista_bond_overlay()
-        self._canvas.draw_idle()
+        self._draw_canvas()
         return True
 
     def _try_update_pyvista_visibility_overlay(self) -> bool:
@@ -3981,6 +4109,7 @@ class AtomicStructureViewer(QWidget):
             specular=0.0,
             specular_power=1.0,
             pbr=False,
+            render=False,
         )
 
     def _draw_pyvista_bonds(
@@ -4262,7 +4391,7 @@ class AtomicStructureViewer(QWidget):
                 focal_point=focal_point,
                 view_up=view_up,
             )
-            self._triad_canvas.draw_idle()
+            self._draw_triad()
             return
         if self._triad_axis is None:
             self._triad_axis = _AxesProxy(self._camera_state)
@@ -4274,7 +4403,7 @@ class AtomicStructureViewer(QWidget):
             focal_point=focal_point,
             view_up=view_up,
         )
-        self._triad_canvas.draw_idle()
+        self._draw_triad()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         self.shutdown()
