@@ -417,6 +417,74 @@ def nearest_image_distance_matrix(
     return distances
 
 
+def nearest_image_delta_matrix(
+    left: Sequence[Sequence[float]] | np.ndarray,
+    right: Sequence[Sequence[float]] | np.ndarray,
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+) -> np.ndarray:
+    """Return the fractional displacement from ``left[i]`` to the nearest image of ``right[j]``.
+
+    The broadcast counterpart of :func:`nearest_image_delta` (with the arguments
+    in path order: ``left[i] + delta[i, j]`` is the image of ``right[j]`` nearest
+    ``left[i]``), with the same search in a reduced basis. The result has shape
+    ``(len(left), len(right), 3)`` and is measured in blocks, as
+    :func:`nearest_image_distance_matrix` is.
+    """
+
+    lattice = lattice_matrix(lattice_vectors)
+    reduction = _reduction(lattice)
+    left_array = np.asarray(left, dtype=float).reshape(-1, 3)
+    right_array = np.asarray(right, dtype=float).reshape(-1, 3)
+    deltas = np.empty((len(left_array), len(right_array), 3), dtype=float)
+    rows = max(1, _NEAREST_IMAGE_BLOCK // max(1, len(right_array)))
+    for start in range(0, len(left_array), rows):
+        difference = right_array[None, :, :] - left_array[start : start + rows, None, :]
+        deltas[start : start + rows] = _nearest_image_fold(
+            difference.reshape(-1, 3), reduction
+        ).reshape(difference.shape)
+    return deltas
+
+
+def nearest_image_deltas(
+    left: Sequence[Sequence[float]] | np.ndarray,
+    right: Sequence[Sequence[float]] | np.ndarray,
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+) -> np.ndarray:
+    """Return the fractional displacement from ``left[i]`` to the nearest image of ``right[i]``.
+
+    The row-by-row counterpart of :func:`nearest_image_delta_matrix`: ``left``
+    and ``right`` have the same length and the result has shape ``(n, 3)``.
+    """
+
+    left_array = np.asarray(left, dtype=float).reshape(-1, 3)
+    right_array = np.asarray(right, dtype=float).reshape(-1, 3)
+    if left_array.shape != right_array.shape:
+        raise LatticeError("nearest_image_deltas needs as many right positions as left ones.")
+    reduction = _reduction(lattice_matrix(lattice_vectors))
+    deltas = np.empty_like(left_array)
+    for start in range(0, len(left_array), _NEAREST_IMAGE_BLOCK):
+        stop = start + _NEAREST_IMAGE_BLOCK
+        deltas[start:stop] = _nearest_image_fold(
+            right_array[start:stop] - left_array[start:stop], reduction
+        )
+    return deltas
+
+
+def _nearest_image_fold(
+    difference: np.ndarray, reduction: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> np.ndarray:
+    """Shift each fractional ``difference`` row by whole lattice vectors to its shortest image."""
+
+    reduced, transform, inverse = reduction
+    folded = difference @ inverse
+    folded -= np.round(folded)
+    candidates = folded[:, None, :] + _NEIGHBOUR_CELL_OFFSETS
+    cartesian = candidates @ reduced
+    lengths = np.einsum("ikl,ikl->ik", cartesian, cartesian)
+    best = candidates[np.arange(len(candidates)), np.argmin(lengths, axis=-1)]
+    return difference + np.rint(best @ transform - difference)
+
+
 def vector_length(vector: Sequence[float]) -> float:
     """Return the Euclidean length of ``vector``."""
 
@@ -594,6 +662,8 @@ __all__ = [
     "near_minimum_indexes",
     "nearest_image_cartesian_delta",
     "nearest_image_delta",
+    "nearest_image_delta_matrix",
+    "nearest_image_deltas",
     "nearest_image_distance",
     "nearest_image_distance_matrix",
     "reduced_lattice",

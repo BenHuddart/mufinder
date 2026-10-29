@@ -61,6 +61,10 @@ class _FakeEnergyBarriersView:
         self.site_scopes: list[dict] = []
         self.neb_previews: list[dict] = []
         self.cleared_previews: list[str | None] = []
+        self.path_symmetry_notes: list[str] = []
+
+    def set_path_symmetry_note(self, text: str) -> None:
+        self.path_symmetry_notes.append(text)
 
     def set_site_scope(self, **kwargs) -> None:
         self.site_scopes.append(kwargs)
@@ -215,6 +219,55 @@ def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
     )
     # The result row carries the producing job's status so the results table can colour it.
     assert result_row.status == "completed"
+
+
+@pytest.mark.parametrize(
+    ("host_spins", "note"),
+    [
+        (None, "Paths use the crystal symmetry."),
+        # The body-centre translation swaps the two Si; with equal and opposite
+        # spins that is a global flip, so the crystal symmetry still holds.
+        ([1.0, -1.0], "Paths use the crystal symmetry."),
+        # Unequal moments: the swap maps the spins onto neither pattern.
+        (
+            [2.0, -1.0],
+            "Paths use the magnetic order's symmetry, which is lower than the crystal symmetry.",
+        ),
+    ],
+)
+def test_energy_barriers_controller_refresh_view_states_the_path_symmetry(
+    tmp_path: Path, host_spins: list[float] | None, note: str
+) -> None:
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    set_show_every_relaxed_site(document, ENERGY_BARRIERS_SCOPE, True)
+    host = document.structures[document.project.host_structure_id]
+    if host_spins is not None:
+        host.properties["atomic_spins"] = host_spins
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
+
+    controller.refresh_view()
+
+    assert view.path_symmetry_notes[-1] == note
+    assert controller.path_symmetry_note("") == ""
+    assert controller.path_symmetry_note("not-a-site") == ""
+
+
+def test_energy_barriers_controller_path_symmetry_note_follows_host_spin_edits(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    controller = _neb_controller(service, document, output_root)
+    host = document.structures[document.project.host_structure_id]
+    reactant = source["reactant_site_id"]
+
+    assert controller.path_symmetry_note(reactant) == "Paths use the crystal symmetry."
+    host.properties["atomic_spins"] = [2.0, -1.0]
+    assert controller.path_symmetry_note(reactant).startswith(
+        "Paths use the magnetic order's symmetry"
+    )
 
 
 def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> None:
@@ -653,7 +706,10 @@ def test_energy_barriers_controller_generates_and_removes_paths(tmp_path: Path) 
     assert (state["selected_reactant_key"], state["selected_product_key"]) == (reactant, product)
     assert state["max_path_length_ang"] == 4.0
     keys = [generated["key"] for generated in state["generated_sources"]]
-    assert keys and all(key.startswith(f"{reactant}:{product}:") for key in keys)
+    # The stored path is generated again and keeps its key; the new paths are
+    # numbered after it.
+    assert keys[0] == "source-key"
+    assert keys[1:] == [f"{reactant}:{product}:{index}" for index in range(2, len(keys) + 1)]
     assert persisted == ["persist"]
     assert view.endpoint_calls[-1][1]["max_path_length_text"] == "4"
 
@@ -662,6 +718,36 @@ def test_energy_barriers_controller_generates_and_removes_paths(tmp_path: Path) 
     assert controller.remove_rows(["source-key"]) == (definition.id,)
     assert "source-key" not in [generated["key"] for generated in state["generated_sources"]]
     assert definition.id not in document.calculations
+
+
+def test_energy_barriers_controller_regeneration_keeps_paths_with_jobs(tmp_path: Path) -> None:
+    # A stored path this pass no longer generates keeps its row when an NEB job
+    # is bound to it, and no new path takes its key.
+    service = ProjectService()
+    document, definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    stored = document.ui_state["energy_barriers_form"]["generated_sources"][0]
+    stored["key"] = f"{source['reactant_site_id']}:{source['product_site_id']}:1"
+    stored["path_end_fractional"] = [0.6, 0.25, 0.25]
+    job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
+    definition.parameters["job_ids_by_label"][stored["key"]] = str(job.id)
+    controller = _neb_controller(service, document, output_root)
+    reactant, product = source["reactant_site_id"], source["product_site_id"]
+
+    controller.generate_paths(reactant, product, "4.0")
+
+    generated = document.ui_state["energy_barriers_form"]["generated_sources"]
+    assert generated[0] == stored
+    assert [entry["path_index"] for entry in generated] == list(range(1, len(generated) + 1))
+    assert len({entry["key"] for entry in generated}) == len(generated)
+
+    # Without the job the stale path is replaced.
+    del definition.parameters["job_ids_by_label"][stored["key"]]
+    controller.generate_paths(reactant, product, "4.0")
+
+    generated = document.ui_state["energy_barriers_form"]["generated_sources"]
+    assert stored["path_end_fractional"] not in [
+        entry["path_end_fractional"] for entry in generated
+    ]
 
 
 def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) -> None:

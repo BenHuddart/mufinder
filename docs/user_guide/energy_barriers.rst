@@ -120,10 +120,56 @@ structures to enumerate distinct muon paths. The current implementation:
 - requires exactly one muon in each endpoint structure;
 - constructs a pristine supercell matching the relaxed endpoint cell;
 - enumerates symmetry-equivalent muon start and end positions in that supercell;
+- measures each candidate hop from a start position to the nearest periodic
+  image of an end position, which is the shortest hop in hexagonal and other
+  skewed cells too (the NEB intermediate image and the endpoint alignment use
+  the same nearest image);
 - optionally filters candidates by a user-specified maximum path length;
 - discards zero-length self-maps before returning any same-site or cross-site
   path candidates;
-- groups equivalent paths by symmetry and keeps the shortest representative.
+- groups the candidate hops by full symmetry operations and keeps one hop per
+  group.
+
+Two hops are equivalent only when one symmetry operation maps the start of one
+onto the start of the other and its end onto the other's end. When both
+endpoints are the same relaxed site, a hop and its reverse are also
+equivalent. Equal length alone is not enough: from the 4c site of CoF₂ two
+families of 3.32 Å hops pass the nearest fluorine at very different
+distances, and they are generated as two paths. Every hop in a group has the
+same length.
+
+The symmetry respects the host's collinear magnetic order. When the host
+carries per-atom spins (``atomic_spins``) and no non-collinear moments, the
+operations used are the crystal operations in the endpoint supercell that keep
+the spin pattern or flip every spin together. A collinear spin-polarised
+calculation without spin-orbit coupling gives the same energy for a pattern and
+its global flip, so such an operation relates hops with the same barrier. Two
+spins count as equal when they differ by at most 5 % of the largest spin, so
+spins read from calculated populations (2.97 and −2.96) still form one
+pattern. The
+same operations give the symmetry-equivalent muon positions and align the
+endpoints onto the chosen path when the NEB inputs are built. For a
+two-sublattice antiferromagnet such as CoF₂ every crystal operation keeps or
+flips the pattern, so the paths are those of the crystal. Where some operations
+map the spins onto neither pattern (a ferrimagnet with unequal moments, or a
+stripe order), hops that the crystal relates can be distinct, and positions
+that the crystal relates but the magnetic order does not are not endpoints of
+this relaxed site: relax such a site separately and choose it as the other
+endpoint. Building the NEB inputs for a stored path whose endpoint is related to
+the relaxed site only by such an operation stops with a message saying so.
+Without spins, or with non-collinear moments, paths use the crystal
+symmetry.
+
+Below ``Generate Paths`` the page states which symmetry the paths from the
+selected ``Initial`` endpoint use: "Paths use the crystal symmetry." or "Paths
+use the magnetic order's symmetry, which is lower than the crystal symmetry."
+
+Generating a pair again replaces its rows, with two exceptions that keep NEB
+jobs and settings with the hop they were made for. A generated path
+symmetry-equivalent to a stored one keeps that row's number and key; a stored
+path no longer generated (for example after a shorter ``Max path length``, or
+after the grouping changed) stays when it has an NEB job or saved settings.
+Newly distinct paths take the next path numbers after those kept.
 
 If no valid symmetry-distinct path can be constructed, the workflow does not
 generate a row.

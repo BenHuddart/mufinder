@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Collection
 from typing import Any
 from uuid import UUID
 
@@ -65,6 +66,27 @@ def merge_serialized_sources(
     return [merged_by_key[key] for key in order]
 
 
+def is_pair_source(
+    source: dict[str, object],
+    *,
+    reactant_site_id: str,
+    product_site_id: str,
+    charge_state: str | None = None,
+) -> bool:
+    """Return whether stored path ``source`` belongs to one reactant/product pair.
+
+    With ``charge_state`` only the pair's paths in that charge state belong (a
+    stored path without one counts as matching).
+    """
+
+    stored_charge_state = source.get("charge_state")
+    return (
+        str(source.get("reactant_site_id", "")).strip() == reactant_site_id
+        and str(source.get("product_site_id", "")).strip() == product_site_id
+        and (charge_state is None or stored_charge_state in (None, "", charge_state))
+    )
+
+
 def replace_serialized_sources_for_pair(
     existing_sources: object,
     *,
@@ -72,25 +94,29 @@ def replace_serialized_sources_for_pair(
     product_site_id: str,
     new_sources: list[dict[str, object]],
     charge_state: str | None = None,
+    keep_keys: Collection[str] = (),
 ) -> list[dict[str, object]]:
-    """Replace every stored path source of one reactant/product pair.
+    """Replace the stored path sources of one reactant/product pair.
 
-    With ``charge_state`` only the pair's paths in that charge state are
-    replaced (a stored path without one counts as matching), so a pair relaxed
-    in both charge states keeps the other charge state's paths. Sources of
-    other endpoint pairs are kept in order; ``new_sources`` are then merged in
-    by ``key``.
+    The pair's paths are those :func:`is_pair_source` accepts, so a pair relaxed
+    in both charge states keeps the other charge state's paths. A pair path
+    whose key is in ``keep_keys`` (one with a job or saved settings) stays.
+    Sources of other endpoint pairs are kept in order; ``new_sources`` are then
+    merged in by ``key``.
     """
 
     filtered: list[dict[str, object]] = []
     for source in tuple(existing_sources) if isinstance(existing_sources, list) else ():
         if not isinstance(source, dict):
             continue
-        stored_charge_state = source.get("charge_state")
         if (
-            str(source.get("reactant_site_id", "")).strip() == reactant_site_id
-            and str(source.get("product_site_id", "")).strip() == product_site_id
-            and (charge_state is None or stored_charge_state in (None, "", charge_state))
+            is_pair_source(
+                source,
+                reactant_site_id=reactant_site_id,
+                product_site_id=product_site_id,
+                charge_state=charge_state,
+            )
+            and str(source.get("key", "")).strip() not in keep_keys
         ):
             continue
         filtered.append(dict(source))

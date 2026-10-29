@@ -614,7 +614,8 @@ no two workflow widgets may define the same private method.
        reciprocal-lattice-unit to Cartesian wavevectors
        (``reciprocal_to_cartesian``), lattice inversion, lattice reduction
        (``reduced_lattice``), nearest-image displacements and distances
-       (``nearest_image_distance``, ``nearest_image_distance_matrix``), which
+       (``nearest_image_distance``, ``nearest_image_distance_matrix``,
+       ``nearest_image_delta_matrix``, ``nearest_image_deltas``), which
        every distance that decides something uses, the per-component minimum-image fold
        (``minimum_image_distance``, ``minimum_image_distance_matrix``), which is
        exact only below about 0.4 of the shortest lattice vector, and periodic

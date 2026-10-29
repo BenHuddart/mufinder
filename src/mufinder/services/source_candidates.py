@@ -17,7 +17,7 @@ passed in, so this module depends on nothing above the ``services`` layer.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
@@ -48,6 +48,8 @@ from mufinder.science.energy_barriers import (
     EnergyBarrierError,
     MuonPath,
     enumerate_distinct_muon_paths,
+    equivalent_path_indexes,
+    path_symmetry_uses_magnetic_order,
 )
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
@@ -63,6 +65,7 @@ from mufinder.services.project_summary import latest_run_for_job, muon_relaxatio
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
+    is_pair_source,
     merge_serialized_sources,
 )
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
@@ -816,7 +819,7 @@ def enumerate_energy_barrier_source_candidates(
         return []
     return [
         EnergyBarrierSourceCandidate(
-            key=f"{reactant.key}:{product.key}:{path_index}",
+            key=_path_key(reactant.key, product.key, path_index),
             reactant=reactant,
             product=product,
             path=path,
@@ -824,6 +827,155 @@ def enumerate_energy_barrier_source_candidates(
         )
         for path_index, path in enumerate(paths, start=1)
     ]
+
+
+def _path_key(reactant_key: str, product_key: str, path_index: int) -> str:
+    return f"{reactant_key}:{product_key}:{path_index}"
+
+
+def keep_stored_path_keys(
+    document: ProjectDocument | None,
+    candidates: Sequence[EnergyBarrierSourceCandidate],
+    stored_sources: object,
+    *,
+    durable_keys: Collection[str] = (),
+) -> list[EnergyBarrierSourceCandidate]:
+    """Give regenerated paths the keys of the stored paths they repeat.
+
+    A key binds a path to its NEB job and settings, so a path generated again
+    must keep its key, and a new path must not take the key of a stored path
+    that keeps its row. A candidate symmetry-equivalent to a stored path of the
+    same pair, charge state and endpoint structures
+    (:func:`~mufinder.science.energy_barriers.equivalent_path_indexes`) takes
+    that path's index and key, preferring a stored path whose key is in
+    ``durable_keys`` (one with a job or saved settings, which stays although no
+    longer generated). Every other candidate takes the next index above the
+    matched and durable paths whose key no kept path holds. With nothing stored
+    the candidates are returned unchanged.
+    """
+
+    if not candidates:
+        return []
+    first = candidates[0]
+    pair = [
+        source
+        for source in (stored_sources if isinstance(stored_sources, list) else ())
+        if isinstance(source, dict)
+        and is_pair_source(
+            source,
+            reactant_site_id=str(first.reactant.site.id),
+            product_site_id=str(first.product.site.id),
+            charge_state=charge_state_for_job(first.reactant.job),
+        )
+    ]
+    if not pair:
+        return list(candidates)
+
+    def stored_key(source: Mapping[str, object]) -> str:
+        return str(source.get("key", "")).strip()
+
+    # Only paths stored for these endpoint structures share their cell, so only
+    # their positions can be compared with the candidates'.
+    same_cell = [
+        source
+        for source in pair
+        if _stored_path_index(source)
+        and stored_key(source)
+        and str(source.get("reactant_structure_id", "")) == str(first.reactant.structure.id)
+        and str(source.get("product_structure_id", "")) == str(first.product.structure.id)
+    ]
+    hops: list[tuple[tuple[float, float, float], tuple[float, float, float]]] = []
+    readable: list[Mapping[str, object]] = []
+    for source in same_cell:
+        try:
+            hops.append(
+                (
+                    fractional_triplet_from_source(source, "path_start_fractional"),
+                    fractional_triplet_from_source(source, "path_end_fractional"),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+        readable.append(source)
+    host_id = document.project.host_structure_id if document is not None else None
+    host = document.structures.get(host_id) if document is not None and host_id else None
+    indexes: list[int | None] = [None] * len(hops)
+    if host is not None and hops:
+        try:
+            indexes = equivalent_path_indexes(
+                pristine_structure=host,
+                reactant_structure=first.reactant.structure,
+                product_structure=first.product.structure,
+                paths=[candidate.path for candidate in candidates],
+                hops=hops,
+            )
+        except ValueError:
+            pass
+    matched: dict[int, Mapping[str, object]] = {}
+    for source, index in zip(readable, indexes, strict=True):
+        if index is None:
+            continue
+        current = matched.get(index)
+        if current is None or (
+            stored_key(source) in durable_keys and stored_key(current) not in durable_keys
+        ):
+            matched[index] = source
+
+    kept_sources = [
+        source
+        for source in pair
+        if any(source is match for match in matched.values()) or stored_key(source) in durable_keys
+    ]
+    taken_keys = {stored_key(source) for source in kept_sources}
+    next_index = max((_stored_path_index(source) for source in kept_sources), default=0) + 1
+    kept: list[EnergyBarrierSourceCandidate] = []
+    for position, candidate in enumerate(candidates):
+        match = matched.get(position)
+        if match is not None:
+            kept.append(
+                replace(candidate, key=stored_key(match), path_index=_stored_path_index(match))
+            )
+            continue
+        key = _path_key(candidate.reactant.key, candidate.product.key, next_index)
+        while key in taken_keys:
+            next_index += 1
+            key = _path_key(candidate.reactant.key, candidate.product.key, next_index)
+        kept.append(replace(candidate, key=key, path_index=next_index))
+        taken_keys.add(key)
+        next_index += 1
+    return kept
+
+
+def _stored_path_index(source: Mapping[str, object]) -> int:
+    value = source.get("path_index")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def energy_barrier_path_symmetry_uses_magnetic_order(
+    document: ProjectDocument | None, reactant_key: str
+) -> bool | None:
+    """Return whether paths from ``reactant_key`` use the host's magnetic order symmetry.
+
+    ``True`` when the host's collinear spin pattern removes crystal operations
+    in the reactant's supercell (see
+    :func:`mufinder.science.energy_barriers.path_symmetry_uses_magnetic_order`),
+    ``False`` when paths use the crystal symmetry, and ``None`` when there is no
+    host or no eligible reactant, or the reactant does not descend from the host.
+    """
+
+    if document is None:
+        return None
+    host_id = document.project.host_structure_id
+    host = document.structures.get(host_id) if host_id is not None else None
+    reactant = quantum_source_candidate_by_key(document, reactant_key) if reactant_key else None
+    if host is None or reactant is None or reactant.structure.parent_structure_id != host.id:
+        return None
+    try:
+        return path_symmetry_uses_magnetic_order(
+            pristine_structure=host, reactant_structure=reactant.structure
+        )
+    except ValueError:  # EnergyBarrierError, or a malformed host or endpoint cell
+        return None
 
 
 _ENDPOINT_FIELDS = ("site", "run", "job", "structure")
@@ -1189,10 +1341,12 @@ __all__ = [
     "energy_barrier_neb_source_candidates",
     "energy_barrier_neb_sources_by_job_id",
     "energy_barrier_path_preview_structure",
+    "energy_barrier_path_symmetry_uses_magnetic_order",
     "energy_barrier_source_label",
     "enumerate_energy_barrier_source_candidates",
     "float_from_source",
     "fractional_triplet_from_source",
+    "keep_stored_path_keys",
     "quantum_seed_name_for_key",
     "quantum_source_base_label",
     "quantum_source_candidate_by_key",
