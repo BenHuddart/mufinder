@@ -1102,8 +1102,9 @@ class EnergyBarriersWidget(SourceTableWidget):
         preview_viewer = self._ensure_preview_viewer()
         if self._preview_reset_pending:
             # A new NEB result: load fresh so the viewer fits the new cell.
-            preview_viewer.set_structure(structure)
-            preview_viewer.select_atoms(_muon_atom_indexes(structure))
+            with preview_viewer.batch_update():
+                preview_viewer.set_structure(structure)
+                preview_viewer.select_atoms(_muon_atom_indexes(structure))
             self._preview_reset_pending = False
         else:
             # Scrubbing along one band: move the atoms, keep camera and zoom.

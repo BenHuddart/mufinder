@@ -1003,33 +1003,38 @@ class UepClusteringDialog(QDialog):
             if live_pyvista_snapshot is not None
             else getattr(self._structure_viewer, "_pyvista_camera_snapshot", None)
         )
-        if getattr(self._structure_viewer, "_structure", None) is not self._viewer_host_structure:
-            self._structure_viewer.set_structure(self._viewer_host_structure)
-        self._structure_viewer.set_point_overlays(overlays)
-        current_pyvista_snapshot = getattr(
-            self._structure_viewer, "_current_pyvista_camera_snapshot", lambda: None
-        )()
-        snapshot_changed = (
-            previous_pyvista_snapshot is not None
-            and not _pyvista_camera_snapshots_match(
-                current_pyvista_snapshot,
-                previous_pyvista_snapshot,
+        # One render for the structure, its overlays and any camera restore.
+        with self._structure_viewer.batch_update():
+            if (
+                getattr(self._structure_viewer, "_structure", None)
+                is not self._viewer_host_structure
+            ):
+                self._structure_viewer.set_structure(self._viewer_host_structure)
+            self._structure_viewer.set_point_overlays(overlays)
+            current_pyvista_snapshot = getattr(
+                self._structure_viewer, "_current_pyvista_camera_snapshot", lambda: None
+            )()
+            snapshot_changed = (
+                previous_pyvista_snapshot is not None
+                and not _pyvista_camera_snapshots_match(
+                    current_pyvista_snapshot,
+                    previous_pyvista_snapshot,
+                )
             )
-        )
-        if previous_camera is not None and (
-            getattr(self._structure_viewer, "_camera_state", None) != previous_camera
-            or getattr(self._structure_viewer, "_limits", None) != previous_limits
-            or snapshot_changed
-        ):
-            self._structure_viewer._camera_state = previous_camera
-            self._structure_viewer._limits = previous_limits
-            self._structure_viewer._axis.set_from_state(previous_camera)
-            if getattr(self._structure_viewer, "_triad_axis", None) is not None:
-                self._structure_viewer._triad_axis.set_from_state(previous_camera)
-            self._structure_viewer._view = (previous_camera.elev, previous_camera.azim)
-            self._structure_viewer._view_roll = previous_camera.roll
-            self._structure_viewer._pyvista_camera_snapshot = previous_pyvista_snapshot
-            self._structure_viewer._render()
+            if previous_camera is not None and (
+                getattr(self._structure_viewer, "_camera_state", None) != previous_camera
+                or getattr(self._structure_viewer, "_limits", None) != previous_limits
+                or snapshot_changed
+            ):
+                self._structure_viewer._camera_state = previous_camera
+                self._structure_viewer._limits = previous_limits
+                self._structure_viewer._axis.set_from_state(previous_camera)
+                if getattr(self._structure_viewer, "_triad_axis", None) is not None:
+                    self._structure_viewer._triad_axis.set_from_state(previous_camera)
+                self._structure_viewer._view = (previous_camera.elev, previous_camera.azim)
+                self._structure_viewer._view_roll = previous_camera.roll
+                self._structure_viewer._pyvista_camera_snapshot = previous_pyvista_snapshot
+                self._structure_viewer._render()
 
     def _render_cluster_energy_summary(
         self, result: UepClusteringResult, color_map: Mapping[int, str]

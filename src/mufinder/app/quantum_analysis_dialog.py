@@ -710,6 +710,11 @@ class QuantumPhononAnalysisDialog(QDialog):
         viewer = getattr(self, "_phonon_viewer", None)
         if viewer is None:
             return
+        # Geometry, vectors and the muon highlight draw once per frame.
+        with viewer.batch_update():
+            self._show_phonon_mode_frame(viewer)
+
+    def _show_phonon_mode_frame(self, viewer: AtomicStructureViewer) -> None:
         mode = self._selected_phonon_mode()
         if mode is None:
             if self._phonon_view_initialized:

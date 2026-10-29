@@ -1330,8 +1330,9 @@ class RelaxationClusteringDialog(QDialog):
                 "alpha": 0.96,
             }
         ]
-        self._viewer.set_structure(self._host_structure)
-        self._viewer.set_point_overlays(overlays)
+        with self._viewer.batch_update():
+            self._viewer.set_structure(self._host_structure)
+            self._viewer.set_point_overlays(overlays)
 
     def _populate_summary_table(self) -> None:
         self._summary_table.setRowCount(0)
@@ -1541,6 +1542,12 @@ class DisplacementAnalysisDialog(QDialog):
         return any(str(species).strip().casefold().endswith(":mu") for species in structure.species)
 
     def _render_viewer(
+        self, relaxed: Structure, comparison: Structure, site: RelaxedMuonSite
+    ) -> None:
+        with self._viewer.batch_update():
+            self._show_relaxed_site(relaxed, comparison, site)
+
+    def _show_relaxed_site(
         self, relaxed: Structure, comparison: Structure, site: RelaxedMuonSite
     ) -> None:
         self._viewer.set_structure(relaxed)
@@ -1832,8 +1839,9 @@ class RelaxationAnalysisWidget(QWidget):
         viewer.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         slot.layout().addWidget(viewer)
         if self._host_structure is not None:
-            viewer.set_structure(self._host_structure)
-            viewer.set_point_overlays(overlays)
+            with viewer.batch_update():
+                viewer.set_structure(self._host_structure)
+                viewer.set_point_overlays(overlays)
 
     def _workspace_sites(self, workspace: Mapping[str, object]) -> tuple[RelaxedMuonSite, ...]:
         host = self._host_structure
