@@ -351,6 +351,45 @@ def test_host_structure_widget_emits_magnetic_configuration_on_spin_and_propagat
     widget.close()
 
 
+def test_host_structure_widget_lists_every_atom_and_edits_the_last_spin(qapp) -> None:
+    atom_count = 250
+    structure = host_structure(
+        lattice=20.0,
+        species=["Fe"] * atom_count,
+        positions=[(index / atom_count, 0.0, 0.0) for index in range(atom_count)],
+        properties={"atomic_spins": [0.0] * atom_count},
+    )
+    widget = HostStructureWidget()
+    payloads: list[dict] = []
+    widget.magnetic_configuration_changed.connect(payloads.append)
+    widget.set_structure(structure)
+
+    table = widget._atom_table
+    assert table.rowCount() == atom_count
+    last = atom_count - 1
+    assert table.verticalHeaderItem(last).text() == str(atom_count)
+    assert table.item(last, 1).text() == f"{last / atom_count:.4f}"
+    spin_item = table.item(last, 4)
+    assert spin_item.flags() & Qt.ItemFlag.ItemIsEditable
+
+    spin_item.setText("2.5")
+
+    assert payloads[-1]["atomic_spins"][last] == pytest.approx(2.5)
+    assert table.item(last, 4).text() == "2.5000"
+
+    emitted = len(payloads)
+    spin_item.setText("not a number")
+
+    assert table.item(last, 4).text() == "2.5000"
+    assert len(payloads) == emitted
+
+    widget._on_viewer_atoms_selected([last])
+
+    assert [index.row() for index in table.selectionModel().selectedRows()] == [last]
+
+    widget.close()
+
+
 def test_atomic_structure_viewer_spin_arrow_geometry_is_centered() -> None:
     figure = Figure()
     axis = figure.add_subplot(projection="3d")

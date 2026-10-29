@@ -52,7 +52,8 @@ The host-structure panel
 - The atom table and the 3D viewer sit side by side in a resizable splitter.
   A compact two-row summary (label, source, atom count, species) above them
   leaves horizontal room for the viewer.
-- The atom table's ``Spin (hbar/2)`` column holds each atom's editable spin,
+- The atom table lists every atom in the structure, one row each, however
+  large the cell. Its ``Spin (hbar/2)`` column holds each atom's editable spin,
   and ``Propagation vector (r.l.u.):`` takes the propagation vector in
   reciprocal-lattice units.
 - ``Supercell Editor...`` opens the :doc:`/user_guide/supercells`.
