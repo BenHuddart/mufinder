@@ -333,3 +333,141 @@ def test_supercell_delete_removes_the_asset_once_confirmed(qapp, tmp_path, monke
     assert "missing" not in seen
     assert saved.id not in doc.structures
     dialog.close()
+
+
+def _count_editor_previews(monkeypatch) -> list[list[list[int]]]:
+    """Record the matrix of every Supercell Editor preview build."""
+
+    previews: list[list[list[int]]] = []
+    original = SupercellEditorDialog._generate_preview
+
+    def counted(self) -> None:
+        previews.append(self.matrix())
+        original(self)
+
+    monkeypatch.setattr(SupercellEditorDialog, "_generate_preview", counted)
+    return previews
+
+
+def test_supercell_editor_opens_with_one_preview(qapp, tmp_path, monkeypatch) -> None:
+    previews = _count_editor_previews(monkeypatch)
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "open_preview.mufinder", "OpenPreview")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+    )
+
+    assert previews == [[[3, 0, 0], [0, 3, 0], [0, 0, 3]]]
+    dialog.close()
+
+
+def test_supercell_editor_apply_matrix_previews_once(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _make_editor(tmp_path)
+    previews = _count_editor_previews(monkeypatch)
+
+    dialog._apply_matrix([[2, 1, 0], [0, 2, 0], [0, 0, 2]])
+
+    assert previews == [[[2, 1, 0], [0, 2, 0], [0, 0, 2]]]
+    assert dialog._advanced_toggle.isChecked()
+    assert not dialog._advanced_group.isHidden()
+
+    previews.clear()
+    dialog._apply_matrix([[2, 0, 0], [0, 3, 0], [0, 0, 1]])
+
+    assert previews == [[[2, 0, 0], [0, 3, 0], [0, 0, 1]]]
+    assert not dialog._advanced_toggle.isChecked()
+    assert dialog._advanced_group.isHidden()
+    dialog.close()
+
+
+def test_supercell_editor_selecting_saved_row_previews_once(qapp, tmp_path, monkeypatch) -> None:
+    dialog, _doc, saved = _editor_with_saved_supercell(tmp_path, monkeypatch)
+    dialog._new_button.click()
+    previews = _count_editor_previews(monkeypatch)
+
+    dialog._asset_table.selectRow(0)
+
+    assert dialog._current_asset_id == saved.id
+    assert previews == [[[2, 0, 0], [0, 1, 0], [0, 0, 1]]]
+    dialog.close()
+
+
+def test_supercell_editor_new_asset_previews_once(qapp, tmp_path, monkeypatch) -> None:
+    dialog, _doc, _saved = _editor_with_saved_supercell(tmp_path, monkeypatch)
+    previews = _count_editor_previews(monkeypatch)
+
+    dialog._new_button.click()
+
+    assert previews == [[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]
+    dialog.close()
+
+
+def test_supercell_editor_delete_previews_once(qapp, tmp_path, monkeypatch) -> None:
+    dialog, doc, saved = _editor_with_saved_supercell(tmp_path, monkeypatch)
+    previews = _count_editor_previews(monkeypatch)
+    answer_next_message_box(click="Delete supercell")
+
+    dialog._delete_button.click()
+
+    assert saved.id not in doc.structures
+    assert previews == [[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]
+    dialog.close()
+
+
+def test_supercell_editor_use_suggestion_previews_once(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _make_editor(tmp_path)
+    previews = _count_editor_previews(monkeypatch)
+    suggestion = SupercellSuggestion(
+        candidates=(
+            SupercellCandidate(
+                scaling=(2, 3, 2), atom_count=24, min_image_distance=8.0, satisfies_criterion=True
+            ),
+        ),
+        recommended_index=0,
+        primitive_atom_count=2,
+        distance_target=8.0,
+        display_threshold=8.0,
+        max_atoms=200,
+        primitive_exceeds_budget=False,
+    )
+
+    def fake_exec(self):
+        self._chosen_scaling = self._suggestion.candidates[0].scaling
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(SupercellSuggestionDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        "mufinder.app.supercell_dialog.suggest_supercell", lambda *_a, **_k: suggestion
+    )
+
+    dialog._suggest_button.click()
+
+    assert previews == [[[2, 0, 0], [0, 3, 0], [0, 0, 2]]]
+    dialog.close()
+
+
+def test_supercell_editor_hand_edit_still_previews_each_change(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _make_editor(tmp_path)
+    previews = _count_editor_previews(monkeypatch)
+
+    dialog._simple_nx.setValue(2)
+    dialog._simple_ny.setValue(3)
+
+    assert previews == [
+        [[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        [[2, 0, 0], [0, 3, 0], [0, 0, 1]],
+    ]
+
+    previews.clear()
+    dialog._advanced_toggle.setChecked(True)
+    dialog._advanced_cells[0][1].setValue(1)
+
+    assert len(previews) == 2
+    assert previews[-1] == [[1, 1, 0], [0, 1, 0], [0, 0, 1]]
+    dialog.close()
