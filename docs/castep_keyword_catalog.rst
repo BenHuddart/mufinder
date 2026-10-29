@@ -84,7 +84,10 @@ copy into the per-user application-data directory, points the saved setup at
 that copy, and rebuilds the running schema. The user never chooses a location,
 the catalog takes effect immediately (no ``OK`` needed), and it cannot go missing
 because a file elsewhere was moved. The copy does not track later changes to the
-original; after a CASTEP upgrade, generate or import again.
+original; after a CASTEP upgrade, generate or import again. When the saved setup
+names a complete catalog outside the application-data directory, startup
+installs it the same way, during the splash screen's ``Loading CASTEP
+configuration...`` step.
 
 Validation (``mufinder.castep_io.keyword_catalog_file``) requires ``cell`` and
 ``param`` sections whose entries carry ``option_type``, ``level`` and

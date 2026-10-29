@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import shlex
@@ -12,6 +13,7 @@ from PySide6.QtCore import QSettings, QStandardPaths
 
 from mufinder.castep_io.keyword_catalog_file import (
     KeywordCatalogSummary,
+    KeywordCatalogValidationError,
     read_keyword_catalog_file,
     write_keyword_catalog_file,
 )
@@ -22,6 +24,8 @@ CASTEP_EXECUTABLE_KEY = "castep/executable_path"
 CASTEP_KEYWORDS_JSON_KEY = "castep/keywords_json_path"
 CASTEP_MPIRUN_KEY = "castep/mpirun_path"
 MANAGED_KEYWORDS_JSON_NAME = "castep_keywords.json"
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,11 +142,59 @@ def install_keyword_catalog(source_path: str | Path, settings: QSettings) -> Key
     return summary
 
 
+def _adopt_legacy_keyword_catalog(setup: CastepSetup, settings: QSettings) -> bool:
+    """Copy a catalog saved at a user-chosen path into MuFinder's own copy.
+
+    Before catalogs were installed as a managed copy, the setting held a path
+    the user chose, often inside a CASTEP source tree. When that file is still a
+    complete catalog it is installed through :func:`install_keyword_catalog`, so
+    the setting names the managed copy from then on and adoption happens once.
+
+    A missing or incomplete file is left configured, so the schema reads it or
+    reports why it was skipped. An unreadable path or a failed write (for example a read-only data directory) is
+    logged and the old path stays in use for this session; startup never fails
+    here.
+
+    Returns:
+        Whether the catalog was adopted.
+    """
+
+    saved = setup.keywords_json_path.strip()
+    if not saved:
+        return False
+    legacy = Path(saved).expanduser()
+    managed = managed_keywords_json_path()
+    try:
+        if legacy.resolve() == managed.resolve() or not legacy.is_file():
+            return False
+        install_keyword_catalog(legacy, settings)
+    except KeywordCatalogValidationError as exc:
+        _LOG.info("Keeping the keyword catalog '%s' in place, not adopting it: %s", legacy, exc)
+        return False
+    except OSError as exc:
+        _LOG.warning(
+            "Could not adopt the keyword catalog '%s' into '%s'; reading it in place: %s",
+            legacy,
+            managed,
+            exc,
+        )
+        return False
+    return True
+
+
 def apply_saved_castep_environment(settings: QSettings | None = None) -> CastepSetup:
-    """Load persisted CASTEP settings, publish them, and load the saved catalog."""
+    """Load persisted CASTEP settings, publish them, and load the saved catalog.
+
+    A catalog saved at a path outside MuFinder's data directory is first
+    adopted into the managed copy (see :func:`_adopt_legacy_keyword_catalog`).
+    """
 
     effective_settings = settings if settings is not None else QSettings("MuFinder", "MuFinder")
     setup = load_castep_setup(effective_settings)
+    if _adopt_legacy_keyword_catalog(setup, effective_settings):
+        # Installing the copy repointed the setting, published it and rebuilt
+        # the schema, so there is nothing left to apply.
+        return load_castep_setup(effective_settings)
     apply_castep_environment(setup)
     # Importing this module already imported the schema, which built itself
     # before the saved catalog path was published. Rebuild it now, or the

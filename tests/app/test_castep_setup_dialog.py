@@ -36,7 +36,7 @@ from mufinder.castep_setup import (
     managed_keywords_json_path,
     save_castep_setup,
 )
-from tests.support.keyword_catalogs import write_complete_catalog
+from tests.support.keyword_catalogs import isolate_catalog_sources, write_complete_catalog
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
 from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
 from tests.support.qt import pump_until
@@ -76,10 +76,14 @@ def test_castep_setup_roundtrip_and_environment(monkeypatch: pytest.MonkeyPatch)
     assert os.environ["MUFINDER_CASTEP_KEYWORDS_JSON"] == "/tmp/user-override.json"
 
 
-def test_apply_saved_castep_environment_uses_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_saved_castep_environment_uses_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A path that does not exist, so startup has nothing to adopt.
+    missing_catalog = str(tmp_path / "generated" / "castep_keywords.json")
     settings = _FakeSettings()
     settings.setValue(CASTEP_EXECUTABLE_KEY, "/usr/local/bin/castep")
-    settings.setValue(CASTEP_KEYWORDS_JSON_KEY, "/tmp/generated/castep_keywords.json")
+    settings.setValue(CASTEP_KEYWORDS_JSON_KEY, missing_catalog)
     settings.setValue(CASTEP_MPIRUN_KEY, "/opt/mpi/bin/mpirun")
 
     monkeypatch.delenv("CASTEP_COMMAND", raising=False)
@@ -89,7 +93,7 @@ def test_apply_saved_castep_environment_uses_settings(monkeypatch: pytest.Monkey
     assert setup.executable_path == "/usr/local/bin/castep"
     assert setup.mpirun_path == "/opt/mpi/bin/mpirun"
     assert "CASTEP_COMMAND" not in os.environ
-    assert os.environ[SETUP_KEYWORDS_JSON_ENV_VAR] == "/tmp/generated/castep_keywords.json"
+    assert os.environ[SETUP_KEYWORDS_JSON_ENV_VAR] == missing_catalog
 
 
 @pytest.mark.skipif(
@@ -244,26 +248,7 @@ def test_apply_castep_environment_clears_keywords_env_when_empty(
 def no_catalog_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start from a machine with no catalog configured or discoverable."""
 
-    for name in (
-        "MUFINDER_CASTEP_KEYWORDS_JSON",
-        "CASTEP_KEYWORDS_JSON",
-        SETUP_KEYWORDS_JSON_ENV_VAR,
-    ):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(schema_module, "_ENV_ROOT_VARS", ())
-    monkeypatch.setattr(
-        schema_module,
-        "_candidate_catalog_sources",
-        lambda: tuple(
-            schema_module.CatalogSourceInfo(path=Path(os.environ[name]), origin=origin)
-            for name, origin in (
-                ("MUFINDER_CASTEP_KEYWORDS_JSON", "env_json:MUFINDER_CASTEP_KEYWORDS_JSON"),
-                (SETUP_KEYWORDS_JSON_ENV_VAR, "setup"),
-            )
-            if os.environ.get(name)
-        ),
-    )
-    schema_module.refresh_keyword_catalog(allow_fallback=True)
+    isolate_catalog_sources(monkeypatch)
 
 
 def test_startup_loads_the_installed_catalog(no_catalog_env, tmp_path: Path) -> None:
