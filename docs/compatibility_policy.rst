@@ -283,6 +283,21 @@ Compatibility ledger
        read when a snapshot has no ``isosurface_layers``.
      - Keep until the next saved-project schema version bump, whose migration
        can wrap the key into a one-entry ``isosurface_layers`` list.
+   * - ``default_cut_off_*`` / ``default_kpoint_stress_threshold`` keys in
+       project UI state
+     - Top-level ``ui_state`` (``state.json``); removed by
+       ``mufinder.persistence.migrations.drop_retired_ui_state_keys``, which
+       ``ProjectService.load_project`` calls on every load
+     - Projects saved by earlier releases may carry
+       ``default_cut_off_energy``, ``default_cut_off_energy_method``,
+       ``default_cut_off_energy_threshold``, ``default_cut_off_force_threshold``,
+       ``default_cut_off_stress_threshold`` and
+       ``default_kpoint_stress_threshold``, copies of the adopted convergence
+       defaults that the project's ``recommended_*`` fields record. Nothing
+       reads or writes them. Loading removes them (``RETIRED_UI_STATE_KEYS``),
+       and the next save writes ``state.json`` without them.
+     - Keep until the next saved-project schema version bump, whose migration
+       can drop the keys; then remove the load-time helper.
    * - ``castep/keywords_json_path`` setting pointing outside the
        application-data directory
      - ``mufinder.castep_setup`` / application settings (``QSettings``)

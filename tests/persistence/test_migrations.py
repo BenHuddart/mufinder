@@ -7,7 +7,9 @@ import pytest
 
 from mufinder.domain.models import PROJECT_SCHEMA_VERSION, Project
 from mufinder.persistence.migrations import (
+    RETIRED_UI_STATE_KEYS,
     UI_STATE_KEY,
+    drop_retired_ui_state_keys,
     migrate_project_payloads,
     stored_schema_version,
 )
@@ -403,3 +405,19 @@ def test_schema_3_inline_dipolar_tensor_is_converted_after_becoming_a_record() -
     assert record["data"]["results"][0]["dipolar_tensor_T_per_muB"][2][2] == pytest.approx(
         2.0 * DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3
     )
+
+
+def test_retired_ui_state_keys_are_dropped_and_reported() -> None:
+    ui_state: dict[str, object] = {key: 1.0 for key in RETIRED_UI_STATE_KEYS}
+    ui_state["convergence_form"] = {"kept": True}
+
+    assert drop_retired_ui_state_keys(ui_state) == {UI_STATE_KEY}
+    assert ui_state == {"convergence_form": {"kept": True}}
+    # Nothing left to drop: ui_state is not reported as changed.
+    assert drop_retired_ui_state_keys(ui_state) == set()
+
+
+def test_dropping_retired_keys_leaves_a_malformed_ui_state_alone() -> None:
+    # state.json can hold any JSON value; only a mapping has keys to drop.
+    assert drop_retired_ui_state_keys(None) == set()  # type: ignore[arg-type]
+    assert drop_retired_ui_state_keys(["default_cut_off_energy"]) == set()  # type: ignore[arg-type]

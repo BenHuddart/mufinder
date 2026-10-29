@@ -10,6 +10,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.adapter_common import project_convergence_parameter_values
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.models import Structure
+from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 
@@ -207,9 +208,7 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     assert project.recommended_cutoff_cell_id == str(project.host_structure_id)
     # Editing a value by hand never changes the project functional.
     assert project.recommended_xc_functional == "PBE"
-    assert doc.ui_state["default_cut_off_energy"] == pytest.approx(850.0)
-    assert doc.ui_state["default_cut_off_energy_method"] == "manual"
-    assert "default_cut_off_energy_threshold" not in doc.ui_state
+    assert RETIRED_UI_STATE_KEYS.isdisjoint(doc.ui_state)
     assert strip._cutoff_value.text() == "850 eV"
     assert "Set manually" in strip._cutoff_value.toolTip()
     assert ("Criteria", "Set manually") in window._cutoff_overview_summary_rows()
@@ -263,7 +262,6 @@ def test_clearing_cutoff_and_grid_from_the_dialog(qapp, tmp_path: Path) -> None:
 
     assert doc.project.recommended_cutoff_energy is None
     assert doc.project.recommended_kpoint_grid is None
-    assert "default_cut_off_energy" not in doc.ui_state
     for strip in window._project_defaults_strips():
         assert strip._cutoff_value.text() == "Not set"
         assert strip._kpoint_value.text() == "Not set"
