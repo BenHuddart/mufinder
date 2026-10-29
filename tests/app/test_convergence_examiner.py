@@ -285,6 +285,7 @@ def test_convergence_examiner_warns_when_the_cutoff_sweep_is_too_short(qapp) -> 
     # The warning does not block adoption.
     assert dialog._adopt_button.isEnabled() is True
     assert theme_module.current_palette().warning.lower() in dialog._results.toHtml().lower()
+    assert dialog._force_ax.get_title() == "Force convergence (threshold 0.05 eV/Ang)"
     legend = [text.get_text() for text in dialog._energy_ax.get_legend().get_texts()]
     assert "Power-law fit" in legend
     assert "Fitted limit" in legend

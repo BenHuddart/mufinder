@@ -674,9 +674,7 @@ def test_main_window_kpoint_examiner_and_adoption_use_the_sweep_supercell(
     assert captured["lattice_vectors"] == supercell.lattice_vectors
 
     monkeypatch.setattr(window, "_confirm_adopted_xc_functional", lambda _functional: True)
-    window._on_kpoint_default_adopted(
-        16.0, "converged", 0.001, 0.05, {16.0: "Grid: 1 x 4 x 4"}
-    )
+    window._on_kpoint_default_adopted(16.0, "converged", 0.001, 0.05, {16.0: "Grid: 1 x 4 x 4"})
 
     assert doc.project.recommended_kpoint_grid == (1, 4, 4)
     assert doc.project.recommended_kpoint_cell_id == str(supercell.id)

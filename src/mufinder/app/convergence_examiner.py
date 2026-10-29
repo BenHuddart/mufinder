@@ -1434,7 +1434,7 @@ class ConvergenceExaminerDialog(QDialog):
             )
         else:
             force_ax.set_title(
-                f"Force convergence (delta threshold {force_threshold:.3g} eV/Ang)", pad=10
+                f"Force convergence (threshold {force_threshold:.3g} eV/Ang)", pad=10
             )
 
         self._canvas.draw_idle()
