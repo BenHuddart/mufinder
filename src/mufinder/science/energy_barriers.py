@@ -20,7 +20,11 @@ from mufinder.domain.magnetic_properties import (
 )
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
-from mufinder.science.lattice import nearest_image_delta_matrix, nearest_image_distance_matrix
+from mufinder.science.lattice import (
+    nearest_image_delta_matrix,
+    nearest_image_deltas,
+    nearest_image_distance_matrix,
+)
 from mufinder.science.spglib_compat import (
     SYMMETRY_TOLERANCE_ANG,
     SymmetryOperations,
@@ -617,9 +621,11 @@ def idpp_intermediate_structure(reactant: Structure, product: Structure) -> Stru
 def _linear_midpoint_atoms(reactant_atoms: Atoms, product_atoms: Atoms) -> Atoms:
     reactant_frac = reactant_atoms.get_scaled_positions(wrap=True)
     product_frac = product_atoms.get_scaled_positions(wrap=True)
-    # Wrap each displacement into (-0.5, 0.5] so the muon takes the short path across the
+    # Each atom moves to its nearest image so the muon takes the short path across the
     # periodic boundary rather than the long way round the cell.
-    midpoint_frac = reactant_frac + 0.5 * _wrapped_fractional_delta(reactant_frac, product_frac)
+    midpoint_frac = reactant_frac + 0.5 * nearest_image_deltas(
+        reactant_frac, product_frac, reactant_atoms.cell.array
+    )
     midpoint = reactant_atoms.copy()
     midpoint.set_scaled_positions(midpoint_frac)
     return midpoint
@@ -647,14 +653,11 @@ def _idpp_central_image(reactant_atoms: Atoms, product_atoms: Atoms) -> Atoms:
 def _muon_host_clearance(atoms: Atoms) -> float:
     muon = _muon_index(atoms)
     frac = atoms.get_scaled_positions(wrap=True)
-    cell = atoms.cell.array
-    distances = [
-        _minimum_image_distance(frac[muon], frac[index], cell)
-        for index in range(len(atoms))
-        if index != muon
-    ]
+    distances = nearest_image_distance_matrix(
+        frac[muon : muon + 1], np.delete(frac, muon, axis=0), atoms.cell.array
+    )[0]
     # A muon-only cell has no host atoms to collide with -> infinite clearance.
-    return min(distances) if distances else float("inf")
+    return float(distances.min()) if distances.size else float("inf")
 
 
 def _single_muon_position(atoms: Atoms) -> np.ndarray:
@@ -836,13 +839,10 @@ def _transform_structure_by_symmetry(
 
     muon_index = _muon_index(relaxed)
     positions = relaxed.get_scaled_positions(wrap=True)
-    displacements = np.zeros_like(positions)
-    for index, position in enumerate(positions):
-        if index == muon_index:
-            continue
-        displacements[index] = _wrapped_fractional_delta(
-            current_wrapped, np.asarray(position, dtype=float)
-        )
+    displacements = nearest_image_deltas(
+        np.broadcast_to(current_wrapped, positions.shape), positions, relaxed.cell.array
+    )
+    displacements[muon_index] = 0.0
 
     transformed = relaxed.copy()
     new_positions = np.zeros_like(positions)
@@ -868,26 +868,15 @@ def _muon_index(atoms: Atoms) -> int:
     return int(matches[0])
 
 
-def _minimum_image_distance(lhs: np.ndarray, rhs: np.ndarray, cell: np.ndarray) -> float:
-    delta = _wrapped_fractional_delta(lhs, rhs)
-    return float(np.linalg.norm(delta @ cell))
-
-
 def _reorder_atoms_like(reference: Atoms, target: Atoms) -> None:
-    penalties = np.zeros((len(reference), len(target)), dtype=float)
     reference_positions = reference.get_scaled_positions(wrap=True)
     target_positions = target.get_scaled_positions(wrap=True)
     reference_numbers = np.asarray(reference.numbers, dtype=int)
     target_numbers = np.asarray(target.numbers, dtype=int)
-    cell = reference.cell.array
-    for row in range(len(reference)):
-        for column in range(len(target)):
-            if reference_numbers[row] != target_numbers[column]:
-                penalties[row, column] = 1e9
-                continue
-            penalties[row, column] = _minimum_image_distance(
-                reference_positions[row], target_positions[column], cell
-            )
+    penalties = nearest_image_distance_matrix(
+        reference_positions, target_positions, reference.cell.array
+    )
+    penalties[reference_numbers[:, None] != target_numbers[None, :]] = 1e9
     row_ids, column_ids = linear_sum_assignment(penalties)
     order = [int(column) for column in column_ids[np.argsort(row_ids)]]
     target.set_scaled_positions(target_positions[order])
@@ -903,7 +892,9 @@ def _reorder_atoms_like(reference: Atoms, target: Atoms) -> None:
 def _minimise_displacements(reference: Atoms, target: Atoms) -> None:
     reference_positions = reference.get_scaled_positions(wrap=True)
     target_positions = target.get_scaled_positions(wrap=True)
-    adjusted = np.zeros_like(target_positions)
-    for index, (lhs, rhs) in enumerate(zip(reference_positions, target_positions, strict=False)):
-        adjusted[index] = lhs + _wrapped_fractional_delta(lhs, rhs)
-    target.set_scaled_positions(adjusted)
+    # Each target atom moves to the image nearest its reference atom, so the muon's
+    # image is the one the generated path was measured to.
+    target.set_scaled_positions(
+        reference_positions
+        + nearest_image_deltas(reference_positions, target_positions, reference.cell.array)
+    )

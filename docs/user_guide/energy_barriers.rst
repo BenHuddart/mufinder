@@ -122,7 +122,8 @@ structures to enumerate distinct muon paths. The current implementation:
 - enumerates symmetry-equivalent muon start and end positions in that supercell;
 - measures each candidate hop from a start position to the nearest periodic
   image of an end position, which is the shortest hop in hexagonal and other
-  skewed cells too;
+  skewed cells too (the NEB intermediate image and the endpoint alignment use
+  the same nearest image);
 - optionally filters candidates by a user-specified maximum path length;
 - discards zero-length self-maps before returning any same-site or cross-site
   path candidates;

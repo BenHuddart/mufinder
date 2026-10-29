@@ -34,6 +34,7 @@ from mufinder.science.lattice import (
     nearest_image_delta,
     nearest_image_distance,
     nearest_image_delta_matrix,
+    nearest_image_deltas,
     nearest_image_distance_matrix,
     reciprocal_to_cartesian,
     reduced_lattice,
@@ -345,6 +346,19 @@ def test_nearest_image_delta_matrix_reaches_the_nearest_image(
     assert np.allclose(offsets, np.rint(offsets), atol=1e-12)
     lengths = np.linalg.norm(deltas @ np.asarray(lattice), axis=-1)
     assert np.allclose(lengths, nearest_image_distance_matrix(left, right, lattice), rtol=1e-12)
+
+
+def test_nearest_image_deltas_pair_rows_as_the_matrix_does() -> None:
+    rng = np.random.default_rng(6)
+    left = rng.uniform(-1.5, 2.5, size=(6, 3))
+    right = rng.uniform(-1.5, 2.5, size=(6, 3))
+
+    rows = nearest_image_deltas(left, right, _SKEWED)
+
+    matrix = nearest_image_delta_matrix(left, right, _SKEWED)
+    assert np.allclose(rows, matrix[np.arange(6), np.arange(6)])
+    with pytest.raises(LatticeError):
+        nearest_image_deltas(left, right[:2], _SKEWED)
 
 
 def test_nearest_image_distance_matrix_is_shorter_than_the_fold_in_a_skewed_cell() -> None:

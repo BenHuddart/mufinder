@@ -509,3 +509,41 @@ def test_stored_hops_match_the_path_they_are_equivalent_to() -> None:
         paths=paths,
         hops=[reversed_hop, shifted_hop, unrelated],
     ) == [2, 3, None]
+
+
+def test_hexagonal_neb_midpoint_follows_the_nearest_image_of_the_path() -> None:
+    # The intermediate image must sit halfway along the hop the path was measured
+    # along, not the longer one the per-component fractional fold picks.
+    host = hcp_host()
+    site = _generic_sites()[2]
+    reactant = relaxed_muon_supercell(host, HCP_SUPERCELL, site)
+    paths = enumerate_distinct_muon_paths(
+        pristine_structure=host,
+        reactant_structure=reactant,
+        product_structure=reactant,
+        max_distance_ang=PAIR_ORBIT_CUTOFF_ANG,
+    )
+    lattice = np.asarray(reactant.lattice_vectors, dtype=float)
+
+    def folded_length(path: Any) -> float:
+        hop = _periodic(np.subtract(path.end_fractional, path.start_fractional))
+        return float(np.linalg.norm(hop @ lattice))
+
+    skewed = [path for path in paths if folded_length(path) > path.length_ang + 1e-3]
+    assert skewed
+    for path in skewed:
+        prepared = prepare_transition_state_structures(
+            pristine_structure=host,
+            reactant_structure=reactant,
+            product_structure=reactant,
+            reactant_anchor_fractional=path.start_fractional,
+            product_anchor_fractional=path.end_fractional,
+        )
+        start = _structure_to_atoms(prepared.reactant, require_muon=True)
+        midpoint = _linear_midpoint_atoms(
+            start, _structure_to_atoms(prepared.product, require_muon=True)
+        )
+        half_hop = (
+            midpoint.get_scaled_positions(wrap=False)[-1] - start.get_scaled_positions()[-1]
+        ) @ lattice
+        assert np.linalg.norm(half_hop) == pytest.approx(path.length_ang / 2, abs=1e-6)
