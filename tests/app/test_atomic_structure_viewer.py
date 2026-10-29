@@ -87,6 +87,39 @@ def test_set_structure_with_spins_in_a_batch_renders_once(viewer, monkeypatch) -
     assert viewer._pyvista_spin_actors
 
 
+def _camera(viewer: AtomicStructureViewer) -> tuple[float, ...]:
+    camera = viewer._canvas.plotter.camera
+    return (*camera.position, *camera.focal_point, float(camera.parallel_scale))
+
+
+def test_a_batched_new_structure_fits_the_camera_to_the_new_cell(qapp) -> None:
+    batched = AtomicStructureViewer()
+    batched.set_structure(_magnetic_host(lattice=4.0))
+    direct = AtomicStructureViewer()
+
+    with batched.batch_update():
+        batched.set_structure(_magnetic_host(lattice=12.0))
+        batched.set_spins([1.0, -1.0])
+        batched.select_atoms([0])
+    direct.set_structure(_magnetic_host(lattice=12.0))
+
+    assert _camera(batched) == pytest.approx(_camera(direct))
+    batched.close()
+    direct.close()
+
+
+def test_selection_signals_fire_after_the_highlight_is_drawn(viewer) -> None:
+    viewer.set_structure(_magnetic_host())
+    seen: list[object] = []
+    viewer.atom_selected.connect(lambda _index: seen.append(viewer._pyvista_selection_actor))
+
+    viewer._set_selected_atoms([1], emit_signal=True)
+
+    assert len(seen) == 1
+    assert seen[0] is not None
+    assert viewer._batch_depth == 0
+
+
 def test_a_render_pass_adds_every_mesh_without_rendering(viewer, monkeypatch) -> None:
     counter = _RenderCounter(viewer, monkeypatch)
     viewer._show_bonds.setChecked(True)

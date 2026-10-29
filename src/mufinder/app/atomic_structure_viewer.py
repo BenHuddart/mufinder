@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from copy import deepcopy
 from functools import wraps
+import logging
 import math
 
 from ase import Atoms
@@ -31,6 +32,8 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.theme import body_font_family, current_palette, style_hint_text
 from mufinder.domain.models import Structure
+
+_LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_VIEW = (20.0, 45.0)
 _DEFAULT_VIEW_ROLL = 0.0
@@ -2107,6 +2110,9 @@ class AtomicStructureViewer(QWidget):
     @_renders_once
     def set_structure(self, structure: Structure | None) -> None:
         """Load a new structure into the viewer."""
+        # Deferred to the end of this batch; marking it first skips in-place updates
+        # (such as the spin toggle below) that the rebuild would discard.
+        self._render()
         self._structure = structure
         self._atoms = self._to_atoms(structure) if structure is not None else None
         self._spins = self._extract_spins(structure)
@@ -2223,6 +2229,8 @@ class AtomicStructureViewer(QWidget):
         )
         self._update_selection_label()
 
+        if self._render_deferred():
+            return
         if self._try_update_pyvista_atom_geometry():
             return
         self.set_structure_preserving_view(structure)
@@ -2239,10 +2247,11 @@ class AtomicStructureViewer(QWidget):
                 3,
             )
             self._spins = spin_array.copy() if valid_shape else None
+        self._store_view()
+        # Deferred: the rebuild also draws the spin toggle below.
+        self._render()
         if self._spins is not None and np.any(np.abs(self._spins) > 1e-10):
             self._show_spins.setChecked(True)
-        self._store_view()
-        self._render()
 
     def set_moment_vectors(
         self,
@@ -2548,7 +2557,6 @@ class AtomicStructureViewer(QWidget):
             [] if atom_index is None else [int(atom_index)], emit_signal=emit_signal
         )
 
-    @_renders_once
     def _set_selected_atoms(self, atom_indexes: Iterable[int], *, emit_signal: bool) -> None:
         normalized: list[int] = []
         seen: set[int] = set()
@@ -2563,8 +2571,9 @@ class AtomicStructureViewer(QWidget):
         self._selected_index = None if not normalized else int(normalized[-1])
         self._update_selection_label()
 
-        self._store_view()
-        self._update_scene(self._try_update_pyvista_selection_overlay)
+        with self.batch_update():
+            self._store_view()
+            self._update_scene(self._try_update_pyvista_selection_overlay)
 
         if emit_signal:
             self.selected_atoms_changed.emit(list(self._selected_indexes))
@@ -2970,7 +2979,17 @@ class AtomicStructureViewer(QWidget):
         self._batch_depth += 1
         try:
             yield
-        finally:
+        except BaseException:
+            self._batch_depth -= 1
+            if self._batch_depth == 0:
+                # Draw what was recorded, but never let a render failure on the
+                # half-applied state hide the caller's exception.
+                try:
+                    self._flush_batched_render()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Deferred viewer render failed", exc_info=True)
+            raise
+        else:
             self._batch_depth -= 1
             if self._batch_depth == 0:
                 self._flush_batched_render()
@@ -3010,11 +3029,16 @@ class AtomicStructureViewer(QWidget):
         update is skipped rather than built and then thrown away.
         """
 
-        if self._batch_depth and self._render_pending:
+        if self._render_deferred():
             return
         if update_in_place():
             return
         self._render()
+
+    def _render_deferred(self) -> bool:
+        """Whether a scene rebuild is waiting for the current batch to end."""
+
+        return bool(self._batch_depth and self._render_pending)
 
     def _draw_canvas(self) -> None:
         """Draw in-place actor changes, or defer the draw to the end of a batch."""
@@ -3174,6 +3198,10 @@ class AtomicStructureViewer(QWidget):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
         if self._backend_name != "pyvista" or self._shutting_down:
             return None
+        if self._render_deferred():
+            # The live camera still shows the scene before this batch; the deferred
+            # rebuild shows this one (None until it fits a new structure).
+            return self._pyvista_camera_snapshot
         camera = getattr(getattr(self._canvas, "plotter", None), "camera", None)
         if camera is None:
             return None
