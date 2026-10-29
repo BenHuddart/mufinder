@@ -213,9 +213,9 @@ cells along a, that the row's field belongs to.
          a total of 0.118082 T.
 
    The 64 fields of the approximant at site II, computed by MuFinder. The
-   first row's 0.1181 T is the sum of 0.0975 T dipolar, 0.0016 T Lorentz,
-   0.1943 T contact and no demagnetizing field. The Lorentz term is a
-   residue of the finite sphere, which does not average a helix to zero exactly.
+   first row's 0.1181 T is the sum of 0.0988 T dipolar, 0.1943 T contact and
+   no demagnetizing field. The helix is modulated, so its dipolar row includes
+   the Lorentz field: only their sum is independent of the Lorentz sphere.
 
 Their magnitudes run from 90.0 mT to 207.3 mT, and the 64 phases sample the
 same two-horned lineshape as the distribution, whose edges are 90.3 mT and

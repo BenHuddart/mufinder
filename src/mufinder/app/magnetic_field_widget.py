@@ -6618,6 +6618,9 @@ class MagneticFieldWidget(QWidget):
         ("Distortion correction", "distortion_T"),
         ("Applied", "applied_T"),
     )
+    # For a modulated structure only the sum of the lattice sum and the continuum
+    # outside the sphere is physical, so the breakdown shows them as one row.
+    _MERGED_DIPOLAR_LORENTZ_LABEL = "Dipolar (incl. Lorentz)"
     # Distribution payload ``terms`` keys, in the order the breakdown lists them.
     _DISTRIBUTION_BREAKDOWN_TERMS = (
         ("Dipolar", "dipolar"),
@@ -8171,8 +8174,18 @@ class MagneticFieldWidget(QWidget):
             hint = "Select a result row to see its field terms."
         else:
             payload = results[selected_rows[0]]
+            merge = self._merges_dipolar_and_lorentz(payload)
             for label, key in self._BREAKDOWN_TERMS:
+                if merge and key == "lorentz_T":
+                    continue
                 vector = np.asarray(payload.get(key, ()), dtype=float)
+                if merge and key == "dipolar_T":
+                    label = self._MERGED_DIPOLAR_LORENTZ_LABEL
+                    lorentz = np.asarray(payload.get("lorentz_T", ()), dtype=float)
+                    # A malformed saved payload leaves the merged row out, like any other term.
+                    vector = (
+                        vector + lorentz if lorentz.shape == vector.shape == (3,) else np.empty(0)
+                    )
                 if vector.shape == (3,):
                     rows.append(
                         (
@@ -8208,7 +8221,16 @@ class MagneticFieldWidget(QWidget):
         terms = payload.get("terms")
         if not isinstance(terms, Mapping):
             return []
-        entries = [(label, terms.get(key)) for label, key in cls._DISTRIBUTION_BREAKDOWN_TERMS]
+        merged = payload.get("dipolar_lorentz")
+        merge = cls._merges_dipolar_and_lorentz(payload) and isinstance(merged, Mapping)
+        entries = []
+        for label, key in cls._DISTRIBUTION_BREAKDOWN_TERMS:
+            if merge and key == "lorentz":
+                continue
+            if merge and key == "dipolar":
+                entries.append((cls._MERGED_DIPOLAR_LORENTZ_LABEL, merged))
+            else:
+                entries.append((label, terms.get(key)))
         entries.append(
             ("Total", {"mean_T": payload.get("mean_T"), "rms_T": payload.get("total_rms_T")})
         )
@@ -8227,6 +8249,13 @@ class MagneticFieldWidget(QWidget):
                 (label, *format_vector_components(mean, scale=rms), format_table_number(rms))
             )
         return rows
+
+    @staticmethod
+    def _merges_dipolar_and_lorentz(payload: Mapping[str, object]) -> bool:
+        """Return whether a result was calculated for a structure with a component at q != 0."""
+
+        parameters = payload.get("calculation_parameters")
+        return isinstance(parameters, Mapping) and bool(parameters.get("modulated", False))
 
     @staticmethod
     def _convergence_lines(raw_checks: object) -> list[str]:

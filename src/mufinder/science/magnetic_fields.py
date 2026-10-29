@@ -19,7 +19,7 @@ from mufinder.domain.constants import (
 )
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
-from mufinder.science.lattice import nearest_image_distance
+from mufinder.science.lattice import nearest_image_distance, reduced_lattice
 from mufinder.science.spglib_compat import (
     SYMMETRY_TOLERANCE_ANG,
     spglib_cell,
@@ -319,8 +319,11 @@ class MagneticFieldDistributionResult:
     ``terms`` maps each name in :data:`DISTRIBUTION_FIELD_TERMS` to its
     statistics over the samples, and ``total_rms_T`` is the RMS of ``|B|``.
     ``applied_T`` and ``demag_T`` are the constant applied and demagnetizing
-    vectors included in every row of ``fields_T``. A result saved before the
-    breakdown existed has empty ``terms`` and ``None`` for the rest.
+    vectors included in every row of ``fields_T``. ``dipolar_lorentz`` is the
+    statistics of the dipolar and Lorentz terms summed sample by sample: for a
+    modulated structure (``calculation_parameters["modulated"]``) only that sum
+    is independent of the sphere radius. A result saved before the breakdown
+    existed has empty ``terms`` and ``None`` for the rest.
     """
 
     site_label: str
@@ -334,6 +337,7 @@ class MagneticFieldDistributionResult:
     total_rms_T: float | None = None
     applied_T: tuple[float, float, float] | None = None
     demag_T: tuple[float, float, float] | None = None
+    dipolar_lorentz: FieldTermStatistics | None = None
 
     @property
     def magnitudes_T(self) -> np.ndarray:
@@ -359,6 +363,8 @@ class MagneticFieldDistributionResult:
             payload["applied_T"] = list(self.applied_T)
         if self.demag_T is not None:
             payload["demag_T"] = list(self.demag_T)
+        if self.dipolar_lorentz is not None:
+            payload["dipolar_lorentz"] = self.dipolar_lorentz.to_json()
         return payload
 
     @classmethod
@@ -393,7 +399,17 @@ class MagneticFieldDistributionResult:
             ),
             applied_T=None if payload.get("applied_T") is None else _tuple3(payload["applied_T"]),
             demag_T=None if payload.get("demag_T") is None else _tuple3(payload["demag_T"]),
+            dipolar_lorentz=_optional_term_from_json(payload.get("dipolar_lorentz")),
         )
+
+
+def _optional_term_from_json(raw_term: object) -> FieldTermStatistics | None:
+    if not isinstance(raw_term, Mapping):
+        return None
+    try:
+        return FieldTermStatistics.from_json(raw_term)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _terms_from_json(raw_terms: object) -> dict[str, FieldTermStatistics]:
@@ -934,6 +950,8 @@ def calculate_commensurate_fields(
 
     applied = _as_vector(opts.applied_field, "applied_field")
     demag = _demag_field(structure, models, opts)
+    parameters = _contact_calculation_parameters(opts)
+    parameters["modulated"] = _has_modulated_component(models)
     results: list[MagneticFieldResult] = []
     for index, (label, position) in enumerate(muons):
         distortion = distortions[index]
@@ -953,7 +971,7 @@ def calculate_commensurate_fields(
                         _distortion_changes(models, distortion, opts), (0, 0, 0)
                     )
                 ),
-                calculation_parameters=_contact_calculation_parameters(opts),
+                calculation_parameters=dict(parameters),
             )
         )
     return tuple(results)
@@ -1023,6 +1041,8 @@ def calculate_commensurate_approximant_fields(
     )
     applied = _as_vector(opts.applied_field, "applied_field")
     demag = _demag_field(structure, approximant_models, opts)
+    parameters = _contact_calculation_parameters(opts)
+    parameters["modulated"] = _has_modulated_component(approximant_models)
 
     terms_by_translation = []
     for translation in translations:
@@ -1065,10 +1085,77 @@ def calculate_commensurate_approximant_fields(
                     distortion=(
                         None if changes is None else _distortion_correction(changes, translation)
                     ),
-                    calculation_parameters=_contact_calculation_parameters(opts),
+                    calculation_parameters=dict(parameters),
                 )
             )
     return tuple(results)
+
+
+def _is_uniform_wavevector(k_rlu: Sequence[float]) -> bool:
+    """Return whether ``k_rlu`` is a reciprocal lattice vector, so the mode is the same in every cell."""
+
+    k = np.asarray(k_rlu, dtype=float)
+    return bool(np.allclose(k, np.round(k), rtol=0.0, atol=1e-10))
+
+
+def _long_wavelength_direction(structure: Structure, k_rlu: Sequence[float]) -> np.ndarray | None:
+    """Return ``q̂ q̂`` for the shortest wavevector equivalent to ``k_rlu``, or ``None`` if uniform.
+
+    ``k_rlu`` is in reciprocal lattice units of ``structure``. On the lattice
+    sites a mode ``k`` is indistinguishable from ``k + G`` for every reciprocal
+    lattice vector ``G``, so its long-wavelength part has the shortest of those
+    wavevectors. The search folds ``k`` into a reduced reciprocal basis and
+    tries the 27 cells around it, which finds the shortest one in a sheared
+    cell too. At a zone-boundary point several shortest wavevectors tie; their
+    ``q̂ q̂`` are averaged, so the result does not depend on rounding.
+    """
+
+    if _is_uniform_wavevector(k_rlu):
+        return None
+    # Rows are the reciprocal basis vectors (without 2 pi), so q = k @ reciprocal.
+    reciprocal = np.linalg.inv(np.asarray(structure.lattice_vectors, dtype=float)).T
+    reduced, _transform = reduced_lattice(reciprocal)
+    q = np.asarray(k_rlu, dtype=float).reshape(3) @ reciprocal
+    coordinates = q @ np.linalg.inv(reduced)
+    offsets = np.indices((3, 3, 3)).reshape(3, -1).T - 1
+    candidates = (coordinates - np.rint(coordinates) - offsets) @ reduced
+    lengths = np.linalg.norm(candidates, axis=1)
+    shortest = candidates[lengths <= lengths.min() * (1.0 + 1e-9)]
+    unit = shortest / np.linalg.norm(shortest, axis=1)[:, np.newaxis]
+    return np.einsum("ni,nj->ij", unit, unit) / len(unit)
+
+
+def _continuum_field_projector(structure: Structure, k_rlu: Sequence[float]) -> np.ndarray:
+    """Return the matrix that turns the backend's Lorentz term into the full continuum field.
+
+    The lattice sum runs over the ions inside a sphere of radius ``R``; the
+    magnetisation outside it is treated as a continuum. For a Fourier mode
+    ``M exp(i q . r)`` that continuum gives, at the sphere's centre,
+
+    ``B_out = -mu0 (3 q̂ q̂ - 1) . M j1(qR) / (qR)``.
+
+    The backend's Lorentz term is ``(mu0 / 3)`` times the mean moment density
+    inside the sphere, which for the same mode is ``mu0 M j1(qR) / (qR)``: the
+    ``+1`` part alone. So ``B_out = (1 - 3 q̂ q̂) . B_Lorentz``, and this returns
+    ``1 - 3 q̂ q̂`` for the mode's shortest wavevector
+    (:func:`_long_wavelength_direction`). A uniform mode returns the identity:
+    its outside field is the demagnetizing term's, which depends on the sample
+    shape.
+    """
+
+    direction = _long_wavelength_direction(structure, k_rlu)
+    return np.eye(3) if direction is None else np.eye(3) - 3.0 * direction
+
+
+def _has_modulated_component(models: Sequence[MuesrModelData]) -> bool:
+    """Return whether any Fourier component has ``q != 0`` modulo a reciprocal lattice vector.
+
+    For such a component the split between the lattice sum (``Dipolar``) and
+    the continuum outside the sphere (``Lorentz``) depends on the sphere
+    radius; only their sum is physical.
+    """
+
+    return any(not _is_uniform_wavevector(model_data.k_rlu) for model_data in models)
 
 
 def _commensurate_field_terms(
@@ -1085,6 +1172,7 @@ def _commensurate_field_terms(
     lorentz = [np.zeros(3, dtype=float) for _ in positions]
     contact = [np.zeros(3, dtype=float) for _ in positions]
     for model_data in models:
+        continuum = _continuum_field_projector(structure, model_data.k_rlu)
         sample = _build_muesr_sample(structure, positions)
         sample.new_mm()
         sample.mm.k = model_data.k_rlu
@@ -1103,7 +1191,7 @@ def _commensurate_field_terms(
                 local_field.ACont = float(options.contact_coupling)
             dipolar[index] += _field_vector(local_field, "Dipolar", "D")
             if options.include_lorentz:
-                lorentz[index] += _field_vector(local_field, "Lorentz", "L")
+                lorentz[index] += continuum @ _field_vector(local_field, "Lorentz", "L")
             contact[index] += _field_vector(local_field, "Contact", "C")
     return dipolar, lorentz, contact
 
@@ -1325,6 +1413,7 @@ def calculate_incommensurate_field_distributions(
         random_seed=phase_sampling_seed,
         max_grid_samples=int(opts.max_grid_samples),
     )
+    calculation_parameters["modulated"] = _has_modulated_component(models)
     calculation_parameters["independent_q_indices"] = list(active_q_indices)
     calculation_parameters["phase_basis_rlu"] = phase_basis_rlu.tolist()
     calculation_parameters["phase_sample_count"] = int(phase_samples_turns.shape[0])
@@ -1364,6 +1453,7 @@ def calculate_incommensurate_field_distributions(
     ]
 
     for entry_index, (mode, phase_coeff, model_entry) in enumerate(backend_entries):
+        continuum = _continuum_field_projector(structure, model_entry.k_rlu)
         sample = _build_muesr_sample(structure, [position for _label, position in muons])
         sample.new_mm()
         sample.mm.k = model_entry.k_rlu
@@ -1386,7 +1476,7 @@ def calculate_incommensurate_field_distributions(
                 local_field.ACont = float(opts.contact_coupling)
             dip = _field_array(local_field, "Dipolar", "D", nangles=int(opts.nangles))
             lor = (
-                _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles))
+                _field_array(local_field, "Lorentz", "L", nangles=int(opts.nangles)) @ continuum.T
                 if opts.include_lorentz
                 else np.zeros_like(dip)
             )
@@ -1499,6 +1589,9 @@ def calculate_incommensurate_field_distributions(
                 total_rms_T=float(np.sqrt(np.mean(magnitudes**2))),
                 applied_T=_tuple3(applied),
                 demag_T=_tuple3(demag),
+                dipolar_lorentz=_sampled_term_statistics(
+                    term_fields["dipolar"] + term_fields["lorentz"]
+                ),
             )
         )
     return tuple(results)
@@ -2168,8 +2261,7 @@ def _bulk_magnetization_field(structure: Structure, models: Sequence[MuesrModelD
 
     moment = np.zeros(3, dtype=float)
     for model_data in models:
-        k_rlu = np.asarray(model_data.k_rlu, dtype=float)
-        if np.allclose(k_rlu, np.round(k_rlu), rtol=0.0, atol=1e-10):
+        if _is_uniform_wavevector(model_data.k_rlu):
             moment += np.sum(np.asarray(model_data.fc, dtype=complex), axis=0).real
     volume = abs(float(np.linalg.det(np.asarray(structure.lattice_vectors, dtype=float))))
     return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment / volume

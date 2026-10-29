@@ -256,7 +256,9 @@ Beyond the dipolar sum, the field calculation includes:
 
 - the Lorentz field. It is part of the Lorentz-sphere evaluation of the
   dipolar sum, not an optional extra, so it is always included and reported as
-  its own term (see `Field Terms`_);
+  its own term (see `Field Terms`_). For order modulated at ``q != 0`` it
+  includes the continuum term along ``q`` (see `The Continuum Outside the
+  Sphere`_);
 - the contact hyperfine term, when a ``Hyperfine coupling`` is entered, from
   the moments of the contact shell set in ``Calculation Settings`` (see
   :ref:`Choose the contact shell
@@ -270,6 +272,62 @@ Beyond the dipolar sum, the field calculation includes:
 Dipolar tensors from selected magnetic-ion positions and the nuclear-relaxation
 distortion correction are available through their own dialogs.
 
+.. _magnetic-fields-continuum:
+
+The Continuum Outside the Sphere
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The lattice sum covers the ions inside a sphere of radius :math:`R` around the
+muon; the ions outside it are treated as a magnetised continuum. For one Fourier
+mode :math:`\mathbf{M}\, e^{i\mathbf{q}\cdot\mathbf{r}}` of the magnetisation, the
+continuum outside the sphere gives at its centre
+
+.. math::
+
+   \mathbf{B}_\mathrm{out} =
+   -\mu_0 \left(3\hat{\mathbf{q}}\hat{\mathbf{q}} - 1\right)\cdot\mathbf{M}\,
+   \frac{j_1(qR)}{qR},
+
+where :math:`j_1` is the spherical Bessel function of order one. It follows from
+integrating the dipolar kernel :math:`(3\hat{\mathbf{r}}\hat{\mathbf{r}} - 1)/r^3`
+over :math:`r > R` against the plane-wave expansion of
+:math:`e^{i\mathbf{q}\cdot\mathbf{r}}`: only its :math:`l = 2` term survives the
+angular integral, and :math:`\int_{qR}^\infty j_2(t)\,dt/t = j_1(qR)/(qR)`
+(M. Abramowitz and I. A. Stegun, *Handbook of Mathematical Functions*, §10.1).
+
+``muesr`` reports the ``+1`` part alone: its Lorentz field is :math:`\mu_0/3`
+times the mean moment density inside the sphere, which for the same mode is
+:math:`\mathbf{B}_\mathrm{Lor} = \mu_0 \mathbf{M}\, j_1(qR)/(qR)`. MuFinder adds
+the rest, :math:`-3\hat{\mathbf{q}}(\hat{\mathbf{q}}\cdot\mathbf{B}_\mathrm{Lor})`,
+for every Fourier component on the commensurate, approximant and distribution
+paths, so the reported ``Lorentz`` term is
+:math:`(1 - 3\hat{\mathbf{q}}\hat{\mathbf{q}})\cdot\mathbf{B}_\mathrm{Lor}`. Here
+:math:`\mathbf{q}` is the shortest wavevector equivalent to the component's,
+since on the lattice a mode at :math:`\mathbf{q}` is the same as one at
+:math:`\mathbf{q} + \mathbf{G}` for any reciprocal lattice vector
+:math:`\mathbf{G}`. At a zone-boundary point, where several shortest
+wavevectors tie, their :math:`\hat{\mathbf{q}}\hat{\mathbf{q}}` are averaged; the
+Lorentz field of such a short-period mode is close to zero in any case. A
+component at :math:`\mathbf{q} = \mathbf{G}` is uniform:
+its field from outside the sphere is the demagnetizing field of the sample
+shape (see :doc:`magnetic_fields`).
+
+The added term vanishes for moments perpendicular to :math:`\mathbf{q}`, so
+helices and transverse spin-density waves are unchanged. It matters for a moment
+component along :math:`\mathbf{q}`, as in a longitudinal spin-density wave or a
+cycloid, when the period is not small next to :math:`R`. In the long-wavelength
+limit a longitudinal mode in a cubic environment gives
+:math:`-2\mu_0 \mathbf{M}/3` and a transverse one :math:`\mu_0 \mathbf{M}/3`.
+With the term, the field no longer depends on the sphere radius. The test suite
+checks this for a 292 Å spin-density wave, cycloid and helix on a simple cubic
+lattice against a sum over whole lattice planes, which needs no sphere: the
+fields agree within 1 % for radii of 40 Å to 200 Å.
+
+How the field divides between the lattice sum and the continuum still depends on
+:math:`R` for such a mode, even though their sum does not. For that reason a
+result whose model has any enabled component at ``q != 0`` shows the two as one
+``Dipolar (incl. Lorentz)`` term (see `Field Terms`_).
+
 .. _magnetic-fields-field-terms:
 
 Field Terms
@@ -282,6 +340,14 @@ that sum to its field: ``Dipolar``, ``Lorentz``, ``Contact``,
 by their ``Total``. A newly calculated or restored commensurate result selects
 its first row. With several rows selected, the first selected row is shown. A
 saved result that stores only its total asks for a recalculation instead.
+
+When any enabled component of the model has ``q != 0`` (not a reciprocal
+lattice vector), the ``Dipolar`` and ``Lorentz`` rows are replaced by one
+``Dipolar (incl. Lorentz)`` row, their sum, because only the sum is independent
+of the sphere radius (see `The Continuum Outside the Sphere`_). This applies to
+commensurate, approximant and distribution rows. A model whose components are
+all uniform keeps the two rows, and so does a saved result that does not record
+whether its model is modulated.
 
 Selecting a distribution row lists the same terms without a separate distortion
 correction, which a corrected distribution includes in its dipolar and contact

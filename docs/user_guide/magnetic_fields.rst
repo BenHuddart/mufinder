@@ -63,7 +63,7 @@ A typical pass through the page is:
    .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
       :alt: The Magnetic Fields page with the MnSi helix distribution at site
             II selected: a mean |B| of 0.154303 T, every term mean 0, RMS
-            magnitudes of 0.0809557 T dipolar, 0.000360636 T Lorentz,
+            magnitudes of 0.0811718 T dipolar including Lorentz,
             0.194362 T contact and 0.159547 T in total, and three passing
             convergence checks.
 
@@ -727,7 +727,7 @@ the full term breakdown of a commensurate result.
 .. figure:: ../_generated/screenshots/mnsi_approximant_fields.webp
    :alt: The Magnetic Fields page listing 64 fields of the commensurate
          approximant q = (1/64, 1/64, 1/64) of the MnSi helix at site II, the
-         first row's field of 0.118082 T and its dipolar, Lorentz, contact,
+         first row's field of 0.118082 T and its dipolar (incl. Lorentz), contact,
          demagnetizing and applied terms.
 
    The 64 fields of the approximant of the helix in
@@ -1011,7 +1011,9 @@ at the muon comes from two surfaces:
 - the surface of the Lorentz sphere gives the ``Lorentz`` field,
   :math:`\mathbf{B}_\mathrm{Lor} = \mu_0 \mathbf{M}_\mathrm{Lor} / 3`. ``muesr``
   takes :math:`\mathbf{M}_\mathrm{Lor}` as the sum of the moments inside the
-  sphere divided by its volume;
+  sphere divided by its volume. For order modulated at ``q != 0`` the continuum
+  also gives a field along ``q``, which MuFinder adds to the ``Lorentz`` term
+  (see :ref:`magnetic-fields-continuum`);
 - the surface of the sample gives the ``Demagnetizing`` field,
 
   .. math::
