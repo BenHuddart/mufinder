@@ -109,7 +109,6 @@ def patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
                 cluster_name="alpha",
                 working_directory="/remote/work",
                 username="alice",
-                job_name_prefix="conv",
                 num_processes=16,
                 walltime="01:00:00",
             )

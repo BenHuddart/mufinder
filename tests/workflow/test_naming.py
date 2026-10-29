@@ -8,7 +8,6 @@ from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import WorkflowStage
 from mufinder.workflow.naming import (
     cluster_workflow_directory_fragment,
-    default_cluster_job_name_prefix,
     job_name,
     sanitize_remote_path_component,
     sanitize_remote_path_fragment,
@@ -47,22 +46,6 @@ def test_sanitize_remote_path_fragment_keeps_separators_and_drops_empty_parts() 
         == "muon_relaxation/positive_muon"
     )
     assert sanitize_remote_path_fragment(" / ") == "workflow"
-
-
-@pytest.mark.parametrize(
-    ("workflow_type", "expected"),
-    [
-        ("pristine_relaxation", "pristine_relax"),
-        ("/uep/", "uep"),
-        ("muon_relaxation/positivemuon", "positivemuon"),
-        ("muon_relaxation/muonium", "muonium"),
-        ("convergence_cutoff", "convergence"),
-        ("mixed_workflows", "convergence"),
-        (None, "convergence"),
-    ],
-)
-def test_default_cluster_job_name_prefix(workflow_type: str | None, expected: str) -> None:
-    assert default_cluster_job_name_prefix(workflow_type) == expected
 
 
 def test_cluster_workflow_directory_fragment() -> None:

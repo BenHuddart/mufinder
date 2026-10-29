@@ -603,8 +603,8 @@ no two workflow widgets may define the same private method.
        is ``mufinder.science.site_generation``.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
-       submission: the workflow directory fragment, the default scheduler
-       job-name prefix and remote path sanitising.
+       submission: the workflow directory fragment and remote path
+       sanitising.
    * - ``mufinder.workflow.energy_barriers``
      - Besides NEB expansion, the merge and per-pair replacement of serialized
        diffusion-path sources and the removal of stored placeholder

@@ -3,10 +3,9 @@
 :func:`job_name` names a job from a prefix and suffix. The remote helpers name
 the cluster side of a submission: :func:`cluster_workflow_directory_fragment`
 is the working-directory fragment for a batch of jobs (and the key the
-last-used cluster submission settings are stored under),
-:func:`default_cluster_job_name_prefix` the scheduler job-name prefix offered
-for that fragment, and :func:`sanitize_remote_path_component` /
-:func:`sanitize_remote_path_fragment` keep both to remote-safe characters.
+last-used cluster submission settings are stored under), and
+:func:`sanitize_remote_path_component` / :func:`sanitize_remote_path_fragment`
+keep it to remote-safe characters.
 """
 
 from __future__ import annotations
@@ -57,27 +56,6 @@ def sanitize_remote_path_fragment(value: str) -> str:
         sanitize_remote_path_component(part) for part in value.strip().split("/") if part.strip()
     ]
     return "/".join(parts) or "workflow"
-
-
-def default_cluster_job_name_prefix(workflow_type: str | None) -> str:
-    """Return the scheduler job-name prefix offered for ``workflow_type``.
-
-    ``pristine_relaxation`` gives ``pristine_relax``, ``uep`` gives ``uep``, a
-    fragment ending in ``positivemuon`` or ``muonium`` gives that charge state,
-    and anything else gives ``convergence``.
-    """
-
-    normalized = (workflow_type or "").strip().strip("/")
-    workflow_defaults = {
-        "pristine_relaxation": "pristine_relax",
-        "uep": "uep",
-    }
-    if normalized in workflow_defaults:
-        return workflow_defaults[normalized]
-    last_component = normalized.rsplit("/", 1)[-1]
-    if last_component in {"positivemuon", "muonium"}:
-        return last_component
-    return "convergence"
 
 
 def cluster_workflow_directory_fragment(jobs: Sequence[Job]) -> str:

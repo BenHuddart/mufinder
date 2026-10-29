@@ -118,9 +118,8 @@ settings for this submission.
    it is. The dialog refuses a walltime above the queue's maximum and a queue
    name that would need quoting. The last-used queue is remembered per project
    with the other last-used settings.
-3. Check ``Remote working directory``, ``Username`` and ``Job name prefix``,
-   then set ``Processor cores per job`` and ``Maximum runtime``
-   (``HH:MM:SS``).
+3. Check ``Remote working directory`` and ``Username``, then set
+   ``Processor cores per job`` and ``Maximum runtime`` (``HH:MM:SS``).
 4. Set the memory request. For a SLURM cluster tick ``Memory per CPU (GB)`` to
    request memory per allocated CPU; it is off by default, so jobs are
    submitted with no memory directive (see :ref:`slurm-memory-requests`). For
@@ -140,6 +139,10 @@ the cluster's scheduler.
   script and left out when the template already names one with ``-p`` or
   ``--partition`` (as the built-in SCARF template does), so a hand-written
   partition wins.
+- The job template's ``$job_name`` is the job's CASTEP seed name, so a SLURM
+  queue lists each job under its own label (``cutoff_convergence_ecut_400``,
+  ``quantum_phonon_…``, ``barrier_…``), and a batch mixing workflows keeps each
+  job's own name.
 - On Redwood, MuFinder submits with ``addqueue``, using the chosen queue,
   ``Memory per core (GB)`` and ``Submission note``.
 - Cluster submission refuses job labels containing anything other than letters,
