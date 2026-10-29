@@ -227,7 +227,9 @@ def test_local_runner_gives_castep_the_users_thread_settings(
 ) -> None:
     # MuFinder capped OpenBLAS and MKL for itself; the user chose OMP_NUM_THREADS.
     for name in native_threads_module.THREAD_POOL_VARIABLES:
-        monkeypatch.delenv(name, raising=False)
+        # setenv first, so monkeypatch also removes the caps set below.
+        monkeypatch.setenv(name, "1")
+        monkeypatch.delenv(name)
     monkeypatch.setenv("OMP_NUM_THREADS", "2")
     monkeypatch.setattr(native_threads_module, "_capped_variables", ())
     native_threads_module.cap_native_thread_pools()

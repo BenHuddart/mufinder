@@ -9,7 +9,7 @@ anything imports NumPy, because the libraries read these variables only when the
 load.
 
 The cap is MuFinder's own: :func:`capped_thread_variables` names the values it set,
-and the local runner removes them, so CASTEP runs see the user's environment
+and the local runner removes them, so CASTEP jobs see the user's environment
 unchanged. This module uses only the standard library, so the entry point can
 import it before the splash screen without loading anything heavy.
 """
@@ -36,13 +36,15 @@ def cap_native_thread_pools(
 ) -> tuple[str, ...]:
     """Cap each native thread pool the user has not sized; return the names set.
 
-    A variable the user already set to a non-empty value is kept as it is. Call
-    this before NumPy, SciPy or anything else that loads BLAS is imported.
+    A variable the user already set, to any value, is kept as it is. Call this
+    before NumPy, SciPy or anything else that loads BLAS is imported.
     """
 
     global _capped_variables
+    if threads < 1:
+        raise ValueError(f"A thread pool needs at least one thread, not {threads}.")
     target = os.environ if environ is None else environ
-    capped = tuple(name for name in THREAD_POOL_VARIABLES if not target.get(name))
+    capped = tuple(name for name in THREAD_POOL_VARIABLES if name not in target)
     for name in capped:
         target[name] = str(threads)
     if environ is None:

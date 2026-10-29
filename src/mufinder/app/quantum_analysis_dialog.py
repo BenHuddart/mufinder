@@ -207,13 +207,28 @@ class QuantumPhononAnalysisDialog(QDialog):
     def _add_lazy_tab(self, tabs: QTabWidget, title: str, build: Callable[[QWidget], None]) -> None:
         page = QWidget()
         page.setObjectName("quantumAnalysisTabPage")
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
         self._unbuilt_tabs[page] = build
         tabs.addTab(page, title)
 
     def _build_tab_if_needed(self, page: QWidget | None) -> None:
         build = self._unbuilt_tabs.pop(page, None)
-        if build is not None:
-            build(page)
+        if build is None:
+            return
+        content = QWidget(page)
+        try:
+            build(content)
+        except Exception as exc:  # noqa: BLE001 - shown on the tab instead of opening.
+            # Built on open, these tabs failed the whole window; built on first
+            # show, the failure stays on the tab and the rest of the window works.
+            content.setParent(None)
+            content.deleteLater()
+            content = QLabel(f"Could not compute this tab: {exc}", page)
+            content.setWordWrap(True)
+            content.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            style_warning_text(content)
+        page.layout().addWidget(content)
 
     def _phonon_modes_tab(self) -> QWidget:
         tab = QWidget()
@@ -697,11 +712,11 @@ class QuantumPhononAnalysisDialog(QDialog):
             return
         mode = self._selected_phonon_mode()
         if mode is None:
-            viewer.set_structure(
-                self._phonon_structure
-            ) if not self._phonon_view_initialized else viewer.update_structure_geometry_preserving_view(
-                self._phonon_structure
-            )
+            if self._phonon_view_initialized:
+                viewer.update_structure_geometry_preserving_view(self._phonon_structure)
+            else:
+                viewer.set_structure(self._phonon_structure)
+                self._phonon_vectors_shown = False
             self._show_phonon_vectors(viewer, None)
             self._phonon_view_initialized = True
             return
@@ -717,6 +732,8 @@ class QuantumPhononAnalysisDialog(QDialog):
         structure = self._structure_with_cartesian_displacements(animated_displacements)
         if not self._phonon_view_initialized or getattr(viewer, "_structure", None) is None:
             viewer.set_structure(structure)
+            # A new structure starts without overlays.
+            self._phonon_vectors_shown = False
             self._phonon_view_initialized = True
         else:
             viewer.update_structure_geometry_preserving_view(structure)
@@ -734,7 +751,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         if overlays is None and not self._phonon_vectors_shown:
             return
         viewer.set_line_overlays(overlays)
-        self._phonon_vectors_shown = overlays is not None
+        self._phonon_vectors_shown = bool(overlays)
 
     def _structure_with_cartesian_displacements(self, displacements_ang: np.ndarray) -> Structure:
         cartesian = self._phonon_equilibrium_cartesian_positions + np.asarray(

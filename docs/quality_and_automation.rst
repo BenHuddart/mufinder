@@ -697,14 +697,14 @@ anything imports NumPy (the libraries read the variables once, when they load):
 
 - ``OPENBLAS_NUM_THREADS``, ``OMP_NUM_THREADS`` and ``MKL_NUM_THREADS`` are each
   set to ``4``;
-- a variable the user's environment already sets to a non-empty value is kept;
+- a variable the user's environment already sets, to any value, is kept;
 - the cap is MuFinder's own: the local runner removes the variables it set
   before starting CASTEP (:doc:`/job_lifecycle`, Local runner behavior).
 
 Setting environment variables is cheap, so nothing heavyweight runs before the
-splash screen. A computation that needs more threads raises the limit locally
-(for example with ``threadpoolctl.threadpool_limits``) instead of changing the
-startup cap.
+splash screen. A computation that needs more threads raises the limit around
+that call, with ``threadpoolctl.threadpool_limits`` added as a dependency,
+instead of changing the startup cap.
 
 One 401 × 401 ``numpy.linalg.eigh`` (median of five) on a 20-core machine, with
 other cores kept busy by spinning processes:
@@ -735,24 +735,10 @@ other cores kept busy by spinning processes:
 
 Quantum Corrections' analysis window builds only the tab it opens on
 (``Phonon Modes``) and refreshes its structure viewer once; the other tabs are
-built the first time they are shown. Opening the window for the GdRu₂Si₂ site 1
-phonon fixture (``tests/fixtures/gdru2si2``, 41 atoms; median of five opens,
-construct, show and process events):
-
-.. list-table::
-   :header-rows: 1
-
-   * - Build
-     - Idle
-     - 4 cores busy
-   * - Every tab, default pools, two viewer refreshes
-     - 1.59 s
-     - 5.1 s
-   * - Shown tab only, capped pools, one viewer refresh
-     - 0.78 s
-     - 0.78 s
-
-What remains is the structure viewer: creating it and its first
+built the first time they are shown. On the same machine it opens the GdRu₂Si₂
+site 1 phonon fixture (``tests/fixtures/gdru2si2``, 41 atoms) in 0.78 s, idle
+or with four cores busy (median of five opens: construct, show and process
+events). Almost all of that is the structure viewer: creating it and its first
 ``set_structure``.
 
 Targeted local execution checks

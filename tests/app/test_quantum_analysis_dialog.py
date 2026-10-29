@@ -8,7 +8,7 @@ from math import pi
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton
+from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton, QWidget
 
 import mufinder.app.quantum_analysis_dialog as quantum_analysis_dialog_module
 from mufinder.app.math_label import MathLabel
@@ -104,8 +104,8 @@ def test_opening_the_analysis_window_builds_only_the_shown_tab(
     assert tabs.currentIndex() == 0
     assert solves == []
     assert pair_matrices == []
-    assert tabs.widget(1).layout() is None
-    assert tabs.widget(2).layout() is None
+    assert tabs.widget(1).findChildren(QWidget) == []
+    assert tabs.widget(2).findChildren(QWidget) == []
     assert dialog.single_particle_results == ()
 
     _show_tab(dialog, "Mode wells and widths")
@@ -124,6 +124,30 @@ def test_opening_the_analysis_window_builds_only_the_shown_tab(
     assert dialog._single_particle_table is single_particle_table
     assert len(solves) == 3
     assert len(pair_matrices) == 1
+
+    dialog.close()
+
+
+def test_a_tab_that_fails_to_compute_says_so_and_leaves_the_window_working(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    def failing_solve(_potential):
+        raise ValueError("the well has no bound state")
+
+    monkeypatch.setattr(
+        quantum_analysis_dialog_module, "solve_single_particle_ground_state", failing_solve
+    )
+    dialog = _open_dialog(tmp_path)
+
+    tabs = _show_tab(dialog, "Mode wells and widths")
+
+    page = tabs.widget(1)
+    messages = [label.text() for label in page.findChildren(QLabel)]
+    assert messages == ["Could not compute this tab: the well has no bound state"]
+    _show_tab(dialog, "Muon Coupling")
+    assert dialog._w2_label.text().startswith("w₂ = ")
+    _show_tab(dialog, "Mode wells and widths")
+    assert [label.text() for label in page.findChildren(QLabel)] == messages
 
     dialog.close()
 

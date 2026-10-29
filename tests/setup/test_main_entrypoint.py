@@ -26,7 +26,10 @@ def _unsized_thread_pools(monkeypatch):
     """Start every test with no thread-pool variables, and restore them afterwards."""
 
     for name in native_threads_module.THREAD_POOL_VARIABLES:
-        monkeypatch.delenv(name, raising=False)
+        # setenv first, so monkeypatch removes what run() sets even when the
+        # variable was absent (delenv of an absent name records nothing to undo).
+        monkeypatch.setenv(name, "1")
+        monkeypatch.delenv(name)
     monkeypatch.setattr(native_threads_module, "_capped_variables", ())
 
 

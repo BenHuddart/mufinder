@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import mufinder.native_threads as native_threads
 
 
@@ -19,17 +21,26 @@ def test_cap_sets_every_unsized_pool_to_four() -> None:
     }
 
 
-def test_cap_keeps_the_users_values_and_treats_an_empty_value_as_unset() -> None:
+def test_cap_keeps_every_value_the_user_set() -> None:
     environ = {"OPENBLAS_NUM_THREADS": "16", "OMP_NUM_THREADS": ""}
 
     capped = native_threads.cap_native_thread_pools(environ, threads=2)
 
-    assert capped == ("OMP_NUM_THREADS", "MKL_NUM_THREADS")
+    assert capped == ("MKL_NUM_THREADS",)
     assert environ == {
         "OPENBLAS_NUM_THREADS": "16",
-        "OMP_NUM_THREADS": "2",
+        "OMP_NUM_THREADS": "",
         "MKL_NUM_THREADS": "2",
     }
+
+
+def test_cap_refuses_a_pool_without_threads() -> None:
+    environ: dict[str, str] = {}
+
+    with pytest.raises(ValueError, match="at least one thread"):
+        native_threads.cap_native_thread_pools(environ, threads=0)
+
+    assert environ == {}
 
 
 def test_only_the_process_environment_is_recorded_for_child_processes(monkeypatch) -> None:
