@@ -1921,35 +1921,25 @@ def test_atomic_structure_viewer_draws_selection_overlay_and_routes_visibility_u
 
     add_calls: list[dict[str, object]] = []
 
-    class _FakeSphere:
-        def __init__(self, label: str) -> None:
-            self.label = label
-
-        def merge(self, other, *, inplace: bool = False):
-            assert inplace is False
-            return _FakeSphere(f"{self.label}+{other.label}")
-
     class _FakePlotter:
         def add_mesh(self, mesh, **kwargs):
             add_calls.append({"mesh": mesh, "kwargs": kwargs})
             return "selection-actor"
 
-    spheres = iter([_FakeSphere("first"), _FakeSphere("second")])
-    monkeypatch.setattr(
-        "mufinder.app.atomic_structure_viewer._build_pyvista_sphere_mesh",
-        lambda *_args, **_kwargs: next(spheres),
-    )
+    import pyvista as pv
 
+    positions = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=float)
     viewer._selected_indexes = [0, 5, 1]
     viewer._draw_pyvista_selection(
-        _FakePlotter(),
-        object(),
-        positions=np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=float),
-        radii=np.array([0.6, 0.45], dtype=float),
+        _FakePlotter(), pv, positions=positions, radii=np.array([0.6, 0.45], dtype=float)
     )
 
     assert viewer._pyvista_selection_actor == "selection-actor"
-    assert add_calls[0]["mesh"].label == "first+second"
+    assert viewer._pyvista_selection_atoms == (0, 1)
+    # One highlight sphere per drawn atom, 1.18 times its radius, in selection order.
+    spheres = np.asarray(add_calls[0]["mesh"].points).reshape(2, -1, 3)
+    assert np.allclose(spheres.mean(axis=1), positions, atol=1e-6)
+    assert np.allclose(np.ptp(spheres[:, :, 2], axis=1), 2 * 1.18 * np.array([0.6, 0.45]))
 
     bond_calls = {"count": 0}
     spin_calls = {"count": 0}

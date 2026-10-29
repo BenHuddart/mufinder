@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections import Counter
 from types import SimpleNamespace
 
+import numpy as np
+
 import pytest
 from PySide6.QtWidgets import QWidget
 
@@ -41,6 +43,14 @@ class FakeActor:
         self.mesh = mesh
         self.kwargs = {} if kwargs is None else dict(kwargs)
         self._property = FakeProperty()
+        # Like a PyVista actor's ``user_matrix``: the transform drawn on top of ``mesh``.
+        self.user_matrix = np.eye(4)
+
+    @property
+    def mapper(self):
+        """Like a PyVista actor's mapper: its ``dataset`` is the mesh the actor draws."""
+
+        return SimpleNamespace(dataset=self.mesh)
 
     def GetProperty(self):
         return self._property

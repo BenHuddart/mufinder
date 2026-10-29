@@ -419,3 +419,181 @@ def test_a_viewer_closed_before_it_is_shown_creates_no_render_window(qapp, monke
     viewer.show()
 
     assert interactors == []
+
+
+# --- Same-topology updates move the drawn atoms -------------------------------
+
+# Two bonded Si atoms 2.0 Å apart along x in a 5 Å cube.
+_bonded_pair = partial(host_structure, positions=((0.1, 0.2, 0.3), (0.5, 0.2, 0.3)))
+
+
+def _block_centres(mesh, count: int) -> np.ndarray:
+    """The centre of each of ``count`` equal point blocks of a glyph mesh."""
+
+    return np.asarray(mesh.points).reshape(count, -1, 3).mean(axis=1)
+
+
+def _assert_cylinder_between(actor, start: np.ndarray, end: np.ndarray) -> None:
+    """Assert that ``actor`` draws its cylinder, under its transform, from ``start`` to ``end``."""
+
+    points = np.asarray(actor.mesh.points, dtype=float)
+    centred = points - points.mean(axis=0)
+    built_axis = np.linalg.svd(centred, full_matrices=False)[2][0]
+    built_radius = np.linalg.norm(centred - np.outer(centred @ built_axis, built_axis), axis=1)
+    drawn = points @ actor.user_matrix[:3, :3].T + actor.user_matrix[:3, 3]
+    length = np.linalg.norm(end - start)
+    axis = (end - start) / length
+    along = (drawn - start) @ axis
+    across = np.linalg.norm(drawn - start - np.outer(along, axis), axis=1)
+    assert np.allclose([along.min(), along.max()], [0.0, length], atol=1e-5)
+    assert np.allclose(across, built_radius, atol=1e-5)
+
+
+def _scene_actors(viewer: AtomicStructureViewer) -> tuple[object, ...]:
+    return (
+        viewer._pyvista_atom_actor,
+        viewer._pyvista_pick_actor,
+        viewer._pyvista_selection_actor,
+        *viewer._pyvista_bond_actors,
+    )
+
+
+@pytest.fixture
+def bonded_viewer(viewer):
+    viewer._show_bonds.setChecked(True)
+    viewer.set_structure(_bonded_pair())
+    viewer.select_atoms([1])
+    return viewer
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        AtomicStructureViewer.set_structure_preserving_view,
+        AtomicStructureViewer.update_structure_geometry_preserving_view,
+    ],
+)
+def test_a_same_topology_update_moves_the_drawn_atoms_without_new_meshes(
+    bonded_viewer, monkeypatch, update
+) -> None:
+    viewer = bonded_viewer
+    actors = _scene_actors(viewer)
+    assert len(viewer._pyvista_bond_actors) == 2
+    renders = count_scene_renders(monkeypatch)
+    counter = _RenderCounter(viewer, monkeypatch)
+    moved = _bonded_pair(positions=((0.12, 0.2, 0.3), (0.54, 0.25, 0.3)))
+
+    update(viewer, moved)
+
+    assert counter.add_mesh_render_flags == []
+    assert renders[viewer] == 0
+    assert counter.main == 1
+    assert _scene_actors(viewer) == actors
+    expected = np.asarray(moved.fractional_positions) * 5.0
+    assert np.allclose(_block_centres(viewer._pyvista_atom_actor.mesh, 2), expected)
+    assert np.allclose(viewer._pyvista_pick_actor.mesh.points, expected)
+    assert np.allclose(_block_centres(viewer._pyvista_selection_actor.mesh, 1), expected[1])
+    # The bond is drawn as two half cylinders that meet at the new midpoint.
+    midpoint = expected.mean(axis=0)
+    first_half, second_half = viewer._pyvista_bond_actors
+    _assert_cylinder_between(first_half, expected[0], midpoint)
+    _assert_cylinder_between(second_half, midpoint, expected[1])
+    assert viewer.selected_atom_indices() == (1,)
+
+
+def test_moving_atoms_keeps_the_camera(bonded_viewer) -> None:
+    viewer = bonded_viewer
+    viewer._set_named_view("a")
+    camera = _camera(viewer)
+
+    viewer.set_structure_preserving_view(
+        _bonded_pair(positions=((0.1, 0.2, 0.3), (0.45, 0.2, 0.3)))
+    )
+
+    assert _camera(viewer) == camera
+
+
+def test_a_bond_that_breaks_redraws_only_the_bonds(bonded_viewer, monkeypatch) -> None:
+    viewer = bonded_viewer
+    atom_actor = viewer._pyvista_atom_actor
+    renders = count_scene_renders(monkeypatch)
+
+    viewer.set_structure_preserving_view(_bonded_pair(positions=((0.1, 0.2, 0.3), (0.9, 0.2, 0.3))))
+
+    assert renders[viewer] == 0
+    assert viewer._pyvista_atom_actor is atom_actor
+    assert viewer._pyvista_bond_actors == []
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        _bonded_pair(species=("Si", "O")),
+        _bonded_pair(lattice=5.5),
+        host_structure(species=("Si", "Si", "Si"), positions=((0, 0, 0), (0.4, 0, 0), (0, 0.4, 0))),
+    ],
+    ids=["species", "cell", "atom-count"],
+)
+def test_a_topology_change_rebuilds_the_scene(bonded_viewer, monkeypatch, changed) -> None:
+    viewer = bonded_viewer
+    renders = count_scene_renders(monkeypatch)
+
+    viewer.set_structure_preserving_view(changed)
+
+    assert renders[viewer] == 1
+    assert len(viewer._atoms) == len(changed.species)
+    assert list(viewer._atoms.get_chemical_symbols()) == list(changed.species)
+
+
+def test_preserving_the_view_still_clears_overlays_when_atoms_could_move(
+    bonded_viewer, monkeypatch
+) -> None:
+    viewer = bonded_viewer
+    viewer.set_point_overlays(_point_overlay())
+    renders = count_scene_renders(monkeypatch)
+
+    viewer.set_structure_preserving_view(
+        _bonded_pair(positions=((0.1, 0.2, 0.3), (0.45, 0.2, 0.3)))
+    )
+
+    assert renders[viewer] == 1
+    assert viewer._pyvista_point_overlay_actors == []
+
+
+def test_a_move_while_hidden_draws_once_when_shown(bonded_viewer, monkeypatch) -> None:
+    viewer = bonded_viewer
+    viewer.hide()
+    counter = _RenderCounter(viewer, monkeypatch)
+    moved = _bonded_pair(positions=((0.1, 0.2, 0.3), (0.45, 0.2, 0.3)))
+
+    viewer.set_structure_preserving_view(moved)
+    assert counter.main == 0
+
+    viewer.show()
+    assert counter.main == 1
+    assert counter.add_mesh_render_flags == []
+    assert np.allclose(viewer._pyvista_pick_actor.mesh.points[1], [2.25, 1.0, 1.5])
+
+
+def test_swapping_two_bonded_atoms_turns_each_half_bond_around(bonded_viewer, monkeypatch) -> None:
+    viewer = bonded_viewer
+    counter = _RenderCounter(viewer, monkeypatch)
+    swapped = _bonded_pair(positions=((0.5, 0.2, 0.3), (0.1, 0.2, 0.3)))
+
+    viewer.set_structure_preserving_view(swapped)
+
+    assert counter.add_mesh_render_flags == []
+    expected = np.asarray(swapped.fractional_positions) * 5.0
+    midpoint = expected.mean(axis=0)
+    first_half, second_half = viewer._pyvista_bond_actors
+    _assert_cylinder_between(first_half, expected[0], midpoint)
+    _assert_cylinder_between(second_half, midpoint, expected[1])
+
+
+def test_two_atoms_moved_onto_one_point_draw_no_bond(bonded_viewer) -> None:
+    viewer = bonded_viewer
+
+    viewer.set_structure_preserving_view(_bonded_pair(positions=((0.3, 0.2, 0.3), (0.3, 0.2, 0.3))))
+
+    assert viewer._pyvista_bond_actors == []
+    assert viewer._pyvista_bond_pieces == {}
