@@ -265,6 +265,34 @@ def test_parameter_dialog_roundtrip_values_and_advanced_rows(qapp) -> None:
     assert set(dialog.advanced_names()) == {"basis_precision"}
 
 
+@pytest.mark.parametrize("preferred", ["basis_precision", "cut_off_energy"])
+def test_parameter_dialog_constructor_seed_matches_the_setters(qapp, preferred) -> None:
+    seed = {
+        "xc_functional": "LDA",
+        "basis_precision": "PRECISE",
+        "cut_off_energy": ValueWithUnit(420.0, "eV"),
+    }
+    seeded = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+        values=dict(seed),
+        preferred_exclusive=preferred,
+        advanced_names={"basis_precision", "cut_off_energy"},
+        mixed_names={"xc_functional"},
+    )
+    stepwise = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    stepwise.set_values(dict(seed), preferred_exclusive=preferred)
+    stepwise.set_advanced_names({"basis_precision", "cut_off_energy"})
+    stepwise.set_mixed_names({"xc_functional"})
+
+    assert seeded.collect_values() == stepwise.collect_values()
+    assert seeded.advanced_names() == stepwise.advanced_names()
+    assert seeded.untouched_mixed_names() == stepwise.untouched_mixed_names() == {"xc_functional"}
+    assert list(seeded._rows) == list(stepwise._rows)
+    assert seeded._rows[preferred].radio.isChecked()  # type: ignore[union-attr]
+    assert seeded._mixed_markers["xc_functional"].isVisibleTo(seeded)
+
+
 def test_parameter_dialog_uses_rich_hubbard_u_editor_when_advanced(qapp) -> None:
     specs = [
         *_dialog_specs(),

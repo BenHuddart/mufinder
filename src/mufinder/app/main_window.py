@@ -5800,6 +5800,7 @@ class MainWindow(QMainWindow):
             return values, reference.advanced_names()
         finally:
             reference.close()
+            reference.deleteLater()
 
     def _continue_relaxation_row(
         self,

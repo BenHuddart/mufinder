@@ -264,23 +264,22 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
             intro_text: str | None = None,
             read_only: bool = False,
             species_options: tuple[str, ...] = (),
+            values: Mapping[str, object],
+            preferred_exclusive: str | None = None,
+            advanced_names: set[str],
+            mixed_names: set[str],
             parent: object | None = None,
         ) -> None:
-            del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
-
-        def set_values(
-            self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
-        ) -> None:
-            calls.append(("set_values", dict(values)))
-
-        def set_advanced_names(self, names: set[str]) -> None:
-            calls.append(("set_advanced_names", tuple(sorted(names))))
+            del specs, workflow_stage, locked_values, intro_text, read_only, species_options
+            del preferred_exclusive, mixed_names, parent
+            calls.append(("values", dict(values)))
+            calls.append(("advanced_names", tuple(sorted(advanced_names))))
 
         def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
             del title
 
-        def set_mixed_names(self, names: set[str]) -> None:
-            del names
+        def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+            calls.append(("deleteLater", None))
 
         def untouched_mixed_names(self) -> set[str]:
             return set()
@@ -299,7 +298,8 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
 
     widget._open_parameter_dialog((row_id,))
 
-    assert ("set_advanced_names", ("spin_polarized",)) in calls
+    assert ("advanced_names", ("spin_polarized",)) in calls
+    assert calls[-1] == ("deleteLater", None)
     assert widget._row_parameter_values[row_id]["task"] == "SINGLEPOINT"
     assert widget._row_parameter_values[row_id]["write_formatted_density"] is True
     assert widget._row_added_advanced[row_id] == {"spin_polarized"}
@@ -332,24 +332,22 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
             intro_text: str | None = None,
             read_only: bool = False,
             species_options: tuple[str, ...] = (),
+            values: Mapping[str, object],
+            preferred_exclusive: str | None = None,
+            advanced_names: set[str],
+            mixed_names: set[str],
             parent: object | None = None,
         ) -> None:
-            del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
-            self._payload = next(dialog_payloads)
-
-        def set_values(
-            self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
-        ) -> None:
+            del specs, workflow_stage, locked_values, intro_text, read_only, species_options
+            del preferred_exclusive, advanced_names, mixed_names, parent
             seen_values.append(dict(values))
-
-        def set_advanced_names(self, names: set[str]) -> None:
-            del names
+            self._payload = next(dialog_payloads)
 
         def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
             del title
 
-        def set_mixed_names(self, names: set[str]) -> None:
-            del names
+        def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+            pass
 
         def untouched_mixed_names(self) -> set[str]:
             return set()
