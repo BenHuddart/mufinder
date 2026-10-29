@@ -1,14 +1,30 @@
-"""Application-level text editing shortcut support."""
+"""Paste shortcut support for editable text widgets.
+
+The filter watches only the focused editable text widget, never the whole
+application: an application-wide Python event filter would run for every
+paint, timer and layout event in the app.
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit, QWidget
+from shiboken6 import isValid
+
+# Widgets whose key events the filter watches while they hold focus; an
+# editable combo box receives the keys its line edit edits.
+_WATCHED_WIDGET_TYPES = (QLineEdit, QPlainTextEdit, QTextEdit, QComboBox)
 
 
 class TextEditingShortcutFilter(QObject):
-    """Route standard text-editing shortcuts to focused editable text widgets."""
+    """Route the paste shortcut to the focused editable text widget.
+
+    Besides ``QKeySequence.StandardKey.Paste``, V with the Control or Meta
+    modifier and without Alt pastes, so both Command-V and Control-V work on
+    macOS. The filter is installed on the focused widget only
+    (``follow_focus``).
+    """
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt API naming.
         if event.type() == QEvent.Type.ShortcutOverride and _is_paste_event(event):
@@ -25,18 +41,45 @@ class TextEditingShortcutFilter(QObject):
         event.accept()
         return True
 
+    def follow_focus(self, old: QWidget | None, now: QWidget | None) -> None:
+        """Move the filter from the widget that lost focus to the one that gained it.
+
+        A completer's popup takes the keys while it is open, so the filter
+        watches the focused widget's completer popup too.
+        """
+
+        for watched in _watched_objects(old):
+            watched.removeEventFilter(self)
+        for watched in _watched_objects(now):
+            watched.installEventFilter(self)
+
 
 def install_text_editing_shortcuts(app: QApplication) -> None:
-    """Install standard text-editing shortcut handling once per QApplication."""
+    """Install paste shortcut handling once per QApplication.
+
+    The filter follows ``QApplication.focusChanged`` onto each focused text
+    widget; nothing is installed on the application itself.
+    """
 
     if getattr(app, "_mufinder_text_editing_shortcut_filter", None) is not None:
         return
-    install_filter = getattr(app, "installEventFilter", None)
-    if not callable(install_filter):
+    focus_changed = getattr(app, "focusChanged", None)
+    if focus_changed is None or not callable(getattr(app, "focusWidget", None)):
         return
     shortcut_filter = TextEditingShortcutFilter(app)
-    install_filter(shortcut_filter)
+    focus_changed.connect(shortcut_filter.follow_focus)
+    shortcut_filter.follow_focus(None, app.focusWidget())
     setattr(app, "_mufinder_text_editing_shortcut_filter", shortcut_filter)
+
+
+def _watched_objects(widget: QWidget | None) -> list[QWidget]:
+    if not isinstance(widget, _WATCHED_WIDGET_TYPES) or not isValid(widget):
+        return []
+    watched: list[QWidget] = [widget]
+    completer = widget.completer() if isinstance(widget, (QLineEdit, QComboBox)) else None
+    if completer is not None and isValid(completer):
+        watched.append(completer.popup())
+    return watched
 
 
 def _is_paste_event(event: QEvent) -> bool:

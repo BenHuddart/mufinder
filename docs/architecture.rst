@@ -329,6 +329,14 @@ no two workflow widgets may define the same private method.
        application, the screenshot renderer with its own and the test
        session's ``qapp`` fixture with the shared one; worker threads never
        call ``gc.collect()`` or hold the only reference to a Qt object.
+   * - ``mufinder.app.text_editing``
+     - The paste shortcut in editable text widgets
+       (``TextEditingShortcutFilter``, ``install_text_editing_shortcuts``):
+       V with Control or Meta pastes into the focused line edit, text edit,
+       plain text edit or editable combo box unless it is read-only or
+       disabled. The filter follows ``QApplication.focusChanged`` onto the
+       focused text widget and its completer popup and is never installed on
+       the application, so other events stay out of Python. ``mufinder.main`` installs it with the application.
    * - ``mufinder.app.pinned_sites_scope``
      - The "Show every relaxed site" check box, pinned-sites notice and
        ``Go to Muon Sites →`` link above a downstream site list
