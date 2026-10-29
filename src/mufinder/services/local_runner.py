@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Deque
 from uuid import UUID
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
+from mufinder.native_threads import capped_thread_variables
 from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.job_progress import castep_output_names
 
@@ -188,6 +189,14 @@ class LocalJobRunner(QObject):
     def _launch_process(self, request: _PendingJob) -> None:
         process = QProcess(self)
         process.setWorkingDirectory(str(request.job_dir))
+        # MuFinder caps its own BLAS/OpenMP pools at startup (mufinder.native_threads);
+        # CASTEP gets the user's environment without those caps.
+        capped = capped_thread_variables()
+        if capped:
+            environment = QProcessEnvironment.systemEnvironment()
+            for name in capped:
+                environment.remove(name)
+            process.setProcessEnvironment(environment)
 
         if request.num_cores > 1:
             process.setProgram(request.mpirun_path)

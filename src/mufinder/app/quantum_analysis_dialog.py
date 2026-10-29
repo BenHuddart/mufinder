@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import pi
 from time import perf_counter
@@ -9,7 +10,7 @@ from time import perf_counter
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -136,6 +137,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._muon_atom_index = self._calculation.atom_index_for_species("H:mu") - 1
         self._current_phonon_mode_row: int | None = None
         self._phonon_view_initialized = False
+        self._phonon_vectors_shown = False
         self._phonon_phase_radians = 0.0
         self._phonon_last_tick_seconds: float | None = None
         self._phonon_animation_timer = QTimer(self)
@@ -166,17 +168,19 @@ class QuantumPhononAnalysisDialog(QDialog):
             layout.addWidget(warning_label)
             self._muon_mass_warning_label = warning_label
 
+        # Only the first tab is built now; the others are built the first time
+        # they are shown, so opening the window does not pay for hidden tabs.
         tabs = QTabWidget()
         tabs.setObjectName("quantumAnalysisTabs")
+        self._unbuilt_tabs: dict[QWidget, Callable[[QWidget], None]] = {}
         tabs.addTab(self._phonon_modes_tab(), "Phonon Modes")
-        tabs.addTab(self._single_particle_tab(), "Mode wells and widths")
-        tabs.addTab(self._correlation_tab(), "Muon Coupling")
+        self._add_lazy_tab(tabs, "Mode wells and widths", self._build_single_particle_tab)
+        self._add_lazy_tab(tabs, "Muon Coupling", self._build_correlation_tab)
+        tabs.currentChanged.connect(lambda index: self._build_tab_if_needed(tabs.widget(index)))
         layout.addWidget(tabs, 1)
 
         self._populate_phonon_mode_table()
         self._select_default_phonon_mode_row()
-        self._solve_single_particle()
-        self._calculate_pair_matrices()
 
     @property
     def calculation(self) -> PhononCalculation:
@@ -192,9 +196,24 @@ class QuantumPhononAnalysisDialog(QDialog):
 
     @property
     def single_particle_results(self) -> tuple[SingleParticleResult, ...]:
-        """Return solved single-particle directions."""
+        """Return the solved single-particle directions.
+
+        The ``Mode wells and widths`` tab solves them the first time it is shown;
+        until then this is empty.
+        """
 
         return tuple(self._single_particle_results)
+
+    def _add_lazy_tab(self, tabs: QTabWidget, title: str, build: Callable[[QWidget], None]) -> None:
+        page = QWidget()
+        page.setObjectName("quantumAnalysisTabPage")
+        self._unbuilt_tabs[page] = build
+        tabs.addTab(page, title)
+
+    def _build_tab_if_needed(self, page: QWidget | None) -> None:
+        build = self._unbuilt_tabs.pop(page, None)
+        if build is not None:
+            build(page)
 
     def _phonon_modes_tab(self) -> QWidget:
         tab = QWidget()
@@ -292,9 +311,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         layout.addWidget(splitter, 1)
         return tab
 
-    def _single_particle_tab(self) -> QWidget:
-        tab = QWidget()
-        tab.setObjectName("quantumAnalysisTabPage")
+    def _build_single_particle_tab(self, tab: QWidget) -> None:
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
@@ -350,11 +367,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([480, 760])
         layout.addWidget(splitter, 1)
-        return tab
+        self._solve_single_particle()
 
-    def _correlation_tab(self) -> QWidget:
-        tab = QWidget()
-        tab.setObjectName("quantumAnalysisTabPage")
+    def _build_correlation_tab(self, tab: QWidget) -> None:
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
@@ -435,7 +450,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         correlation_layout.addStretch(1)
         matrices.addWidget(correlation_box, 0, 1)
         layout.addLayout(matrices, 1)
-        return tab
+        self._calculate_pair_matrices()
 
     def _solve_single_particle(self) -> None:
         half_range = float(self._range_spin.value()) if hasattr(self, "_range_spin") else 2.0
@@ -596,7 +611,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         row = self._default_phonon_mode_row()
         if row < 0:
             return
-        self._phonon_mode_table.selectRow(row)
+        # Select without the table's signal, then refresh the viewer once.
+        with QSignalBlocker(self._phonon_mode_table):
+            self._phonon_mode_table.selectRow(row)
         self._sync_selected_phonon_mode()
 
     def _selected_phonon_mode_row(self) -> int | None:
@@ -685,7 +702,7 @@ class QuantumPhononAnalysisDialog(QDialog):
             ) if not self._phonon_view_initialized else viewer.update_structure_geometry_preserving_view(
                 self._phonon_structure
             )
-            viewer.set_line_overlays(None)
+            self._show_phonon_vectors(viewer, None)
             self._phonon_view_initialized = True
             return
 
@@ -704,11 +721,20 @@ class QuantumPhononAnalysisDialog(QDialog):
         else:
             viewer.update_structure_geometry_preserving_view(structure)
         if self._phonon_show_vectors_checkbox.isChecked():
-            viewer.set_line_overlays(self._phonon_vector_overlays(full_displacements))
+            self._show_phonon_vectors(viewer, self._phonon_vector_overlays(full_displacements))
         else:
-            viewer.set_line_overlays(None)
+            self._show_phonon_vectors(viewer, None)
         if viewer.selected_atom_indices() != (self._muon_atom_index,):
             viewer.select_atoms([self._muon_atom_index])
+
+    def _show_phonon_vectors(
+        self, viewer: AtomicStructureViewer, overlays: list[dict[str, object]] | None
+    ) -> None:
+        # Clearing vectors that are not drawn would only cost the viewer a render.
+        if overlays is None and not self._phonon_vectors_shown:
+            return
+        viewer.set_line_overlays(overlays)
+        self._phonon_vectors_shown = overlays is not None
 
     def _structure_with_cartesian_displacements(self, displacements_ang: np.ndarray) -> Structure:
         cartesian = self._phonon_equilibrium_cartesian_positions + np.asarray(

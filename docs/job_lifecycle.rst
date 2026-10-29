@@ -407,6 +407,10 @@ Local runner behavior
 
 - Requests are validated for CASTEP executable, ``mpirun`` when multiple cores
   are requested, and the local job directory.
+- CASTEP starts with the user's environment. The thread-pool variables the
+  entry point set for MuFinder itself (``OPENBLAS_NUM_THREADS``,
+  ``OMP_NUM_THREADS``, ``MKL_NUM_THREADS``; see :doc:`/quality_and_automation`,
+  Native thread pools) are removed; a value the user set is passed on.
 - Valid jobs enter a pending queue. If concurrency is saturated, the runner
   emits ``queued``.
 - When a process starts, the runner emits ``job_started`` and ``running``.

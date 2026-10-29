@@ -683,6 +683,78 @@ during local debugging, enable DEBUG logging for the relevant modules, e.g.:
    logging.getLogger("mufinder.app.main_window").setLevel(logging.DEBUG)
    logging.getLogger("mufinder.services.project_service").setLevel(logging.DEBUG)
 
+Native thread pools
+-------------------
+
+OpenBLAS, MKL and OpenMP start one worker thread per core unless told
+otherwise. MuFinder's linear algebra is small (eigensolves of a few hundred
+rows, matrix products in matching, symmetry and phonon analysis), and on a
+many-core machine whose other cores are busy, for example with a local CASTEP
+run, a full-size pool spends far longer waiting for its threads than
+computing. ``mufinder.main.run`` therefore calls
+``mufinder.native_threads.cap_native_thread_pools`` as its first step, before
+anything imports NumPy (the libraries read the variables once, when they load):
+
+- ``OPENBLAS_NUM_THREADS``, ``OMP_NUM_THREADS`` and ``MKL_NUM_THREADS`` are each
+  set to ``4``;
+- a variable the user's environment already sets to a non-empty value is kept;
+- the cap is MuFinder's own: the local runner removes the variables it set
+  before starting CASTEP (:doc:`/job_lifecycle`, Local runner behavior).
+
+Setting environment variables is cheap, so nothing heavyweight runs before the
+splash screen. A computation that needs more threads raises the limit locally
+(for example with ``threadpoolctl.threadpool_limits``) instead of changing the
+startup cap.
+
+One 401 × 401 ``numpy.linalg.eigh`` (median of five) on a 20-core machine, with
+other cores kept busy by spinning processes:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Pool size
+     - Idle
+     - 4 cores busy
+     - 16 cores busy
+     - 20 cores busy
+   * - 20 (library default)
+     - 7.7 ms
+     - 0.98 s
+     - 2.1 s
+     - 2.5 s
+   * - 4 (MuFinder's cap)
+     - 6.3 ms
+     - 9.2 ms
+     - 18 ms
+     - 0.16 s
+   * - 1
+     - 9.9 ms
+     - 9.9 ms
+     - 10 ms
+     - 24 ms
+
+Quantum Corrections' analysis window builds only the tab it opens on
+(``Phonon Modes``) and refreshes its structure viewer once; the other tabs are
+built the first time they are shown. Opening the window for the GdRu₂Si₂ site 1
+phonon fixture (``tests/fixtures/gdru2si2``, 41 atoms; median of five opens,
+construct, show and process events):
+
+.. list-table::
+   :header-rows: 1
+
+   * - Build
+     - Idle
+     - 4 cores busy
+   * - Every tab, default pools, two viewer refreshes
+     - 1.59 s
+     - 5.1 s
+   * - Shown tab only, capped pools, one viewer refresh
+     - 0.78 s
+     - 0.78 s
+
+What remains is the structure viewer: creating it and its first
+``set_structure``.
+
 Targeted local execution checks
 -------------------------------
 
