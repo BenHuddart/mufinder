@@ -254,3 +254,48 @@ def count_scene_renders(monkeypatch: pytest.MonkeyPatch) -> Counter:
 
     monkeypatch.setattr(_viewer_module.AtomicStructureViewer, "_render_pyvista", counted)
     return counts
+
+
+def install_fake_picker(
+    viewer: _viewer_module.AtomicStructureViewer,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    picked_point: tuple[float, float, float] | None,
+    shift: bool = False,
+    position: tuple[int, int] = (18, 24),
+):
+    """Give ``viewer`` a canvas whose VTK picker hits ``picked_point``, or nothing for ``None``.
+
+    The viewer stops storing its view and rendering. Returns the picker, which
+    records each ``Pick`` call, and a ``{"value": (x, y)}`` dict a test edits to
+    move the event position the interactor reports.
+    """
+
+    class _FakePicker:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int, object]] = []
+
+        def Pick(self, x: int, y: int, z: int, renderer) -> int:
+            self.calls.append((x, y, z, renderer))
+            return 0 if picked_point is None else 1
+
+        def GetPickPosition(self):
+            if picked_point is None:
+                return (0.0, 0.0, 0.0)
+            return picked_point
+
+    picker = _FakePicker()
+    current_position = {"value": position}
+    monkeypatch.setattr(viewer, "_store_view", lambda *_args: None)
+    monkeypatch.setattr(viewer, "_render", lambda: None)
+    viewer._canvas = SimpleNamespace(
+        plotter=SimpleNamespace(
+            iren=SimpleNamespace(
+                interactor=SimpleNamespace(GetShiftKey=lambda: int(shift)),
+                picker=picker,
+                get_event_position=lambda: current_position["value"],
+                get_poked_renderer=lambda: "renderer",
+            )
+        )
+    )
+    return picker, current_position
