@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Sequence
 from uuid import UUID
@@ -283,95 +282,6 @@ def expand_quantum_phonon_jobs(
                 patch=patch,
                 user_overrides=user_overrides,
                 tags=("quantum_corrections", "phonon", *tags),
-                provenance=provenance,
-            )
-        )
-    return resolved
-
-
-def expand_quantum_singlepoint_jobs(
-    *,
-    jobs: Sequence[QuantumPhononJobConfig],
-    name_prefix: str,
-    global_defaults: InputTemplate | None = None,
-    workflow_defaults: InputTemplate | None = None,
-    structure_defaults: InputTemplate | None = None,
-    user_overrides: InputTemplate | None = None,
-    tags: tuple[str, ...] = (),
-) -> list[JobSpec]:
-    """Expand the singlepoint jobs Quantum Corrections no longer runs. Deprecated.
-
-    The workflow runs one phonon job per site (:func:`expand_quantum_phonon_jobs`),
-    which converges its own ground state. This entry point is kept so external
-    callers still import and run; it renders the former stage-1
-    ``TASK : SINGLEPOINT`` job with the muon ``SPECIES_MASS`` / ``SPECIES_GAMMA``
-    blocks, and warns. See ``docs/compatibility_policy.rst`` for its expiry.
-    """
-
-    warnings.warn(
-        "expand_quantum_singlepoint_jobs is deprecated: Quantum Corrections runs one "
-        "phonon job per site; use expand_quantum_phonon_jobs.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    require_jobs(jobs, "quantum singlepoint job")
-
-    resolved: list[JobSpec] = []
-    for config in jobs:
-        label = config.source.label.strip()
-        if not label:
-            raise ValueError("Quantum singlepoint source labels must not be empty.")
-        structure = config.source.structure
-        if is_muonium(config.source.charge_state):
-            structure = seed_muonium_spin(structure, config.muon_species)
-        keywords = [KeywordAssignment("task", "SINGLEPOINT")]
-        if config.source.charge_state:
-            keywords.append(
-                KeywordAssignment("charge", 0 if is_muonium(config.source.charge_state) else 1)
-            )
-        if is_muonium(config.source.charge_state):
-            keywords.append(KeywordAssignment("spin_polarized", True))
-        base = InputTemplate(
-            cell=CellTemplate(extra_blocks=muon_species_blocks(config.muon_species)),
-            param=ParamTemplate(keywords=tuple(keywords)),
-        )
-        patch_template = compose_patch(
-            base, InputTemplate(cell=config.cell_overrides, param=config.param_overrides)
-        )
-        patch = JobPatch(
-            label_suffix=label,
-            structure=structure,
-            cell=patch_template.cell,
-            param=patch_template.param,
-        )
-        provenance: dict[str, Any] = {
-            "workflow": "quantum_corrections",
-            "calc_type": QUANTUM_SINGLEPOINT_CALC_TYPE,
-            "label": label,
-            "muon_species": config.muon_species,
-            "muon_mass_amu": MUON_MASS_AMU,
-            "muon_gamma_rad_s_T": MUON_GAMMA_RAD_S_T,
-            "source_site_id": str(config.source.source_site_id),
-            "source_relaxation_run_id": str(config.source.source_relaxation_run_id),
-            "source_relaxation_job_id": (
-                str(config.source.source_relaxation_job_id)
-                if config.source.source_relaxation_job_id is not None
-                else None
-            ),
-            "charge_state": config.source.charge_state,
-        }
-        provenance.update(config.source.provenance)
-        resolved.append(
-            resolve_job(
-                name=job_name(name_prefix, label),
-                base_structure=structure,
-                workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-                global_defaults=global_defaults,
-                workflow_defaults=workflow_defaults,
-                structure_defaults=structure_defaults,
-                patch=patch,
-                user_overrides=user_overrides,
-                tags=("quantum_corrections", "singlepoint", *tags),
                 provenance=provenance,
             )
         )

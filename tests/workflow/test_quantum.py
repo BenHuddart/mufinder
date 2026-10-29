@@ -15,7 +15,6 @@ from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.types import CellTemplate, ParamTemplate
 from mufinder.workflow.quantum import (
-    expand_quantum_singlepoint_jobs,
     QUANTUM_PHONON_CALC_TYPE,
     QuantumPhononJobConfig,
     QuantumPhononSource,
@@ -453,20 +452,3 @@ def test_quantum_source_eligibility_off_the_site_link_checks_the_run_belongs_to_
         **_eligibility_inputs(site=site, run=None, job=job), site_link=False
     )
     assert verdict.eligible is False
-
-
-def test_expand_quantum_singlepoint_jobs_is_a_deprecated_shim_rendering_the_former_stage_one() -> (
-    None
-):
-    # Public helper kept for external callers; see the compatibility ledger.
-    with pytest.warns(DeprecationWarning, match="expand_quantum_phonon_jobs"):
-        (job,) = expand_quantum_singlepoint_jobs(
-            jobs=(QuantumPhononJobConfig(source=_source()),), name_prefix="quantum_singlepoint"
-        )
-    assert job.provenance["calc_type"] == "castep_quantum_singlepoint"
-    assert "singlepoint" in job.tags
-    param_text = write_param(job.param_file)
-    cell_text = write_cell(job.cell_file)
-    assert "TASK : SINGLEPOINT" in param_text
-    assert "PHONON" not in param_text
-    assert "SPECIES_MASS" in cell_text and "PHONON_KPOINT_MP_GRID" not in cell_text

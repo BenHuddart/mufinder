@@ -89,7 +89,7 @@ widths by hand is :math:`\hbar^2 / (2 m_\mu) \approx 0.01842` eV Å², so that
 Since :math:`\omega \propto 1/\sqrt{m}`, a muon mode lies about three times
 higher in frequency than the same mode with a proton, and the ZPE rises by the
 same factor. This is why the muon mass has to reach the phonon calculation (see
-the page guide's *Muon mass across the two stages*).
+:ref:`quantum-corrections-muon-mass` in the page guide).
 
 .. _quantum-corrections-mode-choice:
 

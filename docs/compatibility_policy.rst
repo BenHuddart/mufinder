@@ -119,15 +119,6 @@ Compatibility ledger
      - Project-file shim. The calc type names what CASTEP ran, so a stored
        job or result keeps it; drop its readers only when projects holding
        such records are no longer supported.
-   * - ``expand_quantum_singlepoint_jobs``
-     - ``mufinder.workflow.quantum``
-     - Public expansion helper for the singlepoint job Quantum Corrections ran
-       before each phonon job. The workflow runs one phonon job per row and
-       calls ``expand_quantum_phonon_jobs`` only; the helper still renders the
-       former ``TASK : SINGLEPOINT`` inputs for external callers and raises a
-       ``DeprecationWarning``. One test checks it still resolves and renders.
-     - Public helper, deprecated. Keep for one minor release (through 0.7.x)
-       or until the next major release, whichever comes first; then drop it.
    * - ``grid_size`` / ``padding`` arguments of
        ``magnetometric_rectangular_prism_tensor``
      - ``mufinder.science.demagnetization``, also exported from
@@ -663,6 +654,16 @@ migration; code that imported one switches to the replacement named.
   Cluster keyword generation no longer runs Python on the cluster, so the value
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
+
+The public helper below was removed once its ledger expiry (through 0.7.x)
+had passed. It was deprecated with a ``DeprecationWarning`` in 0.8.0, and its
+replacement has shipped since 0.6.0. It was not persisted, so projects need no
+migration; the ``castep_quantum_singlepoint`` jobs and results of older
+projects still load through the calc-type shim in the ledger above.
+
+- ``expand_quantum_singlepoint_jobs`` (``mufinder.workflow.quantum``):
+  Quantum Corrections runs one phonon job per row, which converges its own
+  ground state; call ``expand_quantum_phonon_jobs``.
 
 The convergence functions below were removed without a deprecation period,
 together with their ``mufinder.science`` re-exports, when the examiner moved to
