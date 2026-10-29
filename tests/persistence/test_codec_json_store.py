@@ -246,9 +246,6 @@ def test_prune_entities_removes_stale_files_and_reports_the_kept_ones_on_disk(
     present = store.prune_entities("jobs", {"kept", "missing"})
 
     assert present == {"kept"}
-    assert sorted(path.name for path in jobs_dir.iterdir()) == [
-        "._kept.json",
-        "kept.json",
-        "notes.txt",
-    ]
+    assert sorted(path.name for path in jobs_dir.iterdir()) == ["kept.json", "notes.txt"]
+    assert store.load_entities("jobs") == [{"id": "kept"}]
     assert store.prune_entities("absent_type", {"kept"}) == set()

@@ -113,11 +113,12 @@ class ProjectStore:
         # which this listing of every entity file on each autosave would pay.
         with os.scandir(entity_dir) as entries:
             for entry in entries:
-                stem, suffix = os.path.splitext(entry.name)
-                # Hidden files (macOS ``._*`` resource forks) are left alone, as
-                # ``glob("*.json")`` and ``load_entities`` leave them.
-                if suffix != ".json" or entry.name.startswith("."):
+                # Every ``*.json`` name counts, dotfiles included (as ``Path.glob``
+                # and ``load_entities`` match them): a stray macOS ``._*.json``
+                # resource fork is pruned rather than later parsed as an entity.
+                if not entry.name.endswith(".json"):
                     continue
+                stem = entry.name[: -len(".json")]
                 if stem in keep_ids:
                     present.add(stem)
                 else:
