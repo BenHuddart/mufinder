@@ -314,12 +314,15 @@ Compatibility ledger
        application-data directory
      - ``mufinder.castep_setup`` / application settings (``QSettings``)
      - Before catalogs were installed as a managed copy, this setting held a
-       path the user chose. Such a path is still honoured as the configured
-       catalog, so existing installations keep working without re-running
-       setup. Generating or importing a catalog repoints the setting at the
-       managed copy.
-     - Application setting, not project data. Keep indefinitely: honouring an
-       arbitrary path costs nothing, and dropping it would silently return
+       path the user chose. At startup,
+       ``mufinder.castep_setup.apply_saved_castep_environment`` installs a
+       complete catalog at such a path as the managed copy and repoints the
+       setting at it, once. A path that cannot be adopted (missing, not a
+       complete catalog, or the copy cannot be written) stays in the setting
+       and is still read; a missing file, or one that is not a keyword catalog
+       at all, is reported as the catalog issue.
+     - Application setting, not project data. Keep indefinitely: reading an
+       unadoptable path costs nothing, and dropping it would silently return
        existing users to the starter catalog.
    * - ``candidate`` muon-site status
      - ``MuonSite.status`` / site entity files; read by
