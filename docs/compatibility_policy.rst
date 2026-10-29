@@ -184,6 +184,18 @@ Compatibility ledger
        hand-entered default; older builds display that string verbatim.
      - Current project data, not deprecated. Do not remove without a schema
        migration and replacement project-default model.
+   * - ``recommended_cutoff_method`` / ``recommended_kpoint_method`` values
+       ``delta-threshold``, ``derivative`` and ``asymptotic``
+     - ``Project`` / project manifest; read by ``project_codec`` through
+       ``normalize_default_method`` (``mufinder.domain.models``)
+     - Builds that offered a choice of energy method stored its name. There is
+       now one convergence criterion, so a project default is either
+       ``converged`` or ``manual``: any stored value other than ``manual``
+       (these three included) loads as ``converged``, and new adoptions write
+       ``converged``. The manifest keeps the old string until the project is
+       next saved. Older builds display ``converged`` verbatim.
+     - Keep until the next saved-project schema version bump, whose migration
+       can rewrite the values to ``converged``.
    * - ``execution_target`` / ``num_processes`` /
        ``remote_job_id`` / ``remote_directory`` job fields
      - ``Job`` (``mufinder.domain.models``) / job entity files
@@ -634,6 +646,36 @@ migration; code that imported one switches to the replacement named.
   Cluster keyword generation no longer runs Python on the cluster, so the value
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
+
+The convergence functions below were removed without a deprecation period,
+together with their ``mufinder.science`` re-exports, when the examiner moved to
+one criterion relative to the finest sweep point. They implemented the
+retired criteria, so keeping them would keep those criteria in the API; no
+project data depends on them. Code that called one switches to the
+replacement named.
+
+- ``delta_threshold_energy``, ``derivative_energy``,
+  ``asymptotic_extrapolation_energy``, ``delta_threshold_force`` and
+  ``delta_threshold_stress`` (``mufinder.science.convergence_analysis``): call
+  ``analyze_convergence`` (cutoff sweeps, with ``max_stresses`` and
+  ``stress_threshold`` for stress) or ``analyze_kpoint_convergence``, which
+  return a ``ConvergenceAnalysis``. ``check_sweep_length`` runs the power-law
+  sweep-length check on its own.
+- ``apply_kpoint_label_to_stress_result``: pass ``max_stresses``,
+  ``stress_threshold`` and ``point_labels`` to ``analyze_kpoint_convergence``.
+- The ``method`` argument of ``analyze_convergence``, and the ``method``,
+  ``fallback_suggestion`` and ``deltas`` fields of ``ConvergenceResult``:
+  results now carry ``quantity``, ``summary``, ``explanation``,
+  ``reference_value`` and ``deviations`` (each point's distance from the
+  reference); ``details`` is a property joining them.
+
+The examiner's saved state (``ui_state``) no longer writes ``method``,
+``selected_method_for_recommendation`` or ``results_text`` (the results are
+stored as ``results_rows``), and overview snapshots no longer write
+``method``. An examiner state that still has ``method`` was produced by the
+retired criteria: the examiner keeps its thresholds and plot data, drops its
+results and recommendation, and says so in an ``Earlier analysis`` row. Old overview snapshots render as before; their
+``method`` is ignored. No shim or migration is needed for UI state.
 
 The setting below was removed without a deprecation period, because nothing
 read it and it has no replacement.

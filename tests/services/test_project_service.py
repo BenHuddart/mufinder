@@ -14,6 +14,7 @@ from ase.io import write as ase_write
 
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
+    CONVERGED_DEFAULT_METHOD,
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
@@ -2303,23 +2304,24 @@ def test_set_recommended_cutoff_persists_to_project_manifest(tmp_path: Path) -> 
     service.set_recommended_cutoff(
         doc,
         550.0,
-        method="asymptotic",
+        method=CONVERGED_DEFAULT_METHOD,
         energy_threshold=0.001,
         force_threshold=0.05,
         cell_id="11111111-1111-1111-1111-111111111111",
     )
 
     assert doc.project.recommended_cutoff_energy == pytest.approx(550.0)
-    assert doc.project.recommended_cutoff_method == "asymptotic"
+    assert doc.project.recommended_cutoff_method == CONVERGED_DEFAULT_METHOD
     assert doc.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
     assert doc.project.recommended_cutoff_cell_id == "11111111-1111-1111-1111-111111111111"
     assert doc.provenance[-1].action == "set_recommended_cutoff"
+    assert doc.provenance[-1].description == "Set project recommended cutoff to 550 eV"
 
     service.save_project(doc)
     loaded = service.load_project(root)
     assert loaded.project.recommended_cutoff_energy == pytest.approx(550.0)
-    assert loaded.project.recommended_cutoff_method == "asymptotic"
+    assert loaded.project.recommended_cutoff_method == CONVERGED_DEFAULT_METHOD
     assert loaded.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
     assert loaded.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
     assert loaded.project.recommended_cutoff_cell_id == "11111111-1111-1111-1111-111111111111"
@@ -2336,14 +2338,14 @@ def test_set_recommended_kpoint_grid_persists_to_project_manifest(tmp_path: Path
         doc,
         (4, 4, 3),
         lattice_vectors=lattice,
-        method="delta-threshold",
+        method=CONVERGED_DEFAULT_METHOD,
         energy_threshold=0.001,
         force_threshold=0.05,
         cell_id="22222222-2222-2222-2222-222222222222",
     )
 
     assert doc.project.recommended_kpoint_grid == (4, 4, 3)
-    assert doc.project.recommended_kpoint_method == "delta-threshold"
+    assert doc.project.recommended_kpoint_method == CONVERGED_DEFAULT_METHOD
     assert doc.project.recommended_kpoint_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_kpoint_force_threshold == pytest.approx(0.05)
     assert doc.project.recommended_kpoint_cell_id == "22222222-2222-2222-2222-222222222222"
@@ -2353,7 +2355,7 @@ def test_set_recommended_kpoint_grid_persists_to_project_manifest(tmp_path: Path
     service.save_project(doc)
     loaded = service.load_project(root)
     assert loaded.project.recommended_kpoint_grid == (4, 4, 3)
-    assert loaded.project.recommended_kpoint_method == "delta-threshold"
+    assert loaded.project.recommended_kpoint_method == CONVERGED_DEFAULT_METHOD
     assert loaded.project.recommended_kpoint_energy_threshold == pytest.approx(0.001)
     assert loaded.project.recommended_kpoint_force_threshold == pytest.approx(0.05)
     assert loaded.project.recommended_kpoint_cell_id == "22222222-2222-2222-2222-222222222222"
@@ -2369,13 +2371,13 @@ def test_set_recommended_cutoff_records_stress_threshold_and_trims_text(tmp_path
 
     assert doc.project.recommended_cutoff_stress_threshold == 0.1
     assert doc.project.recommended_cutoff_cell_id == "cellA"
-    assert "using method 'energy'" in doc.provenance[-1].description
+    assert doc.project.recommended_cutoff_method == CONVERGED_DEFAULT_METHOD
+    assert doc.provenance[-1].description == "Set project recommended cutoff to 450 eV"
 
     service.set_recommended_cutoff(doc, 500.0, method="   ", cell_id="   ")
 
     assert doc.project.recommended_cutoff_method is None
     assert doc.project.recommended_cutoff_cell_id is None
-    assert "using method" not in doc.provenance[-1].description
 
 
 def test_set_recommended_kpoint_grid_ignores_a_malformed_lattice(tmp_path: Path) -> None:

@@ -27,6 +27,7 @@ from mufinder.domain.models import (
     ProvenanceRecord,
     Result,
     Structure,
+    normalize_default_method,
     utc_now,
 )
 from mufinder.persistence.codec import parse_datetime, parse_uuid
@@ -72,10 +73,7 @@ def project_from_dict(payload: dict[str, Any]) -> Project:
     except (TypeError, ValueError):
         recommended_cutoff = None
 
-    raw_recommended_method = payload.get("recommended_cutoff_method")
-    recommended_method = None
-    if isinstance(raw_recommended_method, str) and raw_recommended_method.strip():
-        recommended_method = raw_recommended_method.strip()
+    recommended_method = normalize_default_method(payload.get("recommended_cutoff_method"))
 
     raw_energy_threshold = payload.get("recommended_cutoff_energy_threshold")
     try:
@@ -138,10 +136,7 @@ def project_from_dict(payload: dict[str, Any]) -> Project:
         if valid_lattice:
             recommended_kpoint_lattice = parsed_lattice
 
-    raw_recommended_kpoint_method = payload.get("recommended_kpoint_method")
-    recommended_kpoint_method = None
-    if isinstance(raw_recommended_kpoint_method, str) and raw_recommended_kpoint_method.strip():
-        recommended_kpoint_method = raw_recommended_kpoint_method.strip()
+    recommended_kpoint_method = normalize_default_method(payload.get("recommended_kpoint_method"))
 
     raw_kpoint_energy_threshold = payload.get("recommended_kpoint_energy_threshold")
     try:

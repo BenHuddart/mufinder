@@ -25,6 +25,7 @@ from mufinder.domain.models import (
     Structure,
     next_definition_created_at,
     next_job_created_at,
+    normalize_default_method,
     utc_now,
 )
 from mufinder.persistence import project_codec
@@ -1272,11 +1273,11 @@ class ProjectService:
         ``xc_functional`` is the functional the converged runs used. It is
         recorded against the cutoff and, when given, also becomes the project
         default functional — a converged cutoff is only meaningful alongside it.
+        ``method`` is ``manual`` for a value typed in by hand; any other value
+        records the cutoff as converged (see :func:`normalize_default_method`).
         """
         document.project.recommended_cutoff_energy = float(cutoff_energy)
-        document.project.recommended_cutoff_method = (
-            str(method).strip() if method is not None and str(method).strip() else None
-        )
+        document.project.recommended_cutoff_method = normalize_default_method(method)
         document.project.recommended_cutoff_energy_threshold = (
             float(energy_threshold) if energy_threshold is not None else None
         )
@@ -1295,21 +1296,13 @@ class ProjectService:
                 document.project.recommended_cutoff_xc_functional
             )
 
-        method_fragment = (
-            f" using method '{document.project.recommended_cutoff_method}'"
-            if document.project.recommended_cutoff_method
-            else ""
-        )
         self.append_provenance(
             document,
             ProvenanceRecord(
                 action="set_recommended_cutoff",
                 workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
                 actor="user",
-                description=(
-                    f"Set project recommended cutoff to {float(cutoff_energy):.8g} eV"
-                    f"{method_fragment}"
-                ),
+                description=f"Set project recommended cutoff to {float(cutoff_energy):.8g} eV",
                 parameters={
                     "recommended_cutoff_energy": float(cutoff_energy),
                     "recommended_cutoff_method": document.project.recommended_cutoff_method,
@@ -1382,7 +1375,7 @@ class ProjectService:
     ) -> None:
         """Persist a project-wide recommended k-point grid for future workflows.
 
-        ``xc_functional`` is the functional the converged runs used; see
+        ``xc_functional`` and ``method`` are recorded as in
         :meth:`set_recommended_cutoff`.
         """
 
@@ -1393,9 +1386,7 @@ class ProjectService:
             if isinstance(lattice_vectors, list) and len(lattice_vectors) == 3
             else None
         )
-        document.project.recommended_kpoint_method = (
-            str(method).strip() if method is not None and str(method).strip() else None
-        )
+        document.project.recommended_kpoint_method = normalize_default_method(method)
         document.project.recommended_kpoint_energy_threshold = (
             float(energy_threshold) if energy_threshold is not None else None
         )

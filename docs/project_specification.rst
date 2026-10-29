@@ -313,8 +313,8 @@ Convergence testing
   corresponding convergence analysis dialog. Overview snapshots persist in
   ``Document.ui_state["convergence_overview_snapshots"]``, separately from the
   examiner-dialog restore state, and record ``host_structure_id``,
-  ``simulation_cell_structure_id``, the adopted ``default_value``, the
-  convergence ``method``, ``energy_threshold``, ``force_threshold``, the plot
+  ``simulation_cell_structure_id``, the adopted ``default_value``,
+  ``energy_threshold``, ``force_threshold``, the plot
   payload derived from the examiner's ``plot_data``, and k-point point-label
   metadata when needed. A snapshot renders only when it matches the active host
   structure and the current recommended default; otherwise the page shows a
@@ -326,12 +326,14 @@ Convergence testing
   help backed by keyword metadata, a sweep builder supporting manual lists and
   start/stop/step range generation, and optional subset overrides that apply
   alternate parameter values to selected rows.
-- The examiner evaluates convergence with multiple energy-analysis approaches,
-  presents method documentation in the GUI, and persists its inputs and
-  outputs so plots and results are restorable when it is reopened.
-- Adopting a converged default persists both the value and the approach or
-  method metadata used to determine it. Project-level defaults, including the
-  cutoff, are visible from the GUI.
+- The examiner judges energy per atom, maximum force and optional maximum
+  stress with one criterion, relative to the finest point of the sweep, and
+  checks a cutoff sweep's length with a power-law fit that never changes the
+  recommendation. It persists its inputs and outputs so plots and results are
+  restorable when it is reopened.
+- Adopting a converged default persists the value, the thresholds, the cell
+  and the functional, and records it as converged rather than set manually.
+  Project-level defaults, including the cutoff, are visible from the GUI.
 - The k-point spacing and grid mapping follows
   :doc:`/castep/kpoint_spacing_convention`.
 
@@ -341,7 +343,7 @@ Project defaults
 - The project stores three calculation defaults: XC functional, cutoff energy
   and k-point grid.
 - Every workflow tab that consumes them shows the same compact project-defaults
-  strip; method, criteria and converged-with functional belong in its tooltips
+  strip; criteria and converged-with functional belong in its tooltips
   and details dialog, not in the tab header.
 - Adopting a cutoff or k-point default records the XC functional the sweep was
   run with and makes it the project default functional; a sweep whose points
@@ -350,7 +352,7 @@ Project defaults
   current project default must be confirmed by the user.
 - All three defaults are directly editable and clearable without running a
   convergence test. A manually entered cutoff or grid is recorded as such (no
-  method, criteria or converged-with functional) and does not change the
+  criteria or converged-with functional) and does not change the
   project default functional.
 - Changing the functional never discards a converged cutoff or k-point default;
   a default converged with a different functional is visibly flagged instead.

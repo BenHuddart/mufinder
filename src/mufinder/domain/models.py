@@ -260,6 +260,27 @@ class ProvenanceRecord:
 #: directly rather than adopting from a convergence analysis.
 MANUAL_DEFAULT_METHOD = "manual"
 
+#: ``Project.recommended_*_method`` value for a default adopted from a
+#: convergence analysis.
+CONVERGED_DEFAULT_METHOD = "converged"
+
+
+def normalize_default_method(value: object) -> str | None:
+    """Reduce a stored ``recommended_*_method`` value to manual, converged or unset.
+
+    Blank or non-string values are unset. Any value other than ``manual``,
+    including the method names older projects stored (``delta-threshold``,
+    ``derivative``, ``asymptotic``), means the default came from a convergence
+    analysis.
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if value.strip().lower() == MANUAL_DEFAULT_METHOD:
+        return MANUAL_DEFAULT_METHOD
+    return CONVERGED_DEFAULT_METHOD
+
+
 #: Saved-project schema version this code writes. Older projects are upgraded
 #: on load by ``mufinder.persistence.migrations``.
 PROJECT_SCHEMA_VERSION = 6

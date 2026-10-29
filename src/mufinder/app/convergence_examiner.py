@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from html import escape
 import math
 from typing import Any
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -35,14 +35,12 @@ from mufinder.castep_io.output_parser import (
     CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG,
     CASTEP_STRESS_PRINT_RESOLUTION_GPA,
 )
+from mufinder.domain.models import CONVERGED_DEFAULT_METHOD
 from mufinder.science.convergence_analysis import (
+    ConvergenceAnalysis,
     ConvergenceResult,
     analyze_convergence,
     analyze_kpoint_convergence,
-    apply_kpoint_label_to_stress_result,
-    delta_threshold_stress,
-    recommended_value,
-    unconverged_criteria,
 )
 from mufinder.science.kpoint_grids import (
     format_kpoint_grid,
@@ -76,27 +74,9 @@ _SPACING_TICK_MANTISSAS = (0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 1.0)
 _SPACING_TICK_DECADES = (-3, -2, -1, 0)
 
 
-_METHOD_OPTIONS = {
-    "Delta-Threshold": "delta-threshold",
-    "Derivative (dE/dEcut)": "derivative",
-    "Asymptotic Extrapolation": "asymptotic",
-}
-
-_METHOD_DOCS = {
-    "delta-threshold": (
-        "Delta-Threshold compares total energy between successive cutoff values. "
-        "Convergence is reached when the energy difference per atom falls below the selected threshold."
-    ),
-    "derivative": (
-        "Derivative analysis estimates dE/dEcut between successive cutoffs. "
-        "Convergence is reached when the absolute derivative per atom is sufficiently small."
-    ),
-    "asymptotic": (
-        "Asymptotic extrapolation fits E(Ecut) = E_inf + A*exp(-B*Ecut) to estimate infinite-cutoff energy. "
-        "Convergence is reached when the predicted gap to E_inf per atom falls below threshold. "
-        "This method needs at least four completed points."
-    ),
-}
+#: One row of the results box: a label and its lines. Rows are grouped, and a
+#: blank line separates the groups.
+ResultRow = tuple[str, tuple[str, ...]]
 
 
 class ConvergenceExaminerDialog(QDialog):
@@ -171,7 +151,7 @@ class ConvergenceExaminerDialog(QDialog):
         self._force_result: ConvergenceResult | None = None
         self._stress_result: ConvergenceResult | None = None
         self._recommended_value: float | None = None
-        self._selected_method_for_recommendation: str | None = None
+        self._result_groups: list[list[ResultRow]] = []
         self._energy_threshold_for_recommendation: float | None = None
         self._force_threshold_for_recommendation: float | None = None
         self._stress_threshold_for_recommendation: float | None = None
@@ -203,11 +183,6 @@ class ConvergenceExaminerDialog(QDialog):
         self._stress_threshold.setValue(0.1)
         self._stress_threshold.setEnabled(False)
 
-        self._method_combo = QComboBox(self)
-        for label in _METHOD_OPTIONS:
-            self._method_combo.addItem(label)
-
-        self._method_info_button = QPushButton("Info", self)
         self._run_button = QPushButton("Analyse Convergence", self)
         self._results = QTextEdit(self)
         self._results.setReadOnly(True)
@@ -235,7 +210,7 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._build_layout()
         self._connect_signals()
-        self._update_method_availability()
+        self._update_availability()
         self._write_initial_summary()
         self._draw_initial_plot()
         self._restore_initial_state(initial_state)
@@ -272,14 +247,12 @@ class ConvergenceExaminerDialog(QDialog):
         )
         layout.addWidget(criteria_group)
 
-        method_row = QHBoxLayout()
-        method_row.setSpacing(12)
-        method_row.addWidget(QLabel("Energy method"))
-        method_row.addWidget(self._method_combo, stretch=1)
-        method_row.addWidget(self._method_info_button)
-        method_row.addWidget(self._run_button)
-        method_row.addWidget(self._adopt_button)
-        layout.addLayout(method_row)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(12)
+        action_row.addStretch(1)
+        action_row.addWidget(self._run_button)
+        action_row.addWidget(self._adopt_button)
+        layout.addLayout(action_row)
 
         self._results.setMinimumHeight(220)
         self._results.setSizePolicy(
@@ -290,7 +263,6 @@ class ConvergenceExaminerDialog(QDialog):
         layout.addStretch(1)
 
     def _connect_signals(self) -> None:
-        self._method_info_button.clicked.connect(self._show_method_info)
         self._run_button.clicked.connect(self._run_analysis)
         self._adopt_button.clicked.connect(self._emit_adopted_cutoff)
         self._canvas.mpl_connect("motion_notify_event", self._on_plot_hover)
@@ -672,39 +644,8 @@ class ConvergenceExaminerDialog(QDialog):
             return False
         return all(state.max_stress is not None for _cutoff, state in self._completed)
 
-    def _update_method_availability(self) -> None:
-        cutoffs, energies = self._energy_series()
-        count = len(cutoffs)
-        derivative_index = self._method_combo.findText("Derivative (dE/dEcut)")
-        asymptotic_index = self._method_combo.findText("Asymptotic Extrapolation")
-        if self._sweep_kind == "kpoint":
-            if derivative_index >= 0:
-                self._method_combo.model().item(derivative_index).setEnabled(False)
-                self._method_combo.setItemData(
-                    derivative_index,
-                    "K-point convergence only uses Delta-Threshold.",
-                    Qt.ItemDataRole.ToolTipRole,
-                )
-            if asymptotic_index >= 0:
-                self._method_combo.model().item(asymptotic_index).setEnabled(False)
-                self._method_combo.setItemData(
-                    asymptotic_index,
-                    "K-point convergence only uses Delta-Threshold.",
-                    Qt.ItemDataRole.ToolTipRole,
-                )
-            if self._selected_method() != "delta-threshold":
-                self._method_combo.setCurrentIndex(0)
-        elif asymptotic_index >= 0:
-            enabled = count >= 4
-            self._method_combo.model().item(asymptotic_index).setEnabled(enabled)
-            self._method_combo.setItemData(
-                asymptotic_index,
-                "Requires at least 4 completed energy points." if not enabled else "",
-                Qt.ItemDataRole.ToolTipRole,
-            )
-            if not enabled and self._method_combo.currentIndex() == asymptotic_index:
-                self._method_combo.setCurrentIndex(0)
-
+    def _update_availability(self) -> None:
+        cutoffs, _energies = self._energy_series()
         force_cutoffs, _forces = self._force_series()
         can_run = len(cutoffs) >= 2 and len(force_cutoffs) >= 2 and self._num_atoms > 0
         self._run_button.setEnabled(can_run)
@@ -724,28 +665,41 @@ class ConvergenceExaminerDialog(QDialog):
                 else "Set as Project Default K-Point Grid"
             )
 
-    def _write_initial_summary(self) -> None:
+    def _write_initial_summary(self, extra_rows: Sequence[ResultRow] = ()) -> None:
         energy_cutoffs, _energies = self._energy_series()
         force_cutoffs, _forces = self._force_series()
         stress_cutoffs, _stresses = self._stress_series()
 
-        lines = [
-            f"Completed points: {len(self._completed)}",
-            f"Energy datapoints available: {len(energy_cutoffs)}",
-            f"Force datapoints available: {len(force_cutoffs)}",
-            f"Stress datapoints available: {len(stress_cutoffs)}",
-            f"Simulation-cell atoms used for per-atom normalization: {self._num_atoms}",
+        summary: list[ResultRow] = [
+            ("Completed points", (str(len(self._completed)),)),
+            (
+                "With values",
+                (
+                    f"{len(energy_cutoffs)} energy, {len(force_cutoffs)} force, "
+                    f"{len(stress_cutoffs)} stress",
+                ),
+            ),
+            ("Atoms", (f"{self._num_atoms}, for the energy per atom",)),
         ]
-
         if len(energy_cutoffs) < 2 or len(force_cutoffs) < 2:
-            lines.append(
-                "Need at least two completed rows with both energy and max-force values to run analysis."
+            summary.append(
+                (
+                    "Analysis",
+                    (
+                        "Need at least two completed rows with both energy and max-force "
+                        "values to run analysis.",
+                    ),
+                )
             )
         elif self._num_atoms <= 0:
-            lines.append("Simulation-cell atom count must be positive before analysis can run.")
-        lines.extend(self._note_lines())
-
-        self._results.setPlainText("\n".join(lines))
+            summary.append(
+                (
+                    "Analysis",
+                    ("Simulation-cell atom count must be positive before analysis can run.",),
+                )
+            )
+        summary.extend(extra_rows)
+        self._show_results([summary, *self._note_groups()])
 
     def _draw_initial_plot(self) -> None:
         energy_cutoffs, energies = self._energy_series()
@@ -791,34 +745,21 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._canvas.draw_idle()
 
-    def _selected_method(self) -> str:
-        label = self._method_combo.currentText()
-        return _METHOD_OPTIONS.get(label, "delta-threshold")
-
-    def _set_method(self, method: str) -> None:
-        normalized = method.strip().lower()
-        for label, key in _METHOD_OPTIONS.items():
-            if key != normalized:
-                continue
-            index = self._method_combo.findText(label)
-            if index >= 0:
-                self._method_combo.setCurrentIndex(index)
-            return
-
     @staticmethod
     def _serialize_result(result: ConvergenceResult | None) -> dict[str, object] | None:
         if result is None:
             return None
         return {
             "converged": bool(result.converged),
-            "method": result.method,
-            "details": result.details,
+            "quantity": result.quantity,
+            "summary": result.summary,
+            "explanation": result.explanation,
             "converged_value": result.converged_value,
             "converged_cutoff": result.converged_value,
-            "deltas": list(result.deltas) if result.deltas is not None else None,
+            "reference_value": result.reference_value,
+            "deviations": list(result.deviations) if result.deviations is not None else None,
             "fitted_curve": list(result.fitted_curve) if result.fitted_curve is not None else None,
             "extrapolated_energy": result.extrapolated_energy,
-            "fallback_suggestion": result.fallback_suggestion,
         }
 
     @staticmethod
@@ -826,20 +767,13 @@ class ConvergenceExaminerDialog(QDialog):
         if not isinstance(payload, dict):
             return None
 
-        try:
-            converged = bool(payload.get("converged", False))
-            method = str(payload.get("method", ""))
-            details = str(payload.get("details", ""))
-        except (TypeError, ValueError):
-            return None
-
-        converged_value_raw = payload.get("converged_value", payload.get("converged_cutoff"))
-        converged_value: float | None = None
-        if converged_value_raw is not None:
+        def optional_float(raw: object) -> float | None:
+            if raw is None:
+                return None
             try:
-                converged_value = float(converged_value_raw)
+                return float(raw)  # type: ignore[arg-type]
             except (TypeError, ValueError):
-                converged_value = None
+                return None
 
         def parse_series(raw: object) -> tuple[tuple[float, float], ...] | None:
             if not isinstance(raw, list):
@@ -854,26 +788,18 @@ class ConvergenceExaminerDialog(QDialog):
                     continue
             return tuple(values)
 
-        extrapolated_raw = payload.get("extrapolated_energy")
-        extrapolated_energy: float | None = None
-        if extrapolated_raw is not None:
-            try:
-                extrapolated_energy = float(extrapolated_raw)
-            except (TypeError, ValueError):
-                extrapolated_energy = None
-
-        fallback_raw = payload.get("fallback_suggestion")
-        fallback_suggestion = str(fallback_raw) if isinstance(fallback_raw, str) else None
-
         return ConvergenceResult(
-            converged=converged,
-            method=method,
-            details=details,
-            converged_value=converged_value,
-            deltas=parse_series(payload.get("deltas")),
+            converged=bool(payload.get("converged", False)),
+            quantity=str(payload.get("quantity", "")),
+            summary=str(payload.get("summary", "")),
+            explanation=str(payload.get("explanation", "")),
+            converged_value=optional_float(
+                payload.get("converged_value", payload.get("converged_cutoff"))
+            ),
+            reference_value=optional_float(payload.get("reference_value")),
+            deviations=parse_series(payload.get("deviations")),
             fitted_curve=parse_series(payload.get("fitted_curve")),
-            extrapolated_energy=extrapolated_energy,
-            fallback_suggestion=fallback_suggestion,
+            extrapolated_energy=optional_float(payload.get("extrapolated_energy")),
         )
 
     def state_snapshot(self) -> dict[str, object]:
@@ -883,12 +809,12 @@ class ConvergenceExaminerDialog(QDialog):
             "force_threshold": float(self._force_threshold.value()),
             "stress_threshold": float(self._stress_threshold.value()),
             "include_stress": bool(self._include_stress.isChecked()),
-            "method": self._selected_method(),
             "sweep_kind": self._sweep_kind,
-            "results_text": self._results.toPlainText(),
+            "results_rows": [
+                [[label, list(lines)] for label, lines in group] for group in self._result_groups
+            ],
             "recommended_value": self._recommended_value,
             "recommended_cutoff": self._recommended_value,
-            "selected_method_for_recommendation": self._selected_method_for_recommendation,
             "energy_threshold_for_recommendation": self._energy_threshold_for_recommendation,
             "force_threshold_for_recommendation": self._force_threshold_for_recommendation,
             "stress_threshold_for_recommendation": self._stress_threshold_for_recommendation,
@@ -929,9 +855,10 @@ class ConvergenceExaminerDialog(QDialog):
             self._include_stress.setChecked(include_stress_raw)
             self._stress_threshold.setEnabled(include_stress_raw)
 
-        method_raw = state.get("method")
-        if isinstance(method_raw, str) and method_raw.strip():
-            self._set_method(method_raw)
+        # An analysis saved before the single reference criterion carries the
+        # name of the method that produced it. Its results and recommendation
+        # are discarded; the thresholds and the plotted points are kept.
+        legacy_analysis = "method" in state
 
         self._energy_result = self._deserialize_result(state.get("energy_result"))
         self._force_result = self._deserialize_result(state.get("force_result"))
@@ -945,13 +872,6 @@ class ConvergenceExaminerDialog(QDialog):
                 self._recommended_value = None
         else:
             self._recommended_value = None
-
-        selected_method_raw = state.get("selected_method_for_recommendation")
-        self._selected_method_for_recommendation = (
-            str(selected_method_raw).strip()
-            if isinstance(selected_method_raw, str) and selected_method_raw.strip()
-            else None
-        )
 
         energy_threshold_raw = state.get("energy_threshold_for_recommendation")
         if energy_threshold_raw is not None:
@@ -980,9 +900,29 @@ class ConvergenceExaminerDialog(QDialog):
         else:
             self._stress_threshold_for_recommendation = None
 
-        text_raw = state.get("results_text")
-        if isinstance(text_raw, str) and text_raw.strip():
-            self._results.setPlainText(text_raw)
+        if legacy_analysis:
+            self._energy_result = None
+            self._force_result = None
+            self._stress_result = None
+            self._recommended_value = None
+            self._energy_threshold_for_recommendation = None
+            self._force_threshold_for_recommendation = None
+            self._stress_threshold_for_recommendation = None
+            self._write_initial_summary(
+                (
+                    (
+                        "Earlier analysis",
+                        (
+                            "set aside: it used an energy method this version no longer offers",
+                            "click Analyse Convergence to judge the sweep again",
+                        ),
+                    ),
+                )
+            )
+        else:
+            groups = self._parse_result_groups(state.get("results_rows"))
+            if groups:
+                self._show_results(groups)
 
         plot_data = state.get("plot_data")
         if isinstance(plot_data, Mapping):
@@ -1039,11 +979,65 @@ class ConvergenceExaminerDialog(QDialog):
             self._adopt_button.setEnabled(True)
             self._adopt_button.setText(self._adopt_button_text())
             self._emit_state_changed()
+        elif legacy_analysis:
+            self._emit_state_changed()
 
-    def _note_lines(self) -> list[str]:
+    @staticmethod
+    def _parse_result_groups(raw: object) -> list[list[ResultRow]]:
+        groups: list[list[ResultRow]] = []
+        if not isinstance(raw, list):
+            return groups
+        for raw_group in raw:
+            if not isinstance(raw_group, list):
+                continue
+            group: list[ResultRow] = []
+            for row in raw_group:
+                if (
+                    isinstance(row, (list, tuple))
+                    and len(row) == 2
+                    and isinstance(row[0], str)
+                    and isinstance(row[1], (list, tuple))
+                ):
+                    group.append((row[0], tuple(str(line) for line in row[1])))
+            if group:
+                groups.append(group)
+        return groups
+
+    def _note_groups(self) -> list[list[ResultRow]]:
         if not self._notes:
             return []
-        return ["", "Notes:", *(f"- {note}" for note in self._notes)]
+        return [[("Notes", self._notes)]]
+
+    def _show_results(self, groups: Sequence[Sequence[ResultRow]]) -> None:
+        """Show labelled rows: the label in bold on the left, each line beside it.
+
+        The first line of a row is the result; any further lines explain it in
+        muted text. A blank row separates the groups.
+        """
+
+        self._result_groups = [list(group) for group in groups if group]
+        palette = current_palette()
+        cells: list[str] = []
+        for index, group in enumerate(self._result_groups):
+            if index:
+                cells.append('<tr><td colspan="2" style="font-size:6px">&nbsp;</td></tr>')
+            for label, lines in group:
+                for line_index, line in enumerate(lines or ("",)):
+                    label_cell = f"<b>{escape(label)}</b>" if line_index == 0 else ""
+                    color = palette.text_primary if line_index == 0 else palette.text_muted
+                    if line_index == 0 and self._is_warning_row(label, line):
+                        color = palette.warning
+                    cells.append(
+                        f'<tr><td style="padding-right:16px">{label_cell}</td>'
+                        f'<td style="color:{color}">{escape(line)}</td></tr>'
+                    )
+        self._results.setHtml(f'<table cellspacing="0" cellpadding="1">{"".join(cells)}</table>')
+
+    @staticmethod
+    def _is_warning_row(label: str, line: str) -> bool:
+        return (label == "Sweep length" and line == "too short") or (
+            label.startswith("Recommended") and line == "none"
+        )
 
     def _recommended_point_text(self) -> str:
         """Return the recommended k-point grid as ``4 x 4 x 4`` (or a count fallback)."""
@@ -1059,10 +1053,82 @@ class ConvergenceExaminerDialog(QDialog):
             return f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
         return f"Set {self._recommended_point_text()} as Project Default K-Point Grid"
 
-    def _show_method_info(self) -> None:
-        method = self._selected_method()
-        text = _METHOD_DOCS.get(method, "No help text available for this method.")
-        QMessageBox.information(self, "Energy method info", text)
+    def _grid_labels(self) -> dict[float, str]:
+        """The bare grid (``4 x 4 x 6``) of each k-point count, for the results."""
+
+        labels = {
+            value: label.split(":", maxsplit=1)[-1].strip()
+            for value, label in self._point_labels.items()
+        }
+        labels.update(
+            {value: format_kpoint_grid(grid) for value, grid in self._point_grids.items()}
+        )
+        return labels
+
+    def _analysis_groups(
+        self, analysis: ConvergenceAnalysis, stress_threshold: float | None
+    ) -> list[list[ResultRow]]:
+        def number(value: float) -> str:
+            return np.format_float_positional(float(value), trim="-")
+
+        thresholds = [
+            f"energy {number(self._energy_threshold.value())} eV/atom",
+            f"force {number(self._force_threshold.value())} eV/Ang",
+        ]
+        if analysis.stress is not None and stress_threshold is not None:
+            thresholds.append(f"stress {number(stress_threshold)} GPa")
+        reference_lines: tuple[str, ...] = (analysis.reference_text,)
+        if self._sweep_kind == "kpoint":
+            reference_lines += ("a sweep should extend beyond the grid it is meant to certify",)
+        groups: list[list[ResultRow]] = [
+            [("Thresholds", (", ".join(thresholds),)), ("Reference", reference_lines)],
+            [
+                (result.quantity, (result.summary, result.explanation))
+                for result in (analysis.energy, analysis.force, analysis.stress)
+                if result is not None
+            ],
+        ]
+        if analysis.sweep_length is not None:
+            groups.append(
+                [
+                    (
+                        "Sweep length",
+                        (analysis.sweep_length.summary, analysis.sweep_length.explanation),
+                    )
+                ]
+            )
+
+        label = "Recommended cutoff" if self._sweep_kind == "cutoff" else "Recommended k-point grid"
+        if self._recommended_value is not None:
+            if self._sweep_kind == "cutoff":
+                value = f"{self._recommended_value:.8g} eV"
+            else:
+                value = self._recommended_point_text()
+                grid = self._point_grids.get(float(self._recommended_value))
+                spacing = self._point_spacings.get(float(self._recommended_value))
+                if spacing is not None and grid is not None and grid != (1, 1, 1):
+                    value += f" (spacing {spacing:.4g} 1/Ang)"
+            groups.append([(label, (value,))])
+        else:
+            unconverged = analysis.unconverged
+            setting = "cutoffs" if self._sweep_kind == "cutoff" else "denser k-point grids"
+            criteria = " and ".join(unconverged) + (
+                " criterion" if len(unconverged) == 1 else " criteria"
+            )
+            groups.append(
+                [
+                    (
+                        label,
+                        (
+                            "none",
+                            f"the {criteria} did not converge within the sweep; extend the "
+                            f"sweep to larger {setting}, or relax the threshold, and analyse "
+                            "again",
+                        ),
+                    )
+                ]
+            )
+        return [*groups, *self._note_groups()]
 
     def _run_analysis(self) -> None:
         # Show the thresholds actually used: a typed value outside a field's range
@@ -1070,7 +1136,7 @@ class ConvergenceExaminerDialog(QDialog):
         # edit (macOS buttons take no focus), so snap the text here as well.
         for field in (self._energy_threshold, self._force_threshold, self._stress_threshold):
             field.setValue(field.value())
-        self._update_method_availability()
+        self._update_availability()
         if not self._run_button.isEnabled():
             self._write_initial_summary()
             return
@@ -1086,8 +1152,19 @@ class ConvergenceExaminerDialog(QDialog):
             forces = [force_by_cutoff[cutoff] for cutoff in aligned_cutoffs]
 
         if len(cutoffs) < 2:
-            self._results.setPlainText(
-                "Need at least two matching completed rows containing both total energy and max force values."
+            self._show_results(
+                [
+                    [
+                        (
+                            "Analysis",
+                            (
+                                "Need at least two matching completed rows containing both "
+                                "total energy and max force values.",
+                            ),
+                        )
+                    ],
+                    *self._note_groups(),
+                ]
             )
             self._adopt_button.setEnabled(False)
             self._adopt_button.setText(
@@ -1098,7 +1175,6 @@ class ConvergenceExaminerDialog(QDialog):
             self._draw_initial_plot()
             return
 
-        method = self._selected_method()
         energy_threshold = float(self._energy_threshold.value())
         force_threshold = float(self._force_threshold.value())
 
@@ -1118,106 +1194,37 @@ class ConvergenceExaminerDialog(QDialog):
             else:
                 stress_threshold = float(self._stress_threshold.value())
 
+        series = {
+            "energies": energies,
+            "max_forces": forces,
+            "num_atoms": self._num_atoms,
+            "energy_threshold": energy_threshold,
+            "force_threshold": force_threshold,
+            "max_stresses": stresses if include_stress else None,
+            "stress_threshold": stress_threshold if include_stress else None,
+        }
         try:
             if self._sweep_kind == "kpoint":
-                energy_result, force_result = analyze_kpoint_convergence(
+                analysis = analyze_kpoint_convergence(
                     kpoint_counts=cutoffs,
-                    energies=energies,
-                    max_forces=forces,
-                    num_atoms=self._num_atoms,
-                    energy_threshold=energy_threshold,
-                    force_threshold=force_threshold,
-                    point_labels=self._point_labels,
+                    point_labels=self._grid_labels(),
                     point_spacings=self._point_spacings or None,
+                    **series,
                 )
             else:
-                energy_result, force_result = analyze_convergence(
-                    method=method,
-                    cutoffs=cutoffs,
-                    energies=energies,
-                    max_forces=forces,
-                    num_atoms=self._num_atoms,
-                    energy_threshold=energy_threshold,
-                    force_threshold=force_threshold,
-                )
+                analysis = analyze_convergence(cutoffs=cutoffs, **series)
         except ValueError as exc:
             QMessageBox.warning(self, "Convergence analysis failed", str(exc))
             return
 
-        stress_result: ConvergenceResult | None = None
-        if include_stress and stress_threshold is not None:
-            stress_result = delta_threshold_stress(cutoffs, stresses, threshold=stress_threshold)
-            if self._sweep_kind == "kpoint":
-                stress_result = apply_kpoint_label_to_stress_result(
-                    stress_result,
-                    self._point_labels,
-                    point_spacings=self._point_spacings or None,
-                )
-
-        self._energy_result = energy_result
-        self._force_result = force_result
-        self._stress_result = stress_result
-        self._recommended_value = recommended_value(energy_result, force_result, stress_result)
-        self._selected_method_for_recommendation = method
+        self._energy_result = analysis.energy
+        self._force_result = analysis.force
+        self._stress_result = analysis.stress
+        self._recommended_value = analysis.recommended
         self._energy_threshold_for_recommendation = energy_threshold
         self._force_threshold_for_recommendation = force_threshold
         self._stress_threshold_for_recommendation = stress_threshold if include_stress else None
-
-        lines = [
-            f"Energy method: {method}",
-            f"Energy threshold: {energy_threshold:.6g} eV/atom",
-            f"Force threshold: {force_threshold:.6g} eV/Ang",
-        ]
-        if include_stress and stress_threshold is not None:
-            lines.append(f"Stress threshold: {stress_threshold:.6g} GPa")
-        lines.extend(
-            [
-                "",
-                "Energy result:",
-                energy_result.details,
-                "",
-                "Force result:",
-                force_result.details,
-            ]
-        )
-        if stress_result is not None:
-            lines.extend(["", "Stress result:", stress_result.details])
-
-        if energy_result.fallback_suggestion:
-            lines.extend(
-                ["", f"Energy method fallback suggestion: {energy_result.fallback_suggestion}"]
-            )
-
-        if self._recommended_value is not None:
-            if self._sweep_kind == "cutoff":
-                lines.extend(["", f"Recommended cutoff: {self._recommended_value:.8g} eV"])
-            else:
-                label = self._recommended_point_text()
-                recommended_line = f"Recommended k-point grid: {label}"
-                grid = self._point_grids.get(float(self._recommended_value))
-                spacing = self._point_spacings.get(float(self._recommended_value))
-                if spacing is not None and grid is not None and grid != (1, 1, 1):
-                    recommended_line += f" (spacing {spacing:.4g} 1/Ang)"
-                lines.extend(["", recommended_line])
-        else:
-            unconverged = unconverged_criteria(energy_result, force_result, stress_result)
-            if unconverged:
-                setting = "cutoffs" if self._sweep_kind == "cutoff" else "denser k-point grids"
-                lines.extend(
-                    [
-                        "",
-                        "No recommendation: the "
-                        + " and ".join(unconverged)
-                        + (" criterion" if len(unconverged) == 1 else " criteria")
-                        + " did not converge within the sweep. Extend the sweep to larger "
-                        + f"{setting}, or relax the threshold, and analyse again.",
-                    ]
-                )
-            else:
-                lines.extend(["", "No combined convergence recommendation available yet."])
-        lines.extend(self._note_lines())
-
-        self._results.setPlainText("\n".join(lines))
+        self._show_results(self._analysis_groups(analysis, stress_threshold))
         self._last_plot_data = {
             "cutoffs": list(cutoffs),
             "energies": list(energies),
@@ -1293,13 +1300,13 @@ class ConvergenceExaminerDialog(QDialog):
         if self._energy_result and self._energy_result.fitted_curve:
             fit_x = [point[0] for point in self._energy_result.fitted_curve]
             fit_y = [point[1] for point in self._energy_result.fitted_curve]
-            energy_ax.plot(fit_x, fit_y, linestyle="--", color="#0f766e", label="Asymptotic fit")
+            energy_ax.plot(fit_x, fit_y, linestyle="--", color="#0f766e", label="Power-law fit")
         if self._energy_result and self._energy_result.extrapolated_energy is not None:
             energy_ax.axhline(
                 self._energy_result.extrapolated_energy,
                 color="#0f766e",
                 linestyle=":",
-                label="E_inf",
+                label="Fitted limit",
             )
         if self._energy_result and self._energy_result.converged_value is not None:
             energy_ax.axvline(
@@ -1433,12 +1440,12 @@ class ConvergenceExaminerDialog(QDialog):
         if stresses and stress_threshold is not None:
             force_ax.set_title(
                 "Force / stress convergence "
-                f"(dF ≤ {force_threshold:.3g} eV/Ang, dS ≤ {stress_threshold:.3g} GPa)",
+                f"(thresholds {force_threshold:.3g} eV/Ang, {stress_threshold:.3g} GPa)",
                 pad=10,
             )
         else:
             force_ax.set_title(
-                f"Force convergence (delta threshold {force_threshold:.3g} eV/Ang)", pad=10
+                f"Force convergence (threshold {force_threshold:.3g} eV/Ang)", pad=10
             )
 
         self._canvas.draw_idle()
@@ -1446,7 +1453,7 @@ class ConvergenceExaminerDialog(QDialog):
     def _emit_adopted_cutoff(self) -> None:
         if self._recommended_value is None:
             return
-        method = self._selected_method_for_recommendation or self._selected_method()
+        method = CONVERGED_DEFAULT_METHOD
         energy_threshold = self._energy_threshold_for_recommendation
         if energy_threshold is None:
             energy_threshold = float(self._energy_threshold.value())

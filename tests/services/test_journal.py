@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
 from mufinder.services.journal import (
@@ -238,6 +240,48 @@ def test_journal_distinguishes_manual_and_cleared_defaults() -> None:
     ]
     assert "800 eV by hand" in entries[0].body
     assert "6x6x4 by hand" in entries[1].body
+
+
+@pytest.mark.parametrize("method", ["converged", "delta-threshold", "asymptotic", None])
+def test_journal_adopted_defaults_name_no_convergence_method(method: str | None) -> None:
+    def record(hour: int, action: str, **parameters: object) -> ProvenanceRecord:
+        return ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, hour, 0, tzinfo=UTC),
+            action=action,
+            parameters=parameters,
+        )
+
+    entries = (
+        build_journal(
+            "Adopted",
+            [
+                record(
+                    9,
+                    "set_recommended_cutoff",
+                    recommended_cutoff_energy=600.0,
+                    recommended_cutoff_method=method,
+                    recommended_cutoff_xc_functional="PBE",
+                ),
+                record(
+                    10,
+                    "set_recommended_kpoint_grid",
+                    recommended_kpoint_grid=[4, 4, 6],
+                    recommended_kpoint_method=method,
+                ),
+            ],
+        )
+        .days[0]
+        .entries
+    )
+
+    assert [entry.title for entry in entries] == [
+        "Recommended cutoff adopted",
+        "Recommended k-point grid adopted",
+    ]
+    assert entries[0].body.startswith("Set the project default cutoff to 600 eV")
+    assert entries[1].body.startswith("Set the project default k-point grid to 4x4x6")
+    for entry in entries:
+        assert " using " not in entry.body
 
 
 def test_journal_counts_cutoffs_under_either_configuration_key() -> None:

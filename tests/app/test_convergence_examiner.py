@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from matplotlib.colors import to_hex
 import pytest
-from PySide6.QtWidgets import QScrollArea
+from PySide6.QtWidgets import QComboBox, QPushButton, QScrollArea
 
 import mufinder.app.convergence_examiner as convergence_examiner_module
 from mufinder.app import theme as theme_module
@@ -52,27 +52,19 @@ def test_convergence_examiner_uses_scrollable_layout_and_minimum_sizes(qapp) -> 
     assert dialog._adopt_button.parentWidget() is not None
 
 
-def test_convergence_examiner_shows_method_info(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
-    dialog = ConvergenceExaminerDialog(
-        {
-            300.0: _completed_state(-10.0, 0.3),
-            400.0: _completed_state(-10.01, 0.2),
-        },
-        num_atoms=2,
-    )
+def test_convergence_examiner_has_no_method_picker(qapp) -> None:
+    for kind in ("cutoff", "kpoint"):
+        dialog = ConvergenceExaminerDialog(
+            {
+                8.0: _completed_state(-10.0, 0.3),
+                27.0: _completed_state(-10.01, 0.2),
+            },
+            num_atoms=2,
+            sweep_kind=kind,
+        )
 
-    infos: list[str] = []
-    monkeypatch.setattr(
-        convergence_examiner_module.QMessageBox,
-        "information",
-        lambda _parent, _title, message: infos.append(message),
-    )
-
-    dialog._method_combo.setCurrentText("Derivative (dE/dEcut)")
-    dialog._show_method_info()
-
-    assert infos
-    assert "dE/dEcut" in infos[-1]
+        assert dialog.findChildren(QComboBox) == []
+        assert "Info" not in [button.text() for button in dialog.findChildren(QPushButton)]
 
 
 def test_convergence_examiner_runs_analysis_and_enables_adopt(qapp) -> None:
@@ -85,7 +77,6 @@ def test_convergence_examiner_runs_analysis_and_enables_adopt(qapp) -> None:
         num_atoms=2,
     )
 
-    dialog._method_combo.setCurrentText("Delta-Threshold")
     dialog._run_analysis()
 
     assert "Recommended cutoff" in dialog._results.toPlainText()
@@ -113,26 +104,12 @@ def test_convergence_examiner_emits_cutoff_adopted_signal(qapp) -> None:
     dialog._emit_adopted_cutoff()
 
     assert adopted
-    assert adopted[-1][0] == pytest.approx(500.0)
-    assert adopted[-1][1] == "delta-threshold"
+    # 400 eV is within 0.00025 eV/atom and 0.01 eV/Ang of 500 eV.
+    assert adopted[-1][0] == pytest.approx(400.0)
+    assert adopted[-1][1] == "converged"
     assert adopted[-1][2] == pytest.approx(0.001)
     assert adopted[-1][3] == pytest.approx(0.05)
     assert adopted[-1][4] is None
-
-
-def test_convergence_examiner_disables_asymptotic_when_points_insufficient(qapp) -> None:
-    dialog = ConvergenceExaminerDialog(
-        {
-            300.0: _completed_state(-10.0, 0.3),
-            400.0: _completed_state(-10.01, 0.2),
-            500.0: _completed_state(-10.02, 0.18),
-        },
-        num_atoms=2,
-    )
-
-    index = dialog._method_combo.findText("Asymptotic Extrapolation")
-    assert index >= 0
-    assert dialog._method_combo.model().item(index).isEnabled() is False
 
 
 def test_convergence_examiner_restores_persisted_results_and_plot(qapp) -> None:
@@ -144,7 +121,6 @@ def test_convergence_examiner_restores_persisted_results_and_plot(qapp) -> None:
         },
         num_atoms=2,
     )
-    first._method_combo.setCurrentText("Delta-Threshold")
     first._run_analysis()
     snapshot = to_jsonable(first.state_snapshot())
 
@@ -158,9 +134,62 @@ def test_convergence_examiner_restores_persisted_results_and_plot(qapp) -> None:
         initial_state=snapshot,
     )
 
-    assert "Recommended cutoff" in second._results.toPlainText()
+    assert second._results.toPlainText() == first._results.toPlainText()
+    assert "Recommended cutoff\n400 eV" in second._results.toPlainText()
     assert second._adopt_button.isEnabled() is True
-    assert second._recommended_cutoff == pytest.approx(first._recommended_cutoff)
+    assert second._recommended_value == pytest.approx(first._recommended_value)
+
+
+def test_convergence_examiner_discards_an_analysis_saved_by_an_earlier_version(qapp) -> None:
+    states: list[dict[str, object]] = []
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+        initial_state={
+            "energy_threshold": 0.002,
+            "force_threshold": 0.07,
+            "method": "asymptotic",
+            "selected_method_for_recommendation": "asymptotic",
+            "results_text": "Energy method: asymptotic\n\nRecommended cutoff: 500 eV",
+            "recommended_value": 500.0,
+            "energy_result": {"converged": True, "method": "asymptotic", "converged_value": 500.0},
+            "force_result": {"converged": True, "method": "force-delta-threshold"},
+            "plot_data": {
+                "cutoffs": [300.0, 400.0, 500.0],
+                "energies": [-10.0, -10.01, -10.0105],
+                "forces": [0.30, 0.20, 0.19],
+                "energy_threshold": 0.002,
+                "force_threshold": 0.07,
+            },
+        },
+    )
+    dialog.state_changed.connect(states.append)
+
+    text = dialog._results.toPlainText()
+    assert "asymptotic" not in text
+    assert "Completed points\n3" in text
+    assert (
+        "Earlier analysis\nset aside: it used an energy method this version no longer offers"
+        "\n\nclick Analyse Convergence to judge the sweep again"
+    ) in text
+    assert dialog._recommended_value is None
+    assert dialog._energy_result is None
+    assert dialog._adopt_button.isEnabled() is False
+    # The thresholds and the plotted points are kept.
+    assert dialog._energy_threshold.value() == pytest.approx(0.002)
+    assert dialog._force_threshold.value() == pytest.approx(0.07)
+    assert dialog._last_plot_data["cutoffs"] == [300.0, 400.0, 500.0]
+
+    dialog._run_analysis()
+
+    assert "method" not in states[-1]
+    assert "results_text" not in states[-1]
+    assert "Earlier analysis" not in dialog._results.toPlainText()
+    assert "selected_method_for_recommendation" not in states[-1]
 
 
 def test_convergence_examiner_emits_state_changed_after_analysis(qapp) -> None:
@@ -179,10 +208,10 @@ def test_convergence_examiner_emits_state_changed_after_analysis(qapp) -> None:
     dialog._run_analysis()
 
     assert states
-    assert states[-1].get("recommended_cutoff") == pytest.approx(500.0)
+    assert states[-1].get("recommended_cutoff") == pytest.approx(400.0)
 
 
-def test_convergence_examiner_kpoint_mode_uses_delta_only_and_emits_default(qapp) -> None:
+def test_convergence_examiner_kpoint_mode_emits_default(qapp) -> None:
     dialog = ConvergenceExaminerDialog(
         {
             8.0: _completed_state(-10.0, 0.30),
@@ -193,13 +222,6 @@ def test_convergence_examiner_kpoint_mode_uses_delta_only_and_emits_default(qapp
         sweep_kind="kpoint",
         point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
     )
-
-    derivative_index = dialog._method_combo.findText("Derivative (dE/dEcut)")
-    asymptotic_index = dialog._method_combo.findText("Asymptotic Extrapolation")
-    assert derivative_index >= 0
-    assert asymptotic_index >= 0
-    assert dialog._method_combo.model().item(derivative_index).isEnabled() is False
-    assert dialog._method_combo.model().item(asymptotic_index).isEnabled() is False
 
     dialog._run_analysis()
     assert "Recommended k-point grid" in dialog._results.toPlainText()
@@ -218,7 +240,79 @@ def test_convergence_examiner_kpoint_mode_uses_delta_only_and_emits_default(qapp
     )
     dialog._emit_adopted_cutoff()
 
-    assert adopted
+    assert adopted == [(27.0, "converged", pytest.approx(0.001), pytest.approx(0.05), None)]
+
+
+def test_convergence_examiner_kpoint_results_name_the_densest_grid_as_reference(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            8.0: _completed_state(-10.0, 0.30),
+            27.0: _completed_state(-10.01, 0.20),
+            64.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+    )
+
+    dialog._run_analysis()
+
+    text = dialog._results.toPlainText()
+    assert (
+        "Reference\n4 x 4 x 4, the densest grid in the sweep\n\n"
+        "a sweep should extend beyond the grid it is meant to certify"
+    ) in text
+    assert "Energy\nconverged at 3 x 3 x 3\n" in text
+    assert "within 0.00025 eV/atom of 4 x 4 x 4, as is every denser grid" in text
+    assert "Recommended k-point grid\n3 x 3 x 3" in text
+    assert "Sweep length" not in text
+    assert "Grid:" not in text
+    assert "Delta" not in text
+
+
+def test_convergence_examiner_warns_when_the_cutoff_sweep_is_too_short(qapp) -> None:
+    # Per-atom distance from the limit decays as Ecut**-1.5, 3 meV/atom at 600 eV.
+    def energy(cutoff: float) -> float:
+        return -1000.0 + 0.003 * 6 * (cutoff / 600.0) ** -1.5
+
+    dialog = ConvergenceExaminerDialog(
+        {cutoff: _completed_state(energy(cutoff), 0.01) for cutoff in (300.0, 400.0, 500.0, 600.0)},
+        num_atoms=6,
+    )
+
+    dialog._run_analysis()
+
+    text = dialog._results.toPlainText()
+    assert (
+        "Sweep length\ntoo short\n\n600 eV is 0.003 eV/atom from the fitted limit; "
+        "extend the sweep to 1300 eV and analyse again"
+    ) in text
+    assert "Recommended cutoff\n500 eV" in text
+    # The warning does not block adoption.
+    assert dialog._adopt_button.isEnabled() is True
+    assert theme_module.current_palette().warning.lower() in dialog._results.toHtml().lower()
+    assert dialog._force_ax.get_title() == "Force convergence (threshold 0.05 eV/Ang)"
+    legend = [text.get_text() for text in dialog._energy_ax.get_legend().get_texts()]
+    assert "Power-law fit" in legend
+    assert "Fitted limit" in legend
+
+
+def test_convergence_examiner_reports_when_the_limit_cannot_be_estimated(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+    )
+
+    dialog._run_analysis()
+
+    assert (
+        "Sweep length\nlimit not estimated\n\nthe fit needs at least four cutoffs"
+        in dialog._results.toPlainText()
+    )
 
 
 def test_convergence_examiner_kpoint_mode_adds_spacing_axis_when_lattice_provided(qapp) -> None:
@@ -560,7 +654,6 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
         num_atoms=2,
     )
     dialog._recommended_value = 400.0
-    dialog._selected_method_for_recommendation = None
     dialog._energy_threshold_for_recommendation = None
     dialog._force_threshold_for_recommendation = None
     dialog._energy_threshold.setValue(0.002)
@@ -577,8 +670,8 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
 
     dialog._emit_adopted_cutoff()
 
-    assert defaults == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07), None)]
-    assert cutoffs == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07), None)]
+    assert defaults == [(400.0, "converged", pytest.approx(0.002), pytest.approx(0.07), None)]
+    assert cutoffs == [(400.0, "converged", pytest.approx(0.002), pytest.approx(0.07), None)]
 
 
 def _completed_state_with_stress(
@@ -631,12 +724,15 @@ def test_convergence_examiner_runs_stress_and_passes_through_signal(qapp) -> Non
     )
     dialog._include_stress.setChecked(True)
     dialog._stress_threshold.setValue(0.1)
-    dialog._method_combo.setCurrentText("Delta-Threshold")
 
     dialog._run_analysis()
 
     assert dialog._stress_result is not None
-    assert "Stress result" in dialog._results.toPlainText()
+    assert "Stress\nconverged at 400 eV" in dialog._results.toPlainText()
+    assert "stress 0.1 GPa" in dialog._results.toPlainText()
+    assert dialog._force_ax.get_title() == (
+        "Force / stress convergence (thresholds 0.05 eV/Ang, 0.1 GPa)"
+    )
 
     adopted: list[tuple] = []
     dialog.cutoff_adopted.connect(lambda *args: adopted.append(args))
@@ -733,12 +829,13 @@ def test_convergence_examiner_withholds_recommendation_when_force_has_not_conver
         num_atoms=2,
     )
 
-    dialog._method_combo.setCurrentText("Delta-Threshold")
     dialog._run_analysis()
 
     text = dialog._results.toPlainText()
-    assert "Recommended cutoff" not in text
-    assert "No recommendation: the force criterion did not converge within the sweep" in text
+    assert "Force\nnot converged within the sweep" in text
+    assert (
+        "Recommended cutoff\nnone\n\nthe force criterion did not converge within the sweep"
+    ) in text
     assert dialog._adopt_button.isEnabled() is False
 
 
@@ -755,14 +852,14 @@ def test_convergence_examiner_kpoint_adopt_label_names_the_grid_once(qapp) -> No
         notes=("2 x 4 x 1 left out: same k-point count (8) as 2 x 2 x 2.",),
     )
 
-    assert "Notes:\n- 2 x 4 x 1 left out" in dialog._results.toPlainText()
+    assert "Notes\n2 x 4 x 1 left out" in dialog._results.toPlainText()
     dialog._run_analysis()
 
     text = dialog._adopt_button.text()
     assert text.startswith("Set ") and text.endswith(" as Project Default K-Point Grid")
     assert "Grid:" not in text
     results = dialog._results.toPlainText()
-    assert "Recommended k-point grid: Grid:" not in results
+    assert "Grid:" not in results
     assert "2 x 4 x 1 left out" in results
 
 
@@ -783,7 +880,6 @@ def test_convergence_examiner_hover_survives_reanalysis(qapp) -> None:
         },
         num_atoms=2,
     )
-    dialog._method_combo.setCurrentText("Delta-Threshold")
 
     def hover() -> None:
         dialog._canvas.draw()
@@ -812,7 +908,6 @@ def test_convergence_examiner_accepts_tight_thresholds_as_typed(qapp) -> None:
         },
         num_atoms=2,
     )
-    dialog._method_combo.setCurrentText("Delta-Threshold")
     dialog._energy_threshold.setText("0.00001")
     dialog._force_threshold.setText("0.0001")
 
@@ -821,8 +916,7 @@ def test_convergence_examiner_accepts_tight_thresholds_as_typed(qapp) -> None:
     assert dialog._energy_threshold.text() == "0.00001"
     assert dialog._force_threshold.text() == "0.0001"
     text = dialog._results.toPlainText()
-    assert "Energy threshold: 1e-05 eV/atom" in text
-    assert "Force threshold: 0.0001 eV/Ang" in text
+    assert "Thresholds\nenergy 0.00001 eV/atom, force 0.0001 eV/Ang" in text
 
 
 def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precision(qapp) -> None:
@@ -846,7 +940,6 @@ def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precisio
         },
         num_atoms=2,
     )
-    dialog._method_combo.setCurrentText("Delta-Threshold")
     dialog._include_stress.setChecked(True)
     dialog._force_threshold.setText("0.000001")
     dialog._stress_threshold.setText("0.0000001")
@@ -856,8 +949,7 @@ def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precisio
     assert dialog._force_threshold.text() == "0.00001"
     assert dialog._stress_threshold.text() == "0.000001"
     text = dialog._results.toPlainText()
-    assert "Force threshold: 1e-05 eV/Ang" in text
-    assert "Stress threshold: 1e-06 GPa" in text
+    assert "force 0.00001 eV/Ang, stress 0.000001 GPa" in text
     assert "0.00001 eV/Ang" in dialog._force_threshold.toolTip()
 
 
