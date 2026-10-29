@@ -41,6 +41,7 @@ from mufinder.app import theme as theme_module
 from mufinder.app.theme import body_font_family, current_palette
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.domain.models import Structure
+from mufinder.services.project_service import ProjectService
 from tests.support.structures import host_structure
 
 
@@ -683,8 +684,9 @@ def test_atomic_structure_viewer_defaults_to_zero_spins_for_invalid_source(qapp)
 def test_host_structure_widget_loads_spins_from_magnetic_structure_fallback(qapp) -> None:
     structure = _sample_structure()
     structure.properties.pop("atomic_spins", None)
+    structure.properties.pop("propagation_vector", None)
     structure.properties["magnetic_structure"] = {
-        "propagation_vector": [0.0, 0.0, 0.25],
+        "propagation_vector": [0.0, 0.5, 0.25],
         "moments": [
             {"label": "Si1", "vector": [0.0, 0.0, 1.25], "coordinate_system": "cartesian"},
             {"label": "O2", "vector": [0.0, 0.0, -0.75], "coordinate_system": "cartesian"},
@@ -698,6 +700,27 @@ def test_host_structure_widget_loads_spins_from_magnetic_structure_fallback(qapp
     assert np.allclose(widget._viewer._spins, [1.25, -0.75])
     assert widget._atom_table.item(0, 4).text() == "1.2500"
     assert widget._atom_table.item(1, 4).text() == "-0.7500"
+    assert (
+        widget._propagation_x.value(),
+        widget._propagation_y.value(),
+        widget._propagation_z.value(),
+    ) == (0.0, 0.5, 0.25)
+    widget.close()
+
+
+def test_host_structure_widget_reads_a_short_propagation_vector_like_the_services(qapp) -> None:
+    structure = _sample_structure()
+    structure.properties["propagation_vector"] = [0.0, 0.5]
+
+    widget = HostStructureWidget()
+    widget.set_structure(structure)
+
+    shown = [
+        widget._propagation_x.value(),
+        widget._propagation_y.value(),
+        widget._propagation_z.value(),
+    ]
+    assert shown == ProjectService().structure_propagation_vector(structure) == [0.0, 0.5, 0.0]
     widget.close()
 
 

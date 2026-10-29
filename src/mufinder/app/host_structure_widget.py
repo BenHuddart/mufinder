@@ -31,8 +31,10 @@ from mufinder.app.structure_render_guard import (
 )
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import PromotableHost
+from mufinder.services.supercell_assets import structure_atomic_spins
 
 
 class HostStructureWidget(QWidget):
@@ -285,8 +287,8 @@ class HostStructureWidget(QWidget):
             species_summary = ", ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
             self._species_label.setText(f"Species: {species_summary}")
 
-            self._atomic_spins = self._load_spins(structure)
-            self._propagation_vector = self._load_propagation_vector(structure)
+            self._atomic_spins = structure_atomic_spins(structure)
+            self._propagation_vector = list(propagation_vector_from_structure(structure))
             self._set_propagation_inputs(self._propagation_vector)
 
             for index, (species, frac) in enumerate(
@@ -378,9 +380,6 @@ class HostStructureWidget(QWidget):
         self._viewer.set_spins(self._atomic_spins)
         self._emit_magnetic_configuration()
 
-    def _on_viewer_atom_selected(self, atom_index: int) -> None:
-        self._on_viewer_atoms_selected([] if atom_index < 0 else [atom_index])
-
     def _on_viewer_atoms_selected(self, atom_indexes: Sequence[int]) -> None:
         selection_model = self._atom_table.selectionModel()
         if selection_model is None:
@@ -407,67 +406,6 @@ class HostStructureWidget(QWidget):
             )
         finally:
             self._syncing_selection = False
-
-    def _load_spins(self, structure: Structure) -> list[float]:
-        atom_count = len(structure.species)
-        raw = structure.properties.get("atomic_spins")
-        if raw is None:
-            raw = structure.properties.get("initial_magnetic_moments")
-
-        spins = [0.0] * atom_count
-        saw_numeric = False
-        if isinstance(raw, list):
-            for index, value in enumerate(raw[:atom_count]):
-                try:
-                    spins[index] = float(value)
-                    saw_numeric = True
-                except (TypeError, ValueError):
-                    spins[index] = 0.0
-
-        magnetic = structure.properties.get("magnetic_structure")
-        if isinstance(magnetic, dict):
-            moments = magnetic.get("moments")
-            if isinstance(moments, list):
-                fallback = [0.0] * atom_count
-                saw_fallback = False
-                for index, moment in enumerate(moments[:atom_count]):
-                    if not isinstance(moment, dict):
-                        continue
-                    vector = moment.get("vector")
-                    if not isinstance(vector, list) or len(vector) < 3:
-                        continue
-                    try:
-                        fallback[index] = float(vector[2])
-                        saw_fallback = True
-                    except (TypeError, ValueError):
-                        continue
-                if saw_fallback:
-                    if saw_numeric and self._has_nonzero_spin(spins):
-                        return spins
-                    return fallback
-        if saw_numeric:
-            return spins
-        return spins
-
-    @staticmethod
-    def _has_nonzero_spin(values: Sequence[float], *, tolerance: float = 1e-12) -> bool:
-        return any(abs(float(value)) > tolerance for value in values)
-
-    def _load_propagation_vector(self, structure: Structure) -> list[float]:
-        source: Any = structure.properties.get("propagation_vector")
-        if source is None:
-            magnetic = structure.properties.get("magnetic_structure")
-            if isinstance(magnetic, dict):
-                source = magnetic.get("propagation_vector")
-
-        vector = [0.0, 0.0, 0.0]
-        if isinstance(source, list) and len(source) == 3:
-            for index, value in enumerate(source):
-                try:
-                    vector[index] = float(value)
-                except (TypeError, ValueError):
-                    vector[index] = 0.0
-        return vector
 
     def _set_propagation_inputs(self, vector: list[float]) -> None:
         self._propagation_x.setValue(float(vector[0]))
