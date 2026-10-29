@@ -722,6 +722,16 @@ only MuFinder's own code and tests called them.
   the leading underscore in ``mufinder.app.workflow_config_codecs``. The stored
   configuration shape is unchanged.
 
+The names below were removed without a deprecation period. Neither is in the
+API reference and no project data depends on them: nothing constructed the
+dialog, and the Supercell Editor was the only caller of the private forwarder.
+
+- ``SupercellPreviewDialog`` (``mufinder.app.supercell_dialog``): open
+  ``SupercellEditorDialog`` from the same module, which previews, names and
+  saves supercells.
+- ``ProjectService._supercell_asset``: call ``supercell_asset`` from
+  ``mufinder.services.supercell_assets``.
+
 The keywords below were removed without a deprecation period. They belonged to
 an unpersisted record that is not in the API reference and that only MuFinder
 constructs, so no project data or packaged build depends on them. Code that

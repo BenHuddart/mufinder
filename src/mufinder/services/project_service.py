@@ -726,10 +726,6 @@ class ProjectService:
     # Workflow supercell assets and selection live in
     # ``mufinder.services.supercell_assets``; these methods delegate to it.
 
-    def _supercell_asset(self, structure: Structure) -> WorkflowSupercellAsset | None:
-        # ``mufinder.app.supercell_dialog`` reads asset metadata through this.
-        return supercell_assets.supercell_asset(structure)
-
     def get_workflow_supercell_selection(
         self,
         document: ProjectDocument,
