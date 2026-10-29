@@ -88,6 +88,9 @@ def run_row_parameter_dialog(
 
     if not request.row_values:
         return None
+    seed_advanced: set[str] = set()
+    for names in request.row_advanced.values():
+        seed_advanced.update(names)
     dialog = ParameterDialog(
         specs=list(request.specs),
         workflow_stage=request.workflow_stage,
@@ -95,25 +98,25 @@ def run_row_parameter_dialog(
         intro_text=request.intro_text,
         read_only=request.read_only,
         species_options=request.species_options,
+        values=dict(request.values),
+        preferred_exclusive=kpoint_exclusive_hint(request.row_values.values()),
+        advanced_names=seed_advanced,
+        mixed_names=mixed_parameter_names(request.row_values.values()),
         parent=parent,
     )
-    dialog.setWindowTitle(f"{'Inspect' if request.read_only else 'Configure'} {request.subject}")
-    dialog.set_values(
-        dict(request.values),
-        preferred_exclusive=kpoint_exclusive_hint(request.row_values.values()),
-    )
-    seed_advanced: set[str] = set()
-    for names in request.row_advanced.values():
-        seed_advanced.update(names)
-    dialog.set_advanced_names(seed_advanced)
-    dialog.set_mixed_names(mixed_parameter_names(request.row_values.values()))
-
-    if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
-        return None
-
-    values = request.sanitize(dialog.collect_values())
-    advanced = frozenset(dialog.advanced_names())
-    untouched = dialog.untouched_mixed_names()
+    try:
+        dialog.setWindowTitle(
+            f"{'Inspect' if request.read_only else 'Configure'} {request.subject}"
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
+            return None
+        values = request.sanitize(dialog.collect_values())
+        advanced = frozenset(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
+    finally:
+        # The dialog is a child of ``parent``; without this every open would
+        # stay alive under it, editors and all.
+        dialog.deleteLater()
     return RowParameterResult(
         values=values,
         advanced_names=advanced,

@@ -735,7 +735,9 @@ controllers treat every workflow alike:
   between the rows as mixed, sanitises what the dialog returns and resolves it
   per row, keeping each row's own value for a mixed parameter left untouched.
   It returns ``None`` on cancel and for a read-only inspection; the widget
-  only stores the per-row result.
+  only stores the per-row result. The launcher passes the seed, advanced names
+  and mixed names to the ``ParameterDialog`` constructor, so the rows are built
+  once per open, and deletes the dialog once it closes.
 - **Parameters.** Specs exclude ``task``; defaults are seeded from the schema
   and the project defaults; effective parameters carry exactly one of
   ``kpoint_mp_grid`` / ``kpoint_mp_spacing``; every restore passes through the

@@ -145,9 +145,25 @@ class ParameterDialog(QDialog):
         read_only: bool = False,
         editable_names: Iterable[str] | None = None,
         species_options: Sequence[str] = (),
+        values: dict[str, Any] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
+        """Build the dialog and its rows once.
+
+        ``values`` (with ``preferred_exclusive``), ``advanced_names`` and
+        ``mixed_names`` are applied as :meth:`set_values`,
+        :meth:`set_advanced_names` and :meth:`set_mixed_names` apply them, in
+        that order, and the rows are then built once. Each exclusive group's
+        choice therefore comes from the seed alone, never from the defaults of
+        editors built along the way.
+        """
+
         super().__init__(parent)
+        # Rows are built once, at the end of __init__, after every seed is applied.
+        self._rows_deferred = True
         self.setWindowTitle("CASTEP Parameters")
         self.resize(900, 720)
 
@@ -286,7 +302,14 @@ class ParameterDialog(QDialog):
             buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
-        self._rebuild_rows()
+        if values is not None:
+            self.set_values(values, preferred_exclusive=preferred_exclusive)
+        if advanced_names is not None:
+            self.set_advanced_names(advanced_names)
+        if mixed_names is not None:
+            self.set_mixed_names(mixed_names)
+        self._rows_deferred = False
+        self._rebuild_rows(preserve_current=False)
 
     def set_values(
         self,
@@ -601,6 +624,8 @@ class ParameterDialog(QDialog):
             self._detach_layout_item(nested_item)
 
     def _rebuild_rows(self, *, preserve_current: bool = True) -> None:
+        if self._rows_deferred:
+            return
         if preserve_current:
             self._capture_editor_values()
 

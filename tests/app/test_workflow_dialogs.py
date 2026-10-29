@@ -4,10 +4,13 @@ from collections.abc import Callable, Mapping
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtWidgets import QDialog, QWidget
 
+from mufinder.app import param_dialog as param_dialog_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.param_widgets import create_param_editor
 from mufinder.app.workflow_dialogs import (
     EnergyBarrierPathViewerDialog,
     QuantumCorrectionsConfigDialog,
@@ -274,6 +277,58 @@ def test_run_row_parameter_dialog_without_rows_opens_nothing(qapp, monkeypatch) 
 
     assert run_row_parameter_dialog(_row_request({}, values={})) is None
     assert opened == []
+
+
+@pytest.mark.parametrize(
+    ("exec_result", "read_only"),
+    [
+        (QDialog.DialogCode.Accepted, False),
+        (QDialog.DialogCode.Rejected, False),
+        (QDialog.DialogCode.Accepted, True),
+    ],
+)
+def test_run_row_parameter_dialog_deletes_the_dialog_after_it_closes(
+    qapp, monkeypatch, exec_result, read_only
+) -> None:
+    _capture_exec(monkeypatch, exec_result)
+    parent = QWidget()
+
+    for _ in range(5):
+        run_row_parameter_dialog(
+            _row_request({1: {"xc_functional": "PBE"}}, read_only=read_only), parent=parent
+        )
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert parent.findChildren(ParameterDialog) == []
+    parent.deleteLater()
+
+
+def test_run_row_parameter_dialog_builds_each_editor_once(qapp, monkeypatch) -> None:
+    editor_parents: list[object] = []
+
+    def counting_create_param_editor(spec, parent=None, **kwargs):
+        editor_parents.append(parent)
+        return create_param_editor(spec, parent, **kwargs)
+
+    monkeypatch.setattr(param_dialog_module, "create_param_editor", counting_create_param_editor)
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+
+    run_row_parameter_dialog(
+        _row_request(
+            {1: {"max_scf_cycles": 80, "xc_functional": "PBE"}, 2: {"max_scf_cycles": 120}},
+            values={"xc_functional": "PBE"},
+            row_advanced={1: {"max_scf_cycles"}, 2: set()},
+        )
+    )
+
+    (dialog,) = opened
+    table_editors = [parent for parent in editor_parents if parent is dialog._table_widget]
+    row_editors = [row.editor for row in dialog._rows.values() if row.editor is not None]
+    assert row_editors
+    assert len(table_editors) == len(row_editors)
+    # The batch seed still reaches the single build.
+    assert "max_scf_cycles" in dialog.advanced_names()
+    assert "max_scf_cycles" in dialog.untouched_mixed_names()
 
 
 def _source_request(*, read_only: bool = False) -> SourceConfigureRequest:
