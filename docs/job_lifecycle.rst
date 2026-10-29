@@ -847,6 +847,8 @@ refresh covers the convergence, pristine, muon and UEP tables, and energy
 barriers and quantum corrections are refreshed through their controllers'
 ``refresh_view``, which no-ops until their lazily-created view exists.
 
+.. _quantum-singlepoint-records:
+
 Quantum corrections follows the same shape: each row is bound to one phonon
 job, and its table also offers ``Reset Failed Jobs...`` as a button beside the
 run buttons, emitting the same signal for the selected resettable rows. The
@@ -864,6 +866,17 @@ reset clears ``remote_directory`` as for every job, so a cluster resubmission
 recomputes its target; a full continuation into the preserved remote
 directory (:ref:`job-continuation-primitive`) is not offered for Quantum
 Corrections.
+
+A project that holds ``castep_quantum_singlepoint`` jobs loads with them as
+records: they stay in the Job Dashboard, collect normally when they finish,
+and can be dismissed or deleted there. A row with a phonon job keeps it,
+whatever its state, and a completed phonon job keeps its result. A row with
+only a singlepoint job reads ``ready``; its phonon job is written to a
+directory of its own (the seed gains a ``_phonon`` suffix when the
+singlepoint's directory still exists), so it never starts from the
+singlepoint's checkpoint. A row whose singlepoint is still submitting, queued,
+running or being retrieved shows that job's status, and submitting it is
+refused with an explanation until the singlepoint finishes or is cancelled.
 
 .. _dismissed-rows-stay-resubmittable:
 

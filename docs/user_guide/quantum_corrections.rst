@@ -120,26 +120,9 @@ because submitting the row rewrites its input files from the stored
 configuration, and dismissing a failed job from the Job Dashboard reopens its
 row, as for every workflow.
 
-**Projects that hold singlepoint jobs.** A project saved with a MuFinder
-version that ran a singlepoint job before each phonon job, in the same seed
-directory, is read as follows:
-
-- A row with a phonon job keeps it, whatever its state, and a completed phonon
-  job keeps its result. Resetting a failed one with the directory cleaned
-  empties the shared directory, singlepoint files included, so the row reruns
-  as a fresh phonon job on any target. Resetting it with the files kept leaves
-  the singlepoint's checkpoint in place, and a local rerun continues from it;
-  clean the directory to move the row to another target.
-- A row with only a singlepoint job reads ``ready``. Its phonon job is written
-  to a directory of its own (when the singlepoint's directory still exists,
-  the seed gains a ``_phonon`` suffix), so it never starts from the
-  singlepoint's checkpoint.
-- A row whose singlepoint is still submitting, queued, running or being
-  retrieved shows that job's status, and submitting it is refused with an
-  explanation until the singlepoint finishes or is cancelled.
-
-The singlepoint jobs stay in the Job Dashboard as records, collect normally
-when they finish, and can be dismissed or deleted there.
+A project holding the singlepoint jobs that older versions ran before each
+phonon job loads them as records; see
+:ref:`singlepoint records <quantum-singlepoint-records>`.
 
 The workflow page
 -----------------
@@ -188,7 +171,7 @@ and counts pinned sites that no longer resolve to an eligible relaxed site
 ``Status``
    ``ready`` before the row has a job, then the phonon job's status. A row of
    an older project whose singlepoint is still in progress shows that job's
-   status (see `Running the workflow`_).
+   status (see :ref:`singlepoint records <quantum-singlepoint-records>`).
 ``Parameters``
    ``Configure...`` (``Configured...`` once custom values are stored, or once
    the row is locked).
@@ -353,6 +336,8 @@ MuFinder checks only the pseudopotential family, when you submit a row:
 It does not detect Hubbard U, hybrid functionals, spin-orbit coupling, or
 dispersion corrections in your parameters; if you use any of these, choose
 finite displacement.
+
+.. _quantum-corrections-muon-mass:
 
 Muon mass
 ---------
