@@ -251,7 +251,7 @@ def structure_atomic_spins(structure: Structure) -> list[float]:
 
     fallback = atomic_spins_from_structure(structure, atom_count=len(spins))
     if saw_numeric:
-        if isinstance(structure.properties.get("supercell_asset"), dict):
+        if supercell_asset(structure) is not None:
             return spins
         if fallback is not None and not has_nonzero_spins(spins) and has_nonzero_spins(fallback):
             return fallback

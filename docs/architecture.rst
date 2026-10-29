@@ -155,8 +155,11 @@ policy, move the reusable part into the appropriate shared layer:
   ``mufinder.castep_io.starter_catalog``
 - reading the magnetic metadata persisted on a structure (per-atom spins,
   moment-derived spins, the propagation vector) belongs in
-  ``mufinder.domain.magnetic_properties``, so the workflow bridge, services and
-  science modules interpret those properties the same way
+  ``mufinder.domain.magnetic_properties``, so the workflow bridge, services,
+  science modules and app pages interpret those properties the same way; a page
+  reads a structure's spins through ``structure_atomic_spins`` and its
+  propagation vector through ``propagation_vector_from_structure`` (or the
+  ``ProjectService`` methods that delegate to them), never its own parser
 - reusable PySide styling belongs in ``mufinder.app.theme``
 - shared adapter logic that turns GUI value dicts into workflow templates
   belongs in ``mufinder.app.adapter_common``
