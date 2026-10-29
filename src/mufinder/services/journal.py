@@ -66,25 +66,61 @@ _STAMP_LABELS = {
 def build_journal(project_name: str, records: Iterable[ProvenanceRecord]) -> JournalDocument:
     """Convert structured provenance into a curated journal view model."""
 
-    entries = [
+    entries = _entries(records)
+    return JournalDocument(project_name=project_name, days=_append_days((), entries))
+
+
+def extend_journal(
+    journal: JournalDocument, records: Iterable[ProvenanceRecord]
+) -> JournalDocument | None:
+    """Return ``journal`` with the entries for ``records`` appended after its last entry.
+
+    The provenance stream is append-only, so a refresh only needs entries for the
+    records added since the journal was built. Returns ``None`` when a new entry
+    would sort before the journal's last entry (a record with an older timestamp),
+    because :func:`build_journal` would then place it earlier than the end; the
+    caller rebuilds the whole journal instead.
+    """
+
+    entries = _entries(records)
+    if not entries:
+        return journal
+    if journal.days and entries[0].timestamp < journal.days[-1].entries[-1].timestamp:
+        return None
+    return JournalDocument(
+        project_name=journal.project_name, days=_append_days(journal.days, entries)
+    )
+
+
+def _entries(records: Iterable[ProvenanceRecord]) -> list[JournalEntry]:
+    """Journal entries for ``records`` in time order; records without one are skipped."""
+
+    return [
         entry
         for record in sorted(records, key=lambda item: item.timestamp)
         if (entry := _entry_from_record(record))
     ]
-    grouped: dict[str, list[JournalEntry]] = {}
-    day_order: list[str] = []
+
+
+def _day_label(entry: JournalEntry) -> str:
+    return entry.timestamp.astimezone().strftime("%A %d %B %Y")
+
+
+def _append_days(
+    days: tuple[JournalDay, ...], entries: Iterable[JournalEntry]
+) -> tuple[JournalDay, ...]:
+    """Group time-ordered ``entries`` under day headings, continuing ``days``."""
+
+    grouped: dict[str, list[JournalEntry]] = {day.date_label: list(day.entries) for day in days}
+    day_order = [day.date_label for day in days]
     for entry in entries:
-        day_key = entry.timestamp.astimezone().strftime("%A %d %B %Y")
+        day_key = _day_label(entry)
         if day_key not in grouped:
             grouped[day_key] = []
             day_order.append(day_key)
         grouped[day_key].append(entry)
-
-    return JournalDocument(
-        project_name=project_name,
-        days=tuple(
-            JournalDay(date_label=day_key, entries=tuple(grouped[day_key])) for day_key in day_order
-        ),
+    return tuple(
+        JournalDay(date_label=day_key, entries=tuple(grouped[day_key])) for day_key in day_order
     )
 
 

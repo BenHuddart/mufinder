@@ -670,8 +670,11 @@ GUI-responsiveness trace logging
 ``mufinder.services.perf_trace.PerfTrace`` times named stages (via a
 ``with trace.stage("name"):`` block) and logs one summary line per traced
 operation through the standard ``logging`` module. It wraps the main
-window's coalesced dashboard flush (one stage per dashboard view, plus the
-autosave) and ``ProjectService.save_project`` (total duration plus
+window's coalesced dashboard flush (one stage per dashboard view, the
+autosave, and a final ``event loop (deferred deletes, repaint)`` stage: the
+summary is logged from a zero-delay timer after the next event-loop pass, which
+deletes the widgets the views released and repaints the window, so the logged
+total matches the freeze) and ``ProjectService.save_project`` (total duration plus
 ``entity_files_written`` and ``entity_files_skipped`` counters), both of which
 run on the GUI thread and have been observed to stall the app when many cluster
 jobs finish in one burst. ``save_project`` skips rewriting entity files whose

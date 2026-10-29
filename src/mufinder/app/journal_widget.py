@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -19,16 +21,35 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import make_empty_state_label, style_hint_text, style_section_title
-from mufinder.services.journal import JournalDocument, JournalEntry, build_journal, export_journal
+from mufinder.services.journal import (
+    JournalDocument,
+    JournalEntry,
+    build_journal,
+    export_journal,
+    extend_journal,
+)
 from mufinder.domain.models import ProvenanceRecord
 
 
 class JournalWidget(QWidget):
-    """Scrollable journal view derived from structured provenance."""
+    """Scrollable journal view derived from structured provenance.
+
+    The provenance stream is append-only, so the widget keeps the stream it last
+    built from and its length: a refresh with the same, unchanged stream does
+    nothing, and a grown stream appends cards for the new records only. While the
+    widget is hidden (another page of the main stack is shown), ``set_records``
+    only marks the view stale; it is brought up to date when it is shown.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._journal = JournalDocument(project_name="")
+        self._project_name = ""
+        self._records: Sequence[ProvenanceRecord] = ()
+        self._built_records: Sequence[ProvenanceRecord] | None = None
+        self._built_count = 0
+        self._built_last: ProvenanceRecord | None = None
+        self._stale = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
@@ -87,11 +108,97 @@ class JournalWidget(QWidget):
         )
         self._empty_label.hide()
 
-    def set_records(self, project_name: str, records: list[ProvenanceRecord]) -> None:
-        """Rebuild the visible journal from the supplied provenance stream."""
+    def set_records(self, project_name: str, records: Sequence[ProvenanceRecord]) -> None:
+        """Show the journal for ``records``, the project's append-only provenance stream.
 
-        self._journal = build_journal(project_name, records)
+        Passing the same sequence again after records were appended to it adds
+        cards for the new records only; a different sequence (another project)
+        rebuilds the view. A hidden widget defers the work until it is shown.
+        """
+
+        self._project_name = project_name
+        self._records = records
+        self._stale = True
+        if records is not self._built_records:
+            # Another stream rebuilds anyway; do not keep the old one alive meanwhile.
+            self._built_records = None
+        if not self.isHidden():
+            self._refresh()
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt API naming.
+        # QStackedWidget shows its current page through setVisible, also while
+        # the window itself is not shown yet, so the stale build runs here
+        # rather than in showEvent.
+        super().setVisible(visible)
+        if visible and self._stale:
+            self._refresh()
+
+    def _refresh(self) -> None:
+        self._stale = False
+        records = self._records
+        count = len(records)
+        # The stream is append-only, so its identity and length fingerprint what
+        # was built; the last record's identity also catches a replaced tail.
+        same_stream = (
+            records is self._built_records
+            and count >= self._built_count
+            and (not self._built_count or records[self._built_count - 1] is self._built_last)
+        )
+        if same_stream and count == self._built_count:
+            if self._journal.project_name != self._project_name:
+                self._journal = replace(self._journal, project_name=self._project_name)
+            return
+        if same_stream:
+            current = replace(self._journal, project_name=self._project_name)
+            extended = extend_journal(current, records[self._built_count :])
+            if extended is current:
+                # Only records the journal does not show were added.
+                self._journal = current
+                self._mark_built(records)
+                return
+            if (
+                extended is not None
+                and current.days
+                and self._append_cards(self._journal, extended)
+            ):
+                self._journal = extended
+                self._mark_built(records)
+                return
+        self._journal = build_journal(self._project_name, records)
         self._rebuild_view()
+        self._mark_built(records)
+
+    def _mark_built(self, records: Sequence[ProvenanceRecord]) -> None:
+        self._built_records = records
+        self._built_count = len(records)
+        self._built_last = records[-1] if records else None
+
+    def _append_cards(self, current: JournalDocument, extended: JournalDocument) -> bool:
+        """Add the cards ``extended`` has beyond ``current``; ``False`` if it cannot append.
+
+        Appending works when only the last day gained entries or new days follow
+        it; anything else needs a rebuild.
+        """
+
+        days = current.days
+        if any(
+            len(extended.days[index].entries) != len(day.entries)
+            for index, day in enumerate(days[:-1])
+        ):
+            return False
+        # The trailing stretch stays last; new widgets go in front of it.
+        position = self._content_layout.count() - 1
+        last = len(days) - 1
+        for entry in extended.days[last].entries[len(days[last].entries) :]:
+            self._content_layout.insertWidget(position, self._build_entry_card(entry))
+            position += 1
+        for day in extended.days[len(days) :]:
+            self._content_layout.insertWidget(position, self._build_day_header(day.date_label))
+            position += 1
+            for entry in day.entries:
+                self._content_layout.insertWidget(position, self._build_entry_card(entry))
+                position += 1
+        return True
 
     def _rebuild_view(self) -> None:
         while self._content_layout.count():
@@ -110,14 +217,16 @@ class JournalWidget(QWidget):
             return
 
         for day in self._journal.days:
-            day_label = QLabel(day.date_label, self._content)
-            day_label.setObjectName("journalDayHeader")
-            self._content_layout.addWidget(day_label)
-
+            self._content_layout.addWidget(self._build_day_header(day.date_label))
             for entry in day.entries:
                 self._content_layout.addWidget(self._build_entry_card(entry))
 
         self._content_layout.addStretch(1)
+
+    def _build_day_header(self, date_label: str) -> QLabel:
+        day_label = QLabel(date_label, self._content)
+        day_label.setObjectName("journalDayHeader")
+        return day_label
 
     def _build_entry_card(self, entry: JournalEntry) -> QWidget:
         card = QFrame(self._content)
@@ -158,6 +267,8 @@ class JournalWidget(QWidget):
         return card
 
     def _export_journal(self) -> None:
+        if self._stale:
+            self._refresh()
         if not self._journal.project_name:
             QMessageBox.information(
                 self, "No journal", "Open a project before exporting the Journal."

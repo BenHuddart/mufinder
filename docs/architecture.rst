@@ -1555,8 +1555,12 @@ calculation and the project-home quantum-corrections layer.
 rewriting any entity file (and ``state.json``) whose canonical serialized
 payload is unchanged since the last save or load, guarding each skip with a
 file-existence check so an externally deleted file is always regenerated. The
-manifest is always written, because its ``modified_at`` is bumped on every
-save. This is a save-time optimization only and does not change the on-disk
+check reads the entity directory listing that pruning stale files already takes,
+rather than one ``stat`` per entity. The encoder (``persistence.codec.to_jsonable``)
+reads dataclass fields directly instead of deep-copying them through
+``dataclasses.asdict``, so serializing an unchanged project to compare hashes stays
+cheap. The manifest is always written, because its ``modified_at`` is bumped on
+every save. This is a save-time optimization only and does not change the on-disk
 format.
 
 Saving is split between autosave and manual save:

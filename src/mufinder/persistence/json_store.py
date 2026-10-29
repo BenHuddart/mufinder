@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -97,16 +98,32 @@ class ProjectStore:
         self.write_json(out_path, payload)
         return out_path
 
-    def prune_entities(self, entity_type: str, keep_ids: set[str]) -> None:
-        """Remove stale entity JSON files that are no longer present in memory."""
+    def prune_entities(self, entity_type: str, keep_ids: set[str]) -> set[str]:
+        """Remove stale entity JSON files that are no longer present in memory.
+
+        Returns the ids in ``keep_ids`` whose files are on disk, read from the
+        same directory listing, so a caller need not stat each file again.
+        """
         entity_dir = self.entities_root / entity_type
         if not entity_dir.exists():
-            return
+            return set()
 
-        keep_filenames = {f"{entity_id}.json" for entity_id in keep_ids}
-        for entity_path in entity_dir.glob("*.json"):
-            if entity_path.name not in keep_filenames:
-                entity_path.unlink()
+        present: set[str] = set()
+        # ``os.scandir`` names the files without building a ``Path`` per entry,
+        # which this listing of every entity file on each autosave would pay.
+        with os.scandir(entity_dir) as entries:
+            for entry in entries:
+                # Every ``*.json`` name counts, dotfiles included (as ``Path.glob``
+                # and ``load_entities`` match them): a stray macOS ``._*.json``
+                # resource fork is pruned rather than later parsed as an entity.
+                if not entry.name.endswith(".json"):
+                    continue
+                stem = entry.name[: -len(".json")]
+                if stem in keep_ids:
+                    present.add(stem)
+                else:
+                    os.unlink(entry.path)
+        return present
 
     def load_entities(self, entity_type: str) -> list[dict[str, Any]]:
         """Load all entities of a type."""

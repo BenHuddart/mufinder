@@ -1,8 +1,8 @@
 """Tests for content-hash dirty tracking in ProjectService.save_project.
 
 ``save_project`` skips rewriting entity JSON files whose canonical serialized
-payload is unchanged since the last save/load, guarding each skip with a
-``Path.exists()`` check so externally-deleted files are always regenerated. The
+payload is unchanged since the last save/load, guarding each skip with the
+entity directory's listing so externally-deleted files are always regenerated. The
 cache is per-project-root and reset on load/create. See ProjectService's class
 docstring and ``docs/architecture.rst`` (persistence).
 """
@@ -124,6 +124,29 @@ def test_externally_deleted_entity_file_is_rewritten(tmp_path: Path, monkeypatch
 
     assert ("results", str(result.id)) in written
     assert result_path.exists()
+
+
+def test_unchanged_save_takes_file_existence_from_the_directory_listing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ProjectService()
+    root = tmp_path / "listing.mufinder"
+    doc, _job, _result = _populated_document(service, root)
+
+    entities_root = root / "entities"
+    stat_checks: list[Path] = []
+    original_exists = Path.exists
+
+    def _tracking_exists(self: Path, *args, **kwargs) -> bool:
+        if self.suffix == ".json" and entities_root in self.parents:
+            stat_checks.append(self)
+        return original_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", _tracking_exists)
+
+    service.save_project(doc)
+
+    assert stat_checks == []
 
 
 def test_switching_projects_writes_everything_for_new_project(tmp_path: Path, monkeypatch) -> None:

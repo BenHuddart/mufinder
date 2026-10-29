@@ -10,9 +10,11 @@ import pytest
 
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
+from tests.support.journal import generation_record
 from mufinder.services.journal import (
     build_journal,
     export_journal,
+    extend_journal,
     render_journal_markdown,
     render_journal_text,
 )
@@ -324,3 +326,26 @@ def test_symmetry_unavailable_entry_warns_with_the_recorded_reason() -> None:
     assert entry.title == "Host symmetry not detected"
     assert entry.stamp_kind == "warning"
     assert entry.body == record.description
+
+
+def test_extend_journal_matches_a_full_build_of_the_grown_stream() -> None:
+    records = [generation_record(9, day=21), generation_record(10, day=21)]
+    journal = build_journal("Stream", records)
+    added = [
+        generation_record(11, day=21),
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 22, 9, 0, tzinfo=UTC), action="not_journalled"
+        ),
+        generation_record(10, day=22),
+    ]
+
+    extended = extend_journal(journal, added)
+
+    assert extended == build_journal("Stream", records + added)
+    assert extend_journal(journal, []) is journal
+
+
+def test_extend_journal_refuses_a_record_older_than_the_last_entry() -> None:
+    journal = build_journal("Stream", [generation_record(9, day=22)])
+
+    assert extend_journal(journal, [generation_record(9, day=21)]) is None
