@@ -8,7 +8,7 @@ from uuid import UUID
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
@@ -553,11 +553,6 @@ def test_main_window_close_closes_open_uep_dialogs_before_saving(
             return super().close()
 
     monkeypatch.setattr(main_window_module, "UepAnalysisDialog", _FakeUepDialog)
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
-    )
 
     original_save = window._project_service.save_project
 

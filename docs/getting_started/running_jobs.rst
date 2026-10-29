@@ -216,7 +216,8 @@ right-click menu, or Delete/Backspace):
   includes rows that were never submitted. Relaxation removals may then ask
   what to do with each job's output files (delete or archive, with an
   apply-to-all choice); for cutoff rows with associated files the file-handling
-  prompt offers ``Yes to All`` / ``No to All``.
+  prompt offers ``Delete files``, ``Move files`` and, for several rows,
+  ``Delete all`` / ``Move all``.
 - For a row control on a multi-row selection the three-way prompt is the
   confirmation, so you are not asked twice. The exception is removing cutoff or
   k-point rows whose job is still queued or running: that prompt does not
@@ -224,10 +225,19 @@ right-click menu, or Delete/Backspace):
 - A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel``
   or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
   before acting. ``Reset`` asks its clean-up question, which can be cancelled.
-- In the dedicated confirmations the safe choice is the default button and the
-  one Escape selects, and the buttons are labelled with the action
-  (``Remove 3 rows``, ``Keep running``) rather than Yes/No. In the three-way
-  row-control prompt the default button is the all-selected choice.
+- Deleting a saved supercell, a comparison table, a magnetic field workspace,
+  an analysis or dashboard jobs, and removing imported relaxations, are
+  confirmed the same way.
+- In every confirmation the safe choice is the default button and the one
+  Escape selects, and the buttons are labelled with the action
+  (``Delete supercell`` / ``Cancel``, ``Remove 3 rows``, ``Keep running``)
+  rather than Yes/No. In the three-way row-control prompt the default button
+  is the all-selected choice.
+- Questions that change nothing destructive also name their answers:
+  ``Save`` / ``Don't save`` / ``Cancel`` when closing a project, ``Switch
+  host`` / ``Cancel`` for a host-structure mismatch, ``Change functional`` /
+  ``Cancel`` when adopting a result converged with another functional, and
+  ``Trust host key`` / ``Cancel`` for an unknown SSH host key.
 
 The Job Dashboard
 -----------------
@@ -359,7 +369,8 @@ serves as that confirmation.
 Reset and its clean-up
 ~~~~~~~~~~~~~~~~~~~~~~
 
-``Reset``'s optional clean-up deletes everything in a job's output folder
+``Reset`` asks ``Clean and reset``, ``Reset, keep files`` (the default) or
+``Cancel``. The clean-up deletes everything in a job's output folder
 except its ``.cell``/``.param`` inputs, and applies the same ownership check as
 :ref:`starting a relaxation again <resubmit-continue-or-start-again>`, limited
 to the local folder (Reset never touches the cluster). The folder is kept, and

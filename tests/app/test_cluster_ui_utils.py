@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 import mufinder.app.cluster_ui_utils as ui_module
+from mufinder.app import workflow_table_utils
 from mufinder.domain.cluster import ClusterConfig
 import mufinder.services.keychain as keychain_module
 from mufinder.services.keychain import KeychainCredentialError, KeychainCredentialIssue
@@ -116,7 +119,7 @@ def test_show_detailed_warning_uses_expandable_dialog_for_long_message(monkeypat
     assert events["info"] == "Open details for full traceback."
     assert str(events["details"]).startswith("first line")
     assert events["size_grip"] is True
-    assert events["window_flag"] == (ui_module.Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
+    assert events["window_flag"] == (Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
     assert events["executed"] is True
 
 
@@ -396,54 +399,9 @@ def test_prompt_for_cluster_credentials_reports_missing_linux_keyring_entry(monk
     assert informative == "Open Details for the exact system keyring setup commands."
 
 
-def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> None:
-    responses = [1, 2]
-    seen_details: list[str] = []
-    size_grips: list[bool] = []
-    flags: list[tuple[object, bool]] = []
-
-    class _FakePrompt:
-        class Icon:
-            Warning = "warning"
-
-        class StandardButton:
-            Yes = 1
-            No = 2
-
-        def __init__(self, _parent) -> None:
-            pass
-
-        def setSizeGripEnabled(self, enabled: bool) -> None:  # noqa: N802
-            size_grips.append(enabled)
-
-        def setWindowFlag(self, flag, enabled: bool) -> None:  # noqa: N802
-            flags.append((flag, enabled))
-
-        def setIcon(self, _icon) -> None:  # noqa: N802
-            return
-
-        def setWindowTitle(self, _title: str) -> None:  # noqa: N802
-            return
-
-        def setText(self, _text: str) -> None:  # noqa: N802
-            return
-
-        def setInformativeText(self, _text: str) -> None:  # noqa: N802
-            return
-
-        def setDetailedText(self, text: str) -> None:  # noqa: N802
-            seen_details.append(text)
-
-        def setStandardButtons(self, _buttons) -> None:  # noqa: N802
-            return
-
-        def setDefaultButton(self, _button) -> None:  # noqa: N802
-            return
-
-        def exec(self):
-            return responses.pop(0)
-
-    monkeypatch.setattr(ui_module, "QMessageBox", _FakePrompt)
+def test_prompt_to_trust_host_key_names_its_actions_and_defaults_to_cancel(
+    monkeypatch, answered_choices
+) -> None:
     exc = SSHUnknownHostKeyError(
         hostname="glamdring.physics.ox.ac.uk",
         port=22,
@@ -452,11 +410,12 @@ def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> No
         key_base64="AAA",
     )
 
-    assert ui_module.prompt_to_trust_host_key(None, _config(), exc) is True
+    # The stub answers with the default, which must be the safe choice.
     assert ui_module.prompt_to_trust_host_key(None, _config(), exc) is False
-    assert "Fingerprint: SHA256:test" in seen_details[0]
-    assert size_grips == [True, True]
-    assert flags == [
-        (ui_module.Qt.WindowType.MSWindowsFixedSizeDialogHint, False),
-        (ui_module.Qt.WindowType.MSWindowsFixedSizeDialogHint, False),
-    ]
+    (prompt,) = answered_choices
+    assert prompt["choices"] == [("trust", "Trust host key"), ("cancel", "Cancel")]
+    assert (prompt["default"], prompt["escape"]) == ("cancel", "cancel")
+    assert "Fingerprint: SHA256:test" in prompt["detailed_text"]
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "trust")
+    assert ui_module.prompt_to_trust_host_key(None, _config(), exc) is True

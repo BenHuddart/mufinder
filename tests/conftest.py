@@ -286,20 +286,59 @@ def confirmed_destructive_actions(monkeypatch: pytest.MonkeyPatch) -> list[dict[
     prompts: list[dict[str, str]] = []
 
     def _accept(
-        _parent, title, text, detail="", accept_label="Remove", reject_label="Cancel"
+        _parent,
+        title,
+        text,
+        detail="",
+        accept_label="Remove",
+        reject_label="Cancel",
+        *,
+        detailed_text="",
     ) -> bool:
+        prompt = {
+            "title": title,
+            "text": text,
+            "detail": detail,
+            "accept_label": accept_label,
+            "reject_label": reject_label,
+        }
+        if detailed_text:
+            prompt["detailed_text"] = detailed_text
+        prompts.append(prompt)
+        return True
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _accept)
+    return prompts
+
+
+@pytest.fixture(autouse=True)
+def answered_choices(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Answer every ``confirm_choice`` question with its default, and record it.
+
+    Like :func:`confirm_destructive`, ``workflow_table_utils.confirm_choice``
+    opens a modal dialog that would block a test. Each prompt is recorded with
+    its ``choices``, ``default`` and ``escape`` keys; a test that needs another
+    answer patches the function itself.
+    """
+
+    from mufinder.app import workflow_table_utils
+
+    prompts: list[dict[str, object]] = []
+
+    def _default(_parent, title, text, choices, *, default, escape, **kwargs) -> str:
         prompts.append(
             {
                 "title": title,
                 "text": text,
-                "detail": detail,
-                "accept_label": accept_label,
-                "reject_label": reject_label,
+                "choices": list(choices),
+                "default": default,
+                "escape": escape,
+                **kwargs,
             }
         )
-        return True
+        return default
 
-    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _accept)
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", _default)
     return prompts
 
 

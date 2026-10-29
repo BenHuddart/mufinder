@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QTabWidget,
     QToolButton,
     QTreeWidgetItem,
@@ -564,11 +563,6 @@ def test_main_window_pinned_magnetic_field_workspace_owns_a_copy_of_the_page_res
     assert reloaded_widget._result_table.rowCount() == 1
     assert reloaded_widget.collect_state()["nuclear_relaxation_results"]["sigma_us_inv"] == 0.4
 
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
-    )
     reloaded_widget._delete_workspace_button.click()
 
     assert magnetic_field_results(reloaded, workspace_id) == []
@@ -649,11 +643,6 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     assert reloaded.project.magnetic_structure == main_structure
 
     reloaded_window._set_active_route(route)
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
-    )
     reloaded_workspace_widget._delete_workspace_button.click()
 
     assert reloaded.ui_state["magnetic_field_workspaces"] == []

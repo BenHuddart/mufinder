@@ -13,8 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QMessageBox
 
+from mufinder.app import workflow_table_utils
 from mufinder.app.legacy_import_dialog import (
     LegacyImportDialog,
     run_notes,
@@ -370,7 +370,8 @@ class TestRemovalAction:
         )
         asked: list[int] = []
         monkeypatch.setattr(
-            "mufinder.app.main_window.QMessageBox.question",
+            workflow_table_utils,
+            "confirm_destructive",
             lambda *args, **kwargs: asked.append(1),
         )
 
@@ -388,23 +389,20 @@ class TestRemovalAction:
         tmp_path: Path,
         host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
+        confirmed_destructive_actions: list[dict[str, str]],
     ) -> None:
-        from PySide6.QtWidgets import QMessageBox
-
         self._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
             "mufinder.app.main_window.QInputDialog.getItem",
             lambda *args, **kwargs: (args[3][0], True),
-        )
-        monkeypatch.setattr(
-            "mufinder.app.main_window.QMessageBox.question",
-            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
         )
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
 
         window._on_remove_imported_relaxations()
 
+        (prompt,) = confirmed_destructive_actions
+        assert prompt["accept_label"] == "Remove 2 relaxations"
         assert window._document.sites == {}
         assert window._document.jobs == {}
         definition = window._muon_relaxation_controller.active_definition()
@@ -420,7 +418,6 @@ class TestRemovalAction:
         host_structure: Structure,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from PySide6.QtWidgets import QMessageBox
 
         outcome = self._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
@@ -428,8 +425,7 @@ class TestRemovalAction:
             lambda *args, **kwargs: (args[3][0], True),
         )
         monkeypatch.setattr(
-            "mufinder.app.main_window.QMessageBox.question",
-            lambda *args, **kwargs: QMessageBox.StandardButton.No,
+            workflow_table_utils, "confirm_destructive", lambda *args, **kwargs: False
         )
 
         window._on_remove_imported_relaxations()
@@ -731,10 +727,6 @@ class TestProvenanceReachesDisk:
             "mufinder.app.main_window.QInputDialog.getItem",
             lambda *args, **kwargs: (args[3][0], True),
         )
-        monkeypatch.setattr(
-            "mufinder.app.main_window.QMessageBox.question",
-            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
-        )
         monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
         monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
 
@@ -776,10 +768,6 @@ class TestRemoveThenReimport:
         monkeypatch.setattr(
             "mufinder.app.main_window.QInputDialog.getItem",
             lambda *args, **kwargs: (args[3][0], True),
-        )
-        monkeypatch.setattr(
-            "mufinder.app.main_window.QMessageBox.question",
-            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
         )
         monkeypatch.setattr(
             "mufinder.app.main_window.QMessageBox.warning", lambda *args, **kwargs: None

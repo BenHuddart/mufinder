@@ -5,7 +5,7 @@ from functools import partial
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QMessageBox, QPushButton
+from PySide6.QtWidgets import QPushButton
 
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
@@ -716,7 +716,7 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
 
 
 def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
-    qapp, monkeypatch: pytest.MonkeyPatch
+    qapp, answered_choices, confirmed_destructive_actions
 ) -> None:
     widget = EnergyBarriersWidget()
     widget.set_sources(
@@ -741,12 +741,6 @@ def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
     )
     viewed: list[str] = []
     widget.view_source_requested.connect(viewed.append)
-    prompted: list[bool] = []
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *a, **kw: prompted.append(True) or QMessageBox.StandardButton.Yes),
-    )
     widget._sources_table.selectAll()
 
     btn = widget._sources_table.cellWidget(0, 7)
@@ -754,7 +748,8 @@ def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
     btn.click()
 
     assert viewed == ["path-a"]
-    assert prompted == []
+    assert answered_choices == []
+    assert confirmed_destructive_actions == []
 
 
 def test_quantum_source_configure_applies_to_snapshot_rows(

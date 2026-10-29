@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
+from mufinder.app.workflow_table_utils import confirm_choice as _real_confirm_choice
 from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
@@ -563,6 +564,94 @@ def test_confirm_destructive_maps_buttons_and_defaults_to_the_safe_choice(
     assert seen["default"] == "Keep running"
     assert seen["escape"] == "Keep running"
     assert seen["text"] == ("Cancel 2 jobs?", "They are running.")
+
+
+def test_confirm_destructive_puts_a_long_list_behind_show_details(qapp, monkeypatch) -> None:
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    seen: dict[str, object] = {}
+
+    def _fake_exec(box):
+        seen["detailed"] = box.detailedText()
+        seen["size_grip"] = box.isSizeGripEnabled()
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", _fake_exec)
+
+    assert (
+        _real_confirm_destructive(
+            QWidget(),
+            "Confirm remote deletion",
+            "Delete all existing remote job directories?",
+            accept_label="Delete 2 directories",
+            detailed_text="- /a\n- /b",
+        )
+        is False
+    )
+    assert seen == {"detailed": "- /a\n- /b", "size_grip": True}
+
+
+_SAVE_CHOICES = [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")]
+
+
+@pytest.mark.parametrize(
+    ("click", "expected"),
+    [("Save", "save"), ("Don't save", "discard"), ("Cancel", "cancel"), (None, "cancel")],
+)
+def test_confirm_choice_returns_the_key_of_the_clicked_action(
+    qapp, monkeypatch, click, expected
+) -> None:
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    seen: dict[str, object] = {}
+
+    def _fake_exec(box):
+        labels = {button.text(): button for button in box.buttons()}
+        seen["labels"] = sorted(labels)
+        seen["default"] = box.defaultButton().text()
+        seen["escape"] = box.escapeButton().text()
+        seen["roles"] = {text: box.buttonRole(button) for text, button in labels.items()}
+        seen["text"] = (box.text(), box.informativeText())
+        # ``None`` is the box closed without a click (Escape or the title bar).
+        chosen = labels[click] if click is not None else None
+        monkeypatch.setattr(QMessageBox, "clickedButton", lambda _self: chosen)
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", _fake_exec)
+
+    result = _real_confirm_choice(
+        QWidget(),
+        "Save project?",
+        "Save the current project before closing?",
+        _SAVE_CHOICES,
+        default="save",
+        escape="cancel",
+        detail="Layouts changed.",
+        destructive=("discard",),
+    )
+
+    assert result == expected
+    assert seen["labels"] == ["Cancel", "Don't save", "Save"]
+    assert seen["default"] == "Save"
+    assert seen["escape"] == "Cancel"
+    assert seen["roles"] == {
+        "Save": QMessageBox.ButtonRole.AcceptRole,
+        "Don't save": QMessageBox.ButtonRole.DestructiveRole,
+        "Cancel": QMessageBox.ButtonRole.RejectRole,
+    }
+    assert seen["text"] == ("Save the current project before closing?", "Layouts changed.")
+
+
+@pytest.mark.parametrize(("default", "escape"), [("missing", "cancel"), ("save", "missing")])
+def test_confirm_choice_rejects_a_default_or_escape_that_is_not_a_choice(
+    qapp, default, escape
+) -> None:
+    from PySide6.QtWidgets import QWidget
+
+    with pytest.raises(ValueError, match="missing"):
+        _real_confirm_choice(
+            QWidget(), "Save project?", "Save?", _SAVE_CHOICES, default=default, escape=escape
+        )
 
 
 def test_confirm_row_removal_states_count_and_what_is_at_stake(

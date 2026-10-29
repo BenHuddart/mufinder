@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 import mufinder.app.cluster_setup_dialog as dialog_module
+from mufinder.app import workflow_table_utils
 import mufinder.services.keychain as keychain_module
 from mufinder.cluster_setup import load_cluster_configs
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
@@ -568,17 +569,22 @@ def test_cluster_setup_dialog_validation_blocks_invalid_save(
 def test_cluster_setup_dialog_username_change_can_sync_working_dir(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
+    answered_choices,
 ) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
 
-    monkeypatch.setattr(
-        dialog_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: dialog_module.QMessageBox.StandardButton.Yes,
-    )
-
+    # The stub answers with the default, Update directory.
     dialog._username_edit.setText("alice")
     dialog._working_dir_edit.setText("/work4/isis/username")
+    dialog._maybe_sync_working_dir_for_username()
+
+    assert dialog._working_dir_edit.text() == "/work4/isis/alice"
+    (prompt,) = answered_choices
+    assert prompt["choices"] == [("update", "Update directory"), ("keep", "Keep directory")]
+    assert (prompt["default"], prompt["escape"]) == ("update", "keep")
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "keep")
+    dialog._username_edit.setText("bob")
     dialog._maybe_sync_working_dir_for_username()
 
     assert dialog._working_dir_edit.text() == "/work4/isis/alice"

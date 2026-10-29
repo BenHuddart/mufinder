@@ -734,6 +734,11 @@ The harness tests currently verify:
   that build a ``FigureCanvasQTAgg`` directly rather than through
   ``create_plot_canvas`` match a pinned set that may only shrink (see
   :doc:`/architecture`, Plot canvas policy).
+- No module in ``mufinder.app`` calls ``QMessageBox.question`` or uses a
+  ``QMessageBox.StandardButton.Yes`` / ``No`` button (``YesToAll`` and
+  ``NoToAll`` included): confirmations go through ``confirm_destructive`` or
+  ``confirm_choice`` in ``mufinder.app.workflow_table_utils``, whose buttons
+  name their action.
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
   may appear (see :doc:`/architecture`, Shared workflow infrastructure).

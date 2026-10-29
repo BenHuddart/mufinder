@@ -441,53 +441,24 @@ def test_read_bounded_tail_large_file_returns_only_tail(tmp_path: Path) -> None:
 
 
 def test_main_window_prompt_failed_job_cleanup_choices(
-    main_window, monkeypatch: pytest.MonkeyPatch
+    main_window, monkeypatch: pytest.MonkeyPatch, answered_choices
 ) -> None:
-    class _FakeMessageBox:
-        class Icon:
-            Question = 1
-
-        class StandardButton:
-            Yes = 1
-            No = 2
-            Cancel = 3
-
-        _answer = 1
-
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setIcon(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setWindowTitle(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setText(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setInformativeText(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setStandardButtons(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setDefaultButton(self, *_args, **_kwargs) -> None:
-            return None
-
-        def exec(self) -> int:
-            return _FakeMessageBox._answer
-
     window = main_window
-    monkeypatch.setattr(main_window_module, "QMessageBox", _FakeMessageBox)
 
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Yes
+    # The stub answers with the default: reset and keep the files.
+    assert window._prompt_failed_job_cleanup(2) is False
+    (prompt,) = answered_choices
+    assert prompt["choices"] == [
+        ("clean", "Clean and reset"),
+        ("keep", "Reset, keep files"),
+        ("cancel", "Cancel"),
+    ]
+    assert (prompt["default"], prompt["escape"]) == ("keep", "cancel")
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "clean")
     assert window._prompt_failed_job_cleanup(2) is True
 
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.No
-    assert window._prompt_failed_job_cleanup(2) is False
-
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Cancel
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel")
     assert window._prompt_failed_job_cleanup(2) is None
     window.close()
 
