@@ -1054,8 +1054,9 @@ class _CrystallographicTriadCanvas(QWidget):
     def draw_idle(self) -> None:
         self.update()
 
-    def refresh_theme(self) -> None:
-        self.update()
+    def refresh_theme(self, *, draw: bool = True) -> None:
+        if draw:
+            self.update()
 
     def _project_axis(self, direction: np.ndarray) -> tuple[float, float, float]:
         view = _normalized_vector(
@@ -1442,7 +1443,9 @@ class _PyVistaCanvas(QWidget):
             return
         self._plotter.render()
 
-    def refresh_theme(self) -> None:
+    def refresh_theme(self, *, draw: bool = True) -> None:
+        """Apply the current palette; ``draw=False`` leaves the redraw to the caller."""
+
         plotter = getattr(self, "_plotter", None)
         if self._closed or self._refreshing_theme or plotter is None:
             return
@@ -1450,7 +1453,8 @@ class _PyVistaCanvas(QWidget):
         try:
             plotter.setPalette(self.palette())
             _configure_transparent_pyvista_background(plotter)
-            self.draw_idle()
+            if draw:
+                self.draw_idle()
         finally:
             self._refreshing_theme = False
 
@@ -1689,14 +1693,17 @@ class _PyVistaTriadCanvas(QWidget):
         self._light_direction = _coerce_light_direction(direction)
         self._build_axes_scene()
 
-    def refresh_theme(self) -> None:
+    def refresh_theme(self, *, draw: bool = True) -> None:
+        """Rebuild the axes in the current palette; ``draw=False`` leaves the redraw to the caller."""
+
         plotter = getattr(self, "_plotter", None)
         if self._closed or self._refreshing_theme or plotter is None:
             return
         self._refreshing_theme = True
         try:
             self._build_axes_scene()
-            self.draw_idle()
+            if draw:
+                self.draw_idle()
         finally:
             self._refreshing_theme = False
 
@@ -1816,8 +1823,9 @@ class AtomicStructureViewer(QWidget):
         self._refreshing_theme = False
         self._theme_refresh_pending = False
         self._style_signature = _viewer_style_signature()
-        # batch_update() nesting depth and the work it has deferred: a full scene
-        # rebuild, a redraw of in-place actor changes, and a redraw of the triad.
+        # Drawing deferred while a batch_update() block is open or the viewer is not
+        # visible: a full scene rebuild, a redraw of in-place actor changes, and a
+        # redraw of the triad. A hidden viewer keeps them until showEvent.
         self._batch_depth = 0
         self._render_pending = False
         self._draw_pending = False
@@ -1905,6 +1913,9 @@ class AtomicStructureViewer(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
+        # Draw changes made while hidden first, so the camera poll below reads the
+        # camera of the scene now on screen rather than the stale one.
+        self._draw_stale_scene()
         # Camera polling only matters while the view is visible (it syncs the
         # axes/triad to user-driven camera moves). Resume it on show; it is
         # paused in hideEvent so it does not tick on tabs without the view.
@@ -1915,7 +1926,15 @@ class AtomicStructureViewer(QWidget):
             # view was hidden (the poll was paused), this avoids a brief stale
             # gizmo on the first frame after the tab is shown.
             self._poll_pyvista_camera()
-        QTimer.singleShot(0, self._refresh_interaction_hint_layout)
+        # Bound to the viewer, so the call is dropped if it is deleted first.
+        QTimer.singleShot(0, self, self._refresh_interaction_hint_layout)
+
+    def _draw_stale_scene(self) -> None:
+        """Draw what changed while the viewer was hidden: once, now that it shows."""
+
+        if self._shutting_down or self._defers_drawing():
+            return
+        self._flush_batched_render()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().hideEvent(event)
@@ -1961,21 +1980,33 @@ class AtomicStructureViewer(QWidget):
             or not hasattr(self, "_interaction_hint")
         ):
             return
+        if not self.isVisible():
+            # The style signature stays old, so showEvent refreshes the theme then.
+            return
         self._refreshing_theme = True
         try:
-            self._style_signature = _viewer_style_signature()
-            style_hint_text(self._interaction_hint)
-            self._refresh_interaction_hint_layout()
-            canvas = getattr(self, "_canvas", None)
-            if hasattr(canvas, "refresh_theme"):
-                canvas.refresh_theme()
-            triad_canvas = getattr(self, "_triad_canvas", None)
-            if hasattr(triad_canvas, "refresh_theme"):
-                triad_canvas.refresh_theme()
-            self._store_view()
-            self._render()
+            # One batch: the canvases leave their redraw to the scene rebuild, and a
+            # rebuild already pending (from changes made while hidden) keeps the
+            # camera it will fit rather than the stale live one.
+            with self.batch_update():
+                self._style_signature = _viewer_style_signature()
+                style_hint_text(self._interaction_hint)
+                self._refresh_interaction_hint_layout()
+                canvas = getattr(self, "_canvas", None)
+                if hasattr(canvas, "refresh_theme"):
+                    canvas.refresh_theme(draw=False)
+                triad_canvas = getattr(self, "_triad_canvas", None)
+                if hasattr(triad_canvas, "refresh_theme"):
+                    triad_canvas.refresh_theme(draw=False)
+                self._store_view()
+                self._render()
         finally:
             self._refreshing_theme = False
+
+    def _defers_drawing(self) -> bool:
+        """Whether drawing waits: for the end of a batch, or for the viewer to show."""
+
+        return bool(self._batch_depth) or not self.isVisible()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
         canvas = getattr(self, "_canvas", None)
@@ -2995,6 +3026,15 @@ class AtomicStructureViewer(QWidget):
                 self._flush_batched_render()
 
     def _flush_batched_render(self) -> None:
+        if (
+            not self._shutting_down
+            and not self._defers_drawing()
+            and self._style_signature != _viewer_style_signature()
+        ):
+            # The theme changed while the viewer was hidden: refreshing it
+            # rebuilds the scene, which draws every other pending change too.
+            self.refresh_theme()
+            return
         render_pending = self._render_pending
         draw_pending = self._draw_pending
         triad_draw_pending = self._triad_draw_pending
@@ -3007,18 +3047,26 @@ class AtomicStructureViewer(QWidget):
             self._render()
             return
         if draw_pending:
-            self._canvas.draw_idle()
+            self._draw_canvas()
         if triad_draw_pending:
-            self._triad_canvas.draw_idle()
+            # Re-reads the camera, which a hidden viewer left untouched.
+            self._draw_crystallographic_axes()
 
     def _render(self) -> None:
-        """Rebuild and draw the whole scene, or defer it to the end of a batch."""
+        """Rebuild and draw the whole scene, or defer it to the end of a batch or to show.
+
+        A hidden viewer only marks its scene stale; ``showEvent`` rebuilds it once.
+        """
 
         if self._shutting_down:
             return
-        if self._batch_depth:
+        if self._defers_drawing():
             self._render_pending = True
             return
+        # The rebuild draws every change, including any deferred in-place one.
+        self._render_pending = False
+        self._draw_pending = False
+        self._triad_draw_pending = False
         self._render_pyvista()
         self._draw_crystallographic_axes()
 
@@ -3036,20 +3084,20 @@ class AtomicStructureViewer(QWidget):
         self._render()
 
     def _render_deferred(self) -> bool:
-        """Whether a scene rebuild is waiting for the current batch to end."""
+        """Whether a scene rebuild is waiting for the current batch to end or for show."""
 
-        return bool(self._batch_depth and self._render_pending)
+        return bool(self._render_pending and self._defers_drawing())
 
     def _draw_canvas(self) -> None:
-        """Draw in-place actor changes, or defer the draw to the end of a batch."""
+        """Draw in-place actor changes, or defer the draw to the end of a batch or to show."""
 
-        if self._batch_depth:
+        if self._defers_drawing():
             self._draw_pending = True
             return
         self._canvas.draw_idle()
 
     def _draw_triad(self) -> None:
-        if self._batch_depth:
+        if self._defers_drawing():
             self._triad_draw_pending = True
             return
         self._triad_canvas.draw_idle()
@@ -3311,6 +3359,9 @@ class AtomicStructureViewer(QWidget):
 
     def _poll_pyvista_camera(self) -> None:
         if self._backend_name != "pyvista" or self._atoms is None or self._shutting_down:
+            return
+        if self._render_deferred():
+            # The live camera belongs to the scene the pending rebuild replaces.
             return
         signature = self._pyvista_camera_signature()
         if signature is None or signature == self._pyvista_last_camera_signature:
@@ -4369,6 +4420,12 @@ class AtomicStructureViewer(QWidget):
 
     def _draw_crystallographic_axes(self) -> None:
         if self._shutting_down:
+            return
+        if not self.isVisible() or self._render_deferred():
+            # Reading a fresh plotter's camera makes PyVista reset it, which
+            # renders. A hidden viewer syncs the triad when it is shown, and a
+            # pending rebuild syncs it when it draws.
+            self._triad_draw_pending = True
             return
         cell = None if self._atoms is None else np.asarray(self._atoms.cell, dtype=float)
         plotter = getattr(self._canvas, "plotter", None)

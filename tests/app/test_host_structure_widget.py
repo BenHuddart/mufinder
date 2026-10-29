@@ -213,6 +213,7 @@ def test_host_structure_widget_renders_spin_column_and_viewer(qapp) -> None:
 
 def test_host_structure_widget_syncs_table_selection_into_viewer(qapp) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
 
     widget._atom_table.selectRow(1)
@@ -579,6 +580,7 @@ def test_atomic_structure_viewer_selection_label_uses_fixed_single_line_height(q
 
 def test_bond_alpha_tracks_atom_transparency_state(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1007,6 +1009,7 @@ def test_atomic_structure_viewer_updates_pyvista_isosurface_overlay_without_full
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1072,6 +1075,7 @@ def test_atomic_structure_viewer_updates_pyvista_slice_overlay_without_full_rere
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1168,6 +1172,7 @@ def test_atomic_structure_viewer_updates_pyvista_point_overlay_without_full_rere
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1230,6 +1235,7 @@ def test_atomic_structure_viewer_updates_pyvista_selection_overlay_without_full_
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1287,6 +1293,7 @@ def test_atomic_structure_viewer_updates_pyvista_multi_selection_overlay_without
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1350,6 +1357,7 @@ def test_atomic_structure_viewer_updates_pyvista_bond_overlay_without_full_reren
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1394,6 +1402,7 @@ def test_atomic_structure_viewer_pyvista_overlays_hide_slice_culled_bonds_and_sp
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
     _set_slice_planes_hiding_second_atom(viewer)
@@ -1454,6 +1463,7 @@ def test_atomic_structure_viewer_updates_pyvista_spin_overlay_without_full_reren
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1497,6 +1507,7 @@ def test_atomic_structure_viewer_hides_pyvista_spins_without_full_rerender_when_
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -1538,6 +1549,7 @@ def test_atomic_structure_viewer_pyvista_camera_poll_redraws_triad_canvas(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
 
     viewer = widget._viewer
@@ -1960,6 +1972,7 @@ def test_atomic_structure_viewer_updates_isosurface_overlay_branches(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -2026,6 +2039,7 @@ def test_atomic_structure_viewer_updates_slice_and_point_overlay_branches(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -2224,6 +2238,7 @@ def test_atomic_structure_viewer_reuses_pyvista_camera_snapshot_on_redraw(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -2322,6 +2337,7 @@ def test_atomic_structure_viewer_pyvista_zoom_only_poll_updates_camera_snapshot(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = HostStructureWidget()
+    widget.show()
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
@@ -2381,15 +2397,20 @@ def test_atomic_structure_viewer_theme_refresh_rerenders_scene(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     viewer = AtomicStructureViewer()
+    viewer.show()
     calls = {"store": 0, "render": 0, "canvas": 0, "triad": 0}
 
+    draws: list[bool] = []
+
     class _Canvas:
-        def refresh_theme(self) -> None:
+        def refresh_theme(self, *, draw: bool = True) -> None:
             calls["canvas"] += 1
+            draws.append(draw)
 
     class _Triad:
-        def refresh_theme(self) -> None:
+        def refresh_theme(self, *, draw: bool = True) -> None:
             calls["triad"] += 1
+            draws.append(draw)
 
     viewer._canvas = _Canvas()
     viewer._triad_canvas = _Triad()
@@ -2401,6 +2422,8 @@ def test_atomic_structure_viewer_theme_refresh_rerenders_scene(
     viewer.refresh_theme()
 
     assert calls == {"store": 1, "render": 1, "canvas": 1, "triad": 1}
+    # The scene rebuild draws the new palette; the canvases do not draw first.
+    assert draws == [False, False]
     viewer.close()
 
 
