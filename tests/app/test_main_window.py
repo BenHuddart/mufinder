@@ -2847,22 +2847,10 @@ def test_main_window_jobs_table_includes_cluster_columns(qapp) -> None:
     header = window._jobs_table.horizontalHeader()
     assert header.sectionResizeMode(window._JOB_LABEL_COLUMN) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(window._JOB_REMOTE_ID_COLUMN) == QHeaderView.ResizeMode.Stretch
-    assert (
-        header.sectionResizeMode(window._JOB_RUNTIME_COLUMN)
-        == QHeaderView.ResizeMode.ResizeToContents
-    )
-    assert (
-        header.sectionResizeMode(window._JOB_PROCESSES_COLUMN)
-        == QHeaderView.ResizeMode.ResizeToContents
-    )
-    assert (
-        header.sectionResizeMode(window._JOB_PROGRESS_COLUMN)
-        == QHeaderView.ResizeMode.ResizeToContents
-    )
-    assert (
-        header.sectionResizeMode(window._JOB_SUBMIT_COLUMN)
-        == QHeaderView.ResizeMode.ResizeToContents
-    )
+    assert header.sectionResizeMode(window._JOB_RUNTIME_COLUMN) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(window._JOB_PROCESSES_COLUMN) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(window._JOB_PROGRESS_COLUMN) == QHeaderView.ResizeMode.Fixed
+    assert header.sectionResizeMode(window._JOB_SUBMIT_COLUMN) == QHeaderView.ResizeMode.Fixed
     dock = window.findChild(QDockWidget, "jobDashboardDock")
     assert dock is not None
     window.close()

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtWidgets import QTreeWidgetItem
+from PySide6.QtWidgets import QHeaderView, QTableWidgetItem, QTreeWidgetItem
 
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
@@ -380,6 +380,12 @@ def test_main_window_cluster_runtime_uses_queue_elapsed_and_ticks_between_polls(
     window._refresh_active_job_runtime_cells()
 
     assert window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN).text() == "13:38"
+
+    # A poll that no longer reports the job clears its scheduler runtime.
+    window._on_cluster_queue_checked(
+        SimpleNamespace(checked_at=snapshot_time, elapsed_by_job_id={})
+    )
+    assert window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN).text() == ""
     window.close()
 
 
@@ -1799,3 +1805,168 @@ def test_main_window_dashboard_menu_selects_the_clicked_row_and_offers_delete(
     menu.action("Delete...").triggered.emit()
     assert deleted == [1]
     window.close()
+
+
+_DASHBOARD_SCALE_ROWS = 300
+
+
+def _add_scaled_dashboard_jobs(service, doc, *, now, count=_DASHBOARD_SCALE_ROWS):
+    """Fill ``doc`` with ``count`` cluster jobs: running, queued, failed, stopped, running..."""
+
+    statuses = (
+        JobStatus.RUNNING,
+        JobStatus.QUEUED,
+        JobStatus.FAILED,
+        JobStatus.STOPPED,
+        JobStatus.RUNNING,
+    )
+    jobs = []
+    for index in range(count):
+        job = _add_dashboard_job(service, doc, f"scaled_{index:03d}", statuses[index % 5])
+        job.execution_target = "SCARF"
+        job.remote_job_id = str(5_000_000 + index)
+        job.num_processes = 64
+        job.started_at = now - timedelta(hours=1)
+        job.last_checked_at = now - timedelta(minutes=1)
+        jobs.append(job)
+    return jobs
+
+
+def _record_dashboard_cell_writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, int]]:
+    """Record every text, brush and tooltip write to a table item as ``(kind, row, column)``."""
+
+    writes: list[tuple[str, int, int]] = []
+    for name in ("setText", "setForeground", "setToolTip"):
+        original = getattr(QTableWidgetItem, name)
+
+        def recorder(item, value, _original=original, _name=name):
+            writes.append((_name, item.row(), item.column()))
+            return _original(item, value)
+
+        monkeypatch.setattr(QTableWidgetItem, name, recorder)
+    return writes
+
+
+def _freeze_dashboard_clock(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
+    monkeypatch.setattr(main_window_module, "utc_now", lambda: moment)
+
+
+def _rows_in_jobs_viewport(window) -> set[int]:
+    table = window._jobs_table
+    viewport = table.viewport().rect()
+    return {
+        row
+        for row in range(table.rowCount())
+        if viewport.intersects(table.visualRect(table.model().index(row, 0)))
+    }
+
+
+def test_dashboard_refresh_with_no_job_changes_writes_no_cells(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At 300 rows a refresh with nothing changed sets no text, brush or tooltip."""
+
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "scaled_refresh.mufinder", "ScaledRefresh")
+    now = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+    _freeze_dashboard_clock(monkeypatch, now)
+    _add_scaled_dashboard_jobs(service, doc, now=now)
+    window._document = doc
+    window._refresh_jobs_table()
+    assert window._jobs_table.rowCount() == _DASHBOARD_SCALE_ROWS
+
+    writes = _record_dashboard_cell_writes(monkeypatch)
+    window._refresh_jobs_table()
+
+    assert writes == []
+
+
+def test_dashboard_runtime_tick_writes_only_visible_active_rows_that_changed(
+    main_window, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 1 s tick touches only the runtime cells of running rows in the viewport."""
+
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "scaled_tick.mufinder", "ScaledTick")
+    now = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+    _freeze_dashboard_clock(monkeypatch, now)
+    _add_scaled_dashboard_jobs(service, doc, now=now)
+    window._document = doc
+    window.resize(1400, 900)
+    window.show()
+    try:
+        qapp.processEvents()
+        window._refresh_jobs_table()
+        qapp.processEvents()
+
+        writes = _record_dashboard_cell_writes(monkeypatch)
+        window._refresh_active_job_runtime_cells()
+        assert writes == [], "an unchanged runtime must not be rewritten"
+
+        job_by_row = {
+            row: doc.jobs[window._jobs_table_row_job_id(window._jobs_table.item(row, 0))]
+            for row in range(window._jobs_table.rowCount())
+        }
+        for scroll_to_bottom in (False, True):
+            if scroll_to_bottom:
+                window._jobs_table.scrollToBottom()
+                qapp.processEvents()
+            visible = _rows_in_jobs_viewport(window)
+            expected = {row for row in visible if job_by_row[row].status == JobStatus.RUNNING}
+            assert expected, "the viewport must show at least one running row"
+            assert len(visible) < _DASHBOARD_SCALE_ROWS
+
+            now += timedelta(seconds=1)
+            _freeze_dashboard_clock(monkeypatch, now)
+            writes.clear()
+            window._refresh_active_job_runtime_cells()
+
+            assert {kind for kind, _row, _column in writes} == {"setText"}
+            assert {column for _kind, _row, column in writes} == {window._JOB_RUNTIME_COLUMN}
+            assert sorted(row for _kind, row, _column in writes) == sorted(expected)
+
+        assert window._job_runtime_timer.isActive() is True
+    finally:
+        # Hidden, the window closes at teardown without the save prompt.
+        window.hide()
+
+
+def test_dashboard_columns_are_sized_once_not_per_cell(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No column re-measures itself per cell change; the runtime column still widens."""
+
+    window = main_window
+    header = window._jobs_table.horizontalHeader()
+    assert all(
+        header.sectionResizeMode(column) != QHeaderView.ResizeMode.ResizeToContents
+        for column in range(window._jobs_table.columnCount())
+    )
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "runtime_width.mufinder", "RuntimeWidth")
+    now = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+    _freeze_dashboard_clock(monkeypatch, now)
+    job = _add_dashboard_job(service, doc, "long_runner", JobStatus.RUNNING)
+    job.started_at = now - timedelta(hours=9999, minutes=59, seconds=59)
+    window._document = doc
+    window._refresh_jobs_table()
+    runtime_item = window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN)
+    assert runtime_item.text() == "9999:59:59"
+    width_before = window._jobs_table.columnWidth(window._JOB_RUNTIME_COLUMN)
+
+    _freeze_dashboard_clock(monkeypatch, now + timedelta(seconds=1))
+    window._refresh_active_job_runtime_cells()
+
+    assert runtime_item.text() == "10000:00:00"
+    width_grown = window._jobs_table.columnWidth(window._JOB_RUNTIME_COLUMN)
+    assert width_grown > width_before
+
+    # A refresh that shortens the text fits the column back down.
+    job.started_at = now
+    window._refresh_jobs_table()
+
+    assert runtime_item.text() == "00:01"
+    assert window._jobs_table.columnWidth(window._JOB_RUNTIME_COLUMN) < width_grown
