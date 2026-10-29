@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app import workflow_table_utils
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
 from mufinder.app.theme import style_section_subtitle, style_section_title
@@ -745,13 +746,11 @@ class SupercellEditorDialog(QDialog):
         structure = self._document.structures.get(self._current_asset_id)
         if structure is None:
             return
-        if (
-            QMessageBox.question(
-                self,
-                "Delete supercell",
-                f"Delete saved supercell '{structure.label}'?",
-            )
-            != QMessageBox.StandardButton.Yes
+        if not workflow_table_utils.confirm_destructive(
+            self,
+            "Delete supercell",
+            f"Delete saved supercell '{structure.label}'?",
+            accept_label="Delete supercell",
         ):
             return
         try:

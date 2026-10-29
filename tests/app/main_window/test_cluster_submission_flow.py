@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import mufinder.app.main_window as main_window_module
+from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.cluster import ClusterConfig
@@ -1943,42 +1944,44 @@ def test_main_window_remote_directory_prompt_mappings(
 ) -> None:
     window = main_window
 
-    sequence = iter(
-        [
-            main_window_module.QMessageBox.StandardButton.Yes,
-            main_window_module.QMessageBox.StandardButton.YesToAll,
-            main_window_module.QMessageBox.StandardButton.NoToAll,
-            main_window_module.QMessageBox.StandardButton.No,
-        ]
-    )
-    monkeypatch.setattr(main_window_module.QMessageBox, "exec", lambda _self: next(sequence))
+    sequence = iter(["yes", "yes_to_all", "no_to_all", "no"])
+    prompts: list[tuple[list[tuple[str, str]], str, str]] = []
+
+    def _choose(_parent, _title, _text, choices, *, default, escape, **_kwargs) -> str:
+        prompts.append((list(choices), default, escape))
+        return next(sequence)
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", _choose)
 
     assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "yes"
     assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "yes_to_all"
     assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "no_to_all"
     assert window._prompt_remote_directory_overwrite("job", "/remote/job") == "no"
+    choices, default, escape = prompts[0]
+    assert choices == [
+        ("yes", "Delete directory"),
+        ("yes_to_all", "Delete all"),
+        ("no", "Keep directory"),
+        ("no_to_all", "Keep all"),
+    ]
+    assert (default, escape) == ("no", "no")
     window.close()
 
 
 def test_main_window_confirm_bulk_remote_delete_branches(
-    main_window, monkeypatch: pytest.MonkeyPatch
+    main_window, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
 ) -> None:
     window = main_window
 
     assert window._confirm_bulk_remote_delete([]) is True
+    assert confirmed_destructive_actions == []
 
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "exec",
-        lambda _self: main_window_module.QMessageBox.StandardButton.Yes,
-    )
     assert window._confirm_bulk_remote_delete(["/b", "/a", "/a"]) is True
+    (prompt,) = confirmed_destructive_actions
+    assert prompt["accept_label"] == "Delete 2 directories"
+    assert prompt["detailed_text"] == "- /a\n- /b"
 
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "exec",
-        lambda _self: main_window_module.QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
     assert window._confirm_bulk_remote_delete(["/a"]) is False
     window.close()
 

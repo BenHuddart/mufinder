@@ -276,7 +276,9 @@ no two workflow widgets may define the same private method.
        (``standard_row_actions``, ``bind_reset_failed_context_menu``; a
        ``RowMenuAction`` may carry a tooltip and a submenu),
        the supercell column and its k-point suggestions (``SupercellColumn``),
-       destructive confirmations (``confirm_destructive``), selection feedback
+       confirmations with action-named buttons (``confirm_destructive`` for a
+       delete, remove, reset, cancel or dismiss; ``confirm_choice`` for a
+       question with other or more answers; no Yes/No buttons), selection feedback
        (``SelectionFeedback``, ``selected_table_rows``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
        (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
@@ -479,7 +481,7 @@ no two workflow widgets may define the same private method.
      - The decisions of a cluster submission: connection reuse, each job's
        remote target (start again, continuation, resubmission or a fresh
        directory), the
-       overwrite prompts to ask as data and their *Yes/No to All* resolution,
+       overwrite prompts to ask as data and their *delete or keep all* resolution,
        the protected-directory rule, and the ``ClusterJobSubmission`` items
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
@@ -1243,7 +1245,7 @@ hooks above:
 
 Their deps hold only what needs the window: the host-mismatch dialogs
 (``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), a warning,
-and for quantum corrections a yes/no question and the job and file
+and for quantum corrections a go-ahead question with a named accept button and the job and file
 primitives its stage resets drive (the directory-ownership check, path and
 job-record deletion, the keep-files job reset and the post-reset repaint). The
 window keeps the dialogs themselves, the job-file cleanup before a path is
@@ -1498,7 +1500,7 @@ Saving is split between autosave and manual save:
   tracking and results, is autosaved, so active work is not lost if MuFinder
   rebuilds the project view.
 - Analysis-session state stays in memory until the user chooses ``Save
-  Project``, or answers ``Yes`` to the ``Save project?`` prompt shown whenever a
+  Project``, or answers ``Save`` to the ``Save project?`` prompt shown whenever a
   project window is closed. Opening a different project flushes the autosave
   but does not prompt, so unsaved analysis-session state is discarded; save
   first.

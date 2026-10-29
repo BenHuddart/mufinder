@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app import workflow_table_utils
 from mufinder.app.comparison_export import export_comparison_csv
 from mufinder.app.math_label import MathLabel
 from mufinder.app.theme import adjust_font_size, style_section_title
@@ -571,13 +572,11 @@ class ComparisonTableWidget(QWidget):
         QMessageBox.information(self, "Export complete", f"Saved CSV to:\n{file_path}")
 
     def _confirm_delete(self) -> None:
-        answer = QMessageBox.question(
+        if not workflow_table_utils.confirm_destructive(
             self,
             "Delete comparison table",
             "Delete this comparison table?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            accept_label="Delete table",
+        ):
             return
         self.delete_requested.emit(self._table.id)

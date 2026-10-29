@@ -257,7 +257,7 @@ Job tables and the dashboard
   Removing a row that already has associated files warns and offers both
   permanent deletion and moving the files into an archival subfolder outside
   the active workflow set; for several such rows the prompt offers
-  ``Yes to All`` / ``No to All``.
+  ``Delete all`` / ``Move all``.
 
 Provenance and the journal
 --------------------------

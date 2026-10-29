@@ -137,6 +137,36 @@ def bind_delete_shortcuts(
     return delete_shortcut, backspace_shortcut
 
 
+def make_message_box_resizable(box: QMessageBox) -> QMessageBox:
+    """Allow a QMessageBox with details to be resized by the user."""
+
+    box.setSizeGripEnabled(True)
+    box.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
+    return box
+
+
+def _message_box(
+    parent: QWidget,
+    icon: QMessageBox.Icon,
+    title: str,
+    text: str,
+    detail: str,
+    detailed_text: str,
+) -> QMessageBox:
+    """Return a message box with its text set and no buttons yet."""
+
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle(title)
+    box.setText(text)
+    if detail:
+        box.setInformativeText(detail)
+    if detailed_text:
+        box.setDetailedText(detailed_text)
+        make_message_box_resizable(box)
+    return box
+
+
 def confirm_destructive(
     parent: QWidget,
     title: str,
@@ -144,32 +174,83 @@ def confirm_destructive(
     detail: str = "",
     accept_label: str = "Remove",
     reject_label: str = "Cancel",
+    *,
+    detailed_text: str = "",
 ) -> bool:
     """Ask the user to confirm an action that removes, cancels, or discards something.
 
-    Every destructive action in a job table or the Job Dashboard goes through
-    this one dialog, whichever way it was triggered (row control, button, menu,
-    or Delete/Backspace), so the question always looks the same. The safe
-    choice is the default button and the one Escape maps to. Buttons carry
-    explicit labels because "Cancel" is ambiguous when the action being
-    confirmed is itself a cancellation.
+    Every delete, remove, reset, cancel or dismiss prompt in the app goes
+    through this one dialog, whichever way it was triggered (row control,
+    button, menu, or Delete/Backspace), so the question always looks the same.
+    The safe choice is the default button and the one Escape maps to. Buttons
+    carry action labels (``Delete supercell`` / ``Cancel``) rather than Yes/No,
+    and "Cancel" is replaced when the action being confirmed is itself a
+    cancellation. ``detailed_text`` goes behind the box's Show Details button.
+    A question with more than two answers uses :func:`confirm_choice`.
 
     Kept as a module-level function so tests replace it instead of driving a
     modal dialog; callers must look it up on the module at call time.
     """
 
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle(title)
-    box.setText(text)
-    if detail:
-        box.setInformativeText(detail)
+    box = _message_box(parent, QMessageBox.Icon.Warning, title, text, detail, detailed_text)
     accept_button = box.addButton(accept_label, QMessageBox.ButtonRole.DestructiveRole)
     reject_button = box.addButton(reject_label, QMessageBox.ButtonRole.RejectRole)
     box.setDefaultButton(reject_button)
     box.setEscapeButton(reject_button)
     box.exec()
     return box.clickedButton() is accept_button
+
+
+def confirm_choice(
+    parent: QWidget,
+    title: str,
+    text: str,
+    choices: Sequence[tuple[str, str]],
+    *,
+    default: str,
+    escape: str,
+    detail: str = "",
+    detailed_text: str = "",
+    destructive: Sequence[str] = (),
+    icon: QMessageBox.Icon = QMessageBox.Icon.Question,
+) -> str:
+    """Ask a question whose answers are named actions, and return the chosen key.
+
+    The non-destructive sibling of :func:`confirm_destructive`, also used for a
+    destructive question with more than two answers. ``choices`` lists
+    ``(key, label)`` pairs (the platform lays the buttons out by role, so
+    this is not necessarily the order shown); each label names what the button
+    does (``Save`` / ``Don't save`` / ``Cancel``), never Yes/No. ``default`` is
+    the key of the default button and ``escape`` the key Escape and closing the
+    box answer with; both must be in ``choices``. Keys in ``destructive`` get
+    the destructive button role, the ``escape`` key the reject role.
+
+    Kept as a module-level function so tests replace it instead of driving a
+    modal dialog; callers must look it up on the module at call time.
+    """
+
+    keys = [key for key, _label in choices]
+    for name, key in (("default", default), ("escape", escape)):
+        if key not in keys:
+            raise ValueError(f"{name} choice {key!r} is not one of {keys}")
+    box = _message_box(parent, icon, title, text, detail, detailed_text)
+    buttons: dict[str, QPushButton] = {}
+    for key, label in choices:
+        if key == escape:
+            role = QMessageBox.ButtonRole.RejectRole
+        elif key in destructive:
+            role = QMessageBox.ButtonRole.DestructiveRole
+        else:
+            role = QMessageBox.ButtonRole.AcceptRole
+        buttons[key] = box.addButton(label, role)
+    box.setDefaultButton(buttons[default])
+    box.setEscapeButton(buttons[escape])
+    box.exec()
+    clicked = box.clickedButton()
+    for key, button in buttons.items():
+        if clicked is button:
+            return key
+    return escape
 
 
 def count_phrase(count: int, noun: tuple[str, str]) -> str:

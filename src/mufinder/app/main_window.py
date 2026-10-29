@@ -1184,16 +1184,16 @@ class MainWindow(QMainWindow):
         if job_watchdog_timer is not None:
             job_watchdog_timer.stop()
         if self._document is not None and self.isVisible():
-            answer = QMessageBox.question(
+            answer = workflow_table_utils.confirm_choice(
                 self,
                 "Save project?",
                 "Save the current project before closing?",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.No
-                | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Yes,
+                [("save", "Save"), ("discard", "Don't save"), ("cancel", "Cancel")],
+                default="save",
+                escape="cancel",
+                destructive=("discard",),
             )
-            if answer == QMessageBox.StandardButton.Cancel:
+            if answer == "cancel":
                 # Staying open: persist/refresh the coalesced flush that closeEvent
                 # stopped the timer for, so it is not orphaned until the next job.
                 self._flush_dashboard()
@@ -1202,7 +1202,7 @@ class MainWindow(QMainWindow):
                 return
             self._shutting_down = True
             self._close_open_uep_analysis_dialogs()
-            if answer == QMessageBox.StandardButton.Yes:
+            if answer == "save":
                 try:
                     self._project_service.save_project(self._document)
                 except ValueError as exc:
@@ -3479,8 +3479,7 @@ class MainWindow(QMainWindow):
                 return
         else:
             return
-        # The comparison widget already asks for confirmation before emitting.
-        self._delete_comparison_table(table_id, confirm=False)
+        self._delete_comparison_table(table_id)
 
     def _on_comparison_table_title_changed(self, payload: object, title: str) -> None:
         if self._document is None or self._shutting_down:
@@ -3510,22 +3509,17 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(f"Renamed comparison table to '{table.label}'")
 
-    def _delete_comparison_table(self, table_id: UUID, *, confirm: bool = True) -> None:
+    def _delete_comparison_table(self, table_id: UUID) -> None:
+        """Delete a comparison table the user has already confirmed deleting.
+
+        The table's own Delete button is the only entry point, and the widget
+        asks for the confirmation before it emits ``delete_requested``.
+        """
+
         if self._document is None:
             return
         if table_id not in self._document.comparison_tables:
             return
-
-        if confirm:
-            answer = QMessageBox.question(
-                self,
-                "Delete comparison table",
-                "Delete this comparison table?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
 
         self._project_service.remove_comparison_table(self._document, table_id)
         self._sync_comparison_table_views()
@@ -4272,16 +4266,13 @@ class MainWindow(QMainWindow):
         if not deletable_jobs:
             return
 
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Delete jobs")
-        message.setText(f"Delete {len(deletable_jobs)} selected job(s)?")
-        message.setInformativeText(
-            "This removes the selected job records and any linked run/result records."
-        )
-        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        if not confirmed and message.exec() != QMessageBox.StandardButton.Yes:
+        if not confirmed and not workflow_table_utils.confirm_destructive(
+            self,
+            "Delete jobs",
+            f"Delete {len(deletable_jobs)} selected job(s)?",
+            "This removes the selected job records and any linked run/result records.",
+            accept_label=f"Delete {count_phrase(len(deletable_jobs), ('job', 'jobs'))}",
+        ):
             return
 
         for job in deletable_jobs:
@@ -4658,33 +4649,25 @@ class MainWindow(QMainWindow):
         keep_text: str,
         include_apply_all: bool = False,
     ) -> str | None:
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle(title)
-        message.setText(text)
-        message.setInformativeText(
-            "Choose Yes to delete those files, No to move them into a separate 'removed_from_workflow' "
-            f"subfolder, {keep_text}"
-        )
-        buttons = (
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel
-        )
+        choices = [("delete", "Delete files"), ("archive", "Move files")]
         if include_apply_all:
-            buttons |= QMessageBox.StandardButton.YesToAll | QMessageBox.StandardButton.NoToAll
-        message.setStandardButtons(buttons)
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        answer = message.exec()
-        if answer == QMessageBox.StandardButton.Cancel:
-            return None
-        if answer == QMessageBox.StandardButton.NoToAll:
-            return "archive_all"
-        if answer == QMessageBox.StandardButton.YesToAll:
-            return "delete_all"
-        if answer == QMessageBox.StandardButton.Yes:
-            return "delete"
-        return "archive"
+            choices += [("delete_all", "Delete all"), ("archive_all", "Move all")]
+        choices.append(("cancel", "Cancel"))
+        answer = workflow_table_utils.confirm_choice(
+            self,
+            title,
+            text,
+            choices,
+            default="archive",
+            escape="cancel",
+            detail=(
+                "Choose 'Delete files' to delete those files, 'Move files' to move them into a "
+                f"separate 'removed_from_workflow' subfolder, {keep_text}"
+            ),
+            destructive=("delete", "delete_all"),
+            icon=QMessageBox.Icon.Warning,
+        )
+        return None if answer == "cancel" else answer
 
     def _task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
         """Return ``(farming_enabled, num_farms)`` for any farm-aware calc type.
@@ -5392,43 +5375,36 @@ class MainWindow(QMainWindow):
         return submitted_jobs, failed
 
     def _prompt_remote_directory_overwrite(self, job_label: str, remote_dir: str) -> str:
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Remote directory exists")
-        message.setText(f"Remote directory already exists for {job_label}.")
-        message.setInformativeText(f"Directory: {remote_dir}\n\nDelete it before submission?")
-        message.setStandardButtons(
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.YesToAll
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.NoToAll
+        return workflow_table_utils.confirm_choice(
+            self,
+            "Remote directory exists",
+            f"Remote directory already exists for {job_label}.",
+            [
+                ("yes", "Delete directory"),
+                ("yes_to_all", "Delete all"),
+                ("no", "Keep directory"),
+                ("no_to_all", "Keep all"),
+            ],
+            default="no",
+            escape="no",
+            detail=f"Directory: {remote_dir}\n\nDelete it before submission?",
+            destructive=("yes", "yes_to_all"),
+            icon=QMessageBox.Icon.Warning,
         )
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        response = message.exec()
-        if response == QMessageBox.StandardButton.Yes:
-            return "yes"
-        if response == QMessageBox.StandardButton.YesToAll:
-            return "yes_to_all"
-        if response == QMessageBox.StandardButton.NoToAll:
-            return "no_to_all"
-        return "no"
 
     def _confirm_bulk_remote_delete(self, remote_dirs: list[str]) -> bool:
         if not remote_dirs:
             return True
 
-        details = "\n".join(f"- {path}" for path in sorted(set(remote_dirs)))
-        message = make_message_box_resizable(QMessageBox(self))
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Confirm remote deletion")
-        message.setText("Delete all existing remote job directories?")
-        message.setInformativeText(
-            "The following remote directories will be deleted before submission."
+        unique_dirs = sorted(set(remote_dirs))
+        return workflow_table_utils.confirm_destructive(
+            self,
+            "Confirm remote deletion",
+            "Delete all existing remote job directories?",
+            "The following remote directories will be deleted before submission.",
+            accept_label=f"Delete {count_phrase(len(unique_dirs), ('directory', 'directories'))}",
+            detailed_text="\n".join(f"- {path}" for path in unique_dirs),
         )
-        message.setDetailedText(details)
-        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        return message.exec() == QMessageBox.StandardButton.Yes
 
     def _cluster_workflow_directory_fragment(self, jobs: list[Job]) -> str:
         return cluster_workflow_directory_fragment(jobs)
@@ -6132,15 +6108,16 @@ class MainWindow(QMainWindow):
                 mismatch
             ),
             handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
-            confirm=lambda title, text: (
-                QMessageBox.question(
+            confirm=lambda title, text, accept_label: (
+                workflow_table_utils.confirm_choice(
                     self,
                     title,
                     text,
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
+                    [("accept", accept_label), ("cancel", "Cancel")],
+                    default="cancel",
+                    escape="cancel",
                 )
-                == QMessageBox.StandardButton.Yes
+                == "accept"
             ),
         )
 
@@ -6313,24 +6290,22 @@ class MainWindow(QMainWindow):
         return stripped[:max_chars] + "\n... [truncated]"
 
     def _prompt_failed_job_cleanup(self, job_count: int) -> bool | None:
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Question)
-        message.setWindowTitle("Reset failed jobs")
-        message.setText(f"Reset {job_count} failed job(s) to the 'defined' state?")
-        message.setInformativeText(
-            "Choose Yes to clean each job directory before reset, "
-            "No to keep existing files, or Cancel to abort."
+        answer = workflow_table_utils.confirm_choice(
+            self,
+            "Reset failed jobs",
+            f"Reset {job_count} failed job(s) to the 'defined' state?",
+            [("clean", "Clean and reset"), ("keep", "Reset, keep files"), ("cancel", "Cancel")],
+            default="keep",
+            escape="cancel",
+            detail=(
+                "Choose 'Clean and reset' to clean each job directory before reset, "
+                "'Reset, keep files' to keep existing files, or 'Cancel' to abort."
+            ),
+            destructive=("clean",),
         )
-        message.setStandardButtons(
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel
-        )
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        answer = message.exec()
-        if answer == QMessageBox.StandardButton.Cancel:
+        if answer == "cancel":
             return None
-        return answer == QMessageBox.StandardButton.Yes
+        return answer == "clean"
 
     def _run_for_job(self, job_id: UUID) -> CalculationRun | None:
         return self._job_execution.run_for_job(job_id)
@@ -8390,17 +8365,18 @@ class MainWindow(QMainWindow):
         current = self._document.project.recommended_xc_functional
         if current is None or current == xc_functional:
             return True
-        answer = QMessageBox.question(
+        answer = workflow_table_utils.confirm_choice(
             self,
             "Change project functional?",
             f"These convergence calculations used the {xc_functional} functional, "
             f"but the project default functional is {current}.\n\n"
             f"Adopting this result will also change the project default "
             f"functional to {xc_functional}. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            [("change", "Change functional"), ("cancel", "Cancel")],
+            default="cancel",
+            escape="cancel",
         )
-        return answer == QMessageBox.StandardButton.Yes
+        return answer == "change"
 
     def _on_project_xc_functional_change_requested(self, xc_functional: object) -> None:
         if self._document is None:
@@ -9469,16 +9445,16 @@ class MainWindow(QMainWindow):
             )
             return
 
-        confirmed = QMessageBox.question(
+        if not workflow_table_utils.confirm_destructive(
             self,
             "Remove imported relaxations?",
             f"Permanently remove {len(plan.targets)} imported relaxation(s) and delete "
-            "their job directories, including the archived original input files?\n\n"
+            "their job directories, including the archived original input files?",
             "MuFinder did not run these calculations and cannot recreate them.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirmed != QMessageBox.StandardButton.Yes:
+            accept_label=(
+                f"Remove {count_phrase(len(plan.targets), ('relaxation', 'relaxations'))}"
+            ),
+        ):
             return
 
         outcome = remove_imported_relaxations(document, plan, batch_id=batch_id)
@@ -10970,18 +10946,15 @@ class MainWindow(QMainWindow):
                 f"Would you like to switch the active host to {source_label!r} "
                 f"and proceed?"
             )
-            result = QMessageBox.question(
+            result = workflow_table_utils.confirm_choice(
                 self,
                 "Host structure mismatch",
                 msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
+                [("switch", "Switch host"), ("cancel", "Cancel")],
+                default="cancel",
+                escape="cancel",
             )
-            if (
-                result == QMessageBox.StandardButton.Yes
-                and source_id is not None
-                and self._document is not None
-            ):
+            if result == "switch" and source_id is not None and self._document is not None:
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
@@ -11023,18 +10996,15 @@ class MainWindow(QMainWindow):
                 f"({source_label!r}) than the current active host ({active_label!r}).\n\n"
                 f"Would you like to switch the active host to {source_label!r} and proceed?"
             )
-            result = QMessageBox.question(
+            result = workflow_table_utils.confirm_choice(
                 self,
                 "Host structure mismatch",
                 msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
+                [("switch", "Switch host"), ("cancel", "Cancel")],
+                default="cancel",
+                escape="cancel",
             )
-            if (
-                result == QMessageBox.StandardButton.Yes
-                and source_id is not None
-                and self._document is not None
-            ):
+            if result == "switch" and source_id is not None and self._document is not None:
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
@@ -11283,14 +11253,12 @@ class MainWindow(QMainWindow):
             target.get("title", "Magnetic Field Workspace")
         )
         if confirm:
-            answer = QMessageBox.question(
+            if not workflow_table_utils.confirm_destructive(
                 self,
                 "Delete magnetic field workspace",
                 f"Delete magnetic field workspace '{title}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
+                accept_label="Delete workspace",
+            ):
                 return
         self._document.ui_state[self._MAGNETIC_FIELD_WORKSPACES_KEY] = [
             workspace

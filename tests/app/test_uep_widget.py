@@ -683,11 +683,11 @@ def test_uep_widget_context_menu_disables_reset_for_ready_row(qapp, monkeypatch)
     assert payloads == []
 
 
-def test_uep_wizard_button_opens_clicked_row_without_prompt(qapp, monkeypatch) -> None:
+def test_uep_wizard_button_opens_clicked_row_without_prompt(
+    qapp, monkeypatch, answered_choices, confirmed_destructive_actions
+) -> None:
     # The wizard runs on one row at a time, so a multi-row selection neither
     # prompts nor changes which row it opens for.
-    from PySide6.QtWidgets import QMessageBox
-
     widget = UEPWidget()
     widget._add_row()
     widget._add_row()
@@ -695,7 +695,6 @@ def test_uep_wizard_button_opens_clicked_row_without_prompt(qapp, monkeypatch) -
     monkeypatch.setattr(
         selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(a)
     )
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(a))
     requested: list[str] = []
     widget.wizard_requested.connect(requested.append)
 
@@ -705,6 +704,8 @@ def test_uep_wizard_button_opens_clicked_row_without_prompt(qapp, monkeypatch) -
     wizard_button.clicked.emit()
 
     assert prompts == []
+    assert answered_choices == []
+    assert confirmed_destructive_actions == []
     assert requested == [widget._table.item(1, widget._LABEL_COLUMN).text()]
     assert wizard_button.selection_snapshot_rows == ()
 

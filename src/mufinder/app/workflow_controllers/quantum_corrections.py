@@ -239,8 +239,11 @@ def _incompatible_method_message(rows: list[tuple[str, str]]) -> tuple[str, str]
     )
 
 
-def _unverified_method_question(rows: list[tuple[str, str]]) -> tuple[str, str]:
-    """Return the confirmation for rows using DFPT with an unknown pseudopotential family."""
+def _unverified_method_question(rows: list[tuple[str, str]]) -> tuple[str, str, str]:
+    """Return the confirmation for rows using DFPT with an unknown pseudopotential family.
+
+    The result is ``(title, text, accept_label)`` for ``QuantumCorrectionsDeps.confirm``.
+    """
 
     return (
         "Check pseudopotentials for DFPT",
@@ -248,6 +251,7 @@ def _unverified_method_question(rows: list[tuple[str, str]]) -> tuple[str, str]:
         "set, so MuFinder cannot check it:\n\n"
         f"{_method_rows(rows)}\n\n"
         f"{_DFPT_LIMITATIONS} Submit anyway?",
+        "Submit anyway",
     )
 
 
@@ -276,7 +280,7 @@ class QuantumCorrectionsDeps:
     """The window-side handles the quantum-corrections controller needs.
 
     The host-mismatch handlers ask whether to switch the active host (shared
-    with every host-guarded workflow) and ``confirm`` asks a yes/no question.
+    with every host-guarded workflow) and ``confirm`` asks whether to go ahead.
     Everything else the controller reads from the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
     or the service layer.
@@ -284,9 +288,9 @@ class QuantumCorrectionsDeps:
 
     handle_structure_host_mismatch: Callable[[object], bool]
     handle_site_host_mismatch: Callable[[object], bool]
-    #: Ask a yes/no question (title, text); ``True`` means proceed. The safe
-    #: answer, "no", is the default.
-    confirm: Callable[[str, str], bool]
+    #: Ask whether to go ahead (title, text, accept-button label); ``True``
+    #: means proceed. The safe answer, Cancel, is the default.
+    confirm: Callable[[str, str, str], bool]
 
 
 @dataclass(frozen=True)

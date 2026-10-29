@@ -11,6 +11,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 import mufinder.app.main_window as main_window_module
+from mufinder.app import workflow_table_utils
 from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.models import Structure
@@ -530,11 +531,6 @@ def test_main_window_close_prompts_to_save_visible_project(
 
     saves: list[bool] = []
     shutdowns: list[bool] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: main_window_module.QMessageBox.StandardButton.Yes,
-    )
     monkeypatch.setattr(window._project_service, "save_project", lambda _doc: saves.append(True))
     monkeypatch.setattr(window._local_runner, "shutdown", lambda: shutdowns.append(True))
 
@@ -553,11 +549,7 @@ def test_main_window_close_cancel_keeps_window_open(
     window._document = service.create_project(tmp_path / "close_cancel.mufinder", "CloseCancel")
 
     shutdowns: list[bool] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: main_window_module.QMessageBox.StandardButton.Cancel,
-    )
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel")
     monkeypatch.setattr(window._local_runner, "shutdown", lambda: shutdowns.append(True))
 
     window.show()
@@ -572,59 +564,36 @@ def test_main_window_close_cancel_keeps_window_open(
 def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _FakeMessageBox:
-        Icon = SimpleNamespace(Warning=1)
-        StandardButton = SimpleNamespace(Yes=1, No=2, Cancel=3, YesToAll=4, NoToAll=5)
-        _answer = 1
+    answers: list[str] = []
+    asked: list[list[str]] = []
 
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setIcon(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setWindowTitle(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setText(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setInformativeText(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setStandardButtons(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setDefaultButton(self, *_args, **_kwargs) -> None:
-            pass
-
-        def exec(self) -> int:
-            return _FakeMessageBox._answer
+    def _choose(_parent, _title, _text, choices, *, default, escape, **_kwargs) -> str:
+        asked.append([key for key, _label in choices])
+        assert (default, escape) == ("archive", "cancel")
+        return answers.pop(0)
 
     window = main_window
-    monkeypatch.setattr(main_window_module, "QMessageBox", _FakeMessageBox)
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", _choose)
 
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Yes
+    answers[:] = ["delete", "archive", "cancel"]
     assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job") == "delete"
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.No
     assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job") == "archive"
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Cancel
     assert window._prompt_cutoff_file_disposition(300.0, tmp_path / "job") is None
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Yes
+    assert asked[0] == ["delete", "archive", "cancel"]
+    answers[:] = ["delete", "delete_all", "archive_all"]
     assert (
         window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True)
         == "delete"
     )
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.YesToAll
     assert (
         window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True)
         == "delete_all"
     )
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.NoToAll
     assert (
         window._prompt_cutoff_file_disposition(300.0, tmp_path / "job", include_apply_all=True)
         == "archive_all"
     )
+    assert asked[-1] == ["delete", "archive", "delete_all", "archive_all", "cancel"]
 
     file_path = tmp_path / "orphan.txt"
     file_path.write_text("x", encoding="utf-8")

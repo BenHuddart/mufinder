@@ -114,7 +114,7 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     base = dict(
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
-        confirm=lambda _title, _text: True,
+        confirm=lambda _title, _text, _accept_label: True,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
@@ -987,7 +987,7 @@ def _phonon_method_controller(
     *,
     rows: dict[str, tuple[str, str]],
     infos: list[tuple[str, str]],
-    questions: list[tuple[str, str]],
+    questions: list[tuple[str, str, str]],
     answer: bool,
     local: RecordingBackend,
 ):
@@ -1014,7 +1014,9 @@ def _phonon_method_controller(
         document,
         output_root,
         deps=_stub_quantum_deps(
-            confirm=lambda title, text: questions.append((title, text)) or answer
+            confirm=lambda title, text, accept_label: (
+                questions.append((title, text, accept_label)) or answer
+            )
         ),
         local_backend=local,
         infos=infos,
@@ -1033,7 +1035,7 @@ def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name
     """The refusal names the rows instead of ending in a generic "No ready jobs"."""
 
     infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
+    questions: list[tuple[str, str, str]] = []
     local = RecordingBackend()
     controller, keys = _phonon_method_controller(
         ProjectService(),
@@ -1060,7 +1062,7 @@ def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_fam
     tmp_path: Path,
 ) -> None:
     infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
+    questions: list[tuple[str, str, str]] = []
     local = RecordingBackend()
     controller, keys = _phonon_method_controller(
         ProjectService(),
@@ -1076,8 +1078,9 @@ def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_fam
 
     assert local.calls == []
     assert infos == []
-    ((title, message),) = questions
+    ((title, message, accept_label),) = questions
     assert title == "Check pseudopotentials for DFPT"
+    assert accept_label == "Submit anyway"
     assert "siteA (DFPT)" in message
     assert "norm-conserving" in message
 
@@ -1086,7 +1089,7 @@ def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(
     tmp_path: Path,
 ) -> None:
     infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
+    questions: list[tuple[str, str, str]] = []
     local = RecordingBackend()
     controller, keys = _phonon_method_controller(
         ProjectService(),
@@ -1106,7 +1109,7 @@ def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(
 
 def test_quantum_controller_submits_finite_displacement_without_asking(tmp_path: Path) -> None:
     infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str]] = []
+    questions: list[tuple[str, str, str]] = []
     local = RecordingBackend()
     controller, keys = _phonon_method_controller(
         ProjectService(),

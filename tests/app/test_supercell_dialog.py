@@ -6,12 +6,15 @@ from functools import partial
 
 from PySide6.QtWidgets import QDialog, QHeaderView
 
+from mufinder.app import workflow_table_utils
 from mufinder.app.supercell_dialog import SupercellEditorDialog, SupercellPreviewDialog
 from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
+from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Structure
 from mufinder.science.supercell_suggestion import SupercellCandidate, SupercellSuggestion
 from mufinder.services.project_service import ProjectService
+from tests.support.qt import answer_next_message_box
 from tests.support.structures import si_pair_host
 
 
@@ -283,4 +286,50 @@ def test_supercell_editor_spinbox_range_allows_n_64(qapp, tmp_path, monkeypatch)
     monkeypatch.setattr(dialog, "_generate_preview", lambda: None)
     dialog._apply_matrix([[64, 0, 0], [0, 64, 0], [0, 0, 64]])
     assert dialog.matrix() == [[64, 0, 0], [0, 64, 0], [0, 0, 64]]
+    dialog.close()
+
+
+def _editor_with_saved_supercell(tmp_path, monkeypatch):
+    # The autouse stub accepts every confirmation; these tests answer the real box.
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _real_confirm_destructive)
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_delete.mufinder", "EditorDelete")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        initial_matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+    )
+    dialog._name_edit.setText("Delete me")
+    saved = dialog._save_current()
+    assert saved is not None
+    return dialog, doc, saved
+
+
+def test_supercell_delete_confirmation_defaults_to_cancel(qapp, tmp_path, monkeypatch) -> None:
+    dialog, doc, saved = _editor_with_saved_supercell(tmp_path, monkeypatch)
+
+    seen = answer_next_message_box()
+    dialog._delete_current()
+
+    assert sorted(seen["buttons"]) == ["Cancel", "Delete supercell"]
+    assert seen["default"] == "Cancel"
+    assert seen["escape"] == "Cancel"
+    assert seen["text"] == "Delete saved supercell 'Delete me'?"
+    assert saved.id in doc.structures
+    dialog.close()
+
+
+def test_supercell_delete_removes_the_asset_once_confirmed(qapp, tmp_path, monkeypatch) -> None:
+    dialog, doc, saved = _editor_with_saved_supercell(tmp_path, monkeypatch)
+
+    seen = answer_next_message_box(click="Delete supercell")
+    dialog._delete_current()
+
+    assert "missing" not in seen
+    assert saved.id not in doc.structures
     dialog.close()

@@ -330,6 +330,37 @@ def test_app_figures_do_not_use_fractional_subplot_margins() -> None:
     )
 
 
+#: ``QMessageBox.question`` and the Yes/No standard buttons (``YesToAll`` and
+#: ``NoToAll`` included) answer a question with "Yes" or "No" instead of the
+#: action, and the static ``question`` keeps Qt's default button, which is
+#: "Yes" when none is given.
+YES_NO_PROMPT_PATTERN = re.compile(
+    r"QMessageBox\.question\b|StandardButton\.(?:Yes|No)|QMessageBox\.(?:Yes|No)\b"
+)
+
+
+def test_app_confirmations_name_their_actions() -> None:
+    """Forbid Yes/No message boxes in ``mufinder.app``; use the shared helpers.
+
+    ``workflow_table_utils.confirm_destructive`` (delete, remove, reset, cancel,
+    dismiss) and ``workflow_table_utils.confirm_choice`` (any other question)
+    label every button with its action and make the safe choice the default
+    and the Escape answer.
+    """
+
+    offenders = sorted(
+        f"{path.relative_to(PROJECT_ROOT)}:{number}"
+        for path in _python_files("app")
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if YES_NO_PROMPT_PATTERN.search(line)
+    )
+    assert not offenders, (
+        f"Yes/No message boxes found at {offenders}. Ask through "
+        "workflow_table_utils.confirm_destructive or confirm_choice, with buttons "
+        "that name the action."
+    )
+
+
 def test_direct_figure_canvas_modules_do_not_grow() -> None:
     """Ratchet the app modules that build a matplotlib canvas without the helper."""
 

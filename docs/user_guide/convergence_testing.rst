@@ -189,8 +189,9 @@ or results of an earlier definition.
 
 Removing a row whose job is still queued or running cancels the job after a
 confirmation. Removing a cutoff whose job directory contains files also asks
-what to do with them: ``Yes`` deletes them, ``No`` (the default) moves them into
-a ``removed_from_workflow`` folder, and ``Cancel`` keeps the cutoff.
+what to do with them: ``Delete files`` deletes them, ``Move files`` (the
+default) moves them into a ``removed_from_workflow`` folder, and ``Cancel``
+keeps the cutoff.
 
 Adding cutoffs
 ~~~~~~~~~~~~~~

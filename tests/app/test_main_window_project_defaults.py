@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QMessageBox
 
-import mufinder.app.main_window as main_window_module
+from mufinder.app import workflow_table_utils
 from mufinder.app.adapter_common import project_convergence_parameter_values
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.models import Structure
@@ -107,14 +106,16 @@ def test_adopting_with_a_different_functional_asks_before_switching(
         tmp_path, shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"}
     )
     window._on_project_xc_functional_change_requested("LDA")
-    answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+    answers = ["cancel", "change"]
     prompts: list[str] = []
 
-    def fake_question(_parent, title, text, *args, **kwargs):
+    def fake_choice(_parent, title, text, choices, *, default, escape, **kwargs):
         prompts.append(f"{title}: {text}")
+        assert choices == [("change", "Change functional"), ("cancel", "Cancel")]
+        assert (default, escape) == ("cancel", "cancel")
         return answers.pop(0)
 
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", fake_question)
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", fake_choice)
 
     window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
     assert doc.project.recommended_cutoff_energy is None

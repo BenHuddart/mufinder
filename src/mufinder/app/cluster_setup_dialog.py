@@ -684,14 +684,15 @@ class ClusterSetupDialog(QDialog):
         if not working_dir.startswith(expected_prefix):
             return
 
-        answer = QMessageBox.question(
+        answer = workflow_table_utils.confirm_choice(
             self,
             "Update working directory?",
             "The username changed. Update the default working directory to match it?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            [("update", "Update directory"), ("keep", "Keep directory")],
+            default="update",
+            escape="keep",
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if answer != "update":
             return
 
         suffix = working_dir[len(expected_prefix) :]
