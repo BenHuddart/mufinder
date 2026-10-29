@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,12 +16,14 @@ import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
+from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
-from mufinder.domain.models import CalculationRun, Job
+from mufinder.domain.models import CalculationRun, Job, ProvenanceRecord
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
+from tests.support.main_window import select_route
 
 
 def test_dashboard_flush_is_coalesced_across_a_completion_burst(
@@ -54,6 +57,101 @@ def test_dashboard_flush_is_coalesced_across_a_completion_burst(
     window._flush_dashboard()
     assert save_calls == ["save"]
     window.close()
+
+
+def test_dashboard_flush_builds_the_journal_only_for_new_records(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "journal_flush.mufinder", "JournalFlush")
+    for minute in range(3):
+        service.append_provenance(
+            doc,
+            ProvenanceRecord(
+                timestamp=datetime(2026, 4, 21, 9, minute, tzinfo=UTC),
+                action="generate_candidates",
+                parameters={"method": "random", "count": 2},
+            ),
+        )
+    window._document = doc
+    window._refresh_ui_after_project_change()
+    select_route(window, "provenance_log")
+
+    rebuilds: list[str] = []
+    cards: list[str] = []
+    original_rebuild = JournalWidget._rebuild_view
+    original_card = JournalWidget._build_entry_card
+
+    def _rebuild(self: JournalWidget) -> None:
+        rebuilds.append("rebuild")
+        original_rebuild(self)
+
+    def _card(self: JournalWidget, entry):
+        cards.append(entry.title)
+        return original_card(self, entry)
+
+    monkeypatch.setattr(JournalWidget, "_rebuild_view", _rebuild)
+    monkeypatch.setattr(JournalWidget, "_build_entry_card", _card)
+
+    window._request_dashboard_flush(failure_message="x")
+    window._flush_dashboard()
+
+    assert rebuilds == [] and cards == []
+
+    service.append_provenance(
+        doc,
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 9, 30, tzinfo=UTC),
+            action="generate_candidates",
+            parameters={"method": "random", "count": 4},
+        ),
+    )
+    window._request_dashboard_flush(failure_message="x")
+    window._flush_dashboard()
+
+    assert rebuilds == []
+    assert cards == ["Muon sites generated"]
+
+    # While another page is shown, a flush leaves the journal for its next show.
+    select_route(window, "host_structure")
+    service.append_provenance(
+        doc,
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 9, 45, tzinfo=UTC),
+            action="generate_candidates",
+            parameters={"method": "random", "count": 6},
+        ),
+    )
+    window._request_dashboard_flush(failure_message="x")
+    window._flush_dashboard()
+
+    assert len(cards) == 1
+
+    select_route(window, "provenance_log")
+
+    assert rebuilds == [] and len(cards) == 2
+
+
+def test_dashboard_flush_trace_is_logged_after_the_event_loop_pass(
+    main_window, qapp, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    window = main_window
+    window._document = ProjectService().create_project(tmp_path / "trace.mufinder", "Trace")
+    caplog.set_level(logging.DEBUG, logger="mufinder.app.main_window")
+
+    window._request_dashboard_flush(failure_message="x")
+    window._flush_dashboard()
+
+    assert not [r for r in caplog.records if r.getMessage().startswith("dashboard flush")]
+
+    qapp.processEvents()
+
+    messages = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("dashboard flush")
+    ]
+    assert len(messages) == 1
+    assert "event loop (deferred deletes, repaint)=" in messages[0]
 
 
 def test_close_persists_pending_dashboard_flush(main_window, tmp_path: Path) -> None:

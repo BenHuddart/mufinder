@@ -391,16 +391,16 @@ class ProjectService:
         for entity_type, entities in self._entity_groups(document):
             # Prune first so externally-orphaned files (and files for entities
             # deleted in memory) are removed even when nothing else changed.
-            store.prune_entities(entity_type, {entity_id for entity_id, _ in entities})
+            # The same listing says which files are still on disk.
+            on_disk = store.prune_entities(entity_type, {entity_id for entity_id, _ in entities})
             for entity_id, entity in entities:
                 payload = to_jsonable(entity)
                 digest = self._payload_hash(payload)
                 cache_key = (root_key, entity_type, entity_id)
-                target = store.entities_root / entity_type / f"{entity_id}.json"
                 # Skip only when the content is unchanged AND the file still
-                # exists on disk; the ``exists()`` guard forces a rewrite if the
+                # exists on disk; the existence check forces a rewrite if the
                 # file was deleted externally since the cached hash was taken.
-                if self._content_hashes.get(cache_key) == digest and target.exists():
+                if self._content_hashes.get(cache_key) == digest and entity_id in on_disk:
                     skipped += 1
                     continue
                 store.write_entity(entity_type, entity_id, payload)

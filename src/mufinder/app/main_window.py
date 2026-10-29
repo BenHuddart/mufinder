@@ -15,7 +15,17 @@ import time
 from typing import TypeVar
 from uuid import UUID, uuid4
 
-from PySide6.QtCore import QByteArray, QEventLoop, QSize, QSettings, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import (
+    QByteArray,
+    QEventLoop,
+    QSize,
+    QSettings,
+    QTimer,
+    QUrl,
+    Qt,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
@@ -326,7 +336,7 @@ from mufinder.services.muon_sites_summary import (
     store_muon_sites_summary_snapshot,
     validated_muon_sites_summary_snapshot,
 )
-from mufinder.services.perf_trace import PerfTrace
+from mufinder.services.perf_trace import PerfTrace, StageTiming
 from mufinder.services.site_generation_service import WORKER_GENERATION_METHODS
 from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
@@ -3240,6 +3250,23 @@ class MainWindow(QMainWindow):
             self._persist_document_ui_state(
                 failure_message=self._dashboard_autosave_failure_message
             )
+        # The widgets the views released are deleted, and the window repainted, on
+        # the next event-loop pass, still inside the same freeze. The summary is
+        # logged from a zero-delay timer after that pass so its total covers them;
+        # forcing the deferred deletes here would destroy objects whose handlers
+        # may still be on the stack (a flush inside a confirmation's event loop).
+        QTimer.singleShot(
+            0, self, partial(self._log_dashboard_flush_trace, trace, time.perf_counter())
+        )
+
+    @staticmethod
+    def _log_dashboard_flush_trace(trace: PerfTrace, handed_back: float) -> None:
+        trace.stages.append(
+            StageTiming(
+                name="event loop (deferred deletes, repaint)",
+                duration_ms=(time.perf_counter() - handed_back) * 1000.0,
+            )
+        )
         trace.log_summary()
 
     def _store_convergence_overview_snapshot(

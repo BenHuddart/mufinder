@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -29,8 +29,16 @@ def to_jsonable(value: Any) -> Any:
         return {
             str(k): v if type(v) in _JSON_SCALAR_TYPES else to_jsonable(v) for k, v in value.items()
         }
-    if is_dataclass(value):
-        return to_jsonable(asdict(value))
+    if is_dataclass(value) and not isinstance(value, type):
+        # Walk the fields directly: ``dataclasses.asdict`` deep-copies the whole
+        # tree first, which then had to be walked a second time here.
+        result: dict[str, Any] = {}
+        for item in fields(value):
+            field_value = getattr(value, item.name)
+            result[item.name] = (
+                field_value if type(field_value) in _JSON_SCALAR_TYPES else to_jsonable(field_value)
+            )
+        return result
     if isinstance(value, dict):
         return {str(k): to_jsonable(v) for k, v in value.items()}
     if isinstance(value, list):
