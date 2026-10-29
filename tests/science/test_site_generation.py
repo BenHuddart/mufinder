@@ -888,37 +888,39 @@ def test_attached_sites_raises_when_no_candidate_clears_hosts() -> None:
 # Spacing checks
 
 
-def test_spacing_check_measures_the_nearest_image_in_a_skewed_cell() -> None:
-    host = zno_host()
-    point, reference = np.asarray([0.0, 0.0, 0.0]), np.asarray([[0.45, 0.55, 0.0]])
-    true_distance = _brute_force_distance(point, reference[0], host.lattice_vectors)
-
-    # The per-component fold puts these 2.53 A apart; the nearest image is 1.65 A away.
-    assert true_distance == pytest.approx(3.25 * math.sqrt(0.2575))
-    assert site_generation._any_closer_than(point, reference, host.lattice_vectors, 2.0) is True
-    assert site_generation._any_closer_than(point, reference, host.lattice_vectors, 1.6) is False
-    assert site_generation._any_closer_than(point, np.empty((0, 3)), _CUBIC, 1.0) is False
-
-
-def test_spacing_check_is_strict_at_the_limit() -> None:
-    point, reference = np.asarray([0.1, 0.2, 0.3]), np.asarray([[0.4, 0.45, 0.9]])
-    limit = float(nearest_image_distance_matrix(point, reference, _CUBIC)[0, 0])
-
-    assert site_generation._any_closer_than(point, reference, _CUBIC, limit) is False
-    assert (
-        site_generation._any_closer_than(point, reference, _CUBIC, math.nextafter(limit, 10.0))
-        is True
+def _violates(point, references, lattice, limit) -> bool:
+    return site_generation._violates_spacing(
+        np.asarray(point, dtype=float), ((np.asarray(references, dtype=float), limit),), lattice
     )
 
 
-def test_spacing_check_scans_large_inputs_in_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(site_generation, "_DISTANCE_CHECK_BLOCK", 4)
+def test_spacing_check_measures_the_nearest_image_in_a_skewed_cell() -> None:
+    lattice = zno_host().lattice_vectors
+    point, reference = [0.0, 0.0, 0.0], [[0.45, 0.55, 0.0]]
+
+    # The per-component fold puts these 2.53 A apart; the nearest image is 1.65 A away.
+    assert _brute_force_distance(point, reference[0], lattice) == pytest.approx(
+        3.25 * math.sqrt(0.2575)
+    )
+    assert _violates(point, reference, lattice, 2.0) is True
+    assert _violates(point, reference, lattice, 1.6) is False
+    assert _violates(point, np.empty((0, 3)), _CUBIC, 1.0) is False
+
+
+def test_spacing_check_is_strict_at_the_limit() -> None:
+    point, reference = [0.1, 0.2, 0.3], [[0.4, 0.45, 0.9]]
+    limit = float(nearest_image_distance_matrix(point, reference, _CUBIC)[0, 0])
+
+    assert _violates(point, reference, _CUBIC, limit) is False
+    assert _violates(point, reference, _CUBIC, math.nextafter(limit, 10.0)) is True
+
+
+def test_spacing_check_applies_each_limit_to_its_own_references() -> None:
     lattice = zno_host().lattice_vectors
     point = np.asarray([0.0, 0.0, 0.0])
-    # The last reference folds beyond 2 A but its nearest image is 1.65 A away, so only
-    # the blocked nearest-image search finds it.
-    far = np.asarray([[0.5, 0.0, 0.5]] * 9)
-    near = np.vstack([far, [[0.45, 0.55, 0.0]]])
+    near = np.asarray([[0.45, 0.55, 0.0]])
+    far = np.asarray([[0.5, 0.0, 0.5]])
 
-    assert site_generation._any_closer_than(point, far, lattice, 2.0) is False
-    assert site_generation._any_closer_than(point, near, lattice, 2.0) is True
+    # The near reference only breaks the larger limit; the far one breaks neither.
+    assert site_generation._violates_spacing(point, ((near, 1.6), (far, 2.0)), lattice) is False
+    assert site_generation._violates_spacing(point, ((far, 1.6), (near, 2.0)), lattice) is True

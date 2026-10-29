@@ -9,7 +9,7 @@ Two periodic distances live here. The *nearest-image* helpers
 (:func:`nearest_image_distance`, :func:`nearest_image_distance_matrix`, ...)
 search the 27 cells around the per-component fold with the lattice metric, so
 they find the shortest distance in hexagonal, primitive-centred, monoclinic and
-other skewed cells; every distance that decides something (a minimum spacing,
+other reduced cells; every distance that decides something (a minimum spacing,
 a grouping or matching tolerance) uses them. The *minimum-image* helpers
 (:func:`minimum_image_distance`, ...) only fold each fractional component into
 ``[-0.5, 0.5]``. That is exact in an orthogonal cell and for any distance below
@@ -257,6 +257,8 @@ def minimum_image_distance(
 _NEIGHBOUR_CELL_OFFSETS = np.array(
     [(x, y, z) for x in (-1.0, 0.0, 1.0) for y in (-1.0, 0.0, 1.0) for z in (-1.0, 0.0, 1.0)]
 )
+#: Pairs measured at once by :func:`nearest_image_distance_matrix` (27 candidates each).
+_NEAREST_IMAGE_BLOCK = 8192
 
 
 def nearest_image_delta(
@@ -268,7 +270,9 @@ def nearest_image_delta(
 
     The per-component minimum-image displacement (:func:`minimum_image_delta`)
     is searched over its 27 neighbouring cells with the lattice metric, which
-    finds the nearest image in skewed cells too; ``b + delta`` is that image.
+    finds the nearest image in hexagonal, primitive-centred, monoclinic and any
+    other cell whose angles are not extremely acute or obtuse (a reduced cell);
+    ``b + delta`` is that image.
     """
 
     lattice = lattice_matrix(lattice_vectors)
@@ -309,21 +313,28 @@ def nearest_image_distance_matrix(
 ) -> np.ndarray:
     """Return the nearest-image distance from ``left[i]`` to ``right[j]`` for every pair (Angstrom).
 
-    The broadcast counterpart of :func:`nearest_image_distance`: each
-    per-component fold is searched over its 27 neighbouring cells with the
-    lattice metric, so the result is correct in skewed cells. It may differ
-    from the scalar helper in the last bit or so. The result has shape
-    ``(len(left), len(right))`` and the work grows with 27 times that, so
-    callers bound the size of large inputs.
+    The broadcast counterpart of :func:`nearest_image_distance`, with the same
+    27-cell search, and so the same reach: it may differ from the scalar helper
+    in the last bit or so. The result has shape ``(len(left), len(right))``;
+    rows are measured in blocks so the 27-cell search stays within a few
+    megabytes however large the inputs.
     """
 
     lattice = lattice_matrix(lattice_vectors)
     left_array = np.asarray(left, dtype=float).reshape(-1, 3)
     right_array = np.asarray(right, dtype=float).reshape(-1, 3)
-    delta = right_array[None, :, :] - left_array[:, None, :]
-    delta -= np.round(delta)
-    candidates = (delta @ lattice)[:, :, None, :] + (_NEIGHBOUR_CELL_OFFSETS @ lattice)[None, None]
-    return np.sqrt(np.min(np.einsum("ijkl,ijkl->ijk", candidates, candidates), axis=-1))
+    shifts = (_NEIGHBOUR_CELL_OFFSETS @ lattice)[None, None]
+    distances = np.empty((len(left_array), len(right_array)), dtype=float)
+    rows = max(1, _NEAREST_IMAGE_BLOCK // max(1, len(right_array)))
+    for start in range(0, len(left_array), rows):
+        block = left_array[start : start + rows]
+        delta = right_array[None, :, :] - block[:, None, :]
+        delta -= np.round(delta)
+        candidates = (delta @ lattice)[:, :, None, :] + shifts
+        distances[start : start + rows] = np.sqrt(
+            np.min(np.einsum("ijkl,ijkl->ijk", candidates, candidates), axis=-1)
+        )
+    return distances
 
 
 def vector_length(vector: Sequence[float]) -> float:

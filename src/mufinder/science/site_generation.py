@@ -330,34 +330,28 @@ def estimate_muon_muon_separation_for_count(
     return max(_SPACING_SEARCH_MIN_RESULT_ANG, high)
 
 
-# Bounds the nearest-image search (references x 27 neighbouring cells) so a trial
-# checked against many accepted orbit images stays within a few megabytes.
-_DISTANCE_CHECK_BLOCK = 8192
-
-
-def _any_closer_than(
+def _violates_spacing(
     point: np.ndarray,
-    references: np.ndarray,
+    checks: Sequence[tuple[np.ndarray, float]],
     lattice_vectors: Sequence[Sequence[float]],
-    limit: float,
 ) -> bool:
-    """Whether ``point`` lies closer than ``limit`` to the nearest image of any reference.
+    """Whether ``point`` lies closer than a limit to the nearest image of any of its references.
 
-    The per-component fold is never shorter than the nearest image, so a fold already
-    inside ``limit`` rejects the point at once; the 27-cell nearest-image search runs
-    only when no fold does, which is the rare trial about to be accepted.
+    ``checks`` pairs each reference array with its limit. The per-component fold is
+    never shorter than the nearest image, so any fold inside its limit rejects the
+    point at once; the 27-cell nearest-image search runs only when no fold does,
+    which in a filling cell is mostly the trial about to be accepted.
     """
 
-    if len(references) == 0:
-        return False
     position = np.asarray(point, dtype=float).reshape(1, 3)
-    if np.any(minimum_image_distance_matrix(position, references, lattice_vectors) < limit):
-        return True
-    for start in range(0, len(references), _DISTANCE_CHECK_BLOCK):
-        chunk = references[start : start + _DISTANCE_CHECK_BLOCK]
-        if np.any(nearest_image_distance_matrix(position, chunk, lattice_vectors) < limit):
+    active = [(references, limit) for references, limit in checks if len(references)]
+    for references, limit in active:
+        if np.any(minimum_image_distance_matrix(position, references, lattice_vectors) < limit):
             return True
-    return False
+    return any(
+        bool(np.any(nearest_image_distance_matrix(position, references, lattice_vectors) < limit))
+        for references, limit in active
+    )
 
 
 def _host_position_array(host_positions_frac: Sequence[Sequence[float]]) -> np.ndarray:
@@ -444,9 +438,10 @@ def generate_random_sites(
     while (fill or len(accepted_points) < count) and attempts < max_attempts:
         attempts += 1
         candidate_frac = [rng.random(), rng.random(), rng.random()]
-        candidate = np.asarray(candidate_frac, dtype=float)
-        if _any_closer_than(candidate, host_positions, lattice, min_muon_atom) or (
-            _any_closer_than(candidate, accepted_positions, lattice, min_muon_muon)
+        if _violates_spacing(
+            np.asarray(candidate_frac, dtype=float),
+            ((host_positions, min_muon_atom), (accepted_positions, min_muon_muon)),
+            lattice,
         ):
             continue
 

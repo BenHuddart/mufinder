@@ -13,6 +13,7 @@ import math
 import numpy as np
 import pytest
 
+from mufinder.science import lattice as lattice_module
 from mufinder.science.lattice import (
     LatticeError,
     cartesian_to_fractional,
@@ -32,6 +33,7 @@ from mufinder.science.lattice import (
     near_minimum_indexes,
     nearest_image_delta,
     nearest_image_distance,
+    nearest_image_distance_matrix,
     reciprocal_to_cartesian,
     vector_length,
     wrap_fractional,
@@ -304,6 +306,49 @@ def test_distance_matrix_matches_the_scalar_helper() -> None:
             assert matrix[i, j] == pytest.approx(
                 minimum_image_distance(right[j], left[i], lattice), rel=1e-14
             )
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_nearest_image_distance_matrix_matches_the_scalar_helper(lattice) -> None:
+    rng = np.random.default_rng(11)
+    left = rng.uniform(-1.5, 2.5, size=(7, 3))
+    right = rng.uniform(-1.5, 2.5, size=(5, 3))
+
+    matrix = nearest_image_distance_matrix(left, right, lattice)
+
+    assert matrix.shape == (7, 5)
+    for i, j in np.ndindex(matrix.shape):
+        assert matrix[i, j] == pytest.approx(
+            nearest_image_distance(right[j], left[i], lattice), rel=1e-12
+        )
+
+
+def test_nearest_image_distance_matrix_is_shorter_than_the_fold_in_a_skewed_cell() -> None:
+    a, b = [0.0, 0.0, 0.0], [0.45, 0.45, 0.0]
+
+    assert nearest_image_distance_matrix([b], [a], _SKEWED)[0, 0] == pytest.approx(
+        nearest_image_distance(a, b, _SKEWED)
+    )
+    assert nearest_image_distance_matrix([b], [a], _SKEWED)[0, 0] < minimum_image_distance(
+        a, b, _SKEWED
+    )
+
+
+def test_nearest_image_distance_matrix_measures_large_inputs_in_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rng = np.random.default_rng(3)
+    left = rng.uniform(0.0, 1.0, size=(9, 3))
+    right = rng.uniform(0.0, 1.0, size=(4, 3))
+    whole = nearest_image_distance_matrix(left, right, _SKEWED)
+
+    monkeypatch.setattr(lattice_module, "_NEAREST_IMAGE_BLOCK", 5)
+    blocked = nearest_image_distance_matrix(left, right, _SKEWED)
+
+    assert blocked.tolist() == whole.tolist()
+    assert nearest_image_distance_matrix(np.empty((0, 3)), right, _SKEWED).shape == (0, 4)
 
 
 def test_near_minimum_indexes_keeps_every_near_tie() -> None:
