@@ -196,23 +196,13 @@ These are the stiffest modes of the supercell, so MuFinder's rule, the three
 modes with the largest participation, picks the same modes as the paper's
 rule, the three highest frequencies.
 
-Widths and the mode wells
--------------------------
+Widths
+------
 
-``Mode wells and widths`` builds the harmonic well of each muon mode with the
-muon mass and solves for its ground state.
-
-.. figure:: ../../_generated/screenshots/n2_mode_wells.webp
-   :alt: The Mode wells and widths tab with modes 193, 194 and 195: ZPE
-         0.170603, 0.201457 and 0.204853 eV and widths 0.232474, 0.213947 and
-         0.212168 Angstrom, and the plot of the L well with its ground-state
-         level and probability density.
-
-   The L well, its ground-state energy and the muon's probability density.
-
-The solver returns the ZPE and width of each mode: 0.171 eV and 0.232 Å for L,
-and 0.201 and 0.205 eV, 0.214 and 0.212 Å, across the complex. These are the
-harmonic weakly-bound widths of Gomilšek *et al.*, 0.23, 0.21 and 0.21 Å.
+``Width (Å)`` in ``Completed Results`` gives the harmonic zero-point width
+:math:`\Delta x = \sqrt{\hbar / (2 m_\mu \omega)}` of each muon mode with the
+muon mass: 0.23 Å for L and 0.21 Å for each mode across the complex. These are
+the harmonic weakly-bound widths of Gomilšek *et al.*, 0.23, 0.21 and 0.21 Å.
 Their path-integral widths, 0.24(8), 0.27(1) and 0.25(1) Å, are larger across
 the complex: the harmonic well holds the muon too tightly there.
 

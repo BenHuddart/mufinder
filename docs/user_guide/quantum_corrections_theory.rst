@@ -248,18 +248,9 @@ gives :math:`a = 1` for a harmonic well; :math:`a > 1` means the well stiffens
 faster than a parabola, so the harmonic width is too large and the harmonic ZPE
 too small along that direction.
 
-**What MuFinder provides.** The science layer has the solver and the
-effective mass for these limits:
-:func:`~mufinder.science.quantum_adiabatic.solve_single_particle_ground_state`
-solves the finite-difference Schrödinger equation for a tabulated 1D potential,
-and :func:`~mufinder.science.quantum_adiabatic.effective_mass_from_relaxed_scan`
-returns the directional strongly-bound mass
-:math:`m_\mu + \sum_i m_i |\partial \mathbf{R}_i / \partial x_\mu|^2`. No
-MuFinder workflow generates the DFT line scans these need, so anharmonic and
-strongly-bound potentials, and the ratios :math:`k_\mu/k_n` and :math:`a`, are
-not available from the application. The ``Mode wells and widths`` tab of the
-analysis window applies the solver to the harmonic potential of each selected
-mode with the muon mass, which is the harmonic weakly-bound limit.
+MuFinder does not generate the DFT line scans these limits need, so
+anharmonic and strongly-bound potentials, and the ratios :math:`k_\mu/k_n`
+and :math:`a`, are not available from the application.
 
 .. _quantum-corrections-choosing:
 
@@ -353,8 +344,10 @@ transverse modes T1 and T2 across it.
    at :math:`\hbar\omega_j = 2\,\mathrm{ZPE}_j`: 2749.6 cm⁻¹ for L and
    3246.4 and 3301.1 cm⁻¹ for the T pair (1 eV is 8065.5 cm⁻¹). ``w1`` is
    :math:`P - 3 = -0.14`: the three modes carry 2.86 of the muon's total
-   participation of 3. ``Width (Å)`` lists the zero-point widths 0.23, 0.21
-   and 0.21 Å derived below.
+   participation of 3. ``Width (Å)`` lists the harmonic zero-point widths
+   :math:`\Delta x = \sqrt{0.01842 / 0.341} \approx 0.232` Å for L and about
+   0.213 Å for T1 and T2, a sizeable fraction of the 1.27 Å muon–nitrogen
+   distance.
 
 .. figure:: ../_generated/screenshots/n2_phonon_modes.webp
    :alt: The Phonon Modes tab scrolled to the highest modes: N2 stretches
@@ -374,20 +367,6 @@ transverse modes T1 and T2 across it.
    12 %". T1 and T2 stay nearly pure at 0.992. Eighteen librations come out
    with imaginary frequencies; they carry under 0.1 % of the muon's motion and
    are left out of every zero-point sum.
-
-.. figure:: ../_generated/screenshots/n2_mode_wells.webp
-   :alt: The Mode wells and widths tab with the three muon modes, ZPE
-         0.170603, 0.201457 and 0.204853 eV and widths 0.232474, 0.213947
-         and 0.212168 Angstrom, and the plot of the L well.
-
-   The harmonic L well, its ground-state level and the muon's density.
-
-``Mode wells and widths``
-   For each selected mode the solver reproduces the ZPE above and the
-   harmonic widths
-   :math:`\Delta x = \sqrt{0.01842 / 0.341} \approx 0.232` Å for L and
-   about 0.213 Å for T1 and T2. The width is a sizeable fraction of the
-   1.27 Å muon–nitrogen distance.
 
 .. figure:: ../_generated/screenshots/n2_muon_coupling.webp
    :alt: The Muon Coupling tab with Atom A 65: H:mu and Atom B 57: N, w2 =

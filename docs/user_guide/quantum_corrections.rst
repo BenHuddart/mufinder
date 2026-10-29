@@ -89,7 +89,7 @@ row is submitted once.
       The pinned site of :doc:`/user_guide/examples/alpha_n2` with its
       completed phonon job and its result under ``Completed Results``.
 5. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
-   inspect the modes, the mode wells and widths, and atom-pair coupling (see
+   inspect the modes and atom-pair coupling (see
    `Phonon analysis window`_).
 6. **Compare sites.** Repeat for the other distinct sites or charge states and
    compare their ZPEs and witnesses.
@@ -426,8 +426,10 @@ Phonon analysis window
 ``Launch Analysis`` opens a window for one completed phonon job. It reparses the
 stored ``.phonon`` file, so the analysis is tied to the archived CASTEP output
 rather than to table state. If CASTEP used the wrong muon mass, a warning banner
-appears above the tabs. The window opens on ``Phonon Modes``; each other tab is
-computed the first time it is shown.
+appears above the tabs. The window has two tabs, ``Phonon Modes`` and
+``Muon Coupling``; it opens on ``Phonon Modes`` and computes ``Muon Coupling``
+the first time it is shown. Each muon mode's width ``Δx`` is in the
+``Completed Results`` table.
 
 .. figure:: ../_generated/screenshots/n2_phonon_modes.webp
    :alt: The Phonon Modes tab of the phonon analysis window for the alpha-N2
@@ -448,36 +450,6 @@ computed the first time it is shown.
    with the period set by ``Cycle time (s)``; ``Reset`` returns to the
    equilibrium phase; ``Show vectors`` (off by default) overlays the
    full-amplitude mode vectors as fixed reference arrows.
-
-``Mode wells and widths``
-   For each of the three selected modes, builds the one-dimensional harmonic
-   well ``V(q) = (1/2) m_mu omega^2 q^2`` along the muon's direction in that
-   mode from the mode frequency and the muon mass, solves the finite-difference
-   Schrödinger equation over ``±Range (Å)`` (default ``2.0``, 401 grid points),
-   and reports the ground-state energy (``ZPE (eV)``) and the RMS width of the
-   probability density (``Width (Å)``). For a mode the muon alone moves in
-   (participation close to 1) this is the harmonic, weakly-bound limit of the
-   single-particle approximation of Gomilšek *et al.* (host atoms fixed,
-   effective mass = muon mass); a mode shared with host atoms is an eigenmode
-   of the coupled dynamical matrix, so its well is a harmonic estimate along
-   the mode direction rather than a fixed-host muon potential. Once the range
-   resolves the oscillator, as the default does for muon modes, the
-   ground-state energy converges to ``(1/2) hbar omega``, the value in the main
-   table; a range comparable to the width confines the muon further and raises
-   both numbers. The value of the tab is the width
-   ``Δx = sqrt(hbar / (2 m_mu omega))`` and the plot of the potential,
-   ground-state level, and probability density ``|ψ|²`` for each mode.
-   ``Energy scale`` switches the plot between ``Energy`` and ``Sqrt energy``,
-   which keeps shallow wells legible.
-
-   .. figure:: ../_generated/screenshots/n2_mode_wells.webp
-      :alt: The Mode wells and widths tab for the alpha-N2 site with the three
-            muon modes, ZPE 0.170603, 0.201457 and 0.204853 eV and widths
-            0.232474, 0.213947 and 0.212168 Angstrom, and the plot of the
-            selected L well.
-
-      The three muon wells of the α-N₂ site, with the longitudinal one
-      plotted.
 
 ``Muon Coupling``
    Pick ``Atom A`` and ``Atom B`` by their one-based CASTEP index (Atom A
@@ -500,18 +472,17 @@ computed the first time it is shown.
 
       The muon of the α-N₂ site and its nearest nitrogen.
 
-The ``?`` buttons in the ``Mode wells and widths`` and ``Muon Coupling`` tabs show
-the equations used.
+The ``?`` button in the ``Muon Coupling`` tab shows the equations used.
 
 Scope and limitations
 ---------------------
 
 - Phonons are computed at Gamma only, in the harmonic approximation.
-- The ``Mode wells and widths`` tab uses harmonic wells built from the phonon
-  frequencies, which are the harmonic weakly-bound limit only for modes the
-  muon alone moves in. MuFinder does not generate or import DFT line scans, so
-  the anharmonic single-particle approximations of Gomilšek *et al.* are not
-  available in the application (see `For developers`_).
+- The widths are those of the harmonic muon modes, the harmonic weakly-bound
+  limit only for modes the muon alone moves in. MuFinder does not generate or
+  import DFT line scans, so the anharmonic single-particle approximations of
+  Gomilšek *et al.* are not available (see
+  :doc:`/user_guide/quantum_corrections_theory`).
 - Path-integral molecular dynamics (PIMD) is out of scope for MuFinder.
 
 References
@@ -528,11 +499,5 @@ For developers
 
 The check behind `Source eligibility`_ is
 :func:`mufinder.workflow.quantum.quantum_source_eligibility`, and the mass check
-is :func:`~mufinder.science.quantum_phonons.muon_mass_warning`. The science
-layer also provides a general solver for tabulated 1D potentials
-(:func:`~mufinder.science.quantum_adiabatic.solve_single_particle_ground_state`)
-and the strongly-bound effective mass ``m_mu + sum_i m_i |dR_i/dx_mu|^2``
-(:func:`~mufinder.science.quantum_adiabatic.effective_mass_from_relaxed_scan`),
-following the single-particle approximations of Gomilšek *et al.*; no workflow
-feeds them yet. Package layers and the shared workflow infrastructure are
-described in :doc:`/architecture`.
+is :func:`~mufinder.science.quantum_phonons.muon_mass_warning`. Package layers
+and the shared workflow infrastructure are described in :doc:`/architecture`.

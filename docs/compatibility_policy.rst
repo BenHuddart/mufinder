@@ -745,6 +745,17 @@ passed one switches to the replacement named.
   same keyword names, or ``retrieval=RetrievalFlags.for_calc_type(...)``, from
   ``mufinder.services.job_artifacts``.
 
+The module below was removed without a deprecation period, together with the
+analysis window tab that was its only caller. It was in the API reference, but
+no workflow fed it and nothing it returned was persisted, so projects need no
+migration and load unchanged. It has no replacement: each muon mode's harmonic
+zero-point energy and width are in the Quantum Corrections results, from
+``mufinder.science.quantum_phonons``.
+
+- ``mufinder.science.quantum_adiabatic``, with ``DirectionalPotential``,
+  ``SingleParticleResult``, ``solve_single_particle_ground_state`` and
+  ``effective_mass_from_relaxed_scan``.
+
 The module-level names below live in another module and keep no import alias
 at their former path. That module is not in the API reference and no MuFinder
 code imported these names from it. Code that did imports them from the module
