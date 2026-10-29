@@ -1,9 +1,20 @@
 """Lattice algebra shared by the science modules.
 
 This is the one home for fractional/Cartesian conversion, lattice inversion,
-minimum-image displacements and distances, and greedy deduplication of
-periodic positions. A lattice is three row vectors in Angstrom, so a
-fractional row vector ``f`` maps to ``f @ lattice``.
+periodic displacements and distances, and greedy deduplication of periodic
+positions. A lattice is three row vectors in Angstrom, so a fractional row
+vector ``f`` maps to ``f @ lattice``.
+
+Two periodic distances live here. The *nearest-image* helpers
+(:func:`nearest_image_distance`, :func:`nearest_image_distance_matrix`, ...)
+search the 27 cells around the per-component fold with the lattice metric, so
+they find the shortest distance in hexagonal, primitive-centred, monoclinic and
+other skewed cells; every distance that decides something (a minimum spacing,
+a grouping or matching tolerance) uses them. The *minimum-image* helpers
+(:func:`minimum_image_distance`, ...) only fold each fractional component into
+``[-0.5, 0.5]``. That is exact in an orthogonal cell and for any distance below
+about 0.4 of the shortest lattice vector, so they serve the deduplication of
+symmetry images, whose tolerances are far smaller than that.
 
 Two families of helpers agree with each other to the last bit:
 
@@ -291,6 +302,30 @@ def nearest_image_distance(
     return vector_length(nearest_image_cartesian_delta(a, b, lattice_vectors))
 
 
+def nearest_image_distance_matrix(
+    left: Sequence[Sequence[float]] | np.ndarray,
+    right: Sequence[Sequence[float]] | np.ndarray,
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+) -> np.ndarray:
+    """Return the nearest-image distance from ``left[i]`` to ``right[j]`` for every pair (Angstrom).
+
+    The broadcast counterpart of :func:`nearest_image_distance`: each
+    per-component fold is searched over its 27 neighbouring cells with the
+    lattice metric, so the result is correct in skewed cells. It may differ
+    from the scalar helper in the last bit or so. The result has shape
+    ``(len(left), len(right))`` and the work grows with 27 times that, so
+    callers bound the size of large inputs.
+    """
+
+    lattice = lattice_matrix(lattice_vectors)
+    left_array = np.asarray(left, dtype=float).reshape(-1, 3)
+    right_array = np.asarray(right, dtype=float).reshape(-1, 3)
+    delta = right_array[None, :, :] - left_array[:, None, :]
+    delta -= np.round(delta)
+    candidates = (delta @ lattice)[:, :, None, :] + (_NEIGHBOUR_CELL_OFFSETS @ lattice)[None, None]
+    return np.sqrt(np.min(np.einsum("ijkl,ijkl->ijk", candidates, candidates), axis=-1))
+
+
 def vector_length(vector: Sequence[float]) -> float:
     """Return the Euclidean length of ``vector``."""
 
@@ -469,6 +504,7 @@ __all__ = [
     "nearest_image_cartesian_delta",
     "nearest_image_delta",
     "nearest_image_distance",
+    "nearest_image_distance_matrix",
     "vector_length",
     "wrap_fractional",
 ]

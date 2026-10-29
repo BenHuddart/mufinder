@@ -3,14 +3,16 @@
 This module is the one home for symmetry plumbing: it wraps spglib without its
 deprecated warning paths, builds the ``(lattice, positions, numbers)`` cell from
 a structure, caches each host's symmetry operations, and expands a position into
-its symmetry orbit. Callers pass their symmetry and deduplication tolerances
-explicitly.
+its symmetry orbit. :data:`SYMMETRY_TOLERANCE_ANG` is the one symmetry
+tolerance every science caller uses by default; deduplication tolerances are
+passed explicitly.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import lru_cache
+import re
 from typing import Any
 
 from ase.data import atomic_numbers
@@ -18,6 +20,12 @@ import numpy as np
 import spglib
 
 from mufinder.science.lattice import deduplicate_periodic_positions, wrap_fractional
+
+#: The symmetry tolerance (spglib ``symprec``, Angstrom) every symmetry caller uses.
+#: It is loose enough for coordinates entered to four decimals, as in most CIF files
+#: (0.3333 for 1/3 is 1e-4 A off in a 3 A cell), and tight enough not to merge
+#: distinct atoms.
+SYMMETRY_TOLERANCE_ANG = 1e-3
 
 
 def configure_spglib_error_handling() -> None:
@@ -42,7 +50,7 @@ def _dataset_helpers():
 def get_crystal_symmetry_dataset(
     cell,
     *,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     angle_tolerance: float = -1.0,
 ):
     """Return a non-magnetic spglib dataset without deprecated warning paths."""
@@ -69,7 +77,7 @@ configure_spglib_error_handling()
 def get_crystal_symmetry(
     cell,
     *,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     angle_tolerance: float = -1.0,
 ) -> dict[str, Any] | None:
     """Return non-magnetic symmetry operations without spglib's deprecated wrapper."""
@@ -108,19 +116,53 @@ SpglibCell = tuple[np.ndarray, np.ndarray, np.ndarray]
 SymmetryOperations = tuple[np.ndarray, np.ndarray]
 
 
-def species_to_atomic_numbers(species: Sequence[str]) -> list[int] | None:
-    """Return the atomic number of each species label, or ``None`` if any is not an element.
+_LABEL_LETTERS = re.compile(r"[A-Za-z]+")
+#: Element symbols with their atomic numbers; ASE's dummy symbol ``X`` names no element.
+_ELEMENT_NUMBERS = {symbol: number for symbol, number in atomic_numbers.items() if number > 0}
 
-    Labels are stripped and capitalised first, so ``"fe"`` and ``" Fe "`` both read as iron;
-    labelled species such as ``"Fe1"`` or ``"H:mu"`` are not elements.
+
+def species_element_symbol(label: str) -> str | None:
+    """Return the element a species label names, or ``None`` when it names none.
+
+    Case and surrounding space are ignored, so ``"fe"`` and ``" Fe "`` both read as
+    iron. A CASTEP species label (``"Co:1"``, ``"H:mu"``) reads as the element before
+    the colon, and a CIF-style site label (``"Fe1"``, ``"O2a"``) as its leading
+    element symbol: two letters when they spell an element, otherwise one.
+    """
+
+    text = str(label).strip().split(":", 1)[0]
+    match = _LABEL_LETTERS.match(text)
+    if match is None:
+        return None
+    letters = match.group(0)
+    for length in (2, 1):
+        symbol = letters[:length].capitalize()
+        if len(symbol) == length and symbol in _ELEMENT_NUMBERS:
+            return symbol
+    return None
+
+
+def unrecognised_species(species: Sequence[str]) -> list[str]:
+    """Return the distinct labels in ``species`` that name no element, in first-seen order."""
+
+    return list(
+        dict.fromkeys(str(label) for label in species if species_element_symbol(label) is None)
+    )
+
+
+def species_to_atomic_numbers(species: Sequence[str]) -> list[int] | None:
+    """Return the atomic number of each species label, or ``None`` if any names no element.
+
+    Each label is read with :func:`species_element_symbol`, so labelled species such as
+    ``"Co:1"`` and ``"Fe1"`` count as their element.
     """
 
     numbers: list[int] = []
-    for symbol in species:
-        number = atomic_numbers.get(str(symbol).strip().capitalize())
-        if number is None:
+    for label in species:
+        symbol = species_element_symbol(label)
+        if symbol is None:
             return None
-        numbers.append(int(number))
+        numbers.append(int(_ELEMENT_NUMBERS[symbol]))
     return numbers
 
 
@@ -135,8 +177,8 @@ def spglib_cell(
 
     Pass a structure-like object (``lattice_vectors``, ``species`` and
     ``fractional_positions`` attributes) or the three parts as keywords; a
-    keyword overrides the matching attribute. Returns ``None`` when a species is
-    not an element (:func:`species_to_atomic_numbers`) or the species and
+    keyword overrides the matching attribute. Returns ``None`` when a species
+    names no element (:func:`species_to_atomic_numbers`) or the species and
     position counts differ.
     """
 
@@ -207,6 +249,53 @@ def symmetry_operations(cell: SpglibCell, *, symprec: float) -> SymmetryOperatio
         tuple(int(value) for value in np.asarray(numbers)),
         float(symprec),
     )
+
+
+def symmetry_detection_warning(
+    structure: Any = None,
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None = None,
+    species: Sequence[str] | None = None,
+    fractional_positions: Sequence[Sequence[float]] | None = None,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+) -> str | None:
+    """Return why the host's symmetry cannot be detected, or ``None`` when it can.
+
+    Takes the structure, or its parts, as :func:`spglib_cell` does. A caller that
+    falls back to the identity alone (P1) when :func:`symmetry_operations` finds
+    nothing shows this message, so the fall-back is never silent.
+    """
+
+    labels = species if species is not None else getattr(structure, "species", None)
+    positions = (
+        fractional_positions
+        if fractional_positions is not None
+        else getattr(structure, "fractional_positions", None)
+    )
+    unknown = unrecognised_species(labels or [])
+    if unknown:
+        names = ", ".join(f"'{label}'" for label in unknown)
+        return (
+            f"Host symmetry was not detected: species {names} name no element, "
+            "so the host is treated as having no symmetry (P1)."
+        )
+    if labels is not None and positions is not None and len(labels) != len(positions):
+        return (
+            f"Host symmetry was not detected: the host has {len(labels)} species for "
+            f"{len(positions)} positions, so it is treated as having no symmetry (P1)."
+        )
+    cell = spglib_cell(
+        structure,
+        lattice_vectors=lattice_vectors,
+        species=species,
+        fractional_positions=fractional_positions,
+    )
+    if cell is None or symmetry_operations(cell, symprec=symprec) is None:
+        return (
+            f"Host symmetry was not detected by spglib at a tolerance of {symprec:g} A, "
+            "so the host is treated as having no symmetry (P1)."
+        )
+    return None
 
 
 def clear_symmetry_operations_cache() -> None:

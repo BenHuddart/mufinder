@@ -12,9 +12,10 @@ from mufinder.domain.models import Structure
 from mufinder.science.lattice import (
     deduplicate_periodic_positions,
     lattice_frac_to_cart,
-    minimum_image_delta,
     minimum_image_distance,
     minimum_image_distance_matrix,
+    nearest_image_delta,
+    nearest_image_distance_matrix,
 )
 from mufinder.science.relaxation_analysis import (
     RelaxationClusterSummary,
@@ -24,6 +25,7 @@ from mufinder.science.relaxation_analysis import (
     normalize_site_energies,
 )
 from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
     get_crystal_symmetry_dataset,
     operation_images,
     spglib_cell,
@@ -135,7 +137,7 @@ def _orbit_is_occupied(
 ) -> bool:
     if not orbit or not host_positions:
         return False
-    distances = minimum_image_distance_matrix(orbit, host_positions, lattice)
+    distances = nearest_image_distance_matrix(orbit, host_positions, lattice)
     return bool(np.any(distances <= float(tolerance_ang)))
 
 
@@ -235,9 +237,7 @@ def _screen_operation_pairs(
     correction = (_batched_pseudo_inverse(a_t @ a) @ (a_t @ misfit[..., None]))[..., 0]
     projected = point - correction
     residual = np.linalg.norm((a @ projected[..., None])[..., 0] - b, axis=-1)
-    delta = projected - point
-    delta = delta - np.round(delta)
-    distance = np.linalg.norm(delta @ np.asarray(lattice, dtype=float), axis=-1)
+    distance = nearest_image_distance_matrix(point, projected, lattice)[0]
     keep = (
         np.isfinite(residual)
         & (residual <= _PROJECTION_RESIDUAL_TOLERANCE + _PAIR_SCREEN_SLACK)
@@ -286,7 +286,7 @@ def _project_nearby_special_candidates(
 
     if not candidates:
         return ()
-    distances = minimum_image_distance_matrix([reference], candidates, lattice)[0]
+    distances = nearest_image_distance_matrix([reference], candidates, lattice)[0]
     nearby = [
         candidate
         for candidate, distance in zip(candidates, distances, strict=True)
@@ -297,11 +297,14 @@ def _project_nearby_special_candidates(
 
 def _cluster_reference(
     positions: Sequence[Sequence[float]],
+    lattice: Sequence[Sequence[float]],
 ) -> tuple[float, float, float]:
     if not positions:
         return (0.0, 0.0, 0.0)
     anchor = np.asarray(_wrap_fractional(positions[0]), dtype=float)
-    deltas = [minimum_image_delta(_wrap_fractional(position), anchor) for position in positions]
+    deltas = [
+        nearest_image_delta(_wrap_fractional(position), anchor, lattice) for position in positions
+    ]
     return _wrap_fractional(anchor + np.mean(np.asarray(deltas, dtype=float), axis=0))
 
 
@@ -336,7 +339,7 @@ def _match_distances_to_orbit(
     orbit: Sequence[Sequence[float]],
     lattice: Sequence[Sequence[float]],
 ) -> tuple[float, ...]:
-    distances = minimum_image_distance_matrix(member_positions, orbit, lattice)
+    distances = nearest_image_distance_matrix(member_positions, orbit, lattice)
     return tuple(float(value) for value in distances.min(axis=1))
 
 
@@ -347,7 +350,7 @@ def assign_cluster_wyckoff_sites(
     *,
     match_tolerance_ang: float = 0.25,
     occupancy_tolerance_ang: float = 0.05,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> tuple[ClusterWyckoffAssignment, ...]:
     """Assign the highest-symmetry unoccupied Wyckoff site consistent with each cluster."""
 
@@ -364,7 +367,7 @@ def assign_cluster_wyckoff_sites(
                 labels[int(member_index)] = int(cluster.cluster_index)
 
     try:
-        anchored = anchored_sites(ordered_sites, host_structure, labels)
+        anchored = anchored_sites(ordered_sites, host_structure, labels, symprec=float(symprec))
     except Exception:  # noqa: BLE001 - fall back to unshifted display positions.
         anchored = tuple()
 
@@ -456,7 +459,7 @@ def _match_cluster(
     rotations, translations = operations
     symmetry_count = max(1, len(rotations))
 
-    reference = _cluster_reference(member_positions)
+    reference = _cluster_reference(member_positions, lattice)
     raw_candidates = _project_nearby_special_candidates(
         reference,
         rotations,

@@ -17,6 +17,7 @@ from mufinder.science.bonding_analysis import (
     nearest_neighbour_distances,
 )
 from mufinder.science.kpoint_grids import lattice_parameters
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG
 from mufinder.science.symmetry_analysis import compare_space_group, compare_topology
 
 
@@ -512,7 +513,8 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         caveats="Requires spglib and tolerance tuning.",
         physics="Captures whether the relaxed periodic crystal retains the same crystallographic symmetry class as the experimental reference.",
         method=_SYMMETRY_METHOD
-        + " The current implementation compares international space-group numbers with spglib using symprec = 1e-2.",
+        + " The current implementation compares international space-group numbers with spglib"
+        + f" using symprec = {SYMMETRY_TOLERANCE_ANG:g} A.",
         equation=r"\mathrm{match}_{\mathrm{SG}} = \mathbf{1}\left[n_{\mathrm{exp}} = n_{\mathrm{DFT}}\right]",
         symbols=(
             (r"n_{\mathrm{exp}}", "Experimental space-group number reported by spglib."),

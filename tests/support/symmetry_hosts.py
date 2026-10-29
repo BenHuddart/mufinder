@@ -82,3 +82,50 @@ def diamond_si_host() -> Structure:
         species=["Si"] * len(positions),
         fractional_positions=positions,
     )
+
+
+def zno_host(*, cif_rounded: bool = False) -> Structure:
+    # Wurtzite ZnO, P6_3mc (12 operations). ``cif_rounded`` writes 1/3 and 2/3 to four
+    # decimals, as most CIF files do.
+    a, c, u = 3.25, 5.207, 0.382
+    third, two_thirds = (0.3333, 0.6667) if cif_rounded else (1.0 / 3.0, 2.0 / 3.0)
+    return Structure(
+        label="ZnO",
+        lattice_vectors=[[a, 0.0, 0.0], [-a / 2.0, a * 3.0**0.5 / 2.0, 0.0], [0.0, 0.0, c]],
+        species=["Zn", "Zn", "O", "O"],
+        fractional_positions=[
+            [third, two_thirds, 0.0],
+            [two_thirds, third, 0.5],
+            [third, two_thirds, u],
+            [two_thirds, third, 0.5 + u],
+        ],
+    )
+
+
+def si_primitive_host() -> Structure:
+    # Diamond Si in its primitive FCC cell: Fd-3m with 48 operations, axes at 60 degrees.
+    h = 5.43 / 2.0
+    return Structure(
+        label="Si primitive",
+        lattice_vectors=[[0.0, h, h], [h, 0.0, h], [h, h, 0.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+
+
+def cof2_host(*, cobalt_label: str = "Co") -> Structure:
+    # Rutile CoF2, P4_2/mnm (16 operations); every F is on one 4f orbit.
+    a, c, u = 4.695, 3.18, 0.303
+    return Structure(
+        label="CoF2",
+        lattice_vectors=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, c]],
+        species=[cobalt_label, cobalt_label, "F", "F", "F", "F"],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5],
+            [u, u, 0.0],
+            [1.0 - u, 1.0 - u, 0.0],
+            [0.5 + u, 0.5 - u, 0.5],
+            [0.5 - u, 0.5 + u, 0.5],
+        ],
+    )

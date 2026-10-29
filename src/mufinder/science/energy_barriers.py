@@ -14,7 +14,7 @@ from scipy.optimize import linear_sum_assignment
 
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
-from mufinder.science.spglib_compat import get_crystal_symmetry
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, get_crystal_symmetry
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ def enumerate_distinct_muon_paths(
     pristine_structure: Structure,
     reactant_structure: Structure,
     product_structure: Structure,
-    symprec: float = 1e-3,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     tol: float = 1e-4,
     max_distance_ang: float | None = None,
 ) -> tuple[MuonPath, ...]:
@@ -213,7 +213,7 @@ def prepare_transition_state_structures(
     product_structure: Structure,
     reactant_anchor_fractional: Sequence[float],
     product_anchor_fractional: Sequence[float],
-    symprec: float = 1e-3,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     tol: float = 1e-4,
 ) -> PreparedTransitionState:
     """Align reactant/product structures to one chosen path anchor pair."""

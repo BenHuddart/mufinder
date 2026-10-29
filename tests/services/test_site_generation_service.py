@@ -11,15 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.models import MuonSite, Project
+from mufinder.domain.models import MuonSite, Project, Structure
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services import site_generation_service
 from mufinder.services.project_document import ProjectDocument
 from tests.support.structures import silicon_oxide_host
+from tests.support.symmetry_hosts import cof2_host
 
 
-def _document(tmp_path: Path) -> ProjectDocument:
-    host = silicon_oxide_host()
+def _document(tmp_path: Path, host: Structure | None = None) -> ProjectDocument:
+    host = host or silicon_oxide_host()
     document = ProjectDocument(
         project_root=tmp_path, project=Project(name="Sites", host_structure_id=host.id)
     )
@@ -74,6 +75,72 @@ def test_generation_short_of_the_requested_count_adds_a_partial_record(tmp_path:
         partial.description
         == "Requested 2 sites but generated 1. Some selected UEP rows were already present."
     )
+
+
+def test_attached_generation_asks_for_starts_on_one_atom_per_equivalent_set(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path, cof2_host())
+    parameters = {"element": "F", "muons_per_atom": 2, "bond_distance": 1.0, "min_muon_atom": 0.8}
+
+    requested = site_generation_service.requested_site_count(
+        document, method="near_element", parameters=parameters
+    )
+    outcome = site_generation_service.generate_candidate_sites(
+        document, method="near_element", parameters=parameters
+    )
+
+    assert requested == 2
+    assert len(outcome.sites) == 2
+    assert [record.action for record in outcome.provenance] == ["generate_candidates"]
+
+
+def test_generation_records_a_warning_when_host_symmetry_is_not_detected(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path, cof2_host(cobalt_label="Xx"))
+
+    outcome = site_generation_service.generate_candidate_sites(
+        document,
+        method="random",
+        parameters={
+            "selection_mode": "separation",
+            "min_muon_muon": 1.5,
+            "min_muon_atom": 1.0,
+            "max_attempts": 200,
+            "seed": 1,
+            "include_symmetry_equivalents": True,
+        },
+    )
+
+    assert [record.action for record in outcome.provenance] == [
+        "generate_candidates",
+        "symmetry_unavailable",
+    ]
+    warning = outcome.provenance[1]
+    assert "'Xx' name no element" in warning.description
+    assert "(P1)" in warning.description
+    assert warning.actor == "system"
+    assert warning.output_entity_ids == [site.id for site in outcome.sites]
+
+
+def test_generation_without_symmetry_records_no_symmetry_warning(tmp_path: Path) -> None:
+    document = _document(tmp_path, cof2_host(cobalt_label="Xx"))
+
+    outcome = site_generation_service.generate_candidate_sites(
+        document,
+        method="random",
+        parameters={
+            "selection_mode": "separation",
+            "min_muon_muon": 1.5,
+            "min_muon_atom": 1.0,
+            "max_attempts": 200,
+            "seed": 1,
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert [record.action for record in outcome.provenance] == ["generate_candidates"]
 
 
 def test_random_count_generation_shrinks_the_separation_until_sites_fit(

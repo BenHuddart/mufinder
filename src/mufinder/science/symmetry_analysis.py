@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import AtomMatching
 from mufinder.science.bonding_analysis import connectivity_edges
-from mufinder.science.spglib_compat import get_crystal_symmetry_dataset, spglib_cell
+from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
+    get_crystal_symmetry_dataset,
+    spglib_cell,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +35,9 @@ class TopologyResult:
     summary: str
 
 
-def detect_space_group(structure: Structure, *, symprec: float = 1e-2) -> SpaceGroupResult:
+def detect_space_group(
+    structure: Structure, *, symprec: float = SYMMETRY_TOLERANCE_ANG
+) -> SpaceGroupResult:
     """Detect space group metadata via spglib."""
 
     cell = spglib_cell(structure)
@@ -63,7 +69,7 @@ def compare_space_group(
     experimental: Structure,
     dft: Structure,
     *,
-    symprec: float = 1e-2,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> tuple[SpaceGroupResult, SpaceGroupResult, bool | None]:
     """Return both space groups and a match flag."""
 

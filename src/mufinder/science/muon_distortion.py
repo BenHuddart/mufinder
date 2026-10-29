@@ -20,7 +20,12 @@ import numpy as np
 
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
-from mufinder.science.spglib_compat import operation_images, spglib_cell, symmetry_operations
+from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
+    operation_images,
+    spglib_cell,
+    symmetry_operations,
+)
 from mufinder.science.supercell_matching import detect_supercell_matrix_from_lattices
 
 SupercellMatrix = tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]
@@ -180,7 +185,7 @@ def equivalent_site_distortion(
     cell = spglib_cell(pristine_structure)
     if cell is None:
         raise error("spglib could not determine symmetry operations: a species is not an element")
-    operations = symmetry_operations(cell, symprec=1e-5)
+    operations = symmetry_operations(cell, symprec=SYMMETRY_TOLERANCE_ANG)
     if operations is None:
         raise error("spglib could not determine symmetry operations")
     rotations, translations = operations

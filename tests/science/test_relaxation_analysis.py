@@ -122,6 +122,41 @@ def test_connected_components_clusters_sites_within_distance_tolerance() -> None
     assert result.clusters[0].representative_index == 0
 
 
+def test_grouping_measures_the_nearest_image_in_a_skewed_cell() -> None:
+    # A hexagonal cell with no symmetry beyond the identity. The two sites are 1.65 A
+    # apart through the nearest image, but the per-component fold puts them 2.53 A apart.
+    a, c = 3.25, 5.2
+    hexagonal = [[a, 0.0, 0.0], [-a / 2.0, a * 3.0**0.5 / 2.0, 0.0], [0.0, 0.0, c]]
+    host = host_structure(
+        lattice=hexagonal,
+        species=("Si", "O", "C"),
+        positions=((0.0, 0.0, 0.0), (0.31, 0.23, 0.19), (0.67, 0.41, 0.83)),
+    )
+    first, second = (0.1, 0.1, 0.5), (0.55, 0.65, 0.5)
+    sites = [
+        relaxation_analysis.RelaxedMuonSite(
+            job_id=uuid4(),
+            job_label=label,
+            charge_state="positive_muon",
+            structure_id=uuid4(),
+            site_id=None,
+            folded_fractional_position=frac,
+            cartesian_position_ang=tuple(np.asarray(frac) @ np.asarray(hexagonal)),
+            total_energy_ev=energy,
+        )
+        for label, frac, energy in (("a", first, -10.0), ("b", second, -9.9))
+    ]
+    true_distance = nearest_image_distance(first, second, hexagonal)
+
+    within = cluster_connected_components(sites, host, tolerance_ang=2.0)
+    apart = cluster_connected_components(sites, host, tolerance_ang=1.5)
+
+    assert true_distance == pytest.approx(a * np.sqrt(0.2575))
+    assert within.distance_matrix_ang[0][1] == pytest.approx(true_distance)
+    assert [cluster.size for cluster in within.clusters] == [2]
+    assert [cluster.size for cluster in apart.clusters] == [1, 1]
+
+
 def test_tolerance_scan_reports_stable_cluster_count_regions() -> None:
     host = _host_structure()
     sites = [

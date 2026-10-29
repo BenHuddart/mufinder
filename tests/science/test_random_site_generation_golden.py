@@ -24,10 +24,7 @@ import pytest
 if __name__ == "__main__":  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from mufinder.science.site_generation import (
-    generate_random_sites,
-    generate_random_sites_by_distance,
-)
+from mufinder.science.site_generation import generate_random_sites
 from tests.support.symmetry_hosts import (
     bcc_host,
     diamond_si_host,
@@ -48,8 +45,9 @@ _HOST_FACTORIES = {
     "triclinic": triclinic_host,
 }
 
-# Case name -> (host, generator, keyword arguments).  The distance-mode cases use
-# the dialog's default spacings; attempts are trimmed to keep the suite fast.
+# Case name -> (host, mode, keyword arguments).  The distance-mode cases fill the cell
+# (no ``count``) at the dialog's default spacings; attempts are trimmed to keep the
+# suite fast.
 _CASES: dict[str, tuple[str, str, dict[str, Any]]] = {
     "bcc-distance": (
         "bcc",
@@ -127,8 +125,7 @@ def _generate(case: str) -> dict[str, Any]:
         "include_symmetry_equivalents": True,
         **options,
     }
-    generator = generate_random_sites_by_distance if mode == "distance" else generate_random_sites
-    points, attempts = generator(**kwargs)
+    points, attempts = generate_random_sites(**kwargs)
     return {
         "attempts": int(attempts),
         "fractional": [[float(value) for value in point.fractional] for point in points],

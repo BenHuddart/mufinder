@@ -164,6 +164,7 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "clear_recommended_kpoint_grid": _cleared_kpoint_entry,
         "generate_candidates": _generate_candidates_entry,
         "generation_partial": _generation_partial_entry,
+        "symmetry_unavailable": _symmetry_unavailable_entry,
         "promote_uep_candidate": _promote_uep_candidate_entry,
         "submit_jobs": _submit_jobs_entry,
         "job_completed": _job_completed_entry,
@@ -455,6 +456,15 @@ def _generation_partial_entry(record: ProvenanceRecord) -> JournalEntry:
         stamp_kind="warning",
         title="Site generation stopped short",
         body=f"Requested {requested} site(s) but only generated {generated}.",
+    )
+
+
+def _symmetry_unavailable_entry(record: ProvenanceRecord) -> JournalEntry:
+    return _entry(
+        record,
+        stamp_kind="warning",
+        title="Host symmetry not detected",
+        body=record.description,
     )
 
 

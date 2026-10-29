@@ -392,8 +392,9 @@ match on the detected group numbers,
   \mathrm{match}_{\mathrm{SG}} = \mathbf{1}\left[n_{\mathrm{exp}} = n_{\mathrm{DFT}}\right].
 
 This is a compact crystallographic summary, but it should be interpreted with
-the usual care: the result depends on the chosen symmetry tolerance and on the
-numerical quality of the input structure.
+the usual care: the result depends on the symmetry tolerance, 0.001 Å as for
+every MuFinder symmetry analysis, and on the numerical quality of the input
+structure.
 
 Topology preservation
 ^^^^^^^^^^^^^^^^^^^^^

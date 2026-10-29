@@ -30,10 +30,11 @@ from mufinder.science.site_generation import (
     estimate_random_site_count_from_separation,
     generate_attached_element_sites,
     generate_random_sites,
-    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
+    symmetry_distinct_atom_indexes,
 )
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, symmetry_detection_warning
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 
 #: Status of a freshly generated muon site.
@@ -123,11 +124,12 @@ def generate_candidate_sites(
     The new sites are added to ``document.sites``. The outcome's provenance
     holds a ``generate_candidates`` record, followed by a
     ``generation_partial`` record when fewer sites were generated than
-    requested.
+    requested and a ``symmetry_unavailable`` record when the method uses the
+    host's symmetry but it could not be detected, so the host was treated as P1.
     """
 
     host = _HostContext.for_document(document)
-    requested_count = _requested_site_count(method, parameters, host.species)
+    requested_count = _requested_site_count(method, parameters, host)
     if method == "manual":
         batch = _generate_manual_site(document, host, parameters)
     elif method == "random":
@@ -143,9 +145,46 @@ def generate_candidate_sites(
 
     for site in batch.sites:
         document.sites[site.id] = site
-    return SiteGenerationOutcome(
-        sites=batch.sites,
-        provenance=_generation_provenance(method, parameters, batch, requested_count),
+    provenance = _generation_provenance(method, parameters, batch, requested_count)
+    warning = _symmetry_warning(method, parameters, host)
+    if warning is not None:
+        provenance.append(
+            ProvenanceRecord(
+                action="symmetry_unavailable",
+                workflow_stage=WorkflowStage.MUON_GENERATION,
+                actor="system",
+                description=warning,
+                parameters={"method": method, "symprec_ang": SYMMETRY_TOLERANCE_ANG},
+                output_entity_ids=[site.id for site in batch.sites],
+            )
+        )
+    return SiteGenerationOutcome(sites=batch.sites, provenance=provenance)
+
+
+def requested_site_count(
+    document: ProjectDocument, *, method: str, parameters: dict[str, Any]
+) -> int | None:
+    """Return how many sites a generation request asks for, or ``None`` when it sets no target.
+
+    Element-attached generation asks for ``muons_per_atom`` starts on one atom of
+    each symmetry-equivalent set of the element.
+    """
+
+    return _requested_site_count(method, parameters, _HostContext.for_document(document))
+
+
+def _symmetry_warning(method: str, parameters: dict[str, Any], host: _HostContext) -> str | None:
+    """Return why the host's symmetry was not detected, when ``method`` uses it."""
+
+    uses_symmetry = method == "near_element" or (
+        method == "random" and bool(parameters.get("include_symmetry_equivalents", True))
+    )
+    if not uses_symmetry or host.lattice is None or not host.species:
+        return None
+    return symmetry_detection_warning(
+        lattice_vectors=host.lattice,
+        species=host.species,
+        fractional_positions=host.positions,
     )
 
 
@@ -272,7 +311,7 @@ def stage_generated_sites(
 
 
 def _requested_site_count(
-    method: str, parameters: dict[str, Any], host_species: Sequence[str]
+    method: str, parameters: dict[str, Any], host: _HostContext
 ) -> int | None:
     """Return how many sites the request asks for, or ``None`` when it sets no target."""
 
@@ -283,11 +322,20 @@ def _requested_site_count(
     if method == "uep_clusters" and isinstance(parameters.get("selections"), list):
         return len(parameters.get("selections", []))
     if method == "near_element":
-        target = str(parameters.get("element", "")).strip().lower()
-        matching_atoms = sum(
-            1 for species in host_species if str(species).strip().lower() == target
+        target = str(parameters.get("element", "")).strip()
+        distinct_atoms = (
+            len(
+                symmetry_distinct_atom_indexes(
+                    lattice_vectors=host.lattice,
+                    host_species=host.species,
+                    host_positions_frac=host.positions,
+                    target_element=target,
+                )
+            )
+            if target
+            else 0
         )
-        return matching_atoms * _muons_per_atom(parameters) if target and matching_atoms else None
+        return distinct_atoms * _muons_per_atom(parameters) if distinct_atoms else None
     return int(parameters.get("count", 1))
 
 
@@ -408,7 +456,7 @@ def _random_draw_by_separation(
             + 0.999
         ),
     )
-    points, attempts_used = generate_random_sites_by_distance(
+    points, attempts_used = generate_random_sites(
         lattice_vectors=host.lattice,
         host_positions_frac=host.positions,
         host_species=host.species,

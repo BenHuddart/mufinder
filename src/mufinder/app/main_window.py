@@ -7283,28 +7283,13 @@ class MainWindow(QMainWindow):
     def _finish_generation_status(
         self, method: str, parameters: dict, created: list[MuonSite]
     ) -> None:
-        random_mode = (
-            str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        requested = (
+            self._project_service.requested_site_count(
+                self._document, method=method, parameters=parameters
+            )
+            if self._document is not None
+            else None
         )
-        if method == "random" and random_mode in {"separation", "distance", "spacing"}:
-            requested = None
-        elif method == "uep_clusters" and isinstance(parameters.get("selections"), list):
-            requested = len(parameters.get("selections", []))
-        elif method == "near_element" and self._document is not None:
-            host = self._project_service.active_host_structure(self._document)
-            target = str(parameters.get("element", "")).strip().lower()
-            matching_atoms = (
-                sum(1 for species in host.species if str(species).strip().lower() == target)
-                if host is not None and target
-                else 0
-            )
-            requested = matching_atoms * max(
-                1, int(parameters.get("muons_per_atom", parameters.get("count", 1)))
-            )
-        elif method != "manual":
-            requested = int(parameters.get("count", 1))
-        else:
-            requested = 1
         suffix = ""
         if requested is not None and len(created) < requested:
             suffix = f" (requested {requested}; constraints prevented full count)"

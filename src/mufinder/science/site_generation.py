@@ -11,20 +11,20 @@ from typing import Sequence
 import numpy as np
 
 from mufinder.science.lattice import (
-    NEAR_TIE_RTOL,
     cell_volume,
     lattice_rows,
-    minimum_image_cartesian_delta,
-    minimum_image_distance,
     minimum_image_distance_matrix,
-    near_minimum_indexes,
+    nearest_image_cartesian_delta,
+    nearest_image_distance_matrix,
     vector_length,
     wrap_fractional,
 )
 from mufinder.science.lattice import lattice_cart_to_frac as _lattice_cart_to_frac
 from mufinder.science.lattice import lattice_frac_to_cart as _lattice_frac_to_cart
 from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
     SymmetryOperations,
+    get_crystal_symmetry,
     spglib_cell,
     symmetry_operations,
     symmetry_orbit,
@@ -38,6 +38,28 @@ class SiteGenerationError(ValueError):
 _RANDOM_FILLING_FRACTION = 0.350
 _FREE_VOLUME_GRID_RESOLUTION = 18
 ProgressCallback = Callable[[int, int], None]
+
+# Spacing search for a target count: bisect between a lower bound and an upper bound
+# grown from the longest lattice vector until it predicts no more than the target.
+_SPACING_SEARCH_LOWER_ANG = 1e-3
+_SPACING_SEARCH_GROWTH = 1.5
+_SPACING_SEARCH_MAX_SCALE = 8.0
+_SPACING_SEARCH_MIN_UPPER_ANG = 10.0
+_SPACING_SEARCH_BISECTIONS = 36
+_SPACING_SEARCH_MIN_RESULT_ANG = 0.1
+
+#: Neighbours within this distance (Angstrom) of an atom set the directions an attached start avoids.
+ATTACHED_NEIGHBOUR_CUTOFF_ANG = 2.6
+#: Two trial directions for an attached start whose cosine exceeds this are one direction.
+_ATTACHED_DIRECTION_COSINE_LIMIT = 0.999
+#: Neighbours closer than this (Angstrom) coincide with the atom and give no direction.
+_COINCIDENT_ATOM_ANG = 1e-8
+#: Slack (Angstrom) below the minimum muon-atom distance an attached start may still have.
+_ATTACHED_CLEARANCE_SLACK_ANG = 1e-8
+#: Two attached starts on one atom closer than this (Angstrom) are one start.
+_ATTACHED_DUPLICATE_START_ANG = 1e-5
+#: A direction vector shorter than this has no direction.
+_ZERO_VECTOR_LENGTH = 1e-12
 
 
 @dataclass(slots=True)
@@ -91,7 +113,7 @@ def _symmetry_operations(
     lattice_vectors: Sequence[Sequence[float]],
     host_species: Sequence[str],
     host_positions_frac: Sequence[Sequence[float]],
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> SymmetryOperations | None:
     lattice = _validate_lattice(lattice_vectors)
     cell = spglib_cell(
@@ -108,7 +130,7 @@ def symmetry_equivalent_positions(
     lattice_vectors: Sequence[Sequence[float]],
     host_species: Sequence[str],
     host_positions_frac: Sequence[Sequence[float]],
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> list[list[float]]:
     """Return symmetry-equivalent fractional positions for one candidate.
 
@@ -135,9 +157,13 @@ def closest_symmetry_equivalent_position(
     lattice_vectors: Sequence[Sequence[float]],
     host_species: Sequence[str],
     host_positions_frac: Sequence[Sequence[float]],
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> list[float]:
-    """Return the symmetry-equivalent representative closest to an anchor."""
+    """Return the symmetry-equivalent representative closest to an anchor.
+
+    Closeness is the nearest-image distance, so the choice is right in skewed cells
+    too; of equally close representatives the first in orbit order wins.
+    """
 
     lattice = _validate_lattice(lattice_vectors)
     anchor = wrap_fractional(anchor_frac)
@@ -148,15 +174,8 @@ def closest_symmetry_equivalent_position(
         host_positions_frac=host_positions_frac,
         symprec=symprec,
     )
-    candidates = near_minimum_indexes(
-        minimum_image_distance_matrix([anchor], equivalents, lattice)[0]
-    )
-    # Ascending candidates keep ``min``'s first-wins tie-break over the full list.
-    best = min(
-        candidates.tolist(),
-        key=lambda index: minimum_image_distance(equivalents[index], anchor, lattice),
-    )
-    return equivalents[best]
+    distances = nearest_image_distance_matrix([anchor], equivalents, lattice)[0]
+    return equivalents[int(np.argmin(distances))]
 
 
 def _symmetry_multiplicity(
@@ -225,7 +244,7 @@ def estimate_random_site_count_from_separation(
     min_muon_atom: float,
     host_species: Sequence[str] | None = None,
     include_symmetry_equivalents: bool = True,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     filling_fraction: float = _RANDOM_FILLING_FRACTION,
     grid_resolution: int = _FREE_VOLUME_GRID_RESOLUTION,
 ) -> float:
@@ -266,7 +285,7 @@ def estimate_muon_muon_separation_for_count(
     min_muon_atom: float,
     host_species: Sequence[str] | None = None,
     include_symmetry_equivalents: bool = True,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     filling_fraction: float = _RANDOM_FILLING_FRACTION,
     grid_resolution: int = _FREE_VOLUME_GRID_RESOLUTION,
 ) -> float:
@@ -282,7 +301,7 @@ def estimate_muon_muon_separation_for_count(
         math.sqrt(sum(component * component for component in vector)) for vector in lattice
     ]
     high = max(max(vector_lengths, default=1.0), 1.0)
-    low = 1e-3
+    low = _SPACING_SEARCH_LOWER_ANG
 
     def expected_count(spacing: float) -> float:
         return estimate_random_site_count_from_separation(
@@ -297,97 +316,48 @@ def estimate_muon_muon_separation_for_count(
             grid_resolution=grid_resolution,
         )
 
-    max_high = max(high * 8.0, 10.0)
+    max_high = max(high * _SPACING_SEARCH_MAX_SCALE, _SPACING_SEARCH_MIN_UPPER_ANG)
     while expected_count(high) > target_count and high < max_high:
-        high *= 1.5
+        high *= _SPACING_SEARCH_GROWTH
 
-    for _ in range(36):
+    for _ in range(_SPACING_SEARCH_BISECTIONS):
         midpoint = 0.5 * (low + high)
         if expected_count(midpoint) > target_count:
             low = midpoint
         else:
             high = midpoint
 
-    return max(0.1, high)
+    return max(_SPACING_SEARCH_MIN_RESULT_ANG, high)
 
 
-# Bounds the broadcast matrices (references x points) so large orbits against many
-# accepted positions stay within a few megabytes.
-_DISTANCE_CHECK_BLOCK = 65536
+# Bounds the nearest-image search (references x 27 neighbouring cells) so a trial
+# checked against many accepted orbit images stays within a few megabytes.
+_DISTANCE_CHECK_BLOCK = 8192
 
 
 def _any_closer_than(
-    points: np.ndarray,
+    point: np.ndarray,
     references: np.ndarray,
     lattice_vectors: Sequence[Sequence[float]],
     limit: float,
 ) -> bool:
-    """Whether ``minimum_image_distance(point, reference) < limit`` for any pair, decided exactly as that helper would."""
+    """Whether ``point`` lies closer than ``limit`` to the nearest image of any reference.
 
-    if len(points) == 0 or len(references) == 0:
-        return False
-    margin = abs(limit) * NEAR_TIE_RTOL
-    block = max(1, _DISTANCE_CHECK_BLOCK // len(references))
-    for start in range(0, len(points), block):
-        chunk = points[start : start + block]
-        distances = minimum_image_distance_matrix(references, chunk, lattice_vectors)
-        if np.any(distances < limit - margin):
-            return True
-        for reference_index, point_index in np.argwhere(np.abs(distances - limit) <= margin):
-            # ``tolist`` hands the scalar helper Python floats, as the generators always did.
-            point = chunk[point_index].tolist()
-            if (
-                minimum_image_distance(point, references[reference_index].tolist(), lattice_vectors)
-                < limit
-            ):
-                return True
-    return False
-
-
-def _identity_leads(operations: tuple[Sequence[np.ndarray], Sequence[np.ndarray]] | None) -> bool:
-    """Whether the first operation is the identity, so every orbit starts with the position itself."""
-
-    if operations is None:
-        return False
-    rotations, translations = operations
-    if len(rotations) == 0 or len(translations) == 0:
-        return False
-    return bool(np.array_equal(rotations[0], np.eye(3)) and not np.any(translations[0]))
-
-
-def _valid_candidate_orbit(
-    candidate_frac: list[float],
-    *,
-    lattice_vectors: Sequence[Sequence[float]],
-    operations: tuple[Sequence[np.ndarray], Sequence[np.ndarray]] | None,
-    identity_leads: bool,
-    host_positions: np.ndarray,
-    accepted_positions: np.ndarray,
-    min_muon_atom: float,
-    min_muon_muon: float,
-) -> list[list[float]] | None:
-    """Return the candidate's orbit when every image satisfies both spacings, otherwise ``None``.
-
-    ``candidate_frac`` must already lie in ``[0, 1)``.  "Muon-muon" spacing is between
-    alternative one-muon starting positions, used to reduce duplicate relaxations to the
-    same final site.
+    The per-component fold is never shorter than the nearest image, so a fold already
+    inside ``limit`` rejects the point at once; the 27-cell nearest-image search runs
+    only when no fold does, which is the rare trial about to be accepted.
     """
 
-    def violates(points: np.ndarray) -> bool:
-        return _any_closer_than(
-            points, host_positions, lattice_vectors, min_muon_atom
-        ) or _any_closer_than(points, accepted_positions, lattice_vectors, min_muon_muon)
-
-    # With the identity first, the orbit's first (always kept) image is exactly ``candidate_frac``,
-    # so a candidate that fails on its own fails as an orbit: reject before building the orbit.
-    if identity_leads and violates(np.asarray([candidate_frac], dtype=float)):
-        return None
-    orbit = symmetry_orbit(
-        candidate_frac, operations, lattice_vectors=lattice_vectors, tolerance=_ORBIT_TOLERANCE_ANG
-    )
-    if violates(np.asarray(orbit, dtype=float).reshape(-1, 3)):
-        return None
-    return orbit
+    if len(references) == 0:
+        return False
+    position = np.asarray(point, dtype=float).reshape(1, 3)
+    if np.any(minimum_image_distance_matrix(position, references, lattice_vectors) < limit):
+        return True
+    for start in range(0, len(references), _DISTANCE_CHECK_BLOCK):
+        chunk = references[start : start + _DISTANCE_CHECK_BLOCK]
+        if np.any(nearest_image_distance_matrix(position, chunk, lattice_vectors) < limit):
+            return True
+    return False
 
 
 def _host_position_array(host_positions_frac: Sequence[Sequence[float]]) -> np.ndarray:
@@ -401,29 +371,16 @@ def _host_position_array(host_positions_frac: Sequence[Sequence[float]]) -> np.n
 
 def _normalized(vector: Sequence[float]) -> list[float] | None:
     norm = vector_length(vector)
-    if norm <= 1e-12:
+    if norm <= _ZERO_VECTOR_LENGTH:
         return None
     return [float(value) / norm for value in vector]
-
-
-def _host_clearance(
-    candidate_frac: Sequence[float],
-    host_positions_frac: Sequence[Sequence[float]],
-    lattice_vectors: Sequence[Sequence[float]],
-) -> float:
-    if not host_positions_frac:
-        return math.inf
-    return min(
-        minimum_image_distance(candidate_frac, host, lattice_vectors)
-        for host in host_positions_frac
-    )
 
 
 def generate_random_sites(
     *,
     lattice_vectors: Sequence[Sequence[float]] | None,
     host_positions_frac: Sequence[Sequence[float]],
-    count: int,
+    count: int | None = None,
     min_muon_muon: float,
     min_muon_atom: float,
     max_attempts: int = 20000,
@@ -431,17 +388,37 @@ def generate_random_sites(
     allow_partial: bool = False,
     include_symmetry_equivalents: bool = False,
     host_species: Sequence[str] | None = None,
-    symprec: float = 1e-5,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+    expected_count: int | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[GeneratedPoint], int]:
     """Generate candidate sites by random filling with distance constraints.
 
+    With ``count`` set, trials stop once that many sites are accepted, and fewer
+    raise :class:`SiteGenerationError` unless ``allow_partial``. With ``count=None``
+    the cell is filled until ``max_attempts`` trials have run, and
+    ``expected_count`` (when given) is the progress total until it is passed.
+
+    A trial is accepted when its nearest-image distance is at least
+    ``min_muon_atom`` from every host atom and at least ``min_muon_muon`` from
+    every accepted image. With ``include_symmetry_equivalents`` the accepted images
+    are each accepted site's whole symmetry orbit. The host and those orbits are
+    symmetry-invariant and so are distances, so checking the trial alone checks
+    its whole orbit.
+
     Returns a tuple: (sites, attempts_used).
     """
-    if count <= 0:
-        raise SiteGenerationError("Count must be greater than zero.")
-    if min_muon_muon < 0.0 or min_muon_atom < 0.0:
-        raise SiteGenerationError("Distance constraints must be non-negative.")
+    fill = count is None
+    if fill:
+        if min_muon_muon <= 0.0:
+            raise SiteGenerationError("Muon-muon spacing must be greater than zero.")
+        if min_muon_atom < 0.0:
+            raise SiteGenerationError("Distance constraints must be non-negative.")
+    else:
+        if count <= 0:
+            raise SiteGenerationError("Count must be greater than zero.")
+        if min_muon_muon < 0.0 or min_muon_atom < 0.0:
+            raise SiteGenerationError("Distance constraints must be non-negative.")
 
     lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
     rng = random.Random(seed)
@@ -457,122 +434,26 @@ def generate_random_sites(
     )
 
     host_positions = _host_position_array(host_positions_frac)
-    identity_leads = _identity_leads(operations)
     accepted_positions = np.empty((0, 3), dtype=float)
     accepted_points: list[GeneratedPoint] = []
-    if progress_callback is not None:
-        progress_callback(0, count)
-
-    attempts = 0
-    while len(accepted_points) < count and attempts < max_attempts:
-        attempts += 1
-        candidate_frac = [rng.random(), rng.random(), rng.random()]
-        candidate_orbit = _valid_candidate_orbit(
-            candidate_frac,
-            lattice_vectors=lattice,
-            operations=operations,
-            identity_leads=identity_leads,
-            host_positions=host_positions,
-            accepted_positions=accepted_positions,
-            min_muon_atom=min_muon_atom,
-            min_muon_muon=min_muon_muon,
-        )
-        if candidate_orbit is None:
-            continue
-
-        accepted_positions = np.concatenate(
-            [accepted_positions, np.asarray(candidate_orbit, dtype=float)]
-        )
-        accepted_points.append(
-            GeneratedPoint(
-                fractional=wrap_fractional(candidate_frac),
-                cartesian=lattice_frac_to_cart(candidate_frac, lattice),
-            )
-        )
-        if progress_callback is not None:
-            progress_callback(len(accepted_points), count)
-
-    if len(accepted_points) < count:
-        generated = len(accepted_points)
-        if generated == 0:
-            raise SiteGenerationError(
-                "Could not generate any candidate sites with current constraints. "
-                "Relax distance limits or increase supercell size."
-            )
-        if allow_partial:
-            return accepted_points, attempts
-        raise SiteGenerationError(
-            f"Could only generate {generated} of {count} candidate sites after {attempts} attempts. "
-            "Increase max_attempts, relax distance limits, or increase supercell size."
-        )
-
-    return accepted_points, attempts
-
-
-def generate_random_sites_by_distance(
-    *,
-    lattice_vectors: Sequence[Sequence[float]] | None,
-    host_positions_frac: Sequence[Sequence[float]],
-    min_muon_muon: float,
-    min_muon_atom: float,
-    max_attempts: int = 20000,
-    seed: int | None = None,
-    include_symmetry_equivalents: bool = False,
-    host_species: Sequence[str] | None = None,
-    symprec: float = 1e-5,
-    expected_count: int | None = None,
-    progress_callback: ProgressCallback | None = None,
-) -> tuple[list[GeneratedPoint], int]:
-    """Generate as many randomly placed candidate sites as constraints allow.
-
-    Returns a tuple: (sites, attempts_used).
-    """
-    if min_muon_muon <= 0.0:
-        raise SiteGenerationError("Muon-muon spacing must be greater than zero.")
-    if min_muon_atom < 0.0:
-        raise SiteGenerationError("Distance constraints must be non-negative.")
-
-    lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
-    rng = random.Random(seed)
-    operations = (
-        _symmetry_operations(
-            lattice_vectors=lattice,
-            host_species=host_species or [],
-            host_positions_frac=host_positions_frac,
-            symprec=symprec,
-        )
-        if include_symmetry_equivalents and host_species
-        else None
-    )
-
-    host_positions = _host_position_array(host_positions_frac)
-    identity_leads = _identity_leads(operations)
-    accepted_positions = np.empty((0, 3), dtype=float)
-    accepted_points: list[GeneratedPoint] = []
-    progress_total = max(1, int(expected_count or 1))
+    progress_total = max(1, int(expected_count or 1)) if fill else int(count)
     if progress_callback is not None:
         progress_callback(0, progress_total)
 
     attempts = 0
-    while attempts < max_attempts:
+    while (fill or len(accepted_points) < count) and attempts < max_attempts:
         attempts += 1
         candidate_frac = [rng.random(), rng.random(), rng.random()]
-        candidate_orbit = _valid_candidate_orbit(
-            candidate_frac,
-            lattice_vectors=lattice,
-            operations=operations,
-            identity_leads=identity_leads,
-            host_positions=host_positions,
-            accepted_positions=accepted_positions,
-            min_muon_atom=min_muon_atom,
-            min_muon_muon=min_muon_muon,
-        )
-        if candidate_orbit is None:
+        candidate = np.asarray(candidate_frac, dtype=float)
+        if _any_closer_than(candidate, host_positions, lattice, min_muon_atom) or (
+            _any_closer_than(candidate, accepted_positions, lattice, min_muon_muon)
+        ):
             continue
 
-        accepted_positions = np.concatenate(
-            [accepted_positions, np.asarray(candidate_orbit, dtype=float)]
+        orbit = symmetry_orbit(
+            candidate_frac, operations, lattice_vectors=lattice, tolerance=_ORBIT_TOLERANCE_ANG
         )
+        accepted_positions = np.concatenate([accepted_positions, np.asarray(orbit, dtype=float)])
         accepted_points.append(
             GeneratedPoint(
                 fractional=wrap_fractional(candidate_frac),
@@ -586,6 +467,12 @@ def generate_random_sites_by_distance(
         raise SiteGenerationError(
             "Could not generate any candidate sites with current constraints. "
             "Relax distance limits or increase supercell size."
+        )
+    if not fill and len(accepted_points) < count and not allow_partial:
+        raise SiteGenerationError(
+            f"Could only generate {len(accepted_points)} of {count} candidate sites after "
+            f"{attempts} attempts. "
+            "Increase max_attempts, relax distance limits, or increase supercell size."
         )
 
     return accepted_points, attempts
@@ -604,18 +491,43 @@ def _fibonacci_sphere_directions(count: int) -> list[list[float]]:
     return directions
 
 
-def _host_clearance_excluding_index(
-    candidate_frac: Sequence[float],
+def symmetry_distinct_atom_indexes(
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None,
+    host_species: Sequence[str],
     host_positions_frac: Sequence[Sequence[float]],
-    lattice_vectors: Sequence[Sequence[float]],
-    excluded_index: int,
-) -> float:
-    clearances = [
-        minimum_image_distance(candidate_frac, host, lattice_vectors)
-        for index, host in enumerate(host_positions_frac)
-        if index != excluded_index
+    target_element: str,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+) -> list[int]:
+    """Return the index of the first atom of ``target_element`` in each symmetry-equivalent set.
+
+    The sets are spglib's ``equivalent_atoms`` for the host. When the host's symmetry
+    cannot be detected every matching atom is its own set
+    (:func:`mufinder.science.spglib_compat.symmetry_detection_warning` says why).
+    """
+
+    target = target_element.strip().lower()
+    matching = [
+        index for index, species in enumerate(host_species) if species.strip().lower() == target
     ]
-    return min(clearances) if clearances else math.inf
+    if not matching:
+        return []
+    lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
+    cell = spglib_cell(
+        lattice_vectors=lattice, species=host_species, fractional_positions=host_positions_frac
+    )
+    symmetry = None if cell is None else get_crystal_symmetry(cell, symprec=float(symprec))
+    if symmetry is None:
+        return matching
+    equivalent_atoms = symmetry["equivalent_atoms"]
+    seen: set[int] = set()
+    distinct: list[int] = []
+    for index in matching:
+        orbit = int(equivalent_atoms[index])
+        if orbit not in seen:
+            seen.add(orbit)
+            distinct.append(index)
+    return distinct
 
 
 def generate_attached_element_sites(
@@ -627,15 +539,18 @@ def generate_attached_element_sites(
     muons_per_atom: int = 1,
     bond_distance: float = 1.0,
     min_muon_atom: float = 0.8,
-    neighbor_cutoff: float = 2.6,
+    neighbor_cutoff: float = ATTACHED_NEIGHBOUR_CUTOFF_ANG,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
     progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[GeneratedPoint], int]:
     """Generate deterministic element-attached starts using local bonding geometry.
 
-    For every atom matching ``target_element``, candidate directions point away
-    from nearby neighbours and a deterministic spherical fallback set. The best
-    ``muons_per_atom`` candidates for each atom are selected by clearance from
-    the surrounding host structure.
+    One atom of ``target_element`` is taken from each symmetry-equivalent set
+    (:func:`symmetry_distinct_atom_indexes`): starts on equivalent atoms are
+    symmetry images of each other. For each such atom, candidate directions point
+    away from nearby neighbours and a deterministic spherical fallback set. The
+    best ``muons_per_atom`` candidates for each atom are selected by clearance from
+    the surrounding host structure. Every distance is a nearest-image distance.
     """
 
     if not target_element.strip():
@@ -648,10 +563,13 @@ def generate_attached_element_sites(
         raise SiteGenerationError("Muon-atom distance must be non-negative.")
 
     lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
-    target = target_element.strip().lower()
-    target_indexes = [
-        idx for idx, species in enumerate(host_species) if species.strip().lower() == target
-    ]
+    target_indexes = symmetry_distinct_atom_indexes(
+        lattice_vectors=lattice,
+        host_species=host_species,
+        host_positions_frac=host_positions_frac,
+        target_element=target_element,
+        symprec=symprec,
+    )
     if not target_indexes:
         raise SiteGenerationError(f"No host atoms found for element '{target_element}'.")
     expected_count = len(target_indexes) * muons_per_atom
@@ -667,6 +585,7 @@ def generate_attached_element_sites(
         [0.0, 0.0, -1.0],
     ]
 
+    host_positions = _host_position_array(host_positions_frac)
     accepted_points: list[GeneratedPoint] = []
     attempts = 0
     direction_pool_size = max(24, muons_per_atom * 8)
@@ -677,9 +596,9 @@ def generate_attached_element_sites(
         for other_index, other_frac in enumerate(host_positions_frac):
             if other_index == target_index:
                 continue
-            delta = minimum_image_cartesian_delta(other_frac, anchor_frac, lattice)
+            delta = nearest_image_cartesian_delta(other_frac, anchor_frac, lattice)
             distance = vector_length(delta)
-            if 1e-8 < distance <= neighbor_cutoff:
+            if _COINCIDENT_ATOM_ANG < distance <= neighbor_cutoff:
                 direction = _normalized(delta)
                 if direction is not None:
                     neighbor_dirs.append(direction)
@@ -701,34 +620,42 @@ def generate_attached_element_sites(
             if normalized is None:
                 continue
             if any(
-                sum(normalized[i] * existing[i] for i in range(3)) > 0.999
+                sum(normalized[i] * existing[i] for i in range(3))
+                > _ATTACHED_DIRECTION_COSINE_LIMIT
                 for existing in unique_dirs
             ):
                 continue
             unique_dirs.append(normalized)
 
-        per_atom: list[tuple[float, list[float]]] = []
-        for direction in unique_dirs:
-            candidate_cart = [
-                anchor_cart[axis] + direction[axis] * bond_distance for axis in range(3)
-            ]
-            candidate_frac = wrap_fractional(lattice_cart_to_frac(candidate_cart, lattice))
-            attempts += 1
-            if _host_clearance(candidate_frac, host_positions_frac, lattice) < min_muon_atom - 1e-8:
-                continue
-            clearance = _host_clearance_excluding_index(
-                candidate_frac,
-                host_positions_frac,
-                lattice,
-                target_index,
+        candidates = [
+            wrap_fractional(
+                lattice_cart_to_frac(
+                    [anchor_cart[axis] + direction[axis] * bond_distance for axis in range(3)],
+                    lattice,
+                )
             )
+            for direction in unique_dirs
+        ]
+        attempts += len(candidates)
+        # Distance from each candidate to every host atom, and to every atom but the anchor.
+        clearances = nearest_image_distance_matrix(candidates, host_positions, lattice)
+        others = np.delete(clearances, target_index, axis=1)
+        per_atom: list[tuple[float, list[float]]] = []
+        for row, candidate_frac in enumerate(candidates):
+            if clearances.shape[1] and (
+                float(clearances[row].min()) < min_muon_atom - _ATTACHED_CLEARANCE_SLACK_ANG
+            ):
+                continue
+            clearance = float(others[row].min()) if others.shape[1] else math.inf
             per_atom.append((clearance, candidate_frac))
         per_atom.sort(key=lambda item: item[0], reverse=True)
         selected_for_atom: list[list[float]] = []
         for _clearance, candidate_frac in per_atom:
-            if any(
-                minimum_image_distance(candidate_frac, accepted, lattice) < 1e-5
-                for accepted in selected_for_atom
+            if selected_for_atom and bool(
+                np.any(
+                    nearest_image_distance_matrix([candidate_frac], selected_for_atom, lattice)
+                    < _ATTACHED_DUPLICATE_START_ANG
+                )
             ):
                 continue
             selected_for_atom.append(candidate_frac)
