@@ -282,6 +282,39 @@ def test_quantum_expansion_refuses_a_phonon_method_override(method: str) -> None
         )
 
 
+def test_quantum_expansion_refuses_a_phonon_method_in_the_user_overrides() -> None:
+    from mufinder.workflow.types import InputTemplate
+
+    overrides = InputTemplate(
+        param=ParamTemplate(keywords=(KeywordAssignment("phonon_method", "DFPT"),))
+    )
+
+    with pytest.raises(ValueError, match="remove the PHONON_METHOD override"):
+        expand_quantum_phonon_jobs(
+            jobs=(QuantumPhononJobConfig(source=_source()),),
+            name_prefix="quantum_phonon",
+            user_overrides=overrides,
+        )
+
+
+def test_quantum_expansion_writes_its_own_method_over_a_default_layer() -> None:
+    from mufinder.workflow.types import InputTemplate
+
+    defaults = InputTemplate(
+        param=ParamTemplate(keywords=(KeywordAssignment("phonon_method", "DFPT"),))
+    )
+
+    (job,) = expand_quantum_phonon_jobs(
+        jobs=(QuantumPhononJobConfig(source=_source()),),
+        name_prefix="quantum_phonon",
+        global_defaults=defaults,
+        workflow_defaults=defaults,
+    )
+
+    assert "PHONON_METHOD : FINITEDISPLACEMENT" in write_param(job.param_file)
+    assert "DFPT" not in write_param(job.param_file)
+
+
 def test_quantum_expansion_requires_at_least_one_job() -> None:
     with pytest.raises(ValueError, match="At least one quantum"):
         expand_quantum_phonon_jobs(jobs=(), name_prefix="q")

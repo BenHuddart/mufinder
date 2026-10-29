@@ -220,11 +220,12 @@ keyword names, aliases, descriptions, and categories; ``PHONON_METHOD`` is not
 among them.
 
 **Rows configured by an older version.** A row an older version configured
-for ``DFPT`` or ``LINEARRESPONSE`` still loads. The submission that creates
-its phonon job writes ``PHONON_METHOD : FINITEDISPLACEMENT``, and a one-line
-notice names the row and the method it was configured with before the
-submission goes ahead. A completed job keeps its result, whichever method
-produced it.
+for ``DFPT`` or ``LINEARRESPONSE`` still loads. Submitting it writes
+``PHONON_METHOD : FINITEDISPLACEMENT``, also over a job of the row that an
+older version wrote but never ran, and a one-line notice names the row and the
+method it was configured with before the submission goes ahead. A row whose
+job already has finite displacement in its ``.param`` is not announced again.
+A completed job keeps its result, whichever method produced it.
 
 **Defaults.** When the source relaxation's input files are still on disk, each
 row inherits that relaxation's ``CUT_OFF_ENERGY``, ``KPOINT_MP_GRID``,

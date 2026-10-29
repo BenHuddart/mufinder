@@ -166,24 +166,22 @@ def expand_quantum_phonon_jobs(
     gyromagnetic ratio written in its own ``.cell``. ``CONTINUATION : DEFAULT``
     makes a rerun in a directory that still holds the job's ``.check`` resume
     from it, and is a new run otherwise. Every job runs finite-displacement
-    phonons (:data:`QUANTUM_PHONON_METHOD`); a ``PHONON_METHOD`` in
-    ``param_overrides`` is refused. The method and the farm count are recorded
-    in the provenance.
+    phonons (:data:`QUANTUM_PHONON_METHOD`); a ``PHONON_METHOD`` in a layer
+    applied after it (a config's ``param_overrides`` or ``user_overrides``) is
+    refused. The defaults layers sit below the workflow's own value, so theirs
+    never reaches the file. The method and the farm count are recorded in the
+    provenance.
     """
 
     require_jobs(jobs, "quantum phonon job")
+    _refuse_phonon_method_override(user_overrides.param if user_overrides is not None else None)
 
     resolved: list[JobSpec] = []
     for config in jobs:
         label = config.source.label.strip()
         if not label:
             raise ValueError("Quantum phonon source labels must not be empty.")
-        override_method = _param_keyword_value(config.param_overrides, "phonon_method")
-        if override_method is not None:
-            raise ValueError(
-                f"Quantum Corrections writes PHONON_METHOD : {QUANTUM_PHONON_METHOD} itself; "
-                f"remove the PHONON_METHOD override ({override_method!r})."
-            )
+        _refuse_phonon_method_override(config.param_overrides)
 
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
@@ -297,6 +295,17 @@ def _phonon_nonscf_eigenvalue_tol(config: QuantumPhononJobConfig) -> ValueWithUn
             "eV",
         )
     return QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL
+
+
+def _refuse_phonon_method_override(template: ParamTemplate | None) -> None:
+    """Raise when ``template`` sets ``PHONON_METHOD``, which the workflow writes itself."""
+
+    override_method = _param_keyword_value(template, "phonon_method")
+    if override_method is not None:
+        raise ValueError(
+            f"Quantum Corrections writes PHONON_METHOD : {QUANTUM_PHONON_METHOD} itself; "
+            f"remove the PHONON_METHOD override ({override_method!r})."
+        )
 
 
 def _param_keyword_value(template: ParamTemplate | None, name: str) -> object | None:

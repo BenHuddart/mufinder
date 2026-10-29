@@ -128,11 +128,12 @@ Compatibility ledger
        read by ``QuantumCorrectionsController.legacy_phonon_method``
      - Quantum Corrections runs finite displacement only, and new
        configurations write none of these keys. A row an older version
-       configured for ``DFPT`` or ``LINEARRESPONSE`` loads, and the
-       submission that creates its phonon job writes
-       ``PHONON_METHOD : FINITEDISPLACEMENT`` and shows a one-line notice
-       naming the row and its stored method. The stored method is read only
-       for that notice (the row's own parameter, then its extras, then the
+       configured for ``DFPT`` or ``LINEARRESPONSE`` loads; submitting it
+       writes ``PHONON_METHOD : FINITEDISPLACEMENT``, also over a ``defined``
+       job an older version wrote, and shows a one-line notice naming the row
+       and its stored method unless the row's job already has finite
+       displacement in its ``.param``. The stored method is read only for
+       that notice (the row's own parameter, then its extras, then the
        definition), and ``pseudopotential_family`` is ignored. Saving the
        row's Configure dialog replaces its ``row_settings`` entry, which drops
        the row-level keys. A completed job keeps its result and its
@@ -697,7 +698,7 @@ entry above.
   ``pseudopotential_family`` fields of ``QuantumPhononJobConfig``: every job
   writes ``QUANTUM_PHONON_METHOD`` (``FINITEDISPLACEMENT``), and
   ``expand_quantum_phonon_jobs`` refuses a ``PHONON_METHOD`` in
-  ``param_overrides``. Job provenance records ``phonon_method`` as
+  ``param_overrides`` or ``user_overrides``. Job provenance records ``phonon_method`` as
   ``finite_displacement``, as before, and carries no ``method_warning``.
 
 The convergence functions below were removed without a deprecation period,

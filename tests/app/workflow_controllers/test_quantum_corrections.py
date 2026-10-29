@@ -1041,24 +1041,42 @@ def test_quantum_controller_resubmits_an_old_dfpt_row_as_finite_displacement_wit
         assert "LINEARRESPONSE" not in param_text
 
 
-def test_quantum_controller_shows_the_notice_only_when_the_rows_job_is_created(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("written_method", "notice"),
+    [("FINITEDISPLACEMENT", False), ("DFPT", True), (None, True)],
+    ids=["written-finite-displacement", "written-dfpt", "no-param-file"],
+)
+def test_quantum_controller_announces_an_existing_job_unless_it_is_finite_displacement(
+    tmp_path: Path, written_method: str | None, notice: bool
 ) -> None:
-    """A reset row's job was already written as finite displacement: no second notice."""
+    """A defined job an older version wrote as DFPT is announced before it is rewritten;
+    one already written as finite displacement (a reset row) is not announced again."""
 
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     by_label = {candidate.site.label: key for key, candidate in candidates.items()}
     keys = _store_old_phonon_methods(definition, by_label)
+    phonon = _bind_phonon(service, document, definition, keys[0], status=JobStatus.DEFINED)
+    job_dir = output_root / phonon.label
+    if written_method is not None:
+        job_dir.mkdir(parents=True)
+        (job_dir / f"{phonon.label}.param").write_text(
+            f"TASK : PHONON\nPHONON_METHOD : {written_method}\n", encoding="utf-8"
+        )
     infos: list[tuple[str, str]] = []
-    controller = _quantum_document_controller(service, document, output_root, infos=infos)
-    _bind_phonon(service, document, definition, keys[0], status=JobStatus.DEFINED)
+    controller = _quantum_document_controller(
+        service,
+        document,
+        output_root,
+        infos=infos,
+        job_output_directory=lambda job: job_dir if job.id == phonon.id else None,
+    )
 
     assert controller.pre_submit_check(keys) is True
 
     ((_title, message),) = infos
     assert "siteB (LINEARRESPONSE)" in message
-    assert "siteA" not in message
+    assert ("siteA (DFPT)" in message) is notice
 
 
 def test_quantum_controller_reads_an_old_definition_level_method(tmp_path: Path) -> None:

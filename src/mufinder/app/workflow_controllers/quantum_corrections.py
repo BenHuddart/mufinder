@@ -82,6 +82,7 @@ from mufinder.services.source_candidates import (
     serialize_quantum_sources,
     source_relaxation_parameter_values,
 )
+from mufinder.castep_io.param_parser import ParamParseError, parse_param_assignments
 from mufinder.science.quantum_phonons import (
     muon_mass_warning,
     muon_zpe,
@@ -680,12 +681,13 @@ class QuantumCorrectionsController(WorkflowJobController):
           a mismatch the user does not resolve refuses silently;
         - a row whose legacy singlepoint is still active is refused, with an
           explanation naming it, until that job finishes or is cancelled;
-        - a ready row with no phonon job yet that an older version configured
-          for DFPT or linear response (see :meth:`legacy_phonon_method`) is
-          not refused: a one-line notice names it and says it runs as finite
-          displacement, and the submission goes ahead. A row whose phonon job
-          already exists was written as finite displacement when that job
-          was created, so a resubmission after a reset shows no notice.
+        - a ready row an older version configured for DFPT or linear
+          response (see :meth:`legacy_phonon_method`) is not refused: a
+          one-line notice names it and says it runs as finite displacement,
+          and the submission goes ahead. The notice is left out only when the
+          row's phonon job already has finite displacement in its written
+          ``.param`` (see :meth:`_job_runs_finite_displacement`), so a job an
+          older version wrote with another method is always announced.
         """
 
         document = self._context.document()
@@ -738,8 +740,8 @@ class QuantumCorrectionsController(WorkflowJobController):
         return rows
 
     def _rows_with_legacy_phonon_method(self, keys: list[object]) -> list[tuple[str, str]]:
-        """Return ``(label, CASTEP method)`` for ready rows without a phonon job stored
-        with another phonon method."""
+        """Return ``(label, CASTEP method)`` for ready rows stored with another phonon
+        method whose job is not already written as finite displacement."""
 
         definition = self.active_definition()
         if definition is None:
@@ -751,13 +753,35 @@ class QuantumCorrectionsController(WorkflowJobController):
             if (
                 candidate is None
                 or not workflow_row_state_is_ready(states, key)
-                or self.phonon_job_for_key(definition, key) is not None
+                or self._job_runs_finite_displacement(self.phonon_job_for_key(definition, key))
             ):
                 continue
             method = self.legacy_phonon_method(definition, key)
             if method is not None:
                 rows.append((self.source_label(candidate), method))
         return rows
+
+    def _job_runs_finite_displacement(self, job: Job | None) -> bool:
+        """Return whether ``job``'s written ``.param`` already asks for finite displacement.
+
+        ``False`` without a job, without a readable ``.param``, or when it
+        names another method (a job an older version wrote).
+        """
+
+        if job is None:
+            return False
+        directory = self._context.job_output_directory(job)
+        if directory is None:
+            return False
+        param_path = directory / f"{self._context.job_seed_name(job)}.param"
+        try:
+            assignments = parse_param_assignments(
+                param_path.read_text(encoding="utf-8"), strict=False
+            )
+        except (OSError, UnicodeDecodeError, ParamParseError, ValueError):
+            return False
+        method = assignments.get("phonon_method")
+        return method is not None and _legacy_method_value(method) == QUANTUM_PHONON_METHOD
 
     def build_states(self) -> dict[str, RelaxationRunState]:
         """Return each eligible row's state: its job's projected status, else ``ready``."""
