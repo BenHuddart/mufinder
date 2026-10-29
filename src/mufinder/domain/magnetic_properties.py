@@ -99,6 +99,53 @@ def atomic_spins_from_structure(
     return atomic_spins_from_magnetic_moments(magnetic, atom_count=count, honour_atom_index=False)
 
 
+def magnetic_moments_are_collinear(
+    magnetic_structure: Mapping[str, Any],
+    *,
+    tolerance: float = 1e-6,
+    angle_tolerance: float = 1e-3,
+) -> bool:
+    """Return whether every nonzero moment ``vector`` lies along one axis.
+
+    Parallel and antiparallel moments both count as collinear: two unit vectors
+    are along one axis when their cross product is at most ``angle_tolerance``
+    (radians, about 0.06 degrees by default, so moments written to three or four
+    decimals still count). Moments without a numeric three-component ``vector``,
+    and moments shorter than ``tolerance``, are ignored, so a mapping with fewer
+    than two usable moments is collinear.
+    """
+
+    moments = magnetic_structure.get("moments")
+    if not isinstance(moments, list):
+        return True
+    axis: tuple[float, float, float] | None = None
+    for moment in moments:
+        if not isinstance(moment, Mapping):
+            continue
+        vector = moment.get("vector")
+        if not isinstance(vector, (list, tuple)) or len(vector) < 3:
+            continue
+        try:
+            x, y, z = (float(vector[0]), float(vector[1]), float(vector[2]))
+        except (TypeError, ValueError):
+            continue
+        length = (x * x + y * y + z * z) ** 0.5
+        if length <= tolerance:
+            continue
+        unit = (x / length, y / length, z / length)
+        if axis is None:
+            axis = unit
+            continue
+        cross = (
+            axis[1] * unit[2] - axis[2] * unit[1],
+            axis[2] * unit[0] - axis[0] * unit[2],
+            axis[0] * unit[1] - axis[1] * unit[0],
+        )
+        if (cross[0] ** 2 + cross[1] ** 2 + cross[2] ** 2) ** 0.5 > angle_tolerance:
+            return False
+    return True
+
+
 def propagation_vector_from_structure(
     structure: Structure, *, strict: bool = False
 ) -> tuple[float, float, float]:
@@ -148,5 +195,6 @@ __all__ = [
     "atomic_spins_from_magnetic_moments",
     "atomic_spins_from_structure",
     "has_nonzero_spins",
+    "magnetic_moments_are_collinear",
     "propagation_vector_from_structure",
 ]

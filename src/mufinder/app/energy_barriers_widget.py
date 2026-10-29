@@ -667,6 +667,11 @@ class EnergyBarriersWidget(SourceTableWidget):
         endpoint_actions.addWidget(self._generate_paths_button)
         endpoint_actions.addStretch(1)
         endpoint_layout.addLayout(endpoint_actions)
+        self._path_symmetry_note = QLabel("", endpoint_group)
+        self._path_symmetry_note.setWordWrap(True)
+        style_hint_text(self._path_symmetry_note)
+        self._path_symmetry_note.setVisible(False)
+        endpoint_layout.addWidget(self._path_symmetry_note)
         paths_layout.addWidget(endpoint_group)
 
         self._sources_group = QGroupBox("Diffusion Paths")
@@ -890,6 +895,12 @@ class EnergyBarriersWidget(SourceTableWidget):
         self._reactant_combo.blockSignals(False)
         self._product_combo.blockSignals(False)
         self._update_actions()
+
+    def set_path_symmetry_note(self, text: str) -> None:
+        """Show which symmetry groups the generated paths; hidden when ``text`` is empty."""
+
+        self._path_symmetry_note.setText(text)
+        self._path_symmetry_note.setVisible(bool(text))
 
     def set_site_scope(self, *, show_every_site: bool, notice: str = "") -> None:
         """Show whether the endpoints list every relaxed site, and the pinned-sites notice."""

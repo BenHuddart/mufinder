@@ -237,6 +237,23 @@ def test_replace_serialized_sources_for_pair_drops_only_that_pair() -> None:
     assert replaced[-1]["new"] is True
 
 
+def test_replace_serialized_sources_for_pair_keeps_the_listed_keys() -> None:
+    existing = [
+        {"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p"},
+        {"key": "r:p:2", "reactant_site_id": "r", "product_site_id": "p"},
+    ]
+
+    replaced = replace_serialized_sources_for_pair(
+        existing,
+        reactant_site_id="r",
+        product_site_id="p",
+        new_sources=[{"key": "r:p:3", "reactant_site_id": "r", "product_site_id": "p"}],
+        keep_keys={"r:p:2"},
+    )
+
+    assert [source["key"] for source in replaced] == ["r:p:2", "r:p:3"]
+
+
 def test_strip_legacy_energy_barrier_params_drops_placeholders_only() -> None:
     params = {
         "tssearch_lst_max_iter": 10,

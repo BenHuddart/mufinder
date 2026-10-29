@@ -417,6 +417,39 @@ def nearest_image_distance_matrix(
     return distances
 
 
+def nearest_image_delta_matrix(
+    left: Sequence[Sequence[float]] | np.ndarray,
+    right: Sequence[Sequence[float]] | np.ndarray,
+    lattice_vectors: Sequence[Sequence[float]] | np.ndarray,
+) -> np.ndarray:
+    """Return the fractional displacement from ``left[i]`` to the nearest image of ``right[j]``.
+
+    The broadcast counterpart of :func:`nearest_image_delta` (with the arguments
+    in path order: ``left[i] + delta[i, j]`` is the image of ``right[j]`` nearest
+    ``left[i]``), with the same search in a reduced basis. The result has shape
+    ``(len(left), len(right), 3)`` and is measured in blocks, as
+    :func:`nearest_image_distance_matrix` is.
+    """
+
+    lattice = lattice_matrix(lattice_vectors)
+    reduced, transform, inverse = _reduction(lattice)
+    left_array = np.asarray(left, dtype=float).reshape(-1, 3)
+    right_array = np.asarray(right, dtype=float).reshape(-1, 3)
+    deltas = np.empty((len(left_array), len(right_array), 3), dtype=float)
+    rows = max(1, _NEAREST_IMAGE_BLOCK // max(1, len(right_array)))
+    for start in range(0, len(left_array), rows):
+        difference = right_array[None, :, :] - left_array[start : start + rows, None, :]
+        folded = difference @ inverse
+        folded -= np.round(folded)
+        candidates = folded[:, :, None, :] + _NEIGHBOUR_CELL_OFFSETS
+        lengths = np.einsum("ijkl,ijkl->ijk", candidates @ reduced, candidates @ reduced)
+        best = np.take_along_axis(
+            candidates, np.argmin(lengths, axis=-1)[:, :, None, None], axis=2
+        )[:, :, 0, :]
+        deltas[start : start + rows] = difference + np.rint(best @ transform - difference)
+    return deltas
+
+
 def vector_length(vector: Sequence[float]) -> float:
     """Return the Euclidean length of ``vector``."""
 
@@ -594,6 +627,7 @@ __all__ = [
     "near_minimum_indexes",
     "nearest_image_cartesian_delta",
     "nearest_image_delta",
+    "nearest_image_delta_matrix",
     "nearest_image_distance",
     "nearest_image_distance_matrix",
     "reduced_lattice",

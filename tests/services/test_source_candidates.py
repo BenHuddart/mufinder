@@ -43,10 +43,12 @@ from mufinder.services.source_candidates import (
     energy_barrier_neb_source_candidates,
     energy_barrier_neb_sources_by_job_id,
     energy_barrier_path_preview_structure,
+    energy_barrier_path_symmetry_uses_magnetic_order,
     energy_barrier_source_label,
     enumerate_energy_barrier_source_candidates,
     float_from_source,
     fractional_triplet_from_source,
+    keep_stored_path_keys,
     quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
     quantum_source_key,
@@ -466,6 +468,83 @@ def test_enumerate_energy_barrier_paths_between_two_sources(document: ProjectDoc
         == []
     )
     assert enumerate_energy_barrier_source_candidates(document, str(reactant.id), "missing") == []
+
+
+def test_regenerated_paths_keep_the_keys_of_equivalent_stored_paths(
+    document: ProjectDocument,
+) -> None:
+    reactant = _add_relaxed_source(document, "A", energy=-10.0)
+    product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
+    candidates = enumerate_energy_barrier_source_candidates(
+        document, str(reactant.id), str(product.id), max_distance_ang=4.0
+    )
+    assert len(candidates) >= 2
+    stored = serialize_energy_barrier_source_candidates(candidates[:1])[0]
+    # The same hop shifted by the body-centring translation: equivalent, but not
+    # the coordinates generation picks.
+    stored["path_start_fractional"] = [
+        (value + 0.5) % 1.0 for value in stored["path_start_fractional"]
+    ]
+    stored["path_end_fractional"] = [(value + 0.5) % 1.0 for value in stored["path_end_fractional"]]
+    stored.update(key="kept-key", path_index=7)
+    stale = dict(stored, key="stale", path_index=9, path_end_fractional=[0.25, 0.75, 0.6])
+
+    kept = keep_stored_path_keys(document, candidates, [stored, stale])
+
+    assert (kept[0].key, kept[0].path_index) == ("kept-key", 7)
+    # The stale path is replaced, so new paths number on from the matched one.
+    assert [candidate.path_index for candidate in kept[1:]] == list(range(8, 7 + len(kept)))
+    assert [
+        candidate.path_index
+        for candidate in keep_stored_path_keys(
+            document, candidates, [stored, stale], durable_keys={"stale"}
+        )[1:]
+    ] == list(range(10, 9 + len(kept)))
+    assert keep_stored_path_keys(document, candidates, []) == candidates
+    assert keep_stored_path_keys(document, [], [stored]) == []
+
+
+def test_regenerated_paths_prefer_durable_matches_and_avoid_kept_keys(
+    document: ProjectDocument,
+) -> None:
+    reactant = _add_relaxed_source(document, "A", energy=-10.0)
+    product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
+    candidates = enumerate_energy_barrier_source_candidates(
+        document, str(reactant.id), str(product.id), max_distance_ang=4.0
+    )
+    first = serialize_energy_barrier_source_candidates(candidates[:1])[0]
+    plain = dict(first, key="plain", path_index=1)
+    with_job = dict(first, key="with-job", path_index=2)
+    # A path kept for its job but stored without a number still holds its key.
+    legacy = dict(first, key=f"{reactant.id}:{product.id}:3", path_end_fractional=[0.5, 0.5, 0.9])
+    del legacy["path_index"]
+    # A path stored for another relaxed cell is never compared by position.
+    other_cell = dict(first, key="other-cell", path_index=4, reactant_structure_id="elsewhere")
+
+    kept = keep_stored_path_keys(
+        document,
+        candidates,
+        [plain, with_job, legacy, other_cell],
+        durable_keys={"with-job", legacy["key"], "other-cell"},
+    )
+
+    assert kept[0].key == "with-job"
+    new_keys = [candidate.key for candidate in kept[1:]]
+    assert legacy["key"] not in new_keys
+    assert "other-cell" not in new_keys
+    assert len(set(new_keys)) == len(new_keys)
+
+
+def test_path_symmetry_follows_the_host_spins(document: ProjectDocument) -> None:
+    reactant = _add_relaxed_source(document, "A", energy=-10.0)
+    host = _host(document)
+
+    assert energy_barrier_path_symmetry_uses_magnetic_order(document, str(reactant.id)) is False
+    host.properties["atomic_spins"] = [2.0, -1.0]
+    assert energy_barrier_path_symmetry_uses_magnetic_order(document, str(reactant.id)) is True
+    assert energy_barrier_path_symmetry_uses_magnetic_order(document, "missing") is None
+    assert energy_barrier_path_symmetry_uses_magnetic_order(document, "") is None
+    assert energy_barrier_path_symmetry_uses_magnetic_order(None, str(reactant.id)) is None
 
 
 def test_energy_barrier_form_state_readers(document: ProjectDocument) -> None:

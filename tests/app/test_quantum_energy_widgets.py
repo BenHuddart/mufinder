@@ -304,6 +304,17 @@ def test_energy_barriers_widget_emits_generate_paths_with_max_length(qapp) -> No
     assert generated == [("site-a", "site-b", "2.5")]
 
 
+def test_energy_barriers_widget_shows_the_path_symmetry_note_only_when_set(qapp) -> None:
+    widget = EnergyBarriersWidget()
+
+    assert widget._path_symmetry_note.isHidden()
+    widget.set_path_symmetry_note("Paths use the crystal symmetry.")
+    assert not widget._path_symmetry_note.isHidden()
+    assert widget._path_symmetry_note.text() == "Paths use the crystal symmetry."
+    widget.set_path_symmetry_note("")
+    assert widget._path_symmetry_note.isHidden()
+
+
 def test_energy_barriers_widget_delete_shortcuts_include_child_focus(qapp) -> None:
     widget = EnergyBarriersWidget()
 

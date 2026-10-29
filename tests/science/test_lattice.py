@@ -33,6 +33,7 @@ from mufinder.science.lattice import (
     near_minimum_indexes,
     nearest_image_delta,
     nearest_image_distance,
+    nearest_image_delta_matrix,
     nearest_image_distance_matrix,
     reciprocal_to_cartesian,
     reduced_lattice,
@@ -324,6 +325,26 @@ def test_nearest_image_distance_matrix_matches_the_scalar_helper(lattice) -> Non
         assert matrix[i, j] == pytest.approx(
             nearest_image_distance(right[j], left[i], lattice), rel=1e-12
         )
+
+
+@pytest.mark.parametrize(
+    "lattice", [_CUBIC, _TRICLINIC, _SKEWED], ids=["cubic", "triclinic", "skewed"]
+)
+def test_nearest_image_delta_matrix_reaches_the_nearest_image(
+    lattice, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rng = np.random.default_rng(5)
+    left = rng.uniform(-1.5, 2.5, size=(7, 3))
+    right = rng.uniform(-1.5, 2.5, size=(5, 3))
+    monkeypatch.setattr(lattice_module, "_NEAREST_IMAGE_BLOCK", 10)
+
+    deltas = nearest_image_delta_matrix(left, right, lattice)
+
+    assert deltas.shape == (7, 5, 3)
+    offsets = left[:, None, :] + deltas - right[None, :, :]
+    assert np.allclose(offsets, np.rint(offsets), atol=1e-12)
+    lengths = np.linalg.norm(deltas @ np.asarray(lattice), axis=-1)
+    assert np.allclose(lengths, nearest_image_distance_matrix(left, right, lattice), rtol=1e-12)
 
 
 def test_nearest_image_distance_matrix_is_shorter_than_the_fold_in_a_skewed_cell() -> None:

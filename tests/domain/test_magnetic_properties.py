@@ -10,6 +10,7 @@ from mufinder.domain.magnetic_properties import (
     atomic_spins_from_magnetic_moments,
     atomic_spins_from_structure,
     has_nonzero_spins,
+    magnetic_moments_are_collinear,
     propagation_vector_from_structure,
 )
 from mufinder.domain.models import Structure
@@ -38,6 +39,40 @@ def test_has_nonzero_spins_treats_none_and_all_zero_as_no_spins() -> None:
 def test_has_nonzero_spins_honours_an_explicit_tolerance() -> None:
     assert has_nonzero_spins([0.05], tolerance=0.1) is False
     assert has_nonzero_spins([0.5], tolerance=0.1) is True
+
+
+# magnetic_moments_are_collinear
+
+
+def test_parallel_and_antiparallel_moments_are_collinear() -> None:
+    moments = [{"vector": [0.0, 0.0, 2.6]}, {"vector": [0.0, 0.0, -2.6]}, {"vector": [0, 0, 1]}]
+
+    assert magnetic_moments_are_collinear({"moments": moments}) is True
+
+
+def test_moments_rounded_to_a_few_decimals_are_collinear() -> None:
+    moments = [{"vector": [0.577, 0.577, 0.577]}, {"vector": [-0.5774, -0.5774, -0.5773]}]
+
+    assert magnetic_moments_are_collinear({"moments": moments}) is True
+
+
+def test_moments_along_different_axes_are_not_collinear() -> None:
+    moments = [{"vector": [1.0, 0.0, 0.0]}, {"vector": [0.0, 1.0, 0.0]}]
+
+    assert magnetic_moments_are_collinear({"moments": moments}) is False
+
+
+def test_collinearity_ignores_zero_and_malformed_moments() -> None:
+    moments = [
+        {"vector": [0.0, 0.0, 0.0]},
+        {"vector": ["x", 0.0, 1.0]},
+        {"vector": [1.0, 0.0]},
+        "not a moment",
+        {"vector": [0.0, 0.0, 1.0]},
+    ]
+
+    assert magnetic_moments_are_collinear({"moments": moments}) is True
+    assert magnetic_moments_are_collinear({}) is True
 
 
 # atomic_spins_from_magnetic_moments

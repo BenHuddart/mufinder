@@ -558,6 +558,11 @@ Energy barriers
   allowed so symmetry-equivalent same-site hops can be generated, with
   zero-length self-maps excluded. An optional maximum path length filters the
   candidates.
+- Two hops are the same path only when one symmetry operation maps both
+  endpoints of one onto those of the other. The operations respect a collinear
+  magnetic order on the host: those that keep the spin pattern or flip it as a
+  whole. The page states whether paths use the crystal symmetry or the lower
+  symmetry of the magnetic order.
 - Generated path rows remain available after the endpoint selectors change,
   and are removable, including with Delete and Backspace when the table has
   focus.

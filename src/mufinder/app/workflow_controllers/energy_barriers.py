@@ -72,10 +72,12 @@ from mufinder.services.source_candidates import (
     energy_barrier_neb_source_candidates,
     energy_barrier_neb_sources_by_job_id,
     energy_barrier_path_preview_structure,
+    energy_barrier_path_symmetry_uses_magnetic_order,
     energy_barrier_source_label,
     enumerate_energy_barrier_source_candidates,
     float_from_source,
     fractional_triplet_from_source,
+    keep_stored_path_keys,
     quantum_source_candidate_by_key,
     quantum_source_relative_energies,
     selected_energy_barrier_endpoint_keys,
@@ -166,6 +168,11 @@ _DEFAULT_IMAGES = 11
 # it is surfaced in eV/Ang, the unit the .castep output reports.
 _FORCE_TOL_UNIT = "eV/ang"
 _DEFAULT_FORCE_TOL = ValueWithUnit(0.05, _FORCE_TOL_UNIT)
+_PATH_SYMMETRY_NOTE_CACHE_SIZE = 64
+PATH_SYMMETRY_CRYSTAL_NOTE = "Paths use the crystal symmetry."
+PATH_SYMMETRY_MAGNETIC_NOTE = (
+    "Paths use the magnetic order's symmetry, which is lower than the crystal symmetry."
+)
 
 
 @dataclass(frozen=True)
@@ -212,6 +219,7 @@ class EnergyBarriersController(WorkflowJobController):
         super().__init__(context)
         self._deps = deps
         self._view_getter = view_getter
+        self._path_symmetry_notes: dict[str, str] = {}
 
     # --- paths ---
 
@@ -309,7 +317,9 @@ class EnergyBarriersController(WorkflowJobController):
 
         The endpoints must both be chosen and share a charge state, and a
         maximum path length, when given, must be positive. The new paths replace
-        those previously generated for the same endpoint pair.
+        those previously generated for the same endpoint pair, except that a path
+        generated again keeps its key and a stored path with an NEB job or saved
+        settings stays (:func:`keep_stored_path_keys`).
         """
 
         document = self._context.document()
@@ -349,18 +359,84 @@ class EnergyBarriersController(WorkflowJobController):
             state.pop("max_path_length_ang", None)
         else:
             state["max_path_length_ang"] = max_distance_ang
+        stored = state.get("generated_sources", [])
+        # A stored path with a job or saved settings stays even when this pass no
+        # longer generates it: its job and results are durable.
+        definitions = self.path_definitions()
+        stored_keys = {
+            str(source.get("key", "")).strip()
+            for source in (stored if isinstance(stored, list) else ())
+            if isinstance(source, dict)
+        }
+        durable_keys = {
+            key
+            for key in stored_keys
+            if key
+            and any(
+                self.job_for_key(definition, key) is not None
+                or workflow_row_configuration_exists(definition, key)
+                for definition in definitions
+            )
+        }
+        candidates = keep_stored_path_keys(document, candidates, stored, durable_keys=durable_keys)
         state["generated_sources"] = replace_serialized_sources_for_pair(
-            state.get("generated_sources", []),
+            stored,
             reactant_site_id=str(reactant.site.id),
             product_site_id=str(product.site.id),
             new_sources=serialize_energy_barrier_source_candidates(candidates),
             charge_state=charge_state_for_job(reactant.job),
+            keep_keys=durable_keys,
         )
         document.ui_state[ENERGY_BARRIERS_FORM_STATE_KEY] = state
         self.refresh_view()
         self._context.persist_ui_state(
             failure_message="Energy Barriers paths were generated, but autosave failed."
         )
+
+    def path_symmetry_note(self, reactant_key: str) -> str:
+        """Return which symmetry groups the paths from ``reactant_key``, for the page.
+
+        Empty when no eligible initial endpoint is chosen or its supercell cannot
+        be matched to the host.
+        """
+
+        document = self._context.document()
+        host_id = document.project.host_structure_id if document is not None else None
+        host = document.structures.get(host_id) if document is not None and host_id else None
+        reactant = quantum_source_candidate_by_key(document, reactant_key) if reactant_key else None
+        if host is None or reactant is None:
+            return ""
+        # The note rebuilds the endpoint supercell, so it is computed once per host
+        # and endpoint structure rather than on every refresh.
+        cache_key = repr(
+            (
+                id(document),
+                reactant.structure.id,
+                host.id,
+                host.lattice_vectors,
+                host.species,
+                host.fractional_positions,
+                *(
+                    host.properties.get(name)
+                    for name in ("atomic_spins", "magnetic_structure", "propagation_vector")
+                ),
+            )
+        )
+        note = self._path_symmetry_notes.get(cache_key)
+        if note is None:
+            uses_magnetic_order = energy_barrier_path_symmetry_uses_magnetic_order(
+                document, reactant_key
+            )
+            if uses_magnetic_order is None:
+                note = ""
+            elif uses_magnetic_order:
+                note = PATH_SYMMETRY_MAGNETIC_NOTE
+            else:
+                note = PATH_SYMMETRY_CRYSTAL_NOTE
+            if len(self._path_symmetry_notes) >= _PATH_SYMMETRY_NOTE_CACHE_SIZE:
+                self._path_symmetry_notes.clear()
+            self._path_symmetry_notes[cache_key] = note
+        return note
 
     def path_preview(self, key: str) -> PathPreview | None:
         """Return what the path viewer shows for path ``key``.
@@ -1077,6 +1153,7 @@ class EnergyBarriersController(WorkflowJobController):
         if document is None:
             view.set_site_scope(show_every_site=False)
             view.set_endpoint_options([])
+            view.set_path_symmetry_note("")
             view.set_sources([])
             view.set_neb_results([])
             return
@@ -1104,6 +1181,7 @@ class EnergyBarriersController(WorkflowJobController):
             product_key=product_key,
             max_path_length_text=energy_barrier_max_path_length_text(document),
         )
+        view.set_path_symmetry_note(self.path_symmetry_note(reactant_key))
 
         # One unified table: each generated path carries its NEB status + configuration.
         source_rows: list[EnergyBarrierSourceRow] = []
