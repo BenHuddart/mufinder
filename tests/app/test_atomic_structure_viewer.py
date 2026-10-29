@@ -17,7 +17,11 @@ import pytest
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.supercell_dialog import SupercellPreviewDialog
-from tests.support.pyvista_fakes import count_created_interactors
+from tests.support.pyvista_fakes import (
+    FakePlotter,
+    count_created_interactors,
+    count_scene_renders,
+)
 from tests.support.structures import host_structure
 
 _magnetic_host = partial(
@@ -29,29 +33,32 @@ _magnetic_host = partial(
 
 
 class _RenderCounter:
-    """Count ``render`` calls on a viewer's main and triad plotters."""
+    """Count ``render`` calls on a viewer's main and triad plotters.
+
+    The plotters exist only once the viewer is first shown, so the count is
+    taken on the fake plotter class and attributed by the canvas that owns it.
+    """
 
     def __init__(self, viewer: AtomicStructureViewer, monkeypatch: pytest.MonkeyPatch) -> None:
         self.main = 0
         self.triad = 0
         self.add_mesh_render_flags: list[object] = []
-        plotter = viewer._canvas.plotter
-        triad_plotter = viewer._triad_canvas.plotter
-        original_add_mesh = plotter.add_mesh
+        counter = self
+        original_add_mesh = FakePlotter.add_mesh
 
-        def count_main() -> None:
-            self.main += 1
+        def counting_render(plotter: FakePlotter) -> None:
+            if plotter.parent() is viewer._canvas:
+                counter.main += 1
+            elif plotter.parent() is viewer._triad_canvas:
+                counter.triad += 1
 
-        def count_triad() -> None:
-            self.triad += 1
+        def recording_add_mesh(plotter: FakePlotter, mesh, **kwargs):
+            if plotter.parent() is viewer._canvas:
+                counter.add_mesh_render_flags.append(kwargs.get("render", True))
+            return original_add_mesh(plotter, mesh, **kwargs)
 
-        def recording_add_mesh(mesh, **kwargs):
-            self.add_mesh_render_flags.append(kwargs.get("render", True))
-            return original_add_mesh(mesh, **kwargs)
-
-        monkeypatch.setattr(plotter, "render", count_main)
-        monkeypatch.setattr(triad_plotter, "render", count_triad)
-        monkeypatch.setattr(plotter, "add_mesh", recording_add_mesh)
+        monkeypatch.setattr(FakePlotter, "render", counting_render)
+        monkeypatch.setattr(FakePlotter, "add_mesh", recording_add_mesh)
 
     def reset(self) -> None:
         self.main = 0
@@ -383,20 +390,19 @@ def test_a_viewer_creates_its_render_windows_on_first_show(qapp, monkeypatch) ->
         assert interactors == []
         assert viewer._canvas.plotter is None
 
-        renders = []
-        monkeypatch.setattr(AtomicStructureViewer, "_render_pyvista", _counting(renders))
+        renders = count_scene_renders(monkeypatch)
         viewer.show()
 
         # One interactor for the scene and one for the triad, and one scene render.
         assert len(interactors) == 2
-        assert viewer._canvas.plotter is interactors[0]
-        assert interactors[0].isVisible()
-        assert len(renders) == 1
+        assert {viewer._canvas.plotter, viewer._triad_canvas.plotter} == set(interactors)
+        assert viewer._canvas.plotter.isVisible()
+        assert renders == {viewer: 1}
         assert viewer._pyvista_atom_actor is not None
         assert viewer._pyvista_spin_actors
         assert viewer._pyvista_point_overlay_actors
         # The triad is built from the cell it was given, in its own interactor.
-        assert interactors[1]._actors
+        assert viewer._triad_canvas.plotter._actors
 
         viewer.hide()
         viewer.show()
@@ -413,13 +419,3 @@ def test_a_viewer_closed_before_it_is_shown_creates_no_render_window(qapp, monke
     viewer.show()
 
     assert interactors == []
-
-
-def _counting(calls: list) -> object:
-    original = AtomicStructureViewer._render_pyvista
-
-    def counted(self) -> None:
-        calls.append(self)
-        original(self)
-
-    return counted

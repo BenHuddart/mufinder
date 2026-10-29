@@ -2413,6 +2413,9 @@ def test_atomic_structure_viewer_theme_refresh_rerenders_scene(
     draws: list[bool] = []
 
     class _Canvas:
+        # A shown viewer's canvas has its plotter.
+        plotter = object()
+
         def refresh_theme(self, *, draw: bool = True) -> None:
             calls["canvas"] += 1
             draws.append(draw)

@@ -15,7 +15,6 @@ from PySide6.QtWidgets import QApplication
 import mufinder.castep_io.schema as _schema_module
 from mufinder.app.gui_garbage_collector import GuiGarbageCollector, install_gui_garbage_collector
 from mufinder.app.theme import cleanup_theme_runtime
-from tests.support.pyvista_fakes import FakePyVistaCanvas, FakePyVistaTriadCanvas
 
 
 # Process-wide CASTEP keyword-schema state. Several tests rebuild it (refresh_keyword_catalog,
@@ -361,6 +360,7 @@ def _fake_pyvista_qt_backend(request: pytest.FixtureRequest, monkeypatch: pytest
     pv = pytest.importorskip("pyvista")
 
     from mufinder.app import atomic_structure_viewer as atomic_structure_viewer_module
+    from tests.support.pyvista_fakes import FakePyVistaCanvas, FakePyVistaTriadCanvas
 
     monkeypatch.setattr(atomic_structure_viewer_module, "_pyvista_modules", lambda: (pv, object()))
     monkeypatch.setattr(atomic_structure_viewer_module, "_PyVistaCanvas", FakePyVistaCanvas)

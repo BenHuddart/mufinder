@@ -8,6 +8,7 @@ tests that exercise the production canvases.
 
 from __future__ import annotations
 
+from collections import Counter
 from types import SimpleNamespace
 
 import pytest
@@ -157,25 +158,32 @@ class FakePlotter(QWidget):
 
 
 class FakePyVistaCanvas(QWidget):
+    """Like the production canvas: no plotter until the viewer's first show."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._plotter = FakePlotter(self)
+        self._plotter: FakePlotter | None = None
 
     @property
     def plotter(self):
         return self._plotter
 
     def ensure_plotter(self):
+        if self._plotter is None:
+            self._plotter = FakePlotter(self)
         return self._plotter
 
     def draw_idle(self) -> None:
-        self._plotter.render()
+        if self._plotter is not None:
+            self._plotter.render()
 
 
 class FakePyVistaTriadCanvas(QWidget):
+    """Like the production triad: no plotter until the viewer's first show."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._plotter = FakePlotter(self)
+        self._plotter: FakePlotter | None = None
         self._scene = None
         self._light_direction = None
         self.setFixedWidth(132)
@@ -186,6 +194,8 @@ class FakePyVistaTriadCanvas(QWidget):
         return self._plotter
 
     def ensure_plotter(self):
+        if self._plotter is None:
+            self._plotter = FakePlotter(self)
         return self._plotter
 
     def set_scene(self, **kwargs) -> None:
@@ -195,7 +205,8 @@ class FakePyVistaTriadCanvas(QWidget):
         self._light_direction = direction
 
     def draw_idle(self) -> None:
-        self._plotter.render()
+        if self._plotter is not None:
+            self._plotter.render()
 
 
 def count_created_interactors(monkeypatch: pytest.MonkeyPatch) -> list[FakePlotter]:
@@ -219,3 +230,17 @@ def count_created_interactors(monkeypatch: pytest.MonkeyPatch) -> list[FakePlott
     monkeypatch.setattr(_viewer_module, "_PyVistaTriadCanvas", triad_canvas)
     monkeypatch.setattr(_viewer_module, "_pyvista_modules", lambda: (pv, _CountedInteractor))
     return created
+
+
+def count_scene_renders(monkeypatch: pytest.MonkeyPatch) -> Counter:
+    """Count full scene rebuilds (``_render_pyvista`` calls), keyed by the viewer."""
+
+    counts: Counter = Counter()
+    original = _viewer_module.AtomicStructureViewer._render_pyvista
+
+    def counted(viewer: _viewer_module.AtomicStructureViewer) -> None:
+        counts[viewer] += 1
+        original(viewer)
+
+    monkeypatch.setattr(_viewer_module.AtomicStructureViewer, "_render_pyvista", counted)
+    return counts

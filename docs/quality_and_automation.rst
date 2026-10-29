@@ -741,7 +741,9 @@ other cores kept busy by spinning processes:
 
 Structure viewers are created on first show: building the main window creates
 no VTK render window and imports no PyVista, and the first page with a viewer
-pays that set-up once when it opens (:doc:`/architecture`).
+pays that set-up once when it opens (:doc:`/architecture`). The splash screen
+stays up for at least ``mufinder.main.MINIMUM_SPLASH_MS`` (0.8 s), so it does
+not flash past on a fast start.
 
 Quantum Corrections' analysis window builds only the tab it opens on
 (``Phonon Modes``) and refreshes its structure viewer once; the other tabs are

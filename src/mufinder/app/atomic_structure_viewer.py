@@ -1430,7 +1430,11 @@ def _create_qt_interactor(parent: QWidget):
 
 
 def _add_interactor_to_layout(container: QWidget, plotter) -> None:
-    container.layout().addWidget(plotter)
+    layout = container.layout()
+    layout.addWidget(plotter)
+    # Sized now rather than at the next layout pass, so the first render has the
+    # interactor's real size.
+    layout.activate()
     if container.isVisible():
         # Created while its container is showing: Qt would show it only later.
         plotter.show()
@@ -1876,18 +1880,14 @@ class AtomicStructureViewer(QWidget):
         self._render_pending = False
         self._draw_pending = False
         self._triad_draw_pending = False
-        # The canvases create their VTK interactors in _ensure_backend, on first show.
-        self._backend_ready = False
 
         self._backend_name = _require_pyvista_backend()
+        # The canvases create their VTK interactors in _ensure_backend, on first show.
         self._canvas = _PyVistaCanvas(self)
         self._canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._canvas.installEventFilter(self)
-        try:
-            self._triad_canvas = _PyVistaTriadCanvas(self)
-            self._triad_canvas.set_light_direction(self._pyvista_light_direction)
-        except RuntimeError:
-            self._triad_canvas = _CrystallographicTriadCanvas(self)
+        self._triad_canvas = _PyVistaTriadCanvas(self)
+        self._triad_canvas.set_light_direction(self._pyvista_light_direction)
 
         self._show_cell = QCheckBox("Cell")
         self._show_cell.setChecked(True)
@@ -1963,16 +1963,25 @@ class AtomicStructureViewer(QWidget):
         it is given with its scene marked stale, and ``showEvent`` draws them once.
         """
 
-        if self._backend_ready or self._shutting_down:
+        if self._backend_ready() or self._shutting_down:
             return
-        self._backend_ready = True
+        # The triad first: the viewer counts as ready once the main plotter exists,
+        # so a failure here leaves it unready and the next show tries again.
+        self._triad_canvas.ensure_plotter()
         plotter = self._canvas.ensure_plotter()
+        if plotter is None:
+            return
         plotter.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         plotter.installEventFilter(self)
         self._configure_pyvista_interaction()
-        ensure_triad = getattr(self._triad_canvas, "ensure_plotter", None)
-        if callable(ensure_triad):
-            ensure_triad()
+        # Give the new interactors their size now: this showEvent draws the scene
+        # before Qt would lay them out.
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+
+    def _backend_ready(self) -> bool:
+        return self._canvas.plotter is not None
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
@@ -2070,7 +2079,7 @@ class AtomicStructureViewer(QWidget):
     def _defers_drawing(self) -> bool:
         """Whether drawing waits: for the end of a batch, or for the viewer to show."""
 
-        return bool(self._batch_depth) or not self.isVisible() or not self._backend_ready
+        return bool(self._batch_depth) or not self.isVisible() or not self._backend_ready()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
         canvas = getattr(self, "_canvas", None)
@@ -4488,7 +4497,7 @@ class AtomicStructureViewer(QWidget):
     def _draw_crystallographic_axes(self) -> None:
         if self._shutting_down:
             return
-        if not self.isVisible() or not self._backend_ready or self._render_deferred():
+        if not self.isVisible() or not self._backend_ready() or self._render_deferred():
             # Reading a fresh plotter's camera makes PyVista reset it, which
             # renders. A hidden viewer syncs the triad when it is shown, and a
             # pending rebuild syncs it when it draws.

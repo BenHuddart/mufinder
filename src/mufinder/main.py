@@ -20,6 +20,10 @@ def _main_window_ctor():
     return MainWindow
 
 
+# The splash stays up at least this long, so it does not flash past on a fast start.
+MINIMUM_SPLASH_MS = 800
+
+
 def _splash_screen_ctor():
     from mufinder.app.splash_screen import MuFinderSplashScreen
 
@@ -225,7 +229,6 @@ def _wait_for_splash_exposed(app: QApplication, splash: object, *, timeout_ms: i
 
 def run() -> int:
     """Start the Qt application."""
-    minimum_splash_ms = 800
 
     # Before anything imports NumPy: the BLAS and OpenMP pools read their size once,
     # when they load. Setting variables is cheap, so the splash rule holds.
@@ -273,7 +276,7 @@ def run() -> int:
     _process_events(app, max_ms=10)
 
     should_delay = app.__class__.__module__.startswith("PySide6.")
-    while should_delay and splash_clock.elapsed() < minimum_splash_ms:
+    while should_delay and splash_clock.elapsed() < MINIMUM_SPLASH_MS:
         _process_events(app, max_ms=25)
         QThread.msleep(25)
 

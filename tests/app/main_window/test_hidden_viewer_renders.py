@@ -19,7 +19,7 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.main_window import MainWindow
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import open_project_with_host, select_route
-from tests.support.pyvista_fakes import count_created_interactors
+from tests.support.pyvista_fakes import count_created_interactors, count_scene_renders
 from tests.support.structures import host_structure
 
 
@@ -27,15 +27,7 @@ from tests.support.structures import host_structure
 def renders(monkeypatch: pytest.MonkeyPatch) -> Counter:
     """Count scene rebuilds per viewer, keyed by the viewer."""
 
-    counts: Counter = Counter()
-    original = AtomicStructureViewer._render_pyvista
-
-    def counted(self) -> None:
-        counts[self] += 1
-        original(self)
-
-    monkeypatch.setattr(AtomicStructureViewer, "_render_pyvista", counted)
-    return counts
+    return count_scene_renders(monkeypatch)
 
 
 @pytest.fixture
@@ -91,7 +83,7 @@ def test_building_the_window_creates_no_render_window_until_a_viewer_page_shows(
         host_viewer = window._host_structure_view._viewer
         # The host viewer's scene and triad, rendered once; no other viewer.
         assert len(interactors) == 2
-        assert host_viewer._canvas.plotter is interactors[0]
+        assert {host_viewer._canvas.plotter, host_viewer._triad_canvas.plotter} == set(interactors)
         assert renders == Counter({host_viewer: 1})
     finally:
         window.close()
