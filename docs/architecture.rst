@@ -215,8 +215,8 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
 - :func:`~mufinder.app.adapter_common.coerce_supercell_matrix`,
   :func:`~mufinder.app.adapter_common.is_identity_supercell` and
   :func:`~mufinder.app.adapter_common.supercell_label` are the one parser,
-  identity test and label for a 3×3 supercell matrix, used by the adapters and
-  the workflow widgets alike.
+  identity test and label for a 3×3 supercell matrix, used by the adapters,
+  the workflow widgets and the Supercell Editor alike.
 - :func:`~mufinder.app.adapter_common.project_convergence_parameter_values`
   turns the project defaults (functional, cut-off energy in eV, k-point grid
   rescaled to a target cell) into GUI parameter values, the lowest layer of an

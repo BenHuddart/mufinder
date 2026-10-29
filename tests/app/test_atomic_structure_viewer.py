@@ -16,7 +16,8 @@ import pytest
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.host_structure_widget import HostStructureWidget
-from mufinder.app.supercell_dialog import SupercellPreviewDialog
+from mufinder.app.supercell_dialog import SupercellEditorDialog
+from mufinder.services.project_service import ProjectService
 from tests.support.pyvista_fakes import (
     FakePlotter,
     count_created_interactors,
@@ -272,11 +273,18 @@ def test_host_widget_loads_a_magnetic_host_with_one_render(qapp, monkeypatch) ->
     widget.close()
 
 
-def test_supercell_preview_shows_structure_and_spins_with_one_render(qapp, monkeypatch) -> None:
-    dialog = SupercellPreviewDialog(
-        structure=_magnetic_host(),
-        atomic_spins=[1.0, -1.0],
-        propagation_vector=[0.0, 0.0, 0.0],
+def test_supercell_editor_preview_shows_structure_and_spins_with_one_render(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "preview.mufinder", "Preview")
+    host = _magnetic_host()
+    service.add_structure(doc, host)
+    assert service.structure_atomic_spins(host) == [1.0, -1.0]
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
         initial_matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
     )
     dialog.show()

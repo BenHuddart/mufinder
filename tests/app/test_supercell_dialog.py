@@ -1,4 +1,4 @@
-"""Tests for the supercell preview dialog UI and generation behavior."""
+"""Tests for the Supercell Editor dialog UI and generation behavior."""
 
 from __future__ import annotations
 
@@ -7,11 +7,12 @@ from functools import partial
 from PySide6.QtWidgets import QDialog, QHeaderView
 
 from mufinder.app import workflow_table_utils
-from mufinder.app.supercell_dialog import SupercellEditorDialog, SupercellPreviewDialog
+from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
 from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Structure
+from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.supercell_suggestion import SupercellCandidate, SupercellSuggestion
 from mufinder.services.project_service import ProjectService
 from tests.support.qt import answer_next_message_box
@@ -19,74 +20,6 @@ from tests.support.structures import si_pair_host
 
 
 _host_structure = partial(si_pair_host, label="Host", properties={"pbc": [True, True, True]})
-
-
-def test_supercell_dialog_simple_mode_matrix(qapp) -> None:
-    dialog = SupercellPreviewDialog(
-        structure=_host_structure(),
-        atomic_spins=[1.0, -1.0],
-        propagation_vector=[0.0, 0.0, 0.0],
-        initial_matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 3]],
-    )
-
-    assert not dialog._advanced_toggle.isChecked()
-    assert dialog.matrix() == [[2, 0, 0], [0, 1, 0], [0, 0, 3]]
-    assert dialog._viewer._atoms is not None
-    assert len(dialog._viewer._atoms) == 12
-
-    dialog.close()
-
-
-def test_supercell_dialog_advanced_mode_matrix(qapp) -> None:
-    dialog = SupercellPreviewDialog(
-        structure=_host_structure(),
-        atomic_spins=[1.0, -1.0],
-        propagation_vector=[0.0, 0.0, 0.5],
-        initial_matrix=[[1, 1, 0], [0, 1, 0], [0, 0, 1]],
-    )
-
-    assert dialog._advanced_toggle.isChecked()
-    assert "background: transparent" in dialog._advanced_toggle.styleSheet()
-    assert dialog.matrix() == [[1, 1, 0], [0, 1, 0], [0, 0, 1]]
-
-    dialog._advanced_cells[0][0].setValue(2)
-    dialog._generate_preview()
-
-    assert dialog._viewer._atoms is not None
-    assert len(dialog._viewer._atoms) >= 2
-
-    dialog.close()
-
-
-def test_supercell_dialog_supports_unit_cell_action(qapp) -> None:
-    dialog = SupercellPreviewDialog(
-        structure=_host_structure(),
-        atomic_spins=[1.0, -1.0],
-        propagation_vector=[0.0, 0.0, 0.0],
-        accept_button_text="Save Supercell",
-        show_unit_cell_button=True,
-    )
-
-    dialog._accept_unit_cell()
-
-    assert dialog.result() == dialog.DialogCode.Accepted
-    assert dialog.result_mode() == "unit_cell"
-    dialog.close()
-
-
-def test_supercell_dialog_shutdowns_viewer_on_reject(qapp, monkeypatch) -> None:
-    dialog = SupercellPreviewDialog(
-        structure=_host_structure(),
-        atomic_spins=[1.0, -1.0],
-        propagation_vector=[0.0, 0.0, 0.0],
-    )
-    calls: list[bool] = []
-    monkeypatch.setattr(dialog._viewer, "shutdown", lambda: calls.append(True))
-
-    dialog.reject()
-
-    assert calls == [True]
-    dialog.close()
 
 
 def test_supercell_editor_saves_named_asset_and_selects_it(qapp, tmp_path) -> None:
@@ -139,6 +72,70 @@ def test_supercell_editor_asset_table_visible_columns_stretch(qapp, tmp_path) ->
         dialog._USAGE_COLUMN,
     ):
         assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch
+    dialog.close()
+
+
+def test_supercell_editor_labels_matrices_through_the_shared_label(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_labels.mufinder", "EditorLabels")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    for label, matrix in (
+        ("Diagonal", [[2, 0, 0], [0, 2, 0], [0, 0, 2]]),
+        ("Skewed", [[1, 1, 0], [0, 1, 0], [0, 0, 1]]),
+    ):
+        service.create_workflow_supercell_asset(
+            doc,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            host_structure_id=host.id,
+            matrix=matrix,
+            label=label,
+            reuse_existing=False,
+        )
+
+    dialog = SupercellEditorDialog(document=doc, project_service=service, source_structure=host)
+
+    matrix_column = {
+        dialog._asset_table.item(row, dialog._NAME_COLUMN).text(): dialog._asset_table.item(
+            row, dialog._MATRIX_COLUMN
+        ).text()
+        for row in range(dialog._asset_table.rowCount())
+    }
+    assert matrix_column == {"Diagonal": "2x2x2", "Skewed": "[1 1 0; 0 1 0; 0 0 1]"}
+    assert dialog._status_label.text().startswith("Previewing 1x1x1 -> ")
+
+    dialog._new_button.click()
+
+    assert dialog._name_edit.text() == "1x1x1 supercell"
+    dialog.close()
+
+
+def test_supercell_editor_preview_propagates_the_host_spins_along_q(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_modulated.mufinder", "EditorModulated")
+    host = _host_structure(
+        properties={
+            "pbc": [True, True, True],
+            "atomic_spins": [1.0, -1.0],
+            "propagation_vector": [0.0, 0.0, 0.5],
+        }
+    )
+    service.add_structure(doc, host)
+    matrix = [[1, 1, 0], [0, 1, 0], [0, 0, 2]]
+    _expanded, expected = build_supercell_structure(
+        host, matrix, atomic_spins=[1.0, -1.0], propagation_vector=[0.0, 0.0, 0.5]
+    )
+    _expanded, unmodulated = build_supercell_structure(
+        host, matrix, atomic_spins=[1.0, -1.0], propagation_vector=[0.0, 0.0, 0.0]
+    )
+    assert list(expected) != list(unmodulated)
+
+    dialog = SupercellEditorDialog(
+        document=doc, project_service=service, source_structure=host, initial_matrix=matrix
+    )
+
+    assert dialog._advanced_toggle.isChecked()
+    assert dialog._viewer._spins.tolist() == list(expected)
     dialog.close()
 
 
