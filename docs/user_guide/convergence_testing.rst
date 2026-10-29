@@ -371,8 +371,9 @@ logarithmic scale; a second axis along the top marks round ``K-point spacing
 The thresholds, results, and plot are saved with the project, so reopening
 the examiner shows the last analysis. An analysis saved by an earlier MuFinder
 version, which chose between several energy methods, is not shown: the
-examiner keeps its thresholds and plotted points and opens at the summary, so
-click ``Analyse Convergence`` to judge the sweep again.
+examiner keeps its thresholds and plotted points and opens at the summary with
+an ``Earlier analysis`` row saying it was set aside, so click ``Analyse
+Convergence`` to judge the sweep again.
 
 How convergence is judged
 ~~~~~~~~~~~~~~~~~~~~~~~~~

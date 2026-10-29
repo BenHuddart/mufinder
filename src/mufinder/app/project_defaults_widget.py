@@ -35,6 +35,7 @@ from mufinder.domain.models import MANUAL_DEFAULT_METHOD, Project
 from mufinder.app.convergence_display import (
     format_convergence_criteria,
     format_cutoff_energy,
+    format_default_criteria,
     format_kpoint_grid,
 )
 from mufinder.app.theme import refresh_widget_style, style_hint_text, style_warning_text
@@ -143,7 +144,13 @@ def _convergence_detail(
     xc_functional: str | None,
 ) -> str:
     if method == MANUAL_DEFAULT_METHOD:
-        return "Set manually, not from a convergence test."
+        manual = format_default_criteria(
+            method=method,
+            energy_threshold=energy_threshold,
+            force_threshold=force_threshold,
+            stress_threshold=stress_threshold,
+        )
+        return f"{manual}, not from a convergence test."
     parts: list[str] = []
     if not (energy_threshold is None and force_threshold is None and stress_threshold is None):
         parts.append(

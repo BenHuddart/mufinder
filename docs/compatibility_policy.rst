@@ -669,11 +669,12 @@ replacement named.
   ``reference_value`` and ``deviations`` (each point's distance from the
   reference); ``details`` is a property joining them.
 
-The examiner's saved state (``ui_state``) no longer writes ``method`` or
-``selected_method_for_recommendation``, and overview snapshots no longer write
+The examiner's saved state (``ui_state``) no longer writes ``method``,
+``selected_method_for_recommendation`` or ``results_text`` (the results are
+stored as ``results_rows``), and overview snapshots no longer write
 ``method``. An examiner state that still has ``method`` was produced by the
-retired criteria: the examiner keeps its thresholds and plot data and drops its
-results and recommendation. Old overview snapshots render as before; their
+retired criteria: the examiner keeps its thresholds and plot data, drops its
+results and recommendation, and says so in an ``Earlier analysis`` row. Old overview snapshots render as before; their
 ``method`` is ignored. No shim or migration is needed for UI state.
 
 The setting below was removed without a deprecation period, because nothing

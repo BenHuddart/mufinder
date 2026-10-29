@@ -384,7 +384,9 @@ def _sweep_check_from_fit(
             **common,
         )
     step = finest - float(x[-2])
-    suggested = math.ceil(required / step - 1e-9) * step
+    # Round to a millionth of a step first: the fitted ``required`` carries
+    # least-squares noise, and an exact multiple must not gain a whole step.
+    suggested = math.ceil(round(required / step, 6)) * step
     return SweepLengthCheck(
         status=SWEEP_TOO_SHORT,
         summary="too short",

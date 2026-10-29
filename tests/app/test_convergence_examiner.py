@@ -172,6 +172,10 @@ def test_convergence_examiner_discards_an_analysis_saved_by_an_earlier_version(q
     text = dialog._results.toPlainText()
     assert "asymptotic" not in text
     assert "Completed points\n3" in text
+    assert (
+        "Earlier analysis\nset aside: it used an energy method this version no longer offers"
+        "\n\nclick Analyse Convergence to judge the sweep again"
+    ) in text
     assert dialog._recommended_value is None
     assert dialog._energy_result is None
     assert dialog._adopt_button.isEnabled() is False
@@ -183,6 +187,8 @@ def test_convergence_examiner_discards_an_analysis_saved_by_an_earlier_version(q
     dialog._run_analysis()
 
     assert "method" not in states[-1]
+    assert "results_text" not in states[-1]
+    assert "Earlier analysis" not in dialog._results.toPlainText()
     assert "selected_method_for_recommendation" not in states[-1]
 
 
@@ -724,6 +730,9 @@ def test_convergence_examiner_runs_stress_and_passes_through_signal(qapp) -> Non
     assert dialog._stress_result is not None
     assert "Stress\nconverged at 400 eV" in dialog._results.toPlainText()
     assert "stress 0.1 GPa" in dialog._results.toPlainText()
+    assert dialog._force_ax.get_title() == (
+        "Force / stress convergence (thresholds 0.05 eV/Ang, 0.1 GPa)"
+    )
 
     adopted: list[tuple] = []
     dialog.cutoff_adopted.connect(lambda *args: adopted.append(args))

@@ -665,7 +665,7 @@ class ConvergenceExaminerDialog(QDialog):
                 else "Set as Project Default K-Point Grid"
             )
 
-    def _write_initial_summary(self) -> None:
+    def _write_initial_summary(self, extra_rows: Sequence[ResultRow] = ()) -> None:
         energy_cutoffs, _energies = self._energy_series()
         force_cutoffs, _forces = self._force_series()
         stress_cutoffs, _stresses = self._stress_series()
@@ -698,6 +698,7 @@ class ConvergenceExaminerDialog(QDialog):
                     ("Simulation-cell atom count must be positive before analysis can run.",),
                 )
             )
+        summary.extend(extra_rows)
         self._show_results([summary, *self._note_groups()])
 
     def _draw_initial_plot(self) -> None:
@@ -812,7 +813,6 @@ class ConvergenceExaminerDialog(QDialog):
             "results_rows": [
                 [[label, list(lines)] for label, lines in group] for group in self._result_groups
             ],
-            "results_text": self._results.toPlainText(),
             "recommended_value": self._recommended_value,
             "recommended_cutoff": self._recommended_value,
             "energy_threshold_for_recommendation": self._energy_threshold_for_recommendation,
@@ -908,6 +908,17 @@ class ConvergenceExaminerDialog(QDialog):
             self._energy_threshold_for_recommendation = None
             self._force_threshold_for_recommendation = None
             self._stress_threshold_for_recommendation = None
+            self._write_initial_summary(
+                (
+                    (
+                        "Earlier analysis",
+                        (
+                            "set aside: it used an energy method this version no longer offers",
+                            "click Analyse Convergence to judge the sweep again",
+                        ),
+                    ),
+                )
+            )
         else:
             groups = self._parse_result_groups(state.get("results_rows"))
             if groups:
@@ -1429,7 +1440,7 @@ class ConvergenceExaminerDialog(QDialog):
         if stresses and stress_threshold is not None:
             force_ax.set_title(
                 "Force / stress convergence "
-                f"(dF ≤ {force_threshold:.3g} eV/Ang, dS ≤ {stress_threshold:.3g} GPa)",
+                f"(thresholds {force_threshold:.3g} eV/Ang, {stress_threshold:.3g} GPa)",
                 pad=10,
             )
         else:

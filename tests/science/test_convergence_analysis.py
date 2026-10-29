@@ -200,6 +200,18 @@ def test_the_suggestion_rounds_up_to_the_last_step() -> None:
     assert check.suggested_cutoff == pytest.approx(1250.0)
 
 
+def test_a_suggestion_that_is_an_exact_multiple_of_the_step_is_not_bumped() -> None:
+    # The fit puts the tolerance at 10000 eV to within least-squares noise.
+    cutoffs = [200.0, 300.0, 400.0, 600.0, 800.0, 1000.0]
+    energies = [1e5 * cutoff**-2.0 for cutoff in cutoffs]
+
+    check = check_sweep_length(cutoffs, energies, num_atoms=1, threshold=TOL)
+
+    assert check.status == SWEEP_TOO_SHORT
+    assert check.required_cutoff == pytest.approx(10000.0)
+    assert check.suggested_cutoff == pytest.approx(10000.0)
+
+
 def test_a_long_enough_sweep_does_not_warn() -> None:
     cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0, 800.0]
     energies = _power_law(cutoffs, exponent=-6.0, gap_at_600=0.004)
