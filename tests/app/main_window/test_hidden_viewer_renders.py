@@ -2,7 +2,8 @@
 
 A viewer that is not visible records each change and draws it once when it is
 shown, so opening a project or switching the active host renders only the
-viewer on screen. These tests count full scene rebuilds per viewer through the
+viewer on screen. A viewer creates its VTK render windows on first show, so
+building the window creates none. These tests count full scene rebuilds per viewer through the
 window paths a user drives: opening a saved project, choosing another host and
 navigating to a page.
 """
@@ -17,7 +18,8 @@ import pytest
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.main_window import MainWindow
 from mufinder.services.project_service import ProjectService
-from tests.support.main_window import select_route
+from tests.support.main_window import open_project_with_host, select_route
+from tests.support.pyvista_fakes import count_created_interactors, count_scene_renders
 from tests.support.structures import host_structure
 
 
@@ -25,15 +27,7 @@ from tests.support.structures import host_structure
 def renders(monkeypatch: pytest.MonkeyPatch) -> Counter:
     """Count scene rebuilds per viewer, keyed by the viewer."""
 
-    counts: Counter = Counter()
-    original = AtomicStructureViewer._render_pyvista
-
-    def counted(self) -> None:
-        counts[self] += 1
-        original(self)
-
-    monkeypatch.setattr(AtomicStructureViewer, "_render_pyvista", counted)
-    return counts
+    return count_scene_renders(monkeypatch)
 
 
 @pytest.fixture
@@ -64,6 +58,33 @@ def test_building_the_window_renders_no_viewer(qapp, renders: Counter) -> None:
 
         assert window.findChildren(AtomicStructureViewer)
         assert sum(renders.values()) == 0
+    finally:
+        window.close()
+
+
+def test_building_the_window_creates_no_render_window_until_a_viewer_page_shows(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, renders: Counter
+) -> None:
+    interactors = count_created_interactors(monkeypatch)
+    window = MainWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+        assert window.findChildren(AtomicStructureViewer)
+        assert interactors == []
+
+        open_project_with_host(window, tmp_path)
+        qapp.processEvents()
+        assert interactors == []
+
+        select_route(window, "host_structure")
+        qapp.processEvents()
+
+        host_viewer = window._host_structure_view._viewer
+        # The host viewer's scene and triad, rendered once; no other viewer.
+        assert len(interactors) == 2
+        assert {host_viewer._canvas.plotter, host_viewer._triad_canvas.plotter} == set(interactors)
+        assert renders == Counter({host_viewer: 1})
     finally:
         window.close()
 
