@@ -1982,8 +1982,8 @@ class MainWindow(QMainWindow):
         try:
             with trace.stage("cluster and local job tracking"):
                 self._reset_job_tracking_for_project_change()
-            with trace.stage("project defaults and titles"):
-                self._apply_project_change_defaults_and_titles()
+            with trace.stage("project titles"):
+                self._apply_project_change_titles()
             with trace.stage("comparison and magnetic workspace views"):
                 self._sync_comparison_table_views()
                 self._sync_magnetic_field_workspace_views()
@@ -2063,25 +2063,8 @@ class MainWindow(QMainWindow):
                 failure_message=("Reconciled orphaned local jobs, but saving the project failed.")
             )
 
-    def _apply_project_change_defaults_and_titles(self) -> None:
+    def _apply_project_change_titles(self) -> None:
         assert self._document is not None
-        if self._document.project.recommended_cutoff_energy is not None:
-            self._document.ui_state["default_cut_off_energy"] = float(
-                self._document.project.recommended_cutoff_energy
-            )
-        if self._document.project.recommended_cutoff_method is not None:
-            self._document.ui_state["default_cut_off_energy_method"] = (
-                self._document.project.recommended_cutoff_method
-            )
-        if self._document.project.recommended_cutoff_energy_threshold is not None:
-            self._document.ui_state["default_cut_off_energy_threshold"] = float(
-                self._document.project.recommended_cutoff_energy_threshold
-            )
-        if self._document.project.recommended_cutoff_force_threshold is not None:
-            self._document.ui_state["default_cut_off_force_threshold"] = float(
-                self._document.project.recommended_cutoff_force_threshold
-            )
-
         self._main_title.setText(f"Project: {self._document.project.name}")
         self._main_body.setText(
             "Pick a stage on the chart to see where it stands; double-click it to open it."
@@ -4585,14 +4568,6 @@ class MainWindow(QMainWindow):
             ),
             xc_functional=xc_functional,
         )
-        self._document.ui_state["default_cut_off_energy"] = float(cutoff_energy)
-        self._document.ui_state["default_cut_off_energy_method"] = method
-        self._document.ui_state["default_cut_off_energy_threshold"] = float(energy_threshold)
-        self._document.ui_state["default_cut_off_force_threshold"] = float(force_threshold)
-        if stress_threshold is None:
-            self._document.ui_state.pop("default_cut_off_stress_threshold", None)
-        else:
-            self._document.ui_state["default_cut_off_stress_threshold"] = float(stress_threshold)
         self._store_convergence_overview_snapshot(
             "cutoff",
             self._build_cutoff_overview_snapshot(
@@ -8438,10 +8413,6 @@ class MainWindow(QMainWindow):
             ),
             xc_functional=xc_functional,
         )
-        if stress_threshold is None:
-            self._document.ui_state.pop("default_kpoint_stress_threshold", None)
-        else:
-            self._document.ui_state["default_kpoint_stress_threshold"] = float(stress_threshold)
         self._refresh_project_defaults_views()
         self._store_convergence_overview_snapshot(
             "kpoint",
@@ -8547,15 +8518,6 @@ class MainWindow(QMainWindow):
 
         if self._document is None:
             return
-        ui_state = self._document.ui_state
-        for key in (
-            "default_cut_off_energy",
-            "default_cut_off_energy_method",
-            "default_cut_off_energy_threshold",
-            "default_cut_off_force_threshold",
-            "default_cut_off_stress_threshold",
-        ):
-            ui_state.pop(key, None)
         # The pinned overview plot documents the adopted value. Drop it, or
         # typing that same number back in later would resurrect the plot for a
         # default that is now manual.
@@ -8572,8 +8534,6 @@ class MainWindow(QMainWindow):
             method=MANUAL_DEFAULT_METHOD,
             cell_id=str(host_id) if host_id else None,
         )
-        ui_state["default_cut_off_energy"] = value
-        ui_state["default_cut_off_energy_method"] = MANUAL_DEFAULT_METHOD
         self._finish_project_default_edit(f"Project default cutoff set to {value:.8g} eV")
 
     def _on_project_kpoint_grid_change_requested(self, kpoint_grid: object) -> None:
@@ -8585,7 +8545,6 @@ class MainWindow(QMainWindow):
 
         if self._document is None:
             return
-        self._document.ui_state.pop("default_kpoint_stress_threshold", None)
         self._store_convergence_overview_snapshot("kpoint", None)
         if kpoint_grid is None:
             self._project_service.clear_recommended_kpoint_grid(self._document)

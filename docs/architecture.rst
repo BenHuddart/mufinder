@@ -22,10 +22,12 @@ Package layers
    JSON storage and codec helpers. Persistence may serialize domain objects but
    must not reach into UI, CASTEP I/O, services, workflow expansion, or science
    modules. Saved projects carry a schema version (``PROJECT_SCHEMA_VERSION``
-   in ``mufinder.domain.models``, currently 5); ``mufinder.persistence.migrations``
+   in ``mufinder.domain.models``, currently 6); ``mufinder.persistence.migrations``
    upgrades the raw payloads of a project saved at an older version when it is
-   loaded, one version-keyed step at a time. See
-   :doc:`/compatibility_policy` for each step.
+   loaded, one version-keyed step at a time, and drops top-level ``ui_state``
+   keys that nothing reads any more at every version
+   (``RETIRED_UI_STATE_KEYS``). See :doc:`/compatibility_policy` for each step
+   and each retired key.
 
 ``mufinder.science``
    Numerical and crystallographic algorithms, including site generation,

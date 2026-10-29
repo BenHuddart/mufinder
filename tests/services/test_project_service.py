@@ -27,6 +27,7 @@ from mufinder.domain.models import (
 )
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.journal import build_journal
 from mufinder.services.magnetic_field_results import (
@@ -2595,6 +2596,42 @@ def test_save_project_serializes_ui_state_with_value_with_unit(tmp_path: Path) -
     loaded = service.load_project(root)
 
     assert loaded.ui_state["example"]["threshold"] == {"unit": "eV", "value": 1e-6}
+
+
+def test_load_project_drops_retired_default_cutoff_ui_state_keys(tmp_path: Path) -> None:
+    """``state.json`` files from older releases still carry ``default_cut_off_*`` keys."""
+
+    service = ProjectService()
+    root = tmp_path / "retired_ui_state_keys.mufinder"
+    doc = service.create_project(root, "RetiredUiStateKeys")
+    doc.ui_state["uep_form"] = {"kept": True}
+    service.save_project(doc)
+
+    state_path = root / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "default_cut_off_energy": 550.0,
+            "default_cut_off_energy_method": "converged",
+            "default_cut_off_energy_threshold": 0.001,
+            "default_cut_off_force_threshold": 0.05,
+            "default_cut_off_stress_threshold": 0.1,
+            "default_kpoint_stress_threshold": 0.1,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    loaded = service.load_project(root)
+
+    assert RETIRED_UI_STATE_KEYS.isdisjoint(loaded.ui_state)
+    assert loaded.ui_state["uep_form"] == {"kept": True}
+
+    # The next save rewrites state.json without the keys, even though nothing
+    # else in ui_state changed.
+    service.save_project(loaded)
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert RETIRED_UI_STATE_KEYS.isdisjoint(saved)
+    assert saved["uep_form"] == {"kept": True}
 
 
 def test_save_project_roundtrips_convergence_overview_snapshots(tmp_path: Path) -> None:

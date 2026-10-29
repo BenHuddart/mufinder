@@ -15,6 +15,7 @@ from mufinder.app.workflow_config_codecs import deserialize_convergence_config
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
+from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import select_route
@@ -1902,10 +1903,7 @@ def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_pat
     assert doc.project.recommended_cutoff_method == "converged"
     assert doc.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
-    assert doc.ui_state["default_cut_off_energy"] == pytest.approx(550.0)
-    assert doc.ui_state["default_cut_off_energy_method"] == "converged"
-    assert doc.ui_state["default_cut_off_energy_threshold"] == pytest.approx(0.001)
-    assert doc.ui_state["default_cut_off_force_threshold"] == pytest.approx(0.05)
+    assert RETIRED_UI_STATE_KEYS.isdisjoint(doc.ui_state)
     snapshot = doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["cutoff"]
     assert "method" not in snapshot
     assert snapshot["host_structure_id"] == str(host.id)

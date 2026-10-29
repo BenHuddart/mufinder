@@ -38,6 +38,23 @@ MigrationStep = Callable[[EntityPayloads, dict[str, Any]], set[EntityKey]]
 
 _SWEEP_STAGES = frozenset({"convergence_cutoff", "convergence_kpoint"})
 
+RETIRED_UI_STATE_KEYS = frozenset(
+    {
+        "default_cut_off_energy",
+        "default_cut_off_energy_method",
+        "default_cut_off_energy_threshold",
+        "default_cut_off_force_threshold",
+        "default_cut_off_stress_threshold",
+        "default_kpoint_stress_threshold",
+    }
+)
+"""Top-level ``ui_state`` keys that nothing reads any more.
+
+They copied the adopted convergence defaults, which the project's
+``recommended_*`` fields record. :func:`drop_retired_ui_state_keys` removes
+them when a project loads, whatever its schema version.
+"""
+
 
 def stored_schema_version(manifest: dict[str, Any]) -> int:
     """Return the schema version ``manifest`` was saved at."""
@@ -66,6 +83,21 @@ def migrate_project_payloads(
         version += 1
     manifest["schema_version"] = version
     return changed
+
+
+def drop_retired_ui_state_keys(ui_state: dict[str, Any]) -> set[EntityKey]:
+    """Remove every :data:`RETIRED_UI_STATE_KEYS` entry from ``ui_state`` in place.
+
+    Returns ``{UI_STATE_KEY}`` when a key was removed, so the next save
+    rewrites ``ui_state`` without it, and an empty set otherwise.
+    """
+
+    if not isinstance(ui_state, dict):
+        return set()
+    retired = RETIRED_UI_STATE_KEYS.intersection(ui_state)
+    for key in retired:
+        del ui_state[key]
+    return {UI_STATE_KEY} if retired else set()
 
 
 def _sweep_values_replace_cutoff_energies(

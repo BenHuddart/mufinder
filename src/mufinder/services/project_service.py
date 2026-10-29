@@ -31,7 +31,11 @@ from mufinder.domain.models import (
 from mufinder.persistence import project_codec
 from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
-from mufinder.persistence.migrations import migrate_project_payloads, stored_schema_version
+from mufinder.persistence.migrations import (
+    drop_retired_ui_state_keys,
+    migrate_project_payloads,
+    stored_schema_version,
+)
 from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.job_paths import job_output_directory
@@ -289,9 +293,11 @@ class ProjectService:
         # Projects saved at an older schema are upgraded in memory; the entity
         # files (and ui_state) a migration changed are left out of the
         # dirty-tracking cache below so the next save writes them with the new
-        # manifest version.
+        # manifest version. Retired ui_state keys are dropped at any version,
+        # and the next save writes ui_state without them.
         stored_version = stored_schema_version(manifest)
         migrated_keys = migrate_project_payloads(manifest, payloads, ui_state)
+        migrated_keys |= drop_retired_ui_state_keys(ui_state)
 
         project = project_codec.project_from_dict(manifest)
         # Each entity directory is named after the ``ProjectDocument`` mapping it fills.
