@@ -2105,10 +2105,15 @@ def test_magnetic_field_widget_never_shows_a_non_finite_field(qapp, tmp_path, mo
 
     class _Result:
         site_label = "Mu1"
-        total = (float("nan"), 0.0, 0.0)
-        magnitude = float("nan")
+        total = (0.1, 0.0, 0.0)
+        magnitude = 0.1
         distortion = None
 
+    class _NanResult(_Result):
+        total = (float("nan"), 0.0, 0.0)
+        magnitude = float("nan")
+
+    returned: list[object] = [_Result()]
     monkeypatch.setattr(
         magnetic_field_widget_module,
         "classify_magnetic_model",
@@ -2117,7 +2122,7 @@ def test_magnetic_field_widget_never_shows_a_non_finite_field(qapp, tmp_path, mo
     monkeypatch.setattr(
         magnetic_field_widget_module,
         "calculate_commensurate_fields",
-        lambda *_args, **_kwargs: (_Result(),),
+        lambda *_args, **_kwargs: tuple(returned),
     )
 
     widget = MagneticFieldWidget()
@@ -2125,11 +2130,18 @@ def test_magnetic_field_widget_never_shows_a_non_finite_field(qapp, tmp_path, mo
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
     widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._sync_enabled_state()
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+    widget._calculate_fields()
+    assert saved[-1]["magnetic_field_results"] is not None
 
+    returned[:] = [_NanResult()]
     widget._calculate_fields()
 
     assert widget._result_table.rowCount() == 0
     assert widget.collect_state()["magnetic_field_results"] is None
+    # The cleared results are saved, so the earlier ones do not come back on reopening.
+    assert saved[-1]["magnetic_field_results"] is None
     assert widget._calculation_status.text() == (
         "Calculation failed: the field at Mu1 is not a finite number (NaN or infinity), "
         "so it is not shown"

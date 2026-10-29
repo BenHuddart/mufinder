@@ -7558,6 +7558,10 @@ class MagneticFieldWidget(QWidget):
                 self._emit_form_state_changed()
         except MagneticFieldDependencyError as exc:
             self._calculation_status.setText(f"Results unavailable: {exc}")
+        except _NonFiniteFieldError as exc:
+            self._calculation_status.setText(f"Calculation failed: {exc}")
+            # The earlier results were cleared on entry; save that so they do not come back.
+            self._emit_form_state_changed()
         except MagneticFieldError as exc:
             self._calculation_status.setText(f"Calculation failed: {exc}")
         except Exception as exc:  # pragma: no cover - defensive UI boundary
@@ -8771,12 +8775,16 @@ def _non_finite_field_label(results: Sequence[object]) -> str | None:
     return None
 
 
+class _NonFiniteFieldError(MagneticFieldError):
+    """Raised when a calculated field contains a NaN or an infinity."""
+
+
 def _raise_for_non_finite_fields(results: Sequence[object]) -> None:
     """Refuse calculated fields that contain a NaN or an infinity, naming the site."""
 
     label = _non_finite_field_label(results)
     if label is not None:
-        raise MagneticFieldError(
+        raise _NonFiniteFieldError(
             f"the field at {label} is not a finite number (NaN or infinity), so it is not shown"
         )
 
