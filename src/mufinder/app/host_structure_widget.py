@@ -243,7 +243,7 @@ class HostStructureWidget(QWidget):
         )
 
     def set_structure(self, structure: Structure | None) -> None:
-        """Render structure metadata and first rows of atom coordinates.
+        """Render structure metadata and one atom-table row per atom.
 
         No-op (beyond storing the reference) when the rendered structure is
         unchanged since the last call, avoiding the atom-table repopulation and
@@ -301,9 +301,6 @@ class HostStructureWidget(QWidget):
                 self._set_readonly_item(row, 2, f"{float(frac[1]):.4f}")
                 self._set_readonly_item(row, 3, f"{float(frac[2]):.4f}")
                 self._set_spin_item(row, self._atomic_spins[row])
-
-                if row >= 199:
-                    break
 
             self._lock_table_width()
             self._viewer.set_spins(self._atomic_spins)
