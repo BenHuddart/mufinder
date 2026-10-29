@@ -115,6 +115,20 @@ class _ViewerLineOverlaySpec:
     arrow: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _PyVistaBond:
+    """A bond between atoms ``atoms`` drawn from ``start`` to ``end``."""
+
+    atoms: tuple[int, int]
+    start: np.ndarray
+    end: np.ndarray
+    start_color: np.ndarray
+    end_color: np.ndarray
+    radius: float
+    start_radius: float
+    end_radius: float
+
+
 class _AxesProxy:
     """Renderer-neutral camera proxy used by tests and viewer state."""
 
@@ -1200,6 +1214,29 @@ def _build_pyvista_sphere_mesh(
     return sphere
 
 
+def _build_pyvista_sphere_glyphs(
+    pv,
+    *,
+    positions: np.ndarray,
+    radii: np.ndarray,
+    subdivisions: int,
+    point_data: Mapping[str, np.ndarray] | None = None,
+):
+    """One mesh of a sphere per position, each sphere's points one block in position order."""
+
+    points = pv.PolyData(np.asarray(positions, dtype=float))
+    points["glyph_radius"] = np.asarray(radii, dtype=float)
+    for name, values in (point_data or {}).items():
+        points[name] = values
+    unit_sphere = _build_pyvista_sphere_mesh(
+        pv,
+        radius=1.0,
+        center=(0.0, 0.0, 0.0),
+        subdivisions=int(subdivisions),
+    )
+    return points.glyph(scale="glyph_radius", orient=False, geom=unit_sphere, factor=1.0)
+
+
 def _build_pyvista_atom_glyph_mesh(
     pv,
     *,
@@ -1208,18 +1245,81 @@ def _build_pyvista_atom_glyph_mesh(
     colors: np.ndarray,
     subdivisions: int,
 ):
-    points = pv.PolyData(np.asarray(positions, dtype=float))
-    points["glyph_radius"] = np.asarray(radii, dtype=float)
-    points["atom_rgb"] = np.asarray(
-        np.clip(np.asarray(colors, dtype=float), 0.0, 1.0) * 255.0, dtype=np.uint8
-    )
-    unit_sphere = _build_pyvista_sphere_mesh(
+    rgb = np.asarray(np.clip(np.asarray(colors, dtype=float), 0.0, 1.0) * 255.0, dtype=np.uint8)
+    return _build_pyvista_sphere_glyphs(
         pv,
-        radius=1.0,
-        center=(0.0, 0.0, 0.0),
-        subdivisions=int(subdivisions),
+        positions=positions,
+        radii=radii,
+        subdivisions=subdivisions,
+        point_data={"atom_rgb": rgb},
     )
-    return points.glyph(scale="glyph_radius", orient=False, geom=unit_sphere, factor=1.0)
+
+
+def _pyvista_actor_dataset(actor: object | None):
+    """The mesh a PyVista actor draws, or ``None`` when it draws none."""
+
+    mapper = getattr(actor, "mapper", None) if actor is not None else None
+    return getattr(mapper, "dataset", None)
+
+
+def _translated_glyph_points(mesh, offsets: np.ndarray) -> np.ndarray | None:
+    """The points of glyph ``mesh`` with the glyph of input point ``i`` moved by ``offsets[i]``.
+
+    A glyph mesh holds one equal block of points per input point, in input order.
+    ``None`` when ``mesh`` does not split into ``len(offsets)`` blocks.
+    """
+
+    count = len(offsets)
+    if mesh is None or count == 0:
+        return None
+    points = np.asarray(mesh.points, dtype=float)
+    if points.ndim != 2 or len(points) == 0 or len(points) % count:
+        return None
+    blocks = points.reshape(count, -1, 3) + np.asarray(offsets, dtype=float)[:, None, :]
+    return blocks.reshape(-1, 3)
+
+
+def _rotation_between(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """The rotation matrix turning unit vector ``source`` onto unit vector ``target``."""
+
+    cosine = float(np.dot(source, target))
+    if cosine < -1.0 + 1e-9:
+        # Opposite vectors: a half turn about any axis perpendicular to them.
+        helper = np.eye(3)[int(np.argmin(np.abs(source)))]
+        axis = np.cross(source, helper)
+        axis /= np.linalg.norm(axis)
+        return 2.0 * np.outer(axis, axis) - np.eye(3)
+    cross = np.cross(source, target)
+    skew = np.array(
+        [
+            [0.0, -cross[2], cross[1]],
+            [cross[2], 0.0, -cross[0]],
+            [-cross[1], cross[0], 0.0],
+        ]
+    )
+    return np.eye(3) + skew + skew @ skew / (1.0 + cosine)
+
+
+def _segment_transform(
+    base_start: np.ndarray, base_end: np.ndarray, start: np.ndarray, end: np.ndarray
+) -> np.ndarray:
+    """The 4 × 4 matrix carrying a cylinder built from ``base_start`` to ``base_end`` onto
+    ``start`` to ``end``: it turns and stretches the axis and keeps the radius."""
+
+    base_axis = np.asarray(base_end, dtype=float) - np.asarray(base_start, dtype=float)
+    axis = np.asarray(end, dtype=float) - np.asarray(start, dtype=float)
+    base_length = float(np.linalg.norm(base_axis))
+    length = float(np.linalg.norm(axis))
+    direction = axis / length
+    rotation = _rotation_between(base_axis / base_length, direction)
+    stretch = np.eye(3) + (length / base_length - 1.0) * np.outer(direction, direction)
+    linear = stretch @ rotation
+    base_centre = 0.5 * (np.asarray(base_start, dtype=float) + np.asarray(base_end, dtype=float))
+    centre = 0.5 * (np.asarray(start, dtype=float) + np.asarray(end, dtype=float))
+    matrix = np.eye(4)
+    matrix[:3, :3] = linear
+    matrix[:3, 3] = centre - linear @ base_centre
+    return matrix
 
 
 def _build_pyvista_bond_tube_mesh(
@@ -1861,8 +1961,17 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_point_overlay_actors: list[object] = []
         self._pyvista_line_overlay_actors: list[object] = []
         self._pyvista_selection_actor = None
+        # The atoms the selection highlight draws, one sphere each, in mesh order.
+        self._pyvista_selection_atoms: tuple[int, ...] = ()
         self._pyvista_pick_actor = None
         self._pyvista_bond_actors: list[object] = []
+        # How the bond actors draw the bonds: one merged "tubes" or "lines" mesh, or
+        # "cylinders", one actor per half bond keyed by (atom, atom, half) with the
+        # ends its mesh was built between.
+        self._pyvista_bond_kind: str | None = None
+        self._pyvista_bond_pieces: dict[
+            tuple[int, int, int], tuple[object, np.ndarray, np.ndarray]
+        ] = {}
         self._pyvista_spin_actors: list[object] = []
         self._pyvista_last_camera_signature: tuple[float, ...] | None = None
         self._pyvista_camera_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = (
@@ -2257,14 +2366,39 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_selection_actor = None
         self._pyvista_pick_actor = None
         self._pyvista_bond_actors = []
+        self._pyvista_bond_pieces = {}
         self._pyvista_spin_actors = []
         self._selection_label.setText("Selected atom: -")
         self._render()
 
     @_renders_once
     def set_structure_preserving_view(self, structure: Structure | None) -> None:
-        """Load a new structure while preserving camera, zoom, and spin visibility."""
+        """Load a new structure while preserving camera, zoom, and spin visibility.
 
+        A structure with the shown one's species, order and cell, while no overlay
+        is shown, moves the drawn atoms instead of rebuilding the scene.
+        """
+
+        if structure is not None and self._can_move_atoms_to(structure):
+            self.update_structure_geometry_preserving_view(structure)
+            return
+        self._load_structure_preserving_view(structure)
+
+    def _can_move_atoms_to(self, structure: Structure) -> bool:
+        """Whether loading ``structure`` would only move the shown atoms.
+
+        Loading a structure clears the overlays, so a shown overlay needs a reload.
+        """
+
+        return self._can_update_structure_geometry_in_place(structure) and not (
+            self._isosurface_specs
+            or self._slice_specs
+            or self._point_overlay_specs
+            or self._line_overlay_specs
+            or self._hide_atoms_in_front_of_planes
+        )
+
+    def _load_structure_preserving_view(self, structure: Structure | None) -> None:
         if structure is None:
             self.set_structure(None)
             return
@@ -2312,13 +2446,18 @@ class AtomicStructureViewer(QWidget):
 
     @_renders_once
     def update_structure_geometry_preserving_view(self, structure: Structure | None) -> None:
-        """Update atom positions for a structurally equivalent model without resetting the current view."""
+        """Update atom positions for a structurally equivalent model without resetting the current view.
+
+        Shown overlays stay. The drawn atoms move in place when their colours,
+        radii and visible set are unchanged; a structure with other species, order
+        or cell loads as :meth:`set_structure_preserving_view` would.
+        """
 
         if structure is None:
             self.set_structure(None)
             return
         if not self._can_update_structure_geometry_in_place(structure):
-            self.set_structure_preserving_view(structure)
+            self._load_structure_preserving_view(structure)
             return
 
         self._structure = structure
@@ -2335,9 +2474,9 @@ class AtomicStructureViewer(QWidget):
 
         if self._render_deferred():
             return
-        if self._try_update_pyvista_atom_geometry():
+        if self._try_move_pyvista_atoms() or self._try_update_pyvista_atom_geometry():
             return
-        self.set_structure_preserving_view(structure)
+        self._load_structure_preserving_view(structure)
 
     @_renders_once
     def set_spins(self, spins: list[float] | tuple[float, ...] | np.ndarray | None) -> None:
@@ -3195,6 +3334,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_selection_actor = None
         self._pyvista_pick_actor = None
         self._pyvista_bond_actors = []
+        self._pyvista_bond_pieces = {}
         self._pyvista_spin_actors = []
         plotter.clear()
         _configure_transparent_pyvista_background(plotter)
@@ -3914,6 +4054,7 @@ class AtomicStructureViewer(QWidget):
         except Exception:  # noqa: BLE001
             removed = False
         self._pyvista_selection_actor = None
+        self._pyvista_selection_atoms = ()
         return removed
 
     def _try_update_pyvista_selection_overlay(self) -> bool:
@@ -3943,6 +4084,91 @@ class AtomicStructureViewer(QWidget):
         self._draw_pyvista_selection(
             plotter, pv, self._pyvista_all_atom_positions, self._pyvista_all_atom_radii
         )
+        self._draw_canvas()
+        return True
+
+    def _try_move_pyvista_atoms(self) -> bool:
+        """Move the drawn atoms to the current structure's positions, adding no atom mesh.
+
+        The scene must already draw these atoms with the same colours, radii and
+        visible set. The atom glyphs, pick points and selection highlight move by
+        each atom's displacement; the bonds are re-measured and redrawn into their
+        meshes, with new bond actors only when the bonded pairs change; spin arrows
+        are redrawn. Returns ``False``, having changed nothing, when the atoms need
+        new meshes instead.
+        """
+
+        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None:
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        positions, _numbers, _symbols, colors, radii, _extra_points = self._scene_geometry()
+        previous = self._pyvista_all_atom_positions
+        if (
+            previous.shape != positions.shape
+            or self._pyvista_all_atom_radii.shape != radii.shape
+            or self._pyvista_all_atom_colors.shape != colors.shape
+            or not np.allclose(self._pyvista_all_atom_radii, radii)
+            or not np.allclose(self._pyvista_all_atom_colors, colors)
+        ):
+            return False
+        visible_mask = self._visible_atom_mask(positions)
+        visible_indices = np.flatnonzero(visible_mask)
+        if len(visible_indices) == 0 or not np.array_equal(
+            visible_indices, self._pyvista_atom_lookup_indices
+        ):
+            return False
+        pick_mesh = _pyvista_actor_dataset(self._pyvista_pick_actor)
+        if pick_mesh is None or pick_mesh.n_points != len(visible_indices):
+            return False
+        offsets = positions - previous
+        atom_mesh = _pyvista_actor_dataset(self._pyvista_atom_actor)
+        atom_points = _translated_glyph_points(atom_mesh, offsets[visible_indices])
+        if atom_points is None:
+            return False
+        selection_mesh = _pyvista_actor_dataset(self._pyvista_selection_actor)
+        selection_points = (
+            _translated_glyph_points(selection_mesh, offsets[list(self._pyvista_selection_atoms)])
+            if self._pyvista_selection_atoms
+            and list(self._pyvista_selection_atoms) == list(self._selected_indexes)
+            else None
+        )
+
+        atom_mesh.points = atom_points
+        pick_mesh.points = positions[visible_indices]
+        self._pyvista_all_atom_positions = positions.copy()
+        self._pyvista_atom_positions = positions[visible_indices].copy()
+        self._configure_pyvista_lighting(plotter, pv, focal_point=np.mean(positions, axis=0))
+        spins_shown = self._show_spins.isChecked() and self._spins is not None
+        atom_alpha = 0.5 if spins_shown else 1.0
+        self._set_pyvista_actor_opacity(self._pyvista_atom_actor, atom_alpha)
+        if selection_points is not None:
+            selection_mesh.points = selection_points
+        elif self._selected_indexes or self._pyvista_selection_actor is not None:
+            self._try_update_pyvista_selection_overlay()
+        if self._show_bonds.isChecked():
+            self._move_pyvista_bonds(
+                plotter,
+                pv,
+                positions,
+                colors,
+                radii,
+                visible_mask=visible_mask,
+                alpha=float(np.clip(0.84 * atom_alpha, 0.2, 0.8)),
+            )
+        self._remove_pyvista_actor_group(self._pyvista_spin_actors)
+        self._pyvista_spin_actors = []
+        visible_spins = self._filtered_spin_values(self._spins, visible_mask)
+        if spins_shown and visible_spins is not None:
+            self._pyvista_spin_actors = self._draw_pyvista_spins(
+                plotter, pv, positions[visible_indices], radii[visible_indices], visible_spins
+            )
+        self._pyvista_last_camera_signature = self._pyvista_camera_signature()
         self._draw_canvas()
         return True
 
@@ -4035,6 +4261,7 @@ class AtomicStructureViewer(QWidget):
         )
         if not self._show_bonds.isChecked():
             self._pyvista_bond_actors = []
+            self._pyvista_bond_pieces = {}
         if self._selected_indexes:
             self._try_update_pyvista_selection_overlay()
         self._pyvista_last_camera_signature = self._pyvista_camera_signature()
@@ -4080,6 +4307,7 @@ class AtomicStructureViewer(QWidget):
 
         removed = self._remove_pyvista_actor_group(self._pyvista_bond_actors)
         self._pyvista_bond_actors = []
+        self._pyvista_bond_pieces = {}
         if not self._show_bonds.isChecked():
             if removed:
                 self._draw_canvas()
@@ -4202,30 +4430,21 @@ class AtomicStructureViewer(QWidget):
     def _draw_pyvista_selection(
         self, plotter, pv, positions: np.ndarray, radii: np.ndarray
     ) -> None:
-        if not self._selected_indexes:
+        atoms = tuple(
+            int(atom_index)
+            for atom_index in self._selected_indexes
+            if 0 <= atom_index < len(positions)
+        )
+        if not atoms:
             return
         style = _viewer_style()
-        highlight = None
-        for atom_index in self._selected_indexes:
-            if atom_index < 0 or atom_index >= len(positions):
-                continue
-            point = positions[atom_index]
-            radius = float(radii[atom_index])
-            sphere = _build_pyvista_sphere_mesh(
-                pv,
-                radius=1.18 * radius,
-                center=point,
-                subdivisions=4,
-            )
-            if highlight is None:
-                highlight = sphere
-                continue
-            try:
-                highlight = highlight.merge(sphere, inplace=False)
-            except Exception:  # noqa: BLE001
-                continue
-        if highlight is None:
-            return
+        highlight = _build_pyvista_sphere_glyphs(
+            pv,
+            positions=positions[list(atoms)],
+            radii=1.18 * np.asarray(radii, dtype=float)[list(atoms)],
+            subdivisions=4,
+        )
+        self._pyvista_selection_atoms = atoms
         self._pyvista_selection_actor = plotter.add_mesh(
             highlight,
             color=style.selection_fill,
@@ -4239,19 +4458,17 @@ class AtomicStructureViewer(QWidget):
             render=False,
         )
 
-    def _draw_pyvista_bonds(
+    def _pyvista_bonds(
         self,
-        plotter,
-        pv,
         positions: np.ndarray,
         colors: np.ndarray,
         radii: np.ndarray,
         *,
         visible_mask: np.ndarray | None = None,
-        alpha: float,
-    ) -> list[object]:
+    ) -> list[_PyVistaBond]:
+        """The bonds between visible atoms at ``positions``, by covalent radii."""
+
         assert self._atoms is not None
-        actors: list[object] = []
         if visible_mask is None or len(visible_mask) != len(positions):
             visible_mask = np.ones((len(positions),), dtype=bool)
             if len(positions) == len(self._atoms):
@@ -4260,9 +4477,7 @@ class AtomicStructureViewer(QWidget):
         neighbour_list = NeighborList(cutoffs, self_interaction=False, bothways=True, skin=0.0)
         neighbour_list.update(self._atoms)
         cell = np.asarray(self._atoms.cell, dtype=float)
-        bond_pairs: list[
-            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float, float]
-        ] = []
+        bonds: list[_PyVistaBond] = []
         for atom_index in range(len(self._atoms)):
             if atom_index >= len(positions) or not visible_mask[atom_index]:
                 continue
@@ -4277,125 +4492,195 @@ class AtomicStructureViewer(QWidget):
                 bond_radius = float(
                     np.clip(0.18 * min(radii[atom_index], radii[neighbour_index]), 0.06, 0.16)
                 )
-                bond_pairs.append(
-                    (
-                        start,
-                        end,
-                        colors[atom_index],
-                        colors[neighbour_index],
-                        bond_radius,
-                        float(radii[atom_index]),
-                        float(radii[neighbour_index]),
+                bonds.append(
+                    _PyVistaBond(
+                        atoms=(int(atom_index), int(neighbour_index)),
+                        start=start,
+                        end=end,
+                        start_color=colors[atom_index],
+                        end_color=colors[neighbour_index],
+                        radius=bond_radius,
+                        start_radius=float(radii[atom_index]),
+                        end_radius=float(radii[neighbour_index]),
                     )
                 )
+        return bonds
 
-        if _should_use_fast_pyvista_bond_cylinders(len(self._atoms), len(bond_pairs)):
+    def _merged_pyvista_bond_mesh(self, pv, bonds: list[_PyVistaBond]) -> tuple[str, object] | None:
+        """One mesh drawing every bond of a large scene, as ``"tubes"`` or ``"lines"``.
+
+        ``None`` when the scene is small enough to draw a cylinder per half bond.
+        """
+
+        assert self._atoms is not None
+        if _should_use_fast_pyvista_bond_cylinders(len(self._atoms), len(bonds)):
             tube_segments: list[tuple[np.ndarray, np.ndarray, np.ndarray, float]] = []
-            for (
-                start,
-                end,
-                start_color,
-                end_color,
-                bond_radius,
-                start_radius,
-                end_radius,
-            ) in bond_pairs:
+            for bond in bonds:
                 visible_segment = _trim_bond_segment_to_surfaces(
-                    start,
-                    end,
-                    start_radius=start_radius,
-                    end_radius=end_radius,
+                    bond.start,
+                    bond.end,
+                    start_radius=bond.start_radius,
+                    end_radius=bond.end_radius,
                 )
                 if visible_segment is None:
                     continue
                 bond_color = 0.5 * (
-                    np.asarray(start_color, dtype=float) + np.asarray(end_color, dtype=float)
+                    np.asarray(bond.start_color, dtype=float)
+                    + np.asarray(bond.end_color, dtype=float)
                 )
                 tube_segments.append(
-                    (visible_segment[0], visible_segment[1], bond_color, bond_radius)
+                    (visible_segment[0], visible_segment[1], bond_color, bond.radius)
                 )
             bond_tubes = _build_pyvista_bond_tube_mesh(pv, segments=tube_segments)
             if bond_tubes is not None:
-                actors.append(
-                    plotter.add_mesh(
-                        bond_tubes,
-                        scalars="rgb",
-                        rgb=True,
-                        opacity=float(alpha),
-                        smooth_shading=True,
-                        ambient=0.58,
-                        diffuse=0.28,
-                        specular=0.0,
-                        specular_power=1.0,
-                        pbr=False,
-                        render=False,
-                    )
-                )
-                return actors
+                return "tubes", bond_tubes
 
-        if _should_use_fast_pyvista_bond_lines(len(self._atoms), len(bond_pairs)):
+        if _should_use_fast_pyvista_bond_lines(len(self._atoms), len(bonds)):
             line_segments: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-            for (
-                start,
-                end,
-                start_color,
-                end_color,
-                _bond_radius,
-                _start_radius,
-                _end_radius,
-            ) in bond_pairs:
-                midpoint = 0.5 * (start + end)
-                line_segments.append((start, midpoint, start_color))
-                line_segments.append((midpoint, end, end_color))
+            for bond in bonds:
+                midpoint = 0.5 * (bond.start + bond.end)
+                line_segments.append((bond.start, midpoint, bond.start_color))
+                line_segments.append((midpoint, bond.end, bond.end_color))
             line_mesh = _build_pyvista_bond_line_mesh(pv, segments=line_segments)
             if line_mesh is not None:
-                actors.append(
-                    plotter.add_mesh(
-                        line_mesh,
-                        scalars="rgb",
-                        rgb=True,
-                        opacity=float(alpha),
-                        line_width=2.2,
-                        lighting=False,
-                        pbr=False,
-                        render=False,
-                    )
-                )
-                return actors
+                return "lines", line_mesh
+        return None
 
-        for (
-            start,
-            end,
-            start_color,
-            end_color,
-            bond_radius,
-            _start_radius,
-            _end_radius,
-        ) in bond_pairs:
-            midpoint = 0.5 * (start + end)
+    @staticmethod
+    def _add_merged_pyvista_bond_actor(plotter, kind: str, mesh, *, alpha: float):
+        if kind == "tubes":
+            return plotter.add_mesh(
+                mesh,
+                scalars="rgb",
+                rgb=True,
+                opacity=float(alpha),
+                smooth_shading=True,
+                ambient=0.58,
+                diffuse=0.28,
+                specular=0.0,
+                specular_power=1.0,
+                pbr=False,
+                render=False,
+            )
+        return plotter.add_mesh(
+            mesh,
+            scalars="rgb",
+            rgb=True,
+            opacity=float(alpha),
+            line_width=2.2,
+            lighting=False,
+            pbr=False,
+            render=False,
+        )
+
+    @staticmethod
+    def _pyvista_half_bonds(
+        bonds: list[_PyVistaBond],
+    ) -> list[tuple[tuple[int, int, int], np.ndarray, np.ndarray, np.ndarray, float]]:
+        """Each bond's two halves, ``(key, start, end, colour, radius)``, each in its atom's colour.
+
+        A half of zero length, from two atoms on one point, is left out: it draws nothing.
+        """
+
+        halves = []
+        for bond in bonds:
+            midpoint = 0.5 * (bond.start + bond.end)
+            if float(np.linalg.norm(bond.end - bond.start)) <= 2e-12:
+                continue
+            halves.append(((*bond.atoms, 0), bond.start, midpoint, bond.start_color, bond.radius))
+            halves.append(((*bond.atoms, 1), midpoint, bond.end, bond.end_color, bond.radius))
+        return halves
+
+    def _draw_pyvista_bonds(
+        self,
+        plotter,
+        pv,
+        positions: np.ndarray,
+        colors: np.ndarray,
+        radii: np.ndarray,
+        *,
+        visible_mask: np.ndarray | None = None,
+        alpha: float,
+    ) -> list[object]:
+        bonds = self._pyvista_bonds(positions, colors, radii, visible_mask=visible_mask)
+        self._pyvista_bond_pieces = {}
+        merged = self._merged_pyvista_bond_mesh(pv, bonds)
+        if merged is not None:
+            kind, mesh = merged
+            self._pyvista_bond_kind = kind
+            return [self._add_merged_pyvista_bond_actor(plotter, kind, mesh, alpha=alpha)]
+
+        self._pyvista_bond_kind = "cylinders"
+        actors: list[object] = []
+        for key, start, end, color, radius in self._pyvista_half_bonds(bonds):
             actor = self._add_pyvista_cylinder(
-                plotter,
-                pv,
-                start,
-                midpoint,
-                radius=bond_radius,
-                color=start_color,
-                alpha=alpha,
+                plotter, pv, start, end, radius=radius, color=color, alpha=alpha
             )
             if actor is not None:
-                actors.append(actor)
-            actor = self._add_pyvista_cylinder(
-                plotter,
-                pv,
-                midpoint,
-                end,
-                radius=bond_radius,
-                color=end_color,
-                alpha=alpha,
-            )
-            if actor is not None:
+                self._pyvista_bond_pieces[key] = (actor, start, end)
                 actors.append(actor)
         return actors
+
+    def _move_pyvista_bonds(
+        self,
+        plotter,
+        pv,
+        positions: np.ndarray,
+        colors: np.ndarray,
+        radii: np.ndarray,
+        *,
+        visible_mask: np.ndarray,
+        alpha: float,
+    ) -> None:
+        """Redraw the bonds at ``positions``, reusing the actors of bonds that stay.
+
+        A merged bond mesh takes the new geometry; a half-bond cylinder that stays
+        is carried onto its new ends by its actor's transform. Only a bond that
+        forms gets a new actor.
+        """
+
+        bonds = self._pyvista_bonds(positions, colors, radii, visible_mask=visible_mask)
+        merged = self._merged_pyvista_bond_mesh(pv, bonds)
+        actors = self._pyvista_bond_actors
+        if merged is not None:
+            kind, mesh = merged
+            dataset = _pyvista_actor_dataset(actors[0]) if len(actors) == 1 else None
+            if kind == self._pyvista_bond_kind and callable(getattr(dataset, "copy_from", None)):
+                dataset.copy_from(mesh)
+                self._set_pyvista_actor_opacity(actors[0], alpha)
+                return
+        pieces = self._pyvista_bond_pieces
+        if (
+            merged is not None
+            or self._pyvista_bond_kind != "cylinders"
+            or {id(actor) for actor, _start, _end in pieces.values()} != {id(a) for a in actors}
+        ):
+            self._remove_pyvista_actor_group(actors)
+            self._pyvista_bond_actors = self._draw_pyvista_bonds(
+                plotter, pv, positions, colors, radii, visible_mask=visible_mask, alpha=alpha
+            )
+            return
+
+        kept: dict[tuple[int, int, int], tuple[object, np.ndarray, np.ndarray]] = {}
+        moved_actors: list[object] = []
+        for key, start, end, color, radius in self._pyvista_half_bonds(bonds):
+            piece = pieces.pop(key, None)
+            if piece is None:
+                actor = self._add_pyvista_cylinder(
+                    plotter, pv, start, end, radius=radius, color=color, alpha=alpha
+                )
+                if actor is None:
+                    continue
+                piece = (actor, start, end)
+            else:
+                actor, base_start, base_end = piece
+                actor.user_matrix = _segment_transform(base_start, base_end, start, end)
+                self._set_pyvista_actor_opacity(actor, alpha)
+            kept[key] = piece
+            moved_actors.append(actor)
+        self._remove_pyvista_actor_group([actor for actor, _start, _end in pieces.values()])
+        self._pyvista_bond_pieces = kept
+        self._pyvista_bond_actors = moved_actors
 
     def _add_pyvista_cylinder(
         self,

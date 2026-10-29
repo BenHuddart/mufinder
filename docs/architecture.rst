@@ -1149,6 +1149,19 @@ The host page, the Supercell Editor, Muon Sites generation, the analysis
 workspaces, Magnetic Fields, Energy Barriers, Quantum Corrections and the UEP
 viewers all batch their multi-step updates this way.
 
+A structure with the shown one's species, order and cell moves the drawn atoms
+instead of rebuilding the scene. ``set_structure_preserving_view`` does this
+while no overlay is shown (loading a structure clears the overlays), and
+``update_structure_geometry_preserving_view`` does it with the overlays kept.
+The atom glyphs, pick points and selection highlight move by each atom's
+displacement; the bonds are re-measured, a merged bond mesh takes the new
+geometry and each half-bond cylinder that stays is carried onto its new ends
+by its actor's transform, so only a bond that forms gets a new actor. Spin
+arrows are redrawn. A change of colours, radii or visible atoms rebuilds the
+atom meshes, and a change of species, order or cell loads the structure as
+new. Stepping an NEB band or animating a phonon mode therefore adds no atom
+mesh per frame.
+
 A viewer that is not visible (on a page, tab or dialog that is not showing)
 does not render at all. A change, including a theme change, records its state
 and marks the scene stale; the viewer's ``showEvent`` draws a stale scene once,
