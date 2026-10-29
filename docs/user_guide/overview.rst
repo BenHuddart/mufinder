@@ -107,9 +107,10 @@ Convergence Testing
 the host unit cell or a saved supercell. Cutoffs are listed by hand or
 generated from a range; k-point grids are listed by hand or generated as every
 distinct grid CASTEP produces down to a minimum spacing. An examiner judges
-convergence of the energy (Delta-Threshold, Derivative or Asymptotic
-Extrapolation for cutoffs), the maximum force and, optionally, the maximum
-stress, plots the results, and recommends a value. The ``Convergence Testing``
+the energy per atom, the maximum force and, optionally, the maximum stress
+against the finest point of the sweep, checks with a power-law fit that a
+cutoff sweep reaches its converged limit, plots the results, and recommends a
+value. The ``Convergence Testing``
 overview page shows both adopted defaults with the plots pinned when they were
 adopted.
 

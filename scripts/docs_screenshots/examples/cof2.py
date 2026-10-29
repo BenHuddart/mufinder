@@ -92,7 +92,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import Structure
+from mufinder.domain.models import CONVERGED_DEFAULT_METHOD, Structure
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
@@ -300,7 +300,9 @@ def fixture_project(directory: Path) -> Path:
 # The Convergence Testing overview pins the examiner plot of each adopted
 # default. Pinning one needs a finished sweep, so the overview adopts a cutoff
 # and a grid with illustrative sweep data: smooth decays towards the converged
-# values, not CASTEP results.
+# values, not CASTEP results. The examiner recommends exactly the adopted
+# values for this data at the default thresholds: 600 eV (the first cutoff
+# within 1 meV/atom and 0.05 eV/Ang of 800 eV) and 4 x 4 x 6.
 
 ADOPTED_CUTOFF_EV = 600.0
 ADOPTED_GRID = (4, 4, 6)
@@ -333,7 +335,7 @@ def _converged_fixture(directory: Path) -> tuple[ProjectService, ProjectDocument
     host = service.active_host_structure(document)
     host_id = str(host.id)
     criteria = {
-        "method": "delta-threshold",
+        "method": CONVERGED_DEFAULT_METHOD,
         "energy_threshold": ENERGY_THRESHOLD,
         "force_threshold": FORCE_THRESHOLD,
         "cell_id": host_id,
@@ -351,7 +353,6 @@ def _converged_fixture(directory: Path) -> tuple[ProjectService, ProjectDocument
             "host_structure_id": host_id,
             "simulation_cell_structure_id": host_id,
             "default_value": default_value,
-            "method": "delta-threshold",
             "energy_threshold": ENERGY_THRESHOLD,
             "force_threshold": FORCE_THRESHOLD,
             "plot_data": {

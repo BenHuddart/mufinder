@@ -2,21 +2,7 @@
 
 from __future__ import annotations
 
-
-def format_convergence_method(method: str | None) -> str:
-    """Return a user-facing convergence method label."""
-
-    if method is None:
-        return "Not set"
-
-    normalized = method.strip().lower()
-    labels = {
-        "delta-threshold": "Delta-Threshold",
-        "derivative": "Derivative (dE/dEcut)",
-        "asymptotic": "Asymptotic Extrapolation",
-        "manual": "Set manually",
-    }
-    return labels.get(normalized, method)
+from mufinder.domain.models import MANUAL_DEFAULT_METHOD
 
 
 def format_convergence_criteria(
@@ -47,6 +33,24 @@ def format_convergence_criteria(
     if stress_threshold is not None:
         parts.append(f"dS <= {float(stress_threshold):.6g} GPa")
     return ", ".join(parts)
+
+
+def format_default_criteria(
+    *,
+    method: str | None,
+    energy_threshold: float | None,
+    force_threshold: float | None,
+    stress_threshold: float | None = None,
+) -> str:
+    """Return the criteria of a project default, or ``Set manually`` for a typed-in one."""
+
+    if method == MANUAL_DEFAULT_METHOD:
+        return "Set manually"
+    return format_convergence_criteria(
+        energy_threshold=energy_threshold,
+        force_threshold=force_threshold,
+        stress_threshold=stress_threshold,
+    )
 
 
 def format_cutoff_energy(cutoff_energy: float | None) -> str:

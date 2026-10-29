@@ -1,4 +1,4 @@
-"""Tests for cutoff and k-point convergence analysis algorithms."""
+"""Tests for cutoff and k-point convergence analysis."""
 
 from __future__ import annotations
 
@@ -7,633 +7,390 @@ import math
 import pytest
 
 from mufinder.science.convergence_analysis import (
+    SWEEP_LONG_ENOUGH,
+    SWEEP_NOT_ESTIMATED,
+    SWEEP_TOO_SHORT,
     ConvergenceResult,
     analyze_convergence,
     analyze_kpoint_convergence,
-    apply_kpoint_label_to_stress_result,
-    asymptotic_extrapolation_energy,
-    delta_threshold_energy,
-    delta_threshold_force,
-    delta_threshold_stress,
-    derivative_energy,
+    check_sweep_length,
     recommended_value,
     unconverged_criteria,
 )
+
+ATOMS = 6
+TOL = 0.001  # eV/atom
+GRID_LABELS = {
+    1.0: "1 x 1 x 1",
+    8.0: "2 x 2 x 2",
+    27.0: "3 x 3 x 3",
+    64.0: "4 x 4 x 4",
+    125.0: "5 x 5 x 5",
+}
+
+
+def _power_law(cutoffs, *, exponent: float, gap_at_600: float) -> list[float]:
+    """Total energies whose per-atom distance from the limit decays as ``Ecut**exponent``."""
+
+    scale = gap_at_600 * ATOMS / 600.0**exponent
+    return [-1000.0 + scale * float(cutoff) ** exponent for cutoff in cutoffs]
+
+
+def _per_atom(values) -> list[float]:
+    return [-1000.0 + value * ATOMS for value in values]
+
+
+def _forces(cutoffs) -> list[float]:
+    return [0.01 + 0.5 * (float(cutoff) / 300.0) ** -4 for cutoff in cutoffs]
+
+
+def _cutoff(cutoffs, energies, forces=None, **kwargs):
+    return analyze_convergence(
+        cutoffs=cutoffs,
+        energies=energies,
+        max_forces=forces if forces is not None else [0.0] * len(cutoffs),
+        num_atoms=kwargs.pop("num_atoms", ATOMS),
+        energy_threshold=kwargs.pop("energy_threshold", TOL),
+        force_threshold=kwargs.pop("force_threshold", 0.05),
+        **kwargs,
+    )
 
 
 def _converged_at(value: float) -> ConvergenceResult:
     return ConvergenceResult(
         converged=True,
-        method="stress-delta-threshold",
-        details="original",
+        quantity="Stress",
+        summary=f"converged at {value:g}",
+        explanation="",
         converged_value=value,
-        deltas=((value, 1.0e-6),),
     )
 
 
-# Delta-threshold energy
+# The reference criterion
 
 
-def test_delta_threshold_energy_converges_on_successive_delta() -> None:
-    result = delta_threshold_energy(
-        [300.0, 400.0, 500.0],
-        [-100.0, -100.05, -100.051],
-        num_atoms=10,
-        threshold=0.001,
-    )
+def test_energy_is_judged_against_the_finest_point_not_the_previous_one() -> None:
+    # Every successive difference is at most 1 meV/atom, but 300 and 400 eV sit
+    # 2.5 and 1.5 meV/atom from the 800 eV value.
+    cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0, 800.0]
+    analysis = _cutoff(cutoffs, _per_atom([0.0025, 0.0015, 0.0009, 0.0004, 0.0001, 0.0]))
 
-    assert result.converged is True
-    assert result.converged_value == pytest.approx(500.0)
-
-
-def test_delta_threshold_energy_reports_not_converged() -> None:
-    result = delta_threshold_energy(
-        [300.0, 400.0, 500.0],
-        [-100.0, -100.2, -100.35],
-        num_atoms=2,
-        threshold=0.001,
-    )
-
-    assert result.converged is False
-    assert result.converged_value is None
+    assert analysis.energy.converged
+    assert analysis.energy.converged_value == pytest.approx(500.0)
+    assert analysis.energy.reference_value == pytest.approx(800.0)
+    assert analysis.energy.deviations[0] == (300.0, pytest.approx(0.0025))
 
 
-def test_delta_threshold_ignores_nan_and_requires_two_points() -> None:
-    result = delta_threshold_energy(
-        [300.0, 400.0, 500.0],
-        [-10.0, float("nan"), float("nan")],
-        num_atoms=2,
-        threshold=0.001,
-    )
+def test_recommendation_does_not_depend_on_the_step() -> None:
+    coarse = [300.0 + 100.0 * index for index in range(6)]
+    fine = [300.0 + 50.0 * index for index in range(11)]
 
-    assert result.converged is False
-    assert "at least two" in result.details.lower()
+    def recommend(cutoffs):
+        energies = _power_law(cutoffs, exponent=-6.0, gap_at_600=0.004)
+        return _cutoff(cutoffs, energies, _forces(cutoffs)).recommended
 
-
-def test_delta_threshold_energy_cleans_sorts_and_dedupes_the_series() -> None:
-    # Non-numeric rows are dropped, the series is sorted by cutoff and a
-    # repeated cutoff keeps its last observed value (-10.2 at 300 eV).
-    result = delta_threshold_energy(
-        [400.0, "not-a-number", 300.0, 300.0, None],  # type: ignore[list-item]
-        [-10.5, -9.0, -10.0, -10.2, -1.0],
-        num_atoms=1,
-        threshold=0.001,
-    )
-
-    assert result.converged is False
-    assert result.deltas is not None
-    assert [cutoff for cutoff, _ in result.deltas] == [400.0]
-    assert result.deltas[0][1] == pytest.approx(0.3)
+    assert recommend(coarse) == pytest.approx(700.0)
+    assert recommend(fine) == pytest.approx(700.0)
 
 
-def test_delta_threshold_energy_rejects_non_positive_atom_count() -> None:
-    result = delta_threshold_energy(
-        [300.0, 400.0],
-        [-10.0, -10.0001],
-        num_atoms=0,
-        threshold=0.001,
-    )
-    assert result.converged is False
-    assert "positive" in result.details.lower()
-
-
-# Derivative energy
-
-
-def test_derivative_energy_converges_when_rate_flattens() -> None:
-    result = derivative_energy(
-        [300.0, 400.0, 500.0],
-        [-10.0, -10.05, -10.06],
-        num_atoms=10,
-        threshold=0.001,
-    )
-
-    assert result.converged is True
-    assert result.converged_value == pytest.approx(500.0)
-
-
-def test_derivative_energy_converges_and_reports_rate() -> None:
-    result = derivative_energy(
-        [300.0, 400.0, 500.0],
-        [-10.0, -10.5, -10.5005],
-        num_atoms=1,
-        threshold=0.01,
-    )
-    assert result.converged is True
-    assert result.converged_value == pytest.approx(500.0)
-    assert "|dE/dEcut|" in result.details
-
-
-def test_derivative_energy_reports_when_rate_never_flattens() -> None:
-    # Steep, sustained slope so the derivative never falls below threshold.
-    result = derivative_energy(
-        [300.0, 400.0, 500.0],
-        [-10.0, -20.0, -30.0],
-        num_atoms=1,
-        threshold=0.0001,
-    )
-    assert result.converged is False
-    assert result.converged_value is None
-    assert "did not reach" in result.details.lower()
-    assert result.deltas is not None and len(result.deltas) == 2
-    assert result.fallback_suggestion is not None
-
-
-def test_derivative_energy_requires_two_points() -> None:
-    result = derivative_energy([300.0], [-10.0], num_atoms=4, threshold=0.001)
-    assert result.converged is False
-    assert "at least two" in result.details.lower()
-    assert result.fallback_suggestion is not None
-
-
-def test_derivative_energy_rejects_non_positive_atom_count() -> None:
-    result = derivative_energy(
-        [300.0, 400.0],
-        [-10.0, -10.05],
-        num_atoms=-3,
-        threshold=0.001,
-    )
-    assert result.converged is False
-    assert "positive" in result.details.lower()
-
-
-# Asymptotic extrapolation
-
-
-def test_asymptotic_extrapolation_needs_enough_points() -> None:
-    result = asymptotic_extrapolation_energy(
-        [300.0, 400.0, 500.0],
-        [-10.0, -10.05, -10.07],
-        num_atoms=4,
-        threshold=0.001,
-    )
-
-    assert result.converged is False
-    assert "at least four" in result.details.lower()
-    assert result.fallback_suggestion is not None
-
-
-def test_asymptotic_extrapolation_converges_on_clean_signal() -> None:
-    scipy = pytest.importorskip("scipy")
-    assert scipy is not None
-
+def test_a_point_back_outside_tolerance_restarts_the_search() -> None:
+    # 300 eV agrees with 700 eV by accident; 500 eV is outside again.
     cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0]
-    energies = [-10.0 + 2.0 * math.exp(-0.01 * cutoff) for cutoff in cutoffs]
+    analysis = _cutoff(cutoffs, _per_atom([0.0, 0.0005, 0.003, 0.0004, 0.0]))
 
-    result = asymptotic_extrapolation_energy(
-        cutoffs,
-        energies,
-        num_atoms=2,
-        threshold=0.003,
+    assert analysis.energy.converged_value == pytest.approx(600.0)
+
+
+def test_the_finest_point_is_never_converged_on_its_own() -> None:
+    analysis = _cutoff([300.0, 400.0, 500.0], [-10.0, -10.1, -10.2])
+
+    assert not analysis.energy.converged
+    assert analysis.energy.summary == "not converged within the sweep"
+    assert analysis.energy.explanation == "400 eV is 0.017 eV/atom from 500 eV"
+    assert analysis.recommended is None
+    assert analysis.unconverged == ("energy",)
+
+
+def test_two_points_are_needed() -> None:
+    analysis = _cutoff([300.0, math.nan], [-10.0, -10.0])
+
+    assert not analysis.energy.converged
+    assert analysis.energy.explanation == "needs at least two completed points"
+
+
+def test_series_are_cleaned_sorted_and_deduplicated() -> None:
+    analysis = _cutoff(
+        [500.0, 300.0, 400.0, 400.0, math.inf],
+        [-10.0, -9.0, -10.5, -10.0, -10.0],
     )
 
-    assert result.converged is True
-    assert result.converged_value is not None
-    assert result.fitted_curve is not None
-    assert result.extrapolated_energy is not None
+    assert analysis.energy.converged_value == pytest.approx(400.0)
+    assert [point for point, _ in analysis.energy.deviations] == [300.0, 400.0, 500.0]
 
 
-def test_asymptotic_extrapolation_falls_back_on_noisy_data() -> None:
-    scipy = pytest.importorskip("scipy")
-    assert scipy is not None
-
-    result = asymptotic_extrapolation_energy(
-        [300.0, 400.0, 500.0, 600.0, 700.0],
-        [-10.0, -9.2, -10.8, -9.0, -10.7],
-        num_atoms=2,
-        threshold=0.001,
+def test_force_and_stress_are_judged_against_their_finest_values() -> None:
+    analysis = _cutoff(
+        [300.0, 400.0, 500.0, 600.0],
+        [-10.0] * 4,
+        [0.30, 0.12, 0.05, 0.02],
+        max_stresses=[2.0, 0.4, 0.25, 0.2],
+        stress_threshold=0.1,
     )
 
-    assert result.converged is False
-    assert result.fallback_suggestion is not None
+    assert analysis.force.converged_value == pytest.approx(500.0)
+    assert analysis.force.explanation == "within 0.03 eV/Ang of 600 eV, as is every finer cutoff"
+    assert analysis.stress.converged_value == pytest.approx(500.0)
+    assert analysis.recommended == pytest.approx(500.0)
 
 
-def test_asymptotic_fit_quality_or_failure_falls_back() -> None:
-    pytest.importorskip("scipy")
-    # Pathological alternating data: either the fit raises (245-246) or yields a
-    # poor-quality result; both paths produce a non-converged fallback result.
-    result = asymptotic_extrapolation_energy(
-        [300.0, 400.0, 500.0, 600.0, 700.0, 800.0],
-        [0.0, 100.0, -100.0, 100.0, -100.0, 100.0],
-        num_atoms=2,
-        threshold=0.001,
+def test_converged_wording_names_the_deviation_and_the_reference() -> None:
+    analysis = _cutoff([300.0, 400.0, 500.0, 600.0], _per_atom([0.5, 0.01, 0.0008, 0.0]))
+
+    assert analysis.energy.summary == "converged at 500 eV"
+    assert analysis.energy.explanation == (
+        "within 0.0008 eV/atom of 600 eV, as is every finer cutoff"
     )
-    assert result.converged is False
-    assert result.fallback_suggestion is not None
+    assert analysis.energy.details == (
+        "Energy converged at 500 eV: within 0.0008 eV/atom of 600 eV, as is every finer cutoff."
+    )
+    assert analysis.reference_text == "600 eV, the finest cutoff in the sweep"
 
 
-def test_asymptotic_good_fit_but_tolerance_unreached() -> None:
-    pytest.importorskip("scipy")
-    # A clean exponential fits well (high R^2, low RMSE) so it passes the quality
-    # gate, but an absurdly tiny threshold means no sampled cutoff's gap to
-    # E_inf clears it, so converged_value stays None.
+def test_non_positive_atom_count_is_rejected() -> None:
+    with pytest.raises(ValueError, match="atom count"):
+        _cutoff([300.0, 400.0], [-1.0, -1.0], num_atoms=0)
+
+
+def test_stress_is_only_a_criterion_when_supplied() -> None:
+    analysis = _cutoff([300.0, 400.0, 500.0], [-1.0, -1.0, -1.0], [0.1, 0.1, 0.1])
+
+    assert analysis.stress is None
+    assert analysis.recommended == pytest.approx(300.0)
+
+
+# Sweep-length check
+
+
+def test_a_short_smooth_sweep_warns_and_suggests_a_cutoff() -> None:
+    cutoffs = [300.0, 400.0, 500.0, 600.0]
+    energies = _power_law(cutoffs, exponent=-1.5, gap_at_600=0.003)
+
+    check = check_sweep_length(cutoffs, energies, num_atoms=ATOMS, threshold=TOL)
+
+    # The tolerance is reached at 600 * 3**(1/1.5) = 1248 eV.
+    assert check.status == SWEEP_TOO_SHORT
+    assert check.exponent == pytest.approx(-1.5, abs=0.05)
+    assert check.finest_gap == pytest.approx(0.003, rel=0.05)
+    assert check.required_cutoff == pytest.approx(1248.0, rel=0.05)
+    assert check.suggested_cutoff == pytest.approx(1300.0)
+    assert check.summary == "too short"
+    assert check.explanation == (
+        "600 eV is 0.003 eV/atom from the fitted limit; "
+        "extend the sweep to 1300 eV and analyse again"
+    )
+
+
+def test_the_suggestion_rounds_up_to_the_last_step() -> None:
+    cutoffs = [300.0 + 50.0 * index for index in range(11)]
+    energies = _power_law(cutoffs, exponent=-1.5, gap_at_600=0.003)
+
+    check = check_sweep_length(cutoffs, energies, num_atoms=ATOMS, threshold=TOL)
+
+    assert check.status == SWEEP_TOO_SHORT
+    assert check.suggested_cutoff == pytest.approx(1250.0)
+
+
+def test_a_long_enough_sweep_does_not_warn() -> None:
+    cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0, 800.0]
+    energies = _power_law(cutoffs, exponent=-6.0, gap_at_600=0.004)
+
+    check = check_sweep_length(cutoffs, energies, num_atoms=ATOMS, threshold=TOL)
+
+    assert check.status == SWEEP_LONG_ENOUGH
+    assert check.summary == "long enough"
+    assert check.explanation == "800 eV is within 0.00071 eV/atom of the fitted limit"
+    assert check.suggested_cutoff is None
+    assert check.extrapolated_energy < energies[-1]
+    assert check.fitted_curve[0][0] == pytest.approx(cutoffs[0])
+    assert check.fitted_curve[-1][0] == pytest.approx(cutoffs[-1])
+
+
+def test_the_energy_result_carries_the_fit_for_the_plot() -> None:
+    cutoffs = [300.0, 400.0, 500.0, 600.0]
+    analysis = _cutoff(cutoffs, _power_law(cutoffs, exponent=-1.5, gap_at_600=0.003))
+
+    assert analysis.sweep_length.status == SWEEP_TOO_SHORT
+    assert analysis.energy.fitted_curve == analysis.sweep_length.fitted_curve
+    assert analysis.energy.extrapolated_energy == analysis.sweep_length.extrapolated_energy
+
+
+def test_fewer_than_four_points_cannot_be_fitted() -> None:
+    check = check_sweep_length(
+        [300.0, 400.0, 500.0], [-1.0, -1.1, -1.12], num_atoms=1, threshold=TOL
+    )
+
+    assert check.status == SWEEP_NOT_ESTIMATED
+    assert check.summary == "limit not estimated"
+    assert check.explanation == "the fit needs at least four cutoffs"
+    assert check.fitted_curve is None
+
+
+def test_an_energy_that_rises_in_every_tail_is_not_fitted() -> None:
     cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0]
-    energies = [-10.0 + 2.0 * math.exp(-0.01 * c) for c in cutoffs]
 
-    result = asymptotic_extrapolation_energy(
-        cutoffs,
-        energies,
-        num_atoms=2,
-        threshold=1e-15,
-    )
-    assert result.converged is False
-    assert result.converged_value is None
-    assert result.extrapolated_energy is not None
-    assert result.fitted_curve is not None
-    assert "did not reach the requested energy tolerance" in result.details
-
-
-def test_asymptotic_rejects_non_positive_atom_count() -> None:
-    pytest.importorskip("scipy")
-    result = asymptotic_extrapolation_energy(
-        [300.0, 400.0, 500.0, 600.0],
-        [-10.0, -10.5, -10.7, -10.75],
-        num_atoms=0,
-        threshold=0.001,
-    )
-    assert result.converged is False
-    assert "positive" in result.details.lower()
-
-
-# Force and stress delta-threshold
-
-
-def test_force_delta_threshold_handles_non_monotonic_series() -> None:
-    result = delta_threshold_force(
-        [300.0, 400.0, 500.0, 600.0],
-        [0.25, 0.20, 0.23, 0.205],
-        threshold=0.03,
+    check = check_sweep_length(
+        cutoffs, _per_atom([0.5, 0.0, 0.003, 0.0, 0.002]), num_atoms=ATOMS, threshold=TOL
     )
 
-    assert result.converged is True
-    assert result.converged_value == pytest.approx(500.0)
+    assert check.status == SWEEP_NOT_ESTIMATED
+    assert check.explanation == "the energy does not fall steadily towards the finest cutoff"
 
 
-def test_delta_threshold_force_reports_not_converged() -> None:
-    result = delta_threshold_force(
-        [300.0, 400.0, 500.0],
-        [0.5, 0.1, 0.5],
-        threshold=0.001,
-    )
-    assert result.converged is False
-    assert result.converged_value is None
-    assert "did not reach the threshold" in result.details
-    assert result.deltas is not None and len(result.deltas) == 2
-
-
-def test_delta_threshold_force_requires_two_points() -> None:
-    result = delta_threshold_force([300.0], [0.2], threshold=0.01)
-    assert result.converged is False
-    assert "at least two" in result.details.lower()
-    assert result.fallback_suggestion is not None
-
-
-def test_delta_threshold_stress_converges_when_delta_below_threshold() -> None:
-    result = delta_threshold_stress(
-        [300.0, 400.0, 500.0, 600.0],
-        [1.5, 0.4, 0.35, 0.34],
-        threshold=0.1,
-    )
-
-    assert result.converged is True
-    assert result.method == "stress-delta-threshold"
-    assert result.converged_value == pytest.approx(500.0)
-
-
-def test_delta_threshold_stress_not_converged_keeps_deltas() -> None:
-    result = delta_threshold_stress(
-        [300.0, 400.0, 500.0],
-        [5.0, 2.0, 0.5],
-        threshold=0.1,
-    )
-
-    assert result.converged is False
-    assert result.deltas is not None
-    assert len(result.deltas) == 2
-
-
-def test_delta_threshold_stress_requires_two_points() -> None:
-    result = delta_threshold_stress(
-        [300.0],
-        [0.05],
-        threshold=0.1,
-    )
-
-    assert result.converged is False
-    assert "at least two" in result.details.lower()
-
-
-def test_delta_threshold_stress_skips_nan_values() -> None:
-    result = delta_threshold_stress(
-        [300.0, 400.0, 500.0],
-        [float("nan"), float("nan"), 0.4],
-        threshold=0.1,
-    )
-
-    assert result.converged is False
-    assert "at least two" in result.details.lower()
-
-
-# Method dispatch
-
-
-def test_analyze_convergence_runs_selected_method_and_force() -> None:
-    energy_result, force_result = analyze_convergence(
-        method="delta-threshold",
-        cutoffs=[300.0, 400.0, 500.0],
-        energies=[-100.0, -100.05, -100.051],
-        max_forces=[0.20, 0.17, 0.165],
-        num_atoms=10,
-        energy_threshold=0.001,
-        force_threshold=0.01,
-    )
-
-    assert energy_result.converged is True
-    assert force_result.converged is True
-    assert recommended_value(energy_result, force_result) == pytest.approx(500.0)
-
-
-def test_analyze_convergence_dispatches_derivative() -> None:
-    energy, force = analyze_convergence(
-        method="Derivative",
-        cutoffs=[300.0, 400.0, 500.0],
-        energies=[-10.0, -10.5, -10.5005],
-        max_forces=[0.2, 0.17, 0.169],
-        num_atoms=1,
-        energy_threshold=0.01,
-        force_threshold=0.01,
-    )
-    assert energy.method == "derivative"
-    assert force.method == "force-delta-threshold"
-
-
-def test_analyze_convergence_dispatches_asymptotic() -> None:
-    pytest.importorskip("scipy")
+def test_a_fit_that_misses_the_points_is_not_used() -> None:
+    # A step, not a decay: no power law follows it to a quarter of the tolerance.
     cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0]
-    energies = [-10.0 + 2.0 * math.exp(-0.01 * c) for c in cutoffs]
-    energy, force = analyze_convergence(
-        method="asymptotic",
-        cutoffs=cutoffs,
-        energies=energies,
-        max_forces=[0.2, 0.18, 0.17, 0.169, 0.1689],
-        num_atoms=2,
-        energy_threshold=0.003,
-        force_threshold=0.01,
-    )
-    assert energy.method == "asymptotic"
 
-
-def test_analyze_convergence_rejects_unknown_method() -> None:
-    with pytest.raises(ValueError, match="Unsupported energy convergence method"):
-        analyze_convergence(
-            method="nonsense-method",
-            cutoffs=[300.0, 400.0],
-            energies=[-10.0, -10.1],
-            max_forces=[0.2, 0.19],
-            num_atoms=4,
-            energy_threshold=0.001,
-            force_threshold=0.01,
-        )
-
-
-# Recommendation
-
-
-def test_recommended_value_includes_stress_when_converged() -> None:
-    energy = ConvergenceResult(
-        converged=True, method="delta-threshold", details="", converged_value=400.0
-    )
-    force = ConvergenceResult(
-        converged=True, method="force-delta-threshold", details="", converged_value=500.0
-    )
-    stress = ConvergenceResult(
-        converged=True, method="stress-delta-threshold", details="", converged_value=600.0
+    check = check_sweep_length(
+        cutoffs, _per_atom([0.02, 0.02, 0.02, 0.0, 0.0]), num_atoms=ATOMS, threshold=TOL
     )
 
-    assert recommended_value(energy, force, stress) == pytest.approx(600.0)
+    assert check.status == SWEEP_NOT_ESTIMATED
+    assert check.explanation in {
+        "the power law does not follow the points closely enough",
+        "the decay is not a power law",
+    }
 
 
-def test_recommended_value_requires_an_included_stress_to_converge() -> None:
-    """Stress, once included, is a criterion like the others: unconverged means no recommendation."""
+def test_a_decay_slower_than_the_exponent_bound_is_not_used() -> None:
+    cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0, 800.0]
+    energies = [-1.0 + 0.02 * ATOMS * (cutoff / 300.0) ** -0.1 for cutoff in cutoffs]
 
-    energy = ConvergenceResult(
-        converged=True, method="delta-threshold", details="", converged_value=400.0
-    )
-    force = ConvergenceResult(
-        converged=True, method="force-delta-threshold", details="", converged_value=500.0
-    )
-    stress = ConvergenceResult(
-        converged=False, method="stress-delta-threshold", details="", converged_value=None
-    )
+    check = check_sweep_length(cutoffs, energies, num_atoms=ATOMS, threshold=TOL)
 
-    assert recommended_value(energy, force, stress) is None
-    assert unconverged_criteria(energy, force, stress) == ("stress",)
+    assert check.status == SWEEP_NOT_ESTIMATED
+    assert check.explanation == "the decay is not a power law"
 
 
-def test_recommended_value_requires_force_to_converge() -> None:
-    """A converged energy alone must not produce an adoptable recommendation."""
+def test_the_longest_good_tail_is_fitted() -> None:
+    # The 300 eV point is far from the asymptotic regime; the fit drops it.
+    cutoffs = [300.0, 400.0, 500.0, 600.0, 700.0, 800.0]
+    energies = _power_law(cutoffs, exponent=-3.0, gap_at_600=0.003)
+    energies[0] += 5.0
 
-    energy = ConvergenceResult(
-        converged=True, method="delta-threshold", details="", converged_value=500.0
-    )
-    force = ConvergenceResult(
-        converged=False, method="force-delta-threshold", details="", converged_value=None
-    )
+    check = check_sweep_length(cutoffs, energies, num_atoms=ATOMS, threshold=TOL)
 
-    assert recommended_value(energy, force) is None
-    assert unconverged_criteria(energy, force) == ("force",)
-
-
-def test_recommended_value_returns_none_when_nothing_converged() -> None:
-    energy = ConvergenceResult(converged=False, method="delta-threshold", details="")
-    force = ConvergenceResult(converged=False, method="force-delta-threshold", details="")
-    assert recommended_value(energy, force) is None
+    assert check.status == SWEEP_TOO_SHORT
+    assert check.fitted_curve[0][0] == pytest.approx(400.0)
+    assert check.exponent == pytest.approx(-3.0, abs=0.1)
 
 
-def test_unconverged_criteria_is_empty_when_all_supplied_criteria_converged() -> None:
-    energy = ConvergenceResult(
-        converged=True, method="delta-threshold", details="", converged_value=400.0
-    )
-    force = ConvergenceResult(
-        converged=True, method="force-delta-threshold", details="", converged_value=500.0
-    )
-
-    assert unconverged_criteria(energy, force) == ()
-
-
-def test_recommended_value_backward_compatible_without_stress() -> None:
-    energy = ConvergenceResult(
-        converged=True, method="delta-threshold", details="", converged_value=400.0
-    )
-    force = ConvergenceResult(
-        converged=True, method="force-delta-threshold", details="", converged_value=500.0
-    )
-
-    assert recommended_value(energy, force) == pytest.approx(500.0)
-
-
-# K-point sweeps and grid labels
-
-
-def test_analyze_kpoint_convergence_uses_delta_threshold_only() -> None:
-    energy_result, force_result = analyze_kpoint_convergence(
-        kpoint_counts=[1.0, 8.0, 27.0],
-        energies=[-100.0, -100.02, -100.0205],
-        max_forces=[0.20, 0.16, 0.159],
+def test_kpoint_sweeps_have_no_sweep_length_check() -> None:
+    analysis = analyze_kpoint_convergence(
+        kpoint_counts=[1.0, 8.0, 27.0, 64.0],
+        energies=[-100.0, -100.02, -100.0205, -100.021],
+        max_forces=[0.20, 0.16, 0.159, 0.158],
         num_atoms=8,
         energy_threshold=0.001,
         force_threshold=0.01,
     )
 
-    assert energy_result.method == "delta-threshold"
-    assert force_result.method == "force-delta-threshold"
-    assert energy_result.converged is True
-    assert force_result.converged is True
-    assert recommended_value(energy_result, force_result) == pytest.approx(27.0)
+    assert analysis.sweep_length is None
+    assert analysis.energy.fitted_curve is None
 
 
-def test_analyze_kpoint_convergence_details_use_grid_label_when_labels_provided() -> None:
-    energy_result, force_result = analyze_kpoint_convergence(
+# K-point sweeps
+
+
+def test_kpoint_grids_are_judged_against_the_densest_grid() -> None:
+    # 8 and 27 k-points agree with each other, but both sit 2.5 meV/atom from
+    # the densest grid.
+    analysis = analyze_kpoint_convergence(
+        kpoint_counts=[1.0, 8.0, 27.0, 64.0, 125.0],
+        energies=[-100.0, -100.0005, -100.0, -100.02, -100.0205],
+        max_forces=[0.2] * 5,
+        num_atoms=8,
+        energy_threshold=0.001,
+        force_threshold=0.01,
+        point_labels=GRID_LABELS,
+        point_spacings={64.0: 0.08, 125.0: 0.06},
+    )
+
+    assert analysis.energy.converged_value == pytest.approx(64.0)
+    assert analysis.energy.summary == "converged at 4 x 4 x 4 (spacing 0.08 1/Ang)"
+    assert analysis.energy.explanation == (
+        "within 0.000063 eV/atom of 5 x 5 x 5, as is every denser grid"
+    )
+    assert analysis.reference_text == "5 x 5 x 5, the densest grid in the sweep"
+    assert analysis.recommended == pytest.approx(64.0)
+
+
+def test_kpoint_wording_has_no_method_name_or_grid_prefix() -> None:
+    analysis = analyze_kpoint_convergence(
         kpoint_counts=[1.0, 8.0, 27.0],
         energies=[-100.0, -100.02, -100.0205],
         max_forces=[0.20, 0.16, 0.159],
         num_atoms=8,
         energy_threshold=0.001,
-        force_threshold=0.01,
-        point_labels={1.0: "1 x 1 x 1", 8.0: "2 x 2 x 2", 27.0: "3 x 3 x 3"},
+        force_threshold=0.05,
+        point_labels=GRID_LABELS,
+        point_spacings={1.0: 0.5, 8.0: 0.25, 27.0: 0.124},
     )
 
-    assert "at 3 x 3 x 3" in energy_result.details
-    assert "at 3 x 3 x 3" in force_result.details
-    # Raw count must not appear as the convergence point
-    assert "at 27" not in energy_result.details
-    assert "at 27" not in force_result.details
+    for result in (analysis.energy, analysis.force):
+        assert "Delta" not in result.details
+        assert "Grid:" not in result.details
+    assert analysis.energy.summary == "converged at 2 x 2 x 2 (spacing 0.25 1/Ang)"
+    # 1 x 1 x 1 has no spacing that reproduces it.
+    assert analysis.force.summary == "converged at 1 x 1 x 1"
 
 
-def test_analyze_kpoint_convergence_details_keep_numeric_without_labels() -> None:
-    energy_result, force_result = analyze_kpoint_convergence(
+def test_kpoint_wording_without_labels_names_the_count() -> None:
+    analysis = analyze_kpoint_convergence(
         kpoint_counts=[1.0, 8.0, 27.0],
         energies=[-100.0, -100.02, -100.0205],
         max_forces=[0.20, 0.16, 0.159],
         num_atoms=8,
         energy_threshold=0.001,
-        force_threshold=0.01,
+        force_threshold=0.05,
     )
 
-    # Without point_labels the original numeric details are preserved unchanged.
-    assert "27" in energy_result.details
-    assert "27" in force_result.details
+    assert analysis.energy.summary == "converged at 8 k-points"
+    assert analysis.reference_text == "27 k-points, the densest grid in the sweep"
 
 
-def test_analyze_kpoint_convergence_details_include_spacing_for_non_gamma_grid() -> None:
-    energy_result, force_result = analyze_kpoint_convergence(
+def test_kpoint_stress_uses_grid_labels() -> None:
+    analysis = analyze_kpoint_convergence(
         kpoint_counts=[1.0, 8.0, 27.0],
-        energies=[-100.0, -100.02, -100.0205],
-        max_forces=[0.20, 0.16, 0.159],
+        energies=[-100.0, -100.0, -100.0],
+        max_forces=[0.1, 0.1, 0.1],
         num_atoms=8,
         energy_threshold=0.001,
-        force_threshold=0.01,
-        point_labels={1.0: "Grid: 1 x 1 x 1", 8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
-        point_spacings={1.0: 0.25, 8.0: 0.25, 27.0: 0.124},
+        force_threshold=0.05,
+        max_stresses=[1.0, 0.3, 0.25],
+        stress_threshold=0.1,
+        point_labels=GRID_LABELS,
     )
 
-    assert "Grid: 3 x 3 x 3" in energy_result.details
-    assert "spacing 0.124 1/Ang" in energy_result.details
-    assert "delta=" in energy_result.details
-    assert "Grid: 3 x 3 x 3" in force_result.details
-    assert "spacing 0.124 1/Ang" in force_result.details
+    assert analysis.stress.summary == "converged at 2 x 2 x 2"
+    assert analysis.stress.explanation == "within 0.05 GPa of 3 x 3 x 3, as is every denser grid"
+    assert analysis.recommended == pytest.approx(8.0)
 
 
-def test_apply_kpoint_label_to_stress_result_rewrites_grid_label() -> None:
-    stress = delta_threshold_stress(
-        [1.0, 8.0, 27.0],
-        [1.0, 0.3, 0.25],
-        threshold=0.1,
-    )
-    assert stress.converged is True
-    assert stress.converged_value == pytest.approx(27.0)
-
-    labeled = apply_kpoint_label_to_stress_result(
-        stress,
-        {1.0: "1 x 1 x 1", 8.0: "2 x 2 x 2", 27.0: "3 x 3 x 3"},
-    )
-
-    assert "Stress converged by" in labeled.details
-    assert "3 x 3 x 3" in labeled.details
-    assert "at 27 " not in labeled.details
+# Combined recommendation
 
 
-def test_apply_kpoint_label_to_stress_result_includes_spacing_when_supplied() -> None:
-    stress = delta_threshold_stress(
-        [1.0, 8.0, 27.0],
-        [1.0, 0.3, 0.25],
-        threshold=0.1,
-    )
-    labeled = apply_kpoint_label_to_stress_result(
-        stress,
-        {1.0: "Grid: 1 x 1 x 1", 8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
-        point_spacings={1.0: 0.25, 8.0: 0.25, 27.0: 0.124},
-    )
-    assert "Grid: 3 x 3 x 3" in labeled.details
-    assert "spacing 0.124 1/Ang" in labeled.details
+def test_recommended_value_is_the_largest_converged_value() -> None:
+    assert recommended_value(
+        _converged_at(400.0), _converged_at(500.0), _converged_at(600.0)
+    ) == pytest.approx(600.0)
+    assert recommended_value(_converged_at(400.0), _converged_at(500.0)) == pytest.approx(500.0)
 
 
-def test_kpoint_label_leaves_unconverged_result_unchanged() -> None:
+def test_recommended_value_requires_every_supplied_criterion() -> None:
     unconverged = ConvergenceResult(
-        converged=False,
-        method="stress-delta-threshold",
-        details="original",
-        converged_value=None,
+        converged=False, quantity="Force", summary="not converged", explanation=""
     )
 
-    out = apply_kpoint_label_to_stress_result(unconverged, {27.0: "3 x 3 x 3"})
-
-    assert out is unconverged
-    assert out.details == "original"
-
-
-def test_kpoint_label_leaves_result_unchanged_without_a_label_for_the_converged_point() -> None:
-    converged = _converged_at(27.0)
-
-    out = apply_kpoint_label_to_stress_result(converged, {8.0: "2 x 2 x 2"})
-
-    assert out is converged
-    assert out.details == "original"
-
-
-def test_kpoint_label_omits_spacing_for_gamma_only_grid() -> None:
-    # When the converged point is (1,1,1) the spacing is ill-defined, so the
-    # details string should not advertise the boundary value as if it were
-    # the "right" spacing. The standard delta-threshold algorithm never
-    # actually returns (1,1,1) as converged (convergence is always the
-    # second-or-later point), but a synthetic result exercises the
-    # Gamma-only branch.
-    labeled = apply_kpoint_label_to_stress_result(
-        _converged_at(1.0),
-        {1.0: "Grid: 1 x 1 x 1"},
-        point_spacings={1.0: 0.25},
-    )
-    assert "Grid: 1 x 1 x 1" in labeled.details
-    assert "spacing" not in labeled.details
-
-
-def test_kpoint_label_omits_spacing_when_the_converged_point_has_none() -> None:
-    labeled = apply_kpoint_label_to_stress_result(
-        _converged_at(27.0),
-        {27.0: "Grid: 3 x 3 x 3"},
-        point_spacings={8.0: 0.25},
-    )
-
-    assert "Grid: 3 x 3 x 3" in labeled.details
-    assert "spacing" not in labeled.details
-
-
-def test_kpoint_label_keeps_spacing_for_an_unparseable_grid_label() -> None:
-    # Only a parsed (1,1,1) grid suppresses the spacing.
-    labeled = apply_kpoint_label_to_stress_result(
-        _converged_at(27.0),
-        {27.0: "Grid: a x b x c"},
-        point_spacings={27.0: 0.124},
-    )
-
-    assert "spacing 0.124 1/Ang" in labeled.details
+    assert recommended_value(_converged_at(400.0), _converged_at(500.0), unconverged) is None
+    assert unconverged_criteria(_converged_at(400.0), unconverged) == ("force",)
+    assert unconverged_criteria(_converged_at(400.0), _converged_at(500.0)) == ()

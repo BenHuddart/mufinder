@@ -9,7 +9,14 @@ from uuid import uuid4
 import pytest
 
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
-from mufinder.domain.models import Job, MuonSite, ProvenanceRecord, Structure
+from mufinder.domain.models import (
+    CONVERGED_DEFAULT_METHOD,
+    MANUAL_DEFAULT_METHOD,
+    Job,
+    MuonSite,
+    ProvenanceRecord,
+    Structure,
+)
 from mufinder.persistence import project_codec
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.project_document import ProjectDocument
@@ -192,3 +199,38 @@ def test_structure_round_trips_through_entity_decoder() -> None:
     )
 
     assert project_codec.ENTITY_DECODERS["structures"](to_jsonable(structure)) == structure
+
+
+@pytest.mark.parametrize("stored", ["delta-threshold", "derivative", "asymptotic", "converged"])
+def test_project_from_dict_reads_any_convergence_method_as_converged(stored: str) -> None:
+    payload = {
+        "id": str(uuid4()),
+        "name": "Defaults",
+        "schema_version": 6,
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC).isoformat(),
+        "modified_at": datetime(2026, 1, 2, tzinfo=UTC).isoformat(),
+        "recommended_cutoff_method": stored,
+        "recommended_kpoint_method": stored,
+    }
+
+    project = project_codec.project_from_dict(payload)
+
+    assert project.recommended_cutoff_method == CONVERGED_DEFAULT_METHOD
+    assert project.recommended_kpoint_method == CONVERGED_DEFAULT_METHOD
+
+
+def test_project_from_dict_keeps_a_manual_default() -> None:
+    payload = {
+        "id": str(uuid4()),
+        "name": "Defaults",
+        "schema_version": 6,
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC).isoformat(),
+        "modified_at": datetime(2026, 1, 2, tzinfo=UTC).isoformat(),
+        "recommended_cutoff_method": " manual ",
+        "recommended_kpoint_method": "manual",
+    }
+
+    project = project_codec.project_from_dict(payload)
+
+    assert project.recommended_cutoff_method == MANUAL_DEFAULT_METHOD
+    assert project.recommended_kpoint_method == MANUAL_DEFAULT_METHOD

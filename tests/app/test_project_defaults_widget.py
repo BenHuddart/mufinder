@@ -20,12 +20,12 @@ def _summary(**overrides: object) -> ProjectDefaultsSummary:
     values: dict[str, object] = {
         "xc_functional": "PBE",
         "cutoff_energy": 700.0,
-        "cutoff_method": "delta-threshold",
+        "cutoff_method": "converged",
         "cutoff_energy_threshold": 0.001,
         "cutoff_force_threshold": 0.05,
         "cutoff_xc_functional": "PBE",
         "kpoint_grid": (4, 4, 4),
-        "kpoint_method": "delta-threshold",
+        "kpoint_method": "converged",
         "kpoint_energy_threshold": 0.001,
         "kpoint_force_threshold": 0.05,
         "kpoint_xc_functional": "PBE",
@@ -38,7 +38,7 @@ def test_summary_from_project_copies_every_default() -> None:
     project = Project(
         recommended_xc_functional="PBE",
         recommended_cutoff_energy=700.0,
-        recommended_cutoff_method="asymptotic",
+        recommended_cutoff_method="converged",
         recommended_cutoff_stress_threshold=0.1,
         recommended_cutoff_xc_functional="PBE",
         recommended_kpoint_grid=(3, 3, 2),
@@ -49,7 +49,7 @@ def test_summary_from_project_copies_every_default() -> None:
 
     assert summary.xc_functional == "PBE"
     assert summary.cutoff_energy == pytest.approx(700.0)
-    assert summary.cutoff_method == "asymptotic"
+    assert summary.cutoff_method == "converged"
     assert summary.cutoff_stress_threshold == pytest.approx(0.1)
     assert summary.kpoint_grid == (3, 3, 2)
     assert summary.kpoint_xc_functional == "LDA"
@@ -194,7 +194,10 @@ def test_dialog_prefills_values_and_marks_edits_as_manual(qapp) -> None:
     assert dialog.cutoff_energy() == pytest.approx(700.0)
     assert dialog.kpoint_grid() == (4, 4, 4)
     assert dialog.edited_summary() == _summary()
-    assert "Delta-Threshold" in dialog._cutoff_detail.text()
+    # A converged default names its criteria and functional, never a method.
+    assert dialog._cutoff_detail.text() == (
+        "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang \N{MIDDLE DOT} converged with PBE"
+    )
 
     dialog._cutoff_value.setText("850")
     dialog._kpoint_value.setText("6 6 4")

@@ -1896,17 +1896,18 @@ def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_pat
     select_route(window, "convergence_cutoff")
     assert window._main_stack.currentWidget() is window._convergence_view
 
-    window._on_cutoff_adopted(550.0, "asymptotic", 0.001, 0.05)
+    window._on_cutoff_adopted(550.0, "converged", 0.001, 0.05)
 
     assert doc.project.recommended_cutoff_energy == pytest.approx(550.0)
-    assert doc.project.recommended_cutoff_method == "asymptotic"
+    assert doc.project.recommended_cutoff_method == "converged"
     assert doc.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
     assert doc.ui_state["default_cut_off_energy"] == pytest.approx(550.0)
-    assert doc.ui_state["default_cut_off_energy_method"] == "asymptotic"
+    assert doc.ui_state["default_cut_off_energy_method"] == "converged"
     assert doc.ui_state["default_cut_off_energy_threshold"] == pytest.approx(0.001)
     assert doc.ui_state["default_cut_off_force_threshold"] == pytest.approx(0.05)
     snapshot = doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["cutoff"]
+    assert "method" not in snapshot
     assert snapshot["host_structure_id"] == str(host.id)
     assert snapshot["simulation_cell_structure_id"] == str(host.id)
     assert snapshot["default_value"] == pytest.approx(550.0)
@@ -1995,11 +1996,11 @@ def test_main_window_convergence_overview_restores_pinned_snapshots_on_reload(
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
     doc.project.recommended_cutoff_energy = 550.0
-    doc.project.recommended_cutoff_method = "asymptotic"
+    doc.project.recommended_cutoff_method = "converged"
     doc.project.recommended_cutoff_energy_threshold = 0.001
     doc.project.recommended_cutoff_force_threshold = 0.05
     doc.project.recommended_kpoint_grid = (2, 2, 2)
-    doc.project.recommended_kpoint_method = "delta-threshold"
+    doc.project.recommended_kpoint_method = "converged"
     doc.project.recommended_kpoint_energy_threshold = 0.001
     doc.project.recommended_kpoint_force_threshold = 0.05
     doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
@@ -2066,7 +2067,7 @@ def test_main_window_convergence_overview_hides_stale_snapshot_when_host_changes
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
     doc.project.recommended_cutoff_energy = 550.0
-    doc.project.recommended_cutoff_method = "asymptotic"
+    doc.project.recommended_cutoff_method = "converged"
     doc.project.recommended_cutoff_energy_threshold = 0.001
     doc.project.recommended_cutoff_force_threshold = 0.05
     doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {

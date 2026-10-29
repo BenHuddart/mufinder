@@ -99,9 +99,8 @@ from mufinder.app.keyword_catalog_guard import KeywordCatalogGuard
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_display import (
-    format_convergence_criteria,
-    format_convergence_method,
     format_cutoff_energy,
+    format_default_criteria,
     format_kpoint_grid,
 )
 from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
@@ -2198,7 +2197,6 @@ class MainWindow(QMainWindow):
             return [
                 ("Project default", "Not set"),
                 ("Functional", "Not recorded"),
-                ("Method", "Not set"),
                 ("Criteria", "Not set"),
             ]
         return [
@@ -2210,10 +2208,10 @@ class MainWindow(QMainWindow):
                 "Functional",
                 self._document.project.recommended_cutoff_xc_functional or "Not recorded",
             ),
-            ("Method", format_convergence_method(self._document.project.recommended_cutoff_method)),
             (
                 "Criteria",
-                format_convergence_criteria(
+                format_default_criteria(
+                    method=self._document.project.recommended_cutoff_method,
                     energy_threshold=self._document.project.recommended_cutoff_energy_threshold,
                     force_threshold=self._document.project.recommended_cutoff_force_threshold,
                     stress_threshold=self._document.project.recommended_cutoff_stress_threshold,
@@ -2227,7 +2225,6 @@ class MainWindow(QMainWindow):
                 ("Project default", "Not set"),
                 ("Cutoff default", "Not set"),
                 ("Functional", "Not recorded"),
-                ("Method", "Not set"),
                 ("Criteria", "Not set"),
             ]
         return [
@@ -2240,10 +2237,10 @@ class MainWindow(QMainWindow):
                 "Functional",
                 self._document.project.recommended_kpoint_xc_functional or "Not recorded",
             ),
-            ("Method", format_convergence_method(self._document.project.recommended_kpoint_method)),
             (
                 "Criteria",
-                format_convergence_criteria(
+                format_default_criteria(
+                    method=self._document.project.recommended_kpoint_method,
                     energy_threshold=self._document.project.recommended_kpoint_energy_threshold,
                     force_threshold=self._document.project.recommended_kpoint_force_threshold,
                     stress_threshold=self._document.project.recommended_kpoint_stress_threshold,
@@ -3264,7 +3261,6 @@ class MainWindow(QMainWindow):
         self,
         *,
         cutoff_energy: float,
-        method: str,
         energy_threshold: float,
         force_threshold: float,
         simulation_cell_structure_id: str | None,
@@ -3287,7 +3283,6 @@ class MainWindow(QMainWindow):
             "host_structure_id": host_structure_id,
             "simulation_cell_structure_id": simulation_cell_structure_id,
             "default_value": float(cutoff_energy),
-            "method": method,
             "energy_threshold": float(energy_threshold),
             "force_threshold": float(force_threshold),
             "plot_data": dict(plot_data),
@@ -3300,7 +3295,6 @@ class MainWindow(QMainWindow):
         self,
         *,
         grid: tuple[int, int, int],
-        method: str,
         energy_threshold: float,
         force_threshold: float,
         simulation_cell_structure_id: str | None,
@@ -3325,7 +3319,6 @@ class MainWindow(QMainWindow):
             "host_structure_id": host_structure_id,
             "simulation_cell_structure_id": simulation_cell_structure_id,
             "default_value": [int(grid[0]), int(grid[1]), int(grid[2])],
-            "method": method,
             "energy_threshold": float(energy_threshold),
             "force_threshold": float(force_threshold),
             "plot_data": dict(plot_data),
@@ -4577,7 +4570,6 @@ class MainWindow(QMainWindow):
             "cutoff",
             self._build_cutoff_overview_snapshot(
                 cutoff_energy=float(cutoff_energy),
-                method=method,
                 energy_threshold=float(energy_threshold),
                 force_threshold=float(force_threshold),
                 simulation_cell_structure_id=definition_cell_id,
@@ -8428,7 +8420,6 @@ class MainWindow(QMainWindow):
             "kpoint",
             self._build_kpoint_overview_snapshot(
                 grid=grid,
-                method=method,
                 energy_threshold=float(energy_threshold),
                 force_threshold=float(force_threshold),
                 simulation_cell_structure_id=definition_cell_id,

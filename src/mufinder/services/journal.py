@@ -358,13 +358,12 @@ def _recommended_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
             title="Default cutoff set manually",
             body=f"Set the project default cutoff to {float(value):.8g} eV by hand.",
         )
-    method_text = f" using {method}" if method else ""
     return _entry(
         record,
         stamp_kind="success",
         title="Recommended cutoff adopted",
         body=(
-            f"Set the project default cutoff to {float(value):.8g} eV{method_text}"
+            f"Set the project default cutoff to {float(value):.8g} eV"
             f"{_converged_with_text(record, 'recommended_cutoff_xc_functional')}."
         ),
     )
@@ -385,13 +384,12 @@ def _recommended_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
             title="Default k-point grid set manually",
             body=f"Set the project default k-point grid to {grid_text} by hand.",
         )
-    method_text = f" using {method}" if method else ""
     return _entry(
         record,
         stamp_kind="success",
         title="Recommended k-point grid adopted",
         body=(
-            f"Set the project default k-point grid to {grid_text}{method_text}"
+            f"Set the project default k-point grid to {grid_text}"
             f"{_converged_with_text(record, 'recommended_kpoint_xc_functional')}."
         ),
     )

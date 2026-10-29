@@ -1,13 +1,12 @@
 """Scientific algorithms for MuFinder."""
 
 from mufinder.science.convergence_analysis import (
+    ConvergenceAnalysis,
     ConvergenceResult,
+    SweepLengthCheck,
     analyze_convergence,
     analyze_kpoint_convergence,
-    asymptotic_extrapolation_energy,
-    delta_threshold_energy,
-    delta_threshold_force,
-    derivative_energy,
+    check_sweep_length,
     recommended_value,
 )
 from mufinder.science.kpoint_grids import (
@@ -164,13 +163,12 @@ from mufinder.science.wyckoff_analysis import (
 )
 
 __all__ = [
+    "ConvergenceAnalysis",
     "ConvergenceResult",
+    "SweepLengthCheck",
     "analyze_convergence",
     "analyze_kpoint_convergence",
-    "asymptotic_extrapolation_energy",
-    "delta_threshold_energy",
-    "delta_threshold_force",
-    "derivative_energy",
+    "check_sweep_length",
     "recommended_value",
     "format_kpoint_grid",
     "generate_kpoint_grids",

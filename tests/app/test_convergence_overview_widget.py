@@ -16,7 +16,6 @@ def test_convergence_overview_widget_shows_placeholder_and_emits_navigation(qapp
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "Not set"),
-            ("Method", "Not set"),
             ("Criteria", "Not set"),
         ],
         snapshot=None,
@@ -26,7 +25,6 @@ def test_convergence_overview_widget_shows_placeholder_and_emits_navigation(qapp
         summary_rows=[
             ("Project default", "Not set"),
             ("Cutoff default", "Not set"),
-            ("Method", "Not set"),
             ("Criteria", "Not set"),
         ],
         snapshot=None,
@@ -62,7 +60,6 @@ def test_convergence_overview_widget_renders_pinned_snapshots(qapp) -> None:
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Method", "Asymptotic Extrapolation"),
             ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"),
         ],
         snapshot={
@@ -81,7 +78,6 @@ def test_convergence_overview_widget_renders_pinned_snapshots(qapp) -> None:
         summary_rows=[
             ("Project default", "2 x 2 x 2"),
             ("Cutoff default", "550 eV"),
-            ("Method", "Delta-Threshold"),
             ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"),
         ],
         snapshot={
@@ -206,7 +202,6 @@ def test_convergence_overview_widget_skips_stress_when_data_absent(qapp) -> None
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Method", "Delta-Threshold"),
             ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"),
         ],
         snapshot={
@@ -245,7 +240,6 @@ def test_convergence_overview_widget_renders_stress_overlay_when_present(qapp) -
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Method", "Delta-Threshold"),
             ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang, dS <= 0.1 GPa"),
         ],
         snapshot={
@@ -291,7 +285,6 @@ def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> Non
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Method", "Delta-Threshold"),
             ("Criteria", "..."),
         ],
         snapshot={
@@ -314,7 +307,6 @@ def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> Non
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Method", "Delta-Threshold"),
             ("Criteria", "..."),
         ],
         snapshot={
@@ -344,7 +336,6 @@ def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> No
         widget.set_cutoff_panel(
             summary_rows=[
                 ("Project default", "550 eV"),
-                ("Method", "Delta-Threshold"),
                 ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"),
             ],
             snapshot={

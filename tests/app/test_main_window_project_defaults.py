@@ -58,7 +58,7 @@ def test_adopting_cutoff_records_the_sweep_functional_as_project_default(
         assert strip.isEnabled()
         assert strip.summary().xc_functional is None
 
-    window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
 
     assert doc.project.recommended_cutoff_xc_functional == "PBE"
     assert doc.project.recommended_xc_functional == "PBE"
@@ -90,7 +90,7 @@ def test_adopting_a_mixed_functional_sweep_leaves_the_project_functional_alone(
         is None
     )
 
-    window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
 
     assert doc.project.recommended_cutoff_energy == pytest.approx(400.0)
     assert doc.project.recommended_cutoff_xc_functional is None
@@ -117,12 +117,12 @@ def test_adopting_with_a_different_functional_asks_before_switching(
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", fake_choice)
 
-    window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
     assert doc.project.recommended_cutoff_energy is None
     assert doc.project.recommended_xc_functional == "LDA"
     assert "PBE" in prompts[0] and "LDA" in prompts[0]
 
-    window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
     assert doc.project.recommended_cutoff_energy == pytest.approx(400.0)
     assert doc.project.recommended_xc_functional == "PBE"
     assert len(prompts) == 2
@@ -135,7 +135,7 @@ def test_changing_the_project_functional_flags_stale_defaults_and_persists(
     window, doc = _window_with_cutoff_sweep(
         tmp_path, shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"}
     )
-    window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
     provenance_count = len(doc.provenance)
 
     # The strip on any workflow tab drives the same project-wide change.
@@ -182,7 +182,7 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     window, doc = _window_with_cutoff_sweep(
         tmp_path, shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"}
     )
-    window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
     # Pinned overview plots as left behind by earlier adoptions.
     doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
         "cutoff": {
@@ -212,7 +212,8 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     assert "default_cut_off_energy_threshold" not in doc.ui_state
     assert strip._cutoff_value.text() == "850 eV"
     assert "Set manually" in strip._cutoff_value.toolTip()
-    assert ("Method", "Set manually") in window._cutoff_overview_summary_rows()
+    assert ("Criteria", "Set manually") in window._cutoff_overview_summary_rows()
+    assert all(label != "Method" for label, _ in window._cutoff_overview_summary_rows())
     assert window._kpoint_convergence_view._default_params["cut_off_energy"].value == (
         pytest.approx(850.0)
     )

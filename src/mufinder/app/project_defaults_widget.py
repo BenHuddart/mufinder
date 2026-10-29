@@ -3,7 +3,8 @@
 One compact, uniform summary of the three project-wide calculation defaults
 (XC functional, cutoff energy, k-point grid) replaces the per-widget
 "Project Defaults" group boxes. How each convergence default was established
-(method, criteria, the functional it was converged with) lives in the tooltips
+(criteria and the functional it was converged with, or that it was set
+manually) lives in the tooltips
 and in :class:`ProjectDefaultsDialog`, which is also where the defaults can be
 edited by hand.
 """
@@ -33,7 +34,6 @@ from mufinder.domain.models import MANUAL_DEFAULT_METHOD, Project
 
 from mufinder.app.convergence_display import (
     format_convergence_criteria,
-    format_convergence_method,
     format_cutoff_energy,
     format_kpoint_grid,
 )
@@ -143,10 +143,8 @@ def _convergence_detail(
     xc_functional: str | None,
 ) -> str:
     if method == MANUAL_DEFAULT_METHOD:
-        return f"{format_convergence_method(method)}, not from a convergence test."
+        return "Set manually, not from a convergence test."
     parts: list[str] = []
-    if method is not None:
-        parts.append(format_convergence_method(method))
     if not (energy_threshold is None and force_threshold is None and stress_threshold is None):
         parts.append(
             format_convergence_criteria(
