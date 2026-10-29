@@ -2372,6 +2372,9 @@ def test_uep_wizard_sync_slice_viewer_restores_live_pyvista_snapshot(
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
+    # The live camera shows the scene only once the viewer has drawn it, on show.
+    dialog.show()
+    dialog._tabs.setCurrentWidget(dialog._slices_tab)
     viewer = dialog._slice_viewer
     viewer._backend_name = "pyvista"
     viewer._camera_state = _CameraState(17.0, 38.0, 9.0)

@@ -1127,8 +1127,8 @@ dashboard flush therefore never rebuilds a hidden viewer page.
   shuts down the viewers of the tabs it replaces. An edit to one workspace
   (renaming it, showing shifted positions, clustering it, adding structures)
   updates that tab in place and keeps its viewer and camera.
-- The Muon Sites summary is refreshed on project and host changes only when it
-  is showing; navigation and pin changes refresh it unconditionally.
+- The Muon Sites summary's panels are refreshed on every project, host and pin
+  change; its viewers draw the change only when the page is shown (see below).
 - The project-change refresh and the dashboard flush time their stages with
   ``PerfTrace`` (``mufinder.services.perf_trace``), which logs a WARNING naming
   the slow stage when either runs long.
@@ -1148,6 +1148,14 @@ scene once, or only redraws when every change was applied to existing actors.
 The host page, the Supercell Editor, Muon Sites generation, the analysis
 workspaces, Magnetic Fields, Energy Barriers, Quantum Corrections and the UEP
 viewers all batch their multi-step updates this way.
+
+A viewer that is not visible (on a page, tab or dialog that is not showing)
+does not render at all. A change, including a theme change, records its state
+and marks the scene stale; the viewer's ``showEvent`` draws a stale scene once,
+and a viewer shown inside a ``batch_update()`` block draws when the block ends.
+Callers therefore update a viewer the same way whether or not it is showing,
+and need no visibility check of their own. The page widgets keep their render
+fingerprints, which skip a viewer update when nothing it draws has changed.
 
 Controller summary
 ~~~~~~~~~~~~~~~~~~

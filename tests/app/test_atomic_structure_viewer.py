@@ -61,6 +61,7 @@ class _RenderCounter:
 @pytest.fixture
 def viewer(qapp):
     viewer = AtomicStructureViewer()
+    viewer.show()
     yield viewer
     viewer.close()
 
@@ -94,8 +95,10 @@ def _camera(viewer: AtomicStructureViewer) -> tuple[float, ...]:
 
 def test_a_batched_new_structure_fits_the_camera_to_the_new_cell(qapp) -> None:
     batched = AtomicStructureViewer()
+    batched.show()
     batched.set_structure(_magnetic_host(lattice=4.0))
     direct = AtomicStructureViewer()
+    direct.show()
 
     with batched.batch_update():
         batched.set_structure(_magnetic_host(lattice=12.0))
@@ -250,6 +253,7 @@ def test_a_batch_on_a_shut_down_viewer_does_not_render(viewer, monkeypatch) -> N
 
 def test_host_widget_loads_a_magnetic_host_with_one_render(qapp, monkeypatch) -> None:
     widget = HostStructureWidget()
+    widget.show()
     counter = _RenderCounter(widget._viewer, monkeypatch)
 
     widget.set_structure(_magnetic_host())
@@ -267,6 +271,7 @@ def test_supercell_preview_shows_structure_and_spins_with_one_render(qapp, monke
         propagation_vector=[0.0, 0.0, 0.0],
         initial_matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
     )
+    dialog.show()
     counter = _RenderCounter(dialog._viewer, monkeypatch)
 
     dialog._generate_preview()
@@ -275,3 +280,93 @@ def test_supercell_preview_shows_structure_and_spins_with_one_render(qapp, monke
     assert len(dialog._viewer._atoms) == 4
     assert dialog._viewer._spins is not None
     dialog.close()
+
+
+@pytest.fixture
+def hidden_viewer(qapp):
+    viewer = AtomicStructureViewer()
+    yield viewer
+    viewer.close()
+
+
+def test_a_hidden_viewer_does_not_render_and_renders_once_when_shown(
+    hidden_viewer, monkeypatch
+) -> None:
+    counter = _RenderCounter(hidden_viewer, monkeypatch)
+
+    hidden_viewer.set_structure(_magnetic_host())
+    hidden_viewer.set_spins([2.0, -2.0])
+    hidden_viewer.select_atoms([0])
+    assert (counter.main, counter.triad) == (0, 0)
+
+    hidden_viewer.show()
+    assert counter.main == 1
+    assert hidden_viewer._pyvista_atom_actor is not None
+    assert hidden_viewer._pyvista_spin_actors
+    assert hidden_viewer._pyvista_selection_actor is not None
+
+    counter.reset()
+    hidden_viewer.hide()
+    hidden_viewer.show()
+    assert counter.main == 0
+
+
+def test_a_change_while_hidden_draws_once_when_shown_again(viewer, monkeypatch) -> None:
+    viewer.set_structure(_magnetic_host())
+    viewer.hide()
+    counter = _RenderCounter(viewer, monkeypatch)
+
+    viewer.set_point_overlays(_point_overlay())
+    viewer.set_line_overlays(_line_overlay())
+    viewer.set_structure_preserving_view(_magnetic_host(lattice=4.5))
+    assert (counter.main, counter.triad) == (0, 0)
+
+    viewer.show()
+    assert counter.main == 1
+    assert len(viewer._atoms) == 2
+    assert viewer._atoms.cell[0][0] == pytest.approx(4.5)
+
+
+def _shown_viewer_camera(structure) -> tuple[float, ...]:
+    direct = AtomicStructureViewer()
+    direct.show()
+    direct.set_structure(structure)
+    camera = _camera(direct)
+    direct.close()
+    return camera
+
+
+def test_a_hidden_viewer_refreshes_its_theme_once_when_shown(hidden_viewer, monkeypatch) -> None:
+    hidden_viewer.set_structure(_magnetic_host(lattice=7.0))
+    hidden_viewer._style_signature = ("stale",)
+    counter = _RenderCounter(hidden_viewer, monkeypatch)
+
+    hidden_viewer.refresh_theme()
+    assert (counter.main, counter.triad) == (0, 0)
+    assert hidden_viewer._style_signature == ("stale",)
+
+    hidden_viewer.show()
+    assert counter.main == 1
+    assert hidden_viewer._style_signature != ("stale",)
+    # The new structure is fitted, not drawn with the never-shown plotter's camera.
+    assert _camera(hidden_viewer) == pytest.approx(
+        _shown_viewer_camera(_magnetic_host(lattice=7.0))
+    )
+
+
+def test_a_viewer_shown_inside_a_batch_draws_and_refreshes_its_theme_when_the_batch_ends(
+    hidden_viewer, monkeypatch
+) -> None:
+    hidden_viewer._style_signature = ("stale",)
+    counter = _RenderCounter(hidden_viewer, monkeypatch)
+
+    with hidden_viewer.batch_update():
+        hidden_viewer.set_structure(_magnetic_host(lattice=7.0))
+        hidden_viewer.show()
+        assert counter.main == 0
+
+    assert counter.main == 1
+    assert hidden_viewer._style_signature != ("stale",)
+    assert _camera(hidden_viewer) == pytest.approx(
+        _shown_viewer_camera(_magnetic_host(lattice=7.0))
+    )
