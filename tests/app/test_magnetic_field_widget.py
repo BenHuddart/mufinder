@@ -4991,6 +4991,100 @@ def test_magnetic_field_widget_breaks_a_distribution_into_term_means_and_rms(
     widget.close()
 
 
+def _restored_breakdown(qapp, tmp_path, kind: str, payload: dict) -> list[list[str]]:
+    service = ProjectService()
+    document = service.create_project(tmp_path / f"merged-{kind}.mufinder", "Merged Breakdown")
+    service.add_structure(document, _host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state({"magnetic_field_results": {"kind": kind, "results": [payload]}})
+    widget._result_table.selectRow(0)
+    rows = _breakdown_rows(widget)
+    widget.close()
+    return rows
+
+
+@pytest.mark.parametrize("modulated", [True, False], ids=["modulated", "uniform"])
+def test_magnetic_field_widget_merges_dipolar_and_lorentz_for_a_modulated_field(
+    qapp, tmp_path, modulated
+) -> None:
+    result = magnetic_fields_module.MagneticFieldResult(
+        site_label="muon 1",
+        muon_position=(0.5, 0.5, 0.5),
+        dipolar=(0.0, 0.0, -0.3),
+        lorentz=(0.0, 0.0, 0.1),
+        contact=(0.0, 0.0, 0.0),
+        demag=(0.0, 0.0, 0.0),
+        applied=(0.0, 0.0, 0.0),
+        calculation_parameters={"modulated": modulated},
+    )
+
+    rows = _restored_breakdown(qapp, tmp_path, "commensurate", result.to_json())
+
+    labels = [row[0] for row in rows]
+    if modulated:
+        assert rows[0] == ["Dipolar (incl. Lorentz)", "0", "0", "-0.2", "0.2"]
+        assert "Lorentz" not in labels
+    else:
+        assert labels[:2] == ["Dipolar", "Lorentz"]
+    assert rows[-1] == ["Total", "0", "0", "-0.2", "0.2"]
+
+
+def test_magnetic_field_widget_leaves_out_a_merged_row_without_its_lorentz_term(
+    qapp, tmp_path
+) -> None:
+    payload = {
+        "site_label": "muon 1",
+        "dipolar_T": [0.0, 0.0, -0.3],
+        "contact_T": [0.0, 0.0, 0.1],
+        "total_T": [0.0, 0.0, -0.2],
+        "calculation_parameters": {"modulated": True},
+    }
+
+    rows = _restored_breakdown(qapp, tmp_path, "commensurate", payload)
+
+    assert [row[0] for row in rows] == ["Contact", "Total"]
+
+
+@pytest.mark.parametrize("modulated", [True, False], ids=["modulated", "unflagged"])
+def test_magnetic_field_widget_merges_distribution_dipolar_and_lorentz_rows(
+    qapp, tmp_path, modulated
+) -> None:
+    stats = magnetic_fields_module.FieldTermStatistics
+    distribution = magnetic_fields_module.MagneticFieldDistributionResult(
+        site_label="site 1",
+        muon_position=(0.5, 0.5, 0.5),
+        fields_T=np.asarray([[0.0, 0.0, 0.2], [0.0, 0.0, -0.2]], dtype=float),
+        histogram_centres_T=np.asarray([0.2], dtype=float),
+        histogram_counts=np.asarray([2.0], dtype=float),
+        calculation_parameters={"modulated": modulated},
+        terms={
+            "dipolar": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.3),
+            "lorentz": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.1),
+            "contact": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+            "demag": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+            "applied": stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.0),
+        },
+        total_rms_T=0.2,
+        applied_T=(0.0, 0.0, 0.0),
+        demag_T=(0.0, 0.0, 0.0),
+        dipolar_lorentz=stats(mean_T=(0.0, 0.0, 0.0), rms_T=0.2),
+    )
+
+    rows = _restored_breakdown(qapp, tmp_path, "distribution", distribution.to_json())
+
+    if modulated:
+        assert rows[0] == ["Dipolar (incl. Lorentz)", "0", "0", "0", "0.2"]
+        assert [row[0] for row in rows][1:] == [
+            "Contact",
+            "Demagnetizing",
+            "Applied",
+            "Total",
+        ]
+    else:
+        assert [row[0] for row in rows][:2] == ["Dipolar", "Lorentz"]
+
+
 _APPROXIMANT = magnetic_fields_module.CommensurateApproximant(
     q_rlu=((0.3334, 0.0, 0.0),),
     approximant_rlu=((1.0 / 3.0, 0.0, 0.0),),

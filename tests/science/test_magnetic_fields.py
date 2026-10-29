@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from functools import partial
+from functools import cache, partial
 import importlib
 import json
 import sys
@@ -27,6 +27,7 @@ from mufinder.science.demagnetization import DemagnetizingSample, principal_dema
 from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3,
+    MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3,
     MIN_MUON_ATOM_DISTANCE_ANG,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     DipolarTensorResult,
@@ -740,6 +741,123 @@ def test_commensurate_fields_explicit_radius_skips_largest_sphere(monkeypatch) -
         options=MagneticFieldOptions(supercell=(1, 1, 1), radius=4.0),
     )
     assert seen["radius"] == pytest.approx(4.0)
+
+
+# The continuum outside the Lorentz sphere, -mu0 (3 q̂q̂ - 1) . M j1(qR) / (qR) for a mode
+# at q: muesr's Lorentz term is the isotropic part, MuFinder adds -3 q̂ (q̂ . B_Lorentz).
+
+
+@pytest.mark.parametrize(
+    ("q", "lorentz", "modulated"),
+    [
+        ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), False),
+        ((0.0, 0.0, 0.25), (1.0, 1.0, -2.0), True),
+        ((0.0, 0.0, 0.9), (1.0, 1.0, -2.0), True),
+        ((1.0, 0.0, 0.25), (1.0, 1.0, -2.0), True),
+        ((0.25, 0.0, 0.0), (-2.0, 1.0, 1.0), True),
+        ((0.0, 0.0, 1.0), (1.0, 1.0, 1.0), False),
+    ],
+    ids=["uniform", "along-c", "near-a-zone-centre", "shifted-by-a", "along-a", "at-G"],
+)
+def test_commensurate_lorentz_term_includes_the_continuum_along_q(
+    monkeypatch, q, lorentz, modulated
+) -> None:
+    # The mode's shortest wavevector sets q̂: q = (0, 0, 0.9) acts as (0, 0, -0.1),
+    # (1, 0, 0.25) as (0, 0, 0.25), and q = (0, 0, 1) is uniform on the lattice.
+    _install_fake_muesr(
+        monkeypatch,
+        locfield=_fields_per_muon(
+            Dipolar=(0.5, 0.0, 0.0), Lorentz=(1.0, 1.0, 1.0), Contact=(0.0, 0.0, 0.0)
+        ),
+    )
+
+    (result,) = calculate_commensurate_fields(
+        _structure(), _model(q), [_SITE_A], options=MagneticFieldOptions(supercell=(1, 1, 1))
+    )
+
+    assert result.dipolar == pytest.approx((0.5, 0.0, 0.0))
+    assert result.lorentz == pytest.approx(lorentz)
+    assert result.calculation_parameters["modulated"] is modulated
+    assert MagneticFieldResult.from_json(result.to_json()).calculation_parameters == (
+        result.calculation_parameters
+    )
+
+
+@pytest.mark.parametrize(
+    ("lattice", "q", "lorentz"),
+    [
+        # A sheared basis of the 3 Å simple cubic lattice: q = 0.4 a* is 0.4 x̂ / 3 Å
+        # plus 2 b*, so the shortest equivalent wavevector lies along x.
+        ([[3.0, 0.0, 0.0], [15.0, 3.0, 0.0], [0.0, 0.0, 3.0]], (0.4, 0.0, 0.0), (-2.0, 1.0, 1.0)),
+        # At the zone-boundary point (1/2, 1/2, 0) four wavevectors tie; their
+        # average q̂q̂ is diag(1/2, 1/2, 0).
+        (3.0, (0.5, 0.5, 0.0), (-0.5, -0.5, 1.0)),
+    ],
+    ids=["sheared-cell", "zone-boundary-tie"],
+)
+def test_commensurate_continuum_term_uses_the_shortest_equivalent_wavevector(
+    monkeypatch, lattice, q, lorentz
+) -> None:
+    _install_fake_muesr(
+        monkeypatch,
+        locfield=_fields_per_muon(
+            Dipolar=(0.0, 0.0, 0.0), Lorentz=(1.0, 1.0, 1.0), Contact=(0.0, 0.0, 0.0)
+        ),
+    )
+
+    (result,) = calculate_commensurate_fields(
+        _structure(lattice=lattice),
+        _model(q),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1)),
+    )
+
+    assert result.lorentz == pytest.approx(lorentz)
+
+
+def test_commensurate_continuum_term_is_left_out_with_the_lorentz_field(monkeypatch) -> None:
+    _install_fake_muesr(
+        monkeypatch,
+        locfield=_fields_per_muon(
+            Dipolar=(0.5, 0.0, 0.0), Lorentz=(1.0, 1.0, 1.0), Contact=(0.0, 0.0, 0.0)
+        ),
+    )
+
+    (result,) = calculate_commensurate_fields(
+        _structure(),
+        _model((0.0, 0.0, 0.25)),
+        [_SITE_A],
+        options=MagneticFieldOptions(supercell=(1, 1, 1), include_lorentz=False),
+    )
+
+    assert result.lorentz == (0.0, 0.0, 0.0)
+    assert result.total == pytest.approx((0.5, 0.0, 0.0))
+
+
+def test_distribution_lorentz_term_includes_the_continuum_along_q(monkeypatch) -> None:
+    def _locfield(_sample, mode, *_args, **kwargs):
+        assert mode == "i"
+        nangles = int(kwargs["nangles"])
+        lorentz = np.tile([1.0, 1.0, 1.0], (nangles, 1))
+        return [
+            _Field(Dipolar=np.zeros((nangles, 3)), Lorentz=lorentz, Contact=np.zeros((nangles, 3)))
+        ]
+
+    _install_fake_muesr(monkeypatch, locfield=_locfield)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _structure(),
+        _model((0.12345, 0.0, 0.0)),
+        [_SITE_A],
+        options=MagneticFieldOptions(
+            supercell=(1, 1, 1), nangles=4, phase_sampling="grid", histogram_bins=4
+        ),
+    )
+
+    # Each circular part of the spin-density wave contributes (-2, 1, 1).
+    np.testing.assert_allclose(result.fields_T, np.tile([-4.0, 2.0, 2.0], (4, 1)), atol=1e-12)
+    assert result.terms["lorentz"].mean_T == pytest.approx((-4.0, 2.0, 2.0))
+    assert result.calculation_parameters["modulated"] is True
 
 
 # Muon-induced distortion correction: finite-cell field of displaced minus pristine ions
@@ -1866,6 +1984,19 @@ def test_incommensurate_distribution_keeps_the_mean_and_rms_of_each_term(monkeyp
     )
 
 
+def test_incommensurate_distribution_sums_dipolar_and_lorentz_sample_by_sample(
+    monkeypatch,
+) -> None:
+    result = _helix_term_distribution(monkeypatch)
+
+    # The rotating 0.2 T dipolar field and the constant 0.01 T Lorentz field are
+    # perpendicular in every sample, so their sum has an RMS of hypot(0.2, 0.01).
+    assert result.calculation_parameters["modulated"] is True
+    assert result.dipolar_lorentz is not None
+    assert result.dipolar_lorentz.mean_T == pytest.approx((0.0, 0.0, 0.01), abs=1e-12)
+    assert result.dipolar_lorentz.rms_T == pytest.approx(float(np.hypot(0.2, 0.01)))
+
+
 def test_incommensurate_distribution_without_lorentz_keeps_a_zero_lorentz_term(
     monkeypatch,
 ) -> None:
@@ -1888,6 +2019,7 @@ def test_distribution_term_breakdown_round_trips_through_json(monkeypatch) -> No
     np.testing.assert_array_equal(restored.fields_T, result.fields_T)
     np.testing.assert_array_equal(restored.histogram_counts, result.histogram_counts)
     assert restored.terms == result.terms
+    assert restored.dipolar_lorentz == result.dipolar_lorentz
     assert restored.total_rms_T == result.total_rms_T
     assert restored.applied_T == result.applied_T
     assert restored.demag_T == result.demag_T
@@ -1915,9 +2047,11 @@ def test_distribution_saved_without_a_breakdown_loads_with_none() -> None:
     assert restored.total_rms_T is None
     assert restored.applied_T is None
     assert restored.demag_T is None
+    assert restored.dipolar_lorentz is None
     saved = restored.to_json()
     assert "terms" not in saved
     assert "applied_T" not in saved
+    assert "dipolar_lorentz" not in saved
     with pytest.raises(MagneticFieldError, match="recalculate"):
         regenerate_phase_samples(restored)
 
@@ -2104,8 +2238,9 @@ def test_incommensurate_distribution_has_no_demag_field_without_a_uniform_moment
     def _locfield(_sample, mode, *_args, **kwargs):
         assert mode == "i"
         nangles = int(kwargs["nangles"])
+        # A helix's moments, and so its Lorentz field, lie in the plane perpendicular to q.
         lorentz = np.column_stack(
-            [np.arange(nangles), 2.0 * np.arange(nangles), 3.0 * np.arange(nangles)]
+            [np.zeros(nangles), 2.0 * np.arange(nangles), 3.0 * np.arange(nangles)]
         )
         return [
             _Field(Dipolar=np.zeros((nangles, 3)), Lorentz=lorentz, Contact=np.zeros((nangles, 3)))
@@ -2127,7 +2262,7 @@ def test_incommensurate_distribution_has_no_demag_field_without_a_uniform_moment
     )[0]
 
     # A helix has no bulk magnetisation: the sampled fields are muesr's Lorentz lookup alone.
-    lookup = np.column_stack([np.arange(4.0), 2.0 * np.arange(4.0), 3.0 * np.arange(4.0)])
+    lookup = np.column_stack([np.zeros(4), 2.0 * np.arange(4.0), 3.0 * np.arange(4.0)])
     np.testing.assert_allclose(result.fields_T, lookup, atol=1e-12)
 
 
@@ -3058,7 +3193,12 @@ def test_real_muesr_approximant_lists_the_field_at_each_translated_site(real_mue
     for result in results:
         expected = _direct_lattice_field(_structure(), model, result.muon_position, _RADIUS)
         np.testing.assert_allclose(result.dipolar, expected, rtol=1e-6, atol=1e-9)
-        assert result.calculation_parameters == {"contact_coupling": 0.1, "nnn": 3, "rcont": 4.0}
+        assert result.calculation_parameters == {
+            "contact_coupling": 0.1,
+            "nnn": 3,
+            "rcont": 4.0,
+            "modulated": True,
+        }
 
 
 @pytest.mark.parametrize(
@@ -3117,6 +3257,171 @@ def test_real_muesr_dipolar_tensor_maps_a_moment_onto_its_lattice_field(real_mue
             _structure(), _single_q_model((0.0, 0.0, 0.0), axis), _GENERAL_SITE, _RADIUS
         )
         np.testing.assert_allclose(tensor @ axis, expected, rtol=1e-6, atol=1e-9)
+
+
+# Long-wavelength order along c in simple cubic, against a sum over whole ab planes
+#
+# The field of order that varies only along c is summed plane by plane: each ab
+# plane of ions is summed directly over a disc around the muon and as a continuum
+# sheet beyond it. A plane's field falls off exponentially with its distance, so
+# a few planes either side of the muon give the field of the infinite crystal,
+# with no sphere and no Lorentz construction. In the continuum limit a
+# longitudinal mode gives -2 mu0 M / 3 at the body centre and a transverse one
+# +mu0 M / 3 (the outside field -mu0 (3 q̂q̂ - 1) . M / 3 as qR -> 0).
+
+_SC_LATTICE = 4.0
+_SC_WAVEVECTOR = 0.0137  # r.l.u. along c, a 292 Å period
+_SC_BODY_CENTRE = (0.5, 0.5, 0.5)
+_sc_structure = partial(
+    host_structure, label="Fe", lattice=_SC_LATTICE, species=("Fe",), positions=((0.0, 0.0, 0.0),)
+)
+
+
+@cache
+def _ab_plane_tensors(muon_frac: tuple[float, float, float]) -> dict[int, np.ndarray]:
+    """Dipolar tensor in T/μB of each nearby ab plane of the simple cubic lattice at the muon."""
+
+    a = _SC_LATTICE
+    lateral, planes = 200, 12
+    muon = np.asarray(muon_frac, dtype=float) * a
+    base = np.floor(muon_frac)
+    steps = np.arange(-lateral, lateral + 1)
+    i, j = np.meshgrid(steps, steps, indexing="ij")
+    x = (i.ravel() + base[0]) * a - muon[0]
+    y = (j.ravel() + base[1]) * a - muon[1]
+    disc_radius = (lateral - 1) * a
+    inside = x**2 + y**2 <= disc_radius**2
+    x, y = x[inside], y[inside]
+    tensors: dict[int, np.ndarray] = {}
+    for n in range(int(base[2]) - planes, int(base[2]) + planes + 1):
+        height = n * a - muon[2]
+        r = np.column_stack([x, y, np.full_like(x, height)])
+        r2 = np.sum(r**2, axis=1)
+        tensor = 3.0 * np.einsum("ni,nj,n->ij", r, r, r2**-2.5) - np.eye(3) * np.sum(r2**-1.5)
+        # The sheet beyond the disc, with 1 / a^2 ions per unit area.
+        u = disc_radius**2 + height**2
+        in_plane = np.pi * (u**-0.5 - height**2 * u**-1.5)
+        tensor += np.diag([in_plane, in_plane, -2.0 * in_plane]) / a**2
+        tensors[n] = DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3 * tensor
+    return tensors
+
+
+def _ab_plane_field(model, muon_frac) -> np.ndarray:
+    """Field in T at ``muon_frac`` of the moments ``model`` gives each ab plane."""
+
+    structure = _sc_structure()
+    return sum(
+        tensor @ moments_at_atoms(structure, model, [0], [[0.0, 0.0, float(n)]])[0]
+        for n, tensor in _ab_plane_tensors(tuple(float(v) for v in muon_frac)).items()
+    )
+
+
+def _ab_plane_field_ellipse(model, q, muon_frac) -> np.ndarray:
+    """Semi-axes in T of the field ellipse traced as a single-q model's phase turns."""
+
+    structure = _sc_structure()
+    first, second = moments_at_atoms(structure, model, [0, 0], [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    # Moments Re[F exp(-2 pi i q n)] on plane n.
+    angle = 2.0 * np.pi * q
+    coefficient = first + 1j * (second - first * np.cos(angle)) / np.sin(angle)
+    field = sum(
+        tensor @ (coefficient * np.exp(-2j * np.pi * q * n))
+        for n, tensor in _ab_plane_tensors(tuple(float(v) for v in muon_frac)).items()
+    )
+    return np.linalg.svd(np.column_stack([field.real, field.imag]), compute_uv=False)
+
+
+def _sc_options(radius: float, **changes) -> MagneticFieldOptions:
+    cells = int(2 * radius / _SC_LATTICE) + 4
+    return MagneticFieldOptions(supercell=(cells, cells, cells), radius=radius, **changes)
+
+
+def test_ab_plane_sum_gives_the_continuum_fields_of_a_long_wavelength_mode() -> None:
+    bulk = MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 / _SC_LATTICE**3
+    for moment, expected in (((0.0, 0.0, 1.0), 2.0 / 3.0), ((1.0, 0.0, 0.0), 1.0 / 3.0)):
+        model = _single_q_model((0.0, 0.0, _SC_WAVEVECTOR), moment)
+        major, _minor = _ab_plane_field_ellipse(model, _SC_WAVEVECTOR, _SC_BODY_CENTRE)
+        assert major == pytest.approx(expected * bulk, rel=2e-3)
+
+
+@pytest.mark.parametrize("radius", [40.0, 100.0, 200.0])
+@pytest.mark.parametrize(
+    ("real", "imaginary", "continuum"),
+    [
+        ((0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (2.0 / 3.0, 0.0)),
+        ((1.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0 / 3.0, 0.0)),
+        ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (2.0 / 3.0, 1.0 / 3.0)),
+        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0 / 3.0, 1.0 / 3.0)),
+    ],
+    ids=["longitudinal-sdw", "transverse-sdw", "cycloid", "helix"],
+)
+def test_real_muesr_long_wavelength_distribution_matches_the_plane_sum_at_any_radius(
+    real_muesr, radius, real, imaginary, continuum
+) -> None:
+    model = _single_q_model((0.0, 0.0, _SC_WAVEVECTOR), real, imaginary)
+
+    (result,) = calculate_incommensurate_field_distributions(
+        _sc_structure(),
+        model,
+        [_SC_BODY_CENTRE],
+        options=_sc_options(radius, nangles=1024, phase_sample_count=1024),
+    )
+
+    major, minor = _ab_plane_field_ellipse(model, _SC_WAVEVECTOR, _SC_BODY_CENTRE)
+    magnitudes = result.magnitudes_T
+    assert magnitudes.max() == pytest.approx(major, rel=1e-2)
+    assert magnitudes.min() == pytest.approx(minor, abs=1e-2 * major)
+    bulk = MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 / _SC_LATTICE**3
+    np.testing.assert_allclose(
+        [magnitudes.max(), magnitudes.min()], np.asarray(continuum) * bulk, rtol=0, atol=1e-2 * bulk
+    )
+    assert result.calculation_parameters["modulated"] is True
+
+
+@pytest.mark.parametrize("radius", [40.0, 100.0, 200.0])
+@pytest.mark.parametrize(
+    "moment", [(0.0, 0.0, 1.0), (1.0, 0.0, 0.0)], ids=["longitudinal", "transverse"]
+)
+def test_real_muesr_commensurate_long_wavelength_field_matches_the_plane_sum(
+    real_muesr, radius, moment
+) -> None:
+    model = _single_q_model((0.0, 0.0, 1 / 64), moment)
+
+    (result,) = calculate_commensurate_fields(
+        _sc_structure(), model, [_SC_BODY_CENTRE], options=_sc_options(radius)
+    )
+
+    expected = _ab_plane_field(model, _SC_BODY_CENTRE)
+    np.testing.assert_allclose(
+        np.add(result.dipolar, result.lorentz),
+        expected,
+        rtol=0,
+        atol=1e-2 * np.linalg.norm(expected),
+    )
+    assert result.calculation_parameters["modulated"] is True
+
+
+@pytest.mark.parametrize(
+    "moment", [(0.0, 0.0, 1.0), (1.0, 0.0, 0.0)], ids=["longitudinal", "transverse"]
+)
+def test_real_muesr_approximant_field_matches_the_plane_sum_at_each_translation(
+    real_muesr, moment
+) -> None:
+    model = _single_q_model((0.0, 0.0, 1 / 12), moment)
+
+    results = calculate_commensurate_approximant_fields(
+        _sc_structure(), model, [_SC_BODY_CENTRE], options=_sc_options(40.0)
+    )
+
+    assert len(results) == 12
+    scale = max(np.linalg.norm(_ab_plane_field(model, r.muon_position)) for r in results)
+    for result in results:
+        np.testing.assert_allclose(
+            np.add(result.dipolar, result.lorentz),
+            _ab_plane_field(model, result.muon_position),
+            rtol=0,
+            atol=1e-2 * scale,
+        )
 
 
 # Worked examples in docs/user_guide/magnetic_fields.rst, at the default calculation settings
@@ -3264,7 +3569,8 @@ def test_worked_example_a_type_antiferromagnet(real_muesr) -> None:
     )
 
     for result, total in zip(results, (0.0, -0.5493, -0.8003), strict=True):
-        assert result.lorentz == pytest.approx((0.0, 0.0, 0.0), abs=_DOC_PRECISION)
+        # The finite sphere's count of the alternating layers leaves under 0.1 mT.
+        assert result.lorentz == pytest.approx((0.0, 0.0, 0.0), abs=1e-4)
         assert result.total == pytest.approx((0.0, 0.0, total), abs=_DOC_PRECISION)
 
 
