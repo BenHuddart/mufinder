@@ -707,9 +707,12 @@ up the contact field when a ``Hyperfine coupling`` is set (see
 
 When a hyperfine coupling is set and the shell of the selected site (or of any
 of its equivalent sites, when ``Include equivalent sites`` is ticked)
-splits ions with different moments that tie for its last place, a warning under
-the two values names the tied ions and the ``nnn`` that includes them all. It
-follows the values as you edit them, and ``OK`` still accepts them.
+splits ions that tie for its last place and whose moments are not all equal, a
+warning under the two values names the tied ions and the ``nnn`` that includes
+them all. It follows the values as you change them (a typed value once it is
+finished), and ``OK`` still accepts them. It checks the shell of the lattice
+sum for the model's own wavevectors; a tie in a relaxed supercell, or in the
+shell of a commensurate approximant, is reported on the result.
 
 The settings summary on the ``Calculation`` card names the approximant
 tolerance and period when the option is on, and the contact shell when a
@@ -762,16 +765,16 @@ moment is the same, so the contact field equals the coupling times the moment
 whatever the shell.
 
 Take whole sets of equidistant ions. When the shell's last places split ions
-that tie within 10\ :sup:`-3` Å of each other and carry different moments, the
+that tie within 10\ :sup:`-3` Å of each other and whose moments are not all equal, the
 lattice sum keeps an arbitrary subset of them, which changes with ``Cells
 along``, and the contact field changes with it. MuFinder warns of such a shell
 in ``Calculation Settings`` and, after a calculation, under the term breakdown
 of each result row it affects, for example::
 
    Contact shell: Contact neighbours (nnn) = 2 keeps 2 of the 4 magnetic ions
-   with different moments that tie at 1.603 Å from the muon (2 × Fe 1,
-   2 × Mn 2), so the contact field depends on which of them the lattice sum
-   keeps; nnn = 4 includes them all.
+   that tie at 1.603 Å from the muon (2 × Fe 1, 2 × Mn 2), whose moments are
+   not all equal, so the contact field depends on which of them the lattice
+   sum keeps; nnn = 4 includes them all.
 
 Ions are named by species and atom number in the host structure, an ion
 repeated once for each of its periodic images in the tie. The warning does not
@@ -1226,8 +1229,8 @@ shell reaches past the largest sphere about the muon that the supercell holds,
 the calculation stops and asks for a larger relaxed supercell, a smaller
 ``Contact radius`` or fewer ``Contact neighbours``. A shell that runs out of
 ions inside the radius reaches to the radius itself, so a smaller radius brings
-it inside the supercell. When the displaced shell splits ions with different
-moments that tie for its last place, the correction keeps the first of them
+it inside the supercell. When the displaced shell splits ions that tie for its
+last place and whose moments are not all equal, the correction keeps the first of them
 and the result warns, as for the lattice sum, with the warning prefixed ``In
 the relaxed supercell``.
 

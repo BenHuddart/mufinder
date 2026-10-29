@@ -4021,3 +4021,29 @@ def test_real_muesr_shared_shell_matches_the_backend_when_every_call_sees_the_sh
     assert backend.rms_T > 1e-3
     assert shared.mean_T == pytest.approx(backend.mean_T, abs=1e-9)
     assert shared.rms_T == pytest.approx(backend.rms_T, rel=1e-6)
+
+
+def test_the_tie_warning_does_not_call_every_tied_moment_different(monkeypatch) -> None:
+    # The four ions tied at 1.603 Å are two Fe up and two Mn down: their
+    # moments are not all different, only not all equal.
+    _install_fake_muesr(monkeypatch, locfield=_zero_locfield)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=_B2_COUPLING, nnn=3)
+
+    (result,) = calculate_commensurate_fields(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_TETRAHEDRAL], options=options
+    )
+
+    (warning,) = _contact_warnings(result)
+    assert "magnetic ions that tie at 1.603 Å from the muon (2 × Fe 1, 2 × Mn 2)" in warning
+    assert "whose moments are not all equal" in warning
+    assert "with different moments" not in warning
+
+
+def test_the_tie_checker_of_a_commensurate_order_compares_the_summed_moments() -> None:
+    # Fe and Mn both up, as two k = 0 components: the commensurate sum merges
+    # them, so the four tied ions carry one moment and the result has no warning.
+    check = module.contact_shell_tie_checker(
+        _b2_structure(), _b2_ferromagnet(), [_B2_TETRAHEDRAL], find_equivalent_sites=False
+    )
+
+    assert check(2, 10.0) == ()

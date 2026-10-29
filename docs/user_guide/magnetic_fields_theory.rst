@@ -394,7 +394,7 @@ Fe 2 μB up at the corner, Mn 2 μB down at the body centre) the tetrahedral sit
 MuFinder keeps the backend's rule, so its fields agree with ``muesr``, and
 warns instead. Ions within :data:`~mufinder.science.magnetic_fields.CONTACT_SHELL_TIE_TOLERANCE_ANG`
 (10\ :sup:`-3` Å) of the shell's last place count as tied. When the shell keeps
-only some of them and their moments differ at any phase of the order, ``Calculation
+only some of them and their moments differ at some phase of the order, ``Calculation
 Settings`` and the result name the tied ions and the ``nnn`` that includes them
 all. Tied ions with equal moments need no warning: any choice among them gives
 the same field, as in a ferromagnet, or at MnSi's site I, whose three nearest

@@ -5046,8 +5046,11 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         style_warning_text(self._contact_tie_warning)
         # Inside the group box the wrapped warning would not get the height its text needs.
         layout.addWidget(self._contact_tie_warning)
-        self._contact_nnn.valueChanged.connect(self._refresh_contact_tie_warning)
-        self._contact_rcont.valueChanged.connect(self._refresh_contact_tie_warning)
+        # Each check searches the shell of every site, so a typed value is
+        # checked once it is finished, not at every keystroke.
+        for spinbox in (self._contact_nnn, self._contact_rcont):
+            spinbox.setKeyboardTracking(False)
+            spinbox.valueChanged.connect(self._refresh_contact_tie_warning)
         self._refresh_contact_tie_warning()
 
         buttons = QDialogButtonBox(
@@ -8247,6 +8250,7 @@ class MagneticFieldWidget(QWidget):
             hint = "Select a result row to see its field terms."
         else:
             payload = results[selected_rows[0]]
+            contact_warnings = self._contact_shell_warning_lines(payload)
             merge = self._merges_dipolar_and_lorentz(payload)
             for label, key in self._BREAKDOWN_TERMS:
                 if merge and key == "lorentz_T":
@@ -8270,7 +8274,6 @@ class MagneticFieldWidget(QWidget):
             if not rows:
                 hint = "This saved result has no term breakdown; recalculate to see it."
             else:
-                contact_warnings = self._contact_shell_warning_lines(payload)
                 total = np.asarray(payload.get("total_T", (0.0, 0.0, 0.0)), dtype=float)
                 rows.append(
                     (

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 import math
 from typing import Any
 
@@ -845,10 +846,10 @@ class ContactShellTie:
         )
         return (
             f"Contact neighbours (nnn) = {self.nnn} keeps {self.kept} of the "
-            f"{len(self.ion_labels)} magnetic ions with different moments that tie at "
-            f"{self.distance_ang:.3f} Å from the muon ({names}), so the contact field depends "
-            f"on which of them the lattice sum keeps; nnn = {self.nnn_including_all} includes "
-            "them all."
+            f"{len(self.ion_labels)} magnetic ions that tie at {self.distance_ang:.3f} Å from "
+            f"the muon ({names}), whose moments are not all equal, so the contact field "
+            f"depends on which of them the lattice sum keeps; nnn = {self.nnn_including_all} "
+            "includes them all."
         )
 
 
@@ -957,8 +958,31 @@ def _host_contact_ions(
     named by its atom and its cell offset from the muon's own cell.
     """
 
-    lattice = np.asarray(structure.lattice_vectors, dtype=float)
-    fractional = np.asarray(structure.fractional_positions, dtype=float)
+    # The approximant path asks again for every translation and the settings
+    # dialog for every value typed, so the search is cached on its inputs.
+    return _cached_host_contact_ions(
+        tuple(tuple(float(v) for v in row) for row in structure.lattice_vectors),
+        tuple(tuple(float(v) for v in row) for row in structure.fractional_positions),
+        tuple(bool(v) for v in np.asarray(magnetic, dtype=bool)),
+        tuple(float(v) for v in muon_fractional),
+        int(nnn),
+        float(rcont),
+    )
+
+
+@lru_cache(maxsize=512)
+def _cached_host_contact_ions(
+    lattice_rows: tuple[tuple[float, ...], ...],
+    fractional_rows: tuple[tuple[float, ...], ...],
+    magnetic: tuple[bool, ...],
+    muon_fractional: tuple[float, ...],
+    nnn: int,
+    rcont: float,
+) -> _HostContactIons:
+    """Search the magnetic ion images of :func:`_host_contact_ions`; the arrays are read-only."""
+
+    lattice = np.asarray(lattice_rows, dtype=float)
+    fractional = np.asarray(fractional_rows, dtype=float)
     muon = np.asarray(muon_fractional, dtype=float)
     atoms = np.flatnonzero(np.asarray(magnetic, dtype=bool))
     volume = abs(float(np.linalg.det(lattice)))
@@ -992,7 +1016,10 @@ def _host_contact_ions(
             order.size > int(nnn)
             and distances[order[int(nnn) - 1]] + 2.0 * CONTACT_SHELL_TIE_TOLERANCE_ANG < radius
         ):
-            return _HostContactIons(atom_index[order], offsets[order], vectors[order])
+            ions = _HostContactIons(atom_index[order], offsets[order], vectors[order])
+            for array in (ions.atom_indices, ions.cell_offsets, ions.vectors):
+                array.setflags(write=False)
+            return ions
         radius = min(float(rcont), 2.0 * radius)
 
 
@@ -1135,7 +1162,11 @@ def contact_shell_tie_checker(
     """
 
     options = MagneticFieldOptions(find_equivalent_sites=bool(find_equivalent_sites))
+    # The same Fourier entries as the calculation the order takes: a commensurate
+    # sum merges components at one wavevector, a distribution keeps them apart.
     models = get_muesr_model_data(structure, model, merge_equivalent_k=False)
+    if models and classify_magnetic_model(structure, model) == "commensurate":
+        models = get_muesr_model_data(structure, model, merge_equivalent_k=True)
     muons = _expanded_muon_positions(structure, muon_sites, options) if models else []
     magnetic = _magnetic_atom_mask(models, len(structure.species))
     prefix = len(muons) > 1

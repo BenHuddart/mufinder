@@ -6249,3 +6249,48 @@ def test_the_breakdown_warns_of_a_result_whose_contact_shell_splits_a_tie(
     widget._clear_results(clear_state=True)
     assert warning.isHidden()
     widget.close()
+
+
+def test_the_breakdown_shows_a_saved_tie_warning_without_its_terms(qapp, tmp_path) -> None:
+    widget = _b2_widget(tmp_path)
+    state = widget.collect_state()
+    state["magnetic_field_results"] = {
+        "kind": "commensurate",
+        "site_source": "custom",
+        "results": [
+            {
+                "site_label": "site 1",
+                "muon_position": [0.5, 0.25, 0.0],
+                "total_T": [0.0, 0.0, -1.0],
+                "magnitude_T": 1.0,
+                "calculation_parameters": {"contact_shell_warnings": ["A tie."]},
+            }
+        ],
+    }
+    widget.set_form_state(state)
+    widget._result_table.selectRow(0)
+
+    assert "recalculate" in widget._breakdown_hint.text()
+    assert not widget._breakdown_contact_warning.isHidden()
+    assert widget._breakdown_contact_warning.text() == "Contact shell: A tie."
+    widget.close()
+
+
+def test_the_contact_settings_check_ties_when_a_typed_value_is_finished(qapp) -> None:
+    calls: list[tuple[int, float]] = []
+    dialog = MagneticFieldCalculationSettingsDialog(
+        supercell=(100, 100, 100),
+        nangles=32_768,
+        phase_sample_count=200_000,
+        histogram_bins=512,
+        contact_tie_check=lambda nnn, rcont: calls.append((nnn, rcont)) or (),
+    )
+    calls.clear()
+
+    dialog._contact_rcont.lineEdit().selectAll()
+    QTest.keyClicks(dialog._contact_rcont, "25.5")
+
+    assert calls == []
+    QTest.keyClick(dialog._contact_rcont, Qt.Key.Key_Return)
+    assert calls == [(2, 25.5)]
+    dialog.close()
