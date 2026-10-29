@@ -433,7 +433,12 @@ def test_main_window_persists_magnetic_field_calculation_results(
     window._refresh_ui_after_project_change()
     window._magnetic_field_view._set_model(_magnetic_model("Main field"))
     window._magnetic_field_view._selected_muon_site = (
-        window._magnetic_field_view._default_muon_site()
+        magnetic_field_widget_module.MagneticMuonSiteOption(
+            source="custom",
+            label="Custom site",
+            fractional_position=(0.25, 0.25, 0.25),
+            cartesian_position=(0.75, 0.75, 0.75),
+        )
     )
     window._magnetic_field_view._calculate_fields()
 

@@ -18,7 +18,7 @@ Before you start
 - The calculations need the optional ``muesr`` and ``muLFC`` backends (see
   `Dependency handling`_).
 - ``Calculate Dipolar Field`` stays disabled until the magnetic structure has
-  at least one enabled component.
+  at least one enabled component and a muon site is chosen.
 
 Calculate a field
 -----------------
@@ -605,9 +605,24 @@ choose ``Custom fractional position`` and type the site's ``fx``, ``fy`` and
 
    The octahedral interstitial site of bcc iron as a custom position.
 
+A muon site must be at least 0.5 Å from every host atom, counting every
+periodic image: the dipolar and contact sums diverge as the muon approaches an
+ion. ``OK`` refuses a closer site with a message naming the nearest atom and
+its distance, for example ``Custom site is 0.15 Å from O (atom 2)``. A saved
+site that breaks the rule still loads and is shown in the ``Muon Site`` card
+with the same reason; the calculation buttons stay disabled, with the reason
+in their tooltips, until another site is chosen. The field and dipolar-tensor
+calculations apply the same rule, so a script that calls them with such a site
+gets the same error. A field that still comes out as NaN or infinity is never
+shown as a number: the results status names the site whose field is not
+finite and the table stays empty.
+
 Until a site is chosen, the page uses the lowest-energy pinned site (positive
 muon first), else the first structural-relaxation cluster, else the first UEP
-cluster, else a custom site at the origin. With no site chosen, the dialog
+cluster. A project with none of these has no site: the ``Muon Site`` card
+reads ``Choose a muon site.``, and ``Calculate Dipolar Field``,
+``Dipolar Tensor...`` and ``Nuclear Relaxation...`` stay disabled, their
+tooltips saying a site is needed. With no site chosen, the dialog
 opens on ``Structural relaxation clustering`` when that source lists a site
 (a pinned site, or any cluster with ``Show every relaxed site`` ticked), and on
 UEP clustering otherwise.

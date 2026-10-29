@@ -19,6 +19,7 @@ from mufinder.domain.constants import (
 )
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
+from mufinder.science.lattice import nearest_image_distance
 from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
 from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
 from mufinder.science._muesr_compat import muesr_imports
@@ -102,6 +103,55 @@ class MagneticFieldOptions:
     approximant_tolerance: float = 1e-3
     approximant_max_period: int = 12
     max_approximant_fields: int = 512
+
+
+#: The closest a muon site may sit to any host atom, in Angstrom. The dipolar and
+#: contact sums diverge as the muon approaches an ion, so a site nearer than this is
+#: refused rather than calculated.
+MIN_MUON_ATOM_DISTANCE_ANG = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class NearestHostAtom:
+    """The host atom closest to a muon site, over every periodic image."""
+
+    index: int
+    species: str
+    distance_ang: float
+
+
+def nearest_host_atom(
+    structure: Structure, muon_position: Sequence[float]
+) -> NearestHostAtom | None:
+    """Return the host atom nearest ``muon_position`` (fractional), or ``None`` for an empty cell."""
+
+    nearest: NearestHostAtom | None = None
+    for index, (species, position) in enumerate(
+        zip(structure.species, structure.fractional_positions, strict=True)
+    ):
+        distance = nearest_image_distance(muon_position, position, structure.lattice_vectors)
+        if nearest is None or distance < nearest.distance_ang:
+            nearest = NearestHostAtom(index=index, species=str(species), distance_ang=distance)
+    return nearest
+
+
+def muon_site_clearance_error(
+    structure: Structure, muon_position: Sequence[float], *, label: str = "The muon site"
+) -> str | None:
+    """Return why ``muon_position`` is too close to a host atom, or ``None`` when it is clear.
+
+    A site is refused when it lies within :data:`MIN_MUON_ATOM_DISTANCE_ANG` of any
+    periodic image of a host atom; the message names that atom (numbered from 1)
+    and its distance.
+    """
+
+    nearest = nearest_host_atom(structure, muon_position)
+    if nearest is None or nearest.distance_ang >= MIN_MUON_ATOM_DISTANCE_ANG:
+        return None
+    return (
+        f"{label} is {nearest.distance_ang:.2f} Å from {nearest.species} (atom {nearest.index + 1}); "
+        f"a muon site must be at least {MIN_MUON_ATOM_DISTANCE_ANG:g} Å from every atom."
+    )
 
 
 # A distribution counts as converged in a setting when halving that setting moves its
@@ -1951,6 +2001,9 @@ def _expanded_muon_positions(
         else:
             label = f"site {index}"
             position = _canonical_fractional(site)
+        clearance_error = muon_site_clearance_error(structure, position, label=label)
+        if clearance_error is not None:
+            raise MagneticFieldError(clearance_error)
         if not options.find_equivalent_sites:
             expanded.append((label, position))
             continue

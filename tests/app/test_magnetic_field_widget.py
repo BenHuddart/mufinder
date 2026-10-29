@@ -405,6 +405,7 @@ def test_magnetic_field_widget_reports_and_persists_disabled_components(qapp, tm
     service.add_structure(document, _host_structure())
     widget = MagneticFieldWidget()
     widget.set_document(document)
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     payloads: list[dict] = []
     widget.magnetic_structure_changed.connect(payloads.append)
 
@@ -1977,6 +1978,217 @@ def test_muon_site_selection_dialog_custom_muon_site(qapp, tmp_path) -> None:
     dialog.close()
 
 
+def test_muon_site_selection_dialog_refuses_a_custom_site_on_an_atom(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, body: warnings.append(body),
+    )
+    dialog = MuonSiteSelectionDialog(None, _host_structure())
+    _set_site_source(dialog, "custom")
+    dialog._custom_x.setText("0.5")
+    dialog._custom_y.setText("0.5")
+    dialog._custom_z.setText("0.55")
+
+    dialog.accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert dialog.accepted_site() is None
+    assert warnings == [
+        "Custom site is 0.15 Å from O (atom 2); a muon site must be at least 0.5 Å from every atom."
+    ]
+    dialog.close()
+
+
+def test_magnetic_field_widget_opens_a_host_only_project_with_no_muon_site(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-host-only.mufinder", "Host Only")
+    service.add_structure(document, _host_structure())
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+
+    assert widget.selected_muon_site() is None
+    assert widget._site_summary.text() == "Choose a muon site."
+    assert widget._select_site_button.isEnabled()
+    for button in (
+        widget._calculate_button,
+        widget._dipolar_tensor_button,
+        widget._nuclear_relaxation_button,
+    ):
+        assert not button.isEnabled()
+        assert button.toolTip() == "Choose a muon site first."
+
+    widget.set_form_state(
+        {
+            "selected_muon_site": {
+                "source": "custom",
+                "label": "Custom site",
+                "fractional_position": [0.25, 0.5, 0.75],
+            }
+        }
+    )
+
+    for button in (
+        widget._calculate_button,
+        widget._dipolar_tensor_button,
+        widget._nuclear_relaxation_button,
+    ):
+        assert button.isEnabled()
+        assert button.toolTip() == ""
+
+    widget._set_model(
+        MagneticStructureModel(components=(replace(_component("one", "One", 0), enabled=False),))
+    )
+
+    assert not widget._calculate_button.isEnabled()
+    assert widget._calculate_button.toolTip() == (
+        "Enable at least one magnetic-structure component first."
+    )
+    widget.close()
+
+
+def test_magnetic_field_widget_restores_a_saved_site_on_an_atom_and_refuses_it(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-on-atom.mufinder", "On Atom")
+    service.add_structure(document, _host_structure())
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_fields",
+        lambda *_args, **_kwargs: pytest.fail("a site on an atom must not be calculated"),
+    )
+    reason = "Custom site is 0.00 Å from Fe (atom 1); a muon site must be at least 0.5 Å from every atom."
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget.set_form_state(
+        {
+            "selected_muon_site": {
+                "source": "custom",
+                "label": "Custom site",
+                "fractional_position": [0.0, 0.0, 0.0],
+            }
+        }
+    )
+
+    assert widget.selected_muon_site().fractional_position == (0.0, 0.0, 0.0)
+    assert widget._site_summary.text().startswith(
+        "Muon site: Custom site from Custom at (0.0000, 0.0000, 0.0000)."
+    )
+    assert widget._site_summary.text().endswith(reason)
+    for button in (
+        widget._calculate_button,
+        widget._dipolar_tensor_button,
+        widget._nuclear_relaxation_button,
+    ):
+        assert not button.isEnabled()
+        assert button.toolTip() == reason
+
+    widget._calculate_fields()
+
+    assert widget._calculation_status.text() == f"Results: {reason}"
+    assert widget._result_table.rowCount() == 0
+    widget.close()
+
+
+def test_magnetic_field_widget_never_shows_a_non_finite_field(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-nan.mufinder", "NaN Field")
+    service.add_structure(document, _host_structure())
+
+    class _Result:
+        site_label = "Mu1"
+        total = (0.1, 0.0, 0.0)
+        magnitude = 0.1
+        distortion = None
+
+    class _NanResult(_Result):
+        total = (float("nan"), 0.0, 0.0)
+        magnitude = float("nan")
+
+    returned: list[object] = [_Result()]
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "calculate_commensurate_fields",
+        lambda *_args, **_kwargs: tuple(returned),
+    )
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+    saved: list[dict] = []
+    widget.form_state_changed.connect(saved.append)
+    widget._calculate_fields()
+    assert saved[-1]["magnetic_field_results"] is not None
+
+    returned[:] = [_NanResult()]
+    widget._calculate_fields()
+
+    assert widget._result_table.rowCount() == 0
+    assert widget.collect_state()["magnetic_field_results"] is None
+    # The cleared results are saved, so the earlier ones do not come back on reopening.
+    assert saved[-1]["magnetic_field_results"] is None
+    assert widget._calculation_status.text() == (
+        "Calculation failed: the field at Mu1 is not a finite number (NaN or infinity), "
+        "so it is not shown"
+    )
+    widget.close()
+
+
+def test_magnetic_field_widget_never_restores_a_non_finite_field(qapp, tmp_path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-saved-nan.mufinder", "Saved NaN")
+    service.add_structure(document, _host_structure())
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_form_state(
+        {
+            "selected_muon_site": {
+                "source": "custom",
+                "label": "Custom site",
+                "fractional_position": [0.25, 0.5, 0.75],
+            },
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [
+                    {
+                        "site_label": "Custom site",
+                        "total_T": [float("nan"), 0.0, 0.0],
+                        "magnitude_T": float("nan"),
+                    }
+                ],
+            },
+        }
+    )
+
+    assert widget._result_table.rowCount() == 0
+    assert widget._calculation_status.text() == (
+        "Results: the saved field at Custom site is not a finite number (NaN or infinity), "
+        "so it is not shown."
+    )
+    assert not widget._polarisation_button.isEnabled()
+    # The saved results are kept as they were: nothing is discarded without asking.
+    assert widget.collect_state()["magnetic_field_results"]["results"][0]["site_label"] == (
+        "Custom site"
+    )
+    widget.close()
+
+
 def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, monkeypatch) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "magnetic-calc.mufinder", "Magnetic Calc")
@@ -2427,6 +2639,8 @@ def test_magnetic_field_widget_enables_nuclear_relaxation_without_magnetic_model
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
 
     assert not widget._calculate_button.isEnabled()
     assert widget._nuclear_relaxation_button.isEnabled()
@@ -2638,7 +2852,7 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._calc_cells_a.setValue(24)
     widget._calc_cells_b.setValue(36)
     widget._calc_cells_c.setValue(48)
@@ -3481,7 +3695,7 @@ def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._measured_magnetization_check.setChecked(True)
     widget._measured_magnetization_inputs[0].setText("-")
 
@@ -3553,8 +3767,7 @@ def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(
     assert widget._histogram_bins.value() == 512
     assert widget._hyperfine_coupling.text() == "0.0"
     assert widget._current_hyperfine_unit() == "angstrom^-3"
-    assert widget.selected_muon_site() is not None
-    assert widget.selected_muon_site().label == "Custom site"
+    assert widget.selected_muon_site() is None
     assert widget._result_table.rowCount() == 0
     assert widget.collect_state()["magnetic_field_results"] is None
     assert widget.collect_state()["dipolar_tensor_selector"] == {"mode": "assigned"}
@@ -4104,7 +4317,7 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._phase_samples.setValue(250_000)
     widget._phase_sampling_method = "montecarlo"
     widget._histogram_bins.setValue(1024)
@@ -4146,7 +4359,7 @@ def test_magnetic_field_widget_converts_hyperfine_coupling_units(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._hyperfine_coupling.setText("12.5")
     widget._hyperfine_units.setCurrentIndex(widget._hyperfine_units.findData("T_per_muB"))
 
@@ -4645,7 +4858,7 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
 
     widget._calculate_fields()
 
@@ -4715,7 +4928,7 @@ def test_magnetic_field_widget_breaks_a_distribution_into_term_means_and_rms(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
 
     widget._calculate_fields()
 
@@ -4814,7 +5027,7 @@ def _incommensurate_widget(document, monkeypatch, *, approximant) -> MagneticFie
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     return widget
 
 
@@ -5071,7 +5284,7 @@ def test_magnetic_field_widget_opens_incommensurate_distribution_plot(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
 
     widget._calculate_fields()
     widget._open_distribution_plot()
@@ -5125,7 +5338,7 @@ def test_magnetic_field_widget_opens_selected_distribution_plots_together(
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
-    widget._selected_muon_site = _custom_muon_site((0.0, 0.0, 0.0))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
     widget._calculate_fields()
     widget._result_table.selectRow(0)
     widget._result_table.selectionModel().select(
