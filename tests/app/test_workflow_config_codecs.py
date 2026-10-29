@@ -36,6 +36,7 @@ from mufinder.app.workflow_config_codecs import (
     serialize_muon_relaxation_config,
     serialize_pristine_relaxation_config,
     serialize_uep_config,
+    source_row_parameter_values,
     store_workflow_row_configuration,
     workflow_row_configuration,
     workflow_row_configuration_exists,
@@ -494,3 +495,36 @@ def test_store_workflow_row_configuration_adds_and_removes_rows() -> None:
 
     store_workflow_row_configuration(definition, "path", None)
     assert definition.parameters["configuration"] == {}
+
+
+def test_source_row_parameter_values_layers_the_row_over_its_source() -> None:
+    definition = _definition_with_rows([])
+    store_workflow_row_configuration(
+        definition,
+        "site",
+        {
+            "parameter_values": {
+                "max_scf_cycles": 80,
+                "xc_functional": "PBE0",
+                "phonon_method": "DFPT",
+            }
+        },
+    )
+    inherited = {"max_scf_cycles": 60, "spin_polarized": True, "task": "GEOMETRYOPTIMIZATION"}
+
+    values = source_row_parameter_values(
+        definition,
+        "site",
+        inherited,
+        dropped=("task", "phonon_method"),
+        defaults={"elec_energy_tol": 1e-9, "spin_polarized": False},
+    )
+
+    assert values == {
+        "max_scf_cycles": 80,
+        "xc_functional": "PBE0",
+        "spin_polarized": True,
+        "elec_energy_tol": 1e-9,
+    }
+    assert inherited["task"] == "GEOMETRYOPTIMIZATION"
+    assert source_row_parameter_values(None, "site", {}) == {}

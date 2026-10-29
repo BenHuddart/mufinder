@@ -16,8 +16,9 @@ Gamma-point phonons in the same run.
   run's checkpoint.
 - **Submission guards.** :meth:`QuantumCorrectionsController.pre_submit_check`
   checks the active definition against the active host, refuses rows whose
-  legacy singlepoint is still active, and checks each row's phonon method
-  against its pseudopotentials.
+  legacy singlepoint is still active, and tells the user when a row an older
+  version configured for DFPT or linear response will run as finite
+  displacement, the only phonon method the workflow writes.
 - **Result.** :meth:`QuantumCorrectionsController.validate_artifacts` fails a
   phonon job whose ``.phonon`` is missing or unparseable;
   :meth:`QuantumCorrectionsController.build_result` contributes the muon ZPE,
@@ -89,12 +90,12 @@ from mufinder.science.quantum_phonons import (
 from mufinder.workflow import StructureBridgeError, render_job, structure_to_spec
 from mufinder.workflow.quantum import (
     QUANTUM_PHONON_CALC_TYPE,
+    QUANTUM_PHONON_METHOD,
     QUANTUM_PHONON_SET_CALC_TYPE,
     QUANTUM_SINGLEPOINT_CALC_TYPE,
     QuantumPhononJobConfig,
     QuantumPhononSource,
     expand_quantum_phonon_jobs,
-    phonon_method_compatibility,
 )
 from mufinder.workflow.types import JobSpec
 
@@ -109,6 +110,7 @@ from mufinder.app.workflow_config_codecs import (
     batch_row_payload,
     num_farms_from_extras,
     row_settings_payload,
+    source_row_parameter_values,
     store_workflow_row_configuration,
     workflow_row_configuration,
     workflow_row_configuration_exists,
@@ -130,27 +132,27 @@ from mufinder.app.workflow_parameters import (
 from mufinder.app.workflow_submission import effective_row_status, workflow_row_state_is_ready
 
 _CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
-_GUI_TO_METHOD = {
-    "FINITEDISPLACEMENT": "finite_displacement",
-    "DFPT": "dfpt",
-    "LINEARRESPONSE": "linear_response",
+#: ``PHONON_METHOD`` is fixed at finite displacement, so the Configure dialog
+#: neither shows it nor offers it under ``Add Parameter``.
+_EXCLUDED_KEYWORD_NAMES = ("task", "phonon_method")
+#: Stored phonon-method spellings an older configuration wrote, mapped to the
+#: CASTEP value: the dialog's ``phonon_method`` row stored the CASTEP value and
+#: older row extras and definitions stored the lower-case internal name.
+_LEGACY_METHOD_TO_CASTEP = {
+    "finite_displacement": "FINITEDISPLACEMENT",
+    "dfpt": "DFPT",
+    "linear_response": "LINEARRESPONSE",
 }
-_METHOD_TO_GUI = {value: key for key, value in _GUI_TO_METHOD.items()}
 _DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
 _PHONON_JOB_MAPPING = "phonon_job_ids_by_label"
 _SEED_MAPPING = "job_seed_names_by_label"
 
 
-def _method_from_gui_value(value: object) -> str:
-    normalized = str(value).strip().upper()
-    try:
-        return _GUI_TO_METHOD[normalized]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported phonon method '{value}'.") from exc
+def _legacy_method_value(value: object) -> str:
+    """Return the CASTEP spelling of a phonon method an older configuration stored."""
 
-
-def _method_to_gui_value(value: object) -> str:
-    return _METHOD_TO_GUI.get(str(value).strip().lower(), "FINITEDISPLACEMENT")
+    text = str(value).strip()
+    return _LEGACY_METHOD_TO_CASTEP.get(text.lower(), text.upper())
 
 
 def _write_job_directory(job_spec: JobSpec, output_root: Path, *, seed_name: str) -> Path:
@@ -215,43 +217,14 @@ def _format_relative_energy(value: float | None) -> str:
     return "" if value is None else f"{float(value):.5f}"
 
 
-_DFPT_LIMITATIONS = (
-    "CASTEP DFPT phonons need norm-conserving pseudopotentials and are not "
-    "available with DFT+U, meta-GGA or hybrid functionals, non-collinear "
-    "magnetism or spin-orbit coupling, or the newer dispersion corrections."
-)
+def _legacy_method_notice(rows: list[tuple[str, str]]) -> tuple[str, str]:
+    """Return the one-line notice for rows an older version configured for another method."""
 
-
-def _method_rows(rows: list[tuple[str, str]]) -> str:
-    return "\n".join(f"  - {label} ({method})" for label, method in rows)
-
-
-def _incompatible_method_message(rows: list[tuple[str, str]]) -> tuple[str, str]:
-    """Return the refusal for rows using DFPT or linear response with ultrasoft pseudopotentials."""
-
+    listing = ", ".join(f"{label} ({method})" for label, method in rows)
     return (
-        "Phonon method needs norm-conserving pseudopotentials",
-        "These rows use a DFPT phonon method with ultrasoft pseudopotentials, which "
-        "CASTEP does not support:\n\n"
-        f"{_method_rows(rows)}\n\n"
-        "Configure them to use FINITEDISPLACEMENT, or set Pseudopotentials to "
-        "Norm-conserving if that is what the calculation uses.",
-    )
-
-
-def _unverified_method_question(rows: list[tuple[str, str]]) -> tuple[str, str, str]:
-    """Return the confirmation for rows using DFPT with an unknown pseudopotential family.
-
-    The result is ``(title, text, accept_label)`` for ``QuantumCorrectionsDeps.confirm``.
-    """
-
-    return (
-        "Check pseudopotentials for DFPT",
-        "These rows use a DFPT phonon method, but their pseudopotential family is not "
-        "set, so MuFinder cannot check it:\n\n"
-        f"{_method_rows(rows)}\n\n"
-        f"{_DFPT_LIMITATIONS} Submit anyway?",
-        "Submit anyway",
+        "Phonon method changed",
+        "Running as finite displacement (FINITEDISPLACEMENT), the only method "
+        f"Quantum Corrections uses: {listing}.",
     )
 
 
@@ -280,17 +253,13 @@ class QuantumCorrectionsDeps:
     """The window-side handles the quantum-corrections controller needs.
 
     The host-mismatch handlers ask whether to switch the active host (shared
-    with every host-guarded workflow) and ``confirm`` asks whether to go ahead.
-    Everything else the controller reads from the shared
+    with every host-guarded workflow). Everything else the controller reads from the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
     or the service layer.
     """
 
     handle_structure_host_mismatch: Callable[[object], bool]
     handle_site_host_mismatch: Callable[[object], bool]
-    #: Ask whether to go ahead (title, text, accept-button label); ``True``
-    #: means proceed. The safe answer, Cancel, is the default.
-    confirm: Callable[[str, str, str], bool]
 
 
 @dataclass(frozen=True)
@@ -302,7 +271,6 @@ class QuantumConfigureRequest(SourceConfigureRequest):
     opened read-only and is empty when it is editable.
     """
 
-    pseudopotential_family: str
     locked_reason: str
 
 
@@ -432,6 +400,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         specs = build_workflow_parameter_surface(
             workflow_stage="quantum_corrections",
             basic_names=_CONFIG_KEYWORD_NAMES,
+            excluded_names=_EXCLUDED_KEYWORD_NAMES,
         )
         return [
             replace(spec, default_value=_DEFAULT_ELEC_ENERGY_TOL)
@@ -440,51 +409,52 @@ class QuantumCorrectionsController(WorkflowJobController):
             for spec in specs
         ]
 
-    def _row_configuration(
-        self, definition: CalculationDefinition | None, key: str
-    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
-        """Return a row's stored configuration over its source relaxation's settings."""
-
-        params, advanced, extras = workflow_row_configuration(definition, key)
-        candidate = self.candidate_by_key(key)
-        values = (
-            source_relaxation_parameter_values(candidate.job, self._context.job_output_directory)
-            if candidate is not None
-            else {}
-        )
-        legacy_method = extras.get("phonon_method")
-        if legacy_method is not None:
-            values.setdefault("phonon_method", _method_to_gui_value(legacy_method))
-        values.update(params)
-        return values, advanced, extras
-
     def runtime_configuration(
         self, definition: CalculationDefinition | None, key: str
-    ) -> tuple[dict[str, object], str]:
-        """Return a row's effective parameter values and its pseudopotential family.
+    ) -> dict[str, object]:
+        """Return a row's effective parameter values.
 
-        The row's stored values sit over its source relaxation's settings; a
-        definition-level phonon method or pseudopotential family written by an
-        older configuration fills in what the row leaves unset.
+        The row's stored values sit over its source relaxation's settings, with
+        the workflow's tight ``elec_energy_tol`` default. The keywords the
+        workflow writes itself are left out, including a ``phonon_method`` an
+        older configuration stored: every row runs finite displacement (see
+        :meth:`legacy_phonon_method`).
         """
 
-        params, _advanced, extras = self._row_configuration(definition, key)
-        config = definition.parameters.get("configuration", {}) if definition is not None else {}
-        legacy_method = "finite_displacement"
-        legacy_pseudopotential = "unknown"
-        if isinstance(config, dict):
-            legacy_method = str(config.get("method", legacy_method)).strip() or legacy_method
-            legacy_pseudopotential = (
-                str(config.get("pseudopotential_family", legacy_pseudopotential)).strip()
-                or legacy_pseudopotential
-            )
-        values = dict(params)
-        values.setdefault("phonon_method", _method_to_gui_value(legacy_method))
-        values.setdefault("elec_energy_tol", _DEFAULT_ELEC_ENERGY_TOL)
-        pseudopotential_family = (
-            str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
+        candidate = self.candidate_by_key(key)
+        return source_row_parameter_values(
+            definition,
+            key,
+            source_relaxation_parameter_values(candidate.job, self._context.job_output_directory)
+            if candidate is not None
+            else {},
+            dropped=_EXCLUDED_KEYWORD_NAMES,
+            defaults={"elec_energy_tol": _DEFAULT_ELEC_ENERGY_TOL},
         )
-        return values, pseudopotential_family
+
+    @staticmethod
+    def legacy_phonon_method(definition: CalculationDefinition | None, key: str) -> str | None:
+        """Return the phonon method an older configuration chose for a row, unless it is ours.
+
+        Older versions offered DFPT and linear response. The row's stored
+        ``phonon_method`` parameter wins, then a ``phonon_method`` in its
+        extras, then the definition's ``configuration["method"]``. Returns the
+        CASTEP spelling, or ``None`` when nothing is stored or the stored
+        method is finite displacement.
+        """
+
+        params, _advanced, extras = workflow_row_configuration(definition, key)
+        config = definition.parameters.get("configuration", {}) if definition is not None else {}
+        for stored in (
+            params.get("phonon_method"),
+            extras.get("phonon_method"),
+            config.get("method") if isinstance(config, dict) else None,
+        ):
+            if stored is None or not str(stored).strip():
+                continue
+            method = _legacy_method_value(stored)
+            return None if method == QUANTUM_PHONON_METHOD else method
+        return None
 
     def ensure_definition(self, source_keys: Sequence[str]) -> CalculationDefinition | None:
         """Return the active definition with the selected sources added, creating one if needed.
@@ -512,8 +482,6 @@ class QuantumCorrectionsController(WorkflowJobController):
                     definition.input_site_ids.append(candidate.site.id)
             config = definition.parameters.setdefault("configuration", {})
             if isinstance(config, dict):
-                config.setdefault("method", "finite_displacement")
-                config.setdefault("pseudopotential_family", "unknown")
                 config["sources"] = serialize_quantum_sources(
                     document,
                     [
@@ -529,8 +497,6 @@ class QuantumCorrectionsController(WorkflowJobController):
                 ),
                 input_site_ids=list(dict.fromkeys(candidate.site.id for candidate in candidates)),
                 parameters={
-                    "method": "finite_displacement",
-                    "pseudopotential_family": "unknown",
                     "sources": serialize_quantum_sources(
                         document, [candidate.key for candidate in candidates]
                     ),
@@ -560,16 +526,15 @@ class QuantumCorrectionsController(WorkflowJobController):
         states = self.build_states()
         values_by_key: list[dict[str, object]] = []
         advanced_names: set[str] = set()
-        pseudopotential_families: list[str] = []
         num_farms_values: list[int] = []
         for candidate in candidates:
-            values, pseudopotential_family = self.runtime_configuration(definition, candidate.key)
             _params, row_advanced_names, extras = workflow_row_configuration(
                 definition, candidate.key
             )
-            values_by_key.append(values)
-            advanced_names.update(row_advanced_names)
-            pseudopotential_families.append(pseudopotential_family)
+            values_by_key.append(self.runtime_configuration(definition, candidate.key))
+            advanced_names.update(
+                name for name in row_advanced_names if name not in _EXCLUDED_KEYWORD_NAMES
+            )
             num_farms_values.append(num_farms_from_extras(extras))
         read_only = any(
             not workflow_row_state_is_ready(states, candidate.key) for candidate in candidates
@@ -602,7 +567,6 @@ class QuantumCorrectionsController(WorkflowJobController):
             read_only=read_only,
             num_farms=_agreed(num_farms_values, default=1),
             species_options=merge_species_options(candidate.structure for candidate in candidates),
-            pseudopotential_family=_agreed(pseudopotential_families, default="") or "unknown",
             locked_reason=locked_reason,
         )
 
@@ -614,8 +578,7 @@ class QuantumCorrectionsController(WorkflowJobController):
     ) -> None:
         """Store an accepted Configure dialog on every row ``keys`` name.
 
-        ``extras`` are the dialog's workflow values (pseudopotential family and
-        farm count). A mixed parameter the user left alone keeps each row's own
+        ``extras`` are the dialog's workflow values (the farm count). A mixed parameter the user left alone keeps each row's own
         stored value.
         """
 
@@ -717,11 +680,12 @@ class QuantumCorrectionsController(WorkflowJobController):
           a mismatch the user does not resolve refuses silently;
         - a row whose legacy singlepoint is still active is refused, with an
           explanation naming it, until that job finishes or is cancelled;
-        - each ready row's phonon method is checked against its
-          pseudopotential family (see :meth:`_phonon_method_issues`): DFPT or
-          linear response with ultrasoft pseudopotentials is refused with an
-          explanation naming the rows, and with an unknown family the user is
-          asked to confirm.
+        - a ready row with no phonon job yet that an older version configured
+          for DFPT or linear response (see :meth:`legacy_phonon_method`) is
+          not refused: a one-line notice names it and says it runs as finite
+          displacement, and the submission goes ahead. A row whose phonon job
+          already exists was written as finite displacement when that job
+          was created, so a resubmission after a reset shows no notice.
         """
 
         document = self._context.document()
@@ -752,12 +716,9 @@ class QuantumCorrectionsController(WorkflowJobController):
             )
             return False
 
-        incompatible, unverified = self._phonon_method_issues(keys)
-        if incompatible:
-            self._context.show_info(*_incompatible_method_message(incompatible))
-            return False
-        if unverified and not self._deps.confirm(*_unverified_method_question(unverified)):
-            return False
+        legacy_methods = self._rows_with_legacy_phonon_method(keys)
+        if legacy_methods:
+            self._context.show_info(*_legacy_method_notice(legacy_methods))
         return True
 
     def _rows_with_active_legacy_singlepoint(self, keys: list[object]) -> list[tuple[str, str]]:
@@ -776,43 +737,27 @@ class QuantumCorrectionsController(WorkflowJobController):
                 rows.append((self.source_label(candidate), job.status.value))
         return rows
 
-    def _phonon_method_issues(
-        self, keys: list[object]
-    ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-        """Split ready rows' phonon methods into incompatible and unverified.
-
-        Each entry is ``(label, CASTEP method)``. Only rows that could be
-        submitted now count. A method is incompatible when
-        :func:`~mufinder.workflow.quantum.phonon_method_compatibility` rejects
-        it for the row's pseudopotential family (DFPT or linear response with
-        ultrasoft pseudopotentials), and unverified when it is accepted with a
-        caveat (the family is not set).
-        """
+    def _rows_with_legacy_phonon_method(self, keys: list[object]) -> list[tuple[str, str]]:
+        """Return ``(label, CASTEP method)`` for ready rows without a phonon job stored
+        with another phonon method."""
 
         definition = self.active_definition()
+        if definition is None:
+            return []
         states = self.build_states()
-        incompatible: list[tuple[str, str]] = []
-        unverified: list[tuple[str, str]] = []
+        rows: list[tuple[str, str]] = []
         for key in [str(value) for value in keys]:
             candidate = self.candidate_by_key(key)
-            if candidate is None or not workflow_row_state_is_ready(states, key):
+            if (
+                candidate is None
+                or not workflow_row_state_is_ready(states, key)
+                or self.phonon_job_for_key(definition, key) is not None
+            ):
                 continue
-            values, pseudopotential_family = self.runtime_configuration(definition, key)
-            gui_method = str(values.get("phonon_method", "FINITEDISPLACEMENT")).strip().upper()
-            try:
-                method = _method_from_gui_value(gui_method)
-            except ValueError:
-                continue
-            compatible, message = phonon_method_compatibility(
-                method,  # type: ignore[arg-type]
-                pseudopotential_family=pseudopotential_family,  # type: ignore[arg-type]
-            )
-            entry = (self.source_label(candidate), gui_method)
-            if not compatible:
-                incompatible.append(entry)
-            elif message:
-                unverified.append(entry)
-        return incompatible, unverified
+            method = self.legacy_phonon_method(definition, key)
+            if method is not None:
+                rows.append((self.source_label(candidate), method))
+        return rows
 
     def build_states(self) -> dict[str, RelaxationRunState]:
         """Return each eligible row's state: its job's projected status, else ``ready``."""
@@ -881,12 +826,13 @@ class QuantumCorrectionsController(WorkflowJobController):
                 structure = structure_to_spec(candidate.structure)
             except StructureBridgeError:
                 continue
-            values, pseudopotential_family = self.runtime_configuration(definition, key)
             _params, _advanced, extras = workflow_row_configuration(definition, key)
-            values = {name: value for name, value in values.items() if name != "task"}
-            method_value = values.pop("phonon_method", "FINITEDISPLACEMENT")
+            values = {
+                name: value
+                for name, value in self.runtime_configuration(definition, key).items()
+                if name != "task"
+            }
             try:
-                method = _method_from_gui_value(method_value)
                 overrides = build_workflow_settings_template(values)
             except ValueError:
                 continue
@@ -901,8 +847,6 @@ class QuantumCorrectionsController(WorkflowJobController):
                         charge_state=charge_state_for_job(candidate.job),
                         total_energy_eV=candidate.total_energy_eV,
                     ),
-                    method=method,
-                    pseudopotential_family=str(pseudopotential_family),
                     num_farms=num_farms_from_extras(extras),
                     cell_overrides=overrides.cell,
                     param_overrides=overrides.param,

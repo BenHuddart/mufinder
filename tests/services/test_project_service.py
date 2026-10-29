@@ -2484,8 +2484,6 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
         input_structure_ids=[structure.id],
         input_site_ids=[site.id],
         parameters={
-            "method": "finite_displacement",
-            "pseudopotential_family": "unknown",
             "sources": [{"site_id": str(site.id), "label": "siteA"}],
             "phonon_job_ids_by_label": {str(site.id): "ph-job"},
             "job_seed_names_by_label": {str(site.id): "quantum_siteA"},
@@ -2496,10 +2494,9 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     assert definition.id in doc.calculations
     assert doc.calculations[definition.id].workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
     assert doc.calculations[definition.id].input_site_ids == [site.id]
-    assert (
-        doc.calculations[definition.id].parameters["configuration"]["method"]
-        == "finite_displacement"
-    )
+    assert doc.calculations[definition.id].parameters["configuration"]["sources"] == [
+        {"site_id": str(site.id), "label": "siteA"}
+    ]
     assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
     # A new definition binds each row to its phonon job only.
     assert "singlepoint_job_ids_by_label" not in doc.calculations[definition.id].parameters

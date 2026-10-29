@@ -395,6 +395,32 @@ def workflow_row_configuration(
     )
 
 
+def source_row_parameter_values(
+    definition: CalculationDefinition | None,
+    key: str,
+    inherited: Mapping[str, object],
+    *,
+    dropped: Iterable[str] = (),
+    defaults: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Return a source row's effective parameter values.
+
+    The row's stored parameter values sit over ``inherited`` (the settings of
+    its source relaxation); the ``dropped`` names, which the workflow writes
+    itself, are removed from the result, and ``defaults`` fill what is still
+    unset.
+    """
+
+    params, _advanced, _extras = workflow_row_configuration(definition, key)
+    values = dict(inherited)
+    values.update(params)
+    for name in dropped:
+        values.pop(name, None)
+    for name, value in (defaults or {}).items():
+        values.setdefault(name, value)
+    return values
+
+
 def workflow_row_configuration_exists(definition: CalculationDefinition | None, key: str) -> bool:
     """Return whether a source row stores any parameter, advanced name or non-blank extra."""
 

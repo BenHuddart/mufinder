@@ -17,8 +17,7 @@ the supercell's and its x from the molecules far from the muon.
 do: a 2x2x2 supercell (64 N and the muon), the paper's 1200 eV cutoff and
 2x2x2 grid set by hand, one manual start at (0, 1/4, 1/4) relaxed as a positive
 muon, one analysis workspace, clustered and pinned, and the phonon job of the
-pinned site, configured with ultrasoft pseudopotentials,
-``FINITEDISPLACEMENT`` and a 1e-10 eV SCF tolerance. No scene runs CASTEP: the
+pinned site, configured with a 1e-10 eV SCF tolerance. No scene runs CASTEP: the
 relaxation's ``-out.cell`` and the phonon job's ``.phonon`` and ``.castep`` are
 the fixture files (see :func:`~docs_screenshots.render.synthetic_runs`). The
 data set holds no log of the relaxation, so its ``.castep`` is a short one
@@ -196,11 +195,10 @@ def host_project(directory: Path) -> Path:
 
 
 def _configure_phonon_row(dialog: QWidget) -> None:
-    """Ultrasoft pseudopotentials and a 1e-10 eV SCF tolerance; the phonon method stays FINITEDISPLACEMENT."""
+    """A 1e-10 eV SCF tolerance; everything else is inherited from the relaxation."""
 
     from mufinder.castep_io.types import ValueWithUnit
 
-    dialog.set_pseudopotential_family("ultrasoft")
     dialog.set_values({"elec_energy_tol": ValueWithUnit(SCF_TOLERANCE_EV, "eV")})
     dialog._accept_if_valid()
 

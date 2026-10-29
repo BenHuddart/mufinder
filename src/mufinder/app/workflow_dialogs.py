@@ -8,7 +8,6 @@ from typing import Generic, TypeVar
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QLabel,
     QHBoxLayout,
@@ -192,19 +191,12 @@ def run_source_configure_dialog(
 
 
 class QuantumCorrectionsConfigDialog(ParameterDialog):
-    """Parameter dialog with Quantum Corrections pseudopotential selection."""
-
-    _PSEUDOPOTENTIAL_OPTIONS = (
-        ("Unknown / not set", "unknown"),
-        ("Norm-conserving", "norm_conserving"),
-        ("Ultrasoft", "ultrasoft"),
-    )
+    """Parameter dialog for Quantum Corrections rows: task locked to PHONON, plus a farm count."""
 
     def __init__(
         self,
         *,
         specs: list[KeywordSpec],
-        pseudopotential_family: str = "unknown",
         num_farms: int = 1,
         intro_text: str | None = None,
         read_only: bool = False,
@@ -220,19 +212,10 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
             species_options=species_options,
             parent=parent,
         )
-        self._pseudo_combo = QComboBox(self)
-        for label, value in self._PSEUDOPOTENTIAL_OPTIONS:
-            self._pseudo_combo.addItem(label, value)
-        self.set_pseudopotential_family(pseudopotential_family)
-        self._pseudo_combo.setEnabled(not read_only)
         self._num_farms_spin = QSpinBox(self)
         self._num_farms_spin.setRange(1, 9999)
         self._num_farms_spin.setValue(max(1, int(num_farms)))
         self._num_farms_spin.setEnabled(not read_only)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Pseudopotentials", self))
-        row.addWidget(self._pseudo_combo, 1)
 
         farms_row = QHBoxLayout()
         farms_row.addWidget(QLabel("Farms", self))
@@ -241,20 +224,7 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
 
         root = self.layout()
         assert root is not None
-        root.insertLayout(2, row)
-        root.insertLayout(3, farms_row)
-
-    def pseudopotential_family(self) -> str:
-        data = self._pseudo_combo.currentData()
-        return str(data).strip() or "unknown"
-
-    def set_pseudopotential_family(self, family: str) -> None:
-        target = str(family).strip() or "unknown"
-        for index in range(self._pseudo_combo.count()):
-            if self._pseudo_combo.itemData(index) == target:
-                self._pseudo_combo.setCurrentIndex(index)
-                return
-        self._pseudo_combo.setCurrentIndex(0)
+        root.insertLayout(2, farms_row)
 
     def num_farms(self) -> int:
         return max(1, int(self._num_farms_spin.value()))

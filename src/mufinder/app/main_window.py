@@ -6185,17 +6185,6 @@ class MainWindow(QMainWindow):
                 mismatch
             ),
             handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
-            confirm=lambda title, text, accept_label: (
-                workflow_table_utils.confirm_choice(
-                    self,
-                    title,
-                    text,
-                    [("accept", accept_label), ("cancel", "Cancel")],
-                    default="cancel",
-                    escape="cancel",
-                )
-                == "accept"
-            ),
         )
 
     def _build_energy_barriers_deps(self) -> EnergyBarriersDeps:
@@ -10403,7 +10392,6 @@ class MainWindow(QMainWindow):
             return
         dialog = QuantumCorrectionsConfigDialog(
             specs=controller.parameter_specs(),
-            pseudopotential_family=request.pseudopotential_family,
             num_farms=request.num_farms,
             intro_text=request.intro_text,
             read_only=request.read_only,
@@ -10415,10 +10403,7 @@ class MainWindow(QMainWindow):
             controller.apply_configuration(
                 request.keys,
                 result,
-                {
-                    "pseudopotential_family": dialog.pseudopotential_family(),
-                    "num_farms": dialog.num_farms(),
-                },
+                {"num_farms": dialog.num_farms()},
             )
 
     def _on_quantum_corrections_source_label_renamed(self, key: str, label: str) -> None:

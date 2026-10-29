@@ -171,9 +171,6 @@ class _FakeConfigDialog:
     def untouched_mixed_names(self) -> set[str]:
         return set()
 
-    def pseudopotential_family(self) -> str:
-        return "unknown"
-
     def num_farms(self) -> int:
         return 4
 
@@ -203,10 +200,8 @@ def test_configuring_a_ready_row_edits_every_parameter(
     assert not {"editable_param_names", "num_farms_editable", "pseudopotential_editable"} & set(
         opened[0]
     )
-    assert workflow_row_configuration(definition, candidate.key)[2] == {
-        "pseudopotential_family": "unknown",
-        "num_farms": 4,
-    }
+    assert workflow_row_configuration(definition, candidate.key)[2] == {"num_farms": 4}
+    assert "pseudopotential_family" not in opened[0]
 
 
 def test_configuring_a_failed_row_is_read_only_until_it_is_reset(

@@ -114,7 +114,6 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     base = dict(
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
-        confirm=lambda _title, _text, _accept_label: True,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
@@ -560,8 +559,6 @@ def _seed_quantum_document(service: ProjectService, tmp_path: Path):
         input_structure_ids=structure_ids,
         input_site_ids=site_ids,
         parameters={
-            "method": "finite_displacement",
-            "pseudopotential_family": "unknown",
             "phonon_job_ids_by_label": {},
             "job_seed_names_by_label": {},
         },
@@ -911,14 +908,13 @@ def test_quantum_controller_configure_request_opens_editable_ready_rows(tmp_path
     assert request.title == "Configure Quantum Corrections Parameters"
     assert request.read_only is False
     assert request.locked_reason == ""
-    assert request.pseudopotential_family == "unknown"
     assert request.num_farms == 1
     assert request.species_options == ("Si", "H:mu")
     assert "Selected sources: 2" in request.intro_text
     assert "Displacements required for the phonon run: 6" in request.intro_text
     assert "stage" not in request.intro_text.lower()
-    # Every row inherits the tight default and the legacy method.
-    assert all(values["phonon_method"] == "FINITEDISPLACEMENT" for values in request.row_values)
+    # No row carries a phonon method: every row runs finite displacement.
+    assert all("phonon_method" not in values for values in request.row_values)
     assert controller.configure_request(["not-a-source"]) is None
     assert (
         QuantumCorrectionsController(
@@ -981,151 +977,157 @@ def test_quantum_controller_read_only_configure_gives_one_reason(
     assert request.intro_text.endswith(request.locked_reason)
 
 
-def _phonon_method_controller(
-    service: ProjectService,
-    tmp_path: Path,
-    *,
-    rows: dict[str, tuple[str, str]],
-    infos: list[tuple[str, str]],
-    questions: list[tuple[str, str, str]],
-    answer: bool,
-    local: RecordingBackend,
-):
-    """Build a controller whose rows ``siteA``/``siteB`` are ready to submit.
+def test_quantum_controller_parameter_surface_offers_no_phonon_method() -> None:
+    """``PHONON_METHOD`` is fixed, so it is neither a row nor under ``Add Parameter``."""
 
-    ``rows`` maps a site label to ``(GUI phonon method, pseudopotential family)``,
-    stored as the row's configuration; materialize hands back one defined job per
-    row so an allowed submission reaches the local backend.
+    names = [spec.name for spec in QuantumCorrectionsController.parameter_specs()]
+
+    assert "phonon_method" not in names
+    assert "task" not in names
+
+
+def _store_old_phonon_methods(definition, by_label: dict[str, str]) -> list[str]:
+    """Store the DFPT / linear-response rows an older MuFinder version configured.
+
+    ``siteA`` keeps the dialog's ``phonon_method`` row value and ``siteB`` the
+    lower-case name older row extras held; both carry the retired
+    ``pseudopotential_family`` extra.
     """
 
+    store_workflow_row_configuration(
+        definition,
+        by_label["siteA"],
+        {"parameter_values": {"phonon_method": "DFPT"}, "pseudopotential_family": "ultrasoft"},
+    )
+    store_workflow_row_configuration(
+        definition,
+        by_label["siteB"],
+        {"phonon_method": "linear_response", "pseudopotential_family": "norm_conserving"},
+    )
+    return [by_label["siteA"], by_label["siteB"]]
+
+
+def test_quantum_controller_resubmits_an_old_dfpt_row_as_finite_displacement_with_a_notice(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
     by_label = {candidate.site.label: key for key, candidate in candidates.items()}
-    keys = []
-    for label, (method, family) in rows.items():
-        key = by_label[label]
-        keys.append(key)
-        store_workflow_row_configuration(
-            definition,
-            key,
-            {"parameter_values": {"phonon_method": method}, "pseudopotential_family": family},
-        )
-    controller = _quantum_document_controller(
-        service,
-        document,
-        output_root,
-        deps=_stub_quantum_deps(
-            confirm=lambda title, text, accept_label: (
-                questions.append((title, text, accept_label)) or answer
-            )
-        ),
-        local_backend=local,
-        infos=infos,
-    )
-    jobs = {
-        key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_PHONON_CALC_TYPE)
-        for key in keys
-    }
-    controller.materialize = lambda values: [jobs[str(value)] for value in values]  # type: ignore[assignment]
-    return controller, keys
-
-
-def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name(
-    tmp_path: Path,
-) -> None:
-    """The refusal names the rows instead of ending in a generic "No ready jobs"."""
-
+    keys = _store_old_phonon_methods(definition, by_label)
     infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str, str]] = []
     local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={"siteA": ("DFPT", "ultrasoft"), "siteB": ("LINEARRESPONSE", "ultrasoft")},
-        infos=infos,
-        questions=questions,
-        answer=True,
-        local=local,
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, infos=infos
     )
+
+    # The old rows load: their Configure dialog shows no phonon method.
+    request = controller.configure_request(keys)
+    assert request is not None
+    assert all("phonon_method" not in values for values in request.row_values)
 
     controller.submit(keys, target="local")
 
-    assert local.calls == []
-    assert questions == []
     ((title, message),) = infos
-    assert title == "Phonon method needs norm-conserving pseudopotentials"
+    assert title == "Phonon method changed"
+    assert "\n" not in message
     assert "siteA (DFPT)" in message
     assert "siteB (LINEARRESPONSE)" in message
-    assert "stage" not in message.lower()
+    assert "FINITEDISPLACEMENT" in message
+    assert len(local.calls) == 1
+    for seed in ("quantum_siteA", "quantum_siteB"):
+        param_text = (output_root / seed / f"{seed}.param").read_text(encoding="utf-8")
+        assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
+        assert "DFPT" not in param_text
+        assert "LINEARRESPONSE" not in param_text
 
 
-def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_family(
+def test_quantum_controller_shows_the_notice_only_when_the_rows_job_is_created(
     tmp_path: Path,
 ) -> None:
+    """A reset row's job was already written as finite displacement: no second notice."""
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    by_label = {candidate.site.label: key for key, candidate in candidates.items()}
+    keys = _store_old_phonon_methods(definition, by_label)
     infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str, str]] = []
+    controller = _quantum_document_controller(service, document, output_root, infos=infos)
+    _bind_phonon(service, document, definition, keys[0], status=JobStatus.DEFINED)
+
+    assert controller.pre_submit_check(keys) is True
+
+    ((_title, message),) = infos
+    assert "siteB (LINEARRESPONSE)" in message
+    assert "siteA" not in message
+
+
+def test_quantum_controller_reads_an_old_definition_level_method(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    first, second = list(candidates)
+    definition.parameters["configuration"] = {"method": "dfpt", "pseudopotential_family": "unknown"}
+    store_workflow_row_configuration(
+        definition, second, {"parameter_values": {"phonon_method": "FINITEDISPLACEMENT"}}
+    )
+    controller = _quantum_document_controller(service, document, output_root)
+
+    # The row's own value wins over the definition's.
+    assert controller.legacy_phonon_method(definition, first) == "DFPT"
+    assert controller.legacy_phonon_method(definition, second) is None
+    assert controller.legacy_phonon_method(None, first) is None
+
+
+def test_quantum_controller_submits_without_a_notice_when_no_old_method_is_stored(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    infos: list[tuple[str, str]] = []
     local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={"siteA": ("DFPT", "unknown")},
-        infos=infos,
-        questions=questions,
-        answer=False,
-        local=local,
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, infos=infos
     )
 
-    controller.submit(keys, target="local")
+    controller.submit(list(candidates), target="local")
 
-    assert local.calls == []
     assert infos == []
-    ((title, message, accept_label),) = questions
-    assert title == "Check pseudopotentials for DFPT"
-    assert accept_label == "Submit anyway"
-    assert "siteA (DFPT)" in message
-    assert "norm-conserving" in message
-
-
-def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(
-    tmp_path: Path,
-) -> None:
-    infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={"siteA": ("DFPT", "unknown")},
-        infos=infos,
-        questions=questions,
-        answer=True,
-        local=local,
-    )
-
-    controller.submit(keys, target="local")
-
-    assert len(questions) == 1
     assert len(local.calls) == 1
 
 
-def test_quantum_controller_submits_finite_displacement_without_asking(tmp_path: Path) -> None:
-    infos: list[tuple[str, str]] = []
-    questions: list[tuple[str, str, str]] = []
-    local = RecordingBackend()
-    controller, keys = _phonon_method_controller(
-        ProjectService(),
-        tmp_path,
-        rows={"siteA": ("FINITEDISPLACEMENT", "ultrasoft"), "siteB": ("DFPT", "norm_conserving")},
-        infos=infos,
-        questions=questions,
-        answer=False,
-        local=local,
+def test_quantum_controller_keeps_a_completed_dfpt_rows_result(tmp_path: Path) -> None:
+    """A row an older version ran with DFPT keeps its job and result, and no notice."""
+
+    from mufinder.domain.models import Result
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_document(service, tmp_path)
+    by_label = {candidate.site.label: key for key, candidate in candidates.items()}
+    keys = _store_old_phonon_methods(definition, by_label)
+    phonon = _bind_phonon(service, document, definition, keys[0], status=JobStatus.COMPLETED)
+    run = CalculationRun(job_id=phonon.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        calculation_run_id=run.id,
+        data={"phonon_method": "dfpt", "muon_zpe_total_eV": 0.42},
     )
+    document.results[result.id] = result
+    infos: list[tuple[str, str]] = []
+    controller = _quantum_document_controller(service, document, output_root, infos=infos)
+    view = controller._view
 
-    controller.submit(keys, target="local")
+    controller.refresh_view()
 
-    assert infos == []
-    assert questions == []
-    assert len(local.calls) == 1
+    ((result_row,),) = view.results[-1:]
+    assert result_row.label == phonon.label
+    assert result_row.status == "completed"
+    assert controller.build_states()[keys[0]].status == "completed"
+    assert controller.phonon_result(str(result.id)) is result
+    # Only the not-yet-run row is submittable, and only it gets the notice.
+    assert controller.pre_submit_check(keys) is True
+    ((_title, message),) = infos
+    assert "siteB (LINEARRESPONSE)" in message
+    assert "siteA" not in message
 
 
 # --- projects that ran the legacy singlepoint job first ----------------------
@@ -1322,18 +1324,14 @@ def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path)
     controller.apply_configuration(
         [first, second],
         configure_result({"task": "PHONON", "xc_functional": "PBE"}, untouched={"max_scf_cycles"}),
-        {"pseudopotential_family": "norm_conserving", "num_farms": 2},
+        {"num_farms": 2},
     )
 
     first_params, _advanced, first_extras = workflow_row_configuration(definition, first)
     second_params, _advanced, second_extras = workflow_row_configuration(definition, second)
     assert first_params == {"xc_functional": "PBE", "max_scf_cycles": 80}
     assert second_params == {"xc_functional": "PBE"}
-    assert (
-        first_extras
-        == second_extras
-        == {"pseudopotential_family": "norm_conserving", "num_farms": 2}
-    )
+    assert first_extras == second_extras == {"num_farms": 2}
     assert definition.parameters["configuration"][
         "sources"
     ]  # the definition now records its sources

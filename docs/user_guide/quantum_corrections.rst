@@ -65,9 +65,8 @@ row is submitted once.
 2. **Configure before submitting.** Click a row's ``Configure...`` button, or
    select several rows and click ``Configure Selected Parameters...``. Check
    the electronic settings (inherited from the source relaxation, see
-   `Configuration dialog`_), choose the ``Phonon Method``, set
-   ``Pseudopotentials`` to the family you use, and set ``Farms`` if you want
-   task farming. The settings stay editable until the row's job is submitted.
+   `Configuration dialog`_) and set ``Farms`` if you want task farming. The
+   settings stay editable until the row's job is submitted.
 3. **Submit.** Select the rows and click ``Run Selected Locally`` or
    ``Run Selected on Cluster``. With nothing selected the buttons read
    ``Run All Locally`` / ``Run All on Cluster`` and submit every ready row. The
@@ -203,25 +202,29 @@ rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
 
 .. figure:: ../_generated/screenshots/n2_quantum_configuration_dialog.webp
    :alt: The Quantum Corrections configuration dialog for an alpha-N2 row:
-         Ultrasoft pseudopotentials, one farm, the locked PHONON task, the
-         inherited 1200 eV cutoff, 2 x 2 x 2 k-point grid and PBE functional,
-         an SCF energy tolerance of 1e-10 eV, and the FINITEDISPLACEMENT phonon
-         method.
+         one farm, the locked PHONON task, the inherited 1200 eV cutoff,
+         2 x 2 x 2 k-point grid and PBE functional, and an SCF energy
+         tolerance of 1e-10 eV.
 
    The configuration of the α-N₂ row of :doc:`/user_guide/examples/alpha_n2`,
    inheriting its relaxation's settings, with the SCF tolerance tightened to
    ``1e-10`` eV.
 
-- ``Phonon Method`` — ``FINITEDISPLACEMENT`` (default), ``DFPT``, or
-  ``LINEARRESPONSE`` (see `CASTEP phonon methods`_);
-- ``Pseudopotentials`` — ``Unknown / not set``, ``Norm-conserving``, or
-  ``Ultrasoft``; MuFinder uses this only for the DFPT compatibility check;
 - ``Farms`` — the ``NUM_FARMS`` value; ``1`` disables task farming.
 
-The ``Task`` row is shown locked at ``PHONON``. Further CASTEP parameters
-supported for this workflow (for example ``NONSCF_EIGENVALUE_TOL``) can be
-added with ``Add Parameter``, which searches keyword names, aliases,
-descriptions, and categories.
+The ``Task`` row is shown locked at ``PHONON``. There is no phonon-method
+choice: every row runs finite displacement (see `CASTEP phonon methods`_).
+Further CASTEP parameters supported for this workflow (for example
+``NONSCF_EIGENVALUE_TOL``) can be added with ``Add Parameter``, which searches
+keyword names, aliases, descriptions, and categories; ``PHONON_METHOD`` is not
+among them.
+
+**Rows configured by an older version.** A row an older version configured
+for ``DFPT`` or ``LINEARRESPONSE`` still loads. The submission that creates
+its phonon job writes ``PHONON_METHOD : FINITEDISPLACEMENT``, and a one-line
+notice names the row and the method it was configured with before the
+submission goes ahead. A completed job keeps its result, whichever method
+produced it.
 
 **Defaults.** When the source relaxation's input files are still on disk, each
 row inherits that relaxation's ``CUT_OFF_ENERGY``, ``KPOINT_MP_GRID``,
@@ -266,9 +269,9 @@ Each row's phonon job is written to its own seed directory under
 state the site was not first relaxed in adds its prefix, as in
 ``quantum_O1_muonium``:
 
-- ``TASK : PHONON``, ``PHONON_METHOD`` and ``CONTINUATION : DEFAULT`` (a new
-  run when the directory holds no ``.check`` file, a continuation of it
-  otherwise);
+- ``TASK : PHONON``, ``PHONON_METHOD : FINITEDISPLACEMENT`` and
+  ``CONTINUATION : DEFAULT`` (a new run when the directory holds no ``.check``
+  file, a continuation of it otherwise);
 - ``PHONON_KPOINT_MP_GRID 1 1 1`` (Gamma only, always);
 - ``NONSCF_EIGENVALUE_TOL`` = the smaller of ``ELEC_ENERGY_TOL`` and
   ``1e-9 eV``;
@@ -308,34 +311,11 @@ coordinates have not been relaxed for a phonon calculation.
 CASTEP phonon methods
 ---------------------
 
-MuFinder always runs Quantum Corrections phonons at Gamma only via
-``PHONON_KPOINT_MP_GRID 1 1 1``. CASTEP offers two method families:
-
-Finite displacement (``FINITEDISPLACEMENT``)
-  MuFinder's default, and the recommended choice. It works with ultrasoft
-  pseudopotentials and with the methods DFPT does not support. (CASTEP's own
-  default is DFPT; MuFinder always writes ``PHONON_METHOD`` explicitly.)
-
-DFPT / linear response (``DFPT``, ``LINEARRESPONSE``)
-  Advanced option. The CASTEP documentation states that DFPT phonons are not
-  available with ultrasoft pseudopotentials, DFT+U, meta-GGA or hybrid
-  functionals, non-collinear magnetism or spin-orbit coupling, or the newer
-  dispersion corrections.
-
-MuFinder checks only the pseudopotential family, when you submit a row:
-
-- with ``Pseudopotentials`` set to ``Ultrasoft``, a DFPT or linear-response row
-  is refused with a message naming the rows; change the row to
-  ``FINITEDISPLACEMENT``, or set ``Pseudopotentials`` to ``Norm-conserving`` if
-  that is what you use;
-- with ``Unknown / not set``, MuFinder lists the DFPT rows and the methods
-  CASTEP's DFPT does not support, and asks whether to submit anyway (the
-  default answer is no). The reminder is also recorded in the job's
-  provenance.
-
-It does not detect Hubbard U, hybrid functionals, spin-orbit coupling, or
-dispersion corrections in your parameters; if you use any of these, choose
-finite displacement.
+MuFinder runs every Quantum Corrections phonon job at Gamma only
+(``PHONON_KPOINT_MP_GRID 1 1 1``) by finite displacement, which, unlike
+CASTEP's DFPT, works with ultrasoft pseudopotentials, DFT+U, meta-GGA and
+hybrid functionals, non-collinear magnetism, spin-orbit coupling and the newer
+dispersion corrections.
 
 .. _quantum-corrections-muon-mass:
 

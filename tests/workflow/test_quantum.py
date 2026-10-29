@@ -19,8 +19,6 @@ from mufinder.workflow.quantum import (
     QuantumPhononJobConfig,
     QuantumPhononSource,
     expand_quantum_phonon_jobs,
-    method_to_castep,
-    phonon_method_compatibility,
     quantum_source_eligibility,
 )
 from tests.support.structures import QUARTER_DIAGONAL, host_structure
@@ -262,65 +260,25 @@ def test_expand_quantum_phonon_jobs_ignores_boolean_elec_energy_tol() -> None:
     assert nonscf == ValueWithUnit(1e-9, "eV")
 
 
-def test_method_to_castep_maps_known_methods_and_rejects_unknown() -> None:
-    assert method_to_castep("dfpt") == "DFPT"
-    with pytest.raises(ValueError, match="Unsupported phonon method"):
-        method_to_castep("not_a_method")  # type: ignore[arg-type]
-
-
-def test_quantum_phonon_method_compatibility_blocks_dfpt_with_ultrasoft() -> None:
-    compatible, message = phonon_method_compatibility("dfpt", pseudopotential_family="ultrasoft")
-
-    assert compatible is False
-    assert message is not None
-    assert "norm-conserving" in message
-
-
-@pytest.mark.parametrize(
-    ("method", "options", "fragment"),
-    [
-        ("dfpt", {"uses_hubbard_u": True}, "Hubbard U"),
-        ("linear_response", {"uses_exact_exchange": True}, "exact exchange"),
-        ("dfpt", {"uses_spin_orbit": True}, "spin-orbit"),
-    ],
-    ids=["hubbard-u", "exact-exchange", "spin-orbit"],
-)
-def test_quantum_phonon_method_compatibility_blocks_dfpt_for_unsupported_physics(
-    method: str, options: dict[str, bool], fragment: str
-) -> None:
-    compatible, message = phonon_method_compatibility(method, **options)  # type: ignore[arg-type]
-
-    assert compatible is False
-    assert message is not None
-    assert fragment in message
-
-
-def test_quantum_phonon_method_compatibility_warns_for_unknown_pseudopotential_family() -> None:
-    compatible, message = phonon_method_compatibility("dfpt", pseudopotential_family="unknown")
-
-    assert compatible is True
-    assert message is not None
-    assert "unknown" in message
-
-
-def test_quantum_phonon_method_compatibility_allows_dfpt_with_norm_conserving() -> None:
-    assert phonon_method_compatibility("dfpt", pseudopotential_family="norm_conserving") == (
-        True,
-        None,
+def test_quantum_expansion_always_writes_finite_displacement() -> None:
+    (job,) = expand_quantum_phonon_jobs(
+        jobs=(QuantumPhononJobConfig(source=_source()),), name_prefix="quantum_phonon"
     )
 
+    keywords = {kw.name: kw.value for kw in job.param_file.keywords}
+    assert keywords["phonon_method"] == "FINITEDISPLACEMENT"
+    assert job.provenance["phonon_method"] == "finite_displacement"
+    assert "method_warning" not in job.provenance
 
-def test_expand_quantum_phonon_jobs_rejects_incompatible_method() -> None:
-    with pytest.raises(ValueError, match="norm-conserving"):
+
+@pytest.mark.parametrize("method", ["DFPT", "LINEARRESPONSE", "FINITEDISPLACEMENT"])
+def test_quantum_expansion_refuses_a_phonon_method_override(method: str) -> None:
+    overrides = ParamTemplate(keywords=(KeywordAssignment("phonon_method", method),))
+
+    with pytest.raises(ValueError, match="remove the PHONON_METHOD override"):
         expand_quantum_phonon_jobs(
-            jobs=(
-                QuantumPhononJobConfig(
-                    source=_source(),
-                    method="dfpt",
-                    pseudopotential_family="ultrasoft",
-                ),
-            ),
-            name_prefix="quantum",
+            jobs=(QuantumPhononJobConfig(source=_source(), param_overrides=overrides),),
+            name_prefix="quantum_phonon",
         )
 
 

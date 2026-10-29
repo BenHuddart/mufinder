@@ -526,14 +526,13 @@ Quantum corrections
   failed-job reset, with optional directory clean-up.
 - Each job writes ``TASK : PHONON``, ``CONTINUATION : DEFAULT`` (a new run
   without a checkpoint, a resumed one with it), ``PHONON_KPOINT_MP_GRID 1 1 1``,
-  the selected ``PHONON_METHOD``, ``NONSCF_EIGENVALUE_TOL`` and explicit
+  ``PHONON_METHOD : FINITEDISPLACEMENT``, ``NONSCF_EIGENVALUE_TOL`` and explicit
   ``H:mu`` ``SPECIES_MASS`` / ``SPECIES_GAMMA`` blocks, which a fresh run reads
   from its own ``.cell``; ``num_farms`` greater than one adds ``NUM_FARMS``.
-- Finite displacement is the default method. DFPT or linear-response runs
-  reject known ultrasoft pseudopotentials and warn for unknown pseudopotential
-  family metadata at submission, naming the affected rows; a refusal never
-  surfaces only as a generic no-ready-jobs message, and the unknown-family
-  warning asks for confirmation.
+- Finite displacement is the only phonon method; the configuration offers no
+  method or pseudopotential choice. A row an older version configured for DFPT
+  or linear response is submitted as finite displacement with a one-line
+  notice naming it.
 - Only completed phonon jobs produce persisted result rows. ``.phonon`` files
   are expected outputs and are retrieved from cluster runs; with task farming
   active, ``*_farm001.castep`` is accepted as the primary CASTEP output. The

@@ -41,29 +41,23 @@ def _quantum_specs() -> list[KeywordSpec]:
             default_value="SINGLEPOINT",
         ),
         KeywordSpec(
-            name="phonon_method",
+            name="metals_method",
             file="param",
             kind="scalar",
             value_type="enum",
-            allowed_values=("FINITEDISPLACEMENT", "DFPT", "LINEARRESPONSE"),
+            allowed_values=("DM", "EDFT"),
             widget_hint="dropdown",
-            category="phonon",
+            category="electronic",
             basic_workflows=("quantum_corrections",),
-            default_value="FINITEDISPLACEMENT",
-            allowed_tasks=("PHONON",),
+            default_value="DM",
         ),
     ]
 
 
-def test_quantum_corrections_config_dialog_locks_task_and_tracks_pseudopotentials(qapp) -> None:
-    dialog = QuantumCorrectionsConfigDialog(
-        specs=_quantum_specs(),
-        pseudopotential_family="norm_conserving",
-        num_farms=6,
-    )
+def test_quantum_corrections_config_dialog_locks_task_and_keeps_the_farm_count(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(specs=_quantum_specs(), num_farms=6)
 
     assert dialog.collect_values()["task"] == "PHONON"
-    assert dialog.pseudopotential_family() == "norm_conserving"
     assert dialog.num_farms() == 6
 
 
@@ -76,8 +70,9 @@ def test_quantum_corrections_config_dialog_labels_the_farm_count(qapp) -> None:
     assert "Farms" in labels
     assert "A value of 1 disables task farming." in labels
     assert not any("stage" in text.lower() for text in labels)
+    # Finite displacement is the only method, so nothing asks for pseudopotentials.
+    assert "Pseudopotentials" not in labels
     assert dialog._num_farms_spin.isEnabled() is True
-    assert dialog._pseudo_combo.isEnabled() is True
 
 
 @pytest.mark.parametrize("read_only", [False, True])
@@ -88,9 +83,8 @@ def test_quantum_corrections_config_dialog_locks_everything_or_nothing(
         specs=_quantum_specs(), num_farms=5, read_only=read_only
     )
 
-    assert dialog._rows["phonon_method"].editor is not None
-    assert dialog._rows["phonon_method"].editor.isEnabled() is not read_only
-    assert dialog._pseudo_combo.isEnabled() is not read_only
+    assert dialog._rows["metals_method"].editor is not None
+    assert dialog._rows["metals_method"].editor.isEnabled() is not read_only
     assert dialog._num_farms_spin.isEnabled() is not read_only
 
 
@@ -334,7 +328,7 @@ def test_run_row_parameter_dialog_builds_each_editor_once(qapp, monkeypatch) -> 
 def _source_request(*, read_only: bool = False) -> SourceConfigureRequest:
     return SourceConfigureRequest(
         keys=("a", "b"),
-        row_values=({"phonon_method": "DFPT"}, {"phonon_method": "LINEARRESPONSE"}),
+        row_values=({"metals_method": "DM"}, {"metals_method": "EDFT"}),
         advanced_names=frozenset(),
         title="Configure Things",
         intro_text="Selected: 2",
@@ -355,10 +349,10 @@ def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(
     assert opened == [dialog]
     assert dialog.windowTitle() == "Configure Things"
     assert result is not None
-    # The rows disagree on the phonon method, so the dialog marks it mixed and,
+    # The rows disagree on the metals method, so the dialog marks it mixed and,
     # left untouched, reports it so each row keeps its own.
-    assert result.untouched_mixed == frozenset({"phonon_method"})
-    assert "phonon_method" not in result.values
+    assert result.untouched_mixed == frozenset({"metals_method"})
+    assert "metals_method" not in result.values
     assert result.values == dialog.collect_values()
 
 
