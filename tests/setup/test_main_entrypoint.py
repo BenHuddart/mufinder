@@ -604,3 +604,33 @@ def test_importing_the_entry_point_loads_no_numerical_library():
     )
 
     assert completed.stdout.strip() == "[]"
+
+
+def test_building_the_main_window_imports_no_pyvista(tmp_path):
+    """Structure viewers import PyVista and VTK when first shown, not at startup."""
+
+    probe = (
+        "import sys\n"
+        "loaded = lambda: sorted(n for n in ('pyvista', 'pyvistaqt', 'vtk') if n in sys.modules)\n"
+        "import mufinder.app.main_window as m\n"
+        "print(loaded())\n"
+        "from PySide6.QtWidgets import QApplication\n"
+        "app = QApplication([])\n"
+        "window = m.MainWindow()\n"
+        "print(loaded(), flush=True)\n"
+        # Skip interpreter teardown, which this probe does not test.
+        "import os; os._exit(0)\n"
+    )
+    environment = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    for variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONFIGDIR"):
+        environment[variable] = str(tmp_path / variable.lower())
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=environment,
+        timeout=120,
+    )
+
+    assert completed.stdout.split() == ["[]", "[]"]

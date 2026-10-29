@@ -1154,7 +1154,9 @@ does not render at all. A change, including a theme change, records its state
 and marks the scene stale; the viewer's ``showEvent`` draws a stale scene once,
 and a viewer shown inside a ``batch_update()`` block draws when the block ends.
 Callers therefore update a viewer the same way whether or not it is showing,
-and need no visibility check of their own. The page widgets keep their render
+and need no visibility check of their own. A viewer creates its VTK render
+windows, and imports PyVista and pyvistaqt, on its first show, so a viewer on a
+page that is never opened costs only its Qt controls. The page widgets keep their render
 fingerprints, which skip a viewer update when nothing it draws has changed.
 
 Controller summary

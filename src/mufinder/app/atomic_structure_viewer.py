@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from copy import deepcopy
 from functools import wraps
+import importlib.util
 import logging
 import math
 
@@ -1320,9 +1321,14 @@ def _should_use_fast_pyvista_bond_cylinders(atom_count: int, bond_count: int) ->
     return atom_count >= 96 or bond_count >= 180
 
 
+def _pyvista_installed() -> bool:
+    """Whether PyVista and pyvistaqt can be imported, without importing them."""
+
+    return all(importlib.util.find_spec(name) is not None for name in ("pyvista", "pyvistaqt"))
+
+
 def _require_pyvista_backend() -> str:
-    pv, qt_interactor = _pyvista_modules()
-    if pv is None or qt_interactor is None:
+    if not _pyvista_installed():
         raise RuntimeError("AtomicStructureViewer requires PyVista and pyvistaqt.")
     return "pyvista"
 
@@ -1404,38 +1410,64 @@ def _configure_pyvista_vesta_style(
     plotter.add_light(light)
 
 
+def _create_qt_interactor(parent: QWidget):
+    """Import PyVista and build a ``QtInteractor`` (its VTK render window) in ``parent``."""
+
+    pv, qt_interactor = _pyvista_modules()
+    if pv is None or qt_interactor is None:
+        raise RuntimeError("PyVista backend requested but PyVista is not installed.")
+    # auto_update=False disables pyvistaqt's internal render_timer, which
+    # otherwise calls plotter.render() ~5x/sec forever regardless of
+    # visibility. We drive rendering explicitly (_render/draw_idle), so the
+    # timer is pure waste and pegged the CPU even on tabs without the view.
+    plotter = qt_interactor(parent, auto_update=False)
+    plotter.enable_parallel_projection()
+    try:
+        plotter.enable_anti_aliasing("ssaa")
+    except Exception:  # noqa: BLE001
+        pass
+    return pv, plotter
+
+
+def _add_interactor_to_layout(container: QWidget, plotter) -> None:
+    container.layout().addWidget(plotter)
+    if container.isVisible():
+        # Created while its container is showing: Qt would show it only later.
+        plotter.show()
+
+
 class _PyVistaCanvas(QWidget):
-    """Small Qt wrapper that gives ``QtInteractor`` a ``draw_idle`` API."""
+    """Small Qt wrapper that gives ``QtInteractor`` a ``draw_idle`` API.
+
+    The interactor, and with it PyVista and the VTK render window, is created by
+    ``ensure_plotter`` (when the viewer is first shown); ``plotter`` is ``None``
+    until then.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._closed = False
         self._refreshing_theme = False
-        pv, qt_interactor = _pyvista_modules()
-        if pv is None or qt_interactor is None:
-            raise RuntimeError("PyVista backend requested but PyVista is not installed.")
-
-        # auto_update=False disables pyvistaqt's internal render_timer, which
-        # otherwise calls plotter.render() ~5x/sec forever regardless of
-        # visibility. We drive rendering explicitly (_render/draw_idle), so the
-        # timer is pure waste and pegged the CPU even on tabs without the view.
-        self._plotter = qt_interactor(self, auto_update=False)
+        self._plotter = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent;")
-        self._plotter.setPalette(self.palette())
-        _configure_transparent_pyvista_background(self._plotter)
-        self._plotter.enable_parallel_projection()
-        try:
-            self._plotter.enable_anti_aliasing("ssaa")
-        except Exception:  # noqa: BLE001
-            pass
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._plotter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     @property
     def plotter(self):
+        return self._plotter
+
+    def ensure_plotter(self):
+        """Create the interactor on first use and return it (``None`` once shut down)."""
+
+        if self._plotter is None and not self._closed:
+            _pv, plotter = _create_qt_interactor(self)
+            plotter.setPalette(self.palette())
+            _configure_transparent_pyvista_background(plotter)
+            self._plotter = plotter
+            _add_interactor_to_layout(self, plotter)
         return self._plotter
 
     def draw_idle(self) -> None:
@@ -1507,27 +1539,20 @@ class _PyVistaCanvas(QWidget):
 
 
 class _PyVistaTriadCanvas(QWidget):
-    """Mini PyVista scene that mirrors the main camera orientation."""
+    """Mini PyVista scene that mirrors the main camera orientation.
+
+    Like ``_PyVistaCanvas`` it creates its interactor in ``ensure_plotter``; until
+    then it keeps the cell, camera and light direction it is given.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._closed = False
         self._refreshing_theme = False
-        pv, qt_interactor = _pyvista_modules()
-        if pv is None or qt_interactor is None:
-            raise RuntimeError("PyVista triad requested but PyVista is not installed.")
-
-        self._pv = pv
-        # See _PyVistaCanvas: disable the always-on render_timer (auto_update).
-        self._plotter = qt_interactor(self, auto_update=False)
-        self._plotter.enable_parallel_projection()
-        try:
-            self._plotter.enable_anti_aliasing("ssaa")
-        except Exception:  # noqa: BLE001
-            pass
+        self._pv = None
+        self._plotter = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._plotter.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setFixedWidth(132)
         self.setFixedHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -1536,7 +1561,6 @@ class _PyVistaTriadCanvas(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._plotter)
 
         self._cell = np.eye(3, dtype=float)
         self._camera_position = np.array([0.0, 0.0, 4.0], dtype=float)
@@ -1545,8 +1569,23 @@ class _PyVistaTriadCanvas(QWidget):
         self._light_direction = _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
         self._style_signature: tuple[str, ...] | None = None
 
-        self._configure_background()
-        self._build_axes_scene()
+    @property
+    def plotter(self):
+        return self._plotter
+
+    def ensure_plotter(self):
+        """Create the interactor on first use and return it.
+
+        The axes are built by the first ``set_scene``, which the viewer's first
+        render sends with the cell and camera it draws.
+        """
+
+        if self._plotter is None and not self._closed:
+            self._pv, plotter = _create_qt_interactor(self)
+            plotter.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self._plotter = plotter
+            _add_interactor_to_layout(self, plotter)
+        return self._plotter
 
     def _configure_background(self) -> None:
         self._plotter.setPalette(self.palette())
@@ -1561,6 +1600,9 @@ class _PyVistaTriadCanvas(QWidget):
         )
 
     def _build_axes_scene(self) -> None:
+        if self._plotter is None:
+            # Built from the stored cell, camera and light when the interactor exists.
+            return
         self._plotter.clear()
         self._configure_background()
         self._configure_lighting()
@@ -1652,6 +1694,8 @@ class _PyVistaTriadCanvas(QWidget):
         self._apply_camera()
 
     def _apply_camera(self) -> None:
+        if self._plotter is None:
+            return
         direction = _normalized_vector(
             self._camera_position - self._camera_focal_point,
             np.array([1.0, 0.0, 0.0], dtype=float),
@@ -1684,6 +1728,8 @@ class _PyVistaTriadCanvas(QWidget):
         self._camera_up = _normalized_vector(
             np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float)
         )
+        if self._plotter is None:
+            return
         self._configure_background()
         self._apply_camera()
 
@@ -1830,6 +1876,8 @@ class AtomicStructureViewer(QWidget):
         self._render_pending = False
         self._draw_pending = False
         self._triad_draw_pending = False
+        # The canvases create their VTK interactors in _ensure_backend, on first show.
+        self._backend_ready = False
 
         self._backend_name = _require_pyvista_backend()
         self._canvas = _PyVistaCanvas(self)
@@ -1888,9 +1936,6 @@ class AtomicStructureViewer(QWidget):
         self._view_z_button.clicked.connect(lambda: self._set_named_view("c"))
         self._reset_view_button.clicked.connect(self._reset_view)
 
-        self._configure_pyvista_interaction()
-        self._canvas.plotter.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._canvas.plotter.installEventFilter(self)
         self._pyvista_camera_timer = QTimer(self)
         self._pyvista_camera_timer.setInterval(40)
         self._pyvista_camera_timer.timeout.connect(self._poll_pyvista_camera)
@@ -1911,8 +1956,27 @@ class AtomicStructureViewer(QWidget):
         if layout is not None:
             layout.activate()
 
+    def _ensure_backend(self) -> None:
+        """Create the VTK interactors on first show, importing PyVista then.
+
+        Until this runs the viewer holds the structure, overlays, spins and camera
+        it is given with its scene marked stale, and ``showEvent`` draws them once.
+        """
+
+        if self._backend_ready or self._shutting_down:
+            return
+        self._backend_ready = True
+        plotter = self._canvas.ensure_plotter()
+        plotter.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        plotter.installEventFilter(self)
+        self._configure_pyvista_interaction()
+        ensure_triad = getattr(self._triad_canvas, "ensure_plotter", None)
+        if callable(ensure_triad):
+            ensure_triad()
+
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
+        self._ensure_backend()
         # Draw changes made while hidden first, so the camera poll below reads the
         # camera of the scene now on screen rather than the stale one.
         self._draw_stale_scene()
@@ -2006,7 +2070,7 @@ class AtomicStructureViewer(QWidget):
     def _defers_drawing(self) -> bool:
         """Whether drawing waits: for the end of a batch, or for the viewer to show."""
 
-        return bool(self._batch_depth) or not self.isVisible()
+        return bool(self._batch_depth) or not self.isVisible() or not self._backend_ready
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
         canvas = getattr(self, "_canvas", None)
@@ -3272,6 +3336,9 @@ class AtomicStructureViewer(QWidget):
         if self._backend_name != "pyvista" or self._limits is None or self._shutting_down:
             return
         plotter = self._canvas.plotter
+        if plotter is None:
+            # Not shown yet: the first render fits the camera from the stored state.
+            return
         if self._pyvista_camera_snapshot is not None:
             position, focal_point, up, parallel_scale = self._pyvista_camera_snapshot
             plotter.camera.position = tuple(float(value) for value in position)
@@ -4421,7 +4488,7 @@ class AtomicStructureViewer(QWidget):
     def _draw_crystallographic_axes(self) -> None:
         if self._shutting_down:
             return
-        if not self.isVisible() or self._render_deferred():
+        if not self.isVisible() or not self._backend_ready or self._render_deferred():
             # Reading a fresh plotter's camera makes PyVista reset it, which
             # renders. A hidden viewer syncs the triad when it is shown, and a
             # pending rebuild syncs it when it draws.

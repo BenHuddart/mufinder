@@ -17,6 +17,7 @@ import pytest
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.supercell_dialog import SupercellPreviewDialog
+from tests.support.pyvista_fakes import count_created_interactors
 from tests.support.structures import host_structure
 
 _magnetic_host = partial(
@@ -370,3 +371,55 @@ def test_a_viewer_shown_inside_a_batch_draws_and_refreshes_its_theme_when_the_ba
     assert _camera(hidden_viewer) == pytest.approx(
         _shown_viewer_camera(_magnetic_host(lattice=7.0))
     )
+
+
+def test_a_viewer_creates_its_render_windows_on_first_show(qapp, monkeypatch) -> None:
+    interactors = count_created_interactors(monkeypatch)
+    viewer = AtomicStructureViewer()
+    try:
+        viewer.set_structure(_magnetic_host())
+        viewer.set_spins([2.0, -2.0])
+        viewer.set_point_overlays(_point_overlay())
+        assert interactors == []
+        assert viewer._canvas.plotter is None
+
+        renders = []
+        monkeypatch.setattr(AtomicStructureViewer, "_render_pyvista", _counting(renders))
+        viewer.show()
+
+        # One interactor for the scene and one for the triad, and one scene render.
+        assert len(interactors) == 2
+        assert viewer._canvas.plotter is interactors[0]
+        assert interactors[0].isVisible()
+        assert len(renders) == 1
+        assert viewer._pyvista_atom_actor is not None
+        assert viewer._pyvista_spin_actors
+        assert viewer._pyvista_point_overlay_actors
+        # The triad is built from the cell it was given, in its own interactor.
+        assert interactors[1]._actors
+
+        viewer.hide()
+        viewer.show()
+        assert len(interactors) == 2
+    finally:
+        viewer.close()
+
+
+def test_a_viewer_closed_before_it_is_shown_creates_no_render_window(qapp, monkeypatch) -> None:
+    interactors = count_created_interactors(monkeypatch)
+    viewer = AtomicStructureViewer()
+    viewer.set_structure(_magnetic_host())
+    viewer.close()
+    viewer.show()
+
+    assert interactors == []
+
+
+def _counting(calls: list) -> object:
+    original = AtomicStructureViewer._render_pyvista
+
+    def counted(self) -> None:
+        calls.append(self)
+        original(self)
+
+    return counted

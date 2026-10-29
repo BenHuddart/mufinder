@@ -225,7 +225,7 @@ def _wait_for_splash_exposed(app: QApplication, splash: object, *, timeout_ms: i
 
 def run() -> int:
     """Start the Qt application."""
-    minimum_splash_ms = 1600
+    minimum_splash_ms = 800
 
     # Before anything imports NumPy: the BLAS and OpenMP pools read their size once,
     # when they load. Setting variables is cheap, so the splash rule holds.

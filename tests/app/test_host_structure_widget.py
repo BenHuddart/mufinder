@@ -483,6 +483,7 @@ def test_pyvista_canvas_disables_pyvistaqt_auto_update_render_timer(qapp, monkey
     # attribute, so this constructs the real production canvas.
     canvas = _PyVistaCanvas()
     try:
+        canvas.ensure_plotter()
         assert captured.get("auto_update") is False
     finally:
         canvas.deleteLater()
@@ -554,12 +555,21 @@ def test_atomic_structure_viewer_resyncs_camera_on_show(qapp, monkeypatch) -> No
 def test_atomic_structure_viewer_requires_pyvista_modules(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (None, None)
-    )
+    monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_installed", lambda: False)
 
     with pytest.raises(RuntimeError, match="requires PyVista"):
         AtomicStructureViewer()
+
+
+def test_pyvista_installed_checks_without_importing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
+
+    import mufinder.app.atomic_structure_viewer as module
+
+    assert module._pyvista_installed()
+    found = {"pyvista": object(), "pyvistaqt": None}
+    monkeypatch.setattr(importlib.util, "find_spec", found.get)
+    assert not module._pyvista_installed()
 
 
 def test_atomic_structure_viewer_selection_label_uses_fixed_single_line_height(qapp) -> None:

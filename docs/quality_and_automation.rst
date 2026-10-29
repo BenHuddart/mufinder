@@ -646,6 +646,12 @@ the call site or binds them once with ``functools.partial``.
   and ``add_cluster_input_job`` stand in for the cluster submission dialog and
   SSH runner; ``stage_quantum_row`` stages an eligible Quantum Corrections
   row, optionally with the legacy singlepoint job an older project holds.
+- ``tests/support/pyvista_fakes.py``: ``FakePlotter`` stands in for
+  pyvistaqt's ``QtInteractor``, and ``FakePyVistaCanvas`` and
+  ``FakePyVistaTriadCanvas`` for the structure viewer's canvases, which
+  ``tests/conftest.py`` installs in every Qt test;
+  ``count_created_interactors`` gives viewers their production canvases and
+  records each interactor (each VTK render window) they create.
 - ``tests/support/controllers.py``: ``RecordingBackend`` and ``make_context``
   stand in for the submit backends and the ``WorkflowControllerContext`` a
   workflow controller is built from; ``FakeRowState``, ``no_artifacts``,
@@ -732,6 +738,10 @@ other cores kept busy by spinning processes:
      - 9.9 ms
      - 10 ms
      - 24 ms
+
+Structure viewers are created on first show: building the main window creates
+no VTK render window and imports no PyVista, and the first page with a viewer
+pays that set-up once when it opens (:doc:`/architecture`).
 
 Quantum Corrections' analysis window builds only the tab it opens on
 (``Phonon Modes``) and refreshes its structure viewer once; the other tabs are
