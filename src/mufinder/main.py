@@ -11,6 +11,8 @@ from pathlib import Path
 from PySide6.QtCore import QEventLoop, QElapsedTimer, QSettings, QThread, QTimer
 from PySide6.QtWidgets import QApplication
 
+from mufinder.native_threads import cap_native_thread_pools
+
 
 def _main_window_ctor():
     from mufinder.app.main_window import MainWindow
@@ -225,6 +227,9 @@ def run() -> int:
     """Start the Qt application."""
     minimum_splash_ms = 1600
 
+    # Before anything imports NumPy: the BLAS and OpenMP pools read their size once,
+    # when they load. Setting variables is cheap, so the splash rule holds.
+    cap_native_thread_pools()
     _parse_arguments(sys.argv[1:], before_qt=True)
     _set_windows_app_id()
     _force_x11_platform_on_wayland()

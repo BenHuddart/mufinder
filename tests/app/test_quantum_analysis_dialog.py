@@ -8,7 +8,7 @@ from math import pi
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton
+from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton, QWidget
 
 import mufinder.app.quantum_analysis_dialog as quantum_analysis_dialog_module
 from mufinder.app.math_label import MathLabel
@@ -57,6 +57,136 @@ Mode Ion                X                                   Y                   
 """
 
 
+def _open_dialog(tmp_path: Path, job_label: str = "quantum_phonon_site"):
+    phonon_path = tmp_path / "site.phonon"
+    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
+    return QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label=job_label)
+
+
+def _show_tab(dialog: QuantumPhononAnalysisDialog, title: str) -> QTabWidget:
+    """Switch the analysis window to ``title``, as a click on its tab does."""
+
+    tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
+    titles = [tabs.tabText(index) for index in range(tabs.count())]
+    tabs.setCurrentIndex(titles.index(title))
+    return tabs
+
+
+def _show_every_tab(dialog: QuantumPhononAnalysisDialog) -> None:
+    _show_tab(dialog, "Mode wells and widths")
+    _show_tab(dialog, "Muon Coupling")
+    _show_tab(dialog, "Phonon Modes")
+
+
+def test_opening_the_analysis_window_builds_only_the_shown_tab(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    solves: list[object] = []
+    real_solve = quantum_analysis_dialog_module.solve_single_particle_ground_state
+    monkeypatch.setattr(
+        quantum_analysis_dialog_module,
+        "solve_single_particle_ground_state",
+        lambda potential: solves.append(potential) or real_solve(potential),
+    )
+    pair_matrices: list[tuple[int, int]] = []
+    real_covariance = quantum_analysis_dialog_module.covariance_matrix
+    monkeypatch.setattr(
+        quantum_analysis_dialog_module,
+        "covariance_matrix",
+        lambda calculation, a, b: (
+            pair_matrices.append((a, b)) or real_covariance(calculation, a, b)
+        ),
+    )
+
+    dialog = _open_dialog(tmp_path)
+    tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
+
+    assert tabs.currentIndex() == 0
+    assert solves == []
+    assert pair_matrices == []
+    assert tabs.widget(1).findChildren(QWidget) == []
+    assert tabs.widget(2).findChildren(QWidget) == []
+    assert dialog.single_particle_results == ()
+
+    _show_tab(dialog, "Mode wells and widths")
+    assert len(solves) == 3
+    assert dialog._single_particle_table.rowCount() == 3
+    assert pair_matrices == []
+
+    _show_tab(dialog, "Muon Coupling")
+    assert len(pair_matrices) == 1
+    assert dialog._w2_label.text().startswith("w₂ = ")
+
+    # Coming back to a tab shows what was built; nothing is built or solved twice.
+    single_particle_table = dialog._single_particle_table
+    _show_tab(dialog, "Phonon Modes")
+    _show_tab(dialog, "Mode wells and widths")
+    assert dialog._single_particle_table is single_particle_table
+    assert len(solves) == 3
+    assert len(pair_matrices) == 1
+
+    dialog.close()
+
+
+def test_a_tab_that_fails_to_compute_says_so_and_leaves_the_window_working(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    def failing_solve(_potential):
+        raise ValueError("the well has no bound state")
+
+    monkeypatch.setattr(
+        quantum_analysis_dialog_module, "solve_single_particle_ground_state", failing_solve
+    )
+    dialog = _open_dialog(tmp_path)
+
+    tabs = _show_tab(dialog, "Mode wells and widths")
+
+    page = tabs.widget(1)
+    messages = [label.text() for label in page.findChildren(QLabel)]
+    assert messages == ["Could not compute this tab: the well has no bound state"]
+    _show_tab(dialog, "Muon Coupling")
+    assert dialog._w2_label.text().startswith("w₂ = ")
+    _show_tab(dialog, "Mode wells and widths")
+    assert [label.text() for label in page.findChildren(QLabel)] == messages
+
+    dialog.close()
+
+
+def test_opening_the_analysis_window_refreshes_the_phonon_viewer_once(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    refreshes: list[int | None] = []
+    real_refresh = QuantumPhononAnalysisDialog._refresh_phonon_mode_view
+
+    def counting_refresh(self) -> None:
+        refreshes.append(self._selected_phonon_mode_row())
+        real_refresh(self)
+
+    monkeypatch.setattr(QuantumPhononAnalysisDialog, "_refresh_phonon_mode_view", counting_refresh)
+    cleared: list[object] = []
+    real_overlays = quantum_analysis_dialog_module.AtomicStructureViewer.set_line_overlays
+    monkeypatch.setattr(
+        quantum_analysis_dialog_module.AtomicStructureViewer,
+        "set_line_overlays",
+        lambda viewer, overlays: cleared.append(overlays) or real_overlays(viewer, overlays),
+    )
+
+    dialog = _open_dialog(tmp_path)
+
+    # One refresh, for the muon-dominated default row, and no redundant clear of
+    # vectors that were never drawn (each costs the viewer a render).
+    assert refreshes == [1]
+    assert cleared == []
+
+    dialog._phonon_show_vectors_checkbox.setChecked(True)
+    dialog._phonon_show_vectors_checkbox.setChecked(False)
+    assert len(cleared) == 2
+    assert cleared[-1] is None
+    assert dialog._phonon_viewer._line_overlay_specs == []
+
+    dialog.close()
+
+
 def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_path: Path) -> None:
     """Tables are capped, not width-locked, so a QSplitter governs sizing.
 
@@ -71,6 +201,7 @@ def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_
     dialog = QuantumPhononAnalysisDialog(
         phonon_path=str(phonon_path), job_label="quantum_phonon_splitters"
     )
+    _show_every_tab(dialog)
 
     phonon_splitter = dialog._phonon_mode_table.parentWidget()
     assert isinstance(phonon_splitter, QSplitter)
@@ -102,6 +233,7 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(
         phonon_path=str(phonon_path),
         job_label="quantum_phonon_site",
     )
+    _show_every_tab(dialog)
 
     assert len(dialog.single_particle_results) == 3
     assert dialog._single_particle_table.rowCount() == 3
@@ -228,6 +360,7 @@ def test_quantum_analysis_plot_follows_selected_direction_rows(qapp, tmp_path: P
     dialog = QuantumPhononAnalysisDialog(
         phonon_path=str(phonon_path), job_label="quantum_phonon_site"
     )
+    _show_tab(dialog, "Mode wells and widths")
 
     assert len(dialog._figure.axes[0].lines) == 9
 
@@ -308,6 +441,7 @@ def _open_help_dialog_from_tab(
     qapp, dialog, monkeypatch, tab_index: int
 ) -> QuantumAnalysisHelpDialog:
     tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
+    tabs.setCurrentIndex(tab_index)
     tab = tabs.widget(tab_index)
     opened: list[QuantumAnalysisHelpDialog] = []
 

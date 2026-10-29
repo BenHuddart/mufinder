@@ -103,7 +103,10 @@ the structural test: ``mufinder.main`` (application entry point),
 ``mufinder.branding`` (Qt icons), ``mufinder.assets`` / ``mufinder.data``
 (packaged resources, including the starter ``keyword_catalog.yaml`` and the
 shell script templates in ``mufinder/assets/shell/``),
-``mufinder._version``, ``mufinder.castep_setup`` (saved CASTEP setup and
+``mufinder._version``, ``mufinder.native_threads`` (the startup cap on the
+BLAS and OpenMP thread pools; standard library only, so the entry point imports
+it before NumPy and the local runner reads which variables it set; see
+:doc:`/quality_and_automation`, Native thread pools), ``mufinder.castep_setup`` (saved CASTEP setup and
 keyword-catalog management, used by the app), and ``mufinder.cluster_setup``
 (the built-in cluster presets and the ``QSettings`` persistence of cluster
 configurations, used by the app). ``castep_setup`` and ``cluster_setup``

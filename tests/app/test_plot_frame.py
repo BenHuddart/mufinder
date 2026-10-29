@@ -275,6 +275,7 @@ def test_quantum_plot_and_pinned_convergence_plots_can_be_popped_out(qapp, tmp_p
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(quantum_tests.PHONON_TEXT, encoding="utf-8")
     dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum")
+    quantum_tests._show_tab(dialog, "Mode wells and widths")
     assert isinstance(dialog._canvas.parentWidget(), PlotFrame)
     dialog.close()
 

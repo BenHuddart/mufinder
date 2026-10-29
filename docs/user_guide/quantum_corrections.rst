@@ -441,7 +441,8 @@ Phonon analysis window
 ``Launch Analysis`` opens a window for one completed phonon job. It reparses the
 stored ``.phonon`` file, so the analysis is tied to the archived CASTEP output
 rather than to table state. If CASTEP used the wrong muon mass, a warning banner
-appears above the tabs.
+appears above the tabs. The window opens on ``Phonon Modes``; each other tab is
+computed the first time it is shown.
 
 .. figure:: ../_generated/screenshots/n2_phonon_modes.webp
    :alt: The Phonon Modes tab of the phonon analysis window for the alpha-N2

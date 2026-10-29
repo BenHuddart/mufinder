@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import QProcess
 
+import mufinder.native_threads as native_threads_module
 import mufinder.services.local_runner as local_runner_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
@@ -56,6 +58,10 @@ class _FakeQProcess:
         self.finished = _FakeSignal()
         self.killed = False
         self.stderr = b""
+        self.environment = None
+
+    def setProcessEnvironment(self, environment) -> None:
+        self.environment = environment
 
     def setWorkingDirectory(self, path: str) -> None:
         self.working_dir = path
@@ -203,6 +209,59 @@ def test_local_runner_launch_uses_executable_for_single_core(
 
     assert fake_process.program == "/usr/bin/castep"
     assert fake_process.arguments == ["job_single"]
+
+
+def _single_core_request(tmp_path: Path) -> local_runner_module._PendingJob:
+    return local_runner_module._PendingJob(
+        job_id=uuid4(),
+        job_dir=tmp_path,
+        seed_name="job_single",
+        castep_executable="/usr/bin/castep",
+        mpirun_path="",
+        num_cores=1,
+    )
+
+
+def test_local_runner_gives_castep_the_users_thread_settings(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    # MuFinder capped OpenBLAS and MKL for itself; the user chose OMP_NUM_THREADS.
+    for name in native_threads_module.THREAD_POOL_VARIABLES:
+        # setenv first, so monkeypatch also removes the caps set below.
+        monkeypatch.setenv(name, "1")
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("OMP_NUM_THREADS", "2")
+    monkeypatch.setattr(native_threads_module, "_capped_variables", ())
+    native_threads_module.cap_native_thread_pools()
+    assert native_threads_module.capped_thread_variables() == (
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+    )
+    runner = LocalJobRunner()
+    fake_process = _FakeQProcess()
+    monkeypatch.setattr(local_runner_module, "QProcess", lambda _parent: fake_process)
+
+    runner._launch_process(_single_core_request(tmp_path))
+
+    environment = fake_process.environment
+    assert environment is not None
+    assert not environment.contains("OPENBLAS_NUM_THREADS")
+    assert not environment.contains("MKL_NUM_THREADS")
+    assert environment.value("OMP_NUM_THREADS") == "2"
+    assert environment.value("PATH") == os.environ["PATH"]
+
+
+def test_local_runner_leaves_the_environment_alone_without_a_cap(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(native_threads_module, "_capped_variables", ())
+    runner = LocalJobRunner()
+    fake_process = _FakeQProcess()
+    monkeypatch.setattr(local_runner_module, "QProcess", lambda _parent: fake_process)
+
+    runner._launch_process(_single_core_request(tmp_path))
+
+    assert fake_process.environment is None
 
 
 def test_local_runner_cancel_running_process(qapp, tmp_path: Path) -> None:

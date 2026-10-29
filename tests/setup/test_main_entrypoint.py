@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from types import ModuleType
 from types import SimpleNamespace
+import os
+import subprocess
 import sys
 
 import pytest
 
 import mufinder.main as main_module
+import mufinder.native_threads as native_threads_module
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +19,18 @@ def _bare_command_line(monkeypatch):
     """Run every entry-point test as a bare ``mufinder``, not with pytest's arguments."""
 
     monkeypatch.setattr(sys, "argv", ["mufinder"])
+
+
+@pytest.fixture(autouse=True)
+def _unsized_thread_pools(monkeypatch):
+    """Start every test with no thread-pool variables, and restore them afterwards."""
+
+    for name in native_threads_module.THREAD_POOL_VARIABLES:
+        # setenv first, so monkeypatch removes what run() sets even when the
+        # variable was absent (delenv of an absent name records nothing to undo).
+        monkeypatch.setenv(name, "1")
+        monkeypatch.delenv(name)
+    monkeypatch.setattr(native_threads_module, "_capped_variables", ())
 
 
 class _FakeApp:
@@ -135,11 +150,11 @@ class _ProjectWindow(_FakeWindow):
         return True
 
 
-def _run_with_arguments(monkeypatch, arguments, window):
+def _run_with_arguments(monkeypatch, arguments, window, *, app_factory=_FakeApp):
     """Run the entry point with ``arguments`` and return the deferred callbacks."""
 
     monkeypatch.setattr(_FakeApp, "cli_arguments", list(arguments))
-    monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
+    monkeypatch.setattr(main_module, "QApplication", app_factory)
     monkeypatch.setattr(main_module, "_install_gui_garbage_collector", lambda _app: None)
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: lambda: window)
     monkeypatch.setattr(
@@ -532,3 +547,60 @@ def test_wait_for_splash_exposed_pumps_events_until_the_splash_is_shown(monkeypa
     main_module._wait_for_splash_exposed(object(), object(), timeout_ms=40)
 
     assert process_calls == [25, 25, 10]
+
+
+def test_run_caps_the_native_thread_pools_before_qt_starts(monkeypatch):
+    seen_at_qt_start = {}
+
+    def recording_app(argv):
+        for name in native_threads_module.THREAD_POOL_VARIABLES:
+            seen_at_qt_start[name] = os.environ.get(name)
+        return _FakeApp(argv)
+
+    _run_with_arguments(monkeypatch, [], _ProjectWindow(), app_factory=recording_app)
+
+    assert seen_at_qt_start == {
+        "OPENBLAS_NUM_THREADS": "4",
+        "OMP_NUM_THREADS": "4",
+        "MKL_NUM_THREADS": "4",
+    }
+    assert native_threads_module.capped_thread_variables() == (
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+    )
+
+
+def test_run_keeps_thread_pool_sizes_the_user_set(monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "12")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+    _run_with_arguments(monkeypatch, [], _ProjectWindow())
+
+    assert os.environ["OMP_NUM_THREADS"] == "12"
+    assert os.environ["MKL_NUM_THREADS"] == "1"
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "4"
+    assert native_threads_module.capped_thread_variables() == ("OPENBLAS_NUM_THREADS",)
+
+
+def test_importing_the_entry_point_loads_no_numerical_library():
+    """``run`` caps the pools first, so importing its module must not load BLAS."""
+
+    probe = (
+        "import sys, mufinder.main; "
+        "print(sorted(name for name in ('numpy', 'scipy') if name in sys.modules))"
+    )
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in native_threads_module.THREAD_POOL_VARIABLES
+    }
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=environment,
+    )
+
+    assert completed.stdout.strip() == "[]"
