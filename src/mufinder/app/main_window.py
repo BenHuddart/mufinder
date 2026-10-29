@@ -431,6 +431,29 @@ def _ordered_string_list(payload: object) -> list[str]:
     return ordered
 
 
+def _set_item_text(item: QTableWidgetItem, text: str) -> bool:
+    """Set ``item``'s text only when it differs; return whether it was written."""
+
+    if item.text() == text:
+        return False
+    item.setText(text)
+    return True
+
+
+def _set_item_tooltip(item: QTableWidgetItem, tooltip: str) -> None:
+    """Set ``item``'s tooltip only when it differs."""
+
+    if item.toolTip() != tooltip:
+        item.setToolTip(tooltip)
+
+
+def _set_item_foreground(item: QTableWidgetItem, brush: QBrush) -> None:
+    """Set ``item``'s foreground brush only when it differs."""
+
+    if item.foreground() != brush:
+        item.setForeground(brush)
+
+
 class MainWindow(QMainWindow):
     """Main shell containing project navigation and job dashboard."""
 
@@ -466,6 +489,20 @@ class MainWindow(QMainWindow):
     _JOB_INSPECT_COLUMN = 13
     _JOB_RESET_COLUMN = 14
     _JOB_DISMISS_COLUMN = 15
+    # Dashboard columns sized to their contents by _fit_jobs_table_columns;
+    # the other columns stretch to share the remaining width.
+    _JOB_CONTENT_SIZED_COLUMNS = (
+        _JOB_PROGRESS_COLUMN,
+        _JOB_LAST_CHECKED_COLUMN,
+        _JOB_RUNTIME_COLUMN,
+        _JOB_PROCESSES_COLUMN,
+        _JOB_SUBMIT_COLUMN,
+        _JOB_RETRY_RETRIEVAL_COLUMN,
+        _JOB_CANCEL_COLUMN,
+        _JOB_INSPECT_COLUMN,
+        _JOB_RESET_COLUMN,
+        _JOB_DISMISS_COLUMN,
+    )
     _PROJECT_TREE_MIN_WIDTH = 220
     _PROJECT_TREE_MAX_WIDTH = 300
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = ConvergenceCutoffController.active_key
@@ -498,6 +535,8 @@ class MainWindow(QMainWindow):
         # also reports False on window minimize / tabbed-dock obscuring.
         # Defaults True so an as-yet-unshown window still arms the timer.
         self._jobs_dock_visible = True
+        # True while _sync_jobs_table_rows reconciles the dashboard rows.
+        self._jobs_table_syncing = False
         self._settings = QSettings("MuFinder", "MuFinder")
         self._appearance_mode = load_theme_mode(self._settings)
         self._local_runner = LocalJobRunner(self)
@@ -1058,6 +1097,11 @@ class MainWindow(QMainWindow):
             ),
         )
         self._configure_jobs_table_columns()
+        # The runtime tick updates only the rows in view, so bring rows that
+        # scroll into view current at once rather than on the next tick.
+        self._jobs_table.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._refresh_active_job_runtime_cells()
+        )
 
         self._local_runner.job_started.connect(self._on_local_job_started)
         self._local_runner.job_finished.connect(self._on_local_job_finished)
@@ -1578,6 +1622,9 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, mode)
+        # The dashboard's content-sized columns are fixed widths; refit them
+        # to the new theme's metrics.
+        self._fit_jobs_table_columns(self._JOB_CONTENT_SIZED_COLUMNS)
         self._refresh_cluster_connection_label_colour()
         self._refresh_workflow_stage_icons()
         self._sync_project_home()
@@ -2536,8 +2583,6 @@ class MainWindow(QMainWindow):
         ]
         self._job_progress.follow(desired_jobs)
         self._sync_jobs_table_rows(desired_jobs, now=now)
-
-        self._configure_jobs_table_columns()
         self._sync_job_runtime_timer()
 
         self._convergence_controller.refresh_view()
@@ -2613,53 +2658,48 @@ class MainWindow(QMainWindow):
         """
 
         desired_ids = [job.id for job in desired_jobs]
-
-        # Remove rows whose job is no longer desired. Iterate top-down so row
-        # indexes stay valid as we delete.
         desired_id_set = set(desired_ids)
-        self._jobs_table.setUpdatesEnabled(False)
+        table = self._jobs_table
+        rows_changed = False
+        changed_columns: set[int] = set()
+
+        # One repaint for the whole pass, however many rows change.
+        self._jobs_table_syncing = True
+        table.setUpdatesEnabled(False)
         try:
-            for row in range(self._jobs_table.rowCount() - 1, -1, -1):
-                existing_id = self._jobs_table_row_job_id(
-                    self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
-                )
+            # Remove rows whose job is no longer desired. Iterate bottom-up so
+            # row indexes stay valid as we delete.
+            for row in range(table.rowCount() - 1, -1, -1):
+                existing_id = self._jobs_table_row_job_id(table.item(row, self._JOB_LABEL_COLUMN))
                 if existing_id is None or existing_id not in desired_id_set:
-                    self._jobs_table.removeRow(row)
-        finally:
-            self._jobs_table.setUpdatesEnabled(True)
+                    table.removeRow(row)
+                    rows_changed = True
 
-        # Walk the desired order; align each row to the expected job id,
-        # inserting new rows and evicting mismatched rows as needed.
-        for target_row, job in enumerate(desired_jobs):
-            current_id = self._jobs_table_row_job_id(
-                self._jobs_table.item(target_row, self._JOB_LABEL_COLUMN)
-            )
-            if current_id == job.id:
-                self._update_jobs_table_row(target_row, job, now=now)
-                continue
-
-            # Either the slot is empty/beyond the current rows, or it holds a
-            # different job id (order changed / new job). A row must never be
-            # reused for a different job id, so insert a fresh row here. Any row
-            # that previously held this job (further down) is left to be handled
-            # when its own turn comes; but because a mismatched row can only be
-            # a not-yet-visited desired job or removed above, inserting keeps
-            # closures correct.
-            self._jobs_table.setUpdatesEnabled(False)
-            try:
+            # Walk the desired order; align each row to the expected job id,
+            # inserting new rows as needed. A row is never reused for a
+            # different job id, so each button's captured job id stays correct.
+            for target_row, job in enumerate(desired_jobs):
+                current_id = self._jobs_table_row_job_id(
+                    table.item(target_row, self._JOB_LABEL_COLUMN)
+                )
+                if current_id == job.id:
+                    changed_columns |= self._update_jobs_table_row(target_row, job, now=now)
+                    continue
                 self._insert_jobs_table_row(target_row, job, now=now)
-            finally:
-                self._jobs_table.setUpdatesEnabled(True)
+                rows_changed = True
 
-        # Trim any trailing rows left over (e.g. when the desired list shrank
-        # but the removal pass above could not have caught reordered leftovers).
-        if self._jobs_table.rowCount() > len(desired_jobs):
-            self._jobs_table.setUpdatesEnabled(False)
-            try:
-                while self._jobs_table.rowCount() > len(desired_jobs):
-                    self._jobs_table.removeRow(self._jobs_table.rowCount() - 1)
-            finally:
-                self._jobs_table.setUpdatesEnabled(True)
+            # Trim any trailing rows left over (reordered leftovers the removal
+            # pass above could not have caught).
+            while table.rowCount() > len(desired_jobs):
+                table.removeRow(table.rowCount() - 1)
+                rows_changed = True
+
+            self._fit_jobs_table_columns(
+                self._JOB_CONTENT_SIZED_COLUMNS if rows_changed else changed_columns
+            )
+        finally:
+            table.setUpdatesEnabled(True)
+            self._jobs_table_syncing = False
 
     def _insert_jobs_table_row(self, row: int, job: Job, *, now) -> None:
         """Insert a fully built dashboard row for ``job`` at ``row``.
@@ -2718,31 +2758,37 @@ class MainWindow(QMainWindow):
             )
             self._jobs_table.setCellWidget(row, column, button)
 
-    def _update_jobs_table_row(self, row: int, job: Job, *, now) -> None:
+    def _update_jobs_table_row(self, row: int, job: Job, *, now) -> set[int]:
         """Refresh an existing row in place without recreating items or widgets.
 
         Updates cell texts, the status foreground brush, the last-checked cell,
-        the runtime text, and each button's enabled state. The label item's
-        job-id UserRole and every button widget (with its captured closure) are
-        left untouched, so button clicks keep dispatching the correct job id.
+        the runtime text, and each button's enabled state, writing only the
+        values that changed. The label item's job-id UserRole and every button
+        widget (with its captured closure) are left untouched, so button
+        clicks keep dispatching the correct job id. Returns the content-sized
+        columns whose text changed, for the caller to fit once.
         """
 
-        label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
-        if label_item is not None:
-            label_item.setText(job.label)
+        table = self._jobs_table
+        before = {
+            column: item.text()
+            for column in self._JOB_CONTENT_SIZED_COLUMNS
+            if (item := table.item(row, column)) is not None
+        }
 
+        self._set_row_item_text(row, self._JOB_LABEL_COLUMN, job.label)
         self._set_row_item_text(row, self._JOB_WORKFLOW_COLUMN, job.workflow_stage.value)
         self._set_row_item_text(row, self._JOB_CALC_TYPE_COLUMN, job.calc_type)
 
-        status_item = self._jobs_table.item(row, self._JOB_STATUS_COLUMN)
+        status_item = table.item(row, self._JOB_STATUS_COLUMN)
         if status_item is not None:
             self._apply_job_status_cell(status_item, job)
 
-        progress_item = self._jobs_table.item(row, self._JOB_PROGRESS_COLUMN)
+        progress_item = table.item(row, self._JOB_PROGRESS_COLUMN)
         if progress_item is not None:
             self._apply_job_progress_cell(progress_item, job)
 
-        last_checked_item = self._jobs_table.item(row, self._JOB_LAST_CHECKED_COLUMN)
+        last_checked_item = table.item(row, self._JOB_LAST_CHECKED_COLUMN)
         if last_checked_item is not None:
             self._apply_last_checked_cell(last_checked_item, job, now=now)
 
@@ -2757,70 +2803,108 @@ class MainWindow(QMainWindow):
         )
 
         for column, _text, _kind, enabled in self._job_button_specs(job):
-            button = self._jobs_table.cellWidget(row, column)
-            if button is not None:
+            button = table.cellWidget(row, column)
+            if button is not None and button.isEnabled() != enabled:
                 button.setEnabled(enabled)
 
+        return {
+            column
+            for column, old_text in before.items()
+            if table.item(row, column).text() != old_text
+        }
+
     def _set_row_item_text(self, row: int, column: int, text: str) -> None:
-        """Set a cell's text in place, or create the item if it is missing."""
+        """Set a cell's text in place when it differs, or create the item if it is missing."""
 
         item = self._jobs_table.item(row, column)
         if item is None:
             self._jobs_table.setItem(row, column, QTableWidgetItem(text))
         else:
-            item.setText(text)
+            _set_item_text(item, text)
 
     def _refresh_active_job_runtime_cells(self) -> None:
+        """Advance the runtime cells of the running jobs the user can see.
+
+        Runs every second while a job is running, so it reads only the rows in
+        the viewport and writes only the runtime cells of running or
+        retrieving jobs whose text changed; scrolling brings newly shown rows
+        current. The rest of the table is refreshed by ``_refresh_jobs_table``.
+        It writes a handful of cells, so it leaves repaint batching to Qt.
+        """
+
         if self._document is None:
             self._job_runtime_timer.stop()
             return
+        if self._jobs_table_syncing:
+            # A row pass is under way (a removal clamped the scroll bar); it
+            # writes every runtime cell itself.
+            return
 
-        has_live_runtime = False
-        for row in range(self._jobs_table.rowCount()):
-            label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
-            runtime_item = self._jobs_table.item(row, self._JOB_RUNTIME_COLUMN)
-            if label_item is None or runtime_item is None:
-                continue
-            raw_job_id = label_item.data(Qt.ItemDataRole.UserRole)
-            try:
-                job_id = UUID(str(raw_job_id))
-            except (TypeError, ValueError, AttributeError):
-                continue
-            job = self._document.jobs.get(job_id)
-            if job is None:
-                continue
-            if job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING} and (
-                job.started_at is not None
-                or (
-                    job.execution_target != "local"
-                    and job.id in self._cluster_elapsed_seconds_by_job
-                )
+        table = self._jobs_table
+        runtime_grew = False
+        for row in self._jobs_table_viewport_rows():
+            runtime_item = table.item(row, self._JOB_RUNTIME_COLUMN)
+            job_id = self._jobs_table_row_job_id(table.item(row, self._JOB_LABEL_COLUMN))
+            job = self._document.jobs.get(job_id) if job_id is not None else None
+            if (
+                runtime_item is None
+                or job is None
+                or job.status not in {JobStatus.RUNNING, JobStatus.RETRIEVING}
             ):
-                has_live_runtime = True
-            runtime_item.setText(self._job_runtime_text(job))
+                continue
+            old_text = runtime_item.text()
+            if _set_item_text(runtime_item, self._job_runtime_text(job)):
+                runtime_grew = runtime_grew or len(runtime_item.text()) > len(old_text)
+        if runtime_grew:
+            self._fit_jobs_table_columns((self._JOB_RUNTIME_COLUMN,))
 
-        if not has_live_runtime:
+        if not self._has_live_job_runtime():
             self._job_runtime_timer.stop()
+
+    def _jobs_table_viewport_rows(self) -> range:
+        """Return the dashboard rows inside the table's viewport.
+
+        Every row while the table is hidden (the dock is closed or not shown
+        yet), so an update made then is not lost.
+        """
+
+        table = self._jobs_table
+        count = table.rowCount()
+        if count == 0:
+            return range(0)
+        if not table.isVisible():
+            return range(count)
+        height = table.viewport().height()
+        first = table.rowAt(0)
+        last = table.rowAt(height - 1) if height > 0 else -1
+        if first < 0:
+            first = 0
+        if last < 0:
+            last = count - 1
+        return range(first, last + 1)
+
+    def _job_has_live_runtime(self, job: Job) -> bool:
+        """Return True when the job's runtime cell advances with the clock."""
+
+        return job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING} and (
+            job.started_at is not None
+            or (job.execution_target != "local" and job.id in self._cluster_elapsed_seconds_by_job)
+        )
+
+    def _has_live_job_runtime(self) -> bool:
+        return any(
+            self._job_has_live_runtime(job)
+            for job in self._document.jobs.values()
+            if job.status in _VISIBLE_DASHBOARD_STATES
+        )
 
     def _sync_job_runtime_timer(self) -> None:
         if self._document is None:
             self._job_runtime_timer.stop()
             return
-        has_live_runtime = any(
-            job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
-            and (
-                job.started_at is not None
-                or (
-                    job.execution_target != "local"
-                    and job.id in self._cluster_elapsed_seconds_by_job
-                )
-            )
-            for job in self._document.jobs.values()
-            if job.status in _VISIBLE_DASHBOARD_STATES
-        )
         # No point ticking once a second to update a table the user cannot see;
         # _on_jobs_dock_visibility_changed re-arms it when the dock returns.
-        if has_live_runtime and self._jobs_dock_visible:
+        if self._has_live_job_runtime() and self._jobs_dock_visible:
             if not self._job_runtime_timer.isActive():
                 self._job_runtime_timer.start()
         else:
@@ -2836,7 +2920,15 @@ class MainWindow(QMainWindow):
         self._sync_job_runtime_timer()
 
     def _configure_jobs_table_columns(self) -> None:
-        """Stretch primary dashboard columns while keeping action columns compact."""
+        """Stretch the primary dashboard columns; size the rest to their contents.
+
+        The content-sized columns are ``Fixed``, not ``ResizeToContents``: Qt
+        re-measures a ``ResizeToContents`` column over every row on each cell
+        change, which stalls a dashboard of a few hundred rows.
+        ``_fit_jobs_table_columns`` sizes them instead, at most once per column
+        per refresh: every column when rows were added or removed, otherwise
+        only the columns whose text changed.
+        """
 
         header = self._jobs_table.horizontalHeader()
         stretch_columns = (
@@ -2847,24 +2939,16 @@ class MainWindow(QMainWindow):
             self._JOB_CLUSTER_COLUMN,
             self._JOB_REMOTE_ID_COLUMN,
         )
-        contents_columns = (
-            self._JOB_PROGRESS_COLUMN,
-            self._JOB_LAST_CHECKED_COLUMN,
-            self._JOB_RUNTIME_COLUMN,
-            self._JOB_PROCESSES_COLUMN,
-            self._JOB_SUBMIT_COLUMN,
-            self._JOB_RETRY_RETRIEVAL_COLUMN,
-            self._JOB_CANCEL_COLUMN,
-            self._JOB_INSPECT_COLUMN,
-            self._JOB_RESET_COLUMN,
-            self._JOB_DISMISS_COLUMN,
-        )
-
         for column in stretch_columns:
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        for column in self._JOB_CONTENT_SIZED_COLUMNS:
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        self._fit_jobs_table_columns(self._JOB_CONTENT_SIZED_COLUMNS)
 
-        for column in contents_columns:
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+    def _fit_jobs_table_columns(self, columns) -> None:
+        """Size each of ``columns`` to its contents (and header) once."""
+
+        for column in columns:
             self._jobs_table.resizeColumnToContents(column)
 
     @staticmethod
@@ -2896,11 +2980,9 @@ class MainWindow(QMainWindow):
             if label:
                 text = f"{text} · {label}"
             tooltip = cls._failure_tooltip(job)
-        if item.text() != text:
-            item.setText(text)
-        if item.toolTip() != tooltip:
-            item.setToolTip(tooltip)
-        item.setForeground(cls._status_brush(job.status.value))
+        _set_item_text(item, text)
+        _set_item_tooltip(item, tooltip)
+        _set_item_foreground(item, cls._status_brush(job.status.value))
 
     _WALLTIME_NEXT_STEP = "Resubmit to run it again, with a longer walltime if needed."
     _RELAXATION_WALLTIME_NEXT_STEP = (
@@ -2982,10 +3064,14 @@ class MainWindow(QMainWindow):
             cluster_connected=self._is_cluster_connected_for_job(job),
         )
         if stale_reason is not None:
-            item.setText(f"{base_text} — stale")
-            item.setForeground(QBrush(QColor(current_palette().warning)))
+            _set_item_text(item, f"{base_text} — stale")
+            _set_item_foreground(item, QBrush(QColor(current_palette().warning)))
         else:
-            item.setText(base_text)
+            _set_item_text(item, base_text)
+            # Rows are updated in place, so a job that is no longer stale
+            # drops the warning colour it was given.
+            if item.data(Qt.ItemDataRole.ForegroundRole) is not None:
+                item.setData(Qt.ItemDataRole.ForegroundRole, None)
 
         tooltip_lines: list[str] = []
         if job.last_status_source:
@@ -2994,8 +3080,7 @@ class MainWindow(QMainWindow):
             tooltip_lines.append(f"Message: {job.last_status_message}")
         if stale_reason is not None:
             tooltip_lines.append(f"Stale: {stale_reason}")
-        if tooltip_lines:
-            item.setToolTip("\n".join(tooltip_lines))
+        _set_item_tooltip(item, "\n".join(tooltip_lines))
 
     @staticmethod
     def _format_runtime_seconds(elapsed_seconds: int) -> str:
@@ -4096,8 +4181,10 @@ class MainWindow(QMainWindow):
             ):
                 item = self._jobs_table.item(row, self._JOB_PROGRESS_COLUMN)
                 if item is not None:
+                    old_text = item.text()
                     self._apply_job_progress_cell(item, job)
-                    self._jobs_table.resizeColumnToContents(self._JOB_PROGRESS_COLUMN)
+                    if item.text() != old_text:
+                        self._fit_jobs_table_columns((self._JOB_PROGRESS_COLUMN,))
                 break
 
     def _apply_job_progress_cell(self, item: QTableWidgetItem, job: Job) -> None:
@@ -4106,10 +4193,8 @@ class MainWindow(QMainWindow):
         )
         text = progress_cell_text(progress)
         tooltip = progress_tooltip(progress)
-        if item.text() != text:
-            item.setText(text)
-        if item.toolTip() != tooltip:
-            item.setToolTip(tooltip)
+        _set_item_text(item, text)
+        _set_item_tooltip(item, tooltip)
 
     def _on_reset_failed_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:

@@ -120,4 +120,15 @@ def test_last_checked_marks_disconnected_active_cluster_job_stale(qapp, tmp_path
     assert item is not None
     assert item.text().endswith("— stale")
     assert "cluster disconnected" in item.toolTip()
+    assert item.data(Qt.ItemDataRole.ForegroundRole) is not None
+
+    # The row is updated in place: once the job is no longer stale its cell
+    # drops the marker, the warning colour and the stale tooltip.
+    job.status = JobStatus.FAILED
+    window._refresh_jobs_table()
+
+    assert _last_checked_item(window, job.id) is item
+    assert item.text() == "1 min ago"
+    assert item.data(Qt.ItemDataRole.ForegroundRole) is None
+    assert item.toolTip() == ""
     window.close()
