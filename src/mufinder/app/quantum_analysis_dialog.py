@@ -8,8 +8,6 @@ from math import pi
 from time import perf_counter
 
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -27,7 +25,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QScrollArea,
-    QTableWidgetSelectionRange,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -39,29 +36,15 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.math_label import MathLabel
-from mufinder.app.plot_canvas import PlotFrame
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
     style_hint_text,
-    style_plot_axes,
-    style_plot_legend,
     style_section_title,
     style_warning_text,
 )
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
-from mufinder.domain.constants import (
-    ATOMIC_MASS_KG,
-    ELEMENTARY_CHARGE_C,
-    LIGHT_SPEED_M_S,
-    MUON_MASS_AMU,
-)
-from mufinder.science.quantum_adiabatic import (
-    DirectionalPotential,
-    SingleParticleResult,
-    solve_single_particle_ground_state,
-)
 from mufinder.science.quantum_phonons import (
     PhononCalculation,
     correlation_matrix,
@@ -75,17 +58,6 @@ from mufinder.science.quantum_phonons import (
     structure_from_phonon_calculation,
     w2_entanglement_witness,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class SingleParticleAnalysisRow:
-    """Displayed summary for one solved single-particle direction."""
-
-    label: str
-    mode_index: int
-    frequency_cm: float
-    zpe_eV: float
-    width_A: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +94,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._selected_muon_modes = select_muon_modes(self._calculation)
         self._selected_muon_mode_indices = {mode.mode_index for mode in self._selected_muon_modes}
         self._phonon_mode_rows: list[PhononModeAnalysisRow] = []
-        self._single_particle_results: list[SingleParticleResult] = []
         self._phonon_structure = structure_from_phonon_calculation(
             self._calculation,
             label=f"{job_label} phonon structure",
@@ -174,7 +145,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         tabs.setObjectName("quantumAnalysisTabs")
         self._unbuilt_tabs: dict[QWidget, Callable[[QWidget], None]] = {}
         tabs.addTab(self._phonon_modes_tab(), "Phonon Modes")
-        self._add_lazy_tab(tabs, "Mode wells and widths", self._build_single_particle_tab)
         self._add_lazy_tab(tabs, "Muon Coupling", self._build_correlation_tab)
         tabs.currentChanged.connect(lambda index: self._build_tab_if_needed(tabs.widget(index)))
         layout.addWidget(tabs, 1)
@@ -193,16 +163,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         """Return the muon-mass mismatch warning shown for this run, if any."""
 
         return self._muon_mass_warning
-
-    @property
-    def single_particle_results(self) -> tuple[SingleParticleResult, ...]:
-        """Return the solved single-particle directions.
-
-        The ``Mode wells and widths`` tab solves them the first time it is shown;
-        until then this is empty.
-        """
-
-        return tuple(self._single_particle_results)
 
     def _add_lazy_tab(self, tabs: QTabWidget, title: str, build: Callable[[QWidget], None]) -> None:
         page = QWidget()
@@ -326,64 +286,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         layout.addWidget(splitter, 1)
         return tab
 
-    def _build_single_particle_tab(self, tab: QWidget) -> None:
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
-
-        layout.addLayout(
-            _section_header(
-                "Harmonic muon wells (weakly-bound limit)",
-                "Each well is the harmonic potential of one muon-dominated Gamma mode at its frequency, "
-                "with the muon mass, along the muon's direction in it. With the range and grid resolving "
-                "the oscillator (the default range does for muon modes) the ground-state energy "
-                "converges to ħω/2 and the width to Δx; read the width Δx and the shape of |ψ|². A mode "
-                "the muon alone moves in is the harmonic weakly-bound limit; a mode shared with host "
-                "atoms is a coupled eigenmode, not a fixed-host potential. A DFT line-scan potential "
-                "would make the well anharmonic, and MuFinder does not generate one.",
-                self._show_single_particle_help,
-            )
-        )
-
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("Range (Å)"))
-        self._range_spin = QDoubleSpinBox()
-        self._range_spin.setRange(0.05, 5.0)
-        self._range_spin.setDecimals(3)
-        self._range_spin.setSingleStep(0.05)
-        self._range_spin.setValue(2.0)
-        self._range_spin.valueChanged.connect(lambda _value: self._solve_single_particle())
-        controls.addWidget(self._range_spin)
-        controls.addWidget(QLabel("Energy scale"))
-        self._scale_combo = QComboBox()
-        self._scale_combo.addItems(("Energy", "Sqrt energy"))
-        self._scale_combo.currentTextChanged.connect(lambda _value: self._plot_single_particle())
-        controls.addWidget(self._scale_combo)
-        controls.addStretch(1)
-        layout.addLayout(controls)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._single_particle_table = _quantum_analysis_table(
-            ("Mode no.", "Direction", "Frequency (cm⁻¹)", "ZPE (eV)", "Width (Å)")
-        )
-        self._single_particle_table.setMinimumWidth(320)
-        single_particle_header = self._single_particle_table.horizontalHeader()
-        single_particle_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        single_particle_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        single_particle_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        single_particle_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        single_particle_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        self._single_particle_table.itemSelectionChanged.connect(self._plot_single_particle)
-        splitter.addWidget(self._single_particle_table)
-        self._figure = Figure(figsize=(6.0, 4.0), tight_layout=True)
-        self._canvas = FigureCanvas(self._figure)
-        self._plot_frame = PlotFrame(self._canvas, title="Mode well plot")
-        splitter.addWidget(self._plot_frame)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([480, 760])
-        layout.addWidget(splitter, 1)
-        self._solve_single_particle()
-
     def _build_correlation_tab(self, tab: QWidget) -> None:
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -467,107 +369,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         layout.addLayout(matrices, 1)
         self._calculate_pair_matrices()
 
-    def _solve_single_particle(self) -> None:
-        half_range = float(self._range_spin.value()) if hasattr(self, "_range_spin") else 2.0
-        x = np.linspace(-half_range, half_range, 161)
-        results: list[SingleParticleResult] = []
-        rows: list[SingleParticleAnalysisRow] = []
-        for mode in self._selected_muon_modes:
-            omega = 2.0 * pi * LIGHT_SPEED_M_S * 100.0 * mode.frequency_cm
-            mass_kg = MUON_MASS_AMU * ATOMIC_MASS_KG
-            x_m = x * 1e-10
-            potential_eV = 0.5 * mass_kg * omega**2 * x_m**2 / ELEMENTARY_CHARGE_C
-            direction = _muon_mode_direction(self._calculation, mode.mode_index)
-            direction_label = _direction_label(direction)
-            result = solve_single_particle_ground_state(
-                DirectionalPotential(
-                    label=direction_label,
-                    displacement_A=tuple(float(value) for value in x),
-                    energy_eV=tuple(float(value) for value in potential_eV),
-                    effective_mass_amu=MUON_MASS_AMU,
-                )
-            )
-            results.append(result)
-            rows.append(
-                SingleParticleAnalysisRow(
-                    label=direction_label,
-                    mode_index=mode.mode_index,
-                    frequency_cm=mode.frequency_cm,
-                    zpe_eV=result.ground_energy_eV,
-                    width_A=result.width_A,
-                )
-            )
-        self._single_particle_results = results
-        if hasattr(self, "_single_particle_table"):
-            _fill_single_particle_table(self._single_particle_table, rows)
-            if rows:
-                self._single_particle_table.setRangeSelected(
-                    QTableWidgetSelectionRange(
-                        0, 0, len(rows) - 1, self._single_particle_table.columnCount() - 1
-                    ),
-                    True,
-                )
-            self._plot_single_particle()
-
-    def _plot_single_particle(self) -> None:
-        if not hasattr(self, "_figure"):
-            return
-        self._figure.clear()
-        axis = self._figure.add_subplot(111)
-        _style_energy_axis(self._figure, axis)
-        sqrt_scale = (
-            hasattr(self, "_scale_combo") and self._scale_combo.currentText() == "Sqrt energy"
-        )
-        colours = _analysis_line_colours()
-        selected_indices = self._selected_single_particle_indices()
-        for plot_index, result_index in enumerate(selected_indices):
-            result = self._single_particle_results[result_index]
-            x = np.asarray(result.grid_A, dtype=float)
-            potential_meV = 1000.0 * np.asarray(result.potential_eV, dtype=float)
-            energy_meV = 1000.0 * result.ground_energy_eV
-            density = np.asarray(result.probability_density, dtype=float)
-            colour = colours[plot_index % len(colours)]
-            if sqrt_scale:
-                y_potential = np.sqrt(np.clip(potential_meV, 0.0, None))
-                y_energy = float(np.sqrt(max(energy_meV, 0.0)))
-                y_label = r"$\sqrt{E}\ (\sqrt{\mathrm{meV}})$"
-            else:
-                y_potential = potential_meV
-                y_energy = energy_meV
-                y_label = r"$E\ (\mathrm{meV})$"
-            axis.plot(x, y_potential, color=colour, linewidth=1.7, label=rf"{result.label}: $V(q)$")
-            axis.axhline(
-                y_energy,
-                color=colour,
-                linestyle="--",
-                linewidth=1.0,
-                alpha=0.82,
-                label=rf"{result.label}: $E_0$",
-            )
-            if density.max() > 0.0:
-                density_scaled = density / density.max()
-                span = max(float(np.max(y_potential)), y_energy, 1.0)
-                axis.plot(
-                    x,
-                    y_energy + density_scaled * 0.25 * span,
-                    color=colour,
-                    alpha=0.58,
-                    linewidth=1.0,
-                    label=rf"{result.label}: $|\psi(q)|^2$",
-                )
-        axis.set_xlabel(r"Muon displacement, $q$ ($\AA$)")
-        axis.set_ylabel(y_label)
-        style_plot_legend(axis.legend(loc="best", fontsize="small", frameon=True))
-        self._canvas.draw_idle()
-
-    def _selected_single_particle_indices(self) -> list[int]:
-        if not hasattr(self, "_single_particle_table"):
-            return list(range(len(self._single_particle_results)))
-        selected = sorted({index.row() for index in self._single_particle_table.selectedIndexes()})
-        if not selected:
-            return list(range(len(self._single_particle_results)))
-        return [row for row in selected if 0 <= row < len(self._single_particle_results)]
-
     def _calculate_pair_matrices(self) -> None:
         if not hasattr(self, "_atom_a_combo"):
             return
@@ -580,10 +381,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._w2_label.setText(
             f"w₂ = {w2_entanglement_witness(self._calculation, atom_a, atom_b):.6g}"
         )
-
-    def _show_single_particle_help(self) -> None:
-        dialog = QuantumAnalysisHelpDialog(_single_particle_help_definition(), parent=self)
-        dialog.exec()
 
     def _show_correlation_help(self) -> None:
         dialog = QuantumAnalysisHelpDialog(_correlation_help_definition(), parent=self)
@@ -881,7 +678,7 @@ class QuantumAnalysisHelpDialog(QDialog):
 
 
 def _quantum_analysis_table(headers: tuple[str, ...]) -> QTableWidget:
-    """Shared chrome for this dialog's phonon-mode/single-particle/matrix tables.
+    """Shared chrome for this dialog's phonon-mode and matrix tables.
 
     All columns size to content (not stretch-to-fill): these tables show
     compact numeric columns that should not stretch to the dialog width.
@@ -937,54 +734,6 @@ def _symbol_row(symbol: str, meaning: str, parent: QWidget) -> QHBoxLayout:
     return row
 
 
-def _style_energy_axis(figure: Figure, axis) -> None:
-    palette = current_palette()
-    figure.set_facecolor(palette.bg_primary)
-    style_plot_axes(
-        axis,
-        facecolor=palette.bg_primary,
-        tick_color=palette.text_muted,
-        tick_labelsize=9,
-        grid_alpha=0.45,
-        grid_linewidth=0.7,
-    )
-    axis.set_axisbelow(True)
-
-
-def _analysis_line_colours() -> tuple[str, ...]:
-    palette = current_palette()
-    if palette.mode == "dark":
-        return (
-            "#E8A838",
-            "#4ADE80",
-            "#7DD3FC",
-            "#F87171",
-            "#C4B5FD",
-            "#FBBF24",
-        )
-    return (
-        "#E02020",
-        "#146C43",
-        "#0369A1",
-        "#A16207",
-        "#7C3AED",
-        "#B45309",
-    )
-
-
-def _muon_mode_direction(
-    calculation: PhononCalculation,
-    mode_index: int,
-    *,
-    muon_species: str = "H:mu",
-) -> tuple[float, float, float]:
-    muon_index = calculation.atom_index_for_species(muon_species) - 1
-    vector = real_mode_displacements(calculation, mode_index, muon_species=muon_species)[muon_index]
-    if vector.size != 3:
-        return (0.0, 0.0, 0.0)
-    return _normalized_mode_direction(np.asarray(vector, dtype=float))
-
-
 def _normalized_mode_direction(vector: np.ndarray) -> tuple[float, float, float]:
     values = np.asarray(vector, dtype=float).reshape(-1)
     if values.size != 3:
@@ -1005,39 +754,6 @@ def _format_direction_component(value: float) -> str:
     if abs(rounded) < 5e-3:
         rounded = 0.0
     return f"{rounded:.2f}"
-
-
-def _single_particle_help_definition() -> dict[str, object]:
-    return {
-        "title": "Harmonic muon wells (weakly-bound limit)",
-        "paragraphs": (
-            "Each selected muon-dominated Gamma mode defines a one-dimensional harmonic well along the muon's displacement direction, from the mode frequency and the muon mass. For a mode the muon alone moves in (participation close to 1) this is the harmonic weakly-bound limit of the single-particle approximation of Gomilšek et al. (Commun. Phys. 6, 142, 2023): host atoms fixed, effective mass the muon mass. A mode shared with host atoms is an eigenmode of the coupled dynamical matrix, so its well is a harmonic estimate along the mode direction rather than a fixed-host muon potential; the participation column of the Phonon Modes tab shows how far each selected mode is from pure muon motion.",
-            "The solver itself is general and accepts tabulated potentials, but the workflow feeds it harmonic wells only. The ZPE column is the numerical ground-state energy of the finite-difference Schrodinger problem on ±Range with 401 grid points. Once the range and grid resolve the oscillator it converges to ħω/2, the value in the main table, and the width to the analytic Δx; the default range of 2 Å does so for muon modes, whose widths are a few tenths of an Å. A range comparable to Δx confines the muon further and raises both numbers, and a very large range coarsens the grid. The quantity to read is the width: the RMS spread of the normalized muon probability density.",
-            "The paper's anharmonic line-scan potentials and the strongly-bound effective mass, with relaxed host nuclei, are the next rung of the approximation; MuFinder does not generate them. The square-root energy scale is a plotting aid for shallow wells: it keeps the minimum visible while compressing the high-energy part of the potential.",
-        ),
-        "equations": (
-            r"V(q)=\frac{1}{2}m_\mu\omega^2q^2",
-            r"\left[-\frac{\hbar^2}{2m_{\mathrm{eff}}}\frac{d^2}{dq^2}+V(q)\right]\psi(q)=E_0\psi(q)",
-            r"\sigma_\mu=\sqrt{\left<q^2\right>-\left<q\right>^2}",
-            r"\Delta x=\sqrt{\hbar/(2 m_\mu \omega)}",
-        ),
-        "symbols": (
-            (r"q", "Muon displacement along the selected phonon-mode direction."),
-            (r"\omega=2\pi c\nu", "Angular frequency converted from the CASTEP phonon frequency."),
-            (
-                r"E_0",
-                "Ground-state energy of the well; equals ħω/2 for a harmonic well and is reported as ZPE in the table.",
-            ),
-            (
-                r"\sigma_\mu",
-                "Muon wavefunction width along this one-dimensional coordinate, as computed numerically.",
-            ),
-            (
-                r"\Delta x",
-                "Analytic ground-state width of the harmonic well; the numerical width reproduces it.",
-            ),
-        ),
-    }
 
 
 def _correlation_help_definition() -> dict[str, object]:
@@ -1075,29 +791,6 @@ def _matrix_table() -> QTableWidget:
     table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     return table
-
-
-def _fill_single_particle_table(table: QTableWidget, rows: list[SingleParticleAnalysisRow]) -> None:
-    previous = table.blockSignals(True)
-    table.setRowCount(len(rows))
-    for row_index, row in enumerate(rows):
-        values = (
-            str(row.mode_index),
-            row.label,
-            f"{row.frequency_cm:.3f}",
-            f"{row.zpe_eV:.6g}",
-            f"{row.width_A:.6g}",
-        )
-        for column, value in enumerate(values):
-            item = QTableWidgetItem(value)
-            table.setItem(row_index, column, item)
-    table.resizeRowsToContents()
-    table.resizeColumnsToContents()
-    if table.columnCount() >= 5:
-        table.setColumnWidth(0, max(table.columnWidth(0), 78))
-        table.setColumnWidth(3, max(table.columnWidth(3), 66))
-        table.setColumnWidth(4, max(table.columnWidth(4), 62))
-    table.blockSignals(previous)
 
 
 def _fill_phonon_mode_table(table: QTableWidget, rows: list[PhononModeAnalysisRow]) -> None:

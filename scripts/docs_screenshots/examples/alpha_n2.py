@@ -338,13 +338,6 @@ def show_muon_modes(analysis: QWidget) -> None:
     show_molecules("a")(analysis)
 
 
-def show_longitudinal_well(analysis: QWidget) -> None:
-    """Open ``Mode wells and widths`` with the L well, the first selected mode, alone."""
-
-    _show_tab(analysis, "Mode wells and widths")
-    analysis._single_particle_table.selectRow(0)
-
-
 def nearest_nitrogen(analysis: QWidget) -> int:
     """The one-based index of a nitrogen nearest the muon in the phonon structure."""
 
@@ -422,11 +415,6 @@ SCENES: dict[str, Scene] = {
         results_project,
         "quantum_corrections",
         Floating(open_analysis, size=_ANALYSIS_SIZE, prepare=show_muon_modes),
-    ),
-    "n2_mode_wells": Scene(
-        results_project,
-        "quantum_corrections",
-        Floating(open_analysis, size=_ANALYSIS_SIZE, prepare=show_longitudinal_well),
     ),
     "n2_muon_coupling": Scene(
         results_project,

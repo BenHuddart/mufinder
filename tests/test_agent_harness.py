@@ -80,7 +80,6 @@ PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
     {
         "convergence_examiner.py",
         "convergence_overview_widget.py",
-        "quantum_analysis_dialog.py",
         "uep_wizard.py",
     }
 )

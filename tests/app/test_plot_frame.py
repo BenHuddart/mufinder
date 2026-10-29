@@ -266,18 +266,8 @@ def test_plots_sharing_a_dialog_can_be_popped_out(qapp, name: str) -> None:
         dialog.close()
 
 
-def test_quantum_plot_and_pinned_convergence_plots_can_be_popped_out(qapp, tmp_path) -> None:
-    import test_quantum_analysis_dialog as quantum_tests
-
+def test_pinned_convergence_plots_can_be_popped_out(qapp) -> None:
     from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
-    from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
-
-    phonon_path = tmp_path / "site.phonon"
-    phonon_path.write_text(quantum_tests.PHONON_TEXT, encoding="utf-8")
-    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum")
-    quantum_tests._show_tab(dialog, "Mode wells and widths")
-    assert isinstance(dialog._canvas.parentWidget(), PlotFrame)
-    dialog.close()
 
     overview = ConvergenceOverviewWidget()
     for card in (overview._cutoff_card, overview._kpoint_card):

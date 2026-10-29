@@ -270,7 +270,7 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
         results_layout.addWidget(self._result_label)
         result_hint = QLabel(
             "One row per completed phonon run: the total muon ZPE, the muon modes and widths, and the "
-            "mode-mixing witness w1. Launch Analysis opens the modes, wells and atom-pair coupling."
+            "mode-mixing witness w1. Launch Analysis opens the modes and atom-pair coupling."
         )
         result_hint.setWordWrap(True)
         style_hint_text(result_hint)
