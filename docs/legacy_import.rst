@@ -687,11 +687,10 @@ polarisation.
 
 .. note::
 
-   ``phonon_method_compatibility`` accepts a Hubbard-U flag and refuses
-   DFPT/linear-response when it is set, but no caller currently passes it. Legacy
-   magnetic hosts routinely used a Hubbard U, so imports make that dormant guard
-   considerably more reachable. Wiring it is separate work; the importer should
-   at least record the recovered ``HUBBARD_U`` block in provenance.
+   Legacy magnetic hosts routinely used a Hubbard U. Quantum Corrections runs
+   finite-displacement phonons, which CASTEP supports with DFT+U, so an imported
+   site needs no phonon-method check; the importer should still record the
+   recovered ``HUBBARD_U`` block in provenance.
 
 Provenance
 ----------

@@ -80,6 +80,7 @@ from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.app.workflow_config_codecs import (
     batch_row_payload,
     row_settings_payload,
+    source_row_parameter_values,
     store_workflow_row_configuration,
     workflow_row_configuration,
     workflow_row_configuration_exists,
@@ -193,18 +194,16 @@ class HyperfineCouplingController(WorkflowJobController):
         parameters the workflow sets itself are dropped from what it inherits.
         """
 
-        params, _advanced, _extras = workflow_row_configuration(definition, key)
         candidate = self.candidate_by_key(key)
-        values = (
+        return source_row_parameter_values(
+            definition,
+            key,
             source_relaxation_parameter_values(candidate.job, self._context.job_output_directory)
             if candidate is not None
-            else {}
+            else {},
+            dropped=HYPERFINE_CONTROLLED_PARAM_KEYWORDS,
+            defaults={"elec_energy_tol": _DEFAULT_ELEC_ENERGY_TOL},
         )
-        values.update(params)
-        for name in HYPERFINE_CONTROLLED_PARAM_KEYWORDS:
-            values.pop(name, None)
-        values.setdefault("elec_energy_tol", _DEFAULT_ELEC_ENERGY_TOL)
-        return values
 
     def ensure_definition(self, source_keys: Sequence[str]) -> CalculationDefinition | None:
         """Return the active definition with the selected sources added, creating one if needed."""

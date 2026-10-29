@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from mufinder.castep_io.schema import canonical_keyword_name
@@ -18,9 +18,6 @@ from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
 
-QuantumPhononMethod = Literal["finite_displacement", "dfpt", "linear_response"]
-PseudopotentialFamily = Literal["unknown", "norm_conserving", "ultrasoft"]
-
 #: Calc type of the singlepoint job older projects ran before the phonon job.
 #: MuFinder no longer creates such jobs; the name is kept so a stored job or
 #: result of that type is still recognised (see ``docs/compatibility_policy.rst``).
@@ -28,12 +25,10 @@ QUANTUM_SINGLEPOINT_CALC_TYPE = "castep_quantum_singlepoint"
 QUANTUM_PHONON_CALC_TYPE = "castep_quantum_phonon"
 QUANTUM_PHONON_SET_CALC_TYPE = "castep_quantum_phonon_set"
 QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL = ValueWithUnit(1e-9, "eV")
-
-_METHOD_TO_CASTEP = {
-    "finite_displacement": "FINITEDISPLACEMENT",
-    "dfpt": "DFPT",
-    "linear_response": "LINEARRESPONSE",
-}
+#: The only phonon method Quantum Corrections runs. Finite displacement works
+#: with ultrasoft pseudopotentials and with every setting CASTEP's DFPT does not
+#: support, so every phonon job writes it explicitly.
+QUANTUM_PHONON_METHOD = "FINITEDISPLACEMENT"
 
 
 def seed_muonium_spin(structure: StructureSpec, muon_species: str) -> StructureSpec:
@@ -82,9 +77,7 @@ class QuantumPhononJobConfig:
     """Configuration shared by one generated Quantum Corrections job."""
 
     source: QuantumPhononSource
-    method: QuantumPhononMethod = "finite_displacement"
     muon_species: str = "H:mu"
-    pseudopotential_family: PseudopotentialFamily = "unknown"
     num_farms: int = 1
     cell_overrides: CellTemplate | None = None
     param_overrides: ParamTemplate | None = None
@@ -96,49 +89,6 @@ class QuantumSourceEligibility:
 
     eligible: bool
     reason: str = ""
-
-
-def method_to_castep(method: QuantumPhononMethod) -> str:
-    """Return the CASTEP ``PHONON_METHOD`` keyword value."""
-
-    try:
-        return _METHOD_TO_CASTEP[method]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported phonon method: {method!r}.") from exc
-
-
-def phonon_method_compatibility(
-    method: QuantumPhononMethod,
-    *,
-    pseudopotential_family: PseudopotentialFamily = "unknown",
-    uses_hubbard_u: bool = False,
-    uses_exact_exchange: bool = False,
-    uses_spin_orbit: bool = False,
-) -> tuple[bool, str | None]:
-    """Return whether a CASTEP phonon method is compatible with known settings."""
-
-    if method == "finite_displacement":
-        return True, None
-    if pseudopotential_family == "ultrasoft":
-        return (
-            False,
-            "CASTEP DFPT/linear-response phonons require norm-conserving pseudopotentials.",
-        )
-    if uses_hubbard_u:
-        return False, "CASTEP DFPT/linear-response phonons are not implemented with Hubbard U."
-    if uses_exact_exchange:
-        return False, "CASTEP DFPT/linear-response phonons are not implemented with exact exchange."
-    if uses_spin_orbit:
-        return (
-            False,
-            "CASTEP DFPT/linear-response phonons are not implemented with spin-orbit coupling.",
-        )
-    if pseudopotential_family == "unknown":
-        return (
-            True,
-            "Pseudopotential family is unknown; verify norm-conserving pseudopotentials before running DFPT.",
-        )
-    return True, None
 
 
 def quantum_source_eligibility(
@@ -215,24 +165,23 @@ def expand_quantum_phonon_jobs(
     and then computes the phonons in the same job, with the muon mass and
     gyromagnetic ratio written in its own ``.cell``. ``CONTINUATION : DEFAULT``
     makes a rerun in a directory that still holds the job's ``.check`` resume
-    from it, and is a new run otherwise. The phonon method is checked against
-    the pseudopotential family, and the method, its warning and the farm count
-    are recorded in the provenance.
+    from it, and is a new run otherwise. Every job runs finite-displacement
+    phonons (:data:`QUANTUM_PHONON_METHOD`); a ``PHONON_METHOD`` in a layer
+    applied after it (a config's ``param_overrides`` or ``user_overrides``) is
+    refused. The defaults layers sit below the workflow's own value, so theirs
+    never reaches the file. The method and the farm count are recorded in the
+    provenance.
     """
 
     require_jobs(jobs, "quantum phonon job")
+    _refuse_phonon_method_override(user_overrides.param if user_overrides is not None else None)
 
     resolved: list[JobSpec] = []
     for config in jobs:
         label = config.source.label.strip()
         if not label:
             raise ValueError("Quantum phonon source labels must not be empty.")
-        compatible, method_warning = phonon_method_compatibility(
-            config.method,
-            pseudopotential_family=config.pseudopotential_family,
-        )
-        if not compatible:
-            raise ValueError(method_warning or "Incompatible CASTEP phonon method.")
+        _refuse_phonon_method_override(config.param_overrides)
 
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
@@ -253,7 +202,8 @@ def expand_quantum_phonon_jobs(
             "workflow": "quantum_corrections",
             "calc_type": QUANTUM_PHONON_CALC_TYPE,
             "label": label,
-            "phonon_method": config.method,
+            # The provenance spelling older jobs recorded; the .param gets QUANTUM_PHONON_METHOD.
+            "phonon_method": "finite_displacement",
             "phonon_kpoint_mp_grid": (1, 1, 1),
             "muon_species": config.muon_species,
             "muon_mass_amu": MUON_MASS_AMU,
@@ -268,7 +218,6 @@ def expand_quantum_phonon_jobs(
             else None
         )
         provenance["charge_state"] = config.source.charge_state
-        provenance["method_warning"] = method_warning
         provenance.update(config.source.provenance)
 
         resolved.append(
@@ -314,7 +263,7 @@ def _cell_base_template(config: QuantumPhononJobConfig) -> CellTemplate:
 def _param_base_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     keywords = [
         KeywordAssignment("task", "PHONON"),
-        KeywordAssignment("phonon_method", method_to_castep(config.method)),
+        KeywordAssignment("phonon_method", QUANTUM_PHONON_METHOD),
         KeywordAssignment("continuation", "DEFAULT"),
         KeywordAssignment("nonscf_eigenvalue_tol", _phonon_nonscf_eigenvalue_tol(config)),
     ]
@@ -346,6 +295,17 @@ def _phonon_nonscf_eigenvalue_tol(config: QuantumPhononJobConfig) -> ValueWithUn
             "eV",
         )
     return QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL
+
+
+def _refuse_phonon_method_override(template: ParamTemplate | None) -> None:
+    """Raise when ``template`` sets ``PHONON_METHOD``, which the workflow writes itself."""
+
+    override_method = _param_keyword_value(template, "phonon_method")
+    if override_method is not None:
+        raise ValueError(
+            f"Quantum Corrections writes PHONON_METHOD : {QUANTUM_PHONON_METHOD} itself; "
+            f"remove the PHONON_METHOD override ({override_method!r})."
+        )
 
 
 def _param_keyword_value(template: ParamTemplate | None, name: str) -> object | None:

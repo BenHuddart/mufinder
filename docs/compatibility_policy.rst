@@ -119,6 +119,27 @@ Compatibility ledger
      - Project-file shim. The calc type names what CASTEP ran, so a stored
        job or result keeps it; drop its readers only when projects holding
        such records are no longer supported.
+   * - Quantum Corrections ``phonon_method`` / ``method`` and
+       ``pseudopotential_family`` values
+     - Quantum Corrections ``castep_quantum_phonon_set`` definitions: a row's
+       ``row_settings`` entry (``parameter_values["phonon_method"]`` and the
+       ``phonon_method`` / ``pseudopotential_family`` extras) and the
+       definition ``configuration`` (``method``, ``pseudopotential_family``);
+       read by ``QuantumCorrectionsController.legacy_phonon_method``
+     - Quantum Corrections runs finite displacement only, and new
+       configurations write none of these keys. A row an older version
+       configured for ``DFPT`` or ``LINEARRESPONSE`` loads; submitting it
+       writes ``PHONON_METHOD : FINITEDISPLACEMENT``, also over a ``defined``
+       job an older version wrote, and shows a one-line notice naming the row
+       and its stored method unless the row's job already has finite
+       displacement in its ``.param``. The stored method is read only for
+       that notice (the row's own parameter, then its extras, then the
+       definition), and ``pseudopotential_family`` is ignored. Saving the
+       row's Configure dialog replaces its ``row_settings`` entry, which drops
+       the row-level keys. A completed job keeps its result and its
+       provenance's ``phonon_method``.
+     - Project-file shim. Keep until a saved-project schema version bump
+       includes a migration that removes the keys from stored definitions.
    * - ``grid_size`` / ``padding`` arguments of
        ``magnetometric_rectangular_prism_tensor``
      - ``mufinder.science.demagnetization``, also exported from
@@ -664,6 +685,21 @@ projects still load through the calc-type shim in the ledger above.
 - ``expand_quantum_singlepoint_jobs`` (``mufinder.workflow.quantum``):
   Quantum Corrections runs one phonon job per row, which converges its own
   ground state; call ``expand_quantum_phonon_jobs``.
+
+The Quantum Corrections phonon-method helpers below were removed without a
+deprecation period when the workflow moved to finite displacement only. Keeping
+them would keep the retired DFPT and linear-response choice in the API, and no
+project data depends on them; stored method values are covered by the ledger
+entry above.
+
+- ``method_to_castep``, ``phonon_method_compatibility`` and the
+  ``QuantumPhononMethod`` / ``PseudopotentialFamily`` types
+  (``mufinder.workflow.quantum``), and the ``method`` and
+  ``pseudopotential_family`` fields of ``QuantumPhononJobConfig``: every job
+  writes ``QUANTUM_PHONON_METHOD`` (``FINITEDISPLACEMENT``), and
+  ``expand_quantum_phonon_jobs`` refuses a ``PHONON_METHOD`` in
+  ``param_overrides`` or ``user_overrides``. Job provenance records ``phonon_method`` as
+  ``finite_displacement``, as before, and carries no ``method_warning``.
 
 The convergence functions below were removed without a deprecation period,
 together with their ``mufinder.science`` re-exports, when the examiner moved to

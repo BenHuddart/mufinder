@@ -42,8 +42,8 @@ _SOURCE_HEADER_TOOLTIPS: dict[str, str] = {
         "Relaxed total energy relative to the lowest-energy eligible site with the same charge state and cell"
     ),
     "Displacements": (
-        "3 \u00d7 atom count: the displaced calculations a FINITEDISPLACEMENT run needs, a guide to its farm "
-        "count; DFPT and linear-response runs do not use it"
+        "3 \u00d7 atom count: the displaced calculations the finite-displacement phonon run needs, "
+        "a guide to its farm count"
     ),
     "Source Job": "The muon relaxation the row was built from",
     "Status": "Status of the row's current job",
@@ -187,9 +187,8 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
         sources_layout.addWidget(self._source_label)
         source_hint = QLabel(
             "Each row starts from a completed muon relaxation and inherits its electronic settings. The "
-            "electronic settings, phonon method, pseudopotential family and farm count all apply to the row's "
-            "phonon job; the method and pseudopotential family are checked at submission, and every setting is "
-            "locked once the row's job has been submitted."
+            "electronic settings and farm count apply to the row's finite-displacement phonon job, and "
+            "every setting is locked once the row's job has been submitted."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)

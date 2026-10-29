@@ -1000,7 +1000,8 @@ def test_main_window_materializes_a_configured_quantum_phonon_job_and_shows_its_
     param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
     assert "PHONON_KPOINT_MP_GRID 1 1 1" in cell_text
     assert "KPOINT_MP_GRID 2 2 2" in cell_text
-    assert "PHONON_METHOD : DFPT" in param_text
+    # A row an older version configured for DFPT runs as finite displacement.
+    assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
     assert "CONTINUATION : DEFAULT" in param_text
     assert "NUM_FARMS : 4" in param_text
     assert "TASK : PHONON" in param_text
@@ -1098,7 +1099,8 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(
     assert output_dir is not None
     cell_text = (output_dir / "quantum_siteA.cell").read_text(encoding="utf-8")
     param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
-    assert "PHONON_METHOD : DFPT" in param_text
+    # A row an older version configured for DFPT runs as finite displacement.
+    assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
     assert "CUT_OFF_ENERGY : 650" in param_text
     assert "CUT_OFF_ENERGY : 710" not in param_text
     assert "KPOINT_MP_GRID 2 2 2" in cell_text

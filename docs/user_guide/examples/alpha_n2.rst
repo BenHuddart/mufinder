@@ -122,16 +122,15 @@ The phonon run
 
 The pinned site becomes the one row of the ``Quantum Corrections`` page. Its
 configuration dialog inherits the cutoff, the k-point grid and the functional
-from the relaxation. The row is set to the ultrasoft pseudopotentials Gomilšek
-*et al.* used, which calls for the default ``FINITEDISPLACEMENT`` phonon method,
-and to an ``SCF Energy Tolerance`` of ``1e-10`` eV, tighter than the workflow
-default of ``1e-9`` eV.
+from the relaxation, and the row is set to an ``SCF Energy Tolerance`` of
+``1e-10`` eV, tighter than the workflow default of ``1e-9`` eV. The phonons are
+computed by finite displacement, which works with the ultrasoft
+pseudopotentials Gomilšek *et al.* used.
 
 .. figure:: ../../_generated/screenshots/n2_quantum_configuration_dialog.webp
    :alt: The Quantum Corrections configuration dialog for the alpha-N2 row:
-         Ultrasoft pseudopotentials, one farm, task PHONON, cutoff 1200 eV,
-         SCF energy tolerance 1e-10 eV, a 2 x 2 x 2 k-point grid, PBE, and the
-         FINITEDISPLACEMENT phonon method.
+         one farm, task PHONON, cutoff 1200 eV, SCF energy tolerance
+         1e-10 eV, a 2 x 2 x 2 k-point grid and PBE.
 
    The row's configuration before submission. ``Displacements required``
    reads 195, three for each of the 65 atoms.

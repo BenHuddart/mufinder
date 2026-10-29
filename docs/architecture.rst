@@ -1247,8 +1247,9 @@ Controller summary
        the legacy singlepoint's seed in ``singlepoint_seed_names_by_label``;
        ``pre_submit_check`` checks the active definition against the active
        host (``confirm_active_host``), refuses a row whose legacy singlepoint
-       is still active and checks the phonon method against the
-       pseudopotential family; ``build_result`` derives the muon ZPE,
+       is still active, and shows a one-line notice for a row an older
+       version configured for DFPT or linear response, which runs as finite
+       displacement like every row; ``build_result`` derives the muon ZPE,
        gamma-point eigenvalues, mode participations and zero-point widths and
        the ``w1`` witness with its ``w1_definition`` from the carrier's parsed
        phonon calculation, and a legacy ``castep_quantum_singlepoint`` job
@@ -1310,15 +1311,17 @@ hooks above:
   own value), refreshes the view and persists.
 - A row's effective parameters layer its stored ``row_settings`` over the
   settings of its source relaxation
-  (``source_relaxation_parameter_values``); an energy-barrier path also
+  (``source_relaxation_parameter_values``, combined by
+  ``workflow_config_codecs.source_row_parameter_values``, which also drops the
+  keywords the workflow writes itself); an energy-barrier path also
   starts from the project defaults and rounds its image count up to an odd
   number.
 
 Their deps hold only what needs the window: the host-mismatch dialogs
 (``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), a warning,
-and for quantum corrections a go-ahead question with a named accept button and the job and file
-primitives its stage resets drive (the directory-ownership check, path and
-job-record deletion, the keep-files job reset and the post-reset repaint). The
+and the job and file primitives its stage resets drive (the
+directory-ownership check, path and job-record deletion, the keep-files job
+reset and the post-reset repaint). The
 window keeps the dialogs themselves, the job-file cleanup before a path is
 removed, and the phonon analysis windows.
 

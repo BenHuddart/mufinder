@@ -309,16 +309,15 @@ Setup
   (0, ¼, ¼), forming a near-linear [N₂–μ–N₂]⁺ complex along [011] with the
   nearest nitrogens 1.27 and 1.29 Å away.
 
-In MuFinder this is one pinned site on the Quantum Corrections page. The
-ultrasoft pseudopotentials call for the default ``FINITEDISPLACEMENT`` phonon
-method, and the tighter SCF tolerance is set as ``SCF Energy Tolerance``
-(``1e-10`` eV per atom) in the row's configuration dialog.
+In MuFinder this is one pinned site on the Quantum Corrections page. Its
+finite-displacement phonons work with the ultrasoft pseudopotentials, and the
+tighter SCF tolerance is set as ``SCF Energy Tolerance`` (``1e-10`` eV per
+atom) in the row's configuration dialog.
 
 .. figure:: ../_generated/screenshots/n2_quantum_configuration_dialog.webp
    :alt: The Quantum Corrections configuration dialog for the alpha-N2 row:
-         Ultrasoft pseudopotentials, task PHONON, cutoff 1200 eV, SCF energy
-         tolerance 1e-10 eV, a 2 x 2 x 2 k-point grid, PBE, and the
-         FINITEDISPLACEMENT phonon method.
+         task PHONON, cutoff 1200 eV, SCF energy tolerance 1e-10 eV, a
+         2 x 2 x 2 k-point grid and PBE.
 
    The α-N₂ row configured as Gomilšek *et al.* ran it, apart from the
    dispersion correction and the pressure on the cell, which MuFinder's

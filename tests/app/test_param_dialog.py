@@ -720,11 +720,7 @@ def test_quantum_corrections_dialog_inherits_accept_blocking(qapp, monkeypatch) 
         ),
     ]
 
-    dialog = QuantumCorrectionsConfigDialog(
-        specs=specs,
-        pseudopotential_family="norm_conserving",
-        num_farms=4,
-    )
+    dialog = QuantumCorrectionsConfigDialog(specs=specs, num_farms=4)
     assert dialog.validate()
 
     accepted = {"accepted": False}
@@ -734,9 +730,8 @@ def test_quantum_corrections_dialog_inherits_accept_blocking(qapp, monkeypatch) 
 
     assert accepted["accepted"] is False
     assert warnings and warnings[0][0] == "Invalid parameters"
-    # The extra Quantum Corrections controls do not flow through
-    # validate_gui_values and remain untouched by the blocked accept.
-    assert dialog.pseudopotential_family() == "norm_conserving"
+    # The farm count does not flow through validate_gui_values and remains
+    # untouched by the blocked accept.
     assert dialog.num_farms() == 4
 
 
