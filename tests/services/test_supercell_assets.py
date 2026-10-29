@@ -204,3 +204,36 @@ def test_structure_atomic_spins_prefers_moments_over_stale_zero_spins() -> None:
     )
 
     assert supercell_assets.structure_atomic_spins(stale) == pytest.approx([1.75])
+
+
+def test_structure_atomic_spins_ignores_malformed_asset_metadata() -> None:
+    structure = host_structure(
+        species=("Fe",),
+        positions=((0.0, 0.0, 0.0),),
+        properties={
+            "atomic_spins": [0.0],
+            "magnetic_structure": {"moments": [{"vector": [0.0, 0.0, 1.75]}]},
+            "supercell_asset": {"matrix": "not a matrix"},
+        },
+    )
+
+    assert supercell_assets.supercell_asset(structure) is None
+    assert supercell_assets.structure_atomic_spins(structure) == pytest.approx([1.75])
+
+
+def test_structure_atomic_spins_keeps_a_valid_assets_stored_spins() -> None:
+    structure = host_structure(
+        species=("Fe",),
+        positions=((0.0, 0.0, 0.0),),
+        properties={
+            "atomic_spins": [0.0],
+            "magnetic_structure": {"moments": [{"vector": [0.0, 0.0, 1.75]}]},
+            "supercell_asset": {
+                "matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "owner_workflow_stage": _STAGE.value,
+            },
+        },
+    )
+
+    assert supercell_assets.supercell_asset(structure) is not None
+    assert supercell_assets.structure_atomic_spins(structure) == pytest.approx([0.0])
