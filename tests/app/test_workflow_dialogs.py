@@ -279,12 +279,24 @@ def test_run_row_parameter_dialog_without_rows_opens_nothing(qapp, monkeypatch) 
     assert opened == []
 
 
-def test_run_row_parameter_dialog_deletes_the_dialog_after_it_closes(qapp, monkeypatch) -> None:
-    _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+@pytest.mark.parametrize(
+    ("exec_result", "read_only"),
+    [
+        (QDialog.DialogCode.Accepted, False),
+        (QDialog.DialogCode.Rejected, False),
+        (QDialog.DialogCode.Accepted, True),
+    ],
+)
+def test_run_row_parameter_dialog_deletes_the_dialog_after_it_closes(
+    qapp, monkeypatch, exec_result, read_only
+) -> None:
+    _capture_exec(monkeypatch, exec_result)
     parent = QWidget()
 
     for _ in range(5):
-        run_row_parameter_dialog(_row_request({1: {"xc_functional": "PBE"}}), parent=parent)
+        run_row_parameter_dialog(
+            _row_request({1: {"xc_functional": "PBE"}}, read_only=read_only), parent=parent
+        )
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     assert parent.findChildren(ParameterDialog) == []

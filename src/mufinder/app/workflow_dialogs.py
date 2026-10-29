@@ -104,8 +104,10 @@ def run_row_parameter_dialog(
         mixed_names=mixed_parameter_names(request.row_values.values()),
         parent=parent,
     )
-    dialog.setWindowTitle(f"{'Inspect' if request.read_only else 'Configure'} {request.subject}")
     try:
+        dialog.setWindowTitle(
+            f"{'Inspect' if request.read_only else 'Configure'} {request.subject}"
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
             return None
         values = request.sanitize(dialog.collect_values())

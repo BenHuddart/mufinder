@@ -154,9 +154,11 @@ class ParameterDialog(QDialog):
         """Build the dialog and its rows once.
 
         ``values`` (with ``preferred_exclusive``), ``advanced_names`` and
-        ``mixed_names`` seed the dialog exactly as :meth:`set_values`,
-        :meth:`set_advanced_names` and :meth:`set_mixed_names` would, in that
-        order, but the rows are built only after all three are applied.
+        ``mixed_names`` are applied as :meth:`set_values`,
+        :meth:`set_advanced_names` and :meth:`set_mixed_names` apply them, in
+        that order, and the rows are then built once. Each exclusive group's
+        choice therefore comes from the seed alone, never from the defaults of
+        editors built along the way.
         """
 
         super().__init__(parent)
