@@ -473,7 +473,9 @@ Compatibility ledger
        empty ``calculation_parameters``; its fields were computed with
        ``muesr``'s shell of 2 ions within 10 Å. A form without the keys, or
        with values outside the dialog's ranges, takes those defaults. The
-       next calculation writes the keys.
+       next calculation writes the keys. ``contact_shell_warnings`` is
+       written only when a site's shell splits a tie, so an entry without it,
+       including one saved before it existed, shows no tie warning.
      - Read-side repair. Current behaviour for any entry or form without the
        keys; keep until a saved-project schema version bump includes a
        migration that writes the default shell into stored entries and forms.

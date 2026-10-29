@@ -38,6 +38,7 @@ from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     contact_shell_mean,
     contact_shell_reach_limit,
+    contact_shell_tie,
 )
 
 #: Factor turning a CASTEP hyperfine tensor into the physical sign convention.
@@ -164,8 +165,68 @@ def contact_coupling_from_moments(
     ``rcont`` (muesr's contact rule). Dividing the computed spin density by that
     mean of the DFT moments of the same shell lets Magnetic Fields rescale the
     contact field by the moments of its own magnetic structure. Ions are
-    unwrapped to their nearest image of the muon in the periodic cell.
+    unwrapped to their nearest image of the muon in the periodic cell. When
+    the shell splits ions that tie for its last place, it keeps the first of
+    them in ``ion_cartesian`` order; :func:`contact_shell_tie_from_moments`
+    reports such a tie.
     """
+
+    lattice, vectors, coefficients, magnetic = _contact_shell_inputs(
+        muon_cartesian, ion_cartesian, ion_moments_mub, lattice_vectors
+    )
+    mean = contact_shell_mean(
+        vectors,
+        coefficients,
+        magnetic,
+        nnn=int(nnn),
+        rcont=float(rcont),
+        reach_limit=contact_shell_reach_limit(lattice),
+    )
+    mean_moment = float(mean[2].real)
+    if abs(mean_moment) < MAGNETIC_MOMENT_THRESHOLD_MUB:
+        raise HyperfineError(
+            "The contact shell has no net moment, so the spin density cannot be expressed per μB."
+        )
+    return float(spin_density_angstrom3) / mean_moment
+
+
+def contact_shell_tie_from_moments(
+    *,
+    muon_cartesian: Sequence[float],
+    ion_cartesian: Sequence[Sequence[float]],
+    ion_moments_mub: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+    nnn: int,
+    rcont: float,
+) -> str:
+    """Return why the DFT contact shell of :func:`contact_coupling_from_moments` is ambiguous, or ``""``.
+
+    The shell is ambiguous when its ``nnn`` places split ions with different
+    moments that tie for its last place; the ions are numbered from 1 in
+    ``ion_cartesian`` order.
+    """
+
+    _lattice, vectors, coefficients, magnetic = _contact_shell_inputs(
+        muon_cartesian, ion_cartesian, ion_moments_mub, lattice_vectors
+    )
+    tie = contact_shell_tie(
+        vectors,
+        coefficients,
+        magnetic,
+        [f"ion {index + 1}" for index in range(len(vectors))],
+        nnn=int(nnn),
+        rcont=float(rcont),
+    )
+    return "" if tie is None else tie.message()
+
+
+def _contact_shell_inputs(
+    muon_cartesian: Sequence[float],
+    ion_cartesian: Sequence[Sequence[float]],
+    ion_moments_mub: Sequence[float],
+    lattice_vectors: Sequence[Sequence[float]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the lattice, nearest-image vectors, moment coefficients and magnetic mask of the ions."""
 
     lattice = np.asarray(lattice_vectors, dtype=float)
     ions = np.asarray(ion_cartesian, dtype=float).reshape(-1, 3)
@@ -186,17 +247,4 @@ def contact_coupling_from_moments(
         )
     coefficients = np.zeros((ions.shape[0], 3), dtype=complex)
     coefficients[:, 2] = moments
-    mean = contact_shell_mean(
-        vectors,
-        coefficients,
-        magnetic,
-        nnn=int(nnn),
-        rcont=float(rcont),
-        reach_limit=contact_shell_reach_limit(lattice),
-    )
-    mean_moment = float(mean[2].real)
-    if abs(mean_moment) < MAGNETIC_MOMENT_THRESHOLD_MUB:
-        raise HyperfineError(
-            "The contact shell has no net moment, so the spin density cannot be expressed per μB."
-        )
-    return float(spin_density_angstrom3) / mean_moment
+    return lattice, vectors, coefficients, magnetic

@@ -192,8 +192,9 @@ of the muon site along the cell, which is useful for a comparison with a model
 that needs discrete fields.
 
 .. figure:: ../../_generated/screenshots/mnsi_calculation_settings.webp
-   :alt: The Calculation Settings dialog with the approximant option ticked and
-         a longest period of 64.
+   :alt: The Calculation Settings dialog with the approximant option ticked,
+         a longest period of 64, and a warning that 2 contact neighbours split
+         the 3 Mn tied at 1.760 Å.
 
    The approximant needs ``Longest period`` 64, since 1/64 is the nearest
    fraction to 0.0147, 0.0009 r.l.u. away and inside the default tolerance of
@@ -210,7 +211,7 @@ cells along a, that the row's field belongs to.
 .. figure:: ../../_generated/screenshots/mnsi_approximant_fields.webp
    :alt: The Magnetic Fields page for the MnSi approximant at site II: 64 rows
          labelled site 1 + (n, 0, 0), and the term breakdown of the first, with
-         a total of 0.118082 T.
+         a total of 0.118082 T and a contact-shell warning.
 
    The 64 fields of the approximant at site II, computed by MuFinder. The
    first row's 0.1181 T is the sum of 0.0988 T dipolar, 0.1943 T contact and
@@ -247,10 +248,18 @@ with it the width. Without the contact term the continuum runs from 47.8 to
 104.4 mT, 56.6 mT wide; with it, from 90.3 to 206.8 mT, 116.5 mT wide. What
 the coupling does not change is the topology, which the dipolar sum, the
 helix sense and the geometry fix: a circle at site I, so an isolated line, and
-an ellipse at sites II to IV, so a two-horned continuum. The calculation
-sums MuFinder's default of two nearest moments, which is not a setting on the
-page, while the literature sums three; the three nearest Mn lie in one shell, and
-summing any number from one to six changes the edges by 0.3 mT at most.
+an ellipse at sites II to IV, so a two-horned continuum.
+
+The calculation keeps MuFinder's default of two ``Contact neighbours (nnn)``
+while the literature sums three. The three nearest Mn lie in one shell, 1.760 Å
+from the muon. At site I, on the helix axis, they share one phase of the helix
+and so one moment, and any two of them give the same field. At sites II to IV
+their moments differ, two neighbours split the shell, and the page warns under
+those rows' term breakdowns that ``nnn = 3`` includes them all (see
+:ref:`Choose the contact shell <magnetic-fields-contact-shell>`). Here the
+split matters little, because the three moments are nearly parallel: with three
+neighbours the continuum runs from 90.1 mT to 206.6 mT, 0.2 mT below the edges
+above and within 0.1 mT of the predicted ones.
 
 References
 ----------

@@ -336,7 +336,8 @@ SCENES: dict[str, Scene] = {
             },
         ),
         "magnetic_fields",
-        Page("_magnetic_field_view", (1100, 1100)),
+        # Tall enough for the contact-shell warning under the whole breakdown.
+        Page("_magnetic_field_view", (1100, 1160)),
         setup=lambda window: calculate_field(window._magnetic_field_view),
     ),
     "mnsi_polarisation": Scene(
@@ -362,7 +363,7 @@ SCENES: dict[str, Scene] = {
             },
         ),
         "magnetic_fields",
-        Page("_magnetic_field_view", (1100, 1020)),
+        Page("_magnetic_field_view", (1100, 1080)),
         setup=lambda window: calculate_field(window._magnetic_field_view),
     ),
 }

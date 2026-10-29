@@ -1115,33 +1115,6 @@ def test_a_full_contact_shell_past_the_relaxed_supercell_asks_for_fewer_neighbou
         )
 
 
-@pytest.mark.parametrize(
-    ("model", "ambiguous"), [(_antiferromagnet, True), (_ferromagnet, False)], ids=["afm", "fm"]
-)
-def test_contact_distortion_refuses_a_tie_across_the_shell_edge(
-    monkeypatch, model, ambiguous
-) -> None:
-    # Two Fe tie 1.5 Å from the muon for one contact place. With opposite
-    # moments muesr's pick between them is arbitrary; with equal ones it is not.
-    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
-    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X)
-    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=1, rcont=2.0)
-
-    def _calculate():
-        return calculate_commensurate_fields(
-            _structure(), model(), [_MU_X], options=options, distorted_structures=[relaxed]
-        )
-
-    if ambiguous:
-        with pytest.raises(
-            MagneticFieldError,
-            match=r"2 magnetic ions with different moments tie.*Contact neighbours \(nnn\)",
-        ):
-            _calculate()
-    else:
-        assert _calculate()[0].distortion == pytest.approx((0.0, 0.0, 0.0), abs=1e-15)
-
-
 def test_contact_distortion_tie_is_resolved_by_including_the_whole_tied_set(monkeypatch) -> None:
     # The two Fe that tie 1.5 Å from the muon for one place both fit in a two-place shell.
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
@@ -3780,3 +3753,271 @@ def test_cof2_distortion_correction_from_the_mufinder_paper_displacements(real_m
     assert result.distortion is not None
     assert result.distortion[2] == pytest.approx(0.0660, abs=5e-4)
     assert result.magnitude == pytest.approx(0.1996, abs=5e-4)
+
+
+# --- The contact shell: ties across its edge and one shell for every component ------
+#
+# B2 FeMn (a = 2.868 Å) with Fe up and Mn down along c. The tetrahedral site
+# (1/2, 1/4, 0) has two Fe and two Mn tied at 1.603 Å; the octahedral site
+# (1/2, 0, 0) has two Fe at 1.434 Å and four Mn behind them at 2.028 Å.
+
+_B2_TETRAHEDRAL = (0.5, 0.25, 0.0)
+_B2_OCTAHEDRAL = (0.5, 0.0, 0.0)
+_b2_structure = partial(
+    host_structure, label="B2", lattice=2.868, species=("Fe", "Mn"), positions=BODY_CENTRE
+)
+
+
+def _b2_component(species: str, moment: float, q_coeff=(0.0, 0.0, 0.0)) -> MagneticComponent:
+    return MagneticComponent(
+        component_id=species,
+        label=species,
+        kind="custom",
+        selector=AtomSelector.species(species),
+        terms=(FourierTerm(q_coeff, ComplexVector.from_vector([0.0, 0.0, moment])),),
+    )
+
+
+def _b2_antiferromagnet(mn_q=None) -> MagneticStructureModel:
+    """Fe up and Mn down as two components; ``mn_q`` puts the Mn one at a reciprocal lattice vector."""
+
+    if mn_q is None:
+        return MagneticStructureModel(
+            components=(_b2_component("Fe", 2.0), _b2_component("Mn", -2.0))
+        )
+    return MagneticStructureModel(
+        q_basis_rlu=(tuple(mn_q), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(_b2_component("Fe", 2.0), _b2_component("Mn", -2.0, (1.0, 0.0, 0.0))),
+    )
+
+
+def _b2_ferromagnet() -> MagneticStructureModel:
+    return MagneticStructureModel(components=(_b2_component("Fe", 2.0), _b2_component("Mn", 2.0)))
+
+
+_B2_COUPLING = contact_coupling_to_angstrom_minus3(-0.5, "T_per_muB")
+
+
+def _zero_locfield(sample, mode, *_args, **kwargs):
+    rows = int(kwargs["nangles"]) if mode == "i" else 1
+    return [_Field(Dipolar=np.zeros((rows, 3)), Contact=np.zeros((rows, 3))) for _ in sample.muons]
+
+
+def _contact_warnings(result) -> list[str]:
+    return list(result.calculation_parameters.get("contact_shell_warnings", []))
+
+
+def test_a_contact_shell_that_splits_a_tie_of_different_moments_is_warned(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_locfield)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=_B2_COUPLING, nnn=2)
+
+    (result,) = calculate_commensurate_fields(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_TETRAHEDRAL], options=options
+    )
+
+    (warning,) = _contact_warnings(result)
+    assert "Contact neighbours (nnn) = 2 keeps 2 of the 4 magnetic ions" in warning
+    assert "1.603 Å" in warning
+    assert "2 × Fe 1, 2 × Mn 2" in warning
+    assert "nnn = 4 includes them all" in warning
+
+
+@pytest.mark.parametrize(
+    ("model", "nnn", "coupling"),
+    [
+        (_b2_antiferromagnet, 4, _B2_COUPLING),
+        (_b2_antiferromagnet, 8, _B2_COUPLING),
+        (_b2_ferromagnet, 2, _B2_COUPLING),
+        (_b2_antiferromagnet, 2, None),
+    ],
+    ids=["whole-tie", "two-whole-shells", "equal-moments", "no-contact-term"],
+)
+def test_a_contact_shell_that_keeps_a_tie_whole_or_ties_equal_moments_is_not_warned(
+    monkeypatch, model, nnn, coupling
+) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_locfield)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=coupling, nnn=nnn)
+
+    (result,) = calculate_commensurate_fields(
+        _b2_structure(), model(), [_B2_TETRAHEDRAL], options=options
+    )
+
+    assert _contact_warnings(result) == []
+
+
+def test_the_tie_warning_names_ions_within_the_tolerance(monkeypatch) -> None:
+    # Moving the site 0.0004 Å along b leaves the four ions within 1e-3 Å of each other.
+    _install_fake_muesr(monkeypatch, locfield=_zero_locfield)
+    nudged = (0.5, 0.25 + 0.0004 / 2.868, 0.0)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=_B2_COUPLING, nnn=3)
+
+    (result,) = calculate_commensurate_fields(
+        _b2_structure(), _b2_antiferromagnet(), [nudged], options=options
+    )
+
+    (warning,) = _contact_warnings(result)
+    assert "keeps 3 of the 4 magnetic ions" in warning
+    assert module.CONTACT_SHELL_TIE_TOLERANCE_ANG == pytest.approx(1e-3)
+
+
+def test_the_mnsi_contact_shell_warns_at_two_neighbours_and_not_at_three(monkeypatch) -> None:
+    # The three nearest Mn tie at 1.760 Å. At site I, on the helix axis, they
+    # share one helix phase and so one moment; at sites II to IV they differ.
+    _install_fake_muesr(monkeypatch, locfield=_zero_locfield)
+
+    def _warnings(nnn: int) -> list[list[str]]:
+        results = calculate_incommensurate_field_distributions(
+            mnsi_structure(),
+            mnsi_helix(),
+            [MNSI_MUON],
+            options=mnsi_options(supercell=(1, 1, 1), nnn=nnn, nangles=16, phase_sample_count=16),
+        )
+        return [_contact_warnings(result) for result in results]
+
+    site_one, *others = _warnings(2)
+    assert site_one == []
+    assert len(others) == 3
+    assert all(len(site) == 1 and "keeps 2 of the 3 magnetic ions" in site[0] for site in others)
+    assert "1.760 Å" in others[0][0] and "nnn = 3 includes them all" in others[0][0]
+    assert _warnings(3) == [[], [], [], []]
+
+
+def test_the_tie_checker_reports_each_site_for_a_live_setting() -> None:
+    check = module.contact_shell_tie_checker(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_TETRAHEDRAL], find_equivalent_sites=False
+    )
+
+    (warning,) = check(2, 10.0)
+    assert "nnn = 4 includes them all" in warning
+    assert check(4, 10.0) == ()
+    # A radius inside the tie leaves no ion to split.
+    assert check(2, 1.5) == ()
+
+
+def test_the_tie_checker_labels_equivalent_sites() -> None:
+    check = module.contact_shell_tie_checker(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_TETRAHEDRAL], find_equivalent_sites=True
+    )
+
+    warnings = check(2, 10.0)
+
+    assert len(warnings) == 12
+    assert warnings[0].startswith("site 1 equiv 1: ")
+
+
+def test_the_tie_checker_has_nothing_to_check_without_moments() -> None:
+    check = module.contact_shell_tie_checker(
+        _structure(), _empty_model(), [_MU_X], find_equivalent_sites=False
+    )
+
+    assert check(2, 10.0) == ()
+
+
+@pytest.mark.parametrize(
+    ("model", "warned"), [(_antiferromagnet, True), (_ferromagnet, False)], ids=["afm", "fm"]
+)
+def test_contact_distortion_warns_of_a_tie_across_the_shell_edge(
+    monkeypatch, model, warned
+) -> None:
+    # Two Fe tie 1.5 Å from the muon in the relaxed supercell for one contact place.
+    _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 0)))
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=0.1, nnn=1, rcont=2.0)
+
+    (result,) = calculate_commensurate_fields(
+        _structure(), model(), [_MU_X], options=options, distorted_structures=[relaxed]
+    )
+
+    warnings = _contact_warnings(result)
+    if warned:
+        assert any(
+            text.startswith(
+                "In the relaxed supercell, Contact neighbours (nnn) = 1 keeps 1 of the 2"
+            )
+            for text in warnings
+        )
+    else:
+        assert warnings == []
+        assert result.distortion == pytest.approx((0.0, 0.0, 0.0), abs=1e-15)
+
+
+def test_contact_shell_warnings_survive_a_save(monkeypatch) -> None:
+    _install_fake_muesr(monkeypatch, locfield=_zero_locfield)
+    options = MagneticFieldOptions(supercell=(1, 1, 1), contact_coupling=_B2_COUPLING, nnn=2)
+    (result,) = calculate_commensurate_fields(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_TETRAHEDRAL], options=options
+    )
+
+    restored = MagneticFieldResult.from_json(json.loads(json.dumps(result.to_json())))
+
+    assert _contact_warnings(restored) == _contact_warnings(result)
+
+
+def test_real_muesr_distribution_contact_averages_one_shell_over_every_component(
+    real_muesr,
+) -> None:
+    # The Fe and Mn components are summed separately on the distribution path.
+    # Averaging each component's own shell gave the Fe pair's -1000 mT plus the
+    # Mn shell's +1000 mT; the octahedral shell holds only the two Fe.
+    options = MagneticFieldOptions(
+        supercell=(20, 20, 20), contact_coupling=_B2_COUPLING, nangles=16, phase_sample_count=16
+    )
+
+    (commensurate,) = calculate_commensurate_fields(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_OCTAHEDRAL], options=options
+    )
+    (distribution,) = calculate_incommensurate_field_distributions(
+        _b2_structure(), _b2_antiferromagnet(), [_B2_OCTAHEDRAL], options=options
+    )
+
+    assert commensurate.contact == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)
+    assert distribution.terms["contact"].mean_T == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)
+    assert distribution.terms["contact"].rms_T == pytest.approx(1.0, abs=1e-6)
+
+
+def test_real_muesr_commensurate_contact_averages_one_shell_over_every_wavevector(
+    real_muesr,
+) -> None:
+    # The Mn component at q = (0, 0, 1) needs its own lattice sum; its moments
+    # point up once the phase of its body-centre position is applied, so all
+    # six ions are up and the octahedral shell gives -1000 mT, not twice that.
+    model = _b2_antiferromagnet(mn_q=(0.0, 0.0, 1.0))
+    options = MagneticFieldOptions(supercell=(20, 20, 20), contact_coupling=_B2_COUPLING)
+
+    (result,) = calculate_commensurate_fields(
+        _b2_structure(), model, [_B2_OCTAHEDRAL], options=options
+    )
+
+    assert result.contact == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)
+
+
+def test_real_muesr_shared_shell_matches_the_backend_when_every_call_sees_the_shell(
+    real_muesr, monkeypatch
+) -> None:
+    # A linear SDW is summed as two circular helices on the same ions, so the
+    # backend's own per-call average is already right there; the shared shell
+    # must reproduce it row for row, which pins its lookup phases.
+    model = _single_q_model((0.3, 0.0, 0.0), (0.0, 0.0, 1.0))
+    options = MagneticFieldOptions(
+        supercell=(15, 15, 15),
+        radius=_RADIUS,
+        contact_coupling=0.1,
+        nnn=3,
+        nangles=64,
+        phase_sampling="grid",
+        phase_sample_count=64,
+    )
+
+    def _contact():
+        (result,) = calculate_incommensurate_field_distributions(
+            _structure(), model, [_GENERAL_SITE], options=options
+        )
+        return result.terms["contact"]
+
+    shared = _contact()
+    monkeypatch.setattr(module, "_needs_shared_contact_shell", lambda entries: False)
+    backend = _contact()
+
+    assert backend.rms_T > 1e-3
+    assert shared.mean_T == pytest.approx(backend.mean_T, abs=1e-9)
+    assert shared.rms_T == pytest.approx(backend.rms_T, rel=1e-6)

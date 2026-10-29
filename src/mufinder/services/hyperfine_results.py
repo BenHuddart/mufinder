@@ -28,6 +28,7 @@ from mufinder.science.hyperfine import (
     per_bohr3_to_per_angstrom3,
     contact_coupling_from_moments,
     contact_field_from_spin_density,
+    contact_shell_tie_from_moments,
     muon_hyperfine_from_castep,
 )
 from mufinder.science.lattice import lattice_frac_to_cart
@@ -187,7 +188,9 @@ class HandoffTarget:
 
     ``workspace_id`` is ``None`` for the main page. ``coupling`` is the new
     value in Å^-3 per μB, or ``None`` with ``error`` set when the form's contact
-    shell cannot give one.
+    shell cannot give one. ``warning`` says why the coupling is ambiguous when
+    the form's Contact neighbours split ions with different DFT moments that
+    tie for the shell's last place.
     """
 
     title: str
@@ -196,6 +199,7 @@ class HandoffTarget:
     existing_unit: str
     coupling: float | None
     error: str = ""
+    warning: str = ""
 
     @property
     def new_text(self) -> str:
@@ -256,16 +260,18 @@ def plan_magnetic_field_handoff(document: ProjectDocument, result: Result) -> li
         rcont = _float_or(form.get("contact_rcont"), DEFAULT_CONTACT_RCONT)
         coupling: float | None = None
         error = ""
+        warning = ""
         try:
-            coupling = contact_coupling_from_moments(
-                spin_density_angstrom3,
-                muon_cartesian=shell["muon_cartesian_ang"],
-                ion_cartesian=shell["host_cartesian_ang"],
-                ion_moments_mub=shell["host_moments_muB"],
-                lattice_vectors=shell["lattice_vectors_ang"],
-                nnn=nnn,
-                rcont=rcont,
-            )
+            shell_inputs = {
+                "muon_cartesian": shell["muon_cartesian_ang"],
+                "ion_cartesian": shell["host_cartesian_ang"],
+                "ion_moments_mub": shell["host_moments_muB"],
+                "lattice_vectors": shell["lattice_vectors_ang"],
+                "nnn": nnn,
+                "rcont": rcont,
+            }
+            coupling = contact_coupling_from_moments(spin_density_angstrom3, **shell_inputs)
+            warning = contact_shell_tie_from_moments(**shell_inputs)
         except (HyperfineError, MagneticFieldError, KeyError, TypeError, ValueError) as exc:
             error = str(exc)
         targets.append(
@@ -276,6 +282,7 @@ def plan_magnetic_field_handoff(document: ProjectDocument, result: Result) -> li
                 existing_unit=str(form.get("hyperfine_coupling_unit", "") or ""),
                 coupling=coupling,
                 error=error,
+                warning=warning,
             )
         )
     return targets

@@ -64,12 +64,15 @@ A typical pass through the page is:
       :alt: The Magnetic Fields page with the MnSi helix distribution at site
             II selected: a mean |B| of 0.154303 T, every term mean 0, RMS
             magnitudes of 0.0811718 T dipolar including Lorentz,
-            0.194362 T contact and 0.159547 T in total, and three passing
-            convergence checks.
+            0.194362 T contact and 0.159547 T in total, a contact-shell
+            warning that two neighbours split the three Mn tied at 1.760 Å,
+            and three passing convergence checks.
 
       The distribution of the helix in :doc:`/user_guide/examples/mnsi` at
       site II. Every term averages to zero over the phase of the helix; the
-      RMS column shows that the contact term is the largest.
+      RMS column shows that the contact term is the largest. The warning under
+      the breakdown is explained in :ref:`Choose the contact shell
+      <magnetic-fields-contact-shell>`.
 
 6. Optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
    same ``Calculation`` card (see `Calculate a dipolar tensor`_ and `Calculate
@@ -705,6 +708,12 @@ up the contact field when a ``Hyperfine coupling`` is set (see
 - ``Contact radius (Å)`` (default 10 Å, from 0.1 Å to 100 Å), the distance
   from the muon inside which an ion may join the shell.
 
+When a hyperfine coupling is set and the shell of the selected site (or of any
+of its equivalent sites, when ``Include equivalent sites`` is ticked)
+splits ions with different moments that tie for its last place, a warning under
+the two values names the tied ions and the ``nnn`` that includes them all. It
+follows the values as you edit them, and ``OK`` still accepts them.
+
 The settings summary on the ``Calculation`` card names the approximant
 tolerance and period when the option is on, and the contact shell when a
 hyperfine coupling is set. Each commensurate result records the contact
@@ -714,10 +723,14 @@ coupling and shell it used.
    :alt: The Calculation Settings dialog with 100 x 100 x 100 cells, 32768 lookup
          angles per q, 200000 distribution samples, Auto sampling, 512 histogram
          bins, the approximant option ticked with tolerance 0.001 r.l.u. and
-         longest period 64, and a contact shell of 2 neighbours within 10 Å.
+         longest period 64, a contact shell of 2 neighbours within 10 Å, and a
+         warning that 2 neighbours split the 3 Mn tied at 1.760 Å from site 1
+         equiv 2 and two more sites.
 
    The settings of the helix in :doc:`/user_guide/examples/mnsi`, whose q lies
    0.0009 r.l.u. from 1/64, so a period of 64 is needed for its approximant.
+   Its default of 2 contact neighbours splits the three nearest Mn at sites
+   II to IV, and the warning under the values says so.
 
 With the option on and an approximant found, ``Calculate Dipolar Field`` lists
 the finite fields of the approximant, one row per translation of its magnetic
@@ -727,8 +740,8 @@ the full term breakdown of a commensurate result.
 .. figure:: ../_generated/screenshots/mnsi_approximant_fields.webp
    :alt: The Magnetic Fields page listing 64 fields of the commensurate
          approximant q = (1/64, 1/64, 1/64) of the MnSi helix at site II, the
-         first row's field of 0.118082 T and its dipolar (incl. Lorentz), contact,
-         demagnetizing and applied terms.
+         first row's field of 0.118082 T, its dipolar (incl. Lorentz), contact,
+         demagnetizing and applied terms, and a contact-shell warning.
 
    The 64 fields of the approximant of the helix in
    :doc:`/user_guide/examples/mnsi` at site II, labelled ``site 1 + (n, 0, 0)``
@@ -745,12 +758,35 @@ Choose the contact shell
 
 The contact field is :math:`(2\mu_0/3)\,\mu_B A` times the
 :math:`1/r^3`-weighted mean moment of the ``Contact neighbours (nnn)`` nearest
-magnetic ions closer than the ``Contact radius``, ``muesr``'s contact rule. If
-fewer ions lie inside the radius, the shell holds only those. Choose the shell
-to match the muon's bonding: a muon bonded to one magnetic ion needs one
-neighbour, and a muon among four equidistant ions needs four. In a uniform
-ferromagnet every moment is the same, so the contact field equals the coupling
-times the moment whatever the shell.
+magnetic ions closer than the ``Contact radius``, ``muesr``'s contact rule (see
+:ref:`The Contact Term <magnetic-fields-contact-term>`). If fewer ions lie
+inside the radius, the shell holds only those. Choose the shell to match the
+muon's bonding: a muon bonded to one magnetic ion needs one neighbour, and a
+muon among four equidistant ions needs four. In a uniform ferromagnet every
+moment is the same, so the contact field equals the coupling times the moment
+whatever the shell.
+
+Take whole sets of equidistant ions. When the shell's last places split ions
+that tie within 10\ :sup:`-3` Å of each other and carry different moments, the
+lattice sum keeps an arbitrary subset of them, which changes with ``Cells
+along``, and the contact field changes with it. MuFinder warns of such a shell
+in ``Calculation Settings`` and, after a calculation, under the term breakdown
+of each result row it affects, for example::
+
+   Contact shell: Contact neighbours (nnn) = 2 keeps 2 of the 4 magnetic ions
+   with different moments that tie at 1.603 Å from the muon (2 × Fe 1,
+   2 × Mn 2), so the contact field depends on which of them the lattice sum
+   keeps; nnn = 4 includes them all.
+
+Ions are named by species and atom number in the host structure, an ion
+repeated once for each of its periodic images in the tie. The warning does not
+stop the calculation. Set ``Contact neighbours (nnn)`` to the number it names,
+or to the number of ions before the tie, to remove it.
+
+When the model needs more than one lattice sum (components at different
+wavevectors, or a distribution, which samples each component on its own), the
+shell is taken once over every magnetic ion and each component is averaged over
+it, so every path gives the same contact field for the same order.
 
 Set the demagnetizing field
 ---------------------------
@@ -1185,7 +1221,8 @@ When a ``Hyperfine coupling`` :math:`A` is set, the contact term is corrected
 too. The correction is the contact field (see :ref:`Choose the contact
 shell <magnetic-fields-contact-shell>`) with the shell chosen from the displaced
 positions minus the contact field with the shell chosen from the pristine
-sites. This is a rough correction: it tracks which ions
+sites, both by the same ``Contact neighbours`` and ``Contact radius`` as the
+lattice sum. This is a rough correction: it tracks which ions
 are in the shell and their distances through the weights, but a real hyperfine
 coupling changes with the muon-ion distance in a way a single coupling cannot
 describe. A coupling calculated for the relaxed structure, for example by DFT,
@@ -1194,11 +1231,10 @@ shell reaches past the largest sphere about the muon that the supercell holds,
 the calculation stops and asks for a larger relaxed supercell, a smaller
 ``Contact radius`` or fewer ``Contact neighbours``. A shell that runs out of
 ions inside the radius reaches to the radius itself, so a smaller radius brings
-it inside the supercell. When ions with different moments tie for the last
-place in the shell, ``muesr`` keeps an arbitrary one of them, so the contact
-field is undefined there and the calculation stops with a message naming the
-tied ions' distance. Raise ``Contact neighbours (nnn)`` to take in the whole
-tied set, or lower it to leave the set out.
+it inside the supercell. When the displaced shell splits ions with different
+moments that tie for its last place, the correction keeps the first of them
+and the result warns, as for the lattice sum, with the warning prefixed ``In
+the relaxed supercell``.
 
 MuFinder pairs the relaxed supercell with the pristine host before it sums
 anything, and reports the first check that fails:
@@ -1407,8 +1443,11 @@ A ``magnetic_field`` record holds ``kind`` (``commensurate`` or
 stores ``site_label``, ``muon_position``, ``total_T``, ``magnitude_T`` and its
 field terms (the correction is stored as ``distortion_T`` beside the uncorrected
 ``dipolar_T``), and ``calculation_parameters`` with the ``contact_coupling`` in
-``Å⁻³``, ``nnn`` and ``rcont`` of the contact shell it used; a distribution entry stores ``fields_T``, the histogram,
-``calculation_parameters``, its ``convergence`` checks, ``terms`` (each of
+``Å⁻³``, ``nnn`` and ``rcont`` of the contact shell it used, and
+``contact_shell_warnings``, the tie warnings of its site, when there are any;
+a distribution entry stores ``fields_T``, the histogram,
+``calculation_parameters`` (with ``contact_shell_warnings`` as for a
+commensurate entry), its ``convergence`` checks, ``terms`` (each of
 ``dipolar``, ``lorentz``, ``contact``, ``demag`` and ``applied`` with its
 ``mean_T`` and ``rms_T``), ``total_rms_T``, and the constant ``applied_T`` and
 ``demag_T`` vectors; the finite field

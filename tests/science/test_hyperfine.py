@@ -13,6 +13,7 @@ from mufinder.science.hyperfine import (
     per_angstrom3_to_per_bohr3,
     per_bohr3_to_per_angstrom3,
     contact_coupling_from_moments,
+    contact_shell_tie_from_moments,
     contact_field_from_spin_density,
     muon_hyperfine_from_castep,
     spin_density_at,
@@ -168,3 +169,22 @@ def test_contact_coupling_failure_modes() -> None:
             nnn=2,
             rcont=2.0,
         )
+
+
+def test_contact_shell_tie_from_moments_names_a_split_tie_of_different_moments() -> None:
+    kwargs = dict(
+        muon_cartesian=(0.0, 0.0, 0.0),
+        ion_cartesian=[[1.5, 0.0, 0.0], [-1.5, 0.0, 0.0], [0.0, 2.5, 0.0]],
+        lattice_vectors=_LATTICE,
+        rcont=10.0,
+    )
+
+    split = contact_shell_tie_from_moments(ion_moments_mub=(2.0, 1.0, 2.0), nnn=1, **kwargs)
+
+    assert "nnn) = 1 keeps 1 of the 2 magnetic ions" in split
+    assert "(ion 1, ion 2)" in split and "nnn = 2 includes them all" in split
+    assert contact_shell_tie_from_moments(ion_moments_mub=(2.0, 1.0, 2.0), nnn=2, **kwargs) == ""
+    assert contact_shell_tie_from_moments(ion_moments_mub=(2.0, 2.0, 1.0), nnn=1, **kwargs) == ""
+    # The coupling still comes from the first of the tied ions, as the shell keeps it.
+    coupling = contact_coupling_from_moments(0.1, ion_moments_mub=(2.0, 1.0, 2.0), nnn=1, **kwargs)
+    assert coupling == pytest.approx(0.05)

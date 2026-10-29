@@ -270,3 +270,37 @@ def test_handoff_clears_field_results_only_of_forms_whose_coupling_changes(
     document.results[fresh.id] = fresh
     apply_magnetic_field_handoff(document, plan_magnetic_field_handoff(document, result))
     assert fresh.id in document.results
+
+
+def test_handoff_warns_when_the_form_shell_splits_a_tie_of_different_moments(
+    tmp_path: Path,
+) -> None:
+    # The muon sits halfway between two Fe with different Mulliken moments.
+    structure = Structure(
+        lattice_vectors=[[_EDGE, 0.0, 0.0], [0.0, _EDGE, 0.0], [0.0, 0.0, _EDGE]],
+        species=["Fe", "H:mu", "Fe"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+    )
+    document = _document(tmp_path)
+    job = str(uuid4())
+    result = _result(
+        contact_shell_inputs(structure, (2.2, -0.02, 1.8)), site_job=job, structure_id=str(uuid4())
+    )
+    document.ui_state["magnetic_field_form"] = {
+        "selected_muon_site": _site_state(job_id=job),
+        "contact_nnn": 1,
+    }
+    document.ui_state["magnetic_field_workspaces"] = [
+        {
+            "id": "w1",
+            "title": "Workspace",
+            "form": {"selected_muon_site": _site_state(job_id=job), "contact_nnn": 2},
+        }
+    ]
+
+    main, workspace = plan_magnetic_field_handoff(document, result)
+
+    assert main.coupling is not None
+    assert "keeps 1 of the 2 magnetic ions" in main.warning
+    assert "nnn = 2 includes them all" in main.warning
+    assert workspace.warning == ""

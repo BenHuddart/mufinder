@@ -10546,9 +10546,12 @@ class MainWindow(QMainWindow):
             if target.coupling is not None
         ]
         skipped = [f"{target.title}: {target.error}" for target in targets if target.error]
+        ambiguous = [f"{target.title}: {target.warning}" for target in targets if target.warning]
         message = f"Filled the hyperfine coupling of {changed} Magnetic Fields form(s)."
         if lines:
             message += "\n\n" + "\n".join(lines)
+        if ambiguous:
+            message += "\n\nWarning:\n" + "\n".join(ambiguous)
         if skipped:
             message += "\n\nSkipped:\n" + "\n".join(skipped)
         QMessageBox.information(self, title, message)

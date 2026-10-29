@@ -47,6 +47,7 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1103/PhysRevB.93.144419",
         "10.1016/0038-1098(76)90057-0",
     ),
+    "user_guide/magnetic_fields_theory.rst": ("10.1103/PhysRevB.89.184425",),
     "user_guide/examples/alpha_n2.rst": (
         "10.1038/s42005-023-01260-7",
         "10.6084/m9.figshare.23203037.v1",

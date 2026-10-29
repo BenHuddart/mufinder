@@ -261,7 +261,7 @@ Beyond the dipolar sum, the field calculation includes:
   Sphere`_);
 - the contact hyperfine term, when a ``Hyperfine coupling`` is entered, from
   the moments of the contact shell set in ``Calculation Settings`` (see
-  :ref:`Choose the contact shell
+  `The Contact Term`_ and :ref:`Choose the contact shell
   <magnetic-fields-contact-shell>`);
 - the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
@@ -327,6 +327,92 @@ How the field divides between the lattice sum and the continuum still depends on
 :math:`R` for such a mode, even though their sum does not. For that reason a
 result whose model has any enabled component at ``q != 0`` shows the two as one
 ``Dipolar (incl. Lorentz)`` term (see `Field Terms`_).
+
+.. _magnetic-fields-contact-term:
+
+The Contact Term
+~~~~~~~~~~~~~~~~
+
+The muon also sees the spin density that the magnetic ions polarise at its own
+site, the Fermi contact field (Schenck, 1985). MuFinder follows ``muesr``'s
+model of it, in which the contact field is set by the moments of the muon's
+nearest magnetic ions:
+
+.. math::
+
+   \mathbf{B}_c = \frac{2\mu_0}{3}\,\mu_B\,A\,\bar{\mathbf{m}},
+   \qquad
+   \bar{\mathbf{m}} = \frac{\sum_i \mathbf{m}_i / r_i^3}{\sum_i 1/r_i^3}.
+
+The sum runs over the contact shell: the ``Contact neighbours (nnn)`` nearest
+magnetic ions closer than the ``Contact radius``. :math:`A`, the ``Hyperfine
+coupling`` in Å\ :sup:`-3` per μB, is an input, fitted to a measured field
+(as Amato *et al.*, 2014, do for MnSi) or computed by
+:doc:`/user_guide/hyperfine_coupling`. An ion counts as magnetic when it carries
+a moment in any component of the model.
+
+**Ties across the edge of the shell.** The lattice sum keeps the ``nnn`` ions
+with the smallest :math:`r^3` in the order it meets them, and a later ion at the
+same distance never replaces an earlier one. Ions that are equidistant in exact
+arithmetic differ in the last bits of their computed distances, and those bits
+change with ``Cells along``. So when the shell's last places split a set of
+tied ions, which of them the sum keeps changes with the size of the sum, and if
+their moments differ, so does the contact field. In B2 FeMn (``a = 2.868 Å``,
+Fe 2 μB up at the corner, Mn 2 μB down at the body centre) the tetrahedral site
+``(1/2, 1/4, 0)`` has two Fe and two Mn at 1.603 Å. With a coupling of
+-0.5 T/μB its contact field along ``c`` is, in mT:
+
+.. list-table::
+   :header-rows: 1
+
+   * - ``nnn``
+     - 20 cells
+     - 21 cells
+     - 50 cells
+     - 100 cells
+   * - 1
+     - -1000
+     - +1000
+     - +1000
+     - -1000
+   * - 2
+     - -1000
+     - 0
+     - 0
+     - -1000
+   * - 3
+     - -333
+     - -333
+     - +333
+     - -333
+   * - 4
+     - 0
+     - 0
+     - 0
+     - 0
+
+MuFinder keeps the backend's rule, so its fields agree with ``muesr``, and
+warns instead. Ions within :data:`~mufinder.science.magnetic_fields.CONTACT_SHELL_TIE_TOLERANCE_ANG`
+(10\ :sup:`-3` Å) of the shell's last place count as tied. When the shell keeps
+only some of them and their moments differ at any phase of the order, ``Calculation
+Settings`` and the result name the tied ions and the ``nnn`` that includes them
+all. Tied ions with equal moments need no warning: any choice among them gives
+the same field, as in a ferromagnet, or at MnSi's site I, whose three nearest
+Mn share one phase of the helix.
+
+**One shell for every component.** The backend averages over the ions of one
+lattice sum. An order summed in several (components at different wavevectors,
+the separately sampled components of a distribution, or a component split into
+circular helices) would get one full average per sum, added together. Whenever
+more than one sum contributes, MuFinder therefore takes the shell once, over
+every magnetic ion, and averages each component's moments over it with one
+normalisation; for a single sum it uses the backend's own contact field. At the
+B2 octahedral site ``(1/2, 0, 0)``, whose shell is the two Fe at 1.434 Å, the
+Fe and Mn components summed separately would give -1000 mT from the Fe plus
++1000 mT from the four Mn at 2.028 Å; the shared shell gives -1000 mT on every
+path, as the commensurate sum of the merged components does. The test suite
+checks that the shared shell reproduces the backend's contact field, phase by
+phase, whenever every sum sees the same shell.
 
 .. _magnetic-fields-field-terms:
 
@@ -452,7 +538,7 @@ of 0.385 μB turn in the plane perpendicular to ``q = (0.0147, 0.0147, 0.0147)``
 r.l.u., a left-handed helix of period about 18 nm that is incommensurate with the
 lattice. The muon site is 4a with ``x = 0.532``, whose four positions in one
 magnetic domain are site I on the propagation axis and sites II to IV, which are
-equivalent to one another (Amato *et al.*, 2014; the worked example below gives the reference). The worked example
+equivalent to one another (Amato *et al.*, 2014). The worked example
 :doc:`/user_guide/examples/mnsi` builds the model step by step.
 
 For one wavevector the sampled field traces an ellipse,
@@ -487,3 +573,13 @@ to 207.3 mT, the edges of the sampled distribution, and the 64 phases sample the
 same two-horned lineshape. At the default period of 12 no fraction is within
 0.001 r.l.u., so the page samples the distribution.
 
+References
+----------
+
+- A. Amato, P. Dalmas de Réotier, D. Andreica, A. Yaouanc, A. Suter, G.
+  Lapertot, I. M. Pop, E. Morenzoni, P. Bonfà, F. Bernardini and R. De Renzi,
+  Understanding the μSR spectra of MnSi without magnetic polarons, Phys. Rev.
+  B **89**, 184425 (2014),
+  https://doi.org/10.1103/PhysRevB.89.184425.
+- A. Schenck, *Muon Spin Rotation Spectroscopy: Principles and Applications in
+  Solid State Physics* (Adam Hilger, Bristol, 1985).

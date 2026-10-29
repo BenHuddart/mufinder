@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import math
 from typing import Any
@@ -723,6 +723,7 @@ def _component_distortion_changes(
     model_data: MuesrModelData,
     distortion: MuonDistortion,
     contact_options: MagneticFieldOptions | None,
+    magnetic_atoms: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return one Fourier component's complex dipolar and contact changes, in T.
 
@@ -730,9 +731,11 @@ def _component_distortion_changes(
     cell, ``F exp(-2 pi i q . L)``, so the change in field when the component's
     order is shifted by a phase ``theta`` (in turns) is
     ``Re[exp(-2 pi i theta) dB]``, matching moments ``Re[F exp(-2 pi i q . R)]``.
-    The contact change is zero unless ``contact_options`` sets a contact coupling;
-    it follows muLFC's contact rule for one backend call, which sees only the
-    atoms with non-zero coefficients in ``model_data``.
+    The contact change is zero unless ``contact_options`` sets a contact coupling.
+    It follows the backend's contact rule (:func:`contact_shell_mean`) over the
+    ions of ``magnetic_atoms``, a mask over the pristine structure's atoms that
+    holds every atom with a moment in any component; without it, the atoms
+    with a non-zero coefficient in ``model_data``.
     """
 
     fc = np.asarray(model_data.fc, dtype=complex)[distortion.atom_indices]
@@ -748,8 +751,12 @@ def _component_distortion_changes(
         dipolar += scale * (np.asarray(displaced) - np.asarray(pristine))
     contact = np.zeros(3, dtype=complex)
     if contact_options is not None and contact_options.contact_coupling is not None:
-        # muesr drops an atom from the call when its coefficients are all close to zero.
-        magnetic = ~np.all(np.abs(fc) <= 1e-8, axis=1)
+        if magnetic_atoms is None:
+            magnetic = _magnetic_atom_mask([model_data], len(model_data.fc))[
+                distortion.atom_indices
+            ]
+        else:
+            magnetic = np.asarray(magnetic_atoms, dtype=bool)[distortion.atom_indices]
         reach = contact_shell_reach_limit(distortion.supercell_lattice)
         shells = [
             contact_shell_mean(
@@ -782,17 +789,18 @@ def contact_shell_mean(
     """Return muLFC's contact average of ``coefficients`` over the muon's nearest magnetic ions.
 
     The ions are the ``nnn`` nearest magnetic ions closer than ``rcont``,
-    weighted by ``1 / r^3`` and normalised by the sum of those weights. The
-    relaxed supercell holds every ion only within ``reach_limit`` of the muon, so
-    a shell that reaches further could miss a nearer periodic image.
+    weighted by ``1 / r^3`` and normalised by the sum of those weights. When
+    ions tie for the last place the shell keeps the first in ``vectors`` order,
+    as arbitrary a choice as the backend's; :func:`contact_shell_tie` reports
+    such a tie. The relaxed supercell holds every ion only within
+    ``reach_limit`` of the muon, so a shell that reaches further could miss a
+    nearer periodic image.
     """
 
     if int(nnn) < 1:
-        return np.zeros(3, dtype=complex)
+        return np.zeros(np.shape(coefficients)[1:], dtype=complex)
     distances = np.linalg.norm(vectors, axis=1)
-    candidates = np.flatnonzero(magnetic & (distances < rcont))
-    ordered = candidates[np.argsort(distances[candidates], kind="stable")]
-    shell = ordered[: int(nnn)]
+    shell = _contact_shell_order(distances, magnetic, rcont)[: int(nnn)]
     reach = float(distances[shell[-1]]) if shell.size == int(nnn) else rcont
     if reach >= reach_limit:
         remedy = (
@@ -806,27 +814,382 @@ def contact_shell_mean(
             f"every ion within {reach_limit:.2f} Å; use a larger relaxed supercell, or {remedy} in "
             "Calculation Settings"
         )
-    if ordered.size > shell.size:
-        # muLFC keeps whichever tied ion its parallel lattice walk meets first, so a tie
-        # across the last place of the shell leaves its contact field undefined.
-        tied = ordered[np.abs(distances[ordered] - reach) <= _CONTACT_SHELL_TIE_ANG]
-        if tied.size > np.count_nonzero(np.isin(tied, shell)) and not np.allclose(
-            coefficients[tied], coefficients[tied[0]], atol=1e-8, rtol=0.0
+    return _weighted_shell_mean(distances[shell], np.asarray(coefficients)[shell])
+
+
+#: Distance difference, in Å, within which magnetic ions tie for a place in the contact shell.
+CONTACT_SHELL_TIE_TOLERANCE_ANG = 1e-3
+
+
+@dataclass(frozen=True, slots=True)
+class ContactShellTie:
+    """A contact shell whose last places split a set of tied ions with different moments.
+
+    ``ion_labels`` names every tied ion (species and atom number, an ion
+    repeated for each of its periodic images); ``kept`` of them fit in the
+    shell's ``nnn`` places, and ``nnn_including_all`` places hold them all.
+    """
+
+    nnn: int
+    distance_ang: float
+    ion_labels: tuple[str, ...]
+    kept: int
+    nnn_including_all: int
+
+    def message(self) -> str:
+        counts: dict[str, int] = {}
+        for label in sorted(self.ion_labels, key=_ion_label_order):
+            counts[label] = counts.get(label, 0) + 1
+        names = ", ".join(
+            label if count == 1 else f"{count} × {label}" for label, count in counts.items()
+        )
+        return (
+            f"Contact neighbours (nnn) = {self.nnn} keeps {self.kept} of the "
+            f"{len(self.ion_labels)} magnetic ions with different moments that tie at "
+            f"{self.distance_ang:.3f} Å from the muon ({names}), so the contact field depends "
+            f"on which of them the lattice sum keeps; nnn = {self.nnn_including_all} includes "
+            "them all."
+        )
+
+
+def _ion_label_order(label: str) -> tuple[int, str]:
+    """Order ion labels such as ``"Mn 3"`` by their number, then their name."""
+
+    head, _, number = label.rpartition(" ")
+    return (int(number), head) if number.isdigit() else (0, label)
+
+
+def contact_shell_tie(
+    vectors: np.ndarray,
+    coefficients: np.ndarray,
+    magnetic: np.ndarray,
+    labels: Sequence[str],
+    *,
+    nnn: int,
+    rcont: float,
+    tolerance: float = CONTACT_SHELL_TIE_TOLERANCE_ANG,
+) -> ContactShellTie | None:
+    """Return the tie the ``nnn``-ion contact shell splits, or ``None`` when it splits none.
+
+    ``vectors`` run from the muon to each ion, ``coefficients`` hold each ion's
+    Fourier coefficients (one row per ion, every component side by side) and
+    ``labels`` name each ion. Ions within ``tolerance`` of the shell's last
+    place tie for it. A split tie matters only when the tied moments differ:
+    the backend then keeps an arbitrary subset, which changes with the size of
+    the lattice sum.
+    """
+
+    if int(nnn) < 1:
+        return None
+    distances = np.linalg.norm(vectors, axis=1)
+    ordered = _contact_shell_order(distances, magnetic, rcont)
+    if ordered.size <= int(nnn):
+        return None
+    edge = float(distances[ordered[int(nnn) - 1]])
+    tied_places = np.flatnonzero(np.abs(distances[ordered] - edge) <= float(tolerance))
+    tied = ordered[tied_places]
+    if int(tied_places[-1]) < int(nnn):
+        return None
+    rows = np.asarray(coefficients, dtype=complex).reshape(len(distances), -1)[tied]
+    scale = max(float(np.max(np.abs(rows))), 1.0)
+    if np.allclose(rows, rows[0], atol=1e-8 * scale, rtol=0.0):
+        return None
+    return ContactShellTie(
+        nnn=int(nnn),
+        distance_ang=float(np.mean(distances[tied])),
+        ion_labels=tuple(str(labels[index]) for index in tied),
+        kept=int(np.count_nonzero(tied_places < int(nnn))),
+        nnn_including_all=int(tied_places[-1]) + 1,
+    )
+
+
+def _contact_shell_order(distances: np.ndarray, magnetic: np.ndarray, rcont: float) -> np.ndarray:
+    """Return the magnetic ions closer than ``rcont``, nearest first, in a stable order."""
+
+    candidates = np.flatnonzero(np.asarray(magnetic, dtype=bool) & (distances < float(rcont)))
+    return candidates[np.argsort(distances[candidates], kind="stable")]
+
+
+def _weighted_shell_mean(distances: np.ndarray, coefficients: np.ndarray) -> np.ndarray:
+    """Return the ``1 / r^3``-weighted mean of ``coefficients`` (zero for an empty shell)."""
+
+    coefficients = np.asarray(coefficients, dtype=complex)
+    if not len(distances):
+        return np.zeros(coefficients.shape[1:], dtype=complex)
+    weights = np.asarray(distances, dtype=float) ** -3
+    return np.tensordot(weights, coefficients, axes=1) / np.sum(weights)
+
+
+def _magnetic_atom_mask(models: Sequence[MuesrModelData], n_atoms: int) -> np.ndarray:
+    """Return which atoms carry a moment in any of ``models``.
+
+    muesr drops an atom from a lattice sum when its coefficients are all close to zero.
+    """
+
+    magnetic = np.zeros(int(n_atoms), dtype=bool)
+    for model_data in models:
+        magnetic |= ~np.all(np.abs(np.asarray(model_data.fc, dtype=complex)) <= 1e-8, axis=1)
+    return magnetic
+
+
+@dataclass(frozen=True, slots=True)
+class _HostContactIons:
+    """Periodic images of the host's magnetic ions about one muon site, nearest first."""
+
+    atom_indices: np.ndarray
+    cell_offsets: np.ndarray
+    vectors: np.ndarray
+
+
+def _host_contact_ions(
+    structure: Structure,
+    magnetic: np.ndarray,
+    muon_fractional: Sequence[float],
+    *,
+    nnn: int,
+    rcont: float,
+) -> _HostContactIons:
+    """Return the magnetic ion images that can enter the ``nnn``-ion contact shell.
+
+    The images run out from the muon until they hold the shell and every ion
+    that ties with its last place, or to ``rcont``, whichever is nearer; the
+    lattice sum sees the same ions in the same distance order. Each image is
+    named by its atom and its cell offset from the muon's own cell.
+    """
+
+    lattice = np.asarray(structure.lattice_vectors, dtype=float)
+    fractional = np.asarray(structure.fractional_positions, dtype=float)
+    muon = np.asarray(muon_fractional, dtype=float)
+    atoms = np.flatnonzero(np.asarray(magnetic, dtype=bool))
+    volume = abs(float(np.linalg.det(lattice)))
+    spacings = np.array(
+        [
+            volume
+            / float(np.linalg.norm(np.cross(lattice[(axis + 1) % 3], lattice[(axis + 2) % 3])))
+            for axis in range(3)
+        ]
+    )
+    empty = _HostContactIons(
+        np.zeros(0, dtype=int), np.zeros((0, 3), dtype=int), np.zeros((0, 3), dtype=float)
+    )
+    if not atoms.size or int(nnn) < 1:
+        return empty
+    radius = min(float(rcont), 2.0 * float(np.max(spacings)))
+    while True:
+        low = np.floor(muon - radius / spacings).astype(int) - 1
+        high = np.ceil(muon + radius / spacings).astype(int) + 1
+        cells = np.stack(
+            np.meshgrid(*(np.arange(lo, hi + 1) for lo, hi in zip(low, high)), indexing="ij"),
+            axis=-1,
+        ).reshape(-1, 3)
+        atom_index = np.repeat(atoms, len(cells))
+        offsets = np.tile(cells, (len(atoms), 1))
+        vectors = (fractional[atom_index] + offsets - muon) @ lattice
+        distances = np.linalg.norm(vectors, axis=1)
+        inside = distances < radius
+        order = np.flatnonzero(inside)[np.argsort(distances[inside], kind="stable")]
+        if radius >= float(rcont) or (
+            order.size > int(nnn)
+            and distances[order[int(nnn) - 1]] + 2.0 * CONTACT_SHELL_TIE_TOLERANCE_ANG < radius
         ):
-            raise MagneticFieldError(
-                f"the contact shell is ambiguous: {tied.size} magnetic ions with different moments tie at "
-                f"{reach:.3f} Å from the muon for the last of its {int(nnn)} places, and muesr keeps an "
-                "arbitrary one of them; set Contact neighbours (nnn) in Calculation Settings to include "
-                "or exclude the whole tied set"
+            return _HostContactIons(atom_index[order], offsets[order], vectors[order])
+        radius = min(float(rcont), 2.0 * radius)
+
+
+def _host_contact_coefficients(
+    ions: _HostContactIons, models: Sequence[MuesrModelData]
+) -> list[np.ndarray]:
+    """Return each model's Fourier coefficient at every ion image, ``F exp(-2 pi i (q . L + phi))``."""
+
+    out = []
+    for model_data in models:
+        fc = np.asarray(model_data.fc, dtype=complex)[ions.atom_indices]
+        phi = np.asarray(model_data.phi, dtype=float)[ions.atom_indices]
+        turns = ions.cell_offsets @ np.asarray(model_data.k_rlu, dtype=float).reshape(3) + phi
+        out.append(fc * np.exp(-2j * np.pi * turns)[:, np.newaxis])
+    return out
+
+
+def _host_contact_shell_ties(
+    structure: Structure,
+    models: Sequence[MuesrModelData],
+    magnetic: np.ndarray,
+    muon_fractional: Sequence[float],
+    *,
+    nnn: int,
+    rcont: float,
+) -> ContactShellTie | None:
+    """Return the tie the lattice sum's contact shell splits at one muon site, if any."""
+
+    ions = _host_contact_ions(structure, magnetic, muon_fractional, nnn=nnn, rcont=rcont)
+    if not ions.atom_indices.size:
+        return None
+    coefficients = np.concatenate(_host_contact_coefficients(ions, models), axis=1)
+    labels = [f"{structure.species[index]} {index + 1}" for index in ions.atom_indices]
+    return contact_shell_tie(
+        ions.vectors,
+        coefficients,
+        np.ones(len(ions.atom_indices), dtype=bool),
+        labels,
+        nnn=nnn,
+        rcont=rcont,
+    )
+
+
+def _distortion_contact_shell_tie(
+    structure: Structure,
+    models: Sequence[MuesrModelData],
+    magnetic: np.ndarray,
+    distortion: MuonDistortion,
+    *,
+    nnn: int,
+    rcont: float,
+) -> ContactShellTie | None:
+    """Return the tie the contact shell splits among the displaced ions of the relaxed supercell."""
+
+    coefficients = np.concatenate(
+        [
+            np.asarray(model_data.fc, dtype=complex)[distortion.atom_indices]
+            * np.exp(
+                -2j
+                * np.pi
+                * (distortion.cell_offsets @ np.asarray(model_data.k_rlu, dtype=float).reshape(3))
+            )[:, np.newaxis]
+            for model_data in models
+        ],
+        axis=1,
+    )
+    labels = [f"{structure.species[index]} {index + 1}" for index in distortion.atom_indices]
+    return contact_shell_tie(
+        distortion.distorted_vectors,
+        coefficients,
+        np.asarray(magnetic, dtype=bool)[distortion.atom_indices],
+        labels,
+        nnn=nnn,
+        rcont=rcont,
+    )
+
+
+def _contact_shell_warnings(
+    structure: Structure,
+    models: Sequence[MuesrModelData],
+    muon_fractional: Sequence[float],
+    options: MagneticFieldOptions,
+    distortion: MuonDistortion | None = None,
+) -> list[str]:
+    """Return the contact-shell tie warnings of one muon site; none without a contact coupling."""
+
+    if options.contact_coupling is None or not models:
+        return []
+    magnetic = _magnetic_atom_mask(models, len(structure.species))
+    warnings = []
+    tie = _host_contact_shell_ties(
+        structure,
+        models,
+        magnetic,
+        muon_fractional,
+        nnn=int(options.nnn),
+        rcont=float(options.rcont),
+    )
+    if tie is not None:
+        warnings.append(tie.message())
+    if distortion is not None:
+        relaxed = _distortion_contact_shell_tie(
+            structure,
+            models,
+            magnetic,
+            distortion,
+            nnn=int(options.nnn),
+            rcont=float(options.rcont),
+        )
+        if relaxed is not None:
+            warnings.append(f"In the relaxed supercell, {relaxed.message()}")
+    return warnings
+
+
+def _with_contact_warnings(
+    parameters: Mapping[str, object], warnings: Sequence[str]
+) -> dict[str, object]:
+    """Return ``parameters`` with ``contact_shell_warnings`` set when there are any."""
+
+    out = dict(parameters)
+    if warnings:
+        out["contact_shell_warnings"] = list(warnings)
+    return out
+
+
+def contact_shell_tie_checker(
+    structure: Structure,
+    model: MagneticStructureModel,
+    muon_sites: Sequence[MuonSite | Sequence[float]],
+    *,
+    find_equivalent_sites: bool,
+) -> Callable[[int, float], tuple[str, ...]]:
+    """Return a check of the lattice-sum contact shell for Contact neighbours and radius values.
+
+    The returned callable takes ``nnn`` and ``rcont`` and returns one warning
+    per muon site (every symmetry-equivalent site when
+    ``find_equivalent_sites`` is set) whose shell splits a tie of ions with
+    different moments, so a settings dialog can warn as the values change. The
+    sites and the order are resolved once.
+    """
+
+    options = MagneticFieldOptions(find_equivalent_sites=bool(find_equivalent_sites))
+    models = get_muesr_model_data(structure, model, merge_equivalent_k=False)
+    muons = _expanded_muon_positions(structure, muon_sites, options) if models else []
+    magnetic = _magnetic_atom_mask(models, len(structure.species))
+    prefix = len(muons) > 1
+
+    def check(nnn: int, rcont: float) -> tuple[str, ...]:
+        warnings = []
+        for label, position in muons:
+            tie = _host_contact_shell_ties(
+                structure, models, magnetic, position, nnn=int(nnn), rcont=float(rcont)
             )
-    if not shell.size:
-        return np.zeros(3, dtype=complex)
-    weights = distances[shell] ** -3
-    return np.sum(weights[:, np.newaxis] * coefficients[shell], axis=0) / np.sum(weights)
+            if tie is not None:
+                warnings.append(f"{label}: {tie.message()}" if prefix else tie.message())
+        return tuple(warnings)
+
+    return check
 
 
-_CONTACT_SHELL_TIE_ANG = 1e-6
-"""Distance difference within which two ions tie for a place in the contact shell."""
+def _needs_shared_contact_shell(entries: Sequence[object]) -> bool:
+    """Return whether the contact average must be taken once over several backend calls.
+
+    The backend averages its contact shell over the ions of one call, so an
+    order summed in several calls (components at different wavevectors, the
+    separately sampled components of a distribution, or one component split
+    into circular helices) needs one shell over every magnetic ion, averaged
+    once, instead of one full average per call.
+    """
+
+    return len(entries) > 1
+
+
+def _shared_contact_coefficients(
+    structure: Structure,
+    models: Sequence[MuesrModelData],
+    muon_fractional: Sequence[float],
+    options: MagneticFieldOptions,
+) -> list[np.ndarray]:
+    """Return each model's complex contact field, in T, from one shell over every model's ions.
+
+    The shell is the backend's: the ``nnn`` nearest magnetic ions closer than
+    ``rcont``, weighted by ``1 / r^3`` and normalised once over the shell. The
+    field of a model at an order phase ``theta`` is ``Re[exp(-2 pi i theta) B]``.
+    """
+
+    magnetic = _magnetic_atom_mask(models, len(structure.species))
+    ions = _host_contact_ions(
+        structure, magnetic, muon_fractional, nnn=int(options.nnn), rcont=float(options.rcont)
+    )
+    shell = slice(0, int(options.nnn))
+    distances = np.linalg.norm(ions.vectors[shell], axis=1)
+    scale = float(options.contact_coupling) * CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
+    return [
+        scale * _weighted_shell_mean(distances, coefficients[shell])
+        for coefficients in _host_contact_coefficients(ions, models)
+    ]
 
 
 def contact_shell_reach_limit(supercell_lattice: np.ndarray) -> float:
@@ -874,8 +1237,9 @@ def _distortion_changes(
     """Return each commensurate component's propagation vector and complex dipolar plus contact change."""
 
     changes = []
+    magnetic = _magnetic_atom_mask(models, len(models[0].fc)) if models else None
     for model_data in models:
-        dipolar, contact = _component_distortion_changes(model_data, distortion, options)
+        dipolar, contact = _component_distortion_changes(model_data, distortion, options, magnetic)
         changes.append((np.asarray(model_data.k_rlu, dtype=float), dipolar + contact))
     return changes
 
@@ -955,6 +1319,7 @@ def calculate_commensurate_fields(
     results: list[MagneticFieldResult] = []
     for index, (label, position) in enumerate(muons):
         distortion = distortions[index]
+        warnings = _contact_shell_warnings(structure, models, position, opts, distortion)
         results.append(
             MagneticFieldResult(
                 site_label=label,
@@ -971,7 +1336,7 @@ def calculate_commensurate_fields(
                         _distortion_changes(models, distortion, opts), (0, 0, 0)
                     )
                 ),
-                calculation_parameters=dict(parameters),
+                calculation_parameters=_with_contact_warnings(parameters, warnings),
             )
         )
     return tuple(results)
@@ -1065,6 +1430,9 @@ def calculate_commensurate_approximant_fields(
             if distortions[index] is None
             else _distortion_changes(approximant_models, distortions[index], opts)
         )
+        warnings = _contact_shell_warnings(
+            structure, approximant_models, position, opts, distortions[index]
+        )
         for translation, (dipolar, lorentz, contact) in zip(
             translations, terms_by_translation, strict=True
         ):
@@ -1085,7 +1453,7 @@ def calculate_commensurate_approximant_fields(
                     distortion=(
                         None if changes is None else _distortion_correction(changes, translation)
                     ),
-                    calculation_parameters=dict(parameters),
+                    calculation_parameters=_with_contact_warnings(parameters, warnings),
                 )
             )
     return tuple(results)
@@ -1193,6 +1561,15 @@ def _commensurate_field_terms(
             if options.include_lorentz:
                 lorentz[index] += continuum @ _field_vector(local_field, "Lorentz", "L")
             contact[index] += _field_vector(local_field, "Contact", "C")
+    if options.contact_coupling is not None and _needs_shared_contact_shell(models):
+        for index, position in enumerate(positions):
+            contact[index] = sum(
+                (
+                    change.real
+                    for change in _shared_contact_coefficients(structure, models, position, options)
+                ),
+                np.zeros(3, dtype=float),
+            )
     return dipolar, lorentz, contact
 
 
@@ -1443,14 +1820,31 @@ def calculate_incommensurate_field_distributions(
         )
         backend_entries.extend((mode, phase_coeff, entry) for entry in model_entries)
     # The distortion changes, and so the contact-shell checks, come before any lattice sum.
+    entry_models = [entry for *_, entry in backend_entries]
+    magnetic_atoms = _magnetic_atom_mask(entry_models, len(structure.species))
     changes_by_site = [
         None
         if distortion is None
         else [
-            _component_distortion_changes(entry, distortion, opts) for *_, entry in backend_entries
+            _component_distortion_changes(entry, distortion, opts, magnetic_atoms)
+            for entry in entry_models
         ]
         for distortion in distortions
     ]
+    contact_warnings_by_site = [
+        _contact_shell_warnings(structure, models, position, opts, distortion)
+        for (_label, position), distortion in zip(muons, distortions, strict=True)
+    ]
+    # One contact shell over every entry's ions, averaged once, when the backend
+    # would average each entry's own shell (see _needs_shared_contact_shell).
+    shared_contact_by_site = (
+        [
+            _shared_contact_coefficients(structure, entry_models, position, opts)
+            for _label, position in muons
+        ]
+        if opts.contact_coupling is not None and _needs_shared_contact_shell(entry_models)
+        else None
+    )
 
     for entry_index, (mode, phase_coeff, model_entry) in enumerate(backend_entries):
         continuum = _continuum_field_projector(structure, model_entry.k_rlu)
@@ -1482,14 +1876,16 @@ def calculate_incommensurate_field_distributions(
             )
             con = _field_array(local_field, "Contact", "C", nangles=int(opts.nangles))
             site_changes = changes_by_site[index]
-            if site_changes is not None:
-                row_phases = (
-                    _lookup_row_phases_turns(
-                        model_entry.k_rlu, muons[index][1], opts.supercell, int(opts.nangles)
-                    )
-                    if mode == "i"
-                    else np.zeros(int(opts.nangles), dtype=float)
+            row_phases = (
+                _lookup_row_phases_turns(
+                    model_entry.k_rlu, muons[index][1], opts.supercell, int(opts.nangles)
                 )
+                if mode == "i"
+                else np.zeros(int(opts.nangles), dtype=float)
+            )
+            if shared_contact_by_site is not None:
+                con = _phase_shifted_fields(shared_contact_by_site[index][entry_index], row_phases)
+            if site_changes is not None:
                 dip_change, con_change = site_changes[entry_index]
                 dip = dip + _phase_shifted_fields(dip_change, row_phases)
                 con = con + _phase_shifted_fields(con_change, row_phases)
@@ -1580,10 +1976,13 @@ def calculate_incommensurate_field_distributions(
                 fields_T=fields,
                 histogram_centres_T=centres,
                 histogram_counts=counts,
-                calculation_parameters={
-                    **calculation_parameters,
-                    "distortion_corrected": changes_by_site[index] is not None,
-                },
+                calculation_parameters=_with_contact_warnings(
+                    {
+                        **calculation_parameters,
+                        "distortion_corrected": changes_by_site[index] is not None,
+                    },
+                    contact_warnings_by_site[index],
+                ),
                 convergence=convergence,
                 terms={name: terms[name] for name in DISTRIBUTION_FIELD_TERMS},
                 total_rms_T=float(np.sqrt(np.mean(magnitudes**2))),

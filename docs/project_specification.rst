@@ -481,6 +481,9 @@ Magnetic fields
   sites and muon-induced distortion corrections available; optional
   ``muesr`` / ``muLFC`` backends are used where installed, with clear errors
   otherwise (see :doc:`/user_guide/magnetic_fields`).
+- The contact field follows the backend's contact shell, averaged once over
+  every component of the order, and a shell that splits a tie of ions with
+  different moments is warned of, in the settings and on each result.
 
 Hyperfine coupling
 ~~~~~~~~~~~~~~~~~~
@@ -504,7 +507,8 @@ Hyperfine coupling
   ``1/r^3``-weighted mean Mulliken moment of that form's contact shell from the
   source relaxation. A form's default site counts before the form is first
   edited. Overwriting a different nonzero coupling is confirmed first; nothing
-  changes when no form shows the site.
+  changes when no form shows the site. A shell that splits a tie of different
+  moments is warned of.
 
 Quantum corrections
 ~~~~~~~~~~~~~~~~~~~

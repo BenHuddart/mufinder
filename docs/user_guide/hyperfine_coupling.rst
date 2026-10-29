@@ -225,7 +225,12 @@ form's ``Contact neighbours (nnn)`` and ``Contact radius``. If a form already
 holds a different nonzero coupling, a ``Replace hyperfine coupling`` dialog lists each
 form's current and new value and asks before overwriting; ``Cancel`` is the
 default. An empty or zero coupling, a form's default, is filled without asking. A form whose contact shell cannot give a coupling (for example a shell
-that reaches past the relaxed supercell) is skipped and named. If no form
+that reaches past the relaxed supercell) is skipped and named. A form whose
+shell splits ions with different Mulliken moments that tie for its last place
+is filled from the first of the tied ions, and the closing summary repeats the
+warning the Magnetic Fields page gives for such a shell (see
+:ref:`Choose the contact shell <magnetic-fields-contact-shell>`), with the
+ions numbered in the relaxed supercell's order. If no form
 shows the site, nothing changes and MuFinder says so: select the site on the
 Magnetic Fields page or in a saved workspace first. As when the coupling is
 edited on the page, a form whose coupling changes loses its field results,
