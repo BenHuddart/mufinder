@@ -11,18 +11,26 @@ provenance records describing the change in a :class:`SiteGenerationOutcome`
 and leave appending them to the caller, so
 :class:`~mufinder.services.project_service.ProjectService` keeps the one path
 that writes the provenance log.
+
+Random and element-attached generation can take long enough to run on a
+worker thread. They split into three steps so the worker never touches the
+document: :func:`prepare_candidate_sites` copies what the generators read from
+the document, :func:`compute_candidate_sites` computes the sites from that copy
+alone (and can be cancelled), and :func:`apply_candidate_sites` adds them to the
+document once the worker has finished.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+import copy
 from dataclasses import dataclass, field
 import re
 from typing import Any
 from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import MuonSite, ProvenanceRecord, Structure
+from mufinder.domain.models import MuonSite, ProvenanceRecord
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -52,6 +60,18 @@ _RANDOM_COUNT_SEPARATION_SHRINK = 0.9
 
 ProgressCallback = Callable[[int, int], None]
 
+#: Generation methods that can run on a worker thread through
+#: :func:`prepare_candidate_sites` and :func:`compute_candidate_sites`.
+WORKER_GENERATION_METHODS = frozenset({"random", "near_element"})
+
+
+class SiteGenerationCancelled(Exception):
+    """A worker generation was cancelled before it finished.
+
+    It is not a :class:`SiteGenerationError`, so the count-mode retries do not
+    swallow it.
+    """
+
 
 @dataclass(slots=True)
 class SiteGenerationOutcome:
@@ -69,24 +89,46 @@ class SiteGenerationOutcome:
 class _HostContext:
     """The active host as the generators read it."""
 
-    structure: Structure | None
+    structure_id: UUID | None
     lattice: list[list[float]] | None
     species: list[str]
     positions: list[list[float]]
 
     @classmethod
     def for_document(cls, document: ProjectDocument) -> _HostContext:
+        """Copy the active host's id and geometry, so a worker never reads the document."""
+
         host = active_host_structure(document)
         return cls(
-            structure=host,
-            lattice=host.lattice_vectors if host and host.lattice_vectors else None,
-            species=host.species if host else [],
-            positions=host.fractional_positions if host else [],
+            structure_id=host.id if host else None,
+            lattice=(
+                [list(row) for row in host.lattice_vectors]
+                if host and host.lattice_vectors
+                else None
+            ),
+            species=list(host.species) if host else [],
+            positions=[list(position) for position in host.fractional_positions] if host else [],
         )
 
+
+@dataclass(frozen=True, slots=True)
+class CandidateSiteRequest:
+    """A worker generation request, read from the document on the GUI thread.
+
+    It holds copies of everything the generators read: the active host and the
+    labels of the existing sites, which number the new ones.
+    """
+
+    method: str
+    parameters: dict[str, Any]
+    host: _HostContext
+    site_labels: tuple[str, ...]
+
     @property
-    def structure_id(self) -> UUID | None:
-        return self.structure.id if self.structure else None
+    def host_structure_id(self) -> UUID | None:
+        """The active host when the request was prepared."""
+
+        return self.host.structure_id
 
 
 @dataclass(slots=True)
@@ -128,23 +170,136 @@ def generate_candidate_sites(
     host's symmetry but it could not be detected, so the host was treated as P1.
     """
 
-    host = _HostContext.for_document(document)
-    requested_count = _requested_site_count(method, parameters, host)
-    if method == "manual":
-        batch = _generate_manual_site(document, host, parameters)
-    elif method == "random":
-        batch = _generate_random_sites(
-            document, host, parameters, requested_count, progress_callback
-        )
-    elif method == "near_element":
-        batch = _generate_attached_element_sites(document, host, parameters, progress_callback)
-    elif method == "uep_clusters":
-        batch = _generate_uep_cluster_sites(document, host, parameters)
+    if method in WORKER_GENERATION_METHODS:
+        request = prepare_candidate_sites(document, method=method, parameters=parameters)
+        outcome = compute_candidate_sites(request, progress_callback=progress_callback)
     else:
-        raise SiteGenerationError(f"Unknown generation method '{method}'.")
-
-    for site in batch.sites:
+        host = _HostContext.for_document(document)
+        requested_count = _requested_site_count(method, parameters, host)
+        if method == "manual":
+            batch = _generate_manual_site(document, host, parameters)
+        elif method == "uep_clusters":
+            batch = _generate_uep_cluster_sites(document, host, parameters)
+        else:
+            raise SiteGenerationError(f"Unknown generation method '{method}'.")
+        outcome = _generation_outcome(method, parameters, host, batch, requested_count)
+    for site in outcome.sites:
         document.sites[site.id] = site
+    return outcome
+
+
+def prepare_candidate_sites(
+    document: ProjectDocument, *, method: str, parameters: dict[str, Any]
+) -> CandidateSiteRequest:
+    """Capture a random or element-attached request for :func:`compute_candidate_sites`.
+
+    Runs on the thread that owns ``document``; the request it returns is safe
+    to compute on another thread.
+    """
+
+    if method not in WORKER_GENERATION_METHODS:
+        raise SiteGenerationError(f"'{method}' generation cannot run on a worker thread.")
+    return CandidateSiteRequest(
+        method=method,
+        parameters=copy.deepcopy(dict(parameters)),
+        host=_HostContext.for_document(document),
+        site_labels=tuple(_site_labels(document)),
+    )
+
+
+def compute_candidate_sites(
+    request: CandidateSiteRequest,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> SiteGenerationOutcome:
+    """Compute the sites ``request`` asks for, without reading or changing any document.
+
+    ``should_cancel`` is polled at every progress report and once more at the
+    end; when it returns ``True`` the computation stops with
+    :class:`SiteGenerationCancelled` and its sites are never returned.
+    """
+
+    report = _cancellable_progress(progress_callback, should_cancel)
+    host = request.host
+    parameters = request.parameters
+    requested_count = _requested_site_count(request.method, parameters, host)
+    if request.method == "random":
+        batch = _generate_random_sites(
+            request.site_labels, host, parameters, requested_count, report
+        )
+    else:
+        batch = _generate_attached_element_sites(request.site_labels, host, parameters, report)
+    if should_cancel is not None and should_cancel():
+        raise SiteGenerationCancelled
+    return _generation_outcome(request.method, parameters, host, batch, requested_count)
+
+
+def apply_candidate_sites(
+    document: ProjectDocument, request: CandidateSiteRequest, outcome: SiteGenerationOutcome
+) -> None:
+    """Add the sites :func:`compute_candidate_sites` returned for ``request`` to ``document``.
+
+    Raises :class:`SiteGenerationError`, and adds nothing, when the active host
+    is no longer the one the sites were generated for: another structure, or
+    the same one with a different cell or atoms. A site whose label another
+    site took while the request was computed is renumbered after the labels
+    now in use.
+    """
+
+    if _HostContext.for_document(document) != request.host:
+        raise SiteGenerationError(
+            "The active host structure changed while the sites were being generated, "
+            "so they were not added. Generate them again for the new host."
+        )
+    _renumber_taken_labels(document, outcome.sites)
+    for site in outcome.sites:
+        document.sites[site.id] = site
+
+
+def _renumber_taken_labels(document: ProjectDocument, sites: Sequence[MuonSite]) -> None:
+    """Give each of ``sites`` whose label is already in ``document`` the next free number."""
+
+    used = _site_labels(document)
+    taken = set(used)
+    for site in sites:
+        if site.label not in taken:
+            taken.add(site.label)
+            used.append(site.label)
+            continue
+        match = _NUMBERED_LABEL.match(site.label)
+        prefix = match.group(1) if match is not None else site.label
+        site.label = f"{prefix} {_next_site_label_number(used, prefix)}"
+        taken.add(site.label)
+        used.append(site.label)
+
+
+def _cancellable_progress(
+    progress_callback: ProgressCallback | None, should_cancel: Callable[[], bool] | None
+) -> ProgressCallback | None:
+    """Wrap ``progress_callback`` so a progress report stops a cancelled computation."""
+
+    if should_cancel is None:
+        return progress_callback
+
+    def report(generated: int, expected: int) -> None:
+        if should_cancel():
+            raise SiteGenerationCancelled
+        if progress_callback is not None:
+            progress_callback(generated, expected)
+
+    return report
+
+
+def _generation_outcome(
+    method: str,
+    parameters: dict[str, Any],
+    host: _HostContext,
+    batch: _GeneratedBatch,
+    requested_count: int | None,
+) -> SiteGenerationOutcome:
+    """Describe a generated batch: its sites, and the provenance of the request."""
+
     provenance = _generation_provenance(method, parameters, batch, requested_count)
     warning = _symmetry_warning(method, parameters, host)
     if warning is not None:
@@ -361,7 +516,7 @@ def _generate_manual_site(
 
     label_prefix = "Manual Site"
     site = MuonSite(
-        label=f"{label_prefix} {_next_site_label_number(document, label_prefix)}",
+        label=f"{label_prefix} {_next_site_label_number(_site_labels(document), label_prefix)}",
         status=GENERATED_SITE_STATUS,
         initial_fractional_position=fractional,
         initial_cartesian_position=cartesian,
@@ -373,7 +528,7 @@ def _generate_manual_site(
 
 
 def _generate_random_sites(
-    document: ProjectDocument,
+    site_labels: Iterable[str],
     host: _HostContext,
     parameters: dict[str, Any],
     requested_count: int | None,
@@ -402,7 +557,7 @@ def _generate_random_sites(
         )
 
     label_prefix = "Random Site"
-    start_index = _next_site_label_number(document, label_prefix)
+    start_index = _next_site_label_number(site_labels, label_prefix)
     sites = [
         MuonSite(
             label=f"{label_prefix} {start_index + idx - 1}",
@@ -521,7 +676,7 @@ def _random_draw_by_count(
 
 
 def _generate_attached_element_sites(
-    document: ProjectDocument,
+    site_labels: Iterable[str],
     host: _HostContext,
     parameters: dict[str, Any],
     progress_callback: ProgressCallback | None,
@@ -543,7 +698,7 @@ def _generate_attached_element_sites(
         progress_callback=progress_callback,
     )
     label_prefix = f"Attached-{parameters.get('element', '').strip() or 'Element'} Site"
-    start_index = _next_site_label_number(document, label_prefix)
+    start_index = _next_site_label_number(site_labels, label_prefix)
     sites = [
         MuonSite(
             label=f"{label_prefix} {start_index + idx - 1}",
@@ -642,8 +797,8 @@ def _uep_cluster_site(
             source_structure_id = UUID(str(raw_source_structure_id))
         except ValueError:
             source_structure_id = host.structure_id
-    elif host.structure is not None:
-        source_structure_id = host.structure.id
+    elif host.structure_id is not None:
+        source_structure_id = host.structure_id
 
     explicit_label = str(selection.get("label", "")).strip()
     if explicit_label:
@@ -736,11 +891,18 @@ def _has_duplicate_uep_cluster_site(
     return False
 
 
-def _next_site_label_number(document: ProjectDocument, prefix: str) -> int:
+_NUMBERED_LABEL = re.compile(r"^(.*\S)\s+\d+$")
+
+
+def _site_labels(document: ProjectDocument) -> list[str]:
+    return [str(site.label) for site in document.sites.values()]
+
+
+def _next_site_label_number(site_labels: Iterable[str], prefix: str) -> int:
     pattern = re.compile(rf"^{re.escape(prefix.strip())}\s+(\d+)$")
     used_numbers: list[int] = []
-    for site in document.sites.values():
-        match = pattern.match(str(site.label).strip())
+    for label in site_labels:
+        match = pattern.match(label.strip())
         if match is not None:
             used_numbers.append(int(match.group(1)))
     return max(used_numbers, default=0) + 1

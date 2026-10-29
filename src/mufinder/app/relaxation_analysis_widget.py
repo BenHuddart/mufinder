@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import copy
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -15,7 +16,7 @@ from matplotlib.patches import Circle, PathPatch
 from matplotlib.textpath import TextPath
 from matplotlib.transforms import Affine2D
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -313,6 +314,31 @@ def default_workspace_state(
         "viewer_state": {},
         "displacement_state": {},
     }
+
+
+def _structure_geometry(structure: Structure | None) -> tuple[object, ...] | None:
+    """A copy of ``structure``'s id, cell and atoms, to notice an in-place edit to it."""
+
+    if structure is None:
+        return None
+    return (
+        structure.id,
+        [list(row) for row in structure.lattice_vectors or []],
+        list(structure.species),
+        [list(position) for position in structure.fractional_positions],
+    )
+
+
+def _release_page(page: QWidget) -> None:
+    """Shut down a removed workspace page's viewers and delete the page.
+
+    Removing a tab does not delete its page, so the page, and the render
+    window of its viewer, are released explicitly.
+    """
+
+    for viewer in page.findChildren(AtomicStructureViewer):
+        viewer.shutdown()
+    page.deleteLater()
 
 
 def _workspace_id(workspace: Mapping[str, object]) -> str:
@@ -1654,11 +1680,17 @@ class RelaxationAnalysisWidget(QWidget):
         self._sources_by_job_id: dict[UUID, CompletedRelaxationAnalysisSource] = {}
         self._structures_by_id: dict[UUID, Structure] = {}
         self._host_structure: Structure | None = None
+        # A copy of the shown host's cell and atoms: an in-place edit to the
+        # host object is a host change too.
+        self._host_geometry: tuple[object, ...] | None = None
         self._comparison_options: list[tuple[UUID, str, bool]] = []
         # Each tab's 3D viewer is built the first time the tab is current: a
         # viewer is costly to build, and a project can hold many workspaces.
         # Maps a workspace id to the empty viewer slot and its point overlays.
         self._pending_viewers: dict[str, tuple[QWidget, list[dict[str, object]]]] = {}
+        # What each tab shows, keyed by workspace id: an unchanged context
+        # leaves the tab alone, a changed one refills it in place.
+        self._tab_fingerprints: dict[str, tuple[object, ...]] = {}
         # Injected by MainWindow: resolves a relaxation job to its relaxed
         # structure and export header. Unwired, nothing is exportable.
         self._relaxed_structure_export: Callable[[UUID], RelaxedStructureExport] = lambda _job_id: (
@@ -1701,20 +1733,34 @@ class RelaxationAnalysisWidget(QWidget):
         comparison_options: Sequence[tuple[UUID, str, bool]],
         current_workspace_id: str | None = None,
     ) -> None:
-        """Rebuild the tabs from ``workspaces``.
+        """Bring the tabs up to date with ``workspaces``.
 
-        The current tab stays current unless ``current_workspace_id`` names
-        another workspace to open; only the opened tab builds its 3D viewer.
+        A tab whose workspace and completed relaxations are unchanged is left
+        alone, so an unchanged context costs no rebuild and no render. A
+        changed workspace refills its tab in place, keeping its 3D viewer and
+        camera; a new workspace gets a new tab and a deleted one loses its
+        tab. A different host structure, or a change to the host's cell or
+        atoms, rebuilds every tab. The current tab
+        stays current unless ``current_workspace_id`` names another workspace
+        to open; only the opened tab builds its 3D viewer.
         """
 
         self._restoring = True
         try:
+            host_geometry = _structure_geometry(host_structure)
+            host_changed = (
+                host_structure is not self._host_structure or host_geometry != self._host_geometry
+            )
+            self._host_geometry = host_geometry
             self._workspaces = [dict(workspace) for workspace in workspaces]
             self._sources_by_job_id = {source.job_id: source for source in sources}
             self._structures_by_id = dict(structures)
             self._host_structure = host_structure
             self._comparison_options = list(comparison_options)
-            self._rebuild_tabs(current_workspace_id)
+            if host_changed:
+                self._rebuild_tabs(current_workspace_id)
+            else:
+                self._sync_tabs(current_workspace_id)
         finally:
             self._restoring = False
 
@@ -1780,15 +1826,13 @@ class RelaxationAnalysisWidget(QWidget):
             ]
             self._workspace_tabs.clear()
             self._pending_viewers.clear()
+            self._tab_fingerprints.clear()
             for page in old_pages:
-                for viewer in page.findChildren(AtomicStructureViewer):
-                    viewer.shutdown()
-                page.deleteLater()
+                _release_page(page)
             for workspace in self._workspaces:
-                tab = self._build_workspace_tab(workspace)
-                workspace_id = _workspace_id(workspace)
-                tab.setProperty("workspace_id", workspace_id)
-                self._workspace_tabs.addTab(tab, _workspace_name(workspace))
+                self._workspace_tabs.addTab(
+                    self._build_workspace_tab(workspace), _workspace_name(workspace)
+                )
             self._empty_label.setVisible(not self._workspaces)
             self._workspace_tabs.setVisible(bool(self._workspaces))
             if current_id:
@@ -1797,6 +1841,95 @@ class RelaxationAnalysisWidget(QWidget):
             self._rebuilding_tabs = False
             self.setUpdatesEnabled(True)
         self._build_current_viewer()
+
+    def _sync_tabs(self, current_workspace_id: str | None = None) -> None:
+        """Add, remove, reorder and refill tabs so they match ``self._workspaces``.
+
+        Only what changed is touched: an unchanged tab keeps its table, its
+        viewer and its camera, and an unchanged context returns at once.
+        """
+
+        current_id = current_workspace_id or self.current_workspace_id()
+        wanted_ids = [_workspace_id(workspace) for workspace in self._workspaces]
+        shown_ids = [
+            str(self._workspace_tabs.widget(index).property("workspace_id"))
+            for index in range(self._workspace_tabs.count())
+        ]
+        changed_ids = {
+            _workspace_id(workspace)
+            for workspace in self._workspaces
+            if self._tab_fingerprints.get(_workspace_id(workspace))
+            != self._tab_fingerprint(workspace)
+        }
+        if wanted_ids == shown_ids and not changed_ids:
+            if current_workspace_id and current_workspace_id != self.current_workspace_id():
+                self.focus_workspace(current_workspace_id)
+            return
+        # As in _rebuild_tabs: listeners see only real tab switches, and the
+        # tabs paint once.
+        self._rebuilding_tabs = True
+        self.setUpdatesEnabled(False)
+        try:
+            wanted = set(wanted_ids)
+            for index in reversed(range(self._workspace_tabs.count())):
+                page = self._workspace_tabs.widget(index)
+                workspace_id = str(page.property("workspace_id"))
+                if workspace_id in wanted:
+                    continue
+                self._workspace_tabs.removeTab(index)
+                self._pending_viewers.pop(workspace_id, None)
+                self._tab_fingerprints.pop(workspace_id, None)
+                _release_page(page)
+            for index, workspace in enumerate(self._workspaces):
+                workspace_id = _workspace_id(workspace)
+                page = self._workspace_page(workspace_id)
+                if page is None:
+                    self._workspace_tabs.insertTab(
+                        index, self._build_workspace_tab(workspace), _workspace_name(workspace)
+                    )
+                    continue
+                position = self._workspace_tabs.indexOf(page)
+                if position != index:
+                    self._workspace_tabs.tabBar().moveTab(position, index)
+                if workspace_id in changed_ids:
+                    self._update_workspace_tab(page, workspace)
+            self._empty_label.setVisible(not self._workspaces)
+            self._workspace_tabs.setVisible(bool(self._workspaces))
+            if current_id:
+                self.focus_workspace(str(current_id))
+        finally:
+            self._rebuilding_tabs = False
+            self.setUpdatesEnabled(True)
+        self._build_current_viewer()
+
+    def _tab_fingerprint(
+        self, workspace: Mapping[str, object], *, snapshot: bool = False
+    ) -> tuple[object, ...]:
+        """What a workspace's tab shows: its stored state and its relaxations' results.
+
+        ``snapshot`` copies the state, for a fingerprint kept while the widget
+        edits the workspace in place; a fingerprint built only to compare is
+        not copied.
+        """
+
+        return (
+            copy.deepcopy(dict(workspace)) if snapshot else dict(workspace),
+            tuple(self._sources_by_job_id.get(job_id) for job_id in _workspace_job_ids(workspace)),
+        )
+
+    def _update_workspace_tab(self, page: QWidget, workspace: Mapping[str, object]) -> None:
+        """Refill an existing tab from a changed ``workspace``, keeping its viewer."""
+
+        name = _workspace_name(workspace)
+        self._workspace_tabs.setTabText(self._workspace_tabs.indexOf(page), name)
+        name_edit = page.findChild(QLineEdit)
+        if name_edit is not None and name_edit.text() != name:
+            name_edit.setText(name)
+        show_shifted = page.findChild(QCheckBox, "analysisShowShiftedCheckBox")
+        if show_shifted is not None:
+            with QSignalBlocker(show_shifted):
+                show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
+        self._refresh_workspace_tab(_workspace_id(workspace))
 
     def _workspace_page(self, workspace_id: str) -> QWidget | None:
         for index in range(self._workspace_tabs.count()):
@@ -1945,6 +2078,7 @@ class RelaxationAnalysisWidget(QWidget):
 
     def _build_workspace_tab(self, workspace: Mapping[str, object]) -> QWidget:
         page = QWidget(self._workspace_tabs)
+        page.setProperty("workspace_id", _workspace_id(workspace))
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
@@ -2013,6 +2147,7 @@ class RelaxationAnalysisWidget(QWidget):
             lambda _checked=False, wid=_workspace_id(workspace): self.delete_requested.emit(wid)
         )
         show_shifted = QCheckBox("Show shifted positions", header)
+        show_shifted.setObjectName("analysisShowShiftedCheckBox")
         show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
         show_shifted.toggled.connect(
@@ -2111,6 +2246,9 @@ class RelaxationAnalysisWidget(QWidget):
     ) -> list[dict[str, object]]:
         """Fill ``table`` with the workspace's sites; return the viewer's point overlays."""
 
+        self._tab_fingerprints[_workspace_id(workspace)] = self._tab_fingerprint(
+            workspace, snapshot=True
+        )
         sites = self._workspace_sites(workspace)
         anchored = self._anchored(workspace, sites)
         labels = self._cluster_labels(workspace, sites)
@@ -2208,6 +2346,7 @@ class RelaxationAnalysisWidget(QWidget):
         if workspace.get("name") == cleaned:
             return
         workspace["name"] = cleaned
+        self._tab_fingerprints[workspace_id] = self._tab_fingerprint(workspace, snapshot=True)
         self._emit_state()
         page = self._workspace_page(workspace_id)
         if page is None:

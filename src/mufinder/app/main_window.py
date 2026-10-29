@@ -328,6 +328,7 @@ from mufinder.services.muon_sites_summary import (
     validated_muon_sites_summary_snapshot,
 )
 from mufinder.services.perf_trace import PerfTrace
+from mufinder.services.site_generation_service import WORKER_GENERATION_METHODS
 from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
     ProjectDocument,
@@ -624,6 +625,9 @@ class MainWindow(QMainWindow):
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
         self._quantum_analysis_dialogs: dict[UUID, QuantumPhononAnalysisDialog] = {}
         self._muon_generation_thread: _MuonGenerationThread | None = None
+        # The document a running generation was prepared from; its sites are
+        # applied only to that document.
+        self._muon_generation_document: ProjectDocument | None = None
         self._muon_generation_failed = False
 
         app = QApplication.instance()
@@ -828,6 +832,9 @@ class MainWindow(QMainWindow):
         self._uep_view.remove_requested.connect(self._on_remove_uep_rows)
         self._muon_generation_view = MuonGenerationWidget()
         self._muon_generation_view.generate_requested.connect(self._on_generate_requested)
+        self._muon_generation_view.cancel_generation_requested.connect(
+            self._on_cancel_generation_requested
+        )
         self._muon_generation_view.cluster_positions_requested.connect(
             self._on_cluster_muon_positions_requested
         )
@@ -1269,13 +1276,16 @@ class MainWindow(QMainWindow):
                 relaxation_analysis_view.shutdown()
         muon_generation_thread = getattr(self, "_muon_generation_thread", None)
         if muon_generation_thread is not None:
-            # Generation mutates the project document mid-run, so it cannot be
-            # interrupted or abandoned — but a bare wait() froze the window
-            # into "Not Responding" for the remainder of a long generation.
-            # Pump the event loop behind a busy dialog instead; the window
-            # modality prevents re-entrant close clicks.
+            # The worker only computes points and never touches the document,
+            # so closing cancels it and discards its sites. It notices at its
+            # next progress report, which a run that rejects many trial
+            # positions in a row can take a while to reach, so the event loop
+            # runs behind a busy dialog meanwhile; a bare wait() would show
+            # the window as not responding. The window modality prevents
+            # re-entrant close clicks.
+            muon_generation_thread.cancel()
             if not muon_generation_thread.isFinished():
-                progress = QProgressDialog("Finishing muon site generation…", None, 0, 0, self)
+                progress = QProgressDialog("Cancelling muon site generation…", None, 0, 0, self)
                 progress.setWindowTitle("Closing")
                 progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.setMinimumDuration(0)
@@ -1287,6 +1297,7 @@ class MainWindow(QMainWindow):
                 progress.close()
             muon_generation_thread.wait()
             self._muon_generation_thread = None
+            self._muon_generation_document = None
         self._shutdown_embedded_structure_viewers()
         local_runner = getattr(self, "_local_runner", None)
         if local_runner is not None:
@@ -7123,6 +7134,8 @@ class MainWindow(QMainWindow):
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
+        if self._muon_generation_blocks_host_change():
+            return
 
         file_path, _selected_filter = self._get_open_file_name(
             title="Select Structure File",
@@ -7165,7 +7178,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if method in {"random", "near_element"}:
+        if method in WORKER_GENERATION_METHODS:
             self._start_muon_generation_thread(method, parameters)
             return
 
@@ -7186,29 +7199,26 @@ class MainWindow(QMainWindow):
     def _start_muon_generation_thread(self, method: str, parameters: dict) -> None:
         if self._document is None:
             return
-        thread = _MuonGenerationThread(
-            self._project_service,
-            self._document,
-            method=method,
-            parameters=parameters,
-            parent=self,
-        )
+        try:
+            request = self._project_service.prepare_candidate_sites(
+                self._document, method=method, parameters=parameters
+            )
+        except (SiteGenerationError, ValueError) as exc:
+            QMessageBox.warning(self, "Generation blocked", str(exc))
+            return
+        thread = _MuonGenerationThread(self._project_service, request, parent=self)
         self._muon_generation_thread = thread
+        self._muon_generation_document = self._document
         self._muon_generation_failed = False
         thread.generated.connect(
-            lambda created, current_method=method, params=dict(parameters): (
-                self._on_threaded_generation_finished(
-                    current_method,
-                    params,
-                    created,
-                )
-            )
+            lambda outcome, worker=thread: self._on_threaded_generation_finished(worker, outcome)
         )
         thread.failed.connect(
             lambda message, current_method=method: self._on_threaded_generation_failed(
                 current_method, message
             )
         )
+        thread.cancelled.connect(self._on_threaded_generation_cancelled)
         random_mode = (
             str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
         )
@@ -7231,6 +7241,37 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Generating {method_label} muon sites...")
         thread.start()
 
+    def _on_cancel_generation_requested(self) -> None:
+        thread = self._muon_generation_thread
+        if thread is None or thread.cancel_requested:
+            return
+        if not workflow_table_utils.confirm_destructive(
+            self,
+            "Cancel generation",
+            "Cancel the running muon site generation?",
+            "The sites it has generated so far are discarded.",
+            accept_label="Cancel generation",
+            reject_label="Keep generating",
+        ):
+            return
+        # The run may have finished while the question was open.
+        if self._muon_generation_thread is thread:
+            thread.cancel()
+            self._muon_generation_view.set_generation_progress(0, 1, "Cancelling...")
+
+    def _muon_generation_blocks_host_change(self) -> bool:
+        """Refuse a host change while a generation computes sites for the current host."""
+
+        if self._muon_generation_thread is None:
+            return False
+        QMessageBox.information(
+            self,
+            "Generation in progress",
+            "Muon sites are being generated for the current host structure. Wait for the "
+            "generation to finish, or cancel it, before changing the host.",
+        )
+        return True
+
     def _on_generation_progress_changed(
         self, method: str, generated: int, expected: int, mode: str
     ) -> None:
@@ -7245,9 +7286,26 @@ class MainWindow(QMainWindow):
         )
 
     def _on_threaded_generation_finished(
-        self, method: str, parameters: dict, created: object
+        self, thread: _MuonGenerationThread, outcome: object
     ) -> None:
-        sites = list(created) if isinstance(created, list) else []
+        """Apply a finished worker's sites to the document, on the GUI thread."""
+
+        if self._shutting_down:
+            return
+        document = self._muon_generation_document
+        if document is None or document is not self._document:
+            self._on_threaded_generation_discarded()
+            return
+        if thread.cancel_requested:
+            self._on_threaded_generation_cancelled()
+            return
+        method = thread.method
+        parameters = thread.parameters
+        try:
+            sites = self._project_service.apply_generated_sites(document, thread.request, outcome)
+        except SiteGenerationError as exc:
+            self._on_threaded_generation_failed(method, str(exc))
+            return
         used_spacing: object | None = None
         if method == "random" and sites:
             used_spacing = sites[0].properties.get(
@@ -7265,8 +7323,30 @@ class MainWindow(QMainWindow):
         self._refresh_journal_view()
         self._finish_generation_status(method, parameters, sites)
 
+    def _on_threaded_generation_cancelled(self) -> None:
+        if self._shutting_down:
+            return
+        if self._muon_generation_document is not self._document:
+            self._on_threaded_generation_discarded()
+            return
+        self._muon_generation_view.set_generation_busy(False, "Generation cancelled")
+        self.statusBar().showMessage("Muon site generation cancelled; no sites were added")
+
+    def _on_threaded_generation_discarded(self) -> None:
+        """Drop a run started in a project that is no longer open."""
+
+        self._muon_generation_view.set_generation_busy(False, "Ready")
+        self.statusBar().showMessage(
+            "Discarded the muon site generation started in the previously open project"
+        )
+
     def _on_threaded_generation_failed(self, method: str, message: str) -> None:
         self._muon_generation_failed = True
+        if self._shutting_down:
+            return
+        if self._muon_generation_document is not self._document:
+            self._on_threaded_generation_discarded()
+            return
         self._muon_generation_view.set_generation_busy(False, "Generation failed")
         QMessageBox.warning(self, "Generation blocked", message)
         method_label = "Random" if method == "random" else "Near-element"
@@ -7274,6 +7354,7 @@ class MainWindow(QMainWindow):
 
     def _on_muon_generation_thread_finished(self) -> None:
         self._muon_generation_thread = None
+        self._muon_generation_document = None
         if not self._muon_generation_failed:
             self._muon_generation_view.set_generation_controls_enabled(True)
 
@@ -10967,6 +11048,9 @@ class MainWindow(QMainWindow):
     def _on_active_host_change_requested(self, structure_id_str: str) -> None:
         if self._document is None:
             return
+        if self._muon_generation_blocks_host_change():
+            self._refresh_host_structure_view()
+            return
         try:
             structure_id = UUID(structure_id_str)
         except (ValueError, AttributeError):
@@ -11017,7 +11101,12 @@ class MainWindow(QMainWindow):
                 default="cancel",
                 escape="cancel",
             )
-            if result == "switch" and source_id is not None and self._document is not None:
+            if (
+                result == "switch"
+                and source_id is not None
+                and self._document is not None
+                and not self._muon_generation_blocks_host_change()
+            ):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()
@@ -11067,7 +11156,12 @@ class MainWindow(QMainWindow):
                 default="cancel",
                 escape="cancel",
             )
-            if result == "switch" and source_id is not None and self._document is not None:
+            if (
+                result == "switch"
+                and source_id is not None
+                and self._document is not None
+                and not self._muon_generation_blocks_host_change()
+            ):
                 try:
                     self._project_service.set_active_host_structure(self._document, source_id)
                     self._refresh_host_structure_view()

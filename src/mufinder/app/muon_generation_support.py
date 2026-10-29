@@ -1,6 +1,6 @@
 """Main-window helpers for the muon site generation page.
 
-``MuonGenerationThread`` runs candidate-site generation off the Qt main thread,
+``MuonGenerationThread`` computes candidate sites off the Qt main thread,
 and ``MuonChargeStateDialog`` asks which charge states the relaxation jobs
 created from the selected sites should use.
 """
@@ -23,9 +23,11 @@ from PySide6.QtWidgets import (
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.science.site_generation import SiteGenerationError
+from mufinder.services.site_generation_service import SiteGenerationCancelled
 
 if TYPE_CHECKING:
-    from mufinder.services.project_service import ProjectDocument, ProjectService
+    from mufinder.services.project_service import ProjectService
+    from mufinder.services.site_generation_service import CandidateSiteRequest
 
 
 class MuonChargeStateDialog(QDialog):
@@ -98,44 +100,73 @@ class MuonChargeStateDialog(QDialog):
 
 
 class MuonGenerationThread(QThread):
-    """Run site generation away from the Qt main thread."""
+    """Compute a prepared site-generation request away from the Qt main thread.
+
+    The thread never reads or changes the project document: it computes the
+    sites of a :class:`CandidateSiteRequest` captured on the GUI thread, and
+    ``generated`` hands the outcome back for the main window to apply there.
+    :meth:`cancel` stops the computation at its next progress report;
+    ``cancelled`` then follows instead of ``generated`` or ``failed``, and the
+    result is discarded.
+    """
 
     generated = Signal(object)
     failed = Signal(str)
+    cancelled = Signal()
     progress_changed = Signal(int, int)
 
     def __init__(
         self,
         service: ProjectService,
-        document: ProjectDocument,
+        request: CandidateSiteRequest,
         *,
-        method: str,
-        parameters: dict,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._service = service
-        self._document = document
-        self._method = method
-        self._parameters = dict(parameters)
+        self._request = request
+        # Kept apart from requestInterruption(), which reads False again once
+        # the thread has finished, while its queued result may still arrive.
+        self._cancel_requested = False
+
+    @property
+    def request(self) -> CandidateSiteRequest:
+        return self._request
 
     @property
     def method(self) -> str:
-        return self._method
+        return self._request.method
 
     @property
     def parameters(self) -> dict:
-        return dict(self._parameters)
+        return dict(self._request.parameters)
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether :meth:`cancel` was called; a cancelled run's result is discarded."""
+
+        return self._cancel_requested
+
+    def cancel(self) -> None:
+        """Ask the computation to stop; its result is discarded."""
+
+        self._cancel_requested = True
+        self.requestInterruption()
 
     def run(self) -> None:
         try:
-            created = self._service.generate_candidate_sites(
-                self._document,
-                method=self._method,
-                parameters=self._parameters,
+            outcome = self._service.compute_candidate_sites(
+                self._request,
                 progress_callback=self.progress_changed.emit,
+                should_cancel=self.isInterruptionRequested,
             )
-        except (SiteGenerationError, ValueError) as exc:
-            self.failed.emit(str(exc))
+        except SiteGenerationCancelled:
+            self.cancelled.emit()
             return
-        self.generated.emit(created)
+        except (SiteGenerationError, ValueError) as exc:
+            if self.isInterruptionRequested():
+                self.cancelled.emit()
+            else:
+                self.failed.emit(str(exc))
+            return
+        self.generated.emit(outcome)

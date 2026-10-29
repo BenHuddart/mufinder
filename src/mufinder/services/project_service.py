@@ -1742,6 +1742,46 @@ class ProjectService:
         )
         return self._record_site_change(document, outcome)
 
+    def prepare_candidate_sites(
+        self, document: ProjectDocument, *, method: str, parameters: dict[str, Any]
+    ) -> site_generation_service.CandidateSiteRequest:
+        """Capture a random or element-attached request to compute on a worker thread.
+
+        See :func:`mufinder.services.site_generation_service.prepare_candidate_sites`.
+        """
+        return site_generation_service.prepare_candidate_sites(
+            document, method=method, parameters=parameters
+        )
+
+    @staticmethod
+    def compute_candidate_sites(
+        request: site_generation_service.CandidateSiteRequest,
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> site_generation_service.SiteGenerationOutcome:
+        """Compute a prepared request's sites without touching the document; safe on a worker.
+
+        See :func:`mufinder.services.site_generation_service.compute_candidate_sites`.
+        """
+        return site_generation_service.compute_candidate_sites(
+            request, progress_callback=progress_callback, should_cancel=should_cancel
+        )
+
+    def apply_generated_sites(
+        self,
+        document: ProjectDocument,
+        request: site_generation_service.CandidateSiteRequest,
+        outcome: site_generation_service.SiteGenerationOutcome,
+    ) -> list[MuonSite]:
+        """Add a computed request's sites to ``document`` and record its provenance.
+
+        Runs on the thread that owns ``document``, once the worker has finished.
+        See :func:`mufinder.services.site_generation_service.apply_candidate_sites`.
+        """
+        site_generation_service.apply_candidate_sites(document, request, outcome)
+        return self._record_site_change(document, outcome)
+
     def requested_site_count(
         self, document: ProjectDocument, *, method: str, parameters: dict[str, Any]
     ) -> int | None:
