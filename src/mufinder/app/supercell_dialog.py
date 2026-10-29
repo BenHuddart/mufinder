@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import ExitStack
+from itertools import chain
 from uuid import UUID
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -354,7 +356,6 @@ class SupercellEditorDialog(QDialog):
         self._build_layout()
         self._apply_matrix(initial_matrix or [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         self._refresh_assets()
-        self._generate_preview()
 
     def _shutdown_viewer(self) -> None:
         if self._viewer_shutdown:
@@ -531,14 +532,20 @@ class SupercellEditorDialog(QDialog):
             and parsed[1][1] > 0
             and parsed[2][2] > 0
         )
-        self._simple_nx.setValue(max(1, parsed[0][0]))
-        self._simple_ny.setValue(max(1, parsed[1][1]))
-        self._simple_nz.setValue(max(1, parsed[2][2]))
-        for row in range(3):
-            for column in range(3):
-                self._advanced_cells[row][column].setValue(parsed[row][column])
-        self._advanced_toggle.setChecked(not is_diagonal)
-        self._on_advanced_toggled(self._advanced_toggle.isChecked())
+        # Set every box with its signal blocked so the whole matrix change builds
+        # one preview, not one per box.
+        simple_boxes = (self._simple_nx, self._simple_ny, self._simple_nz)
+        with ExitStack() as blocked:
+            for widget in (*simple_boxes, *chain(*self._advanced_cells), self._advanced_toggle):
+                blocked.enter_context(QSignalBlocker(widget))
+            for axis, spinbox in enumerate(simple_boxes):
+                spinbox.setValue(max(1, parsed[axis][axis]))
+            for row in range(3):
+                for column in range(3):
+                    self._advanced_cells[row][column].setValue(parsed[row][column])
+            self._advanced_toggle.setChecked(not is_diagonal)
+        self._advanced_group.setVisible(not is_diagonal)
+        self._generate_preview()
 
     def _on_advanced_toggled(self, enabled: bool) -> None:
         self._advanced_group.setVisible(enabled)
@@ -634,7 +641,6 @@ class SupercellEditorDialog(QDialog):
             return
         self._name_edit.setText(asset.label)
         self._apply_matrix(asset.matrix)
-        self._generate_preview()
         self._refresh_action_state()
 
     def _refresh_action_state(self) -> None:
@@ -666,7 +672,6 @@ class SupercellEditorDialog(QDialog):
         self._current_asset_id = None
         self._apply_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         self._name_edit.setText(self._default_name(self.matrix()))
-        self._generate_preview()
         self._refresh_action_state()
 
     def _save_as_asset(self):
