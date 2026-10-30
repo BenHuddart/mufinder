@@ -246,7 +246,10 @@ applies what the controls show.
    meanwhile) so you can choose a stable plateau in the cluster-count curve
    deliberately.
 ``Hierarchical``
-   Cuts a dendrogram at the threshold ``Hierarchical t``.
+   Cuts a dendrogram at the threshold ``Hierarchical t``. Links below the cut
+   take the colour of their cluster, the colour its sites have in the structure
+   view, and links above the cut stay grey. A cluster of one site has no link
+   to colour.
 ``K-means``
    Divides the endpoints into the number of clusters you request in
    ``Clusters k``, but never into more clusters than there are distinct sites:
