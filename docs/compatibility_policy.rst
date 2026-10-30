@@ -757,6 +757,14 @@ migration; code that imported one switches to the replacement named.
   Cluster keyword generation no longer runs Python on the cluster, so the value
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
+- ``supercell_editor`` (navigator route, ``--page`` value and stage key of the
+  project home): the Supercell Editor is a dialog opened from the Host Structure
+  page and the workflows' ``Manage Supercells…``. A project whose
+  ``project_home_stage`` holds the value loads as usual and its project home
+  opens on the stage the project has reached, because an unknown saved stage is
+  ignored; the value is replaced the next time a stage page opens. ``--page
+  supercell_editor`` warns of an unknown page and leaves the project home showing.
+  No alias is kept, since the key held no project data.
 
 The public helper below was removed once its ledger expiry (through 0.7.x)
 had passed. It was deprecated with a ``DeprecationWarning`` in 0.8.0, and its

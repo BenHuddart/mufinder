@@ -46,7 +46,6 @@ from tests.support.field_results import field_result
 
 PAGE_ROUTES = (
     "host_structure",
-    "supercell_editor",
     "convergence",
     "convergence_cutoff",
     "convergence_kpoint",

@@ -170,13 +170,6 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
         "Start here: import the crystal the project studies. Every other stage works on the active host.",
     ),
     WorkflowStageInfo(
-        "supercell_editor",
-        "Supercell Editor",
-        "Save reusable supercells for workflow setup.",
-        "Optional. Any calculation can run in a saved supercell instead of the unit cell.",
-        optional=True,
-    ),
-    WorkflowStageInfo(
         "convergence_cutoff",
         "Cutoff Energy",
         "Set a project default cutoff value.",
@@ -263,7 +256,6 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
 )
 
 STAGE_DEPENDENCIES: tuple[StageDependency, ...] = (
-    StageDependency("host_structure", "supercell_editor", DependencyKind.OPTIONAL),
     StageDependency("host_structure", "convergence_cutoff", DependencyKind.REQUIRED),
     StageDependency("host_structure", "convergence_kpoint", DependencyKind.REQUIRED),
     StageDependency("convergence", "pristine_relaxation", DependencyKind.OPTIONAL),
@@ -347,15 +339,6 @@ def job_stage_title(stages: Iterable[WorkflowStage]) -> str | None:
 
 def host_complete(document: ProjectDocument) -> bool:
     return document.project.host_structure_id is not None
-
-
-def supercell_editor_complete(document: ProjectDocument) -> bool:
-    return bool(
-        supercell_assets.list_workflow_supercell_assets(
-            document,
-            host_structure_id=document.project.host_structure_id,
-        )
-    )
 
 
 def cutoff_complete(document: ProjectDocument) -> bool:
@@ -469,7 +452,6 @@ def energy_barriers_complete(document: ProjectDocument) -> bool:
 #: The completion rule of every stage and stage group, by key.
 COMPLETION_CHECKS: dict[str, Callable[[ProjectDocument], bool]] = {
     "host_structure": host_complete,
-    "supercell_editor": supercell_editor_complete,
     "convergence": convergence_complete,
     "convergence_cutoff": cutoff_complete,
     "convergence_kpoint": kpoint_complete,
@@ -689,19 +671,20 @@ def _host_facts(document: ProjectDocument) -> tuple[str, ...]:
     facts = [f"{formula} · {plural(atoms, 'atom')}"]
     if host.origin == "pristine_relaxation":
         facts.append("Active host is a relaxed structure")
+    facts.append(_saved_supercells_fact(document))
     return tuple(facts)
 
 
-def _supercell_facts(document: ProjectDocument) -> tuple[str, ...]:
+def _saved_supercells_fact(document: ProjectDocument) -> str:
     assets = supercell_assets.list_workflow_supercell_assets(
         document,
         host_structure_id=document.project.host_structure_id,
     )
     if not assets:
-        return ("No saved supercells",)
+        return "No saved supercells"
     labels = ", ".join(asset.label for asset in assets[:3])
     more = f" and {len(assets) - 3} more" if len(assets) > 3 else ""
-    return (f"{plural(len(assets), 'saved supercell')}: {labels}{more}",)
+    return f"{plural(len(assets), 'saved supercell')}: {labels}{more}"
 
 
 def _cutoff_facts(document: ProjectDocument) -> tuple[str, ...]:
@@ -869,7 +852,6 @@ def _barrier_facts(document: ProjectDocument) -> tuple[str, ...]:
 
 _FACTS: dict[str, Callable[[ProjectDocument], tuple[str, ...]]] = {
     "host_structure": _host_facts,
-    "supercell_editor": _supercell_facts,
     "convergence_cutoff": _cutoff_facts,
     "convergence_kpoint": _kpoint_facts,
     "pristine_relaxation": _pristine_facts,

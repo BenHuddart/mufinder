@@ -89,8 +89,6 @@ key. Each key selects the navigator entry beside it:
      - Navigator entry
    * - ``host_structure``
      - ``Host Structure``
-   * - ``supercell_editor``
-     - ``Supercell Editor``
    * - ``convergence``
      - ``Convergence Testing``
    * - ``convergence_cutoff``
