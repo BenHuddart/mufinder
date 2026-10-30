@@ -49,8 +49,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 from matplotlib import image as mpl_image
 from matplotlib.path import Path as PolygonPath
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
+from mufinder.app.sample_photo_dialog import PREVIEW_DEBOUNCE_MS
 from mufinder.domain.models import Structure
 from mufinder.science.demagnetization import DemagnetizingSample, PlatePhoto
 from mufinder.science.sample_image import segment_plate_image
@@ -229,6 +231,9 @@ def orient_disc_normal_to_110(dialog: QWidget) -> None:
         edit.setText(value)
     for edit, value in zip(dialog._in_plane_inputs, ("0", "0", "1"), strict=True):
         edit.setText(value)
+    # The 3D preview redraws once the edits pause.
+    QTest.qWait(2 * PREVIEW_DEBOUNCE_MS)
+    settle(QApplication.instance())
     focus_default_button(dialog)
 
 

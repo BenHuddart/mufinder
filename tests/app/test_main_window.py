@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
+import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
 import mufinder.services.job_artifacts as job_artifacts_module
@@ -420,12 +421,12 @@ def test_main_window_persists_magnetic_field_calculation_results(
             }
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_fields",
         lambda *_args, **_kwargs: (_Result(),),
     )

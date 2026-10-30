@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import threading
+import time
 from uuid import uuid4
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QAbstractItemView, QDialog
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QProgressDialog
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
+import mufinder.services.magnetic_field_calculation as magnetic_field_calculation_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
 from mufinder.app.magnetic_analysis_dialogs import NuclearRelaxationDialog
 from mufinder.app.magnetic_component_dialogs import MagneticComponentDialog
@@ -221,7 +224,7 @@ def test_magnetic_field_widget_restores_a_saved_site_on_an_atom_and_refuses_it(
     document = service.create_project(tmp_path / "magnetic-on-atom.mufinder", "On Atom")
     service.add_structure(document, feo_host_structure())
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_fields",
         lambda *_args, **_kwargs: pytest.fail("a site on an atom must not be calculated"),
     )
@@ -277,12 +280,12 @@ def test_magnetic_field_widget_never_shows_a_non_finite_field(qapp, tmp_path, mo
 
     returned: list[object] = [_Result()]
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_fields",
         lambda *_args, **_kwargs: tuple(returned),
     )
@@ -339,12 +342,12 @@ def test_magnetic_field_widget_reports_an_untyped_backend_error(
         raise RuntimeError("Symbolic FC not defined!")
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module, "calculate_commensurate_fields", _backend_failure
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _backend_failure
     )
 
     widget = MagneticFieldWidget()
@@ -425,11 +428,13 @@ def test_magnetic_field_widget_calculates_commensurate_fields(qapp, tmp_path, mo
         return (_Result(),)
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -762,7 +767,9 @@ def test_magnetic_field_widget_calculates_nuclear_relaxation_from_dialog(
         )
         return _Result()
 
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_nuclear_relaxation", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_nuclear_relaxation", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -790,11 +797,13 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
         return ()
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -1043,11 +1052,13 @@ def test_magnetic_field_widget_applied_field_reaches_the_calculation_and_round_t
         )
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", fake_fields)
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", fake_fields
+    )
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
@@ -1122,7 +1133,7 @@ def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(
     service.add_structure(document, feo_host_structure())
     calls: list[object] = []
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_fields",
         lambda *args, **kwargs: calls.append(kwargs),
     )
@@ -1514,7 +1525,7 @@ def test_magnetic_field_widget_opens_dipolar_tensor_dialog(qapp, tmp_path, monke
 
     monkeypatch.setattr(magnetic_field_widget_module, "DipolarTensorDialog", _Dialog)
     monkeypatch.setattr(
-        magnetic_field_widget_module, "calculate_dipolar_tensors_for_atoms", _calculate
+        magnetic_field_calculation_module, "calculate_dipolar_tensors_for_atoms", _calculate
     )
 
     widget = MagneticFieldWidget()
@@ -1557,12 +1568,14 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(
         return ()
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "incommensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module, "calculate_incommensurate_field_distributions", _calculate
+        magnetic_field_calculation_module,
+        "calculate_incommensurate_field_distributions",
+        _calculate,
     )
 
     widget = MagneticFieldWidget()
@@ -1606,11 +1619,13 @@ def test_magnetic_field_widget_converts_hyperfine_coupling_units(
         return ()
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -1651,11 +1666,13 @@ def test_magnetic_field_widget_passes_equivalent_site_option(qapp, tmp_path, mon
         return ()
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
-    monkeypatch.setattr(magnetic_field_widget_module, "calculate_commensurate_fields", _calculate)
+    monkeypatch.setattr(
+        magnetic_field_calculation_module, "calculate_commensurate_fields", _calculate
+    )
 
     widget = MagneticFieldWidget()
     widget.set_document(document)
@@ -1885,12 +1902,12 @@ def test_magnetic_field_widget_breaks_a_commensurate_field_into_its_terms(
         applied=(0.0, 0.0, 0.0),
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_fields",
         lambda *_args, **_kwargs: (result,),
     )
@@ -1944,12 +1961,12 @@ def test_magnetic_field_widget_shows_numerically_zero_field_components_as_zero(
         applied=(0.0, 0.0, 0.0),
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "commensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_fields",
         lambda *_args, **_kwargs: (result,),
     )
@@ -2106,12 +2123,12 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(
         fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "incommensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: (_Distribution(),),
     )
@@ -2177,12 +2194,12 @@ def test_magnetic_field_widget_breaks_a_distribution_into_term_means_and_rms(
         demag_T=(0.0, 0.0, 0.0),
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "incommensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: (distribution,),
     )
@@ -2370,12 +2387,12 @@ def _approximant_field(label: str, bz: float) -> magnetic_fields_module.Magnetic
 
 def _incommensurate_widget(document, monkeypatch, *, approximant) -> MagneticFieldWidget:
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "incommensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "find_commensurate_approximant",
         lambda *_args, **_kwargs: approximant,
     )
@@ -2404,12 +2421,12 @@ def test_magnetic_field_widget_lists_commensurate_approximant_fields(
         )
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_approximant_fields",
         _approximant_fields,
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: pytest.fail("an approximant should not sample a distribution"),
     )
@@ -2463,12 +2480,12 @@ def test_magnetic_field_widget_suggests_an_available_approximant(
         convergence = (flagged,)
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_commensurate_approximant_fields",
         lambda *_args, **_kwargs: pytest.fail("approximants are turned off"),
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: (_Distribution(),),
     )
@@ -2503,7 +2520,7 @@ def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(
         convergence = ()
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: (_Distribution(),),
     )
@@ -2619,12 +2636,12 @@ def test_magnetic_field_widget_opens_incommensurate_distribution_plot(
         histogram_counts = np.asarray([1, 1], dtype=float)
 
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "incommensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: (_Distribution(),),
     )
@@ -2673,12 +2690,12 @@ def test_magnetic_field_widget_opens_selected_distribution_plots_together(
         _Distribution("site 2", [1.5, 2.5]),
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "classify_magnetic_model",
         lambda *_args, **_kwargs: "incommensurate",
     )
     monkeypatch.setattr(
-        magnetic_field_widget_module,
+        magnetic_field_calculation_module,
         "calculate_incommensurate_field_distributions",
         lambda *_args, **_kwargs: distributions,
     )
@@ -2961,3 +2978,184 @@ def test_the_contact_settings_check_ties_when_a_typed_value_is_finished(qapp) ->
     QTest.keyClick(dialog._contact_rcont, Qt.Key.Key_Return)
     assert calls == [(2, 25.5)]
     dialog.close()
+
+
+class _StubField:
+    def __init__(self, label: str, bz: float) -> None:
+        self.site_label = label
+        self.muon_position = (0.25, 0.5, 0.75)
+        self.total = (0.0, 0.0, bz)
+        self.magnitude = abs(bz)
+        self.distortion = None
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "site_label": self.site_label,
+            "muon_position": list(self.muon_position),
+            "total_T": list(self.total),
+            "magnitude_T": self.magnitude,
+        }
+
+
+def _stub_calculation(label: str, bz: float):
+    return magnetic_field_calculation_module.MagneticFieldCalculation(
+        magnetic_field_calculation_module.COMMENSURATE_RESULTS,
+        (_StubField(label, bz),),
+        f"Results: calculated {label}.",
+    )
+
+
+def _ready_widget(tmp_path) -> MagneticFieldWidget:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "off-thread.mufinder", "Off Thread")
+    service.add_structure(document, feo_host_structure())
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    widget._include_equivalent_sites.setChecked(False)
+    widget._sync_enabled_state()
+    return widget
+
+
+def _busy_dialog() -> QProgressDialog | None:
+    for candidate in QApplication.topLevelWidgets():
+        if isinstance(candidate, QProgressDialog) and candidate.isVisible():
+            return candidate
+    return None
+
+
+def test_the_page_keeps_its_event_loop_running_during_a_slow_calculation(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    widget = _ready_widget(tmp_path)
+    threads: list[threading.Thread] = []
+    during: list[tuple[bool, str]] = []
+
+    def _slow(_request):
+        threads.append(threading.current_thread())
+        time.sleep(0.3)
+        return _stub_calculation("the slow field", 0.5)
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_magnetic_field_calculation", _slow
+    )
+    ticks: list[float] = []
+    timer = QTimer()
+    timer.setInterval(10)
+    timer.timeout.connect(lambda: ticks.append(time.perf_counter()))
+    QTimer.singleShot(
+        100,
+        lambda: during.append(
+            (widget._calculate_button.isEnabled(), widget._calculation_status.text())
+        ),
+    )
+    timer.start()
+    widget.calculate_fields()
+    timer.stop()
+
+    assert threads and threads[0] is not threading.main_thread()
+    # The GUI thread kept serving timers while the worker calculated.
+    assert len(ticks) >= 10
+    assert during == [(False, "Results: calculating the fields at 1 muon site…")]
+    assert widget._calculate_button.isEnabled()
+    assert widget._calculation_status.text() == "Results: calculated the slow field."
+    assert widget._result_table.item(0, 0).text() == "the slow field"
+    widget.close()
+
+
+def test_cancelling_a_calculation_keeps_the_earlier_results_and_saves_nothing(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    widget = _ready_widget(tmp_path)
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "run_prepared_magnetic_field_calculation",
+        lambda _request: _stub_calculation("the first field", 0.25),
+    )
+    widget.calculate_fields()
+    saved = widget.collect_state()["magnetic_field_results"]
+    emitted: list[object] = []
+    widget.form_state_changed.connect(lambda *args: emitted.append(args))
+
+    release = threading.Event()
+    seen: list[str] = []
+
+    def _stuck(_request):
+        release.wait(10)
+        return _stub_calculation("the abandoned field", 9.0)
+
+    def _cancel() -> None:
+        dialog = _busy_dialog()
+        if dialog is None:
+            QTimer.singleShot(20, _cancel)
+            return
+        seen.append(dialog.labelText())
+        dialog.cancel()
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_magnetic_field_calculation", _stuck
+    )
+    QTimer.singleShot(0, _cancel)
+    try:
+        widget.calculate_fields()
+    finally:
+        release.set()
+
+    assert seen == ["Calculating the fields at 1 muon site…"]
+    assert widget._calculation_status.text() == (
+        "Results: calculation cancelled; the earlier results are kept"
+    )
+    assert widget._result_table.rowCount() == 1
+    assert widget._result_table.item(0, 0).text() == "the first field"
+    assert widget.collect_state()["magnetic_field_results"] == saved
+    assert emitted == []
+    assert widget._calculate_button.isEnabled()
+    widget.close()
+
+
+def test_the_dialogs_calculate_off_the_gui_thread(qapp, tmp_path, monkeypatch) -> None:
+    widget = _ready_widget(tmp_path)
+    threads: list[threading.Thread] = []
+    descriptions: list[str] = []
+    real_run = magnetic_field_widget_module.run_blocking_call
+
+    def _recording_run(parent, op, *, title, description, cancellable):
+        descriptions.append(description)
+        assert cancellable
+        return real_run(parent, op, title=title, description=description, cancellable=True)
+
+    def _tensors(*_args, **_kwargs):
+        threads.append(threading.current_thread())
+        return ("tensor",)
+
+    def _widths(_request):
+        threads.append(threading.current_thread())
+        return "widths"
+
+    monkeypatch.setattr(magnetic_field_widget_module, "run_blocking_call", _recording_run)
+    monkeypatch.setattr(magnetic_field_widget_module, "run_dipolar_tensor_calculation", _tensors)
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_nuclear_relaxation_calculation", _widths
+    )
+
+    class _TensorDialog:
+        def selected_ion_indices(self):
+            return [0]
+
+        def include_equivalent_sites(self):
+            return False
+
+    class _NuclearDialog:
+        def options(self):
+            return NuclearRelaxationOptions()
+
+    assert widget._calculate_dipolar_tensors_from_dialog(_TensorDialog()) == ("tensor",)
+    assert widget._calculate_nuclear_relaxation_from_dialog(_NuclearDialog()) == "widths"
+    assert len(threads) == 2
+    assert all(thread is not threading.main_thread() for thread in threads)
+    assert descriptions == [
+        "Calculating the dipolar tensors at 1 muon site…",
+        "Calculating the nuclear relaxation…",
+    ]
+    widget.close()

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QGroupBox
 
+from mufinder.app.blocking_call import BlockingCallCancelled
 from mufinder.app.magnetic_analysis_dialogs import DipolarTensorDialog, NuclearRelaxationDialog
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
@@ -472,4 +473,48 @@ def test_dipolar_tensor_dialog_shows_zeros_for_a_malformed_stored_tensor(qapp) -
     dialog = _dipolar_dialog_with_result([[1.0, 2.0]])
 
     assert [dialog._result_tables[0].item(0, column).text() for column in range(3)] == ["0"] * 3
+    dialog.close()
+
+
+def _cancelled(_dialog):
+    raise BlockingCallCancelled("Calculating…")
+
+
+def test_cancelling_a_tensor_calculation_keeps_the_shown_tensors(qapp) -> None:
+    dialog = _tensor_dialog(custom_muon_site((0.25, 0.25, 0.25)))
+    dialog._calculate()
+    shown = dialog.results_state()
+    dialog._calculate_callback = _cancelled
+
+    dialog._calculate()
+
+    assert dialog._status.text() == "Calculation cancelled; the earlier results are kept"
+    assert dialog.results_state() == shown
+    dialog.close()
+
+
+def test_cancelling_a_nuclear_calculation_keeps_the_shown_widths(qapp) -> None:
+    dialog = _nuclear_dialog(custom_muon_site((0.25, 0.25, 0.25)))
+    dialog._calculate()
+    shown = dialog.results_state()
+    dialog._calculate_callback = _cancelled
+
+    dialog._calculate()
+
+    assert dialog._status.text() == "Calculation cancelled; the earlier results are kept"
+    assert dialog.results_state() == shown
+    dialog.close()
+
+
+def test_cancelling_a_first_calculation_says_only_that_it_was_cancelled(qapp) -> None:
+    dialog = NuclearRelaxationDialog(
+        muon_site=custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        calculate_callback=_cancelled,
+    )
+
+    dialog._calculate()
+
+    assert dialog._status.text() == "Calculation cancelled"
+    assert dialog.results_state() == {}
     dialog.close()

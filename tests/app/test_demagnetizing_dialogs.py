@@ -7,6 +7,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 from PySide6.QtCore import QEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QWidget
 
 import mufinder.app.demagnetizing_dialogs as demagnetizing_dialogs_module
@@ -29,6 +30,17 @@ class _DemagPreview(QWidget):
 
 
 _HEXAGONAL_LATTICE = [[3.0, 0.0, 0.0], [-1.5, 1.5 * np.sqrt(3.0), 0.0], [0.0, 0.0, 5.0]]
+
+
+def _shown_preview(dialog):
+    """The sample and lattice the 3D preview shows once the debounced redraw has run."""
+
+    for _ in range(100):
+        if not dialog._preview_timer.isActive():
+            break
+        QTest.qWait(20)
+    assert not dialog._preview_timer.isActive()
+    return dialog._preview.samples[-1]
 
 
 def _demag_dialog(monkeypatch, sample=None, lattice_vectors=None):
@@ -104,7 +116,7 @@ def test_demagnetizing_advanced_dialog_takes_the_plate_from_the_photo_dialog(
     assert dialog._photo_button.text() == "Edit outline…"
     assert "Tr N = 1.00000" in dialog._tensor_label.text()
     assert "FFT box" in dialog._tensor_label.text()
-    assert dialog._preview.samples[-1][0].shape == "image_plate"
+    assert _shown_preview(dialog)[0].shape == "image_plate"
     # The orientation is applied to the plate like any shape.
     dialog._orientation_mode.setCurrentIndex(dialog._orientation_mode.findData("directions"))
     _set_indices(dialog._normal_inputs, (1, 0, 0))
@@ -183,7 +195,7 @@ def test_demagnetizing_advanced_dialog_orients_sample_by_crystal_directions(
     assert f"{tensor[0, 1]:.5f}" in dialog._tensor_label.text()
     assert tensor[0, 1] != pytest.approx(0.0)
     assert dialog._use_button.isEnabled()
-    preview_sample, preview_lattice = dialog._preview.samples[-1]
+    preview_sample, preview_lattice = _shown_preview(dialog)
     assert preview_sample == sample
     assert preview_lattice == np.eye(3).tolist()
     dialog.close()
@@ -509,3 +521,21 @@ def test_demagnetizing_preview_draws_the_voxels_of_a_plate(qapp, monkeypatch) ->
     canvas.set_sample(DemagnetizingSample(shape="image_plate"))
     assert len(canvas._plotter.meshes) == 4
     canvas.close()
+
+
+def test_demagnetizing_dialog_redraws_its_preview_once_edits_pause(qapp, monkeypatch) -> None:
+    dialog = _demag_dialog(monkeypatch)
+    # The dialog opens with its preview drawn.
+    assert len(dialog._preview.samples) == 1
+
+    for value in (1.5, 2.0, 2.5):
+        dialog._ellipsoid_c.setValue(value)
+
+    # The tensor follows every edit; the preview redraws once, with the last shape.
+    assert dialog.selected_sample().semi_axes[2] == pytest.approx(2.5)
+    assert "N = " in dialog._tensor_label.text()
+    assert len(dialog._preview.samples) == 1
+    sample, _lattice = _shown_preview(dialog)
+    assert len(dialog._preview.samples) == 2
+    assert sample.semi_axes[2] == pytest.approx(2.5)
+    dialog.close()

@@ -49,6 +49,11 @@ A typical pass through the page is:
    `Set the calculation parameters`_).
 4. Click ``Calculate Dipolar Field``. Results appear in the table below
    (``Site``, ``Bx (T)``, ``By (T)``, ``Bz (T)``, ``|B| (T)``, ``Result``).
+   While it runs, the status line names the number of sites, and a
+   calculation that takes more than a moment shows a busy dialog whose
+   ``Cancel`` stops waiting for it and keeps the results shown before; the
+   tensor and nuclear-relaxation calculations below can be cancelled the
+   same way.
 5. Read the result:
 
    - A commensurate result row also lists its field terms (see
@@ -827,7 +832,8 @@ configured through the ``Advanced…`` button, for shape-specific tensors:
    (see `Outline a plate in a photograph`_). The window reports the tensor
    used by the calculation and renders the sample with a PyVista preview, with
    arrows along the crystal axes ``a``, ``b`` and ``c`` and the magnetisation
-   direction ``M``. Lengths are in arbitrary units, since only their ratios
+   direction ``M``. The tensor follows every edit; the preview redraws once
+   the edits pause. Lengths are in arbitrary units, since only their ratios
    matter.
 
 .. figure:: ../_generated/screenshots/fe_demagnetizing_shapes.webp
@@ -879,8 +885,8 @@ outline from the photo:
    most of the centre of the photo, so a dark crystal on a light card and a
    light crystal on a dark one both work. The outline is drawn over the photo,
    and the line under the fields gives its size in pixels.
-4. If the outline is wrong, drag ``Threshold``; ``Auto`` returns it to the Otsu
-   level. ``Invert`` swaps sample and background. ``Fill holes``, on by default,
+4. If the outline is wrong, drag ``Threshold``; the outline is redrawn once
+   the drag pauses. ``Auto`` returns it to the Otsu level. ``Invert`` swaps sample and background. ``Fill holes``, on by default,
    counts background enclosed by the sample, such as a reflection, as sample.
 5. Enter the ``Width (along a)`` and ``Height (along b)`` of the outline's
    bounding box and the ``Thickness (along c)``. Choosing a photo sets the
