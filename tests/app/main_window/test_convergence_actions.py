@@ -1913,7 +1913,10 @@ def test_main_window_convergence_overview_restores_pinned_snapshots_on_reload(
     assert reopened._convergence_overview_view._cutoff_card._plot._placeholder.isHidden() is True
     assert reopened._convergence_overview_view._kpoint_card._plot._placeholder.isHidden() is True
     assert len(reopened._convergence_overview_view._cutoff_card._plot._figure.axes) == 2
-    assert len(reopened._convergence_overview_view._kpoint_card._plot._figure.axes) == 2
+    # Energy, force, and the spacing axis placed on the host's lattice.
+    kpoint_axes = reopened._convergence_overview_view._kpoint_card._plot._figure.axes
+    assert [ax.get_xlabel() for ax in kpoint_axes][-1] == "K-point spacing (1/Ang)"
+    assert len(kpoint_axes) == 3
     reopened.close()
     window.close()
 

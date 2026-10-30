@@ -121,6 +121,9 @@ class KeywordSpec:
     block_schema: BlockSchema | None = None
     source_order: int = 0
     vector_length: int | None = None
+    #: ``False`` keeps the keyword out of the parameter dialog's Add Parameter
+    #: picker. Parsers, validators and writers still accept it.
+    user_visible: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -604,13 +607,20 @@ def _override_kind_details(
     return ("scalar", "text", "String")
 
 
+_VISIBILITY_ONLY_OVERRIDE_KEYS = frozenset({"user_visible"})
+
+
 def _override_canonical_names(file: FileKind) -> tuple[str, ...]:
     names: list[str] = []
     if file == "cell":
         for name in BLOCK_SCHEMAS.get(file, {}):
             if name not in names:
                 names.append(name)
-    for name in KEYWORD_OVERRIDES.get(file, {}):
+    for name, override in KEYWORD_OVERRIDES.get(file, {}).items():
+        # An override that only sets ``user_visible`` adjusts a keyword the
+        # catalog provides; it never adds one the catalog lacks.
+        if set(override) <= _VISIBILITY_ONLY_OVERRIDE_KEYS:
+            continue
         if name not in names:
             names.append(name)
     return tuple(names)
@@ -688,6 +698,7 @@ def _override_spec(
         else None,
         block_schema=block_schema,
         source_order=source_order,
+        user_visible=bool(override.get("user_visible", True)),
         vector_length=(
             int(override["vector_length"])
             if override.get("vector_length") is not None

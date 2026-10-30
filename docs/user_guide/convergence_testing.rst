@@ -118,8 +118,11 @@ sweep page and lists:
   into the ``Project Defaults`` dialog.
 
 Below the summary, each card shows a read-only copy of the examiner plot as it
-was when the value was adopted, with the thresholds as ``dE``, ``dF``, and
-(when used) ``dS`` badges. The pinned plot is replaced by a placeholder when
+was when the value was adopted, drawn more compactly: the thresholds appear as
+``dE``, ``dF``, and (when used) ``dS`` badges instead of titles and legends.
+The k-point card uses the examiner's axes, with the number of k-points on a
+logarithmic scale and round spacings along the top, and names only the adopted
+grid. The pinned plot is replaced by a placeholder when
 nothing has been adopted, when the default has since been edited or cleared by
 hand, or when the active host structure has changed.
 
@@ -366,7 +369,8 @@ When stress is used it is drawn on a second axis of the force panel. Hover a
 point to see its value; on a k-point plot the tooltip also names the grid. For a k-point sweep the horizontal axis is the
 ``Number of k-points``, the product ``a x b x c`` of the grid divisions, on a
 logarithmic scale; a second axis along the top marks round ``K-point spacing
-(1/Ang)`` values at the matching positions.
+(1/Ang)`` values at the matching positions. The recommended grid is named in
+the energy panel's legend; the other grids are named only in the tooltip.
 
 The thresholds, results, and plot are saved with the project, so reopening
 the examiner shows the last analysis. An analysis saved by an earlier MuFinder

@@ -7,8 +7,8 @@ importing this module stays cheap.
 
 The rest of the module holds the window helpers that several
 ``tests/app/main_window`` modules share: selecting a project-tree route, cluster
-submission doubles for the continuation and fresh-start flows, and a staged
-Quantum Corrections row.
+submission doubles for the continuation and fresh-start flows, a staged
+Quantum Corrections row and a recording stand-in for the failed-job dialog.
 """
 
 from __future__ import annotations
@@ -253,3 +253,28 @@ def stage_quantum_row(
     candidate = window._quantum_corrections_controller.candidate_by_key(str(site.id))
     assert candidate is not None
     return definition, candidate, singlepoint_job
+
+
+def capture_failed_job_dialogs(
+    monkeypatch: pytest.MonkeyPatch, *, action: object = None
+) -> list[object]:
+    """Replace the window's failed-job dialog with one that records itself and answers.
+
+    Each dialog the window opens is appended to the returned list without being
+    shown; its ``exec`` answers with ``action`` (a ``FailedJobAction``, or
+    ``None`` for Close).
+    """
+
+    import mufinder.app.main_window as main_window_module
+    from mufinder.app.failed_job_dialog import FailedJobDialog
+
+    dialogs: list[object] = []
+
+    class _RecordingDialog(FailedJobDialog):
+        def exec(self) -> int:
+            dialogs.append(self)
+            self._action = action
+            return 1 if action is not None else 0
+
+    monkeypatch.setattr(main_window_module, "FailedJobDialog", _RecordingDialog)
+    return dialogs

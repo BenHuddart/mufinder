@@ -52,35 +52,75 @@ merged with ``catalog_overrides``, into the same keyword specs a full catalog
 produces. ``keyword_catalog_status()`` reports the origin, path, CASTEP version, keyword
 counts, whether the starter catalog is active, and any such reason.
 
+Keywords kept out of Add Parameter
+----------------------------------
+
+An entry in ``KEYWORD_OVERRIDES`` (``mufinder.castep_io.catalog_overrides``)
+may set ``user_visible`` to ``False``; it defaults to ``True``. The keyword stays
+in the schema: parsers read it, validators check it and writers render it, but
+the parameter dialog's ``Add Parameter`` picker never offers it. A value already
+stored for it still shows as a row, so it can be inspected and removed. The flag
+applies to a full catalog and to the starter catalog alike, and an override that
+sets nothing else adjusts a keyword the catalog provides without adding one the
+catalog lacks.
+
+The flag is set for these kinds of entry:
+
+- **Parser compatibility.** ``UNIT_CELL``, because MuFinder writes the lattice
+  from the project structure, and ``TSSEARCH_LST_MAX_ITER``, which CASTEP marks
+  obsolete and which is kept so older stored configurations still parse.
+- **Developer blocks.** ``DEVEL_CODE``, passed through verbatim.
+- **Keywords MuFinder sets itself.** ``NUM_FARMS``, which Quantum Corrections
+  and Energy Barriers set from their own farm count, and ``MAGRES_TASK``, which
+  the Hyperfine Coupling workflow sets.
+- **Aliases** need no flag: an alias folds into its canonical keyword and is
+  never listed on its own.
+
+The picker groups the keywords it offers under a heading for their category
+(``KEYWORD_CATEGORY_LABELS`` in ``mufinder.castep_io.gui_metadata``), with the
+headings and the keywords under each sorted by name.
+
 Installing a catalog
 --------------------
 
 .. figure:: _generated/screenshots/castep_setup_dialog.webp
-   :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
-         generate one or use an existing file.
+   :alt: The Setup > CASTEP dialog: the optional local CASTEP paths at the top,
+         then the keyword catalog with a warning that none is loaded and the
+         controls to generate one or use an existing file.
 
    ``Setup > CASTEP`` before a keyword catalog is installed.
 
 ``Setup > CASTEP`` offers two routes, and both end the same way:
 
-- **Generate Keyword Catalog** asks CASTEP to describe its keywords, either
-  locally or on a configured cluster.
-- **Use Existing File…** imports a ``castep_keywords.json`` the user already
+- **Generate** asks CASTEP to describe its keywords, either locally or on a
+  configured cluster.
+- **Use existing file…** imports a ``castep_keywords.json`` the user already
   has.
 
-The dialog keeps the keyword catalog apart from the optional ``CASTEP on this
-computer`` paths, and states that the local executable and MPI launcher are
-used only for local runs and local keyword generation. It shows which catalog
-is in use and why a configured one was skipped. A line under the generation
-target says which settings that target uses (this computer, or a cluster as a
-scheduler job or on its login node), and a set-up cluster is preselected as the
-target when no local executable is configured.
+The optional ``CASTEP on this computer`` paths sit above the ``Keyword
+catalog`` group, since generating from ``This computer`` uses them; the dialog
+states that the local executable and MPI launcher are used only for local runs
+and local keyword generation. Each path is saved when its editing finishes, and
+the MPI launcher is saved only when it is empty or an executable file, with an
+inline warning otherwise. The dialog has a single ``Close`` button.
+
+The catalog status is one line, built by ``catalog_status_line``
+(``mufinder.app.keyword_catalog_notice``): the CASTEP version and keyword
+counts, with the file's path as its tooltip and ``Show file`` opening the
+containing folder. With ``MUFINDER_CASTEP_KEYWORDS_JSON`` set the line ends
+``Overridden by MUFINDER_CASTEP_KEYWORDS_JSON``. The starter state and the
+reason a configured catalog was skipped appear beneath it in the warning
+style. A line under the generation target says which settings that target uses
+(this computer, or a cluster as a scheduler job or on its login node), and a
+set-up cluster is preselected as the target when no local executable is
+configured. The progress line appears when a run starts and keeps the last
+result.
 
 Either way the result goes through ``install_keyword_catalog``
 (``mufinder.castep_setup``), which validates the file, writes MuFinder's own
 copy into the per-user application-data directory, points the saved setup at
 that copy, and rebuilds the running schema. The user never chooses a location,
-the catalog takes effect immediately (no ``OK`` needed), and it cannot go missing
+the catalog takes effect immediately, and it cannot go missing
 because a file elsewhere was moved. The copy does not track later changes to the
 original; after a CASTEP upgrade, generate or import again. When the saved setup
 names a complete catalog outside the application-data directory, startup

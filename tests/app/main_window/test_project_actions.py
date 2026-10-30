@@ -369,39 +369,6 @@ def test_add_demo_job_requires_project(main_window, monkeypatch: pytest.MonkeyPa
     window.close()
 
 
-def test_open_castep_setup_dialog_updates_status_bar(
-    main_window, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-
-    class FakeDialog:
-        DialogCode = type("DialogCode", (), {"Accepted": 1})
-
-        def __init__(self, *args, **kwargs) -> None:
-            self._setup = type(
-                "Setup",
-                (),
-                {
-                    "executable_path": "/opt/castep/bin/castep",
-                    "keywords_json_path": "/tmp/castep_keywords.json",
-                    "mpirun_path": "",
-                },
-            )()
-
-        def exec(self):
-            return 1
-
-        def setup(self):
-            return self._setup
-
-    monkeypatch.setattr(main_window_module, "CastepSetupDialog", FakeDialog)
-
-    window._open_castep_setup_dialog()
-
-    assert "CASTEP setup updated" in window.statusBar().currentMessage()
-    window.close()
-
-
 def test_journal_write_does_not_change_active_workflow_view_on_submission(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

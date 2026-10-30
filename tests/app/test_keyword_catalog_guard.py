@@ -20,6 +20,7 @@ from mufinder.app.keyword_catalog_notice import (
     catalog_detail_text,
     catalog_short_label,
     catalog_source_description,
+    catalog_status_line,
 )
 from mufinder.castep_io.schema import (
     CatalogSourceInfo,
@@ -297,6 +298,7 @@ def test_catalog_wording_for_each_origin() -> None:
         "installed through CASTEP setup:\n/data/castep_keywords.json"
     )
     assert catalog_detail_text(setup) == catalog_source_description(setup)
+    assert catalog_status_line(setup) == "CASTEP 26.11 · 118 cell, 449 param keywords"
 
     override = _status("env_json:MUFINDER_CASTEP_KEYWORDS_JSON", version="")
     assert catalog_short_label(override) == "CASTEP keywords: loaded"
@@ -305,11 +307,16 @@ def test_catalog_wording_for_each_origin() -> None:
         "set by the MUFINDER_CASTEP_KEYWORDS_JSON environment variable, which overrides "
         "CASTEP setup:\n/data/castep_keywords.json"
     )
+    assert catalog_status_line(override) == (
+        "Unrecorded CASTEP version · 118 cell, 449 param keywords · "
+        "Overridden by MUFINDER_CASTEP_KEYWORDS_JSON"
+    )
 
     starter = _status(
         "bundled_starter_catalog", version="", issue="The configured keyword catalog is gone."
     )
     assert catalog_short_label(starter) == "CASTEP keywords: limited built-in set"
+    assert catalog_status_line(starter) == catalog_source_description(starter)
     detail = catalog_detail_text(starter)
     assert detail.index("No keyword catalog is loaded") < detail.index(
         "The configured keyword catalog is gone."

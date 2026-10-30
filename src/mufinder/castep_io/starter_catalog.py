@@ -410,6 +410,7 @@ def _starter_spec_from_catalog(
         else None,
         block_schema=block_schema,
         source_order=source_order,
+        user_visible=bool(override.get("user_visible", True)),
         vector_length=(
             int(payload["vector_length"])
             if payload.get("vector_length") is not None

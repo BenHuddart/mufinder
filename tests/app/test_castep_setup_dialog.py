@@ -380,7 +380,7 @@ def test_castep_setup_dialog_installs_generated_catalog_immediately(
 ) -> None:
     settings = _FakeSettings()
     dialog = CastepSetupDialog(settings=settings)
-    assert "limited built-in keyword set" in dialog._catalog_status_label.text()
+    assert "limited built-in keyword set" in dialog._catalog_warning_label.text()
 
     infos: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -414,11 +414,13 @@ def test_castep_setup_dialog_installs_generated_catalog_immediately(
     assert not scratch_paths[0].parent.exists()
     assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == str(managed)
     assert keyword_catalog_status().origin == "setup"
-    assert "Keyword catalog for CASTEP 26.11" in dialog._catalog_status_label.text()
-    assert "installed through CASTEP setup" in dialog._catalog_status_label.text()
+    assert dialog._catalog_status_label.text() == "CASTEP 26.11 · 63 cell, 185 param keywords"
+    assert dialog._catalog_status_label.toolTip() == str(managed)
+    assert dialog._catalog_warning_label.text() == ""
     assert dialog._progress_label.text() == "CASTEP keyword generation complete."
+    assert dialog.changes_saved is True
 
-    dialog._accept_and_save()
+    # Generating saved the executable it ran, with no OK to press.
     assert settings.value(CASTEP_EXECUTABLE_KEY, "", str) == "/opt/castep/bin/castep"
     assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == str(managed)
     assert keyword_catalog_status().origin == "setup"
@@ -518,7 +520,11 @@ def test_castep_setup_dialog_import_says_when_an_env_override_wins(
     assert "It is not in use yet" in infos[0]
     assert "MUFINDER_CASTEP_KEYWORDS_JSON environment variable overrides CASTEP setup" in infos[0]
     assert keyword_catalog_status().castep_version == "23.1"
-    assert "which overrides CASTEP setup" in dialog._catalog_status_label.text()
+    assert dialog._catalog_status_label.text() == (
+        "CASTEP 23.1 · 63 cell, 185 param keywords · Overridden by MUFINDER_CASTEP_KEYWORDS_JSON"
+    )
+    assert dialog._catalog_status_label.toolTip() == str(override)
+    assert dialog._show_catalog_file_button.isEnabled() is True
     dialog.close()
 
 
@@ -634,19 +640,300 @@ class _FakeSignal:
         pass
 
 
+class _NeverStartedProcess:
+    """A ``QProcess`` stand-in that records nothing and never runs."""
+
+    def __init__(self, _parent=None) -> None:
+        self.readyReadStandardOutput = _FakeSignal()
+        self.readyReadStandardError = _FakeSignal()
+        self.finished = _FakeSignal()
+        self.errorOccurred = _FakeSignal()
+
+    def start(self, _program: str, _arguments: list[str]) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+
 def test_castep_setup_dialog_explains_a_missing_catalog(qapp, no_catalog_env) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
 
-    assert dialog.findChild(QLabel, "catalogStatusLabel").text() == (
+    dialog.show()
+
+    # The starter state is the warning line; there is no file to show.
+    assert dialog._catalog_warning_label.text() == (
         "No keyword catalog is loaded; MuFinder is using its limited built-in keyword set."
     )
-    intro = next(
-        label.text()
-        for label in dialog.findChildren(QLabel)
-        if "castep_keywords.json" in label.text()
-    )
+    assert dialog._catalog_warning_label.objectName() == "warningText"
+    assert dialog.findChild(QLabel, "catalogStatusLabel").isVisible() is False
+    assert dialog._show_catalog_file_button.isEnabled() is False
+    intro = dialog.findChild(QLabel, "catalogIntro").text()
     assert "some results cannot be loaded" in intro
-    assert "there is no location to choose" in intro
+    assert "MuFinder keeps its own copy of whatever you generate or import." in intro
+    assert "no location to choose" not in intro
+    dialog.close()
+
+
+def test_castep_setup_dialog_show_file_reveals_the_installed_catalog(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _FakeSettings()
+    source = write_complete_catalog(tmp_path / "src.json", "26.11")
+    install_keyword_catalog(source, settings)
+    opened: list[Path] = []
+    monkeypatch.setattr(dialog_module, "open_containing_folder", opened.append)
+
+    dialog = CastepSetupDialog(settings=settings)
+    dialog.show()
+
+    assert dialog._catalog_status_label.isVisible() is True
+    assert dialog._catalog_warning_label.isVisible() is False
+    assert dialog._show_catalog_file_button.isEnabled() is True
+    dialog._show_catalog_file_button.click()
+    assert opened == [managed_keywords_json_path().parent]
+    dialog.close()
+
+
+def test_castep_setup_dialog_saves_paths_as_they_are_edited(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    assert dialog.changes_saved is False
+
+    dialog._executable_edit.setText("/opt/castep/bin/castep")
+    dialog._executable_edit.editingFinished.emit()
+    assert settings.value(CASTEP_EXECUTABLE_KEY, "", str) == "/opt/castep/bin/castep"
+    assert dialog.changes_saved is True
+
+    launcher = tmp_path / "mpirun"
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    dialog._mpirun_edit.setText(str(launcher))
+    dialog._mpirun_edit.editingFinished.emit()
+    assert settings.value(CASTEP_MPIRUN_KEY, "", str) == str(launcher)
+    assert dialog._mpirun_warning_label.isHidden() is True
+    dialog.close()
+
+
+def test_castep_setup_dialog_warns_inline_and_keeps_an_invalid_mpirun_unsaved(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _FakeSettings()
+    settings.setValue(CASTEP_MPIRUN_KEY, "/usr/bin/mpirun")
+    dialog = CastepSetupDialog(settings=settings)
+    modals: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _parent, title, _message: modals.append(title)
+    )
+    not_executable = tmp_path / "mpirun.txt"
+    not_executable.write_text("", encoding="utf-8")
+
+    dialog._mpirun_edit.setText(str(not_executable))
+    dialog._mpirun_edit.editingFinished.emit()
+
+    assert settings.value(CASTEP_MPIRUN_KEY, "", str) == "/usr/bin/mpirun"
+    assert dialog._mpirun_warning_label.isHidden() is False
+    assert dialog._mpirun_warning_label.objectName() == "warningText"
+    assert "does not point to an executable file" in dialog._mpirun_warning_label.text()
+    assert modals == []
+    assert dialog.changes_saved is False
+
+    # Local generation does not start with the invalid launcher, and says why.
+    started: list[str] = []
+    monkeypatch.setattr(
+        dialog, "_start_generation_process", lambda executable, _path: started.append(executable)
+    )
+    dialog._executable_edit.setText("/opt/castep/bin/castep")
+    dialog._generate_keywords()
+    assert started == []
+    assert "Fix or clear it to generate from this computer." in (
+        dialog._mpirun_warning_label.text()
+    )
+    assert dialog._progress_label.isHidden() is True
+
+    # Clearing the field is valid and saves the empty launcher.
+    dialog._mpirun_edit.clear()
+    dialog._mpirun_edit.editingFinished.emit()
+    assert settings.value(CASTEP_MPIRUN_KEY, "", str) == ""
+    assert dialog._mpirun_warning_label.isHidden() is True
+    dialog.close()
+
+
+def test_castep_setup_dialog_saves_a_browsed_or_detected_path(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    launcher = tmp_path / "mpirun"
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    monkeypatch.setattr(
+        dialog_module.QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: ("/opt/castep/bin/castep", ""),
+    )
+    dialog._browse_executable_button.click()
+    assert settings.value(CASTEP_EXECUTABLE_KEY, "", str) == "/opt/castep/bin/castep"
+
+    monkeypatch.setattr(dialog_module, "discover_mpirun", lambda: str(launcher))
+    dialog._detect_mpirun_button.click()
+    assert settings.value(CASTEP_MPIRUN_KEY, "", str) == str(launcher)
+    dialog.close()
+
+
+def test_castep_setup_dialog_return_in_a_path_field_presses_no_button(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QPushButton
+
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    dialog.show()
+    pickers: list[object] = []
+    monkeypatch.setattr(
+        dialog_module.QFileDialog,
+        "getOpenFileName",
+        lambda *args, **_kwargs: pickers.append(args) or ("", ""),
+    )
+
+    assert [button for button in dialog.findChildren(QPushButton) if button.isDefault()] == []
+    dialog._executable_edit.setFocus()
+    dialog._executable_edit.setText("/opt/castep/bin/castep")
+    QTest.keyClick(dialog._executable_edit, Qt.Key.Key_Return)
+
+    assert pickers == []
+    assert dialog.isVisible() is True
+    assert settings.value(CASTEP_EXECUTABLE_KEY, "", str) == "/opt/castep/bin/castep"
+    dialog.close()
+
+
+def test_castep_setup_dialog_close_stays_open_once_for_a_new_launcher_warning(
+    qapp, tmp_path: Path
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    dialog.show()
+    not_executable = tmp_path / "mpirun.txt"
+    not_executable.write_text("", encoding="utf-8")
+    dialog._mpirun_edit.setText(str(not_executable))
+
+    # The first close shows the warning instead of losing the edit silently.
+    dialog.reject()
+    assert dialog.isVisible() is True
+    assert dialog._mpirun_warning_label.isHidden() is False
+
+    # Closing again leaves the saved launcher as it was.
+    dialog.reject()
+    assert dialog.isVisible() is False
+    assert settings.value(CASTEP_MPIRUN_KEY, "", str) == ""
+
+
+def test_castep_setup_dialog_height_follows_the_progress_line(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(dialog_module, "QProcess", _NeverStartedProcess)
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    dialog.show()
+    idle_height = dialog.height()
+
+    dialog._start_generation_process("/opt/castep/bin/castep", tmp_path / "castep_keywords.json")
+    qapp.processEvents()
+    running_height = dialog.height()
+    dialog._cancel_generation()
+    dialog._on_generation_finished(1, None)
+    qapp.processEvents()
+
+    assert running_height > idle_height
+    # The bar is gone; the result line stays, so the dialog shrinks back part way.
+    assert idle_height < dialog.height() < running_height
+    dialog.close()
+
+
+def test_castep_setup_dialog_closing_saves_the_last_edit(qapp) -> None:
+    """Escape skips editingFinished, so closing saves what was typed."""
+
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    dialog._executable_edit.setText("/opt/castep/bin/castep")
+
+    dialog.reject()
+
+    assert settings.value(CASTEP_EXECUTABLE_KEY, "", str) == "/opt/castep/bin/castep"
+    assert dialog.changes_saved is True
+
+
+def test_castep_setup_dialog_offers_only_close(qapp) -> None:
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+
+    box = dialog.findChild(QDialogButtonBox)
+    assert box.standardButtons() == QDialogButtonBox.StandardButton.Close
+    assert len(box.buttons()) == 1
+    dialog.close()
+
+
+def test_castep_setup_dialog_puts_local_paths_before_the_catalog(qapp) -> None:
+    from PySide6.QtWidgets import QGroupBox
+
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+
+    titles = [group.title() for group in dialog.findChildren(QGroupBox)]
+    assert titles == ["CASTEP on this computer (optional)", "Keyword catalog"]
+    layout = dialog.layout()
+    indices = {
+        layout.itemAt(index).widget().title(): index
+        for index in range(layout.count())
+        if isinstance(layout.itemAt(index).widget(), QGroupBox)
+    }
+    assert indices["CASTEP on this computer (optional)"] < indices["Keyword catalog"]
+    dialog.close()
+
+
+def test_castep_setup_dialog_hides_the_progress_line_until_a_run_starts(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(dialog_module, "QProcess", _NeverStartedProcess)
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    dialog.show()
+
+    assert dialog._progress_label.isVisible() is False
+    assert dialog._progress_bar.isVisible() is False
+
+    dialog._start_generation_process("/opt/castep/bin/castep", tmp_path / "castep_keywords.json")
+    assert dialog._progress_label.isVisible() is True
+    assert dialog._progress_bar.isVisible() is True
+
+    # Cancelling leaves the result line in view and hides the bar.
+    dialog._cancel_generation()
+    dialog._on_generation_finished(1, None)
+    assert dialog._progress_label.isVisible() is True
+    assert dialog._progress_label.text() == "CASTEP keyword generation cancelled."
+    assert dialog._progress_bar.isVisible() is False
+    dialog.close()
+
+
+def test_castep_setup_dialog_fits_a_1333_by_864_window(qapp) -> None:
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    dialog.show()
+
+    minimum = dialog.minimumSizeHint()
+    assert minimum.width() <= 1333
+    assert minimum.height() <= 864
+    assert dialog.width() <= 1333
+    assert dialog.height() <= 864
     dialog.close()
 
 
@@ -664,7 +951,7 @@ def test_castep_setup_dialog_reports_a_configured_catalog_that_went_missing(
 
     dialog = CastepSetupDialog(settings=settings)
 
-    text = dialog._catalog_status_label.text()
+    text = dialog._catalog_warning_label.text()
     assert f"The configured keyword catalog '{missing}' no longer exists." in text
     assert "No keyword catalog is loaded" in text
     dialog.close()
@@ -833,13 +1120,15 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
     dialog.close()
 
 
-def test_castep_setup_dialog_text_fields_are_taller_by_default(qapp) -> None:
+def test_castep_setup_dialog_path_fields_are_taller_and_equally_wide(qapp) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
+    dialog.show()
 
     assert dialog._executable_edit.minimumHeight() >= 34
     assert dialog._mpirun_edit.minimumHeight() >= 34
-    assert dialog._executable_edit.minimumWidth() >= 740
-    assert dialog._mpirun_edit.minimumWidth() >= 740
+    # No fixed minimum width; the mpirun field's extra button does not shorten it.
+    assert dialog._executable_edit.minimumWidth() == 0
+    assert dialog._executable_edit.width() == dialog._mpirun_edit.width()
     dialog.close()
 
 
@@ -886,11 +1175,11 @@ def test_castep_setup_dialog_says_which_settings_each_target_uses(qapp) -> None:
     assert "Only needed to run calculations on this computer" in note
     assert "Cluster jobs and cluster keyword generation never use these paths" in note
     assert "Setup > HPC Clusters" in note
-    assert dialog._executable_edit.parent().parent().title() == "CASTEP on this computer (optional)"
+    assert dialog._executable_edit.parent().title() == "CASTEP on this computer (optional)"
 
     # On this computer there is no scheduler/login-node choice to make.
     assert dialog._generate_target_combo.currentData() == "local"
-    assert hint.text().startswith("Runs the CASTEP executable set below on this computer")
+    assert hint.text().startswith("Runs the CASTEP executable set above on this computer")
     assert dialog._generate_method_combo.isVisible() is False
 
     dialog._generate_target_combo.setCurrentText("SCARF")
@@ -900,7 +1189,7 @@ def test_castep_setup_dialog_says_which_settings_each_target_uses(qapp) -> None:
     assert hint.text().startswith(
         "Runs CASTEP on SCARF as a short scheduler job, using that cluster's settings"
     )
-    assert "The paths below are not used." in hint.text()
+    assert "The paths above are not used." in hint.text()
 
     dialog._generate_method_combo.setCurrentText("Login node")
     assert hint.text().startswith(
@@ -946,6 +1235,8 @@ def test_castep_setup_dialog_login_node_choice_is_used_and_remembered(
     saved = {config.name: config for config in dialog_module.load_cluster_configs(settings)}
     assert saved["SCARF"].keyword_execution_mode == "direct"
     assert saved["Redwood"].keyword_execution_mode == "direct"  # stored preset value, untouched
+    # The remembered method counts as a saved change for the status bar.
+    assert dialog.changes_saved is True
     dialog.close()
 
     reopened = CastepSetupDialog(settings=settings)
@@ -959,4 +1250,5 @@ def test_castep_setup_dialog_login_node_choice_is_used_and_remembered(
         lambda *_args, **_kwargs: pytest.fail("unchanged method must not be re-saved"),
     )
     reopened._generate_keywords()
+    assert reopened.changes_saved is False
     reopened.close()

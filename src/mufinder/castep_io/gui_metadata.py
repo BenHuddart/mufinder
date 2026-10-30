@@ -51,6 +51,75 @@ def keyword_visible_in_workflow(
     return False
 
 
+#: Group headings for keyword categories, in sentence case. A category that is
+#: not listed is shown with its underscores as spaces and a capital first letter.
+KEYWORD_CATEGORY_LABELS: dict[str, str] = {
+    "constraints": "Constraints",
+    "electronic": "Electronic",
+    "elnes": "ELNES",
+    "general": "General",
+    "geometry": "Geometry optimisation",
+    "io": "Input and output",
+    "kpoints": "K-points",
+    "magres": "Magnetic resonance",
+    "molecular_dynamics": "Molecular dynamics",
+    "optics": "Optics",
+    "phonon": "Phonons",
+    "pseudopotentials": "Species and pseudopotentials",
+    "scf": "SCF",
+    "spectral": "Spectral",
+    "structure": "Structure",
+    "symmetry": "Symmetry",
+    "tddft": "TDDFT",
+    "tssearch": "Transition-state search",
+    "wannier": "Wannier functions",
+    "workflow": "Workflow",
+}
+
+
+def keyword_category_label(category: str | None) -> str:
+    """Return the heading a keyword category is grouped under in the parameter picker."""
+
+    key = (category or "general").strip().lower() or "general"
+    if key in KEYWORD_CATEGORY_LABELS:
+        return KEYWORD_CATEGORY_LABELS[key]
+    text = key.replace("_", " ")
+    return text[:1].upper() + text[1:]
+
+
+def exclusive_partner_labels(spec: KeywordSpec) -> tuple[str, ...]:
+    """Return the labels of the keywords that cannot be set together with ``spec``.
+
+    The partners are the keyword's ``mutually_exclusive_with`` entries, then the
+    keywords whose own list names it, then the other members of its
+    ``exclusive_group``, looked up in the active schema for the label; a partner
+    the schema does not list is shown by its name.
+    """
+
+    schema = keyword_specs(spec.file)
+    names: list[str] = [
+        canonical_keyword_name(spec.file, str(item)) for item in spec.mutually_exclusive_with
+    ]
+    names.extend(
+        name
+        for name, other in schema.items()
+        if spec.name
+        in {canonical_keyword_name(spec.file, str(item)) for item in other.mutually_exclusive_with}
+    )
+    if spec.exclusive_group:
+        names.extend(
+            name for name, other in schema.items() if other.exclusive_group == spec.exclusive_group
+        )
+    labels: list[str] = []
+    for name in dict.fromkeys(names):
+        if not name or name == spec.name:
+            continue
+        other = schema.get(name)
+        label = (other.label if other is not None else None) or name.upper()
+        labels.append(label)
+    return tuple(labels)
+
+
 def keyword_visible_for_task(spec: KeywordSpec, *, task: str) -> bool:
     """Return whether a keyword should be shown for the effective CASTEP task."""
 
