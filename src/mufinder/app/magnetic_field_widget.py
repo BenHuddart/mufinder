@@ -1700,8 +1700,7 @@ class MagneticFieldWidget(QWidget):
                     "field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD
                 ),
             )
-        if self._result_table.rowCount() > 0:
-            self._result_table.selectRow(0)
+        self._finish_result_rows()
 
     def _populate_distribution_results(self, results: object, *, site_source: str) -> None:
         self._distribution_results = list(results)
@@ -1722,8 +1721,7 @@ class MagneticFieldWidget(QWidget):
                 ),
                 distribution_index=index,
             )
-        if self._result_table.rowCount() > 0:
-            self._result_table.selectRow(0)
+        self._finish_result_rows()
         self._sync_distribution_plot_button()
 
     def _restore_field_results(self) -> None:
@@ -1760,8 +1758,7 @@ class MagneticFieldWidget(QWidget):
                 self._append_result_row(
                     str(result.get("site_label", "site")), total, magnitude, result_type
                 )
-            if self._result_table.rowCount() > 0:
-                self._result_table.selectRow(0)
+            self._finish_result_rows()
             self._calculation_status.setText(
                 f"Results: restored {plural(len(result_payloads), 'commensurate field value')}."
                 + self._estimate_status_suffix()
@@ -1787,8 +1784,7 @@ class MagneticFieldWidget(QWidget):
                     ),
                     distribution_index=index,
                 )
-            if self._result_table.rowCount() > 0:
-                self._result_table.selectRow(0)
+            self._finish_result_rows()
             self._calculation_status.setText(
                 f"Results: restored {plural(len(result_payloads), 'incommensurate distribution')}."
                 + self._estimate_status_suffix()
@@ -1871,6 +1867,8 @@ class MagneticFieldWidget(QWidget):
         *,
         distribution_index: int | None = None,
     ) -> None:
+        """Add one result row; end a fill with ``_finish_result_rows``, which fits the rows."""
+
         row = self._result_table.rowCount()
         self._result_table.insertRow(row)
         values = [
@@ -1885,7 +1883,16 @@ class MagneticFieldWidget(QWidget):
             if distribution_index is not None:
                 item.setData(_DISTRIBUTION_RESULT_ROLE, int(distribution_index))
             self._result_table.setItem(row, column, item)
+
+    def _finish_result_rows(self) -> None:
+        """Fit the appended rows and select the first.
+
+        Runs once per fill: resizing after every row is quadratic in the row count.
+        """
+
         self._result_table.resizeRowsToContents()
+        if self._result_table.rowCount() > 0:
+            self._result_table.selectRow(0)
 
     def _selected_distribution_results(self) -> tuple[object, ...]:
         selected = self._result_table.selectedItems()
