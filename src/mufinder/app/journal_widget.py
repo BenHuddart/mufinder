@@ -27,6 +27,7 @@ from mufinder.services.journal import (
     build_journal,
     export_journal,
     extend_journal,
+    stamp_label,
 )
 from mufinder.domain.models import ProvenanceRecord
 
@@ -244,7 +245,7 @@ class JournalWidget(QWidget):
         stamp = QLabel(card)
         stamp.setObjectName("journalStamp")
         stamp.setProperty("stampKind", entry.stamp_kind)
-        stamp.setText(self._stamp_text(entry.stamp_kind))
+        stamp.setText(stamp_label(entry.stamp_kind))
         top_row.addWidget(stamp, 0, Qt.AlignmentFlag.AlignLeft)
         top_row.addStretch(1)
         layout.addLayout(top_row)
@@ -307,13 +308,3 @@ class JournalWidget(QWidget):
             for character in project_name.strip()
         )
         return cleaned.strip("_") or "project"
-
-    @staticmethod
-    def _stamp_text(stamp_kind: str) -> str:
-        labels = {
-            "milestone": "Milestone",
-            "success": "Completed",
-            "warning": "Attention",
-            "danger": "Failed",
-        }
-        return labels.get(stamp_kind, "Entry")

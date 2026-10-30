@@ -494,7 +494,9 @@ defined by two of these modules, and a pinned count may only fall.
        (``spacing_axis_ticks``).
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
-       and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`).
+       and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`), and
+       the cores per job a project's next local run offers
+       (``remembered_local_cores``, ``remember_local_cores``).
    * - ``mufinder.services.job_paths``
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
@@ -654,7 +656,8 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.services.project_summary``
      - The workflow-stage catalogue the navigator and the project home are built
        from (``WORKFLOW_STAGES``, ``STAGE_GROUPS``: titles, completion goals and
-       guidance), the dependency graph between stages (``STAGE_DEPENDENCIES``),
+       guidance; ``job_stage_title`` names the page a batch of jobs came from),
+       the dependency graph between stages (``STAGE_DEPENDENCIES``),
        each stage's completion rule (``COMPLETION_CHECKS`` and the ``*_complete``
        functions), the muon-relaxation row and job lookups those rules share
        (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
@@ -719,8 +722,11 @@ defined by two of these modules, and a pinned count may only fall.
      - The in-memory project aggregate (``ProjectDocument``), the active host
        (``active_host_structure``) and the read-only definition and job
        lookups (``definitions_for_stage``, ``active_definition``,
-       ``job_for_mapping_key``; see Workflow controllers).
-       ``mufinder.services.project_service`` re-exports these names.
+       ``job_for_mapping_key``; see Workflow controllers), and the label of
+       the workflow row that owns a job (``job_row_label``), which job
+       provenance records carry for the Journal.
+       ``mufinder.services.project_service`` re-exports all but
+       ``job_row_label``.
    * - ``mufinder.services.supercell_assets``
      - Saved supercell assets built from a host (create, rename, regenerate,
        delete, the frozen rule and its references), each workflow's
@@ -868,9 +874,13 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.domain.text``
      - Helpers for text shown to the user, for every layer that builds it:
        ``plural`` writes a count that agrees with its number (``1 job``,
-       ``3 jobs``; see :doc:`/ui_text`), and ``natural_sort_key`` orders
+       ``3 jobs``; see :doc:`/ui_text`), ``natural_sort_key`` orders
        labels with their numbers compared as numbers (``site_2`` before
-       ``site_10``).
+       ``site_10``), and ``execution_target_text`` names where a job runs
+       (``this computer``, or the cluster's name). The name of each muon
+       generation method, which the ``Generate Sites`` picker and the Journal
+       both show, is ``GENERATION_METHOD_LABELS`` in
+       ``mufinder.domain.models``.
 
 Widget contract
 ~~~~~~~~~~~~~~~

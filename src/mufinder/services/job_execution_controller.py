@@ -39,6 +39,29 @@ class SubmissionOutcome:
         return len(self.submitted_jobs)
 
 
+#: Project ``ui_state`` key holding the cores per job of the last local run.
+LOCAL_SUBMISSION_CORES_KEY = "local_submission_cores"
+
+
+def remembered_local_cores(ui_state: Mapping[str, Any]) -> int | None:
+    """Return the cores per job last used for a local run in this project.
+
+    ``None`` when the project has not run anything locally yet, or the saved
+    value is not a positive whole number.
+    """
+
+    value = ui_state.get(LOCAL_SUBMISSION_CORES_KEY)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+def remember_local_cores(ui_state: dict[str, Any], num_cores: int) -> None:
+    """Record ``num_cores`` as the cores per job the next local run offers."""
+
+    ui_state[LOCAL_SUBMISSION_CORES_KEY] = max(1, int(num_cores))
+
+
 @dataclass(frozen=True, slots=True)
 class ClusterJobSubmission:
     """Controller-owned inputs for submitting one remote job."""

@@ -7,6 +7,7 @@ import numpy as np
 from mufinder.domain.models import Structure
 from mufinder.science import structure_metrics as sm
 from mufinder.science.atom_matching import AtomMatching, match_structures
+from mufinder.science.supercell_matching import tile_to_supercell
 from mufinder.science.symmetry_analysis import SpaceGroupResult
 from mufinder.science.structure_metrics import (
     MetricDefinition,
@@ -292,3 +293,51 @@ def test_a_change_that_rounds_to_zero_is_never_negative() -> None:
     assert sm._format_with_change(89.99999, 90.0) == "90 (+0.00 %)"
     assert sm._format_with_change(90.0, 90.0) == "90 (+0.00 %)"
     assert sm._format_with_change(89.99, 90.0) == "89.99 (-0.01 %)"
+
+
+def _strained_supercell(matrix: tuple[tuple[int, int, int], ...], strain: np.ndarray) -> Structure:
+    """The ``_exp`` cube tiled to ``matrix``, its Cartesian frame strained by ``strain``."""
+
+    tiled = tile_to_supercell(_exp(), matrix)
+    tiled.lattice_vectors = (np.asarray(tiled.lattice_vectors) @ strain).tolist()
+    return tiled
+
+
+def test_a_2x2x2_supercell_column_reads_per_host_cell() -> None:
+    matrix = ((2, 0, 0), (0, 2, 0), (0, 0, 2))
+    dft = _strained_supercell(matrix, np.eye(3) * 1.003)
+
+    values = dft_metric_values(
+        tile_to_supercell(_exp(), matrix),
+        dft,
+        _empty_matching(),
+        host=_exp(),
+        supercell_matrix=matrix,
+    )
+
+    assert np.isclose(values["a"].value, 5.015)
+    assert values["a"].display == "5.015 (+0.30 %)"
+    assert values["gamma"].display == "90 (+0.00 %)"
+    assert np.isclose(values["cell_volume"].value, 125.0 * 1.003**3)
+    assert values["cell_volume"].display.endswith("(+0.90 %)")
+
+
+def test_a_non_diagonal_supercell_column_reads_the_host_cell_it_implies() -> None:
+    # A sqrt(2) x sqrt(2) x 1 cell rotated 45° from the host axes, strained 1 %
+    # along the host a only. Per supercell vector a would read +0.50 %.
+    matrix = ((1, 1, 0), (-1, 1, 0), (0, 0, 1))
+    dft = _strained_supercell(matrix, np.diag([1.01, 1.0, 1.0]))
+
+    values = dft_metric_values(
+        tile_to_supercell(_exp(), matrix),
+        dft,
+        _empty_matching(),
+        host=_exp(),
+        supercell_matrix=matrix,
+    )
+
+    assert values["a"].display == "5.05 (+1.00 %)"
+    assert values["b"].display == "5 (+0.00 %)"
+    assert values["c"].display == "5 (+0.00 %)"
+    assert values["gamma"].display == "90 (+0.00 %)"
+    assert values["cell_volume"].display == "126.25 (+1.00 %)"

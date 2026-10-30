@@ -48,6 +48,34 @@ def write_complete_catalog(path: Path, castep_version: str = "26.11") -> Path:
     return path
 
 
+def catalog_entry(
+    option_type: str, docstring: str = "Example", *, level: str = "Basic"
+) -> dict[str, str]:
+    """Return one ``castep_keywords.json`` entry with the given CASTEP type."""
+
+    return {"option_type": option_type, "level": level, "docstring": docstring}
+
+
+def refresh_from_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cell: dict[str, dict[str, str]],
+    param: dict[str, dict[str, str]],
+) -> None:
+    """Write a small catalog of ``cell`` and ``param`` entries and rebuild the schema on it."""
+
+    import mufinder.castep_io.schema as schema_module
+
+    catalog = tmp_path / "castep_keywords.json"
+    catalog.write_text(
+        json.dumps({"castep_version": "test", "cell": cell, "param": param}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(schema_module.OVERRIDE_KEYWORDS_JSON_ENV_VAR, str(catalog))
+    schema_module.refresh_keyword_catalog()
+
+
 def isolate_catalog_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start from a machine with no catalog configured.
 

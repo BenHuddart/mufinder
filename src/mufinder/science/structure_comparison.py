@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+import numpy as np
+
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.atom_matching import AtomMatching, match_structures
 from mufinder.science.structure_metrics import (
     MetricDefinition,
@@ -48,6 +51,19 @@ class ComparisonResult:
     warnings: tuple[str, ...] = ()
 
 
+def _per_host_cell_note(normalization: NormalizedStructurePair) -> str:
+    """The banner note for a supercell column: its tiling, and that it is read per host cell."""
+
+    matrix = normalization.supercell_matrix
+    diagonal = all(matrix[i][j] == 0 for i in range(3) for j in range(3) if i != j)
+    if diagonal and all(matrix[i][i] > 0 for i in range(3)):
+        supercell = f"{matrix[0][0]} × {matrix[1][1]} × {matrix[2][2]} supercell"
+    else:
+        host_cells = round(abs(float(np.linalg.det(np.asarray(matrix, dtype=float)))))
+        supercell = f"Supercell of {plural(host_cells, 'host cell')}"
+    return f"{supercell}; its lattice parameters are shown per host cell."
+
+
 def compare_structures(
     experimental_structure: Structure,
     dft_structures: list[DftComparisonInput],
@@ -66,11 +82,19 @@ def compare_structures(
     for dft_input in dft_structures:
         normalization = normalize_for_comparison(experimental_structure, dft_input.structure)
         matching = match_structures(normalization.experimental, normalization.dft)
-        values = dft_metric_values(normalization.experimental, normalization.dft, matching)
+        values = dft_metric_values(
+            normalization.experimental,
+            normalization.dft,
+            matching,
+            host=experimental_structure,
+            supercell_matrix=normalization.supercell_matrix,
+        )
 
         column_warnings = [*normalization.warnings, *matching.warnings]
         if column_warnings:
             warnings.extend(f"{dft_input.label}: {warning}" for warning in column_warnings)
+        if normalization.is_supercell:
+            warnings.append(f"{dft_input.label}: {_per_host_cell_note(normalization)}")
 
         columns.append(
             DftComparisonColumn(
