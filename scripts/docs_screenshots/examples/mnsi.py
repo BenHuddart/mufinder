@@ -38,7 +38,7 @@ from ..render import (
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QSplitter, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
 
 from mufinder.domain.models import Structure
 from mufinder.science.magnetic_structure import MagneticStructureModel
@@ -158,13 +158,6 @@ def mnsi_project(
 # --- Scene steps --------------------------------------------------------------
 
 
-def widen_atom_table(page: QWidget) -> None:
-    """Widen the atom table so the ``Spin (hbar/2)`` column is not cut off."""
-
-    page.findChild(QSplitter).setSizes([560, 540])
-    frame_viewers(page)
-
-
 def open_builder(window: MainWindow) -> None:
     window._magnetic_field_view._edit_structure_button.click()
 
@@ -282,7 +275,7 @@ SCENES: dict[str, Scene] = {
     "mnsi_host_structure": Scene(
         helix_project,
         "host_structure",
-        Page("_host_structure_view", (1100, 760), prepare=widen_atom_table),
+        Page("_host_structure_view", (1100, 760), prepare=frame_viewers),
     ),
     "mnsi_magnetic_structure_builder": Scene(
         helix_project,

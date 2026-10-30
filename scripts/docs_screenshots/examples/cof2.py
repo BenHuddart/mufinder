@@ -66,7 +66,6 @@ from ..render import (
     scratch_directory,
     select_all_sites,
     settle,
-    show_host_with_spins,
     synthetic_runs,
     view_along_a,
     when_modal,
@@ -1266,7 +1265,7 @@ SCENES: dict[str, Scene] = {
     "host_structure_page": Scene(
         fixture_project,
         "host_structure",
-        Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins),
+        Page("_host_structure_view", (1100, 760), prepare=view_along_a),
     ),
     "supercell_editor": Scene(
         fixture_project,

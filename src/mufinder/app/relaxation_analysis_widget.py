@@ -78,7 +78,7 @@ from mufinder.app.theme import (
 )
 from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
 from mufinder.app.viewer_dialog import StructureViewerDialog
-from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.app.workflow_table_utils import create_workflow_table, table_natural_width
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.relaxation_analysis import (
@@ -926,23 +926,6 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _summary_table_natural_width(self) -> int:
-        """Return the width the cluster summary table needs to show every column in full."""
-
-        table = self._summary_table
-        header = table.horizontalHeader()
-        width = 0
-        for column in range(table.columnCount()):
-            if table.isColumnHidden(column):
-                continue
-            if header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch:
-                width += max(header.sectionSizeHint(column), table.sizeHintForColumn(column))
-            else:
-                width += table.columnWidth(column)
-        if table.verticalHeader().isVisible():
-            width += table.verticalHeader().width()
-        return width + 2 * table.frameWidth() + table.verticalScrollBar().sizeHint().width()
-
     def _apply_default_split(self) -> None:
         """Split the plot and viewer panes until the user drags the handle.
 
@@ -958,7 +941,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         if total <= 0:
             return
         plot_minimum = splitter.widget(0).minimumSizeHint().width()
-        right = max(total // 2, self._summary_table_natural_width())
+        right = max(total // 2, table_natural_width(self._summary_table))
         right = max(min(right, total - plot_minimum), 1)
         splitter.setSizes([total - right, right])
 

@@ -7,13 +7,17 @@ The structure viewer's own behaviour is tested in ``test_atomic_structure_viewer
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QSplitter
 
 from mufinder.app.host_structure_widget import HostStructureWidget
+from mufinder.app.workflow_table_utils import table_natural_width
 from mufinder.services.project_service import ProjectService
+from tests.support.main_window import select_route
 from tests.support.pyvista_fakes import install_fake_picker
 from tests.support.structures import (
     hexagonal_magnesium_oxide_host,
@@ -22,27 +26,186 @@ from tests.support.structures import (
 )
 
 
-def test_host_structure_widget_splitter_fits_small_screen_width(qapp) -> None:
-    """Viewer/table minimums fit a 1280px window (SC-7 small-screen fix).
+def _assert_atom_table_fits(widget: HostStructureWidget) -> None:
+    """Every column of the atom table is on screen and no horizontal scrollbar shows."""
+    table = widget._atom_table
+    last = table.columnCount() - 1
+    assert not table.horizontalScrollBar().isVisible()
+    assert table.columnViewportPosition(last) + table.columnWidth(last) <= table.viewport().width()
+    # The column is as wide as its text needs, so nothing inside it is elided.
+    assert table.columnWidth(last) >= table.horizontalHeader().sectionSizeHint(last)
+    assert table.columnWidth(last) >= table.sizeHintForColumn(last)
 
-    The table is capped at its content width (never locked to it), so the
-    central splitter can shrink the table pane below its content width with a
-    horizontal scrollbar, leaving room for the reduced-minimum viewer.
-    """
+
+def _crowded_host(atom_count: int):
+    return host_structure(
+        species=["Si"] * atom_count,
+        positions=[(0.0, 0.0, index / atom_count) for index in range(atom_count)],
+    )
+
+
+def test_atom_table_fits_at_the_default_window_size(main_window, tmp_path: Path) -> None:
+    """The window's default size shows the whole table, ``Spin (hbar/2)`` included."""
+    window = main_window
+    window._document = ProjectService().create_project(tmp_path / "fit.mufinder", "Fit")
+    window._refresh_ui_after_project_change()
+    page = window._host_structure_view
+    page.set_structure(magnetic_silicon_oxide_host())
+    select_route(window, "host_structure")
+    window.resize(1280, 864)
+    window.show()
+    QApplication.processEvents()
+
+    _assert_atom_table_fits(page)
+    assert page._viewer.width() >= page._viewer.minimumWidth()
+    window.close()
+
+
+def test_atom_table_fits_when_the_structure_loaded_before_the_page_was_shown(qapp) -> None:
+    """A project opens with the page hidden; the split is still right on first show."""
     widget = HostStructureWidget()
     widget.set_structure(magnetic_silicon_oxide_host())
+    widget.resize(1000, 700)
+    widget.show()
+    qapp.processEvents()
+
+    _assert_atom_table_fits(widget)
+    # The viewer, not the table, gets everything the table does not need.
+    assert widget._viewer.width() > widget._atom_table.width()
+
+
+def test_atom_table_fits_when_a_structure_loads_into_a_visible_page(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.resize(1000, 700)
+    widget.show()
+    qapp.processEvents()
+
+    widget.set_structure(magnetic_silicon_oxide_host())
+    qapp.processEvents()
+
+    _assert_atom_table_fits(widget)
+
+
+def test_atom_table_fits_with_four_digit_row_numbers_and_a_vertical_scrollbar(qapp) -> None:
+    """At 1,000+ atoms the row numbers widen and the rows overflow; the split allows for both."""
+    widget = HostStructureWidget()
+    widget.set_structure(magnetic_silicon_oxide_host())
+    narrow_gutter_width = table_natural_width(widget._atom_table)
+    widget.set_structure(_crowded_host(1200))
+    widget.resize(1000, 500)
+    widget.show()
+    qapp.processEvents()
+
+    assert widget._atom_table.verticalScrollBar().isVisible()
+    assert table_natural_width(widget._atom_table) > narrow_gutter_width
+    _assert_atom_table_fits(widget)
+
+
+def test_viewer_keeps_its_minimum_and_the_table_scrolls_on_a_small_screen(qapp) -> None:
+    """Below the table's content width the table scrolls; the viewer keeps its 380 px."""
+    widget = HostStructureWidget()
+    widget.set_structure(magnetic_silicon_oxide_host())
+    widget.resize(620, 700)
+    widget.show()
+    qapp.processEvents()
 
     assert widget._viewer.minimumWidth() == 380
-    assert widget._atom_table.minimumWidth() < widget._atom_table.maximumWidth()
+    assert widget._viewer.width() >= 380
+    assert widget._atom_table.width() < table_natural_width(widget._atom_table)
+    assert widget._atom_table.horizontalScrollBar().isVisible()
+
+
+def test_window_growth_goes_to_the_viewer(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(magnetic_silicon_oxide_host())
+    widget.resize(1000, 700)
+    widget.show()
+    qapp.processEvents()
+    table_width = widget._atom_table.width()
+
+    widget.resize(1400, 700)
+    qapp.processEvents()
+
+    assert widget._atom_table.width() == table_width
+
+
+def test_dragged_split_survives_a_spin_edit_and_resets_for_another_structure(qapp) -> None:
+    widget = HostStructureWidget()
+    host = magnetic_silicon_oxide_host()
+    widget.set_structure(host)
+    widget.resize(1000, 700)
+    widget.show()
+    qapp.processEvents()
 
     splitter = widget._viewer.parentWidget()
-    from PySide6.QtWidgets import QSplitter
+    splitter.setSizes([500, 500])
+    qapp.processEvents()
+    dragged = widget._atom_table.width()
+    assert dragged > table_natural_width(widget._atom_table)
+
+    host.properties["atomic_spins"] = [2.0, -2.0]
+    widget.set_structure(host)
+    qapp.processEvents()
+    assert widget._atom_table.width() == dragged
+
+    # A host with the same table width still opens with every column on show.
+    widget.set_structure(magnetic_silicon_oxide_host())
+    qapp.processEvents()
+    assert widget._atom_table.width() == table_natural_width(widget._atom_table)
+
+
+def test_clearing_the_structure_keeps_the_dragged_split(qapp) -> None:
+    widget = HostStructureWidget()
+    host = magnetic_silicon_oxide_host()
+    widget.set_structure(host)
+    widget.resize(1000, 700)
+    widget.show()
+    qapp.processEvents()
+    widget._viewer.parentWidget().setSizes([500, 500])
+    qapp.processEvents()
+    dragged = widget._atom_table.width()
+
+    widget.set_structure(None)
+    qapp.processEvents()
+
+    assert widget._atom_table.width() == dragged
+
+
+def test_propagation_vector_row_sits_outside_the_table_and_viewer_split(qapp) -> None:
+    widget = HostStructureWidget()
+    splitter = widget._viewer.parentWidget()
 
     assert isinstance(splitter, QSplitter)
-    # Combined minimum width (viewer + table pane) must comfortably fit a
-    # 1280px-wide window; the previous 560 viewer minimum alone left too
-    # little room once the table's content-width lock was added on top.
-    assert widget._viewer.minimumWidth() + widget._atom_table.minimumWidth() < 1280
+    assert not splitter.isAncestorOf(widget._propagation_x)
+    assert widget._atom_table.parentWidget() is splitter
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, "imports/host.cif · 2 atoms · O:1, Si:1"),
+        ({"source_file": None, "label": "Relaxed host"}, "Relaxed host · 2 atoms · O:1, Si:1"),
+        (
+            {"source_file": None, "species": ("Si",), "positions": ((0.0, 0.0, 0.0),)},
+            "Host · 1 atom · Si:1",
+        ),
+    ],
+)
+def test_structure_summary_is_one_line_of_source_atoms_and_species(
+    qapp, overrides, expected
+) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(magnetic_silicon_oxide_host(**overrides))
+
+    assert widget._summary.text() == expected
+
+
+def test_structure_summary_without_a_structure(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(magnetic_silicon_oxide_host())
+    widget.set_structure(None)
+
+    assert widget._summary.text() == "No host structure loaded."
 
 
 def test_host_structure_widget_gives_spare_height_to_the_table_and_viewer(qapp) -> None:
@@ -73,12 +236,6 @@ def test_host_structure_widget_renders_spin_column_and_viewer(qapp) -> None:
     assert widget._atom_table.item(1, 4).text() == "-1.5000"
     assert widget._atom_table.verticalHeaderItem(1).text() == "2"
     assert widget._atom_table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    # The table is capped at its content width (so it cannot greedily expand)
-    # but the minimum is deliberately left low, so the splitter can shrink it
-    # below content width with a horizontal scrollbar on small screens.
-    assert widget._atom_table.maximumWidth() > 0
-    assert widget._atom_table.minimumWidth() < widget._atom_table.maximumWidth()
-    assert widget._atom_table.maximumWidth() >= widget._propagation_controls_width()
     assert widget._viewer._atoms is not None
     assert "Right drag: rotate" in widget._viewer._interaction_hint.text()
     assert "Middle drag: pan" in widget._viewer._interaction_hint.text()
@@ -369,7 +526,7 @@ def test_set_structure_none_transitions_render(qapp, monkeypatch) -> None:
     widget.set_structure(None)  # skipped
     widget.set_structure(host)
     assert calls == [host, None, host]
-    assert widget._summary.text().startswith("Loaded structure")
+    assert widget._summary.text().startswith("imports/host.cif")
 
 
 def test_set_structure_rerenders_after_geometry_swap(qapp, monkeypatch) -> None:

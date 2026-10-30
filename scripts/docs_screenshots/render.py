@@ -740,16 +740,6 @@ def view_along_a(widget: QWidget) -> None:
             viewer._set_named_view("a")
 
 
-def show_host_with_spins(page: QWidget) -> None:
-    """Widen the atom table to show the ``Spin (hbar/2)`` column, then view the cell down a."""
-
-    from PySide6.QtWidgets import QSplitter
-
-    page.findChild(QSplitter).setSizes([470, 630])
-    settle(QApplication.instance())
-    view_along_a(page)
-
-
 def calculate_field(page: Any) -> None:
     """Click ``Calculate Dipolar Field`` on a Magnetic Fields page and select the first result row."""
 
