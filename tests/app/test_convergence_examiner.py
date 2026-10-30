@@ -83,7 +83,7 @@ def test_convergence_examiner_runs_analysis_and_enables_adopt(qapp) -> None:
     assert dialog._adopt_button.isEnabled() is True
 
 
-def test_convergence_examiner_emits_cutoff_adopted_signal(qapp) -> None:
+def test_convergence_examiner_adopts_the_recommended_cutoff(qapp) -> None:
     dialog = ConvergenceExaminerDialog(
         {
             300.0: _completed_state(-10.0, 0.30),
@@ -95,13 +95,13 @@ def test_convergence_examiner_emits_cutoff_adopted_signal(qapp) -> None:
     dialog._run_analysis()
 
     adopted: list[tuple[float, str, float, float, object]] = []
-    dialog.cutoff_adopted.connect(
+    dialog.default_adopted.connect(
         lambda value, method, energy_threshold, force_threshold, stress_threshold: adopted.append(
             (value, method, energy_threshold, force_threshold, stress_threshold)
         )
     )
 
-    dialog._emit_adopted_cutoff()
+    dialog._adopt_button.click()
 
     assert adopted
     # 400 eV is within 0.00025 eV/atom and 0.01 eV/Ang of 500 eV.
@@ -220,27 +220,57 @@ def test_convergence_examiner_kpoint_mode_emits_default(qapp) -> None:
         },
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+        point_grids={8.0: (2, 2, 2), 27.0: (3, 3, 3), 64.0: (4, 4, 4)},
     )
 
     dialog._run_analysis()
     assert "Recommended k-point grid" in dialog._results.toPlainText()
 
-    adopted: list[tuple[float, str, float, float, object]] = []
+    adopted: list[tuple[object, str, float, float, object]] = []
     dialog.default_adopted.connect(
-        lambda value, method, energy_threshold, force_threshold, stress_threshold: adopted.append(
-            (
-                float(value),
-                method,
-                float(energy_threshold),
-                float(force_threshold),
-                stress_threshold,
-            )
+        lambda key, method, energy_threshold, force_threshold, stress_threshold: adopted.append(
+            (key, method, float(energy_threshold), float(force_threshold), stress_threshold)
         )
     )
-    dialog._emit_adopted_cutoff()
+    dialog._adopt_button.click()
 
-    assert adopted == [(27.0, "converged", pytest.approx(0.001), pytest.approx(0.05), None)]
+    # The dialog emits the recommended point's grid, not its k-point count.
+    assert adopted == [((3, 3, 3), "converged", pytest.approx(0.001), pytest.approx(0.05), None)]
+
+
+def test_convergence_examiner_kpoint_adopt_needs_the_recommended_grid(qapp) -> None:
+    sweep_data = {
+        8.0: _completed_state(-10.0, 0.30),
+        27.0: _completed_state(-10.01, 0.20),
+        64.0: _completed_state(-10.0105, 0.19),
+    }
+    first = ConvergenceExaminerDialog(
+        sweep_data,
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_grids={8.0: (2, 2, 2), 27.0: (3, 3, 3), 64.0: (4, 4, 4)},
+    )
+    first._run_analysis()
+    saved_state = first.state_snapshot()
+
+    # Reopened on points whose recommended count (27) has no grid: there is
+    # nothing to set, so the button stays disabled and nothing is emitted.
+    dialog = ConvergenceExaminerDialog(
+        sweep_data,
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_grids={8.0: (2, 2, 2), 64.0: (4, 4, 4)},
+        initial_state=saved_state,
+    )
+    adopted: list[tuple] = []
+    dialog.default_adopted.connect(lambda *args: adopted.append(args))
+
+    assert dialog._recommended_value == pytest.approx(27.0)
+    assert dialog._adopt_button.isEnabled() is False
+    assert dialog._adopt_button.text() == "Set 27 k-points as Project Default K-Point Grid"
+    assert "Run the analysis again" in dialog._adopt_button.toolTip()
+    dialog._emit_adopted_default()
+    assert adopted == []
 
 
 def test_convergence_examiner_kpoint_results_name_the_densest_grid_as_reference(qapp) -> None:
@@ -252,7 +282,7 @@ def test_convergence_examiner_kpoint_results_name_the_densest_grid_as_reference(
         },
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+        point_grids={8.0: (2, 2, 2), 27.0: (3, 3, 3), 64.0: (4, 4, 4)},
     )
 
     dialog._run_analysis()
@@ -326,13 +356,12 @@ def test_convergence_examiner_kpoint_mode_adds_spacing_axis_when_lattice_provide
         counts[1]: _completed_state(-10.02, 0.18),
         counts[2]: _completed_state(-10.025, 0.17),
     }
-    labels = {counts[i]: f"Grid: {grids[i][0]} x {grids[i][1]} x {grids[i][2]}" for i in range(3)}
 
     dialog = ConvergenceExaminerDialog(
         sweep_data,
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels=labels,
+        point_grids=dict(zip(counts, grids, strict=True)),
         lattice_vectors=lattice,
     )
 
@@ -386,7 +415,7 @@ def test_convergence_examiner_kpoint_mode_omits_spacing_axis_without_lattice(qap
         },
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+        point_grids={8.0: (2, 2, 2), 27.0: (3, 3, 3), 64.0: (4, 4, 4)},
     )
     assert dialog._point_spacings == {}
 
@@ -537,7 +566,7 @@ def test_convergence_examiner_hover_routes_twin_axes_to_logical_subplot(qapp) ->
         sweep_data,
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels={1.0: "Grid: 1 x 1 x 1", 8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
+        point_grids={1.0: (1, 1, 1), 8.0: (2, 2, 2), 27.0: (3, 3, 3)},
         lattice_vectors=lattice,
     )
     dialog._include_stress.setChecked(True)
@@ -599,7 +628,7 @@ def test_convergence_examiner_hover_tooltip_and_leave(qapp) -> None:
         },
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels={300.0: "Grid: 3 x 10 x 10"},
+        point_grids={300.0: (3, 10, 10)},
     )
     dialog._run_analysis()
 
@@ -660,18 +689,15 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
     dialog._force_threshold.setValue(0.07)
 
     defaults: list[tuple] = []
-    cutoffs: list[tuple] = []
     dialog.default_adopted.connect(
         lambda value, method, et, ft, st: defaults.append((value, method, et, ft, st))
     )
-    dialog.cutoff_adopted.connect(
-        lambda value, method, et, ft, st: cutoffs.append((value, method, et, ft, st))
-    )
 
-    dialog._emit_adopted_cutoff()
+    dialog._offer_adoption()
+    dialog._adopt_button.click()
 
+    # One signal carries the adoption.
     assert defaults == [(400.0, "converged", pytest.approx(0.002), pytest.approx(0.07), None)]
-    assert cutoffs == [(400.0, "converged", pytest.approx(0.002), pytest.approx(0.07), None)]
 
 
 def _completed_state_with_stress(
@@ -735,8 +761,8 @@ def test_convergence_examiner_runs_stress_and_passes_through_signal(qapp) -> Non
     )
 
     adopted: list[tuple] = []
-    dialog.cutoff_adopted.connect(lambda *args: adopted.append(args))
-    dialog._emit_adopted_cutoff()
+    dialog.default_adopted.connect(lambda *args: adopted.append(args))
+    dialog._adopt_button.click()
 
     assert adopted
     assert adopted[-1][-1] == pytest.approx(0.1)
@@ -773,7 +799,7 @@ def test_convergence_examiner_kpoint_adopt_label_names_the_grid_once(qapp) -> No
         },
         num_atoms=2,
         sweep_kind="kpoint",
-        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+        point_grids={8.0: (2, 2, 2), 27.0: (3, 3, 3), 64.0: (4, 4, 4)},
         notes=("2 x 4 x 1 left out: same k-point count (8) as 2 x 2 x 2.",),
     )
 

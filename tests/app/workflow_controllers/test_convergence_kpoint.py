@@ -527,7 +527,7 @@ def _kpoint_adopt_document(
     return document, cell
 
 
-def test_kpoint_examine_keys_points_by_count_with_grid_labels(
+def test_kpoint_examine_keys_points_by_count_with_their_grids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = ProjectService()
@@ -549,7 +549,7 @@ def test_kpoint_examine_keys_points_by_count_with_grid_labels(
         "num_atoms": 2,
         "initial_state": {},
         "sweep_kind": "kpoint",
-        "point_labels": {8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
+        "point_grids": {8.0: (2, 2, 2), 27.0: (3, 3, 3)},
         "lattice_vectors": host.lattice_vectors,
         "notes": [],
     }
@@ -578,29 +578,6 @@ def test_kpoint_examiner_state_is_kept_in_ui_state_without_saving(tmp_path: Path
     assert loaded.ui_state[KPOINT_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [8.0, 27.0]
 
 
-def test_kpoint_adopt_warns_when_the_label_names_no_grid(tmp_path: Path) -> None:
-    service = ProjectService()
-    document = service.create_project(tmp_path / "kpoint_adopt_warn.mufinder", "KPointAdoptWarn")
-    window = RecordingSweepWindow()
-    controller = _examine_controller(document, window, service=service)
-
-    controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={})
-    controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={8.0: "8 k-points"})
-
-    assert (
-        window.warnings
-        == [
-            (
-                "Adopt failed",
-                "Could not resolve the recommended k-point grid from the plotted data.",
-            )
-        ]
-        * 2
-    )
-    assert document.project.recommended_kpoint_grid is None
-    assert window.refreshes == 0
-
-
 def test_kpoint_adopt_sets_the_grid_with_its_lattice_and_pins_the_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -622,7 +599,9 @@ def test_kpoint_adopt_sets_the_grid_with_its_lattice_and_pins_the_snapshot(
         document, window, service=service, statuses=statuses, persisted=persisted
     )
 
-    controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={8.0: "Grid: 2 x 2 x 2"})
+    controller.adopt(
+        (2, 2, 2), "converged", 0.001, 0.05, point_grids={8.0: (2, 2, 2), 27.0: (3, 3, 3)}
+    )
 
     assert document.project.recommended_kpoint_grid == (2, 2, 2)
     assert document.project.recommended_kpoint_method == "converged"
@@ -636,7 +615,8 @@ def test_kpoint_adopt_sets_the_grid_with_its_lattice_and_pins_the_snapshot(
     assert snapshot["host_structure_id"] == str(host.id)
     assert snapshot["simulation_cell_structure_id"] == str(host.id)
     assert snapshot["default_value"] == [2, 2, 2]
-    assert snapshot["point_labels"]["8.0"] == "Grid: 2 x 2 x 2"
+    # The snapshot stores the examined grids as the labels the overview shows.
+    assert snapshot["point_labels"] == {"8.0": "Grid: 2 x 2 x 2", "27.0": "Grid: 3 x 3 x 3"}
     assert document.provenance[-1].action == "set_recommended_kpoint_grid"
     assert window.refreshes == 1
     assert persisted == ["Could not persist k-point convergence overview snapshot to disk"]
@@ -670,7 +650,7 @@ def test_kpoint_examiner_and_adoption_use_the_sweep_supercell(
     assert options["lattice_vectors"] == supercell.lattice_vectors
 
     assert window.on_adopted is not None
-    window.on_adopted(32.0, "converged", 0.001, 0.05, None)
+    window.on_adopted((2, 4, 4), "converged", 0.001, 0.05, None)
 
     assert document.project.recommended_kpoint_grid == (2, 4, 4)
     assert document.project.recommended_kpoint_cell_id == str(supercell.id)
@@ -691,13 +671,13 @@ def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -
         (4, 1, 1): completed,
     }
 
-    counts, labels, notes = ConvergenceKpointController.examiner_points(states, lattice)
+    counts, grids, notes = ConvergenceKpointController.examiner_points(states, lattice)
 
-    assert labels[16.0] == "Grid: 4 x 2 x 2"
+    assert grids[16.0] == (4, 2, 2)
     assert counts[16.0] is states[(4, 2, 2)]
-    assert labels[8.0] == "Grid: 2 x 2 x 2"
+    assert grids[8.0] == (2, 2, 2)
     # A completed grid is kept over a uniform one with nothing to examine.
-    assert labels[4.0] == "Grid: 4 x 1 x 1"
+    assert grids[4.0] == (4, 1, 1)
     assert len(notes) == 2
     # Each note gives the reason that actually decided which grid was kept.
     assert any(

@@ -23,6 +23,8 @@ import warnings
 
 import numpy as np
 
+from mufinder.science.kpoint_grids import format_kpoint_grid
+
 #: :attr:`SweepLengthCheck.status` values.
 SWEEP_LONG_ENOUGH = "long_enough"
 SWEEP_TOO_SHORT = "too_short"
@@ -168,24 +170,28 @@ def _cutoff_wording() -> _SweepWording:
 
 
 def _kpoint_wording(
-    point_labels: Mapping[float, str] | None,
+    point_grids: Mapping[float, tuple[int, int, int]] | None,
     point_spacings: Mapping[float, float] | None,
 ) -> _SweepWording:
-    labels = {float(key): str(value) for key, value in (point_labels or {}).items()}
+    grids = {
+        float(key): (int(grid[0]), int(grid[1]), int(grid[2]))
+        for key, grid in (point_grids or {}).items()
+    }
 
     def point_text(value: float) -> str:
-        return labels.get(float(value), f"{value:.8g} k-points")
+        grid = grids.get(float(value))
+        return format_kpoint_grid(grid) if grid is not None else f"{value:.8g} k-points"
 
     def summary_text(value: float) -> str:
         label = point_text(value)
-        spacing = _spacing_annotation(label, value, point_spacings)
+        spacing = _spacing_annotation(grids.get(float(value)), value, point_spacings)
         return f"{label} ({spacing})" if spacing else label
 
     return _SweepWording(point_text, summary_text, "denser grid", "the densest grid in the sweep")
 
 
 def _spacing_annotation(
-    grid_label: str,
+    grid: tuple[int, int, int] | None,
     converged_value: float,
     point_spacings: Mapping[float, float] | None,
 ) -> str:
@@ -199,15 +205,8 @@ def _spacing_annotation(
     if point_spacings is None:
         return ""
     spacing = point_spacings.get(float(converged_value))
-    if spacing is None:
+    if spacing is None or grid == (1, 1, 1):
         return ""
-    parts = grid_label.split(":", maxsplit=1)[-1].replace(" ", "").split("x")
-    if len(parts) == 3:
-        try:
-            if tuple(int(part) for part in parts) == (1, 1, 1):
-                return ""
-        except ValueError:
-            pass
     return f"spacing {spacing:.4g} 1/Ang"
 
 
@@ -506,13 +505,14 @@ def analyze_kpoint_convergence(
     force_threshold: float,
     max_stresses: Sequence[float] | None = None,
     stress_threshold: float | None = None,
-    point_labels: Mapping[float, str] | None = None,
+    point_grids: Mapping[float, tuple[int, int, int]] | None = None,
     point_spacings: Mapping[float, float] | None = None,
 ) -> ConvergenceAnalysis:
     """Judge a k-point sweep, ordered by k-point count, against its densest grid.
 
-    ``point_labels`` maps each count to its grid (``{27.0: "3 x 3 x 3"}``) for
-    the wording, and ``point_spacings`` to the spacing that reproduces it,
+    ``point_grids`` maps each count to its grid (``{27.0: (3, 3, 3)}``), which
+    the wording names as ``3 x 3 x 3`` (a count without one is named as
+    ``27 k-points``), and ``point_spacings`` to the spacing that reproduces it,
     which is named beside a converged grid other than ``1 x 1 x 1``. There is
     no sweep-length check.
     """
@@ -526,7 +526,7 @@ def analyze_kpoint_convergence(
         energy_threshold=energy_threshold,
         force_threshold=force_threshold,
         stress_threshold=stress_threshold,
-        wording=_kpoint_wording(point_labels, point_spacings),
+        wording=_kpoint_wording(point_grids, point_spacings),
     )
     return ConvergenceAnalysis(energy, force, stress, None, reference_text)
 

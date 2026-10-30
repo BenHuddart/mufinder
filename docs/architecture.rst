@@ -574,8 +574,9 @@ no two workflow widgets may define the same private method.
        (``validated_cutoff_overview_snapshot``,
        ``validated_kpoint_overview_snapshot``), with the k-point spacings
        recomputed on the cell the sweep ran on (``kpoint_snapshot_cell``,
-       ``recompute_snapshot_spacings``), and the parsing of the examiner's
-       ``Grid: a x b x c`` point labels (``kpoint_grids_from_labels``). The
+       ``recompute_snapshot_spacings``). A k-point snapshot stores the
+       examined grids as ``Grid: a x b x c`` point labels, which the overview
+       shows and ``kpoint_grids_from_labels`` reads back. The
        spacing series itself is ``distinct_grid_spacings`` in
        ``mufinder.science.kpoint_grids``, which the examiner also uses.
    * - ``mufinder.services.project_summary``
@@ -1273,15 +1274,16 @@ Controller summary
        state in ``ui_state``; ``adopt`` confirms a change of project
        functional, records the default and pins its overview snapshot through
        ``mufinder.services.convergence_defaults``, saves, and reports in the
-       status bar. Three hooks carry what differs: ``examiner_input`` (the
-       k-point sweep keeps one grid per k-point count, labelled ``Grid: a x b
-       x c``, and passes the lattice), ``resolve_adopted_key`` (the k-point
-       sweep reads the grid back from that label) and
+       status bar. Two hooks carry what differs: ``examiner_input`` (the
+       k-point sweep keeps one grid per k-point count and passes those grids
+       and the lattice to the examiner as data) and
        ``record_adopted_default`` (the project-service setter and the
-       snapshot). The examiner dialog, the message boxes and the window
-       refreshes come in through the deps (``run_examiner``,
-       ``show_warning``, ``confirm_choice``,
-       ``refresh_after_default_adopted``).
+       snapshot). The examiner's one ``default_adopted`` signal carries the
+       adopted sweep key itself, the cutoff in eV or the recommended point's
+       grid, so ``adopt`` never reads a value back from a label. The
+       examiner dialog, the message boxes and the window refreshes come in
+       through the deps (``run_examiner``, ``show_warning``,
+       ``confirm_choice``, ``refresh_after_default_adopted``).
 
        It also owns the ``Simulation Cell`` selector.
        ``refresh_simulation_cell`` shows the stage's saved supercells, the

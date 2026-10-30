@@ -403,7 +403,9 @@ when it is included. If any does not converge within the sweep the
 recommendation reads ``none``, the adopt button stays disabled, and the row
 says which criterion failed, for example *the force criterion did not converge
 within the sweep*. Extend the sweep to larger cutoffs or denser grids, or relax
-the threshold, and analyse again.
+the threshold, and analyse again. A k-point recommendation restored from an
+earlier analysis whose k-point count no longer has a grid in the sweep cannot be
+adopted either; its button stays disabled until you analyse again.
 
 **Sweep length (cutoff sweeps).** The finest cutoff is only the best answer the
 sweep has, so a sweep that stops too early gives an optimistic

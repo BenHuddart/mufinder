@@ -421,7 +421,7 @@ def test_main_window_kpoint_examine_button_opens_the_examiner_and_adopts_through
     assert dialog.kwargs == {
         "num_atoms": 1,
         "sweep_kind": "kpoint",
-        "point_labels": {8.0: "Grid: 2 x 2 x 2"},
+        "point_grids": {8.0: (2, 2, 2)},
         "lattice_vectors": host.lattice_vectors,
         "notes": [],
         "parent": window,
@@ -430,29 +430,9 @@ def test_main_window_kpoint_examine_button_opens_the_examiner_and_adopts_through
     assert doc.ui_state[KPOINT_EXAMINER_STATE_KEY] == {"cached": True}
 
     (adopted,) = dialog.adopted
-    adopted(8.0, "converged", 0.001, 0.05, None)
+    adopted((2, 2, 2), "converged", 0.001, 0.05, None)
     assert doc.project.recommended_kpoint_grid == (2, 2, 2)
     assert window.statusBar().currentMessage() == "Project default k-point grid set to 2x2x2"
-    window.close()
-
-
-def test_main_window_kpoint_adopt_failure_shows_a_warning(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    window._document = ProjectService().create_project(
-        tmp_path / "kpoint_adopt_warn.mufinder", "KPointAdoptWarn"
-    )
-    warnings: list[tuple[object, str]] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda parent, title, _message: warnings.append((parent, title)),
-    )
-
-    window._kpoint_convergence_controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={})
-
-    assert warnings == [(window, "Adopt failed")]
     window.close()
 
 
@@ -463,7 +443,7 @@ def test_main_window_adopted_kpoint_grid_refreshes_the_window(main_window, tmp_p
     assert window._main_stack.currentWidget() is window._kpoint_convergence_view
 
     window._kpoint_convergence_controller.adopt(
-        8.0, "converged", 0.001, 0.05, point_labels={8.0: "Grid: 2 x 2 x 2"}
+        (2, 2, 2), "converged", 0.001, 0.05, point_grids={8.0: (2, 2, 2)}
     )
 
     for strip in window._project_defaults_strips():

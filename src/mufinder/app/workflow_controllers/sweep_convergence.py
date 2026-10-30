@@ -14,12 +14,12 @@ lookup for a definition written before the mapping existed).
 
 The controller also examines a sweep and adopts its result as the project
 default (:meth:`~SweepConvergenceController.examine`,
-:meth:`~SweepConvergenceController.adopt`). Three more hooks carry what
+:meth:`~SweepConvergenceController.adopt`). Two more hooks carry what
 differs between the sweeps: ``examiner_input`` (the examiner's points and its
-sweep-specific options), ``resolve_adopted_key`` (the sweep key an adopted
-value names) and ``record_adopted_default`` (the project-default setter and the
-pinned overview snapshot). The examiner dialog, the confirmation and the window
-refreshes come in through the deps.
+sweep-specific options, among them the k-point grid of each point) and
+``record_adopted_default`` (the project-default setter and the pinned overview
+snapshot). The examiner emits the adopted sweep key itself. The examiner
+dialog, the confirmation and the window refreshes come in through the deps.
 
 It stores the configuration the widget's Configure dialog accepts
 (:meth:`~SweepConvergenceController.configure`): the configuration is checked
@@ -65,6 +65,7 @@ from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
 from mufinder.app.convergence_types import (
     ConvergenceConfig,
+    KPointGrid,
     SweepKeyCodec,
     SweepPointRunState,
     convergence_config_xc_functional,
@@ -490,28 +491,16 @@ class SweepConvergenceController(WorkflowJobController):
 
     def examiner_input(
         self, states: Mapping[Any, SweepPointRunState], cell: Structure
-    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], dict[str, object]]:
-        """Return the examiner's points by axis value, their labels and its options.
+    ) -> tuple[dict[float, SweepPointRunState], dict[str, object]]:
+        """Return the examiner's points by axis value and its options.
 
         The options are the sweep-specific keyword arguments of the examiner
-        dialog; ``cell`` is the structure the sweep ran on.
+        dialog; a k-point sweep's ``point_grids`` (the grid of each point) are
+        also pinned with an adopted default. ``cell`` is the structure the sweep
+        ran on.
         """
 
         raise NotImplementedError
-
-    def resolve_adopted_key(self, value: float, point_labels: Mapping[float, str]) -> Any | None:
-        """Return the sweep key the adopted axis ``value`` names, or ``None``.
-
-        ``None`` shows an ``Adopt failed`` warning with
-        :meth:`unresolved_adopt_message`.
-        """
-
-        raise NotImplementedError
-
-    def unresolved_adopt_message(self) -> str:
-        """Return the warning text for a value :meth:`resolve_adopted_key` cannot resolve."""
-
-        return ""
 
     def record_adopted_default(
         self,
@@ -526,7 +515,7 @@ class SweepConvergenceController(WorkflowJobController):
         cell_id: str | None,
         definition_cell_id: str | None,
         xc_functional: str | None,
-        point_labels: Mapping[float, str],
+        point_grids: Mapping[float, KPointGrid],
     ) -> str:
         """Set ``key`` as the project default and pin its overview snapshot.
 
@@ -569,7 +558,8 @@ class SweepConvergenceController(WorkflowJobController):
             return
 
         cell = self.sweep_cell(self.active_definition()) or host
-        points, labels, options = self.examiner_input(self.build_states(), cell)
+        points, options = self.examiner_input(self.build_states(), cell)
+        grids = options.get("point_grids", {})
 
         persisted_state = document.ui_state.get(self.examiner_state_key, {})
         if not isinstance(persisted_state, dict):
@@ -579,8 +569,8 @@ class SweepConvergenceController(WorkflowJobController):
             points,
             num_atoms=len(cell.species),
             initial_state=persisted_state,
-            on_adopted=lambda value, method, et, ft, st: self.adopt(
-                value, method, et, ft, st, point_labels=labels
+            on_adopted=lambda key, method, et, ft, st: self.adopt(
+                key, method, et, ft, st, point_grids=grids
             ),
             on_state_changed=self.store_examiner_state,
             **options,
@@ -602,28 +592,25 @@ class SweepConvergenceController(WorkflowJobController):
 
     def adopt(
         self,
-        value: float,
+        key: Any,
         method: str,
         energy_threshold: float,
         force_threshold: float,
         stress_threshold: float | None = None,
         *,
-        point_labels: Mapping[float, str],
+        point_grids: Mapping[float, KPointGrid],
     ) -> None:
-        """Make the examiner's adopted axis ``value`` the project default.
+        """Make the examiner's adopted sweep ``key`` the project default.
 
-        ``point_labels`` are the labels the examiner was opened with. A result
-        converged with a functional other than the project's is confirmed
-        first, since adopting it also changes the project functional.
+        ``key`` is the cutoff in eV or the k-point grid the examiner emitted;
+        ``point_grids`` are the grids it was opened with, pinned with a k-point
+        default. A result converged with a functional other than the project's
+        is confirmed first, since adopting it also changes the project
+        functional.
         """
 
         document = self._context.document()
         if document is None:
-            return
-
-        key = self.resolve_adopted_key(value, point_labels)
-        if key is None:
-            self._deps.show_warning("Adopt failed", self.unresolved_adopt_message())
             return
 
         definition = self.active_definition()
@@ -649,7 +636,7 @@ class SweepConvergenceController(WorkflowJobController):
             ),
             definition_cell_id=definition_cell_id,
             xc_functional=xc_functional,
-            point_labels=point_labels,
+            point_grids=point_grids,
         )
         self._deps.refresh_after_default_adopted()
         self._context.persist_ui_state(failure_message=self.snapshot_persist_failure_message)

@@ -20,12 +20,12 @@ from mufinder.science.convergence_analysis import (
 
 ATOMS = 6
 TOL = 0.001  # eV/atom
-GRID_LABELS = {
-    1.0: "1 x 1 x 1",
-    8.0: "2 x 2 x 2",
-    27.0: "3 x 3 x 3",
-    64.0: "4 x 4 x 4",
-    125.0: "5 x 5 x 5",
+GRIDS = {
+    1.0: (1, 1, 1),
+    8.0: (2, 2, 2),
+    27.0: (3, 3, 3),
+    64.0: (4, 4, 4),
+    125.0: (5, 5, 5),
 }
 
 
@@ -323,7 +323,7 @@ def test_kpoint_grids_are_judged_against_the_densest_grid() -> None:
         num_atoms=8,
         energy_threshold=0.001,
         force_threshold=0.01,
-        point_labels=GRID_LABELS,
+        point_grids=GRIDS,
         point_spacings={64.0: 0.08, 125.0: 0.06},
     )
 
@@ -344,7 +344,7 @@ def test_kpoint_wording_has_no_method_name_or_grid_prefix() -> None:
         num_atoms=8,
         energy_threshold=0.001,
         force_threshold=0.05,
-        point_labels=GRID_LABELS,
+        point_grids=GRIDS,
         point_spacings={1.0: 0.5, 8.0: 0.25, 27.0: 0.124},
     )
 
@@ -356,7 +356,7 @@ def test_kpoint_wording_has_no_method_name_or_grid_prefix() -> None:
     assert analysis.force.summary == "converged at 1 x 1 x 1"
 
 
-def test_kpoint_wording_without_labels_names_the_count() -> None:
+def test_kpoint_wording_without_grids_names_the_count() -> None:
     analysis = analyze_kpoint_convergence(
         kpoint_counts=[1.0, 8.0, 27.0],
         energies=[-100.0, -100.02, -100.0205],
@@ -370,7 +370,7 @@ def test_kpoint_wording_without_labels_names_the_count() -> None:
     assert analysis.reference_text == "27 k-points, the densest grid in the sweep"
 
 
-def test_kpoint_stress_uses_grid_labels() -> None:
+def test_kpoint_stress_names_the_grids() -> None:
     analysis = analyze_kpoint_convergence(
         kpoint_counts=[1.0, 8.0, 27.0],
         energies=[-100.0, -100.0, -100.0],
@@ -380,7 +380,7 @@ def test_kpoint_stress_uses_grid_labels() -> None:
         force_threshold=0.05,
         max_stresses=[1.0, 0.3, 0.25],
         stress_threshold=0.1,
-        point_labels=GRID_LABELS,
+        point_grids=GRIDS,
     )
 
     assert analysis.stress.summary == "converged at 2 x 2 x 2"

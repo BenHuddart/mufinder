@@ -17,6 +17,7 @@ from mufinder.services.convergence_defaults import (
     build_cutoff_overview_snapshot,
     build_kpoint_overview_snapshot,
     convergence_overview_snapshots,
+    kpoint_grid_label,
     kpoint_grids_from_labels,
     kpoint_snapshot_cell,
     recompute_snapshot_spacings,
@@ -112,7 +113,7 @@ def test_kpoint_snapshot_stores_the_grid_and_the_point_labels(project) -> None:
         energy_threshold=0.001,
         force_threshold=0.05,
         simulation_cell_structure_id=str(host.id),
-        labels={8: "Grid: 2 x 2 x 2"},
+        point_grids={8: (2, 2, 2)},
     )
 
     assert snapshot is not None
@@ -129,7 +130,7 @@ def test_kpoint_snapshot_stores_the_grid_and_the_point_labels(project) -> None:
         (
             build_kpoint_overview_snapshot,
             KPOINT_EXAMINER_STATE_KEY,
-            {"grid": (2, 2, 2), "labels": {}},
+            {"grid": (2, 2, 2), "point_grids": {}},
         ),
     ],
 )
@@ -340,6 +341,11 @@ def test_grids_parse_from_grid_labels_and_skip_anything_else() -> None:
     )
 
     assert grids == {8.0: (2, 2, 2), 12.0: (2, 2, 3)}
+
+
+def test_grid_labels_round_trip_through_the_parser() -> None:
+    assert kpoint_grid_label((4, 4, 6)) == "Grid: 4 x 4 x 6"
+    assert kpoint_grids_from_labels({96.0: kpoint_grid_label((4, 4, 6))}) == {96.0: (4, 4, 6)}
 
 
 def test_spacings_suppress_duplicates_from_a_dominant_axis() -> None:
