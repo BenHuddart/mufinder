@@ -45,7 +45,7 @@ def test_relaxation_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
     labels = [combo.itemText(index) for index in range(combo.count())]
     assert labels[0] == "Unit cell"
     assert "convergence_cutoff 2x2x1" in labels
-    assert labels[-1] == "Manage Supercells..."
+    assert labels[-1] == "Manage Supercells…"
 
 
 def test_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
@@ -63,7 +63,7 @@ def test_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> Non
     assert not combo.isEnabled()
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
     remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
@@ -922,7 +922,7 @@ def test_relaxation_batch_configure_button_tracks_selection(qapp) -> None:
     widget._add_row()
     widget._add_row()
 
-    assert widget._batch_configure_button.text() == "Configure Selected Parameters..."
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters…"
     # Nothing selected on construction → disabled.
     widget._refresh_batch_button_state()
     assert widget._batch_configure_button.isEnabled() is False
@@ -1409,8 +1409,8 @@ def test_relaxation_row_menu_has_shared_core_then_continue_and_export(qapp, monk
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
-        "Reset Failed Jobs...",
-        "Configure...",
+        "Reset Failed Jobs…",
+        "Configure…",
         "Remove",
         "Continue relaxation…",
         "Export Relaxed Structure",
@@ -1494,7 +1494,7 @@ def test_relaxation_row_menu_acts_on_the_eligible_rows_of_a_mixed_selection(
         "Run on Cluster (1 of 3)",
         "Cancel (1 of 3)",
         "Inspect Failure (1 of 3)",
-        "Reset Failed Jobs... (1 of 3)",
+        "Reset Failed Jobs… (1 of 3)",
     ]
     menu.action("Cancel (1 of 3)").triggered.emit()
 

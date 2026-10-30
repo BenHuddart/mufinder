@@ -56,6 +56,7 @@ from mufinder.app.workflow_table_utils import (
     name_row_control,
 )
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
+from mufinder.domain.text import plural
 from mufinder.science.polarisation import PolarisationError
 from mufinder.science.polarisation_simulation import (
     MAX_PADDING_FACTOR,
@@ -238,9 +239,9 @@ class PolarisationWidget(QWidget):
             "Run the selected simulation again with these settings and the current fields."
         )
         self._recalculate_button.clicked.connect(self._recalculate_simulation)
-        self._remove_button = QPushButton("Remove...", self)
+        self._remove_button = QPushButton("Remove…", self)
         self._remove_button.clicked.connect(self._remove_selected_simulation)
-        self._export_button = QPushButton("Export Data...", self)
+        self._export_button = QPushButton("Export Data…", self)
         self._export_button.clicked.connect(self._export_data)
 
         self._status = QLabel("", self)
@@ -873,7 +874,7 @@ class PolarisationWidget(QWidget):
                     simulation_id=simulation_id,
                 ),
                 title="Polarisation",
-                description="Simulating the muon polarisation...",
+                description="Simulating the muon polarisation…",
                 cancellable=True,
             )
         except BlockingCallCancelled:
@@ -884,7 +885,7 @@ class PolarisationWidget(QWidget):
             return
         store_polarisation_simulation(document, record)
         self._status.setText(
-            f"{record.title}: simulated {len(record.simulation.static.site_labels)} site(s)."
+            f"{record.title}: simulated {plural(len(record.simulation.static.site_labels), 'site')}."
         )
         self._refresh_simulations(keep=record.simulation_id)
         # The form first, so the save that follows carries it.

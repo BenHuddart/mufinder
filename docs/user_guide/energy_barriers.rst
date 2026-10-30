@@ -55,12 +55,12 @@ Running the workflow
    symmetry-distinct muon paths for that ordered pair only, including
    symmetry-equivalent hops of the same relaxed site when the same endpoint is
    selected twice. Each path becomes a row of the ``Diffusion Paths`` table.
-5. **Preview a path (optional).** Click a row's ``View...`` button to inspect
+5. **Preview a path (optional).** Click a row's ``View…`` button to inspect
    the hop before submission.
 6. **Remove paths you do not need.** Use ``Remove Selected``, the row menu's
    ``Remove`` entry, or the ``Delete`` / ``Backspace`` shortcuts.
 7. **Configure the NEB jobs.** Select the paths and click ``Configure Selected
-   Parameters...``, or use a row's ``Configure...`` button (see `Configuration
+   Parameters…``, or use a row's ``Configure…`` button (see `Configuration
    UI`_).
 8. **Run them.** Click ``Run All Locally`` or ``Run All on Cluster``; the
    buttons read ``Run Selected ...`` when rows are selected. MuFinder builds
@@ -177,12 +177,12 @@ generate a row.
 The ``Diffusion Paths`` table shows each generated path's endpoints
 (``Reactant`` and ``Product``), ``Charge``, and ``Path Length``, its configured
 task-farm count in the ``Farms`` column (``Off`` when farming is disabled), its
-NEB job ``Status``, a per-row ``Configure...`` button in the ``Parameters``
-column (it reads ``Configured...`` once the row has custom settings or its job
-has been built), and a ``View...`` button.
+NEB job ``Status``, a per-row ``Configure…`` button in the ``Parameters``
+column (it reads ``Configured…`` once the row has custom settings or its job
+has been built), and a ``View…`` button.
 Right-clicking selected rows offers the shared row actions (``Run Local``,
 ``Run on Cluster``, ``Cancel``, ``Inspect Failure``, ``Reset Failed
-Jobs...``, ``Configure...``, ``Remove``).
+Jobs…``, ``Configure…``, ``Remove``).
 
 Generated path rows remain in the table after the endpoint selectors change,
 so hops generated earlier stay available for inspection and submission
@@ -191,11 +191,11 @@ while the user prepares another pair.
 Path preview
 ------------
 
-The ``View...`` action on a generated path opens a structure viewer based on
+The ``View…`` action on a generated path opens a structure viewer based on
 the undistorted pristine supercell that matches the relaxed endpoint cell.
 MuFinder overlays the initial and final muon positions for the selected path
 and can draw an arrow between them to make the intended migration direction
-clear without showing relaxed host distortions. ``View...`` always opens the
+clear without showing relaxed host distortions. ``View…`` always opens the
 viewer for the row whose button was clicked, regardless of the current table
 selection.
 

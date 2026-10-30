@@ -25,7 +25,7 @@ Using the importer
 1. **Load the host.** Open the project and make sure it has an active host
    structure that matches the legacy calculations (see
    :doc:`/user_guide/host_structure`).
-2. **Choose the folder.** Choose ``File > Import Legacy Relaxations...`` and,
+2. **Choose the folder.** Choose ``File > Import Legacy Relaxations…`` and,
    in the folder dialog ``Select a legacy MuFinder working folder``, select
    the legacy working folder. MuFinder scans it on a background thread and
    reports progress in the status bar.
@@ -113,7 +113,7 @@ one, so that initial-versus-relaxed comparisons stay truthful.
 Removing an import
 ------------------
 
-1. Choose ``File > Remove Imported Relaxations...``.
+1. Choose ``File > Remove Imported Relaxations…``.
 2. In the ``Remove Imported Relaxations`` dialog, pick the ``Import batch`` to
    remove.
 3. Read the confirmation, which names what will be deleted, and confirm. The

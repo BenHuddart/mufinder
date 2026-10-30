@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.theme import style_section_subtitle, style_section_title, track_item_view_corners
 from mufinder.domain.charge_states import muon_charge_state_label
+from mufinder.domain.text import plural
 from mufinder.services.legacy_import import DetectedRun, LegacyFolderScan, scan_legacy_folder
 
 
@@ -154,14 +155,15 @@ def run_summary_lines(scan: LegacyFolderScan) -> list[str]:
     conflicts = sum(len(run.conflicts) for run in scan.runs)
     if conflicts:
         lines.append(
-            f"{conflicts} parameter disagreement(s) between the run outputs and the "
+            f"{plural(conflicts, 'parameter disagreement')} between the run outputs and the "
             "local input files. The value the calculation actually used will be "
             "imported; see the Notes column."
         )
     undetermined = [run.site_index for run in scan.runs if run.charge_state is None]
     if undetermined:
         lines.append(
-            "Charge state could not be determined for site(s) "
+            "Charge state could not be determined for "
+            f"{'site' if len(undetermined) == 1 else 'sites'} "
             f"{', '.join(str(index) for index in undetermined)}; they will be imported "
             "as positive muons."
         )
@@ -201,7 +203,7 @@ class LegacyImportDialog(QDialog):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            f"Found {len(scan.runs)} relaxation(s) in {scan.root.name}. "
+            f"Found {plural(len(scan.runs), 'relaxation')} in {scan.root.name}. "
             "Imported relaxations are read-only: they record calculations run "
             "outside MuFinder."
         )

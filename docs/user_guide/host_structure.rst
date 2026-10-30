@@ -56,7 +56,7 @@ The host-structure panel
   large the cell. Its ``Spin (hbar/2)`` column holds each atom's editable spin,
   and ``Propagation vector (r.l.u.):`` takes the propagation vector in
   reciprocal-lattice units.
-- ``Supercell Editor...`` opens the :doc:`/user_guide/supercells`.
+- ``Supercell Editor…`` opens the :doc:`/user_guide/supercells`.
 
 The viewer is an orthographic structure viewer that keeps the camera when
 bonds, spins, slice planes, point markers or UEP isosurfaces are redrawn.

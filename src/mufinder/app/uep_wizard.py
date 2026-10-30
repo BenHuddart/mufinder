@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+from mufinder.app import workflow_table_utils
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.uep_clustering_dialog import UepClusteringDialog, cluster_color_map
 from mufinder.app.decimal_input import DecimalLineEdit
@@ -1069,8 +1070,17 @@ class _EditSlicePlaneDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._plane_number = plane_number
 
     def _delete_plane(self) -> None:
+        if not workflow_table_utils.confirm_destructive(
+            self,
+            "Delete slice plane",
+            f"Delete plane {self._plane_number}?",
+            "The plane and its potential slice are removed from the slice view.",
+            "Delete plane",
+        ):
+            return
         self.plane_deleted.emit()
         self.done(2)
 
@@ -1546,7 +1556,7 @@ class _BatchSearchThread(QThread):
             generation_lines.append(f"Generation attempts used: {attempts_used}")
             if self.isInterruptionRequested():
                 return
-            self.prepared.emit(len(starts), "\n".join(generation_lines + ["Optimizing starts..."]))
+            self.prepared.emit(len(starts), "\n".join(generation_lines + ["Optimizing starts…"]))
 
             results: list[UepOptimizationResult] = []
             total = len(starts)
@@ -1613,7 +1623,7 @@ class _BatchZpeThread(QThread):
                 "\n".join(
                     [
                         f"Optimized sites available for ZPE: {len(successful_indexes)}",
-                        "Evaluating harmonic zero-point energies from the optimized-site Hessians...",
+                        "Evaluating harmonic zero-point energies from the optimized-site Hessians…",
                     ]
                 ),
             )
@@ -2056,7 +2066,7 @@ class UepAnalysisDialog(QDialog):
         self._isosurface_zero_minimum = QCheckBox("Set minimum potential to zero", controls)
         self._isosurface_zero_minimum.setEnabled(False)
         self._isosurface_zero_minimum.toggled.connect(self._on_isosurface_zero_minimum_toggled)
-        self._isosurface_export_button = QPushButton("Export XSF...", controls)
+        self._isosurface_export_button = QPushButton("Export XSF…", controls)
         self._isosurface_export_button.setEnabled(False)
         self._isosurface_export_button.clicked.connect(self._export_potential_grid_xsf)
         button_row = QHBoxLayout()
@@ -2295,7 +2305,7 @@ class UepAnalysisDialog(QDialog):
         self._slice_zero_minimum = QCheckBox("Set minimum potential to zero", controls)
         self._slice_zero_minimum.toggled.connect(self._on_slice_zero_minimum_toggled)
         self._slice_zero_minimum.setEnabled(False)
-        self._slice_export_button = QPushButton("Export XSF...", controls)
+        self._slice_export_button = QPushButton("Export XSF…", controls)
         self._slice_export_button.clicked.connect(self._export_potential_grid_xsf)
         self._slice_export_button.setEnabled(False)
         button_row = QHBoxLayout()
@@ -2416,7 +2426,7 @@ class UepAnalysisDialog(QDialog):
         side_title.setWordWrap(True)
         side_layout.addWidget(side_title)
         side_layout.addWidget(self._slice_colorbar_canvas, 1)
-        self._slice_hide_atoms = QCheckBox("Hide atoms in front of plane(s)", side_card)
+        self._slice_hide_atoms = QCheckBox("Hide atoms in front of the planes", side_card)
         self._slice_hide_atoms.setStyleSheet("QCheckBox { background: transparent; }")
         self._slice_hide_atoms.toggled.connect(self._on_slice_hide_atoms_toggled)
         side_layout.addWidget(self._slice_hide_atoms)
@@ -4755,7 +4765,7 @@ class UepAnalysisDialog(QDialog):
         if self._is_isosurface_busy():
             return
         active_gw_factor = float(self._source.gw_factor)
-        grid_message = f"Calculating the full-cell electrostatic-potential grid for gw_factor {active_gw_factor:.3f}..."
+        grid_message = f"Calculating the full-cell electrostatic-potential grid for gw_factor {active_gw_factor:.3f}…"
         self._clear_pending_isosurface_request()
         self._potential_grid_preview_cache = None
         self._potential_grid_live_preview_cache = None
@@ -4875,7 +4885,7 @@ class UepAnalysisDialog(QDialog):
         layer = self._isosurface_layers[layer_index]
         layer.level_ev = float(level_ev)
         layer.status_text = (
-            f"Refining the isosurface preview at {level_ev:.6f} eV from the denser cached grid..."
+            f"Refining the isosurface preview at {level_ev:.6f} eV from the denser cached grid…"
         )
         layer.status_kind = "busy"
         status_text = layer.status_text if layer_index == self._active_isosurface_index else None
@@ -6544,9 +6554,9 @@ class UepAnalysisDialog(QDialog):
         self._set_batch_controls_enabled(False)
         self._apply_batch_search_progress_style(completed=False)
         self._batch_search_progress.setRange(0, 0)
-        self._batch_search_progress.setFormat("Packing starts...")
+        self._batch_search_progress.setFormat("Packing starts…")
         self._set_batch_zpe_progress_idle()
-        self._set_batch_log("Packing admissible starts and launching the optimization batch...")
+        self._set_batch_log("Packing admissible starts and launching the optimization batch…")
         thread.start()
 
     def _run_batch_zpe(self) -> None:
@@ -6568,9 +6578,9 @@ class UepAnalysisDialog(QDialog):
         self._set_batch_controls_enabled(False)
         self._apply_batch_zpe_progress_style(completed=False)
         self._batch_zpe_progress.setRange(0, 0)
-        self._batch_zpe_progress.setFormat("Preparing ZPE...")
+        self._batch_zpe_progress.setFormat("Preparing ZPE…")
         self._append_batch_log(
-            "Launching harmonic zero-point-energy evaluation for the optimized sites..."
+            "Launching harmonic zero-point-energy evaluation for the optimized sites…"
         )
         thread.start()
 

@@ -12,6 +12,7 @@ import numpy as np
 
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.ase_bridge import structure_to_ase_atoms
 from mufinder.science.lattice import (
     cartesian_to_reciprocal,
@@ -740,7 +741,7 @@ def magnetic_builder_checklist(
                 "components",
                 components_title,
                 CHECKLIST_TODO,
-                "Use Add Component, Add Preset... or Build From Host Spins.",
+                "Use Add Component, Add Preset… or Build From Host Spins.",
             )
         )
     elif not enabled:
@@ -767,7 +768,7 @@ def magnetic_builder_checklist(
                 "components",
                 components_title,
                 CHECKLIST_DONE,
-                f"{len(model.components)} component(s), {len(enabled)} enabled.",
+                f"{plural(len(model.components), 'component')}, {len(enabled)} enabled.",
             )
         )
 

@@ -179,7 +179,7 @@ def test_random_generation_runs_in_worker_and_updates_estimated_distance(
     )
     assert window._muon_generation_view._generation_progress.value() == 1
     assert window._muon_generation_view._generation_progress.maximum() == 1
-    assert window._muon_generation_view._generation_progress.format() == "Generated 1 site(s)"
+    assert window._muon_generation_view._generation_progress.format() == "Generated 1 site"
     assert window._muon_generation_view._generate_btn.isEnabled()
     window.close()
 

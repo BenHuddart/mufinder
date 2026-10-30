@@ -247,8 +247,8 @@ class TestTheAction:
 
         assert messages
         body = messages[0]
-        assert "Imported 1 relaxation(s)." in body
-        assert "1 were skipped." in body
+        assert "Imported 1 relaxation." in body
+        assert "1 run was skipped." in body
         # The bare-H relabelling is reported rather than applied silently.
         assert "relabelled" in body
 
@@ -453,7 +453,7 @@ class TestScanProgressReporting:
 
         window._on_legacy_scan_progress(3, 36)
 
-        assert window.statusBar().currentMessage() == "Scanning legacy: relaxation 3 of 36..."
+        assert window.statusBar().currentMessage() == "Scanning legacy: relaxation 3 of 36…"
 
 
 class TestScanRunsOnAThread:

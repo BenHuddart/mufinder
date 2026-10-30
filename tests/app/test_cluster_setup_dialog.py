@@ -228,7 +228,7 @@ def test_cluster_setup_dialog_shows_keychain_option_for_macos_redwood(
 
     assert dialog._keychain_row.isHidden() is False
     assert dialog._keychain_check.text() == "Use macOS Keychain passwords"
-    assert dialog._keychain_help_button.toolTip() == "Show macOS Keychain setup commands"
+    assert dialog._keychain_help_button.toolTip() == "Show macOS Keychain setup commands."
 
     messages: list[str] = []
     monkeypatch.setattr(
@@ -253,7 +253,7 @@ def test_cluster_setup_dialog_shows_keyring_option_for_linux_redwood(
 
     assert dialog._keychain_row.isHidden() is False
     assert dialog._keychain_check.text() == "Use system keyring passwords"
-    assert dialog._keychain_help_button.toolTip() == "Show system keyring setup commands"
+    assert dialog._keychain_help_button.toolTip() == "Show system keyring setup commands."
 
     shown: list[tuple[str, str]] = []
     monkeypatch.setattr(

@@ -1666,7 +1666,7 @@ def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(
         500.0,
     ]
     assert loaded.ui_state["convergence_form"]["cutoff_energies"] == [300.0, 400.0, 500.0]
-    assert "Prepared a cutoff convergence sweep with 3 cutoff value(s)." in [
+    assert "Prepared a cutoff convergence sweep with 3 cutoff values." in [
         entry.body
         for day in build_journal("Schema 1", loaded.provenance).days
         for entry in day.entries
@@ -2091,7 +2091,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_convergence_cutoff",
             "workflow_stage": "convergence_cutoff",
             "actor": "user",
-            "description": "Configured cutoff convergence with 2 cutoff value(s)",
+            "description": "Configured cutoff convergence with 2 cutoff values",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {
@@ -2127,7 +2127,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_convergence_kpoint",
             "workflow_stage": "convergence_kpoint",
             "actor": "user",
-            "description": "Configured k-point convergence with 3 grid value(s)",
+            "description": "Configured k-point convergence with 3 grid values",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {"sweep_values": [[2, 2, 2], [4, 4, 4], [6, 6, 6]]},
@@ -2158,7 +2158,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_pristine_relaxation",
             "workflow_stage": "pristine_relaxation",
             "actor": "user",
-            "description": "Configured pristine relaxation with 1 job row(s)",
+            "description": "Configured pristine relaxation with 1 job row",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {"rows": [{"label": "a"}]},
@@ -2187,7 +2187,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_muon_relaxation",
             "workflow_stage": "muon_relaxation",
             "actor": "user",
-            "description": "Configured muon relaxation with 3 job row(s)",
+            "description": "Configured muon relaxation with 3 job rows",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {"rows": [{"site_id": "<site>"}, {"site_id": "bad"}, "x"]},
@@ -2216,7 +2216,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_uep",
             "workflow_stage": "uep",
             "actor": "user",
-            "description": "Configured UEP source workflow with 2 job row(s)",
+            "description": "Configured UEP source workflow with 2 job rows",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {"rows": [{"label": "a"}, {"label": "b"}]},
@@ -2250,7 +2250,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_quantum_corrections",
             "workflow_stage": "quantum_corrections",
             "actor": "user",
-            "description": "Configured Quantum Corrections with 1 relaxed site(s)",
+            "description": "Configured Quantum Corrections with 1 relaxed site",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {
@@ -2282,7 +2282,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "action": "configure_energy_barriers",
             "workflow_stage": "energy_barriers",
             "actor": "user",
-            "description": "Configured Energy Barriers NEB with 1 relaxed site(s)",
+            "description": "Configured Energy Barriers NEB with 1 relaxed site",
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {"method": "NEB"},

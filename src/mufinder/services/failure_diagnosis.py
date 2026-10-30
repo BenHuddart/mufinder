@@ -242,7 +242,7 @@ def read_log_tail(path: Path, max_bytes: int = LOG_TAIL_BYTES) -> str:
         return text
 
     _, _, remainder = text.partition("\n")
-    return "[... truncated] ...\n" + remainder
+    return "[… truncated] …\n" + remainder
 
 
 def _fresh_log_text(path: Path, not_before: datetime | None) -> str | None:

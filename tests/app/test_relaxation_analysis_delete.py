@@ -230,7 +230,7 @@ def test_tree_context_menu_deletes_an_analysis(
 
         menu = window._project_tree_context_menu(_analysis_item(window, stale))
         assert menu is not None
-        assert [action.text() for action in menu.actions()] == ["Delete Analysis..."]
+        assert [action.text() for action in menu.actions()] == ["Delete Analysis…"]
         menu.actions()[0].trigger()
 
         assert [w["id"] for w in window._relaxation_analysis_workspaces()] == [kept["id"]]
@@ -257,7 +257,7 @@ def test_tree_context_menu_offers_magnetic_workspace_delete(
         item = window._find_tree_item_by_route(window._magnetic_field_workspace_route("mag-1"))
         menu = window._project_tree_context_menu(item)
         assert menu is not None
-        assert [action.text() for action in menu.actions()] == ["Delete Workspace..."]
+        assert [action.text() for action in menu.actions()] == ["Delete Workspace…"]
         menu.actions()[0].trigger()
 
         assert deleted == ["mag-1"]

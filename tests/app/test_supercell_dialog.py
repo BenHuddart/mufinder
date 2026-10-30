@@ -102,7 +102,7 @@ def test_supercell_editor_labels_matrices_through_the_shared_label(qapp, tmp_pat
         for row in range(dialog._asset_table.rowCount())
     }
     assert matrix_column == {"Diagonal": "2x2x2", "Skewed": "[1 1 0; 0 1 0; 0 0 1]"}
-    assert dialog._status_label.text().startswith("Previewing 1x1x1 -> ")
+    assert dialog._status_label.text().startswith("Previewing 1x1x1 → ")
 
     dialog._new_button.click()
 

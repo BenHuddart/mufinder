@@ -20,8 +20,8 @@ Running the workflow
 --------------------
 
 1. **Open the editor.** Select ``Supercell Editor`` in the project navigator and
-   click ``Open Supercell Editor``, or click ``Supercell Editor...`` in the
-   ``Host Structure`` panel, or choose ``Manage Supercells...`` from a
+   click ``Open Supercell Editor``, or click ``Supercell Editor…`` in the
+   ``Host Structure`` panel, or choose ``Manage Supercells…`` from a
    workflow's simulation-cell selector or row ``Supercell`` drop-down.
 2. **Start a new cell.** Click ``New`` to start from the unit-cell matrix.
 3. **Choose the scaling.** Set ``Nx``, ``Ny`` and ``Nz`` (1 to 64 each), or tick
@@ -110,11 +110,11 @@ selection that calculation inputs read.
 - The cutoff and k-point convergence pages have a ``Simulation Cell`` section:
   a summary of the active cell, a ``Saved supercells`` drop-down with ``Single
   unit cell`` and the saved supercells of the active host, ``Manage
-  Supercells...`` to open the editor, and ``Use Unit Cell`` to return to the
+  Supercells…`` to open the editor, and ``Use Unit Cell`` to return to the
   host unit cell without deleting any saved supercell.
 - The pristine-relaxation, muon-relaxation and UEP tables have a per-row
   ``Supercell`` drop-down with ``Unit cell``, the saved supercells and
-  ``Manage Supercells...``.
+  ``Manage Supercells…``.
 - Saved supercells are project-wide and visible to every workflow for the same
   active host. Selecting one owned by another workflow clones it into the
   current workflow, reusing an existing current-workflow copy when one with the

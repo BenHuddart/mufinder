@@ -62,8 +62,8 @@ row is submitted once.
 1. **Open the page.** Select ``Quantum Corrections`` in the workflow navigator.
    The ``Quantum Phonon Jobs`` table lists the pinned sites with
    ``Status`` = ``ready``.
-2. **Configure before submitting.** Click a row's ``Configure...`` button, or
-   select several rows and click ``Configure Selected Parameters...``. Check
+2. **Configure before submitting.** Click a row's ``Configure…`` button, or
+   select several rows and click ``Configure Selected Parameters…``. Check
    the electronic settings (inherited from the source relaxation, see
    `Configuration dialog`_) and set ``Farms`` if you want task farming. The
    settings stay editable until the row's job is submitted.
@@ -95,9 +95,9 @@ row is submitted once.
 
 **Changing your mind or recovering from a failure.** Once a row's job has been
 submitted its parameters are locked, so the stored inputs stay traceable to the
-run. When ``Configure...`` opens a locked row read-only, the dialog says why in
+run. When ``Configure…`` opens a locked row read-only, the dialog says why in
 one line. A row recovers through the shared failed-job reset, as in every
-workflow table: ``Reset Failed Jobs...`` on the button row and in the
+workflow table: ``Reset Failed Jobs…`` on the button row and in the
 right-click menu returns a failed, stopped or cancelled phonon job to
 ``defined`` (see :doc:`/getting_started/running_jobs`). The reset asks first and
 offers to clean the job directory:
@@ -172,10 +172,10 @@ and counts pinned sites that no longer resolve to an eligible relaxed site
    an older project whose singlepoint is still in progress shows that job's
    status (see :ref:`singlepoint records <quantum-singlepoint-records>`).
 ``Parameters``
-   ``Configure...`` (``Configured...`` once custom values are stored, or once
+   ``Configure…`` (``Configured…`` once custom values are stored, or once
    the row is locked).
 
-Below the table, ``Reset Failed Jobs...`` sits beside the run buttons and is
+Below the table, ``Reset Failed Jobs…`` sits beside the run buttons and is
 enabled while a selected row's job failed, was stopped or was cancelled.
 Right-click selected rows to run, cancel, inspect a failure, reset failed jobs,
 or configure them. There is no ``Remove``: rows are derived from completed
@@ -258,7 +258,7 @@ between rows are marked as mixed and are left untouched unless you edit them.
      - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections
        Parameters`` so the stored inputs stay traceable to the submitted job.
        One line says why and what unlocks the row: cancel an active job and
-       reset it, use ``Reset Failed Jobs...`` on a failed, stopped or cancelled
+       reset it, use ``Reset Failed Jobs…`` on a failed, stopped or cancelled
        job, or delete a completed job from the Job Dashboard.
 
 What MuFinder writes

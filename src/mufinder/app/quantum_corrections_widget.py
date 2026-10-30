@@ -224,7 +224,7 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
+        self._batch_configure_button = QPushButton("Configure Selected Parameters…")
         self._selection_count_label = QLabel("")
         style_hint_text(self._selection_count_label)
         # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run

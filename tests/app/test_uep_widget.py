@@ -84,7 +84,7 @@ def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
     labels = [combo.itemText(index) for index in range(combo.count())]
     assert labels[0] == "Unit cell"
     assert "pristine_relaxation 2x2x1" in labels
-    assert labels[-1] == "Manage Supercells..."
+    assert labels[-1] == "Manage Supercells…"
 
 
 def test_uep_widget_supercell_combo_shows_a_restored_custom_matrix(qapp) -> None:
@@ -103,7 +103,7 @@ def test_uep_widget_supercell_combo_shows_a_restored_custom_matrix(qapp) -> None
         "Unit cell",
         "2x2x1",
         "Custom 3x3",
-        "Manage Supercells...",
+        "Manage Supercells…",
     ]
     assert combo.currentText() == "Custom 3x3"
     assert widget.row_supercell_matrix(row_id) == ((1, 1, 0), (0, 1, 0), (0, 0, 2))
@@ -120,7 +120,7 @@ def test_uep_widget_manage_supercells_entry_requests_the_manager(qapp) -> None:
     widget.form_state_changed.connect(states.append)
 
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
-    combo.setCurrentIndex(combo.findText("Manage Supercells..."))
+    combo.setCurrentIndex(combo.findText("Manage Supercells…"))
 
     assert requested == [row_id]
     assert widget.row_supercell_matrix(row_id) is None
@@ -378,14 +378,14 @@ def test_uep_widget_marks_row_configure_button_as_configured_when_customized(qap
 
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configure..."
+    assert configure_button.text() == "Configure…"
 
     row_id = widget._row_id_at(0)
     assert row_id is not None
     widget._row_parameter_values[row_id] = {"cut_off_energy": ValueWithUnit(500.0, "eV")}
     widget._refresh_all_rows()
 
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
 
 def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
@@ -405,7 +405,7 @@ def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
     assert not combo.isEnabled()
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
     remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
@@ -521,7 +521,7 @@ def test_uep_batch_configure_button_tracks_selection(qapp) -> None:
     widget._add_row()
     widget._add_row()
 
-    assert widget._batch_configure_button.text() == "Configure Selected Parameters..."
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters…"
     widget._refresh_batch_button_state()
     assert widget._batch_configure_button.isEnabled() is False
 
@@ -787,8 +787,8 @@ def test_uep_row_menu_uses_the_shared_core(qapp, monkeypatch) -> None:
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
-        "Reset Failed Jobs...",
-        "Configure...",
+        "Reset Failed Jobs…",
+        "Configure…",
         "Remove",
         "Open Containing Folder",
         "Export Inputs/Outputs…",

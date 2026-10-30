@@ -38,7 +38,7 @@ at (½, ½, ½) of the conventional cubic cell. It is a ferromagnet with a momen
    The bcc Fe cell, with a spin of 2.2 ħ/2 on each atom marking the
    ferromagnetic order.
 
-The same 2.2 μB sets the magnetic model. ``Edit Magnetic Structure...`` holds one
+The same 2.2 μB sets the magnetic model. ``Edit Magnetic Structure…`` holds one
 collinear component, ``q = (0, 0, 0)``, applied to all atoms with the moment
 ``[0, 0, 2.2]``; the ``Magnetic Structure`` card on the page lists it.
 

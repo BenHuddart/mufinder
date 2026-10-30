@@ -427,10 +427,10 @@ def test_read_bounded_tail_large_file_returns_only_tail(tmp_path: Path) -> None:
     assert path.stat().st_size > limit
 
     tail_text = MainWindow._read_bounded_tail(path)
-    assert len(tail_text.encode("utf-8")) <= limit + len("[... truncated] ...\n")
+    assert len(tail_text.encode("utf-8")) <= limit + len("[… truncated] …\n")
     assert "FIRST-LINE-SENTINEL" not in tail_text
     assert "LAST-LINE-SENTINEL" in tail_text
-    assert tail_text.startswith("[... truncated] ...\n")
+    assert tail_text.startswith("[… truncated] …\n")
 
     excerpt = MainWindow._read_text_excerpt(path, max_chars=10**9)
     assert "FIRST-LINE-SENTINEL" not in excerpt

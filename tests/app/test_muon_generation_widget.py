@@ -255,10 +255,10 @@ def test_widget_can_restore_generated_site_selection_after_refresh(qapp) -> None
 def test_widget_generation_progress_and_random_distance_update(qapp) -> None:
     widget = MuonGenerationWidget()
 
-    widget.set_generation_busy(True, "Generating random sites...")
+    widget.set_generation_busy(True, "Generating random sites…")
     assert widget._generation_progress.minimum() == 0
     assert widget._generation_progress.maximum() == 0
-    assert widget._generation_progress.format() == "Generating random sites..."
+    assert widget._generation_progress.format() == "Generating random sites…"
     assert not widget._generate_btn.isEnabled()
     assert widget._cancel_generation_btn.isVisibleTo(widget)
     cancels: list[bool] = []
@@ -275,7 +275,7 @@ def test_widget_generation_progress_and_random_distance_update(qapp) -> None:
     assert widget._generate_btn.isEnabled()
     assert not widget._cancel_generation_btn.isVisibleTo(widget)
 
-    widget.set_generation_busy(True, "Preparing random generation...")
+    widget.set_generation_busy(True, "Preparing random generation…")
     widget.set_generation_progress(2, 5)
     assert widget._generation_progress.minimum() == 0
     assert widget._generation_progress.maximum() == 5

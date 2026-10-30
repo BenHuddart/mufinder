@@ -176,7 +176,7 @@ class LocalJobRunner(QObject):
         if not request.castep_executable:
             return "No CASTEP executable is configured."
         if request.num_cores > 1 and not request.mpirun_path:
-            return "Configure mpirun in Setup -> CASTEP before requesting multiple cores."
+            return "Configure mpirun in Setup > CASTEP before requesting multiple cores."
         if not request.job_dir.exists() or not request.job_dir.is_dir():
             return f"Job directory does not exist: {request.job_dir}"
         return None

@@ -275,7 +275,7 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     assert widget._added_advanced[300.0] == {"basis_precision"}
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
 
 def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
@@ -306,7 +306,7 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
     assert widget._parameter_values[300.0]["max_scf_cycles"] == 50
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
 
 def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
@@ -1007,14 +1007,14 @@ def test_convergence_widget_context_menu_has_the_shared_order(
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
-        "Reset Failed Jobs...",
-        "Configure...",
+        "Reset Failed Jobs…",
+        "Configure…",
         "Remove",
         "Open Containing Folder",
         "Export Inputs/Outputs…",
     ]
     enabled = {action.text for action in menu.actions if action.enabled}
-    assert enabled == {"Run Local", "Run on Cluster", "Configure...", "Remove"}
+    assert enabled == {"Run Local", "Run on Cluster", "Configure…", "Remove"}
 
 
 def _two_cutoffs_with_different_scf_cycles() -> CutoffConvergenceWidget:

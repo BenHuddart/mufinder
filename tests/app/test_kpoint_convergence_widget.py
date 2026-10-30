@@ -457,7 +457,7 @@ def test_kpoint_widget_queued_grid_parameter_dialog_is_read_only(
     assert widget._parameter_values[(2, 2, 2)]["max_scf_cycles"] == 50
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
 
 def test_kpoint_widget_cancelled_grid_parameters_are_editable(

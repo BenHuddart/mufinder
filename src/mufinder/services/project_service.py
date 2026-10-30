@@ -28,6 +28,7 @@ from mufinder.domain.models import (
     normalize_default_method,
     utc_now,
 )
+from mufinder.domain.text import plural
 from mufinder.persistence import project_codec
 from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
@@ -524,7 +525,7 @@ class ProjectService:
                 action="submit_jobs",
                 workflow_stage=workflow_stage,
                 actor="user",
-                description=f"Submitted {len(submitted_jobs)} job(s) to {execution_target}",
+                description=f"Submitted {plural(len(submitted_jobs), 'job')} to {execution_target}",
                 parameters={
                     "execution_target": execution_target,
                     "job_count": len(submitted_jobs),
@@ -970,7 +971,7 @@ class ProjectService:
             action="configure_convergence_cutoff",
             description=(
                 "Configured cutoff convergence with "
-                f"{len(snapshot.get('sweep_values', []))} cutoff value(s)"
+                f"{plural(len(snapshot.get('sweep_values', [])), 'cutoff value')}"
             ),
             configuration=snapshot,
             output_directory=output_directory,
@@ -1005,7 +1006,7 @@ class ProjectService:
             action="configure_convergence_kpoint",
             description=(
                 "Configured k-point convergence with "
-                f"{len(snapshot.get('sweep_values', []))} grid value(s)"
+                f"{plural(len(snapshot.get('sweep_values', [])), 'grid value')}"
             ),
             configuration=snapshot,
             output_directory=output_directory,
@@ -1036,7 +1037,7 @@ class ProjectService:
             stage=WorkflowStage.PRISTINE_RELAXATION,
             calc_type="castep_pristine_relaxation",
             action="configure_pristine_relaxation",
-            description=f"Configured pristine relaxation with {len(snapshot.get('rows', []))} job row(s)",
+            description=f"Configured pristine relaxation with {plural(len(snapshot.get('rows', [])), 'job row')}",
             configuration=snapshot,
             output_directory=output_directory,
             extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
@@ -1073,7 +1074,7 @@ class ProjectService:
             stage=WorkflowStage.MUON_RELAXATION,
             calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE,
             action="configure_muon_relaxation",
-            description=f"Configured muon relaxation with {len(snapshot.get('rows', []))} job row(s)",
+            description=f"Configured muon relaxation with {plural(len(snapshot.get('rows', [])), 'job row')}",
             configuration=snapshot,
             output_directory=output_directory,
             extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
@@ -1100,7 +1101,7 @@ class ProjectService:
             stage=WorkflowStage.UEP,
             calc_type="castep_uep_source",
             action="configure_uep",
-            description=f"Configured UEP source workflow with {len(snapshot.get('rows', []))} job row(s)",
+            description=f"Configured UEP source workflow with {plural(len(snapshot.get('rows', [])), 'job row')}",
             configuration=snapshot,
             output_directory=output_directory,
             extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
@@ -1134,7 +1135,7 @@ class ProjectService:
             stage=WorkflowStage.QUANTUM_CORRECTIONS,
             calc_type="castep_quantum_phonon_set",
             action="configure_quantum_corrections",
-            description=f"Configured Quantum Corrections with {len(input_site_ids)} relaxed site(s)",
+            description=f"Configured Quantum Corrections with {plural(len(input_site_ids), 'relaxed site')}",
             configuration=snapshot,
             output_directory=output_directory,
             extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
@@ -1160,7 +1161,7 @@ class ProjectService:
             stage=WorkflowStage.HYPERFINE_COUPLING,
             calc_type="castep_hyperfine_set",
             action="configure_hyperfine_coupling",
-            description=f"Configured Hyperfine Coupling with {len(input_site_ids)} relaxed site(s)",
+            description=f"Configured Hyperfine Coupling with {plural(len(input_site_ids), 'relaxed site')}",
             configuration=to_jsonable(parameters),
             output_directory=output_directory,
             extra_parameters={"job_ids_by_label": {}},
@@ -1186,7 +1187,7 @@ class ProjectService:
             stage=WorkflowStage.ENERGY_BARRIERS,
             calc_type="castep_nudged_elastic_band_set",
             action="configure_energy_barriers",
-            description=f"Configured Energy Barriers NEB with {len(input_site_ids)} relaxed site(s)",
+            description=f"Configured Energy Barriers NEB with {plural(len(input_site_ids), 'relaxed site')}",
             configuration=to_jsonable(parameters),
             output_directory=output_directory,
             extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
@@ -2188,4 +2189,4 @@ class ProjectService:
             JobStatus.CANCELLED: {JobStatus.SUBMITTING},
         }
         if target not in allowed[current]:
-            raise ValueError(f"Invalid job transition: {current.value} -> {target.value}")
+            raise ValueError(f"Invalid job transition from {current.value} to {target.value}")

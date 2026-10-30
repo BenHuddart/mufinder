@@ -257,21 +257,21 @@ def run() -> int:
     splash_clock = QElapsedTimer()
     splash_clock.start()
 
-    splash.set_progress(18, "Loading appearance...")
+    splash.set_progress(18, "Loading appearance…")
     settings = QSettings("MuFinder", "MuFinder")
     apply_theme, load_theme_mode = _theme_helpers()
     apply_theme(app, load_theme_mode(settings))
     _process_events(app, max_ms=10)
 
-    splash.set_progress(35, "Loading CASTEP configuration...")
+    splash.set_progress(35, "Loading CASTEP configuration…")
     _apply_saved_castep_environment(settings)
     _process_events(app, max_ms=10)
 
-    splash.set_progress(70, "Building main window...")
+    splash.set_progress(70, "Building main window…")
     window = _main_window_ctor()()
     _process_events(app, max_ms=10)
 
-    splash.set_progress(95, "Finalising UI...")
+    splash.set_progress(95, "Finalising UI…")
     window.show()
     _process_events(app, max_ms=10)
 

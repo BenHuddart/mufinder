@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
 from mufinder.science.spglib_compat import (
     SYMMETRY_TOLERANCE_ANG,
@@ -270,7 +271,7 @@ def _check_composition(
         found = sum(1 for value in host_symbols if value == symbol)
         if found != expected:
             raise error(
-                f"The distorted structure has {found} {symbol} atom(s); its {determinant}-cell pristine "
+                f"The distorted structure has {plural(found, f'{symbol} atom')}; its {determinant}-cell pristine "
                 f"supercell has {expected}."
             )
 
@@ -315,7 +316,7 @@ def _check_one_to_one(
     duplicates = len(atom_indices) - len(keys)
     if duplicates:
         raise error(
-            f"The distorted-to-pristine atom mapping is not one-to-one: {duplicates} displaced atom(s) share a "
+            f"The distorted-to-pristine atom mapping is not one-to-one: {plural(duplicates, 'displaced atom shares', 'displaced atoms share')} a "
             "pristine site. Check that the distorted structure was relaxed from this host."
         )
 

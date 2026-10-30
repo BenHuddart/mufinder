@@ -363,10 +363,10 @@ def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> No
 
     (_jobs, local_extras), (_cluster_jobs, cluster_extras) = local.calls[0], cluster.calls[0]
     assert local_extras["success_message"](1) == (
-        "Submitted 1 local job(s); skipped 2 selected rows that were not ready"
+        "Submitted 1 local job; skipped 2 selected rows that were not ready"
     )
     assert cluster_extras["success_message"](1, "hpc") == (
-        "Submitted 1 cluster job(s) on hpc; skipped 2 selected rows that were not ready"
+        "Submitted 1 cluster job on hpc; skipped 2 selected rows that were not ready"
     )
 
 
@@ -384,7 +384,7 @@ def test_submit_reports_a_single_skipped_row_in_the_singular(tmp_path: Path) -> 
     controller.submit(["a", "b"], target="local")
 
     assert local.calls[0][1]["success_message"](1) == (
-        "Submitted 1 local job(s); skipped 1 selected row that was not ready"
+        "Submitted 1 local job; skipped 1 selected row that was not ready"
     )
 
 

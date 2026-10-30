@@ -568,7 +568,7 @@ def test_magnetic_texture_dialog_builds_hexagonal_texture_component(qapp) -> Non
     assert len(component.terms) == 3
     assert component.metadata["type"] == "texture"
     assert component.metadata["texture_mode"] == "hexagonal_skyrmion"
-    assert "term(s)" in dialog._diagnostics.text()
+    assert "terms" in dialog._diagnostics.text()
     assert dialog._preview._moments.shape[:2] == (161, 161)
     assert isinstance(dialog._controls_scroll, QScrollArea)
     assert dialog._custom_group.isHidden()
@@ -585,7 +585,7 @@ def test_magnetic_texture_dialog_builds_hexagonal_texture_component(qapp) -> Non
     assert dialog._preview._canvas_mode == "light"
     assert dialog._magnitude_info_button.objectName() == "mufinderHelpButton"
     assert not dialog._magnitude_info_button.icon().isNull()
-    assert dialog._magnitude_info_button.toolTip() == "Explain magnitude normalization and pruning"
+    assert dialog._magnitude_info_button.toolTip() == "Explain magnitude normalization and pruning."
     dialog.close()
 
 
@@ -852,7 +852,7 @@ def test_magnetic_texture_dialog_normalization_and_pruning_update_diagnostics(qa
     texture = dialog.texture()
 
     assert len(texture.terms) == 2
-    assert "2 term(s)" in dialog._diagnostics.text()
+    assert "2 terms" in dialog._diagnostics.text()
     dialog.close()
 
 
@@ -1176,7 +1176,7 @@ def test_component_dialog_starts_without_atom_phases(qapp) -> None:
     dialog = MagneticComponentDialog(_multi_species_structure())
 
     assert dialog._atom_phase_summary.text() == "None"
-    assert dialog._atom_phase_button.text() == "Per-Atom Phases..."
+    assert dialog._atom_phase_button.text() == "Per-Atom Phases…"
     assert dialog.component((0.0, 0.0, 0.0)).atom_phase_turns == {}
     dialog.close()
 
@@ -1662,7 +1662,7 @@ def test_magnetic_structure_builder_q_basis_panel_highlights_selected_components
     assert not any(table.item(row, 0).font().bold() for row in range(3))
     _select_builder_rows(dialog, 1)
     assert [table.item(row, 0).font().bold() for row in range(3)] == [False, True, False]
-    assert table.item(1, 0).toolTip() == "Used by the selected component"
+    assert table.item(1, 0).toolTip() == "Used by the selected component."
     _select_builder_rows(dialog, 0, 1)
     assert [table.item(row, 1).font().bold() for row in range(3)] == [True, True, False]
     assert dialog.model().q_basis_rlu[0] == (0.25, 0.0, 0.0)
@@ -2347,7 +2347,7 @@ def test_magnetic_field_widget_corrects_an_incommensurate_distribution(
     # The zero lattice field leaves only the moved Fe's dipole change, turning with the helix.
     change = MU0_OVER_4PI_T_M_PER_A * BOHR_MAGNETON_J_PER_T / 1e-30 * (1.5**-3 - 1.6**-3)
     assert widget._calculation_status.text().startswith(
-        "Results: sampled 1 incommensurate field distribution(s) with muon-induced distortion corrections"
+        "Results: sampled 1 incommensurate field distribution with muon-induced distortion corrections"
     )
     assert widget._result_table.item(0, 5).text() == "distribution mean (distortion-corrected)"
     state = widget.collect_state()
@@ -2951,7 +2951,7 @@ def test_demagnetizing_advanced_dialog_needs_an_outline_for_a_plate(qapp, monkey
 
     assert dialog._stack.currentIndex() == 2
     assert "No outline yet" in dialog._plate_summary.text()
-    assert dialog._photo_button.text() == "From photo..."
+    assert dialog._photo_button.text() == "From photo…"
     assert "no outline" in dialog._tensor_label.text()
     assert not dialog._use_button.isEnabled()
     dialog.close()
@@ -2980,7 +2980,7 @@ def test_demagnetizing_advanced_dialog_takes_the_plate_from_the_photo_dialog(
 
     assert dialog._use_button.isEnabled()
     assert "Plate from photo 5 x 5 x 0.2 (crystal.png)" in dialog._plate_summary.text()
-    assert dialog._photo_button.text() == "Edit outline..."
+    assert dialog._photo_button.text() == "Edit outline…"
     assert "Tr N = 1.00000" in dialog._tensor_label.text()
     assert "FFT box" in dialog._tensor_label.text()
     assert dialog._preview.samples[-1][0].shape == "image_plate"
@@ -5170,7 +5170,7 @@ def test_magnetic_field_widget_lists_commensurate_approximant_fields(
     ]
     assert widget._result_table.item(1, 5).text() == "field"
     assert widget._calculation_status.text() == (
-        "Results: calculated 2 field value(s) of the commensurate approximant q = (1/3, 0, 0) with a "
+        "Results: calculated 2 field values of the commensurate approximant q = (1/3, 0, 0) with a "
         "3 x 1 x 1 magnetic supercell (q moved by at most 6.7e-05 r.l.u.)."
     )
     state = widget.collect_state()["magnetic_field_results"]
@@ -5215,8 +5215,8 @@ def test_magnetic_field_widget_suggests_an_available_approximant(
 
     status = widget._calculation_status.text()
     assert status.startswith(
-        "Results: sampled 1 incommensurate field distribution(s); "
-        "1 convergence check(s) need attention, select a row for advice."
+        "Results: sampled 1 incommensurate field distribution; "
+        "1 convergence check needs attention, select a row for advice."
     )
     assert "within 6.7e-05 r.l.u. of the commensurate approximant q = (1/3, 0, 0)" in status
     assert status.endswith(
@@ -5250,8 +5250,7 @@ def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(
     widget._calculate_fields()
 
     assert (
-        widget._calculation_status.text()
-        == "Results: sampled 1 incommensurate field distribution(s)."
+        widget._calculation_status.text() == "Results: sampled 1 incommensurate field distribution."
     )
     widget.close()
 

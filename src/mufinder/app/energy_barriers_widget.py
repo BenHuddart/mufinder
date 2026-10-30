@@ -713,7 +713,7 @@ class EnergyBarriersWidget(SourceTableWidget):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
+        self._batch_configure_button = QPushButton("Configure Selected Parameters…")
         self._remove_sources_button = QPushButton(REMOVE_SELECTED_TEXT)
         self._selection_count_label = QLabel("")
         style_hint_text(self._selection_count_label)
@@ -930,7 +930,7 @@ class EnergyBarriersWidget(SourceTableWidget):
         return f"{row.reactant} to {row.product}"
 
     def create_source_row_cells(self, row_index: int, row: EnergyBarrierSourceRow) -> None:
-        view_button = QPushButton("View...", self._sources_table)
+        view_button = QPushButton("View…", self._sources_table)
         view_button.setToolTip("Open the path viewer for this diffusion path.")
         name_row_control(view_button, "View", self.source_row_label(row))
         view_button.clicked.connect(

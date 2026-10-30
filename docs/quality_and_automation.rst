@@ -400,7 +400,7 @@ antiparallel spins on the two Co, ``PBE`` as the project functional and a saved
 
 ``fixture_project`` is the configured-but-unsubmitted project of the setup
 scenes: a cutoff sweep (300 to 800 eV) and a k-point sweep (the grids
-``Generate From Spacing...`` gives down to 0.05 1/Ang), none submitted, and
+``Generate From Spacing…`` gives down to 0.05 1/Ang), none submitted, and
 ten candidate muon sites from ``ProjectService.generate_candidate_sites``,
 one 1 Å from each fluorine and six random with a fixed seed. The builders make
 the calls the application makes, including the sweep widgets' own form logic,
@@ -817,8 +817,8 @@ The harness tests currently verify:
 - Every ``mufinder.*`` path in the shared-homes table (:doc:`/architecture`,
   Shared workflow infrastructure) names a module or package under
   ``src/mufinder``; the check reads the file system and imports nothing.
-- The Sphinx index includes the agent harness, architecture, quality, and
-  compatibility documents, and ``docs/architecture.rst`` names every layer
+- The Sphinx index includes the agent harness, architecture, quality,
+  compatibility and UI text documents, and ``docs/architecture.rst`` names every layer
   package.
 - Lower package layers do not import higher package layers
   (``FORBIDDEN_LAYER_IMPORTS``), and no layer package outside ``mufinder.app``
@@ -835,6 +835,10 @@ The harness tests currently verify:
   ``NoToAll`` included): confirmations go through ``confirm_destructive`` or
   ``confirm_choice`` in ``mufinder.app.workflow_table_utils``, whose buttons
   name their action.
+- No string literal under ``src/mufinder`` (docstrings and ``numpy.einsum``
+  subscripts excepted) contains ``(s)`` after a word, three dots or ``->``:
+  counts go through ``mufinder.domain.text.plural``, the ellipsis is ``…`` and
+  menu paths are written ``Setup > CASTEP`` (see :doc:`/ui_text`).
 - The private methods that two or more workflow widget modules define match
   a pinned name-to-count table; a count may only fall and no new shared name
   may appear (see :doc:`/architecture`, Shared workflow infrastructure).

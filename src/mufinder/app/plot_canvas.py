@@ -239,7 +239,7 @@ class PlotFrame(QWidget):
         self._pop_out_button.setAutoRaise(True)
         # Its soft backing, which keeps it visible over plot content, is in the
         # theme stylesheet, so it follows a theme switch with the icon.
-        self._pop_out_button.setToolTip("Open in a separate window (zoom, pan, save)")
+        self._pop_out_button.setToolTip("Open in a separate window (zoom, pan, save).")
         self._pop_out_button.setAccessibleName(f"Open {title} in a separate window")
         self._pop_out_button.clicked.connect(self.pop_out)
         overlay_layout.addWidget(self._pop_out_button)

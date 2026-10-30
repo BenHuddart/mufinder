@@ -718,6 +718,10 @@ no two workflow widgets may define the same private method.
        (``atomic_spins_from_structure``,
        ``atomic_spins_from_magnetic_moments``,
        ``propagation_vector_from_structure``, ``has_nonzero_spins``).
+   * - ``mufinder.domain.text``
+     - Helpers for text shown to the user, for every layer that builds it:
+       ``plural`` writes a count that agrees with its number (``1 job``,
+       ``3 jobs``); see :doc:`/ui_text`.
 
 Widget contract
 ~~~~~~~~~~~~~~~
@@ -754,7 +758,7 @@ controllers treat every workflow alike:
   relaxation, UEP) delegates it to one ``SupercellColumn``. The column holds the
   project supercell options, each row's matrix and the project k-point
   reference; it builds every row's combo (``Unit cell``, the project options,
-  the row's own matrix when it is not an option, ``Manage Supercells...``),
+  the row's own matrix when it is not an option, ``Manage Supercells…``),
   applies a choice to the targeted rows through the shared targeting rule, and
   derives the row's suggested k-point grid, the grid's equivalent spacing for
   the parameter dialog, and the grid-adjustment message. The widget supplies
@@ -778,8 +782,8 @@ controllers treat every workflow alike:
   shared sanitiser (``sanitize_parameter_mapping``); the shared rows come first (see Workflow parameter surface
   policy).
 - **Layout.** A header row with the title, subtitle and project-defaults strip;
-  a controls row (``Add...``, a count label, ``Remove Selected``,
-  ``Configure Selected Parameters...``); and a run row with the job-name prefix
+  a controls row (``Add…``, a count label, ``Remove Selected``,
+  ``Configure Selected Parameters…``); and a run row with the job-name prefix
   and the two run buttons.
 - **Accessible names.** Every control a page shows has a name a screen reader
   can announce: its own text, a ``QLabel`` buddy (``setBuddy`` where a visible
@@ -1531,8 +1535,8 @@ opened through ``mufinder.app.workflow_dialogs``):
   including hidden ones and either/or pairs of which only one member matches
   the search.
 
-Configuring several rows at once (``Configure Selected Parameters...``, a
-row's ``Configure...`` button on a multi-row selection, or ``Configure...`` in
+Configuring several rows at once (``Configure Selected Parameters…``, a
+row's ``Configure…`` button on a multi-row selection, or ``Configure…`` in
 the row menu) opens one parameter dialog for all of them:
 
 - A parameter the rows agree on is shown with that value. A parameter on which

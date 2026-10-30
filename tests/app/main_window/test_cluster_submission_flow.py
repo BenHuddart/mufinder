@@ -1464,7 +1464,7 @@ def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_director
             "could not be checked (SFTP stat failed)",
         )
     ]
-    assert window.statusBar().currentMessage() == "Submitted 1 cluster job(s) on alpha"
+    assert window.statusBar().currentMessage() == "Submitted 1 cluster job on alpha"
 
     window.close()
 
@@ -2546,7 +2546,7 @@ def test_main_window_batch_timeout_stops_the_worker_submitting(
     # cancelled; closing the progress dialog then repeats the request.
     assert cancel_requests == [True, True]
     assert failed == [
-        "- Cluster submission stopped responding after 3 minutes; 1 pending job(s) were cancelled."
+        "- Cluster submission stopped responding after 3 minutes; 1 pending job was cancelled."
     ]
     window.close()
 

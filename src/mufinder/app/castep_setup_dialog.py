@@ -205,7 +205,7 @@ class CastepSetupDialog(QDialog):
         local_layout = QVBoxLayout(local_group)
         local_note = QLabel(
             "Only needed to run calculations on this computer, or to generate the keyword catalog from "
-            '"This computer". Cluster jobs and cluster keyword generation never use these paths: each '
+            "'This computer'. Cluster jobs and cluster keyword generation never use these paths: each "
             "cluster's own CASTEP executable is set in Setup > HPC Clusters."
         )
         local_note.setWordWrap(True)
@@ -561,7 +561,7 @@ class CastepSetupDialog(QDialog):
         self._generation_output_path = output_path.expanduser()
         self._generation_log = ""
         self._set_generation_running(True)
-        self._progress_label.setText("Starting CASTEP keyword extraction...")
+        self._progress_label.setText("Starting CASTEP keyword extraction…")
         self._progress_bar.setValue(0)
 
         # The subprocess runs ``generate_castep_keywords_json`` with the
@@ -599,7 +599,7 @@ class CastepSetupDialog(QDialog):
         self._generation_output_path = output_path.expanduser()
         self._generation_log = ""
         self._set_generation_running(True)
-        self._progress_label.setText(f"Starting CASTEP keyword extraction on {config.name}...")
+        self._progress_label.setText(f"Starting CASTEP keyword extraction on {config.name}…")
         self._progress_bar.setValue(0)
 
         worker = ClusterKeywordGenerationWorker(
@@ -648,7 +648,7 @@ class CastepSetupDialog(QDialog):
         if self._generation_process is None and self._generation_worker is None:
             return
         self._generation_cancelled = True
-        self._progress_label.setText("Cancelling CASTEP keyword generation...")
+        self._progress_label.setText("Cancelling CASTEP keyword generation…")
         if self._generation_process is not None:
             self._generation_process.kill()
         if self._generation_worker is not None:
@@ -676,7 +676,7 @@ class CastepSetupDialog(QDialog):
             if match:
                 percent = max(0, min(100, int(match.group(1))))
                 self._progress_bar.setValue(percent)
-                self._progress_label.setText(f"Generating CASTEP keywords... {percent}%")
+                self._progress_label.setText(f"Generating CASTEP keywords… {percent}%")
             else:
                 self._progress_label.setText(chunk)
 
@@ -757,7 +757,7 @@ class CastepSetupDialog(QDialog):
         lines = [line.strip() for line in text.replace("\r", "\n").splitlines() if line.strip()]
         summary = lines[0] if lines else text
         if len(summary) > 240:
-            summary = f"{summary[:237]}..."
+            summary = f"{summary[:239]}…"
 
         if len(lines) <= 1 and len(text) <= 240:
             QMessageBox.warning(self, "Generation failed", summary)

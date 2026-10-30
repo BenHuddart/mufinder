@@ -608,7 +608,7 @@ class FieldNotesPanel(QFrame):
         self._needs.setVisible(bool(stage.unmet_requirements))
         self._guidance.setText(stage.guidance)
         self._open_button.setText(f"Open {stage.title}")
-        self._open_button.setToolTip(f"Go to the {stage.title} page")
+        self._open_button.setToolTip(f"Go to the {stage.title} page.")
 
     def stage(self) -> StageSummary | None:
         return self._stage
@@ -665,7 +665,7 @@ class ProjectHomeWidget(QWidget):
         header.addWidget(self._progress, 1)
         self._journal_button = QPushButton("Open Journal", self)
         self._journal_button.setObjectName("projectHomeJournalButton")
-        self._journal_button.setToolTip("Read the project's journal of actions and notes")
+        self._journal_button.setToolTip("Read the project's journal of actions and notes.")
         self._journal_button.clicked.connect(lambda: self.route_requested.emit("provenance_log"))
         header.addWidget(self._journal_button)
         layout.addLayout(header)

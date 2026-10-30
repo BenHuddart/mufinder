@@ -210,5 +210,5 @@ def test_inspect_headline_is_capped(qapp, tmp_path: Path) -> None:
 
     lines = headline.splitlines()
     assert len(lines) == MainWindow._FAILURE_HEADLINE_LIMIT + 1
-    assert lines[-1] == "…and 3 more job(s)."
+    assert lines[-1] == "…and 3 more jobs."
     window.close()

@@ -59,7 +59,7 @@ q = (0.0147, 0.0147, 0.0147) in reciprocal lattice units, and the Mn moment is
 the moments turn in the plane perpendicular to [111].
 
 The builder takes the vector in two steps. The propagation direction of
-``Add Preset...`` is a crystal axis or a row of the q basis, and [111] is not an
+``Add Preset…`` is a crystal axis or a row of the q basis, and [111] is not an
 axis, so q is first typed into row ``q1`` of the ``Propagation-Vector Basis``
 panel, and the preset then propagates along that row.
 

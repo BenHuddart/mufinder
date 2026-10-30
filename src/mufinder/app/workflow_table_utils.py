@@ -32,6 +32,7 @@ from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_t
 from mufinder.app.theme import use_square_top_table_corners, use_tabbed_table_corners
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.text import plural
 from mufinder.science.kpoint_grids import spacing_from_grid
 
 #: Displayed row statuses whose job can be reset back to ``defined`` from the
@@ -46,7 +47,7 @@ RESETTABLE_ROW_STATUSES = frozenset({"failed", "stopped", "cancelled"})
 
 #: Menu text for the per-row reset action, shared so every workflow table names
 #: the same recovery affordance identically.
-RESET_FAILED_ACTION_TEXT = "Reset Failed Jobs..."
+RESET_FAILED_ACTION_TEXT = "Reset Failed Jobs…"
 
 #: Table tooltip announcing the reset menu. A one-entry context menu that is
 #: greyed out except on failed rows is otherwise invisible — a user with a stuck
@@ -253,12 +254,6 @@ def confirm_choice(
     return escape
 
 
-def count_phrase(count: int, noun: tuple[str, str]) -> str:
-    """Return ``"1 row"`` / ``"3 rows"`` for a ``(singular, plural)`` noun."""
-
-    return f"{count} {noun[0] if count == 1 else noun[1]}"
-
-
 def confirm_row_removal(
     parent: QWidget,
     count: int,
@@ -280,21 +275,20 @@ def confirm_row_removal(
     details: list[str] = []
     if cancelling_count:
         details.append(
-            f"{count_phrase(cancelling_count, ('job is', 'jobs are'))} queued or running "
+            f"{plural(cancelling_count, 'job is', 'jobs are')} queued or running "
             "and will be cancelled."
         )
     settled = submitted_count - cancelling_count
     if settled > 0:
         details.append(
-            f"{count_phrase(settled, noun)} already "
-            f"{'has' if settled == 1 else 'have'} a submitted job."
+            f"{plural(settled, *noun)} already {'has' if settled == 1 else 'have'} a submitted job."
         )
     return confirm_destructive(
         parent,
         f"Remove {noun[0] if count == 1 else noun[1]}",
-        f"Remove {count_phrase(count, noun)}?",
+        f"Remove {plural(count, *noun)}?",
         " ".join(details),
-        f"Remove {count_phrase(count, noun)}",
+        f"Remove {plural(count, *noun)}",
     )
 
 
@@ -523,7 +517,7 @@ RUN_LOCAL_ACTION_TEXT = "Run Local"
 RUN_CLUSTER_ACTION_TEXT = "Run on Cluster"
 CANCEL_ACTION_TEXT = "Cancel"
 INSPECT_FAILURE_ACTION_TEXT = "Inspect Failure"
-CONFIGURE_ACTION_TEXT = "Configure..."
+CONFIGURE_ACTION_TEXT = "Configure…"
 REMOVE_ACTION_TEXT = "Remove"
 EXPORT_RELAXED_STRUCTURE_ACTION_TEXT = "Export Relaxed Structure"
 
@@ -566,7 +560,7 @@ def standard_row_actions(
         return lambda row: predicate(status_for_row(row))
 
     def _confirmed_cancel(rows: Sequence[object]) -> None:
-        phrase = count_phrase(len(rows), ("calculation", "calculations"))
+        phrase = plural(len(rows), "calculation", "calculations")
         if confirm_parent is not None and not confirm_destructive(
             confirm_parent,
             "Cancel calculations",
@@ -918,10 +912,10 @@ def multi_row_outcome_text(action: str, applied: int, selected: int) -> str:
     many rows were selected and ``applied`` how many the action reached.
     """
 
-    text = f"{action} {count_phrase(applied, ('row', 'rows'))}"
+    text = f"{action} {plural(applied, 'row', 'rows')}"
     skipped = selected - applied
     if skipped > 0:
-        text += f", {count_phrase(skipped, ('row', 'rows'))} skipped"
+        text += f", {plural(skipped, 'row', 'rows')} skipped"
     return text
 
 
@@ -960,7 +954,7 @@ def style_workflow_configure_button(
     preserved for callers that do not opt in.
     """
 
-    button.setText("Configured..." if configured or locked else "Configure...")
+    button.setText("Configured…" if configured or locked else "Configure…")
     inspect_phrase = (
         f"Inspect the {workflow_label} parameters used for this {noun}."
         if used
@@ -979,7 +973,7 @@ def style_workflow_configure_button(
 
 #: Last entry of every supercell combo; choosing it asks the window to open the
 #: supercell manager instead of changing the row.
-MANAGE_SUPERCELLS_TEXT = "Manage Supercells..."
+MANAGE_SUPERCELLS_TEXT = "Manage Supercells…"
 
 
 class SupercellColumn:

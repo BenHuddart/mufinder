@@ -588,5 +588,5 @@ class SupercellEditorDialog(QDialog):
             self._viewer.set_structure(expanded_structure)
             self._viewer.set_spins(expanded_spins)
         self._status_label.setText(
-            f"Previewing {self._matrix_label(matrix)} -> {len(expanded_structure.species)} atoms."
+            f"Previewing {self._matrix_label(matrix)} → {len(expanded_structure.species)} atoms."
         )

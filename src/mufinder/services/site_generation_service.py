@@ -31,6 +31,7 @@ from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import MuonSite, ProvenanceRecord
+from mufinder.domain.text import plural
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -394,7 +395,7 @@ def cluster_candidate_positions(
         action="cluster_candidate_positions",
         workflow_stage=WorkflowStage.MUON_GENERATION,
         actor="user",
-        description=f"Clustered {len(updated)} generated muon site(s) near an anchor position",
+        description=f"Clustered {plural(len(updated), 'generated muon site')} near an anchor position",
         parameters={
             "anchor_fractional": anchor,
             "site_labels": [site.label for site in updated],
@@ -427,7 +428,7 @@ def remove_candidate_sites(
         action="delete_candidates",
         workflow_stage=WorkflowStage.MUON_GENERATION,
         actor="user",
-        description=f"Deleted {len(removed)} generated muon site(s)",
+        description=f"Deleted {plural(len(removed), 'generated muon site')}",
         parameters={"site_labels": [site.label for site in removed]},
         input_entity_ids=[site.id for site in removed],
     )
@@ -457,7 +458,7 @@ def stage_generated_sites(
         action="stage_muon_relaxation_sites",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         actor="user",
-        description=f"Staged {len(staged)} generated muon site(s) for relaxation",
+        description=f"Staged {plural(len(staged), 'generated muon site')} for relaxation",
         parameters={"site_labels": [site.label for site in staged]},
         input_entity_ids=[site.id for site in staged],
         output_entity_ids=[site.id for site in staged],
@@ -831,7 +832,7 @@ def _generation_provenance(
             action="generate_candidates",
             workflow_stage=WorkflowStage.MUON_GENERATION,
             actor="user",
-            description=f"Generated {len(batch.sites)} site(s) via {method}",
+            description=f"Generated {plural(len(batch.sites), 'site')} via {method}",
             parameters={"method": method, **parameters},
             output_entity_ids=list(created_ids),
         )

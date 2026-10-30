@@ -91,6 +91,7 @@ from mufinder.app.workflow_table_utils import (
     format_vector_components,
 )
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.ase_bridge import host_elements, reduced_formula
 from mufinder.science.demagnetization import (
@@ -325,7 +326,7 @@ class MagneticComponentDialog(QDialog):
         self._component_info_button.setIcon(icon("help"))
         self._component_info_button.setIconSize(QSize(22, 22))
         self._component_info_button.setToolTip(
-            "Explain this component in the propagation-vector formalism"
+            "Explain this component in the propagation-vector formalism."
         )
         self._component_info_button.clicked.connect(self._show_component_info)
 
@@ -378,7 +379,7 @@ class MagneticComponentDialog(QDialog):
             self._q_source_combo.addItem("Combination of basis rows", self._Q_SOURCE_COMBINATION)
         else:
             self._q_source_combo.setToolTip(
-                "No propagation vector is stored yet; enter q as a vector"
+                "No propagation vector is stored yet; enter q as a vector."
             )
         self._q_coeff_inputs = tuple(
             self._decimal_input("0", minimum=-4.0, maximum=4.0, placeholder=f"n{index + 1}")
@@ -414,7 +415,7 @@ class MagneticComponentDialog(QDialog):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
         )
         style_hint_text(self._atom_phase_summary)
-        self._atom_phase_button = QPushButton("Per-Atom Phases...")
+        self._atom_phase_button = QPushButton("Per-Atom Phases…")
         self._atom_phase_button.setToolTip(
             "Give single atoms an extra phase in turns, added to the component's phase."
         )
@@ -2227,7 +2228,7 @@ class MagneticTextureDialog(QDialog):
         style_help_button(self._magnitude_info_button)
         self._magnitude_info_button.setIcon(icon("help"))
         self._magnitude_info_button.setIconSize(QSize(22, 22))
-        self._magnitude_info_button.setToolTip("Explain magnitude normalization and pruning")
+        self._magnitude_info_button.setToolTip("Explain magnitude normalization and pruning.")
         self._magnitude_info_button.clicked.connect(self._show_magnitude_pruning_info)
 
         self._custom_table = MagneticComponentTable(
@@ -3127,7 +3128,7 @@ class MagneticTextureDialog(QDialog):
             after = texture_diagnostics(texture, self._grid_resolution())
             self._diagnostics.setText(
                 "Texture: "
-                f"{before.term_count} term(s) -> {after.term_count} term(s); "
+                f"{plural(before.term_count, 'term')} → {plural(after.term_count, 'term')}; "
                 f"|m| mean {after.magnitude_mean:.4g} μB, std {after.magnitude_std:.4g}, "
                 f"range {after.magnitude_min:.4g}-{after.magnitude_max:.4g}.\n"
                 f"{self._topological_charge_text(texture)}"
@@ -3277,25 +3278,25 @@ class MagneticStructureBuilderDialog(QDialog):
         self._q_basis_table.itemChanged.connect(self._on_q_basis_item_changed)
         self._q_basis_hint = QLabel(
             "Each component stores its q as a combination of these rows. Double-click a q vector to edit it; "
-            "every component that uses the row follows it. Rows used by a texture change through Edit...."
+            "every component that uses the row follows it. Rows used by a texture change through Edit…."
         )
         self._q_basis_hint.setWordWrap(True)
         style_hint_text(self._q_basis_hint)
 
         self._add_button = QPushButton("Add Component")
         self._add_button.clicked.connect(self._add_component)
-        self._add_preset_button = QPushButton("Add Preset...")
+        self._add_preset_button = QPushButton("Add Preset…")
         self._add_preset_button.setToolTip(
-            "Build a helix, conical, cycloid or spin-density wave from a propagation direction and crystal axes"
+            "Build a helix, conical, cycloid or spin-density wave from a propagation direction and crystal axes."
         )
         self._add_preset_button.clicked.connect(self._add_preset)
-        self._add_texture_button = QPushButton("Add Texture...")
+        self._add_texture_button = QPushButton("Add Texture…")
         self._add_texture_button.clicked.connect(self._add_texture)
-        self._edit_button = QPushButton("Edit...")
+        self._edit_button = QPushButton("Edit…")
         self._edit_button.clicked.connect(self._edit_selected_component)
         self._duplicate_button = QPushButton("Duplicate")
         self._duplicate_button.setToolTip(
-            "Add a copy of each selected component below its original"
+            "Add a copy of each selected component below its original."
         )
         self._duplicate_button.clicked.connect(self._duplicate_selected_components)
         self._remove_button = QPushButton("Remove")
@@ -3565,20 +3566,20 @@ class MagneticStructureBuilderDialog(QDialog):
                 vector_item.setFlags(vector_item.flags() | Qt.ItemFlag.ItemIsEditable)
             if slot.texture_component_ids:
                 vector_item.setToolTip(
-                    "Used by a texture, whose moment directions follow its q vectors: edit the texture to change it"
+                    "Used by a texture, whose moment directions follow its q vectors: edit the texture to change it."
                 )
             elif slot.direction_component_ids:
                 vector_item.setToolTip(
                     "Double-click to change the wavelength: a helix, cycloid or conical component uses this row, "
-                    "so only edits that keep its wavevector directions are accepted"
+                    "so only edits that keep its wavevector directions are accepted."
                 )
             elif slot.in_use:
                 vector_item.setToolTip(
-                    "Double-click to edit; every component that uses this row changes wavevector with it"
+                    "Double-click to edit; every component that uses this row changes wavevector with it."
                 )
             else:
                 vector_item.setToolTip(
-                    "Unused: double-click to edit. Adding a component with a new q fills an unused row"
+                    "Unused: double-click to edit. Adding a component with a new q fills an unused row."
                 )
         self._highlight_selected_q_basis_rows()
 
@@ -3615,7 +3616,7 @@ class MagneticStructureBuilderDialog(QDialog):
             if row_item is not None:
                 if highlighted:
                     row_item.setForeground(accent)
-                    row_item.setToolTip("Used by the selected component")
+                    row_item.setToolTip("Used by the selected component.")
                 else:
                     row_item.setData(Qt.ItemDataRole.ForegroundRole, None)
                     row_item.setToolTip("")
@@ -3978,7 +3979,7 @@ class MagneticStructureBuilderDialog(QDialog):
         if count and not workflow_table_utils.confirm_destructive(
             self,
             "Replace magnetic structure",
-            f"Replace the {workflow_table_utils.count_phrase(count, ('component', 'components'))} "
+            f"Replace the {plural(count, 'component', 'components')} "
             "in the builder with components built from the host spins?",
             "The current components are discarded.",
             "Replace Components",
@@ -4521,7 +4522,7 @@ class MagneticFieldDistributionDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         self._export_button = buttons.addButton(
-            "Export Data...", QDialogButtonBox.ButtonRole.ActionRole
+            "Export Data…", QDialogButtonBox.ButtonRole.ActionRole
         )
         self._export_button.clicked.connect(self._export_data)
         buttons.rejected.connect(self.reject)
@@ -5175,7 +5176,7 @@ def demag_sample_summary(sample: DemagnetizingSample) -> str:
         return f"Rectangular prism {a:g} x {b:g} x {c:g}"
     if shape == "image_plate":
         if sample.plate_mask is None:
-            return "No outline yet. Click From photo... to outline the sample in a photo."
+            return "No outline yet. Click From photo… to outline the sample in a photo."
         width, height = sample.plate_size
         text = f"Plate from photo {width:g} x {height:g} x {sample.plate_thickness:g}"
         if sample.photo is not None and sample.photo.path:
@@ -5461,7 +5462,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._plate_summary = QLabel("", self)
         self._plate_summary.setWordWrap(True)
         style_hint_text(self._plate_summary)
-        self._photo_button = QPushButton("From photo...", self)
+        self._photo_button = QPushButton("From photo…", self)
         self._photo_button.clicked.connect(self._open_photo_dialog)
         self._voxel_summary = QLabel("", self)
         self._voxel_summary.setWordWrap(True)
@@ -5684,7 +5685,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
     def _sync_voxel_summaries(self) -> None:
         self._plate_summary.setText(demag_sample_summary(self._plate_sample))
         self._photo_button.setText(
-            "From photo..." if self._plate_sample.plate_mask is None else "Edit outline..."
+            "From photo…" if self._plate_sample.plate_mask is None else "Edit outline…"
         )
         if self._voxel_sample is not None:
             self._voxel_summary.setText(
@@ -6286,7 +6287,7 @@ class DipolarTensorDialog(QDialog):
 
         self._indices_edit = QLineEdit()
         self._indices_edit.setPlaceholderText("1, 3, 6")
-        self._indices_edit.setToolTip("Atom numbers counted from 1 in the host's atom order")
+        self._indices_edit.setToolTip("Atom numbers counted from 1 in the host's atom order.")
         self._indices_edit.textChanged.connect(self._refresh_enabled_state)
 
         self._include_equivalent_sites = QCheckBox("Include equivalent muon sites")
@@ -6350,7 +6351,7 @@ class DipolarTensorDialog(QDialog):
         target_group = QGroupBox("Magnetic Ions")
         form = QFormLayout(target_group)
         assigned_text = (
-            f"{len(self._assigned_indices)} atom(s) targeted by enabled magnetic components"
+            f"{plural(len(self._assigned_indices), 'atom')} targeted by enabled magnetic components"
             if self._assigned_indices
             else "No atoms currently have assigned moments"
         )
@@ -6457,9 +6458,8 @@ class DipolarTensorDialog(QDialog):
                 state["site_source"] = self._muon_site.source
         self._populate_results(self._results_state)
         count = len(self._results_state)
-        plural = "" if count == 1 else "s"
         suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
-        self._status.setText(f"Calculated {count} dipolar tensor{plural}.{suffix}")
+        self._status.setText(f"Calculated {plural(count, 'dipolar tensor')}.{suffix}")
 
     def _restore_selector_state(self, state: Mapping[str, object] | None) -> None:
         if isinstance(state, Mapping):
@@ -6517,7 +6517,9 @@ class DipolarTensorDialog(QDialog):
         elif not indices:
             self._status.setText("Choose at least one magnetic ion.")
         else:
-            self._status.setText(f"Ready to calculate tensor using {len(indices)} magnetic ion(s).")
+            self._status.setText(
+                f"Ready to calculate tensor using {plural(len(indices), 'magnetic ion')}."
+            )
 
     def _muon_site_summary(self) -> str:
         if self._muon_site is None:
@@ -6707,12 +6709,12 @@ class MagneticFieldWidget(QWidget):
         style_section_subtitle(self._subtitle)
         self._pin_button = QToolButton()
         self._pin_button.setIcon(icon("save_workspace"))
-        self._pin_button.setToolTip("Save this magnetic-field workspace")
+        self._pin_button.setToolTip("Save this magnetic-field workspace.")
         self._pin_button.setAccessibleName("Save Workspace")
         self._pin_button.clicked.connect(self._emit_pin_requested)
         self._delete_workspace_button = QToolButton()
         self._delete_workspace_button.setIcon(icon("delete"))
-        self._delete_workspace_button.setToolTip("Delete this saved magnetic-field workspace")
+        self._delete_workspace_button.setToolTip("Delete this saved magnetic-field workspace.")
         self._delete_workspace_button.setAccessibleName("Delete Workspace")
         self._delete_workspace_button.setVisible(False)
         self._delete_workspace_button.clicked.connect(self.delete_requested.emit)
@@ -6726,13 +6728,13 @@ class MagneticFieldWidget(QWidget):
             accessible_name="Magnetic Structure Components",
         )
         self._component_summary_table.setVisible(False)
-        self._edit_structure_button = QPushButton("Edit Magnetic Structure...")
+        self._edit_structure_button = QPushButton("Edit Magnetic Structure…")
         self._edit_structure_button.clicked.connect(self._open_structure_builder)
 
         self._site_summary = QLabel("Muon site: -")
         self._site_summary.setWordWrap(True)
         style_hint_text(self._site_summary)
-        self._select_site_button = QPushButton("Select Muon Site...")
+        self._select_site_button = QPushButton("Select Muon Site…")
         self._select_site_button.clicked.connect(self._open_muon_site_dialog)
         self._include_equivalent_sites = QCheckBox("Include equivalent sites")
         self._include_equivalent_sites.setToolTip(
@@ -6750,7 +6752,7 @@ class MagneticFieldWidget(QWidget):
         self._advanced_demag_summary.setWordWrap(True)
         self._advanced_demag_summary.setVisible(False)
         style_hint_text(self._advanced_demag_summary)
-        self._advanced_demag_button = QPushButton("Advanced...")
+        self._advanced_demag_button = QPushButton("Advanced…")
         self._advanced_demag_button.clicked.connect(self._open_advanced_demag_dialog)
         self._sphere_radio.toggled.connect(self._on_demag_shape_toggled)
         self._plate_radio.toggled.connect(self._on_demag_shape_toggled)
@@ -6811,14 +6813,14 @@ class MagneticFieldWidget(QWidget):
 
         self._calculate_button = QPushButton("Calculate Dipolar Field")
         self._calculate_button.clicked.connect(self._calculate_fields)
-        self._dipolar_tensor_button = QPushButton("Dipolar Tensor...")
+        self._dipolar_tensor_button = QPushButton("Dipolar Tensor…")
         self._dipolar_tensor_button.clicked.connect(self._open_dipolar_tensor_dialog)
-        self._nuclear_relaxation_button = QPushButton("Nuclear Relaxation...")
+        self._nuclear_relaxation_button = QPushButton("Nuclear Relaxation…")
         self._nuclear_relaxation_button.clicked.connect(self._open_nuclear_relaxation_dialog)
         self._calculation_settings_summary = QLabel("")
         self._calculation_settings_summary.setWordWrap(True)
         style_hint_text(self._calculation_settings_summary)
-        self._calculation_settings_button = QPushButton("Calculation Settings...")
+        self._calculation_settings_button = QPushButton("Calculation Settings…")
         self._calculation_settings_button.clicked.connect(self._open_calculation_settings_dialog)
         self._open_distribution_button = QPushButton("Open Distribution Plot")
         self._open_distribution_button.setEnabled(False)
@@ -7285,9 +7287,8 @@ class MagneticFieldWidget(QWidget):
         count = len(self._model.components)
         enabled = enabled_magnetic_components(self._model)
         disabled = count - len(enabled)
-        plural = "" if count == 1 else "s"
         suffix = f" ({disabled} disabled)" if disabled else ""
-        self._structure_summary.setText(f"Magnetic structure: {count} component{plural}{suffix}")
+        self._structure_summary.setText(f"Magnetic structure: {plural(count, 'component')}{suffix}")
         self._set_summary_rows(
             self._component_summary_table,
             [
@@ -7572,7 +7573,7 @@ class MagneticFieldWidget(QWidget):
                 _raise_for_non_finite_fields(results)
                 self._populate_commensurate_results(results, site_source=site.source)
                 self._calculation_status.setText(
-                    f"Results: calculated {len(results)} commensurate field value(s){corrected}."
+                    f"Results: calculated {plural(len(results), 'commensurate field value')}{corrected}."
                     + self._estimate_status_suffix()
                 )
                 self._emit_form_state_changed()
@@ -7594,7 +7595,7 @@ class MagneticFieldWidget(QWidget):
                     _raise_for_non_finite_fields(results)
                     self._populate_commensurate_results(results, site_source=site.source)
                     self._calculation_status.setText(
-                        f"Results: calculated {len(results)} field value(s) of the commensurate approximant "
+                        f"Results: calculated {plural(len(results), 'field value')} of the commensurate approximant "
                         f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)"
                         f"{corrected}." + self._estimate_status_suffix()
                     )
@@ -7608,7 +7609,7 @@ class MagneticFieldWidget(QWidget):
                     )
                     _raise_for_non_finite_fields(results)
                     self._populate_distribution_results(results, site_source=site.source)
-                    status = f"Results: sampled {len(results)} incommensurate field distribution(s){corrected}"
+                    status = f"Results: sampled {plural(len(results), 'incommensurate field distribution')}{corrected}"
                     flagged = sum(
                         1
                         for result in results
@@ -7616,7 +7617,7 @@ class MagneticFieldWidget(QWidget):
                         if not check.converged
                     )
                     if flagged:
-                        status += f"; {flagged} convergence check(s) need attention, select a row for advice"
+                        status += f"; {plural(flagged, 'convergence check needs', 'convergence checks need')} attention, select a row for advice"
                     status += "."
                     if approximant is not None:
                         status += (
@@ -8461,7 +8462,7 @@ class MagneticFieldWidget(QWidget):
             if self._result_table.rowCount() > 0:
                 self._result_table.selectRow(0)
             self._calculation_status.setText(
-                f"Results: restored {len(result_payloads)} commensurate field value(s)."
+                f"Results: restored {plural(len(result_payloads), 'commensurate field value')}."
                 + self._estimate_status_suffix()
             )
         elif kind == "distribution":
@@ -8488,7 +8489,7 @@ class MagneticFieldWidget(QWidget):
             if self._result_table.rowCount() > 0:
                 self._result_table.selectRow(0)
             self._calculation_status.setText(
-                f"Results: restored {len(result_payloads)} incommensurate distribution(s)."
+                f"Results: restored {plural(len(result_payloads), 'incommensurate distribution')}."
                 + self._estimate_status_suffix()
             )
         self._sync_distribution_plot_button()
@@ -9150,7 +9151,7 @@ def _component_moment_label(component: MagneticComponent) -> str:
             float(np.linalg.norm(term.coefficient.to_array())) for term in component.terms
         ]
         mode = str(component.metadata.get("texture_mode", "texture")).replace("_", " ")
-        return f"{mode.title()}\n{len(component.terms)} Fourier term(s)\nmax {_format_moment_magnitude(max(magnitudes))}"
+        return f"{mode.title()}\n{plural(len(component.terms), 'Fourier term')}\nmax {_format_moment_magnitude(max(magnitudes))}"
     if component.kind == "conical" and len(component.terms) >= 2:
         static = np.linalg.norm(np.asarray(component.terms[0].coefficient.real, dtype=float))
         rotating_real = np.linalg.norm(np.asarray(component.terms[1].coefficient.real, dtype=float))

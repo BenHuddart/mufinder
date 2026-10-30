@@ -21,7 +21,7 @@ Reading and exporting the Journal
    date headers (see `The Journal page`_).
 3. **Choose a format.** Pick ``Plain text (.txt)`` or ``Markdown (.md)`` in the
    ``Export format`` selector.
-4. **Export.** Click ``Export...`` and choose where to save the file. The
+4. **Export.** Click ``Export…`` and choose where to save the file. The
    suggested filename is ``<project-name>-journal`` with the extension for the
    selected format; characters other than letters, digits, ``-`` and ``_`` in
    the project name are replaced by underscores. Both formats mirror the

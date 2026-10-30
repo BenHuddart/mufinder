@@ -208,7 +208,7 @@ def test_cluster_submission_dialog_compacts_large_job_summary(qapp) -> None:
     )
 
     summary = dialog._summary_label.text()
-    assert "12 job(s)" in summary
+    assert "12 jobs" in summary
     assert "cutoff_convergence_ecut_0" in summary
     assert "cutoff_convergence_ecut_3" in summary
     assert "cutoff_convergence_ecut_4" not in summary

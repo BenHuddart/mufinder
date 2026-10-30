@@ -219,7 +219,7 @@ def test_configuring_a_failed_row_is_read_only_until_it_is_reset(
 
     window._quantum_corrections_view.configure_requested.emit([candidate.key])
     assert opened[-1]["read_only"] is True
-    assert "use Reset Failed Jobs... to edit" in str(opened[-1]["intro_text"])
+    assert "use Reset Failed Jobs… to edit" in str(opened[-1]["intro_text"])
 
     _answer_cleanup(monkeypatch, False)
     window._quantum_corrections_view.reset_failed_requested.emit([candidate.key])

@@ -14,10 +14,10 @@ from mufinder.app.splash_screen import MuFinderSplashScreen
 def test_splash_progress_clamps_and_renders(qapp) -> None:
     splash = MuFinderSplashScreen()
 
-    splash.set_progress(150, "  Loading UI...  ")
+    splash.set_progress(150, "  Loading UI…  ")
 
     assert splash._progress == 100
-    assert splash._message == "Loading UI..."
+    assert splash._message == "Loading UI…"
     assert splash.pixmap() is not None
     assert not splash.pixmap().isNull()
 

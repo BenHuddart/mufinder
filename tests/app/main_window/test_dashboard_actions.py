@@ -1836,7 +1836,7 @@ def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
         "Inspect (1 of 3)",
         "Reset (2 of 3)",
         "Dismiss (2 of 3)",
-        "Delete...",
+        "Delete…",
     ]
     assert menu.separators_before == [6]
     assert {action.text for action in menu.actions if not action.enabled} == {"Retry Retrieval"}
@@ -1900,7 +1900,7 @@ def test_main_window_dashboard_menu_selects_the_clicked_row_and_offers_delete(
 
     selected = sorted(index.row() for index in window._jobs_table.selectionModel().selectedRows())
     assert selected == [2]
-    menu.action("Delete...").triggered.emit()
+    menu.action("Delete…").triggered.emit()
     assert deleted == [1]
     window.close()
 

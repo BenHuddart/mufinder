@@ -215,7 +215,7 @@ class RowTableWidget(QWidget):
             QLineEdit(self._NAME_PREFIX_DEFAULT) if self._NAME_PREFIX_DEFAULT is not None else None
         )
         self._add_row_button = QPushButton(self._ADD_ROW_TEXT) if self._ADD_ROW_TEXT else None
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
+        self._batch_configure_button = QPushButton("Configure Selected Parameters…")
         self._batch_configure_button.setEnabled(False)
         self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
         self._selection_count_label = QLabel("")
@@ -694,7 +694,7 @@ class RowTableWidget(QWidget):
             set_workflow_table_item(target, row, self._STATUS_COLUMN, self._EMPTY_STATUS)
             self.create_row_cells(target, row, row_id)
 
-            configure_button = SelectionSnapshotPushButton("Configure...", target)
+            configure_button = SelectionSnapshotPushButton("Configure…", target)
             configure_button.selection_snapshot_key = row_id
             configure_button.setSizePolicy(
                 QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed

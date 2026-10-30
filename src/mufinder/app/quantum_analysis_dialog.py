@@ -716,7 +716,7 @@ def _section_header(title: str, guidance: str, callback) -> QHBoxLayout:
     help_button = QToolButton()
     help_button.setObjectName("quantumAnalysisHelpButton")
     help_button.setText("?")
-    help_button.setToolTip("Show calculation notes and equations")
+    help_button.setToolTip("Show calculation notes and equations.")
     help_button.setAccessibleName(f"{title} help")
     help_button.clicked.connect(callback)
     row.addWidget(help_button, 0, Qt.AlignmentFlag.AlignTop)

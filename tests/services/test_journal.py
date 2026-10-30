@@ -308,7 +308,7 @@ def test_journal_counts_cutoffs_under_either_configuration_key() -> None:
     bodies = [entry.body for entry in build_journal("Cutoffs", records).days[0].entries]
 
     assert bodies == [
-        f"Prepared a cutoff convergence sweep with {count} cutoff value(s)." for count in (2, 3, 4)
+        f"Prepared a cutoff convergence sweep with {count} cutoff values." for count in (2, 3, 4)
     ]
 
 

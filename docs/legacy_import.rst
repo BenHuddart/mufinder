@@ -826,7 +826,7 @@ Phasing
    already does. The marker is applied by style and tooltip, never by editing the
    label text: the label is read back as the row's identity, so decorating it
    would corrupt the row key.
-6. **Wizard** — *done*. ``File > Import Legacy Relaxations...`` picks a folder,
+6. **Wizard** — *done*. ``File > Import Legacy Relaxations…`` picks a folder,
    scans it on a worker thread, and opens
    :class:`~mufinder.app.legacy_import_dialog.LegacyImportDialog` for review
    before anything is committed.

@@ -145,7 +145,7 @@ class CutoffConvergenceWidget(SweepConvergenceWidget):
     _SWEEP_GROUP_TITLE = "Cutoff Sweep"
     _KEY_COLUMN_LABEL = "Cutoff Energy (eV)"
     _ADD_BUTTON_TEXT = "Add Cutoff"
-    _GENERATE_BUTTON_TEXT = "Generate From Range..."
+    _GENERATE_BUTTON_TEXT = "Generate From Range…"
     _EXAMINE_BUTTON_TEXT = "Examine Cutoff Convergence"
     _EXAMINE_READY_TOOLTIP = "Analyse completed cutoff energy and force trends."
     _EXAMINE_WAITING_TOOLTIP = (

@@ -31,12 +31,12 @@ To submit jobs from a workflow page:
 
 The same actions are in a row's right-click menu, which opens the same menu in
 every workflow table, in this order: ``Run Local``, ``Run on Cluster``,
-``Cancel``, ``Inspect Failure``, ``Reset Failed Jobs...``, ``Configure...``,
+``Cancel``, ``Inspect Failure``, ``Reset Failed Jobs…``, ``Configure…``,
 ``Remove``, then any table-specific entries below a separator (``Continue
 relaxation…`` and ``Export Relaxed Structure`` in the relaxation tables), and
 last, below another separator, ``Open Containing Folder`` and ``Export
 Inputs/Outputs…``. Quantum Corrections has no ``Remove``. Right-clicking a row
-outside the selection selects it first. ``Reset Failed Jobs...`` acts on the
+outside the selection selects it first. ``Reset Failed Jobs…`` acts on the
 selected rows that are ``failed``, ``stopped`` or ``cancelled`` (see
 :ref:`per-row-reset-affordance`).
 
@@ -64,9 +64,9 @@ When an entry does not apply, it is greyed out and its tooltip says why: the
 row has no job yet, or its job has no local folder or no CASTEP files.
 
 The button row below each table also offers ``Configure Selected
-Parameters...`` and ``Remove Selected``. Quantum Corrections has no ``Remove
+Parameters…`` and ``Remove Selected``. Quantum Corrections has no ``Remove
 Selected`` because its rows are derived from completed relaxations, and adds a
-``Reset Failed Jobs...`` button that acts like the menu entry.
+``Reset Failed Jobs…`` button that acts like the menu entry.
 
 Local submission
 ~~~~~~~~~~~~~~~~
@@ -179,7 +179,7 @@ affected.
   per-row ``Configure`` and remove buttons, and every Job Dashboard action
   button.
 - Controls that only make sense for one row (``Open Wizard`` in the UEP table,
-  ``View...`` in the Energy Barriers table) always act on their own row and
+  ``View…`` in the Energy Barriers table) always act on their own row and
   never prompt.
 
 What a click will affect is shown before the click, without changing any text
@@ -321,7 +321,7 @@ Acting on jobs
 
 To act on one or more jobs, click a row button or select rows and right-click.
 The right-click menu offers ``Resubmit``, ``Retry Retrieval``, ``Cancel``,
-``Inspect``, ``Reset``, ``Dismiss`` and ``Delete...``. Each entry is enabled
+``Inspect``, ``Reset``, ``Dismiss`` and ``Delete…``. Each entry is enabled
 when it applies to at least one selected job, acts on those jobs only, as the
 row buttons do, and carries the count when it is partial (``Reset (2 of 3)``).
 The row buttons remain the primary controls.
@@ -355,9 +355,9 @@ The row buttons remain the primary controls.
    Hides a failed, stopped or cancelled job from the dashboard, after asking
    for confirmation. Its records are kept.
 
-``Delete...``
+``Delete…``
    Pressing Delete or Backspace with dashboard rows selected, or choosing
-   ``Delete...``, applies the action that fits each job's state: active jobs
+   ``Delete…``, applies the action that fits each job's state: active jobs
    (``submitting``, ``queued``, ``running``, ``retrieving``) are cancelled,
    failed, stopped and cancelled jobs are reset, and any other job has its
    records deleted. One summary dialog lists those actions with their counts
@@ -600,7 +600,7 @@ Cluster profiles and connections
 
    ``Setup > HPC Clusters`` with the built-in SCARF profile selected.
 
-To add or edit a cluster, choose ``Setup > HPC Clusters...``. Profiles are
+To add or edit a cluster, choose ``Setup > HPC Clusters…``. Profiles are
 stored globally, including built-in SCARF and Redwood presets.
 
 1. Select a cluster in ``Saved clusters``, or click ``Add`` for a new one.

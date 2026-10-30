@@ -326,9 +326,9 @@ def test_direct_mode_batches_help_calls_into_a_few_round_trips(
     assert len(ssh.commands) == 7
     assert all(command.startswith("/bin/bash -lc ") for command in ssh.commands)
     assert ssh.disconnected is True
-    assert progress[0] == ("Connecting to Redwood...", 0)
-    assert ("Generating CASTEP keywords... 211 of 211", 99) in progress
-    assert progress[-1] == ("Writing CASTEP keywords to castep_keywords.json...", 100)
+    assert progress[0] == ("Connecting to Redwood…", 0)
+    assert ("Generating CASTEP keywords… 211 of 211", 99) in progress
+    assert progress[-1] == ("Writing CASTEP keywords to castep_keywords.json…", 100)
     # No temporary file is left beside the catalog.
     assert [path.name for path in output_path.parent.iterdir()] == ["castep_keywords.json"]
 
@@ -512,10 +512,10 @@ def test_scheduler_mode_parses_the_remote_dump_and_cleans_up(
     # Nothing but the runner script is uploaded.
     assert [args for kind, args in ssh.commands if kind == "put"] == [request.script_path]
 
-    assert "Keyword job 42 is queued..." in progress
+    assert "Keyword job 42 is queued…" in progress
     # A running job reports how far it has got, so a slow one is not mistaken
     # for a stuck one.
-    assert "Keyword job 42 is running... (137 keywords described so far)" in progress
+    assert "Keyword job 42 is running… (137 keywords described so far)" in progress
     assert progress[-1] == "CASTEP keyword generation complete."
     assert ssh.deleted == [request.working_dir]
     assert ssh.disconnected is True
@@ -596,7 +596,7 @@ def test_running_job_progress_detail_is_best_effort(
         progress=lambda message, _percent: progress.append(message),
     )
 
-    assert "Keyword job 42 is running..." in progress
+    assert "Keyword job 42 is running…" in progress
 
 
 def test_scheduler_polling_backs_off(

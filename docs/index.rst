@@ -94,3 +94,4 @@ and quality standards.
    job_lifecycle
    legacy_import
    branding
+   ui_text

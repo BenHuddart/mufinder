@@ -29,6 +29,7 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.farm_validation import check_farm_counts
 from mufinder.app.theme import style_hint_text
 from mufinder.domain.cluster import ClusterConfig
+from mufinder.domain.text import plural
 from mufinder.services.cluster_queues import is_valid_queue_name, walltime_issue
 from mufinder.services.keychain import credential_store_for_display, is_glamdring_keychain_supported
 from mufinder.services.script_template import template_sets_partition
@@ -434,7 +435,7 @@ class ClusterSubmissionDialog(QDialog):
 
     def _job_summary_text(self) -> str:
         job_count = len(self._job_labels)
-        prefix = f"You are about to submit {job_count} job(s)"
+        prefix = f"You are about to submit {plural(job_count, 'job')}"
         if not self._job_labels:
             return f"{prefix}."
         displayed_labels = self._job_labels[:4]

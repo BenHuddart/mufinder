@@ -43,7 +43,7 @@ Running the workflow
    the buttons follows the generation, and the new rows appear in the table.
 3. **Check the rows.** Select rows in the table to overlay their positions on
    the host structure in the ``Preview Muon Sites`` viewer.
-4. **Optionally tidy the rows.** Click ``Cluster Positions...`` to give
+4. **Optionally tidy the rows.** Click ``Cluster Positions…`` to give
    symmetry-equivalent starts one common representative, or ``Remove
    Selected`` to delete rows you do not want (see `Tidying generated rows`_).
 5. **Stage relaxation jobs.** Select rows and click ``Create Jobs from
@@ -67,7 +67,7 @@ The Generation page
 
 The page has the ``Generation Setup`` group on the left, with the ``Method``
 drop-down and the fields for the chosen method, the buttons ``Generate Sites``,
-``Cluster Positions...``, ``Remove Selected`` and ``Create Jobs from
+``Cluster Positions…``, ``Remove Selected`` and ``Create Jobs from
 Selected``, a progress bar, and the generated-site table. The ``Preview Muon
 Sites`` viewer on the right shows the host structure with the selected
 positions overlaid. The table has the columns ``Site``, ``Method``, ``State``
@@ -75,7 +75,7 @@ and the fractional coordinates ``fX``, ``fY`` and ``fZ``.
 
 The table is ordered with natural numeric sorting, so ``Random Site 2`` appears
 before ``Random Site 10``. Selected rows can be clustered around an anchor with
-``Cluster Positions...``, staged with ``Create Jobs from Selected``, or removed
+``Cluster Positions…``, staged with ``Create Jobs from Selected``, or removed
 with ``Remove Selected`` or the ``Delete`` key (``Backspace`` on macOS) before
 relaxation jobs are configured; only rows still marked ``generated`` are
 deleted. Press ``Escape`` to clear the selection.
@@ -271,7 +271,7 @@ Clustering initial positions around an anchor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 After one or more generated rows exist, selected rows can be normalized with
-``Cluster Positions...``. This action does not create or delete rows. Instead,
+``Cluster Positions…``. This action does not create or delete rows. Instead,
 it rewrites the selected rows so that each selected muon is represented by the
 symmetry-equivalent fractional coordinate closest to an anchor you choose.
 
@@ -285,7 +285,7 @@ makes the table use a consistent representative of each symmetry orbit before
 jobs are staged.
 
 1. Select one or more rows in the generated-site table.
-2. Click ``Cluster Positions...``.
+2. Click ``Cluster Positions…``.
 3. In the ``Cluster Positions`` dialog, choose ``Manual anchor`` and enter the
    fractional anchor (``fX``, ``fY``, ``fZ``), or choose one of the selected
    muon rows from the ``Anchor`` drop-down to use its current fractional
@@ -305,7 +305,7 @@ positions are physically equivalent but appear in different parts of the unit
 cell, or when you want to compare subsequent relaxations without first
 disentangling equivalent-image choices in the output structures.
 
-``Cluster Positions...`` is only a coordinate-representation cleanup. It does
+``Cluster Positions…`` is only a coordinate-representation cleanup. It does
 not cluster relaxed endpoints, merge generated rows, decide which final sites
 are physically distinct, or replace post-relaxation analysis. If symmetry
 detection is unavailable for the host structure, MuFinder falls back to the
@@ -375,9 +375,9 @@ Running the relaxations
 
 1. **Open the tab for the charge state** you staged, ``Positive muon`` or
    ``Muonium``.
-2. **Check the parameters.** Click ``Configure...`` in a row's ``Parameters``
+2. **Check the parameters.** Click ``Configure…`` in a row's ``Parameters``
    column for one row, or select rows and click ``Configure Selected
-   Parameters...`` for several. The ``task``, ``charge``, ``fix_all_cell``, and
+   Parameters…`` for several. The ``task``, ``charge``, ``fix_all_cell``, and
    ``write_cell_structure`` settings are locked by MuFinder: the tab always
    writes geometry-optimization jobs, keeps the host cell fixed, writes the
    relaxed ``-out.cell`` file needed for result ingestion, and derives the
@@ -499,7 +499,7 @@ Limitations
   endpoints.
 - The random seed used by the generators is internal; the generation setup does
   not expose it.
-- ``Cluster Positions...`` only changes which symmetry-equivalent coordinate a
+- ``Cluster Positions…`` only changes which symmetry-equivalent coordinate a
   row uses; it does not merge rows or judge which final sites are distinct.
 - Host symmetry is detected with spglib at a tolerance of 0.001 Å, loose enough
   for coordinates written to four decimals, as in most CIF files. Labelled

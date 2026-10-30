@@ -46,7 +46,7 @@ Create a project and set up CASTEP
    page). Enter a ``Project name:``, then choose where it goes in ``Select
    parent folder``. MuFinder creates a ``<name>.mufinder`` folder there and
    opens the project home.
-3. Open ``Setup > CASTEP...`` and install a keyword catalog: pick the target in
+3. Open ``Setup > CASTEP…`` and install a keyword catalog: pick the target in
    ``Generate from`` and click ``Generate Keyword Catalog``, or click ``Use
    Existing File…`` if you already have a ``castep_keywords.json``.
 
@@ -59,7 +59,7 @@ Create a project and set up CASTEP
 4. To run on this computer, fill in ``CASTEP executable`` and ``MPI launcher
    (mpirun)`` (``Auto-detect`` searches for ``mpirun``), then click ``OK``.
 5. To run on a cluster instead, add a profile under ``Setup > HPC
-   Clusters...``.
+   Clusters…``.
 
 .. figure:: ../_generated/screenshots/cluster_setup_dialog.webp
    :alt: The Remote Cluster Connections dialog with the built-in SCARF profile
@@ -150,7 +150,7 @@ and k-point grid, so settle them first.
    defaults`` strip click ``Edit…``, choose an ``XC functional`` (the
    screenshots use ``PBE``) and click ``OK``.
 2. Leave ``Single unit cell`` selected under ``Simulation Cell``.
-3. Click ``Generate From Range...`` and accept ``Start (eV)``, ``Stop (eV)``
+3. Click ``Generate From Range…`` and accept ``Start (eV)``, ``Stop (eV)``
    and ``Step (eV)``, or change them.
 
    .. figure:: ../_generated/screenshots/cutoff_convergence_page.webp
@@ -172,7 +172,7 @@ and k-point grid, so settle them first.
 5. When the rows have completed, click ``Examine Cutoff Convergence``, then
    ``Analyse Convergence``, then the ``Set <value> eV as Project Default
    Cutoff`` button.
-6. Select ``K-Point Grid``, click ``Generate From Spacing...`` and accept the
+6. Select ``K-Point Grid``, click ``Generate From Spacing…`` and accept the
    ``Minimum spacing (1/Ang)``. The new rows use the cutoff you just adopted.
 
    .. figure:: ../_generated/screenshots/kpoint_convergence_page.webp
@@ -219,7 +219,7 @@ experimental lattice.
 
       The pristine relaxation of CoF₂, from a synthetic CASTEP output.
 
-5. Click ``Generate Comparison Table...``, tick ``Include`` for the completed
+5. Click ``Generate Comparison Table…``, tick ``Include`` for the completed
    job, keep or edit the ``Comparison table label`` and click ``OK``.
 
 .. figure:: ../_generated/screenshots/comparison_job_dialog.webp
@@ -314,7 +314,7 @@ per relaxation.
 5. Select ``Relaxations`` and open the ``Positive muon`` tab. Select every row
    and pick your saved supercell in one row's ``Supercell`` drop-down; when
    asked, apply it to all the selected rows.
-6. Click ``Configure Selected Parameters...`` to check the CASTEP settings and
+6. Click ``Configure Selected Parameters…`` to check the CASTEP settings and
    tick ``Spin Polarized``. The rows inherit the project defaults, with an
    equivalent-density k-point grid for the supercell.
 7. Click ``Run All Locally`` or ``Run All on Cluster``. The ``Job Dashboard``
@@ -350,7 +350,7 @@ the relaxed positions into distinct sites.
 
       The workspace after clustering: the 4c site and two higher sites.
 
-2. Click ``Clustering...``. Choose ``Connected Components`` as the
+2. Click ``Clustering…``. Choose ``Connected Components`` as the
    ``Method``, click ``Scan Tolerances`` and choose a ``Distance tolerance (Å)``
    on a plateau of the cluster-count curve, then click ``Apply Clustering``.
 
@@ -397,7 +397,7 @@ Below its Néel temperature of 37.85 K, CoF₂'s ordered Co moments give the
 muon a static dipolar field. Define the order, then calculate the field at the
 pinned site.
 
-1. Select ``Magnetic Fields`` and click ``Edit Magnetic Structure...`` in the
+1. Select ``Magnetic Fields`` and click ``Edit Magnetic Structure…`` in the
    ``Magnetic Structure`` card.
 2. In the ``Magnetic Structure Builder``, add one collinear component with
    q = (0, 0, 0) on the corner Co with moment ``(0, 0, 2.64)`` μB, and one on
@@ -410,7 +410,7 @@ pinned site.
 
       The antiferromagnet as two collinear components.
 
-3. In the ``Muon Site`` card click ``Select Muon Site...``. With ``Structural
+3. In the ``Muon Site`` card click ``Select Muon Site…``. With ``Structural
    relaxation clustering`` as the ``Source``, the table lists the pinned
    sites. Choose the lowest-energy one, tick ``Correct the local field for
    muon-induced displacements`` and click ``OK``.
@@ -439,7 +439,7 @@ and with experiment. These calculations use the optional ``muesr`` and
 ``muLFC`` backends.
 
 For CoF₂ above T_N the field comes from the nuclear dipoles instead: click
-``Nuclear Relaxation...``, choose ``Zero field`` and ``Polycrystal`` and click
+``Nuclear Relaxation…``, choose ``Zero field`` and ``Polycrystal`` and click
 ``Calculate`` for the width ``σ (μs⁻¹)``.
 
 .. figure:: ../_generated/screenshots/nuclear_relaxation_dialog.webp

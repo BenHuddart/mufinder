@@ -162,7 +162,7 @@ def test_show_detailed_warning_truncates_long_single_line_summary(monkeypatch) -
     ui_module.show_detailed_warning(None, "Long", "x" * 260)
 
     summary = str(events["summary"])
-    assert summary.endswith("...")
+    assert summary.endswith("…")
     assert len(summary) == 240
 
 

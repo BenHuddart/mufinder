@@ -40,6 +40,7 @@ from uuid import UUID
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
+from mufinder.domain.text import plural
 
 #: Provenance action for one removal. ``services.journal`` renders nothing for
 #: an action it does not know, so a matching journal builder is required.
@@ -296,7 +297,7 @@ def remove_imported_relaxations(
             action=REMOVAL_ACTION,
             workflow_stage=WorkflowStage.MUON_RELAXATION,
             actor="user",
-            description=f"Removed {removed} imported muon relaxation(s)",
+            description=f"Removed {plural(removed, 'imported muon relaxation')}",
             parameters={
                 "batch_id": str(batch_id) if batch_id is not None else None,
                 "labels": removed_labels,

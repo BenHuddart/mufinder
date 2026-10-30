@@ -57,6 +57,7 @@ Use these documents as the first stop for common tasks:
 - :doc:`/quality_and_automation` lists quality gates, local commands, and targeted checks.
 - :doc:`/compatibility_policy` records compatibility aliases and expiry rules.
 - :doc:`/job_lifecycle` is the job state-transition contract.
+- :doc:`/ui_text` is the style for every string the application shows.
 
 Executable guardrails
 ---------------------

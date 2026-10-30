@@ -88,7 +88,7 @@ def test_open_project_stops_orphaned_local_job_and_shows_message(
 
     # Status-bar message surfaced (past the generic "Opened project" message).
     message = window.statusBar().currentMessage()
-    assert "local job(s) were stopped" in message
+    assert "local job was stopped" in message
     assert "1 " in message
 
     window.close()

@@ -355,7 +355,7 @@ def generate_cluster_castep_keywords_json(
         raise ClusterKeywordGenerationError("CASTEP keywords output path must end with .json.")
 
     ssh = SSHConnection(config, settings=settings)
-    _emit_progress(progress, f"Connecting to {config.name}...", 0)
+    _emit_progress(progress, f"Connecting to {config.name}…", 0)
     resolved_credentials = credentials or SSHCredentials.from_legacy_password(password)
     if config.jump_host_enabled:
         ssh.connect(credentials=resolved_credentials)
@@ -397,7 +397,7 @@ def _generate_direct_keywords_json(
     progress: ProgressCallback | None,
     cancel_check: CancelCheck | None,
 ) -> Path:
-    _emit_progress(progress, f"Querying CASTEP help on {config.name}...", 5)
+    _emit_progress(progress, f"Querying CASTEP help on {config.name}…", 5)
     help_all = _run_remote_checked(
         ssh,
         config,
@@ -424,13 +424,11 @@ def _generate_direct_keywords_json(
         )
         done = min(start + len(batch), len(keywords))
         percent = max(5, min(99, int((done / len(keywords)) * 100)))
-        _emit_progress(
-            progress, f"Generating CASTEP keywords... {done} of {len(keywords)}", percent
-        )
+        _emit_progress(progress, f"Generating CASTEP keywords… {done} of {len(keywords)}", percent)
 
     payload = _checked_payload(dump, castep_version, config)
     _check_cancel(cancel_check)
-    _emit_progress(progress, f"Writing CASTEP keywords to {output_path.name}...", 100)
+    _emit_progress(progress, f"Writing CASTEP keywords to {output_path.name}…", 100)
     return write_keyword_catalog_file(payload, output_path)
 
 
@@ -469,11 +467,11 @@ def _wait_for_scheduler_job(
         info = statuses.get(remote_job_id)
         mapped = JobStatus.COMPLETED if info is None else scheduler.map_to_job_status(info.state)
         if mapped == JobStatus.QUEUED:
-            _emit_progress(progress, f"Keyword job {remote_job_id} is queued...", 35)
+            _emit_progress(progress, f"Keyword job {remote_job_id} is queued…", 35)
         elif mapped == JobStatus.RUNNING:
             described = _remote_described_count(ssh, remote_dump_path)
             detail = f" ({described} keywords described so far)" if described else ""
-            _emit_progress(progress, f"Keyword job {remote_job_id} is running...{detail}", 60)
+            _emit_progress(progress, f"Keyword job {remote_job_id} is running…{detail}", 60)
         elif mapped == JobStatus.COMPLETED:
             return
         elif mapped == JobStatus.CANCELLED:
@@ -539,7 +537,7 @@ def _generate_scheduler_keywords_json(
             )
             runner_path = Path(handle.name)
         try:
-            _emit_progress(progress, f"Uploading keyword generation script to {config.name}...", 10)
+            _emit_progress(progress, f"Uploading keyword generation script to {config.name}…", 10)
             ssh.put(runner_path, remote_runner_path)
             ssh.chmod(remote_runner_path, 0o755)
         finally:
@@ -565,9 +563,9 @@ def _generate_scheduler_keywords_json(
         )
 
         _check_cancel(cancel_check)
-        _emit_progress(progress, f"Submitting keyword generation job on {config.name}...", 20)
+        _emit_progress(progress, f"Submitting keyword generation job on {config.name}…", 20)
         remote_job_id = scheduler.submit(ssh, request)
-        _emit_progress(progress, f"Waiting for cluster job {remote_job_id}...", 30)
+        _emit_progress(progress, f"Waiting for cluster job {remote_job_id}…", 30)
         _wait_for_scheduler_job(
             ssh=ssh,
             scheduler=scheduler,
@@ -579,9 +577,7 @@ def _generate_scheduler_keywords_json(
             cancel_check=cancel_check,
         )
 
-        _emit_progress(
-            progress, f"Downloading CASTEP keyword descriptions from {config.name}...", 90
-        )
+        _emit_progress(progress, f"Downloading CASTEP keyword descriptions from {config.name}…", 90)
         dump_text = ssh.read_text(remote_dump_path) if ssh.exists(remote_dump_path) else ""
         if DUMP_COMPLETE_MARKER not in dump_text:
             message = (

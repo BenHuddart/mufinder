@@ -19,6 +19,7 @@ REQUIRED_AGENT_DOCS = (
     "docs/project_specification.rst",
     "docs/quality_and_automation.rst",
     "docs/compatibility_policy.rst",
+    "docs/ui_text.rst",
 )
 
 INDEXED_DOCS = (
@@ -26,6 +27,7 @@ INDEXED_DOCS = (
     "architecture",
     "quality_and_automation",
     "compatibility_policy",
+    "ui_text",
 )
 
 PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
@@ -677,3 +679,76 @@ def test_constant_names_are_only_defined_in_their_home() -> None:
         "mufinder.domain.constants. Import the constant from the home instead:\n"
         + "\n".join(violations)
     )
+
+
+#: Text the UI style (``docs/ui_text.rst``) rules out: ``(s)`` instead of a count
+#: that agrees with its number (``mufinder.domain.text.plural``), three dots
+#: instead of the one-character ellipsis, and ``->`` instead of ``Setup > CASTEP``
+#: in a menu path (or ``→`` for a change from one value to another).
+UI_TEXT_FORBIDDEN = (
+    (re.compile(r"\w\(s\)"), "'(s)': write the count with mufinder.domain.text.plural"),
+    (re.compile(r"\.\.\."), "'...': use the one-character ellipsis '…'"),
+    (re.compile(r"->"), "'->': write menu paths as 'Setup > CASTEP', a change as '→'"),
+)
+
+#: ``numpy.einsum`` subscripts use ``...`` and ``->`` as syntax, not as text.
+EINSUM_SUBSCRIPTS = re.compile(r"^[\w.,]+->[\w.]*$")
+
+
+def _ui_text_violations(source: str) -> list[tuple[int, str]]:
+    """Return ``(line, problem)`` for each string constant that breaks the UI style.
+
+    Every string literal counts (f-string pieces included) except docstrings and
+    einsum subscripts, so a message built in ``services`` or ``science`` and
+    shown by the app is held to the same rules as a label in ``app``.
+    """
+
+    tree = ast.parse(source)
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    violations: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if id(node) in docstrings or EINSUM_SUBSCRIPTS.match(node.value):
+            continue
+        violations.extend(
+            (node.lineno, problem)
+            for pattern, problem in UI_TEXT_FORBIDDEN
+            if pattern.search(node.value)
+        )
+    return violations
+
+
+def test_ui_text_check_flags_text_and_skips_docstrings_and_einsum() -> None:
+    source = (
+        '"""Module docstring with job(s)... and a -> b."""\n'
+        "def f(n):\n"
+        '    """Docstring: Setup -> CASTEP..."""\n'
+        '    np.einsum("...i,ij->...j", a, b)\n'
+        '    label = "Export..."\n'
+        '    return f"Submitted {n} job(s) in Setup -> CASTEP"\n'
+    )
+
+    assert sorted(_ui_text_violations(source)) == sorted(
+        [
+            (5, UI_TEXT_FORBIDDEN[1][1]),
+            (6, UI_TEXT_FORBIDDEN[0][1]),
+            (6, UI_TEXT_FORBIDDEN[2][1]),
+        ]
+    )
+
+
+def test_ui_text_follows_the_style_page() -> None:
+    """No ``(s)``, ``...`` or ``->`` in any string MuFinder can show (``docs/ui_text.rst``)."""
+
+    violations = [
+        f"{path.relative_to(PROJECT_ROOT)}:{line}: {problem}"
+        for path in sorted(SOURCE_ROOT.rglob("*.py"))
+        for line, problem in _ui_text_violations(path.read_text(encoding="utf-8"))
+    ]
+    assert not violations, "UI text breaks docs/ui_text.rst:\n" + "\n".join(violations)

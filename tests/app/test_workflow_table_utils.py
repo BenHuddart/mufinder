@@ -139,19 +139,19 @@ def test_configure_button_energy_barriers_defaults(button: QPushButton) -> None:
     style_workflow_configure_button(
         button, workflow_label="Energy Barriers", configured=False, locked=False
     )
-    assert button.text() == "Configure..."
+    assert button.text() == "Configure…"
     assert button.toolTip() == "Configure Energy Barriers parameters for this row."
 
     style_workflow_configure_button(
         button, workflow_label="Energy Barriers", configured=True, locked=False
     )
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Edit custom Energy Barriers parameters for this row."
 
     style_workflow_configure_button(
         button, workflow_label="Energy Barriers", configured=False, locked=True
     )
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Inspect the Energy Barriers parameters for this row."
 
 
@@ -159,7 +159,7 @@ def test_configure_button_quantum_corrections_defaults(button: QPushButton) -> N
     style_workflow_configure_button(
         button, workflow_label="Quantum Corrections", configured=False, locked=True
     )
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Inspect the Quantum Corrections parameters for this row."
 
 
@@ -168,15 +168,15 @@ def test_configure_button_relaxation_wording(button: QPushButton) -> None:
     kwargs = {"workflow_label": "CASTEP", "noun": "row", "used": True}
 
     style_workflow_configure_button(button, configured=False, locked=False, **kwargs)
-    assert button.text() == "Configure..."
+    assert button.text() == "Configure…"
     assert button.toolTip() == "Configure CASTEP parameters for this row."
 
     style_workflow_configure_button(button, configured=True, locked=False, **kwargs)
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Edit custom CASTEP parameters for this row."
 
     style_workflow_configure_button(button, configured=False, locked=True, **kwargs)
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Inspect the CASTEP parameters used for this row."
 
 
@@ -184,15 +184,15 @@ def test_configure_button_uep_wording(button: QPushButton) -> None:
     kwargs = {"workflow_label": "CASTEP", "noun": "UEP source job", "used": True}
 
     style_workflow_configure_button(button, configured=False, locked=False, **kwargs)
-    assert button.text() == "Configure..."
+    assert button.text() == "Configure…"
     assert button.toolTip() == "Configure CASTEP parameters for this UEP source job."
 
     style_workflow_configure_button(button, configured=True, locked=False, **kwargs)
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Edit custom CASTEP parameters for this UEP source job."
 
     style_workflow_configure_button(button, configured=False, locked=True, **kwargs)
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     assert button.toolTip() == "Inspect the CASTEP parameters used for this UEP source job."
 
 
@@ -200,7 +200,7 @@ def test_configure_button_locked_takes_priority_over_configured(button: QPushBut
     style_workflow_configure_button(
         button, workflow_label="CASTEP", configured=True, locked=True, noun="row", used=True
     )
-    assert button.text() == "Configured..."
+    assert button.text() == "Configured…"
     # Locked wins: inspect phrasing, not the edit phrasing.
     assert button.toolTip() == "Inspect the CASTEP parameters used for this row."
 
@@ -326,7 +326,7 @@ def test_bind_reset_failed_context_menu_resets_keyed_rows_and_counts_the_keyless
 
     # The keyless row is skipped, and the entry says so before the reset prompt
     # (which names the number of jobs) is shown.
-    assert menu.reset_action().text == "Reset Failed Jobs... (1 of 2)"
+    assert menu.reset_action().text == "Reset Failed Jobs… (1 of 2)"
     assert menu.reset_action().enabled is True
     assert emitted == [["row_0"]]
 
@@ -340,7 +340,7 @@ def test_bind_reset_failed_context_menu_resets_the_eligible_rows_of_a_mixed_sele
 
     menu = open_reset_menu(table, row=0)
 
-    assert menu.reset_action().text == "Reset Failed Jobs... (2 of 4)"
+    assert menu.reset_action().text == "Reset Failed Jobs… (2 of 4)"
     assert emitted == [["row_0", "row_2"]]
 
 
@@ -767,8 +767,8 @@ def test_standard_row_menu_has_one_order_with_reset_in_its_place(qapp, monkeypat
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
-        "Reset Failed Jobs...",
-        "Configure...",
+        "Reset Failed Jobs…",
+        "Configure…",
         "Remove",
     ]
 
@@ -784,7 +784,7 @@ def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch
         "Run Local",
         "Run on Cluster",
         "Cancel",
-        "Configure...",
+        "Configure…",
     ]
     # Without a reset action there is nothing for the reset tooltip to advertise.
     assert table.toolTip() == ""
@@ -793,16 +793,16 @@ def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch
 @pytest.mark.parametrize(
     ("statuses", "enabled"),
     [
-        (["ready", "not generated"], {"Run Local", "Run on Cluster", "Configure...", "Remove"}),
-        (["running", "queued"], {"Cancel", "Configure...", "Remove"}),
+        (["ready", "not generated"], {"Run Local", "Run on Cluster", "Configure…", "Remove"}),
+        (["running", "queued"], {"Cancel", "Configure…", "Remove"}),
         (
             ["failed", "stopped"],
-            {"Inspect Failure", "Reset Failed Jobs...", "Configure...", "Remove"},
+            {"Inspect Failure", "Reset Failed Jobs…", "Configure…", "Remove"},
         ),
-        (["completed", "completed"], {"Configure...", "Remove"}),
+        (["completed", "completed"], {"Configure…", "Remove"}),
         # Cancelled rows are editable but run again through Reset (or the
         # dashboard), so Run stays off, matching the submission filter.
-        (["cancelled", "cancelled"], {"Reset Failed Jobs...", "Configure...", "Remove"}),
+        (["cancelled", "cancelled"], {"Reset Failed Jobs…", "Configure…", "Remove"}),
     ],
 )
 def test_standard_row_menu_enables_actions_from_row_status(
@@ -834,15 +834,15 @@ def test_standard_row_menu_offers_actions_for_the_eligible_rows_of_a_mixed_selec
         "Run on Cluster (1 of 4)",
         "Cancel (2 of 4)",
         "Inspect Failure (1 of 4)",
-        "Reset Failed Jobs... (1 of 4)",
-        "Configure...",
+        "Reset Failed Jobs… (1 of 4)",
+        "Configure…",
         "Remove",
     ]
     assert all(action.enabled for action in menu.actions)
 
     menu.action("Cancel (2 of 4)").triggered.emit()
     menu.action("Inspect Failure (1 of 4)").triggered.emit()
-    menu.action("Configure...").triggered.emit()
+    menu.action("Configure…").triggered.emit()
 
     # The fake menu's exec() already clicked the enabled reset entry.
     assert calls == [
@@ -866,7 +866,7 @@ def test_standard_row_menu_passes_selected_rows_and_confirms_cancel(
     table.selectAll()
 
     menu = open_reset_menu(table)
-    menu.action("Configure...").triggered.emit()
+    menu.action("Configure…").triggered.emit()
     menu.action("Cancel").triggered.emit()
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
     menu.action("Cancel").triggered.emit()
@@ -892,7 +892,7 @@ def test_row_menu_action_separator_is_drawn_above_it(qapp, monkeypatch) -> None:
 
     menu = open_reset_menu(table)
 
-    assert [action.text for action in menu.actions] == ["Reset Failed Jobs...", "Extra"]
+    assert [action.text for action in menu.actions] == ["Reset Failed Jobs…", "Extra"]
     assert menu.separators_before == [1]
 
 
