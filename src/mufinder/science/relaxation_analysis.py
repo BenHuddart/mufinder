@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID
 
@@ -533,6 +533,60 @@ def _fake_uep_optimizations(sites: Sequence[RelaxedMuonSite]) -> tuple[UepOptimi
     return tuple(optimizations)
 
 
+#: Smallest span each relaxed-site feature column is scaled by before the
+#: hierarchical and k-means methods compare sites: 0.01 eV of energy and 0.05 of
+#: a fractional coordinate. Differences below these scales (numerical noise
+#: between relaxations that reached the same site) never separate two sites,
+#: however small the spread of the whole workspace is.
+FEATURE_SPAN_FLOOR_ENERGY_EV = 0.01
+FEATURE_SPAN_FLOOR_FRACTIONAL = 0.05
+
+
+def _feature_span_floors(column_count: int) -> np.ndarray:
+    # The features are the energy then the three asymmetric fractional coordinates.
+    return np.asarray(
+        [FEATURE_SPAN_FLOOR_ENERGY_EV] + [FEATURE_SPAN_FLOOR_FRACTIONAL] * (column_count - 1),
+        dtype=float,
+    )
+
+
+def floored_feature_scaling(genome_vectors: Sequence[Sequence[float]]) -> np.ndarray:
+    """Scale each relaxed-site feature column to its span, with the span floored.
+
+    Each column is shifted to start at zero and divided by its span (max minus
+    min) or by its physical floor (:data:`FEATURE_SPAN_FLOOR_ENERGY_EV`,
+    :data:`FEATURE_SPAN_FLOOR_FRACTIONAL`), whichever is larger. Plain min-max
+    scaling would stretch positional noise of 1e-7 over the whole [0, 1]
+    range and split one site into several.
+    """
+
+    vectors = np.asarray(genome_vectors, dtype=float)
+    if vectors.size == 0:
+        return vectors.reshape(0, 0)
+    floors = _feature_span_floors(vectors.shape[1])
+    minima = vectors.min(axis=0)
+    spans = np.maximum(vectors.max(axis=0) - minima, floors)
+    return (vectors - minima) / spans
+
+
+def distinct_feature_count(genome_vectors: Sequence[Sequence[float]]) -> int:
+    """Return how many distinct sites the relaxed-site features describe.
+
+    Two sites are the same when every feature differs by less than its
+    physical floor, and sameness is chained (single linkage), so the count is
+    the number of connected components of that graph. K-means never asks for
+    more clusters than this, so it cannot split one site to fill ``k``.
+    """
+
+    vectors = np.asarray(genome_vectors, dtype=float)
+    if vectors.size == 0:
+        return 0
+    scaled = vectors / _feature_span_floors(vectors.shape[1])
+    differences = np.abs(scaled[:, None, :] - scaled[None, :, :]).max(axis=-1)
+    adjacency = ((differences < 1.0) & ~np.eye(len(vectors), dtype=bool)).astype(int)
+    return len(_connected_components(adjacency))
+
+
 def cluster_soprano_style(
     sites: Sequence[RelaxedMuonSite],
     host_structure: Structure,
@@ -542,7 +596,14 @@ def cluster_soprano_style(
     kmeans_k: int = 4,
     symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> UepClusteringResult:
-    """Cluster structural-relaxation endpoints with pymuon-suite-style features."""
+    """Cluster structural-relaxation endpoints with pymuon-suite-style features.
+
+    The features (energy and asymmetric-unit fractional position) are those
+    of the UEP clustering, scaled by :func:`floored_feature_scaling` rather
+    than plain min-max, so noise between relaxations of one site never
+    separates them. K-means asks for at most :func:`distinct_feature_count`
+    clusters; ``summary.clustering_kmeans_k`` holds the number it used.
+    """
 
     active = UepClusteringConfig(
         clustering_method=str(method).strip().lower(),
@@ -555,6 +616,19 @@ def cluster_soprano_style(
         source_structure=host_structure,
         config=active,
     )
+    if prepared.optimizations:
+        scaled = floored_feature_scaling(prepared.genome_vectors)
+        # The cached linkage was built from the plain min-max features, so it is dropped.
+        prepared = replace(
+            prepared,
+            normalized_genome_vectors=tuple(
+                tuple(float(value) for value in row) for row in scaled.tolist()
+            ),
+            linkage_matrix=(),
+        )
+        if active.clustering_method == "kmeans":
+            distinct = max(distinct_feature_count(prepared.genome_vectors), 1)
+            active = replace(active, clustering_kmeans_k=min(int(kmeans_k), distinct))
     return cluster_prepared_uep_dataset(prepared, config=active)
 
 

@@ -16,7 +16,7 @@ from matplotlib.patches import Circle, PathPatch
 from matplotlib.textpath import TextPath
 from matplotlib.transforms import Affine2D
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -92,7 +92,15 @@ from mufinder.science.relaxation_analysis import (
     scan_connected_component_tolerances,
     uep_summary_to_relaxation_clusters,
 )
-from mufinder.services.muon_sites_summary import relaxed_site_grouping
+from mufinder.services.analysis_grouping import (
+    DEFAULT_GROUPING_SETTINGS,
+    METHOD_CONNECTED as _METHOD_CONNECTED,
+    METHOD_HIERARCHICAL as _METHOD_HIERARCHICAL,
+    METHOD_KMEANS as _METHOD_KMEANS,
+    SiteGrouping,
+    grouped_clustering_state,
+    regroup_workspace,
+)
 from mufinder.services.source_candidates import CompletedRelaxationAnalysisSource
 from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
 from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
@@ -105,9 +113,9 @@ from mufinder.science.wyckoff_analysis import (
 _WORKSPACE_SCHEMA_VERSION = 1
 #: Item data role holding a site row's relaxation job id (as a string).
 _JOB_ID_ROLE = Qt.ItemDataRole.UserRole + 1
-_METHOD_CONNECTED = "connected"
-_METHOD_HIERARCHICAL = "hier"
-_METHOD_KMEANS = "kmeans"
+#: How long the clustering dialog waits after a control edit before regrouping,
+#: so a run of edits (k-means spin-box steps) regroups once.
+_CLUSTERING_EDIT_DELAY_MS = 250
 
 
 class _EqualInitialHorizontalSplitter(QSplitter):
@@ -305,15 +313,7 @@ def default_workspace_state(
         "host_structure_id": str(host_structure_id),
         "job_ids": [str(job_id) for job_id in job_ids],
         "show_shifted_positions": False,
-        "clustering": {
-            "method": _METHOD_CONNECTED,
-            "connected_tolerance_ang": 0.25,
-            "hierarchical_t": 0.3,
-            "kmeans_k": 4,
-            "wyckoff_match_tolerance_ang": 0.25,
-            "tolerance_scan": [],
-            "result": None,
-        },
+        "clustering": {**DEFAULT_GROUPING_SETTINGS, "tolerance_scan": [], "result": None},
         "viewer_state": {},
         "displacement_state": {},
     }
@@ -670,6 +670,33 @@ def _wyckoff_assignment_tooltip(match: Mapping[str, object] | None) -> str:
     return "\n".join(rows)
 
 
+class _ToleranceScanThread(QThread):
+    """Count connected components across the tolerance grid off the GUI thread."""
+
+    #: The scan rows, or the error text when the scan failed.
+    scanned = Signal(object)
+
+    def __init__(
+        self,
+        sites: Sequence[RelaxedMuonSite],
+        host_structure: Structure,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._sites = tuple(sites)
+        self._host_structure = host_structure
+
+    def run(self) -> None:  # noqa: D401 - QThread API.
+        try:
+            rows = scan_connected_component_tolerances(
+                self._sites, self._host_structure, start_ang=0.0, stop_ang=1.0, points=51
+            )
+        except RelaxationAnalysisError as exc:
+            self.scanned.emit(str(exc))
+            return
+        self.scanned.emit(rows)
+
+
 class RelaxationClusteringDialog(StructureViewerDialog):
     """Dialog for clustering one structural-relaxation analysis workspace."""
 
@@ -693,6 +720,14 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._current_labels: tuple[int, ...] = ()
         self._current_clusters: tuple[RelaxationClusterSummary, ...] = ()
         self._current_wyckoff_assignments: tuple[ClusterWyckoffAssignment, ...] = ()
+        # The k k-means used: at most the number of distinct sites.
+        self._current_kmeans_k: int | None = None
+        self._scan_thread: _ToleranceScanThread | None = None
+        # Control edits regroup once the edits pause, not on every step.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(_CLUSTERING_EDIT_DELAY_MS)
+        self._refresh_timer.timeout.connect(self._refresh)
         self._tolerance_scan = parse_tolerance_scan(
             (self._clustering_state()).get("tolerance_scan", [])
         )
@@ -753,6 +788,10 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._hierarchical_input.setDecimals(4)
         self._kmeans_spin = QSpinBox(self)
         self._kmeans_spin.setRange(1, max(len(self._sites), 1))
+        self._kmeans_note = QLabel("", self)
+        self._kmeans_note.setObjectName("relaxationKmeansNote")
+        self._kmeans_note.setWordWrap(True)
+        style_hint_text(self._kmeans_note)
         self._wyckoff_tolerance_input = DecimalLineEdit(self)
         self._wyckoff_tolerance_input.setRange(0.0, 99.0)
         self._wyckoff_tolerance_input.setDecimals(4)
@@ -801,6 +840,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         controls_layout.addWidget(self._hierarchical_input, 0, 5)
         controls_layout.addWidget(self._kmeans_label, 0, 6)
         controls_layout.addWidget(self._kmeans_spin, 0, 7)
+        controls_layout.addWidget(self._kmeans_note, 1, 0, 1, 11)
         controls_layout.addWidget(self._wyckoff_tolerance_label, 0, 9)
         controls_layout.addWidget(self._wyckoff_tolerance_input, 0, 10)
         controls_layout.setColumnStretch(8, 1)
@@ -944,10 +984,10 @@ class RelaxationClusteringDialog(StructureViewerDialog):
 
     def _connect_signals(self) -> None:
         self._method_combo.currentIndexChanged.connect(self._on_method_changed)
-        self._tolerance_input.editingFinished.connect(self._refresh)
-        self._hierarchical_input.editingFinished.connect(self._refresh)
-        self._kmeans_spin.valueChanged.connect(lambda *_: self._refresh())
-        self._wyckoff_tolerance_input.editingFinished.connect(self._refresh)
+        self._tolerance_input.editingFinished.connect(self._schedule_refresh)
+        self._hierarchical_input.editingFinished.connect(self._schedule_refresh)
+        self._kmeans_spin.valueChanged.connect(lambda *_: self._schedule_refresh())
+        self._wyckoff_tolerance_input.editingFinished.connect(self._schedule_refresh)
         self._scan_button.clicked.connect(self._scan_tolerances)
         self._apply_button.clicked.connect(self._apply)
 
@@ -967,6 +1007,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._hierarchical_input.setVisible(hierarchical)
         self._kmeans_label.setVisible(kmeans)
         self._kmeans_spin.setVisible(kmeans)
+        self._kmeans_note.setVisible(kmeans and bool(self._kmeans_note.text()))
         self._hier_toolbar.setVisible(hierarchical)
         self._connected_panel.setVisible(connected)
         self._soprano_panel.setVisible(not connected)
@@ -975,21 +1016,51 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._sync_controls()
         self._refresh()
 
+    def _schedule_refresh(self) -> None:
+        """Regroup once the control edits pause."""
+
+        self._refresh_timer.start()
+
+    def _flush_pending_refresh(self) -> None:
+        """Regroup now if an edit is still waiting, so what is applied matches the controls."""
+
+        if self._refresh_timer.isActive():
+            self._refresh()
+
     def _scan_tolerances(self) -> None:
-        try:
-            self._tolerance_scan = scan_connected_component_tolerances(
-                self._sites,
-                self._host_structure,
-                start_ang=0.0,
-                stop_ang=1.0,
-                points=51,
-            )
-        except RelaxationAnalysisError as exc:
-            QMessageBox.warning(self, "Tolerance scan failed", str(exc))
+        """Scan the tolerance grid on a worker thread; the plot updates when it finishes."""
+
+        if self._scan_thread is not None:
             return
+        self._scan_button.setEnabled(False)
+        self._scan_button.setText("Scanning…")
+        thread = _ToleranceScanThread(self._sites, self._host_structure, self)
+        thread.scanned.connect(self._on_tolerance_scan_finished)
+        self._scan_thread = thread
+        thread.start()
+
+    def _on_tolerance_scan_finished(self, outcome: object) -> None:
+        thread, self._scan_thread = self._scan_thread, None
+        if thread is not None:
+            thread.wait()
+            thread.deleteLater()
+        self._scan_button.setEnabled(True)
+        self._scan_button.setText("Scan Tolerances")
+        if isinstance(outcome, str):
+            QMessageBox.warning(self, "Tolerance scan failed", outcome)
+            return
+        self._tolerance_scan = tuple(outcome)  # type: ignore[arg-type]
         self._refresh()
 
+    def done(self, result: int) -> None:  # noqa: D401 - Qt API.
+        # A running scan finishes before the dialog goes; it takes well under a second.
+        self._refresh_timer.stop()
+        if self._scan_thread is not None:
+            self._scan_thread.wait()
+        super().done(result)
+
     def _refresh(self) -> None:
+        self._refresh_timer.stop()
         self._sync_controls()
         if not self._sites:
             return
@@ -1002,6 +1073,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
                 )
                 self._current_labels = result.cluster_labels
                 self._current_clusters = result.clusters
+                self._current_kmeans_k = None
                 self._append_scan_point(result)
                 self._render_connected(result)
             else:
@@ -1016,6 +1088,9 @@ class RelaxationClusteringDialog(StructureViewerDialog):
                 self._current_clusters = uep_summary_to_relaxation_clusters(
                     self._sites, result.summary
                 )
+                self._current_kmeans_k = (
+                    result.summary.clustering_kmeans_k if self._method() == _METHOD_KMEANS else None
+                )
                 self._render_soprano(result)
             self._current_wyckoff_assignments = assign_cluster_wyckoff_sites(
                 self._sites,
@@ -1026,8 +1101,23 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         except Exception as exc:  # noqa: BLE001
             self._show_plot_error(str(exc))
             return
+        self._update_kmeans_note()
         self._render_viewer()
         self._populate_summary_table()
+
+    def _update_kmeans_note(self) -> None:
+        requested = int(self._kmeans_spin.value())
+        used = self._current_kmeans_k
+        if used is not None and used < requested:
+            self._kmeans_note.setText(
+                f"K-means used {used} clusters: the sites have only {used} distinct "
+                "positions and energies, so a larger k would split one site."
+            )
+        else:
+            self._kmeans_note.setText("")
+        self._kmeans_note.setVisible(
+            self._method() == _METHOD_KMEANS and bool(self._kmeans_note.text())
+        )
 
     def _append_scan_point(self, result: ConnectedComponentsResult) -> None:
         rows = dict(parse_tolerance_scan(self._tolerance_scan))
@@ -1391,31 +1481,33 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         )
 
     def _apply(self) -> None:
+        self._flush_pending_refresh()
         if not self._current_labels:
             QMessageBox.warning(
                 self, "No clustering", "Run clustering before applying it to the workspace."
             )
             return
-        result_payload = {
-            "cluster_labels": list(self._current_labels),
-            "clusters": [dataclass_to_plain(cluster) for cluster in self._current_clusters],
-            "wyckoff_assignments": [
-                dataclass_to_plain(assignment) for assignment in self._current_wyckoff_assignments
-            ],
-        }
-        clustering = {
+        settings = {
             "method": self._method(),
             "connected_tolerance_ang": float(self._tolerance_input.value()),
             "hierarchical_t": float(self._hierarchical_input.value()),
             "kmeans_k": int(self._kmeans_spin.value()),
             "wyckoff_match_tolerance_ang": float(self._wyckoff_tolerance_input.value()),
-            "tolerance_scan": [
-                [float(t), int(count)] for t, count in parse_tolerance_scan(self._tolerance_scan)
-            ],
-            "result": result_payload,
         }
-        # Record the symmetry the grouping used now, against the host it ran on.
-        clustering["grouping"] = relaxed_site_grouping(clustering, self._host_structure)
+        grouping = SiteGrouping(
+            method=self._method(),
+            cluster_labels=tuple(self._current_labels),
+            clusters=tuple(self._current_clusters),
+            wyckoff_assignments=tuple(self._current_wyckoff_assignments),
+            kmeans_k_used=self._current_kmeans_k,
+        )
+        # The grouping record states the symmetry used now, against the host it ran on.
+        clustering = grouped_clustering_state(
+            settings,
+            grouping,
+            self._host_structure,
+            tolerance_scan=parse_tolerance_scan(self._tolerance_scan),
+        )
         self.clustering_applied.emit(clustering)
         self.accept()
 
@@ -1430,6 +1522,7 @@ class DisplacementAnalysisDialog(StructureViewerDialog):
         sites: Sequence[RelaxedMuonSite],
         structures_by_id: Mapping[UUID, Structure],
         comparison_options: Sequence[tuple[UUID, str, bool]],
+        default_comparison_id: UUID | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -1439,6 +1532,7 @@ class DisplacementAnalysisDialog(StructureViewerDialog):
         self._sites = normalize_site_energies(sites)
         self._structures = dict(structures_by_id)
         self._comparison_options = list(comparison_options)
+        self._default_comparison_id = default_comparison_id
         self._result: DisplacementAnalysisResult | None = None
         self._site_combo = QComboBox(self)
         self._comparison_combo = QComboBox(self)
@@ -1505,6 +1599,10 @@ class DisplacementAnalysisDialog(StructureViewerDialog):
                     model_item.setToolTip(
                         "Free-cell pristine relaxations cannot be used for displacement analysis."
                     )
+        if self._default_comparison_id is not None:
+            index = self._comparison_combo.findData(str(self._default_comparison_id))
+            if index >= 0:
+                self._comparison_combo.setCurrentIndex(index)
 
     def _connect(self) -> None:
         self._site_combo.currentIndexChanged.connect(lambda *_: self._refresh())
@@ -1606,9 +1704,11 @@ class DisplacementAnalysisDialog(StructureViewerDialog):
         axis.set_xlabel("Distance from muon (Å)")
         axis.set_ylabel("Radial displacement (Å)")
         if species:
+            # Beside the axes at the bottom, clear of the frame's pop-out button
+            # in the top-right corner.
             legend = axis.legend(
-                loc="upper left",
-                bbox_to_anchor=(1.02, 1.0),
+                loc="lower left",
+                bbox_to_anchor=(1.02, 0.0),
                 borderaxespad=0.0,
                 frameon=True,
             )
@@ -1652,6 +1752,7 @@ class RelaxationAnalysisWidget(QWidget):
         # host object is a host change too.
         self._host_geometry: tuple[object, ...] | None = None
         self._comparison_options: list[tuple[UUID, str, bool]] = []
+        self._default_comparison_id: UUID | None = None
         # Each tab's 3D viewer is built the first time the tab is current: a
         # viewer is costly to build, and a project can hold many workspaces.
         # Maps a workspace id to the empty viewer slot and its point overlays.
@@ -1700,6 +1801,7 @@ class RelaxationAnalysisWidget(QWidget):
         host_structure: Structure | None,
         comparison_options: Sequence[tuple[UUID, str, bool]],
         current_workspace_id: str | None = None,
+        default_comparison_id: UUID | None = None,
     ) -> None:
         """Bring the tabs up to date with ``workspaces``.
 
@@ -1725,6 +1827,7 @@ class RelaxationAnalysisWidget(QWidget):
             self._structures_by_id = dict(structures)
             self._host_structure = host_structure
             self._comparison_options = list(comparison_options)
+            self._default_comparison_id = default_comparison_id
             if host_changed:
                 self._rebuild_tabs(current_workspace_id)
             else:
@@ -2069,6 +2172,10 @@ class RelaxationAnalysisWidget(QWidget):
             lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid)
         )
         cluster_button = QPushButton("Clustering…", header)
+        cluster_button.setToolTip(
+            "Sites are grouped automatically, with connected components within 0.25 Å. "
+            "Open to compare methods and apply another grouping to this workspace."
+        )
         cluster_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid)
         )
@@ -2345,6 +2452,11 @@ class RelaxationAnalysisWidget(QWidget):
                 current.append(job_id)
                 seen.add(job_id)
         workspace["job_ids"] = [str(job_id) for job_id in current]
+        if self._host_structure is not None:
+            # The workspace regroups with its own method and settings.
+            workspace["clustering"] = regroup_workspace(
+                workspace, self._workspace_sites(workspace), self._host_structure
+            )
         self._emit_state()
         self._refresh_workspace_tab(workspace_id)
 
@@ -2395,6 +2507,7 @@ class RelaxationAnalysisWidget(QWidget):
             sites=sites,
             structures_by_id=self._structures_by_id,
             comparison_options=self._comparison_options,
+            default_comparison_id=self._default_comparison_id,
             parent=self,
         )
         dialog.exec()

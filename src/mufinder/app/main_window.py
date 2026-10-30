@@ -377,9 +377,12 @@ from mufinder.services.source_candidates import (
     coerce_fractional_triplet,
     completed_muon_relaxation_sources,
     completed_pristine_relaxation_jobs,
+    mixes_calculations,
+    newest_completed_structure_id,
     quantum_seed_name_for_key,
     relaxation_sources_for_labels,
 )
+from mufinder.services.analysis_grouping import regroup_workspace
 from mufinder.services.structure_export import relaxed_structure_export_for_job_id
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
@@ -7154,6 +7157,9 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self._accept_mixed_relaxation_calculations(sources):
+            return
+
         charge_state = next(iter(charge_states))
         default_name = f"{muon_charge_state_label(charge_state)} analysis"
         name, accepted = QInputDialog.getText(
@@ -7171,6 +7177,10 @@ class MainWindow(QMainWindow):
             charge_state=charge_state,
             host_structure_id=host.id,
             job_ids=[source.job_id for source in sources],
+        )
+        # A new workspace is grouped straight away (connected components within 0.25 Å).
+        workspace["clustering"] = regroup_workspace(
+            workspace, [source.to_relaxed_site(host) for source in sources], host
         )
         workspaces = self._relaxation_analysis_workspaces()
         workspaces.append(workspace)
@@ -7357,10 +7367,42 @@ class MainWindow(QMainWindow):
         selected = dialog.selected_job_ids()
         if not selected:
             return
+        joined = [
+            source
+            for source in sources
+            if source.job_id in existing_ids or source.job_id in set(selected)
+        ]
+        if not self._accept_mixed_relaxation_calculations(joined):
+            return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
         self.statusBar().showMessage(
             f"Added {plural(len(selected), 'relaxation result')} to the analysis workspace"
         )
+
+    def _accept_mixed_relaxation_calculations(
+        self, sources: list[CompletedRelaxationAnalysisSource]
+    ) -> bool:
+        """Return whether to go on with relaxations from more than one calculation.
+
+        Total energies are only comparable between relaxations in the same
+        supercell with the same settings, so mixing them asks first, with
+        ``Cancel`` the default.
+        """
+
+        if not mixes_calculations(sources):
+            return True
+        answer = workflow_table_utils.confirm_choice(
+            self,
+            "Different calculations",
+            "These relaxations ran in different supercells or with different settings "
+            "(cutoff, k-points, functional or spin), so their energies are not comparable "
+            "and the workspace's dE values would be meaningless.",
+            (("add", "Use them anyway"), ("cancel", "Cancel")),
+            default="cancel",
+            escape="cancel",
+            icon=QMessageBox.Icon.Warning,
+        )
+        return answer == "add"
 
     def _record_relaxed_sites_grouped(self, workspace_id: str) -> None:
         if self._document is None:
@@ -9149,6 +9191,23 @@ class MainWindow(QMainWindow):
             options.append((job.structure_id, label, not fixed_cell))
         return options
 
+    def _default_displacement_reference_id(
+        self, comparison_options: list[tuple[UUID, str, bool]]
+    ) -> UUID | None:
+        """The newest completed fixed-cell pristine relaxation, else ``None`` (the host)."""
+
+        usable = {
+            structure_id for structure_id, _label, blocked in comparison_options if not blocked
+        }
+        return newest_completed_structure_id(
+            self._document,
+            [
+                job
+                for job in self._completed_pristine_relaxation_jobs()
+                if job.structure_id in usable
+            ],
+        )
+
     def _refresh_relaxation_analysis_context(
         self, *, force: bool = False, current_workspace_id: str | None = None
     ) -> None:
@@ -9182,13 +9241,15 @@ class MainWindow(QMainWindow):
                 comparison_options=[],
             )
             return
+        comparison_options = self._comparison_structure_options_for_relaxation_analysis()
         view.set_context(
             workspaces=self._relaxation_analysis_workspaces(),
             sources=self._completed_muon_relaxation_sources(),
             structures=self._document.structures,
             host_structure=self._project_service.active_host_structure(self._document),
-            comparison_options=self._comparison_structure_options_for_relaxation_analysis(),
+            comparison_options=comparison_options,
             current_workspace_id=current_workspace_id,
+            default_comparison_id=self._default_displacement_reference_id(comparison_options),
         )
 
     def _refresh_stale_relaxation_analysis_context(

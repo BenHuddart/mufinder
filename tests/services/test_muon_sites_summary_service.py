@@ -355,6 +355,11 @@ def test_workspace_creation_and_grouping_records_carry_the_parameters(project) -
     assert created.action == "create_analysis_workspace"
     assert created.parameters["relaxation_count"] == 2
     assert created.parameters["charge_state_label"] == "positive muon"
+    # A workspace is grouped as it is created, so its record states the grouping too.
+    assert created.parameters["distinct_site_count"] == 2
+    assert created.parameters["grouping_summary"].startswith("Connected components within 0.25 Å")
+    ungrouped = analysis_workspace_created_record({"name": "New", "job_ids": []})
+    assert "distinct_site_count" not in ungrouped.parameters
     assert grouped is not None
     assert grouped.action == "group_relaxed_sites"
     assert grouped.parameters["site_count"] == 3

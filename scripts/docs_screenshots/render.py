@@ -686,7 +686,7 @@ def select_all_sites(page: QWidget) -> None:
 
 
 def cluster_and_pin(window: MainWindow, charge_state: str, name: str) -> None:
-    """Select every row of a charge state's tab, create a workspace, cluster it and pin it."""
+    """Select a charge state's rows, create a workspace (grouped as it is made) and pin it."""
 
     relaxations = window._muon_relaxation_view
     window._set_active_route("muon_relaxations")
@@ -695,8 +695,6 @@ def cluster_and_pin(window: MainWindow, charge_state: str, name: str) -> None:
     when_modal("QInputDialog", lambda dialog: (dialog.setTextValue(name), dialog.accept()))
     relaxations._create_analysis_button.click()
     workspace_id = str(window._relaxation_analysis_workspaces()[-1]["id"])
-    when_modal("RelaxationClusteringDialog", lambda dialog: dialog._apply_button.click())
-    window._relaxation_analysis_view._open_clustering(workspace_id)
     window._on_muon_sites_pin_requested(workspace_id)
 
 

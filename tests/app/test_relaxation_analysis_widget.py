@@ -477,23 +477,33 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(
 
     class _FakeDialog:
         def __init__(
-            self, *, workspace_name, sites, structures_by_id, comparison_options, parent=None
+            self,
+            *,
+            workspace_name,
+            sites,
+            structures_by_id,
+            comparison_options,
+            default_comparison_id=None,
+            parent=None,
         ):
             opened["workspace_name"] = workspace_name
             opened["site_count"] = len(sites)
             opened["comparison_options"] = list(comparison_options)
+            opened["default_comparison_id"] = default_comparison_id
 
         def exec(self):
             opened["shown"] = True
             return 0
 
     widget = RelaxationAnalysisWidget()
+    pristine_id = uuid4()
     widget.set_context(
         workspaces=[workspace],
         sources=[source],
         structures={host.id: host, relaxed_id: relaxed},
         host_structure=host,
-        comparison_options=[(host.id, "Host", False)],
+        comparison_options=[(host.id, "Host", False), (pristine_id, "Pristine", False)],
+        default_comparison_id=pristine_id,
     )
     monkeypatch.setattr(
         "mufinder.app.relaxation_analysis_widget.DisplacementAnalysisDialog", _FakeDialog
@@ -503,7 +513,11 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(
 
     assert opened["workspace_name"] == "Relaxation analysis"
     assert opened["site_count"] == 1
-    assert opened["comparison_options"] == [(host.id, "Host", False)]
+    assert opened["comparison_options"] == [
+        (host.id, "Host", False),
+        (pristine_id, "Pristine", False),
+    ]
+    assert opened["default_comparison_id"] == pristine_id
     assert opened["shown"] is True
 
     widget.close()
@@ -1416,7 +1430,10 @@ def test_relaxation_analysis_added_structures_and_clustering_update_the_tab_in_p
 
         widget.add_job_ids_to_workspace(workspace_id, [sources[1].job_id])
 
-        assert table.topLevelItemCount() == 2
+        # The two sites are one bcc orbit, so the regrouped workspace has one cluster.
+        assert table.topLevelItemCount() == 1
+        assert table.topLevelItem(0).childCount() == 2
+        assert widget._workspaces[0]["clustering"]["result"]["cluster_labels"] == [1, 1]
         assert len(overlays[-1][0]["positions"]) == 2
 
         widget._apply_clustering(workspace_id, {"result": {"cluster_labels": [1, 2]}})
@@ -1446,3 +1463,196 @@ def test_relaxation_analysis_edit_to_the_host_geometry_rebuilds_the_tabs(qapp) -
     finally:
         widget.shutdown()
         widget.deleteLater()
+
+
+def _plot_canvas_rect(dialog, artist_bbox, canvas):
+    """``artist_bbox`` (display pixels, origin bottom left) as a rectangle in ``dialog``."""
+
+    from PySide6.QtCore import QPoint, QRect
+
+    ratio = canvas.device_pixel_ratio
+    height = canvas.figure.bbox.height
+    top_left = canvas.mapTo(
+        dialog, QPoint(int(artist_bbox.x0 / ratio), int((height - artist_bbox.y1) / ratio))
+    )
+    return QRect(
+        top_left.x(), top_left.y(), int(artist_bbox.width / ratio), int(artist_bbox.height / ratio)
+    )
+
+
+def test_displacement_legend_stays_clear_of_the_pop_out_button(qapp) -> None:
+    comparison_id = uuid4()
+    relaxed_id = uuid4()
+    comparison = Structure(
+        id=comparison_id,
+        label="Host",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["Co", "F"],
+        fractional_positions=[[0.2, 0.5, 0.5], [0.4, 0.5, 0.5]],
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=comparison.lattice_vectors,
+        species=["Co", "F", "H:mu"],
+        fractional_positions=[[0.22, 0.5, 0.5], [0.41, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    site = RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        cartesian_position_ang=(0.0, 5.0, 5.0),
+        total_energy_ev=-10.0,
+    )
+    dialog = DisplacementAnalysisDialog(
+        workspace_name="Relaxation analysis",
+        sites=[site],
+        structures_by_id={comparison_id: comparison, relaxed_id: relaxed},
+        comparison_options=[(comparison_id, "Host", False)],
+    )
+    try:
+        dialog.resize(1180, 720)
+        dialog.show()
+        qapp.processEvents()
+        canvas = dialog._canvas
+        canvas.draw()
+        legend = dialog._figure.axes[0].get_legend()
+        legend_rect = _plot_canvas_rect(dialog, legend.get_window_extent(), canvas)
+        button = dialog._plot_frame.pop_out_button
+        button_rect = button.rect().translated(button.mapTo(dialog, button.rect().topLeft()))
+
+        assert legend_rect.isValid()
+        assert not legend_rect.intersects(button_rect)
+    finally:
+        dialog.close()
+
+
+def test_displacement_dialog_opens_on_the_default_comparison(qapp) -> None:
+    host = host_structure()
+    pristine = host_structure(label="Pristine")
+    relaxed_id = uuid4()
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=host.lattice_vectors,
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.02, 0.0, 0.0], [0.5, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    site = _relaxed_site(host, (0.0, 0.5, 0.5), -10.0)
+    site = RelaxedMuonSite(
+        **{**{f: getattr(site, f) for f in site.__dataclass_fields__}, "structure_id": relaxed_id}
+    )
+
+    dialog = DisplacementAnalysisDialog(
+        workspace_name="Relaxation analysis",
+        sites=[site],
+        structures_by_id={host.id: host, pristine.id: pristine, relaxed_id: relaxed},
+        comparison_options=[(host.id, "Host", False), (pristine.id, "Pristine", False)],
+        default_comparison_id=pristine.id,
+    )
+    try:
+        assert dialog._comparison_combo.currentText() == "Pristine"
+        assert dialog._selected_comparison() is pristine
+    finally:
+        dialog.close()
+
+
+def _clustering_dialog(host, sites):
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    return RelaxationClusteringDialog(workspace=workspace, host_structure=host, sites=sites)
+
+
+def test_clustering_dialog_regroups_once_edits_pause_and_applies_what_the_controls_show(
+    qapp,
+) -> None:
+    host = host_structure()
+    sites = [
+        _relaxed_site(host, (0.10, 0.10, 0.10), -10.0),
+        _relaxed_site(host, (0.112, 0.10, 0.10), -9.9),
+        _relaxed_site(host, (0.25, 0.25, 0.25), -9.8),
+    ]
+    dialog = _clustering_dialog(host, sites)
+    applied: list[dict] = []
+    dialog.clustering_applied.connect(applied.append)
+    try:
+        labels_before = dialog._current_labels
+        dialog._tolerance_input.setValue(5.0)
+        dialog._tolerance_input.editingFinished.emit()
+        dialog._tolerance_input.editingFinished.emit()
+
+        # The edit waits for the pause; nothing has regrouped yet.
+        assert dialog._refresh_timer.isActive()
+        assert dialog._current_labels == labels_before
+
+        dialog._apply()
+
+        assert not dialog._refresh_timer.isActive()
+        assert applied[-1]["connected_tolerance_ang"] == 5.0
+        assert applied[-1]["result"]["cluster_labels"] == [1, 1, 1]
+        assert applied[-1]["grouping"]["connected_tolerance_ang"] == 5.0
+    finally:
+        dialog.close()
+
+
+def test_clustering_dialog_scans_tolerances_on_a_worker(qapp) -> None:
+    host = host_structure()
+    sites = [
+        _relaxed_site(host, (0.10, 0.10, 0.10), -10.0),
+        _relaxed_site(host, (0.25, 0.25, 0.25), -9.8),
+    ]
+    dialog = _clustering_dialog(host, sites)
+    try:
+        dialog._scan_tolerances()
+
+        assert not dialog._scan_button.isEnabled()
+        assert dialog._scan_button.text() == "Scanning…"
+        dialog._scan_thread.wait()
+        for _ in range(20):
+            qapp.processEvents()
+            if dialog._scan_thread is None:
+                break
+
+        assert dialog._scan_thread is None
+        assert dialog._scan_button.isEnabled()
+        assert dialog._scan_button.text() == "Scan Tolerances"
+        assert len(dialog._tolerance_scan) >= 51
+    finally:
+        dialog.close()
+
+
+@pytest.mark.skipif(
+    __import__("importlib").util.find_spec("soprano") is None,
+    reason="soprano optional dependency not installed",
+)
+def test_clustering_dialog_says_when_k_means_used_fewer_clusters(qapp) -> None:
+    host = host_structure()
+    sites = [
+        _relaxed_site(host, (0.5, 0.25, 0.0), -10.0),
+        _relaxed_site(host, (0.5, 0.25, 1e-7), -10.0),
+        _relaxed_site(host, (0.25, 0.25, 0.25), -9.5),
+    ]
+    dialog = _clustering_dialog(host, sites)
+    applied: list[dict] = []
+    dialog.clustering_applied.connect(applied.append)
+    try:
+        dialog._method_combo.setCurrentIndex(dialog._method_combo.findData("kmeans"))
+        dialog._kmeans_spin.setValue(3)
+        dialog._refresh()
+
+        assert len(set(dialog._current_labels)) == 2
+        assert not dialog._kmeans_note.isHidden()
+        assert "used 2 clusters" in dialog._kmeans_note.text()
+
+        dialog._apply()
+
+        assert applied[-1]["kmeans_k"] == 2
+    finally:
+        dialog.close()

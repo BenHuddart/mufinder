@@ -616,7 +616,10 @@ defined by two of these modules, and a pinned count may only fall.
        diffusion paths, their labels, stored form and preview supercell, the
        Energy Barriers form state they live in and the NEB results for energy
        barriers; and the completed pristine and muon relaxations offered to
-       comparison and relaxation analysis.
+       comparison and relaxation analysis, with what makes two relaxations'
+       energies comparable (``relaxation_calculation_key``,
+       ``mixes_calculations``) and the newest completed pristine relaxation
+       (``newest_completed_structure_id``).
    * - ``mufinder.services.site_relaxations``
      - Recording a completed muon relaxation on its source site
        (``record_site_relaxation``): the charge state a site is first relaxed in
@@ -637,6 +640,13 @@ defined by two of these modules, and a pinned count may only fall.
        summary card and its CIF export state; the module also builds the
        provenance records of a new analysis workspace and of an applied grouping
        (``analysis_workspace_created_record``, ``relaxed_sites_grouped_record``).
+   * - ``mufinder.services.analysis_grouping``
+     - How a relaxation analysis workspace groups its sites: the default
+       grouping (connected components within 0.25 Å), regrouping a workspace
+       with its stored method and settings when it is created or relaxations
+       join it (``regroup_workspace``), and the ``clustering`` mapping both that
+       and ``Apply Clustering`` store, with the grouping record
+       (``grouped_clustering_state``).
    * - ``mufinder.services.convergence_defaults``
      - The pinned cutoff and k-point plots on the Convergence Testing
        overview: building a snapshot from the examiner's saved plot data when
@@ -812,6 +822,15 @@ defined by two of these modules, and a pinned count may only fall.
        pairing to a symmetry-equivalent site
        (``equivalent_site_distortion``). The nuclear-relaxation and
        dipolar-field distortion corrections both use it.
+   * - ``mufinder.science.relaxation_analysis``
+     - Grouping relaxed muon sites into distinct sites: symmetry-aware
+       nearest-image distances (``symmetry_distance_matrix``), connected
+       components within a tolerance (``cluster_connected_components``, the
+       one connected-components grouping of relaxed sites), and the
+       hierarchical and k-means methods over energy and asymmetric-unit
+       position with each feature's span floored at a physical scale
+       (``cluster_soprano_style``, ``floored_feature_scaling``,
+       ``distinct_feature_count``); also anchoring and displacement analysis.
    * - ``mufinder.science.nuclear_relaxation``
      - Nuclear dipolar second moments: isotope data, the lattice sums for each
        mode (``calculate_nuclear_relaxation``) and the moment tensors that give

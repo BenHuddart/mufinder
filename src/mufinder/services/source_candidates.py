@@ -51,17 +51,22 @@ from mufinder.science.energy_barriers import (
     equivalent_path_indexes,
     path_symmetry_uses_magnetic_order,
 )
+from mufinder.science.lattice import lattice_frac_to_cart, wrap_fractional
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
-    folded_muon_position_from_structure,
     grouped_relative_energies,
+    muon_fractional_position_from_cell,
 )
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.services.job_paths import job_seed_name
 from mufinder.services.job_results import total_energy_for_job
 from mufinder.services.project_document import definitions_for_stage
 from mufinder.services.project_service import ProjectDocument
-from mufinder.services.project_summary import latest_run_for_job, muon_relaxation_row_jobs
+from mufinder.services.project_summary import (
+    latest_run_for_job,
+    muon_relaxation_job_for_row,
+    muon_relaxation_row_jobs,
+)
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
@@ -144,6 +149,9 @@ class CompletedRelaxationAnalysisSource:
     site_id: UUID | None
     folded_fractional_position: tuple[float, float, float]
     total_energy_ev: float | None
+    #: What makes two relaxations' total energies comparable: the supercell and the
+    #: energy-defining settings their row stores (:func:`relaxation_calculation_key`).
+    calculation: tuple[object, ...] = ()
 
     def to_relaxed_site(self, host_structure: Structure) -> RelaxedMuonSite:
         cart = tuple(
@@ -1171,6 +1179,122 @@ def coerce_fractional_triplet(value: object) -> tuple[float, float, float] | Non
     return float_triplet_or_none(value)
 
 
+#: Row settings that change a relaxation's total energy, so relaxations that
+#: differ in any of them are different calculations.
+RELAXATION_ENERGY_PARAMETERS = (
+    "cut_off_energy",
+    "basis_precision",
+    "kpoint_mp_grid",
+    "kpoint_mp_spacing",
+    "xc_functional",
+    "spin_polarized",
+)
+
+
+def _muon_relaxation_rows_by_job(document: ProjectDocument) -> dict[UUID, Mapping[str, object]]:
+    """Map each bound muon-relaxation job to the row it ran, from the newest definition."""
+
+    rows_by_job: dict[UUID, Mapping[str, object]] = {}
+    for definition in definitions_for_stage(
+        document, WorkflowStage.MUON_RELAXATION, calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE
+    ):
+        configuration = definition.parameters.get("configuration")
+        rows = configuration.get("rows") if isinstance(configuration, Mapping) else None
+        for entry in rows if isinstance(rows, list) else []:
+            if not isinstance(entry, Mapping):
+                continue
+            label = str(entry.get("label", "")).strip()
+            charge_state = (
+                canonical_charge_state(str(entry.get("charge_state") or ""))
+                or POSITIVE_MUON_CHARGE_STATE
+            )
+            job = muon_relaxation_job_for_row(document, definition, label, charge_state)
+            if label and job is not None:
+                rows_by_job.setdefault(job.id, entry)
+    return rows_by_job
+
+
+def _stored_supercell_matrix(entry: Mapping[str, object]) -> list[list[float]] | None:
+    raw = entry.get("supercell_matrix")
+    if not isinstance(raw, list) or len(raw) != 3:
+        return None
+    try:
+        return [[float(value) for value in row] for row in raw]  # type: ignore[union-attr]
+    except (TypeError, ValueError):
+        return None
+
+
+def host_muon_position_from_relaxed_structure(
+    structure: Structure, entry: Mapping[str, object] | None
+) -> tuple[float, float, float] | None:
+    """Return the relaxed muon's host-cell position, read from its relaxed supercell.
+
+    The relaxed structure is the supercell the row ran in, so its ``H:mu``
+    fractional coordinate is mapped to the host cell with the supercell matrix
+    the row stores (no matrix: the row ran in the host cell). ``None`` when
+    the row is unknown or the cell holds no muon: the position is unavailable.
+    """
+
+    if entry is None:
+        return None
+    supercell_position = muon_fractional_position_from_cell(structure)
+    if supercell_position is None:
+        return None
+    matrix = _stored_supercell_matrix(entry)
+    host = (
+        supercell_position
+        if matrix is None
+        else lattice_frac_to_cart(supercell_position, matrix)  # row vector times the matrix
+    )
+    folded = wrap_fractional(host)
+    return (float(folded[0]), float(folded[1]), float(folded[2]))
+
+
+def _comparable_value(value: object) -> object:
+    if isinstance(value, (list, tuple)):
+        return tuple(_comparable_value(item) for item in value)
+    if isinstance(value, str):
+        return value.strip().casefold()
+    if isinstance(value, bool) or value is None:
+        return value
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def relaxation_calculation_key(
+    entry: Mapping[str, object] | None, structure: Structure
+) -> tuple[object, ...]:
+    """Return what must match for two relaxations' total energies to be comparable.
+
+    The supercell the row stores (else the relaxed cell's composition, which
+    separates supercells of different sizes) and the energy-defining settings
+    the row stores (:data:`RELAXATION_ENERGY_PARAMETERS`).
+    """
+
+    matrix = _stored_supercell_matrix(entry) if entry is not None else None
+    cell: object = (
+        ("supercell", _comparable_value(matrix))
+        if entry is not None
+        else ("composition", tuple(sorted(Counter(structure.species).items())))
+    )
+    values = entry.get("parameter_values") if entry is not None else None
+    parameters = values if isinstance(values, Mapping) else {}
+    return (
+        cell,
+        tuple(
+            (name, _comparable_value(parameters.get(name))) for name in RELAXATION_ENERGY_PARAMETERS
+        ),
+    )
+
+
+def mixes_calculations(sources: Iterable[CompletedRelaxationAnalysisSource]) -> bool:
+    """Return whether ``sources`` come from more than one comparable calculation."""
+
+    return len({source.calculation for source in sources}) > 1
+
+
 def completed_muon_relaxation_sources(
     document: ProjectDocument | None,
     rows: Iterable[MuonRelaxationRowJob],
@@ -1182,8 +1306,11 @@ def completed_muon_relaxation_sources(
 
     ``rows`` are the host's muon-relaxation rows with their bound jobs. A row
     contributes once per job when the job completed, its run converged and has
-    a result with a derived structure, and a folded host muon position is known
-    (from the result payload, else from the relaxed structure). Sources are
+    a result with a derived structure, and a folded host muon position is known:
+    from the result payload, else from the relaxed supercell mapped to the host
+    cell with the row's stored supercell matrix
+    (:func:`host_muon_position_from_relaxed_structure`). Each source carries
+    its calculation key (:func:`relaxation_calculation_key`). Sources are
     sorted by total energy (unknown last), then case-insensitive label.
     """
 
@@ -1191,6 +1318,7 @@ def completed_muon_relaxation_sources(
         return []
     sources: list[CompletedRelaxationAnalysisSource] = []
     seen: set[UUID] = set()
+    rows_by_job = _muon_relaxation_rows_by_job(document)
     for label, charge_state, site_id, job in rows:
         if job is None or job.status != JobStatus.COMPLETED or job.id in seen:
             continue
@@ -1204,13 +1332,14 @@ def completed_muon_relaxation_sources(
         structure = document.structures.get(structure_id)
         if structure is None:
             continue
+        entry = rows_by_job.get(job.id)
         fractional = None
         if isinstance(result.data, dict):
             fractional = coerce_fractional_triplet(
                 result.data.get("muon_final_fractional_position_host")
             )
         if fractional is None:
-            fractional = folded_muon_position_from_structure(structure)
+            fractional = host_muon_position_from_relaxed_structure(structure, entry)
         if fractional is None:
             continue
         sources.append(
@@ -1222,6 +1351,7 @@ def completed_muon_relaxation_sources(
                 site_id=site_id,
                 folded_fractional_position=fractional,
                 total_energy_ev=total_energy_for_job(job.id),
+                calculation=relaxation_calculation_key(entry, structure),
             )
         )
         seen.add(job.id)
@@ -1232,6 +1362,24 @@ def completed_muon_relaxation_sources(
             source.job_label.casefold(),
         ),
     )
+
+
+def newest_completed_structure_id(
+    document: ProjectDocument | None, jobs: Iterable[CompletedPristineJob]
+) -> UUID | None:
+    """Return the relaxed structure of the most recently completed job in ``jobs``."""
+
+    if document is None:
+        return None
+    newest: tuple[object, UUID] | None = None
+    for job in jobs:
+        record = document.jobs.get(job.job_id)
+        completed_at = record.completed_at if record is not None else None
+        if completed_at is None:
+            continue
+        if newest is None or completed_at > newest[0]:  # type: ignore[operator]
+            newest = (completed_at, job.structure_id)
+    return newest[1] if newest is not None else None
 
 
 def relaxation_sources_for_labels(
@@ -1311,6 +1459,7 @@ __all__ = [
     "EnergyBarrierNebCandidate",
     "EnergyBarrierSourceCandidate",
     "MuonRelaxationRowJob",
+    "RELAXATION_ENERGY_PARAMETERS",
     "PristineRelaxationRowLike",
     "QuantumSourceCandidate",
     "RelaxationRowStateLike",
@@ -1334,8 +1483,11 @@ __all__ = [
     "energy_barrier_source_label",
     "enumerate_energy_barrier_source_candidates",
     "float_from_source",
+    "host_muon_position_from_relaxed_structure",
     "fractional_triplet_from_source",
     "keep_stored_path_keys",
+    "mixes_calculations",
+    "newest_completed_structure_id",
     "quantum_seed_name_for_key",
     "quantum_source_base_label",
     "quantum_source_candidate_by_key",
@@ -1343,6 +1495,7 @@ __all__ = [
     "quantum_source_labels_by_key",
     "quantum_source_key",
     "quantum_source_relative_energies",
+    "relaxation_calculation_key",
     "relaxation_sources_for_labels",
     "selected_energy_barrier_endpoint_keys",
     "serialize_energy_barrier_neb_sources",
