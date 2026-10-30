@@ -144,12 +144,18 @@ from mufinder.app.relaxation_adapter import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.app.adapter_common import AdapterExpansion, summarize_kpoint_adjustments
+from mufinder.app.adapter_common import (
+    IDENTITY_SUPERCELL,
+    AdapterExpansion,
+    coerce_supercell_matrix,
+    summarize_kpoint_adjustments,
+)
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
     PristineRelaxationConfig,
     PristineRelaxationRow,
+    SupercellMatrix,
 )
 from mufinder.app.relaxation_analysis_widget import (
     RelaxationAnalysisJobDialog,
@@ -201,6 +207,7 @@ from mufinder.app.quantum_corrections_widget import (
 )
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.supercell_dialog import SupercellEditorDialog
+from mufinder.app.workflow_row_widget import RowTableWidget
 from mufinder.app.submission_dialog import LocalSubmissionDialog
 from mufinder.app.theme import (
     THEME_DARK,
@@ -7929,54 +7936,136 @@ class MainWindow(QMainWindow):
         return dialog
 
     def _on_host_supercell_editor_requested(self) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-        host = self._project_service.active_host_structure(self._document)
-        if host is None:
-            QMessageBox.warning(
-                self, "No host structure", "Load a host structure before editing supercells."
-            )
-            return
-        dialog = self._open_supercell_editor(
-            source_structure=host,
-            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-            initial_matrix=self._document.project.supercell_matrix,
+        self._edit_supercell(
+            WorkflowStage.CONVERGENCE_CUTOFF,
+            initial_matrix=lambda document: document.project.supercell_matrix,
+            apply=lambda dialog: self._host_structure_view.set_project_supercell_matrix(
+                dialog.matrix()
+            ),
+            missing_source="Load a host structure before editing supercells.",
             select_mode=False,
         )
-        if dialog is not None:
-            self._host_structure_view.set_project_supercell_matrix(dialog.matrix())
 
-    def _on_convergence_simulation_cell_create_requested(self) -> None:
-        if self._document is None:
+    def _edit_supercell(
+        self,
+        workflow_stage: WorkflowStage,
+        *,
+        initial_matrix: Callable[[ProjectDocument], Sequence[Sequence[int]] | None],
+        apply: Callable[[SupercellEditorDialog], None],
+        missing_source: str,
+        missing_source_title: str = "No host structure",
+        source_structure: Callable[[ProjectDocument], Structure | None] | None = None,
+        select_mode: bool = True,
+    ) -> None:
+        """Open the Supercell Editor for one workflow and apply what it returns.
+
+        Every entry point to the editor goes through here: it needs an open
+        project and a source structure (the active host unless
+        ``source_structure`` names another), then opens the editor, whose
+        close refreshes the supercell options, the project tree and autosave.
+        ``initial_matrix`` is read only once both guards pass, and ``apply``
+        runs only when the editor returns (in select mode, when it is accepted).
+        """
+
+        document = self._document
+        if document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
-
-        host = self._project_service.active_host_structure(self._document)
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before creating a saved supercell.",
-            )
+        if source_structure is None:
+            source = self._project_service.active_host_structure(document)
+        else:
+            source = source_structure(document)
+        if source is None:
+            QMessageBox.warning(self, missing_source_title, missing_source)
             return
-
+        matrix = initial_matrix(document)
         dialog = self._open_supercell_editor(
-            source_structure=host,
-            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-            initial_matrix=self._convergence_supercell_initial_matrix(),
-            select_mode=True,
+            source_structure=source,
+            workflow_stage=workflow_stage,
+            initial_matrix=None if matrix is None else [list(row) for row in matrix],
+            select_mode=select_mode,
         )
-        if dialog is None or dialog.selected_structure_id() is None:
+        if dialog is not None:
+            apply(dialog)
+
+    def _select_simulation_cell_in_editor(
+        self,
+        workflow_stage: WorkflowStage,
+        *,
+        initial_matrix: Callable[[], list[list[int]]],
+        refresh: Callable[[], None],
+        sweep_name: str,
+    ) -> None:
+        """Pick or create a convergence sweep's simulation cell in the editor."""
+
+        def apply(dialog: SupercellEditorDialog) -> None:
+            structure_id = dialog.selected_structure_id()
+            if self._document is None or structure_id is None:
+                return
+            selected = self._project_service.use_workflow_supercell_asset(
+                self._document,
+                workflow_stage=workflow_stage,
+                asset_structure_id=structure_id,
+            )
+            refresh()
+            self.statusBar().showMessage(
+                f"Selected {sweep_name} simulation cell '{selected.label}'"
+            )
+
+        self._edit_supercell(
+            workflow_stage,
+            initial_matrix=lambda _document: initial_matrix(),
+            apply=apply,
+            missing_source="Load a host structure before creating a saved supercell.",
+        )
+
+    def _edit_row_supercell(
+        self,
+        view: RowTableWidget,
+        payload: object,
+        workflow_stage: WorkflowStage,
+        *,
+        workflow_name: str,
+        missing_source: str,
+        missing_source_title: str = "No host structure",
+        source_structure: Callable[[ProjectDocument], Structure | None] | None = None,
+    ) -> None:
+        """Choose one row's supercell in the editor and set it on the row."""
+
+        if self._document is None:
+            return
+        try:
+            row_id = int(payload)
+        except (TypeError, ValueError):
             return
 
-        selected = self._project_service.use_workflow_supercell_asset(
-            self._document,
-            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-            asset_structure_id=dialog.selected_structure_id(),
+        def row_matrix(_document: ProjectDocument) -> SupercellMatrix:
+            existing = view.row_supercell_matrix(row_id)
+            return existing if existing is not None else IDENTITY_SUPERCELL
+
+        def apply(dialog: SupercellEditorDialog) -> None:
+            matrix = coerce_supercell_matrix(dialog.selected_matrix())
+            if matrix is None:
+                return
+            view.set_row_supercell(row_id, matrix)
+            self.statusBar().showMessage(f"Selected {workflow_name} simulation cell")
+
+        self._edit_supercell(
+            workflow_stage,
+            initial_matrix=row_matrix,
+            apply=apply,
+            missing_source=missing_source,
+            missing_source_title=missing_source_title,
+            source_structure=source_structure,
         )
-        self._refresh_convergence_simulation_cell()
-        self.statusBar().showMessage(f"Selected convergence simulation cell '{selected.label}'")
+
+    def _on_convergence_simulation_cell_create_requested(self) -> None:
+        self._select_simulation_cell_in_editor(
+            WorkflowStage.CONVERGENCE_CUTOFF,
+            initial_matrix=self._convergence_supercell_initial_matrix,
+            refresh=self._refresh_convergence_simulation_cell,
+            sweep_name="convergence",
+        )
 
     def _on_convergence_simulation_cell_selection_requested(self, payload: object) -> None:
         if self._document is None:
@@ -8143,35 +8232,12 @@ class MainWindow(QMainWindow):
         return [list(row) for row in self._document.project.supercell_matrix]
 
     def _on_kpoint_simulation_cell_create_requested(self) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        host = self._project_service.active_host_structure(self._document)
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before creating a saved supercell.",
-            )
-            return
-
-        dialog = self._open_supercell_editor(
-            source_structure=host,
-            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
-            initial_matrix=self._kpoint_supercell_initial_matrix(),
-            select_mode=True,
+        self._select_simulation_cell_in_editor(
+            WorkflowStage.CONVERGENCE_KPOINT,
+            initial_matrix=self._kpoint_supercell_initial_matrix,
+            refresh=self._refresh_kpoint_convergence_simulation_cell,
+            sweep_name="k-point",
         )
-        if dialog is None or dialog.selected_structure_id() is None:
-            return
-
-        selected = self._project_service.use_workflow_supercell_asset(
-            self._document,
-            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
-            asset_structure_id=dialog.selected_structure_id(),
-        )
-        self._refresh_kpoint_convergence_simulation_cell()
-        self.statusBar().showMessage(f"Selected k-point simulation cell '{selected.label}'")
 
     def _on_kpoint_simulation_cell_selection_requested(self, payload: object) -> None:
         if self._document is None:
@@ -9966,92 +10032,24 @@ class MainWindow(QMainWindow):
             )
 
     def _on_pristine_relaxation_supercell_edit_requested(self, payload: object) -> None:
-        if self._document is None:
-            return
-
-        try:
-            row_id = int(payload)
-        except (TypeError, ValueError):
-            return
-
-        host = self._project_service.active_host_structure(self._document)
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before configuring pristine-relaxation supercells.",
-            )
-            return
-
-        existing = self._pristine_relaxation_view.row_supercell_matrix(row_id)
-        initial_matrix = (
-            [list(line) for line in existing]
-            if existing is not None
-            else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        self._edit_row_supercell(
+            self._pristine_relaxation_view,
+            payload,
+            WorkflowStage.PRISTINE_RELAXATION,
+            workflow_name="pristine-relaxation",
+            missing_source=(
+                "Load a host structure before configuring pristine-relaxation supercells."
+            ),
         )
-
-        dialog = self._open_supercell_editor(
-            source_structure=host,
-            workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
-            initial_matrix=initial_matrix,
-            select_mode=True,
-        )
-        if dialog is None:
-            return
-
-        matrix_values = dialog.selected_matrix()
-        if matrix_values is None:
-            return
-        matrix = (
-            (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
-            (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
-            (matrix_values[2][0], matrix_values[2][1], matrix_values[2][2]),
-        )
-
-        self._refresh_workflow_supercell_options(self._pristine_relaxation_view)
-        self._pristine_relaxation_view.set_row_supercell(row_id, matrix)
-        self.statusBar().showMessage("Selected pristine-relaxation simulation cell")
 
     def _on_muon_relaxation_supercell_edit_requested(self, payload: object) -> None:
-        if self._document is None:
-            return
-        try:
-            row_id = int(payload)
-        except (TypeError, ValueError):
-            return
-        host = self._project_service.active_host_structure(self._document)
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before configuring muon-relaxation supercells.",
-            )
-            return
-        existing = self._muon_relaxation_view.row_supercell_matrix(row_id)
-        initial_matrix = (
-            [list(line) for line in existing]
-            if existing is not None
-            else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        self._edit_row_supercell(
+            self._muon_relaxation_view,
+            payload,
+            WorkflowStage.MUON_RELAXATION,
+            workflow_name="muon-relaxation",
+            missing_source="Load a host structure before configuring muon-relaxation supercells.",
         )
-        dialog = self._open_supercell_editor(
-            source_structure=host,
-            workflow_stage=WorkflowStage.MUON_RELAXATION,
-            initial_matrix=initial_matrix,
-            select_mode=True,
-        )
-        if dialog is None:
-            return
-        matrix_values = dialog.selected_matrix()
-        if matrix_values is None:
-            return
-        matrix = (
-            (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
-            (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
-            (matrix_values[2][0], matrix_values[2][1], matrix_values[2][2]),
-        )
-        self._refresh_workflow_supercell_options(self._muon_relaxation_view)
-        self._muon_relaxation_view.set_row_supercell(row_id, matrix)
-        self.statusBar().showMessage("Selected muon-relaxation simulation cell")
 
     def _notify_kpoint_adjustments(self, expansion: AdapterExpansion) -> None:
         """Summarise the rows whose project k-point grid was rescaled.
@@ -10633,48 +10631,17 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_defaults(self._uep_view)
 
     def _on_uep_supercell_edit_requested(self, payload: object) -> None:
-        if self._document is None:
-            return
-        try:
-            row_id = int(payload)
-        except (TypeError, ValueError):
-            return
-
-        source_structure = self._selected_uep_source_structure()
-        if source_structure is None:
-            QMessageBox.warning(
-                self,
-                "No source structure",
-                "Select or generate a source structure before configuring UEP supercells.",
-            )
-            return
-
-        existing = self._uep_view.row_supercell_matrix(row_id)
-        initial_matrix = (
-            [list(line) for line in existing]
-            if existing is not None
-            else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        self._edit_row_supercell(
+            self._uep_view,
+            payload,
+            WorkflowStage.UEP,
+            workflow_name="UEP",
+            missing_source=(
+                "Select or generate a source structure before configuring UEP supercells."
+            ),
+            missing_source_title="No source structure",
+            source_structure=lambda _document: self._selected_uep_source_structure(),
         )
-        dialog = self._open_supercell_editor(
-            source_structure=source_structure,
-            workflow_stage=WorkflowStage.UEP,
-            initial_matrix=initial_matrix,
-            select_mode=True,
-        )
-        if dialog is None:
-            return
-
-        matrix_values = dialog.selected_matrix()
-        if matrix_values is None:
-            return
-        matrix = (
-            (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
-            (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
-            (matrix_values[2][0], matrix_values[2][1], matrix_values[2][2]),
-        )
-        self._refresh_workflow_supercell_options(self._uep_view)
-        self._uep_view.set_row_supercell(row_id, matrix)
-        self.statusBar().showMessage("Selected UEP simulation cell")
 
     def _on_uep_configured(self, config: UepConfig) -> None:
         if self._document is None:

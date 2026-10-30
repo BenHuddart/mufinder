@@ -206,6 +206,62 @@ def test_convergence_manage_supercells_selects_returned_asset(
     window.close()
 
 
+def test_kpoint_manage_supercells_selects_returned_asset(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, message: warnings.append(message),
+    )
+    service = ProjectService()
+    doc = service.create_project(
+        tmp_path / "kpoint_supercell_editor_select.mufinder", "KpointEditorSelect"
+    )
+    window._document = doc
+    window._on_kpoint_simulation_cell_create_requested()
+    assert warnings == ["Load a host structure before creating a saved supercell."]
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+        label="Shared 2x2x1",
+        reuse_existing=False,
+    )
+    opened: list[dict[str, object]] = []
+
+    class _FakeDialog:
+        def selected_structure_id(self):
+            return asset.id
+
+    def fake_open(**kwargs):
+        opened.append(kwargs)
+        return _FakeDialog()
+
+    monkeypatch.setattr(window, "_open_supercell_editor", fake_open)
+
+    window._on_kpoint_simulation_cell_create_requested()
+
+    assert opened[0]["workflow_stage"] is WorkflowStage.CONVERGENCE_KPOINT
+    assert doc.ui_state["workflow_supercells"]["convergence_kpoint"]["structure_id"] == str(
+        asset.id
+    )
+    assert window.statusBar().currentMessage() == "Selected k-point simulation cell 'Shared 2x2x1'"
+    window.close()
+
+
 def test_convergence_simulation_cell_selection_clones_other_workflow_asset(
     main_window, tmp_path: Path
 ) -> None:
