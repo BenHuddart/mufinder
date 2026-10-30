@@ -414,7 +414,7 @@ def test_journal_describes_cluster_positions_staging_and_removal() -> None:
             "Muon starts clustered",
             "Moved 2 generated muon sites to the symmetry-equivalent positions nearest the "
             "anchor (0.2500, 0.2500, 0.2500): Random Site 1, Random Site 2. The original "
-            "positions are kept with the generation run.",
+            "positions are kept in the project's provenance.",
         ),
         (
             "Muon sites staged for relaxation",
@@ -458,3 +458,21 @@ def test_journal_describes_workspace_creation_and_grouping() -> None:
             "components within 0.25 Å.",
         ),
     ]
+
+
+def test_a_cluster_positions_entry_names_the_run_only_when_the_starts_had_one() -> None:
+    record = _muon_sites_record(
+        "cluster_candidate_positions",
+        parameters={
+            "site_labels": ["Random Site 1"],
+            "anchor_fractional": [0.5, 0.5, 0.5],
+            "generation_run_ids": [str(uuid4())],
+        },
+        output_entity_ids=[uuid4()],
+    )
+
+    body = build_journal("Starts", [record]).days[0].entries[0].body
+
+    assert body.endswith(
+        "The original positions are kept in the project's provenance and with the generation run."
+    )

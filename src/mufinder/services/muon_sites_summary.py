@@ -153,9 +153,15 @@ def relaxed_site_grouping(
     The method's own setting is kept (the distance tolerance for connected
     components, ``t`` for hierarchical, ``k`` for k-means), with the Wyckoff
     matching tolerance and the host's space group at the one symmetry
-    tolerance the grouping uses.
+    tolerance the grouping uses. A clustering applied with its grouping
+    recorded (``clustering["grouping"]``, written when the grouping is
+    applied) returns that record, so a host refreshed afterwards does not
+    change the symmetry the grouping is said to have used.
     """
 
+    recorded = clustering.get("grouping")
+    if isinstance(recorded, Mapping) and recorded.get("method"):
+        return dict(recorded)
     method = str(clustering.get("method", "connected") or "connected")
     grouping: dict[str, object] = {"method": method}
     setting_key = {

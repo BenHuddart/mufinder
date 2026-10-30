@@ -510,10 +510,27 @@ def _cluster_positions_entry(record: ProvenanceRecord) -> JournalEntry:
         title="Muon starts clustered",
         body=(
             f"Moved {plural(count, 'generated muon site')} to the symmetry-equivalent "
-            f"positions nearest the anchor{anchor_text}{_site_labels_text(record)}. "
-            "The original positions are kept with the generation run."
+            f"positions nearest the anchor{anchor_text}{_site_labels_text(record)}."
+            f"{_original_positions_text(record)}"
         ),
     )
+
+
+def _original_positions_text(record: ProvenanceRecord) -> str:
+    """Say where the moved starts' original positions are kept.
+
+    The record keeps every one; starts made before generation runs were
+    recorded have no run to keep them as well.
+    """
+
+    runs = record.parameters.get("generation_run_ids")
+    run_count = len(runs) if isinstance(runs, list) else 0
+    text = " The original positions are kept in the project's provenance"
+    if run_count == 1:
+        text += " and with the generation run"
+    elif run_count > 1:
+        text += f" and with their {run_count} generation runs"
+    return f"{text}."
 
 
 def _stage_sites_entry(record: ProvenanceRecord) -> JournalEntry:

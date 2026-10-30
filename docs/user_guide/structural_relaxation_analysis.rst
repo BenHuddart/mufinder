@@ -346,7 +346,8 @@ gives the clustering method with its setting (the distance tolerance for
 ``Connected Components``, ``t`` for ``Hierarchical``, ``k`` for ``K-means``) and
 the Wyckoff tolerance, and ``Symmetry`` gives the host's space group, its number
 of symmetry operations and the 0.001 Å tolerance spglib detected it at, for
-example ``P4₂/mnm (16 ops), tolerance 0.001 Å``. A card pinned before MuFinder
+example ``P4₂/mnm (16 ops), tolerance 0.001 Å``, as recorded when the grouping was
+applied. A card pinned before MuFinder
 recorded these shows neither line; pin the analysis again to add them.
 
 Quantum Corrections, Energy Barriers and the Magnetic Fields muon-site dialog

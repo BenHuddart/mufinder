@@ -18,6 +18,7 @@ from mufinder.services.muon_sites_summary import (
     build_muon_sites_summary_snapshot,
     grouping_method_text,
     grouping_symmetry_text,
+    relaxed_site_grouping,
     relaxed_sites_grouped_record,
     summary_export_header_lines,
     downstream_site_scope,
@@ -363,3 +364,15 @@ def test_workspace_creation_and_grouping_records_carry_the_parameters(project) -
         "P4₂/mnm (16 ops), tolerance 0.001 Å"
     )
     assert relaxed_sites_grouped_record({"name": "Empty"}, host) is None
+
+
+def test_a_grouping_recorded_when_applied_is_kept_when_the_host_changes_later(project) -> None:
+    _service, doc, _host = project
+    host = cof2_host()
+    workspace = _grouped_workspace(doc, host)
+    workspace["clustering"]["grouping"] = relaxed_site_grouping(workspace["clustering"], host)
+
+    snapshot = build_muon_sites_summary_snapshot(workspace, cof2_host(cobalt_label="Xx"))
+
+    assert snapshot is not None
+    assert snapshot["grouping"]["space_group_symbol"] == "P4_2/mnm"

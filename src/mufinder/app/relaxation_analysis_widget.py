@@ -92,6 +92,7 @@ from mufinder.science.relaxation_analysis import (
     scan_connected_component_tolerances,
     uep_summary_to_relaxation_clusters,
 )
+from mufinder.services.muon_sites_summary import relaxed_site_grouping
 from mufinder.services.source_candidates import CompletedRelaxationAnalysisSource
 from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
 from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
@@ -1413,6 +1414,8 @@ class RelaxationClusteringDialog(StructureViewerDialog):
             ],
             "result": result_payload,
         }
+        # Record the symmetry the grouping used now, against the host it ran on.
+        clustering["grouping"] = relaxed_site_grouping(clustering, self._host_structure)
         self.clustering_applied.emit(clustering)
         self.accept()
 
