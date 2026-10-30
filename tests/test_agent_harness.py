@@ -348,6 +348,93 @@ def test_app_figures_do_not_use_fractional_subplot_margins() -> None:
     )
 
 
+#: The modules that define the look of the application and may hold colour literals.
+THEME_STYLING_HOMES = frozenset({"app/theme.py", "app/splash_screen.py"})
+
+HEX_COLOUR_LITERAL = re.compile(r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b")
+TRANSPARENT_STYLESHEET = re.compile(r"\bbackground(?:-color)?\s*:\s*transparent\b")
+
+#: Hex colours that must stay outside ``theme.py``, per module, with the reason.
+PINNED_HEX_COLOUR_LITERALS: dict[str, tuple[frozenset[str], str]] = {
+    "app/project_home_trail.py": (
+        frozenset(
+            {
+                "#FFFFFF",
+                "#5C341E",
+                "#7A4728",
+                "#A66A3A",
+                "#9B5F32",
+                "#B3723D",
+                "#8A512C",
+                "#5F371F",
+                "#C88B55",
+                "#D2A169",
+                "#FFF8EA",
+            }
+        ),
+        "the wooden signpost is a fixed illustration, like the splash screen, in both themes",
+    ),
+    "app/uep_wizard.py": (
+        frozenset({"#dc2626", "#ffffff", "#1f1a17", "#FFFFFF", "#1d4ed8", "#0f766e", "#b91c1c"}),
+        "#312 removes this wizard's plots and overlays; their colours are not worth moving first",
+    ),
+}
+
+#: Modules that may still set a transparent stylesheet, with the reason.
+PINNED_TRANSPARENT_STYLESHEETS: dict[str, str] = {
+    "app/uep_wizard.py": "#312 removes this wizard's copies; the rule in theme.py covers the rest",
+}
+
+
+def test_styling_stays_in_the_theme_module() -> None:
+    """Keep colours and transparency workarounds in ``theme.py``.
+
+    A ``#rrggbb`` literal elsewhere does not follow the theme, and labels and
+    checkboxes are already transparent through the application stylesheet.
+    Containers use ``style_transparent_surface``. A module on an allow-list
+    must still need it, so the lists can only shrink.
+    """
+
+    hex_offenders: dict[str, set[str]] = {}
+    hex_seen: dict[str, set[str]] = {}
+    transparent_offenders: list[str] = []
+    transparent_seen: set[str] = set()
+    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        module = path.relative_to(SOURCE_ROOT).as_posix()
+        if module in THEME_STYLING_HOMES:
+            continue
+        text = path.read_text(encoding="utf-8")
+        literals = set(HEX_COLOUR_LITERAL.findall(text))
+        allowed = PINNED_HEX_COLOUR_LITERALS.get(module, (frozenset(), ""))[0]
+        if literals - allowed:
+            hex_offenders[module] = literals - allowed
+        if literals:
+            hex_seen[module] = literals
+        if TRANSPARENT_STYLESHEET.search(text):
+            transparent_seen.add(module)
+            if module not in PINNED_TRANSPARENT_STYLESHEETS:
+                transparent_offenders.append(module)
+
+    assert not hex_offenders, (
+        f"Hex colours outside theme.py: {hex_offenders}. Take plot colours from "
+        "plot_series_colours() and everything else from the palette in mufinder.app.theme."
+    )
+    assert not transparent_offenders, (
+        f"Transparent stylesheets outside theme.py: {transparent_offenders}. Labels and "
+        "checkboxes need none; use style_transparent_surface for a container."
+    )
+    stale_hex = {
+        module: sorted(allowed - hex_seen.get(module, set()))
+        for module, (allowed, _reason) in PINNED_HEX_COLOUR_LITERALS.items()
+        if allowed - hex_seen.get(module, set())
+    }
+    assert not stale_hex, f"Remove these from PINNED_HEX_COLOUR_LITERALS: {stale_hex}"
+    stale_transparent = set(PINNED_TRANSPARENT_STYLESHEETS) - transparent_seen
+    assert not stale_transparent, (
+        f"Remove these from PINNED_TRANSPARENT_STYLESHEETS: {sorted(stale_transparent)}"
+    )
+
+
 #: ``QMessageBox.question`` and the Yes/No standard buttons (``YesToAll`` and
 #: ``NoToAll`` included) answer a question with "Yes" or "No" instead of the
 #: action, and the static ``question`` keeps Qt's default button, which is

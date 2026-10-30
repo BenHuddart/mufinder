@@ -31,7 +31,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.theme import body_font_family, current_palette, style_hint_text
+from mufinder.app.theme import (
+    STRUCTURE_OVERLAY_COLOURS,
+    body_font_family,
+    current_palette,
+    style_hint_text,
+    style_transparent_surface,
+)
 from mufinder.domain.models import Structure
 
 _LOGGER = logging.getLogger(__name__)
@@ -638,7 +644,7 @@ def _viewer_style() -> _ViewerStyle:
         success=palette.success,
         info=palette.status_submitting,
         triad_axis_colors=triad_axis_colors,
-        triad_hub_inner=_blend_hex_colors(palette.bg_surface, "#ffffff", 0.24),
+        triad_hub_inner=_blend_hex_colors(palette.bg_surface, "white", 0.24),
         triad_hub_mid=_blend_hex_colors(palette.bg_surface_alt, palette.bg_surface, 0.5),
         triad_hub_outer=_blend_hex_colors(palette.border, palette.text_muted, 0.35),
         unit_cell=_blend_hex_colors(palette.text_muted, palette.border, 0.45),
@@ -825,8 +831,6 @@ def _draw_split_bond_cylinder(
 
 
 _SPIN_ARROW_RESOLUTION = 18
-_SPIN_UP_COLOR = "#1f78b4"
-_SPIN_DOWN_COLOR = "#d7301f"
 _SPIN_SHAFT_OPACITY = 0.88
 _SPIN_HEAD_OPACITY = 0.9
 
@@ -875,7 +879,11 @@ def _draw_spin_arrows(
         shaft_end_z = center_z + direction * shaft_tip_offset
         tip_z = center_z + direction * half_length
 
-        color = _SPIN_UP_COLOR if direction > 0 else _SPIN_DOWN_COLOR
+        color = (
+            STRUCTURE_OVERLAY_COLOURS.spin_up
+            if direction > 0
+            else STRUCTURE_OVERLAY_COLOURS.spin_down
+        )
 
         if is_vector:
             tail = np.asarray(position, dtype=float) - direction_vector * half_length
@@ -1052,7 +1060,7 @@ class _CrystallographicTriadCanvas(QWidget):
         self._camera_focal_point = np.zeros(3, dtype=float)
         self._camera_up = np.array([0.0, 0.0, 1.0], dtype=float)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setStyleSheet("background: transparent;")
+        style_transparent_surface(self)
         self.setFixedWidth(132)
         self.setFixedHeight(130)
 
@@ -1430,8 +1438,8 @@ def _build_pyvista_spin_arrow_mesh(pv, layout: _SpinArrowLayout):
     offsets = np.arange(count, dtype=np.int64)[:, None] * block_size
     cells = arrow_cells[None, :] + offsets * index_mask[None, :]
 
-    up = QColor(_SPIN_UP_COLOR).getRgb()[:3]
-    down = QColor(_SPIN_DOWN_COLOR).getRgb()[:3]
+    up = QColor(STRUCTURE_OVERLAY_COLOURS.spin_up).getRgb()[:3]
+    down = QColor(STRUCTURE_OVERLAY_COLOURS.spin_down).getRgb()[:3]
     rgb = np.where(layout.points_up[:, None], up, down).astype(np.uint8)
     alpha = np.concatenate(
         [
@@ -1747,7 +1755,7 @@ class _PyVistaCanvas(QWidget):
         self._refreshing_theme = False
         self._plotter = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setStyleSheet("background: transparent;")
+        style_transparent_surface(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -1854,7 +1862,7 @@ class _PyVistaTriadCanvas(QWidget):
         self.setFixedHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setStyleSheet("background: transparent;")
+        style_transparent_surface(self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2920,7 +2928,7 @@ class AtomicStructureViewer(QWidget):
                 if not np.isfinite(start).all() or not np.isfinite(end).all():
                     continue
 
-                color_raw = entry.get("color", entry.get("colors", "#15a3a3"))
+                color_raw = entry.get("color", entry.get("colors", STRUCTURE_OVERLAY_COLOURS.line))
                 if isinstance(color_raw, str):
                     qcolor = QColor(color_raw)
                     if not qcolor.isValid():
@@ -3595,7 +3603,7 @@ class AtomicStructureViewer(QWidget):
         pick_points["pick_radius"] = np.maximum(1.8 * draw_radii, 0.45)
         self._pyvista_pick_actor = plotter.add_mesh(
             pick_points,
-            color="#000000",
+            color="black",
             opacity=0.01,
             point_size=float(max(16.0, np.max(np.maximum(32.0 * draw_radii, 18.0)))),
             render_points_as_spheres=True,
@@ -4432,7 +4440,7 @@ class AtomicStructureViewer(QWidget):
         pick_points["pick_radius"] = np.maximum(1.8 * draw_radii, 0.45)
         self._pyvista_pick_actor = plotter.add_mesh(
             pick_points,
-            color="#000000",
+            color="black",
             opacity=0.01,
             point_size=float(max(16.0, np.max(np.maximum(32.0 * draw_radii, 18.0)))),
             render_points_as_spheres=True,

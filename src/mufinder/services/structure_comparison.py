@@ -114,17 +114,22 @@ def build_comparison_table(
 ) -> ComparisonTable:
     """Compare ``inputs`` against ``host`` and return the unsaved table.
 
-    Raises :class:`ValueError` when the structures cannot be compared.
+    ``inputs`` are the table's columns, in the order of ``jobs``, as
+    :func:`comparison_inputs` returns them. A job whose structure is not among
+    them has no column and no part in the parameter differences. Raises
+    :class:`ValueError` when the structures cannot be compared.
     """
 
     result = compare_structures(host, inputs)
+    column_structure_ids = {item.structure_id for item in inputs}
+    column_jobs = [job for job in jobs if job.structure_id in column_structure_ids]
     return ComparisonTable(
         label=label,
         experimental_structure_id=host.id,
         dft_structure_ids=[item.structure_id for item in inputs],
         dft_labels=[item.label for item in inputs],
         result_data=comparison_result_data(
-            result, parameter_differences=parameter_difference_rows(jobs)
+            result, parameter_differences=parameter_difference_rows(column_jobs)
         ),
     )
 

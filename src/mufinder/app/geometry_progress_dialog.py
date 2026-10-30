@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
+    categorical_colour,
     current_palette,
+    plot_series_colours,
     style_hint_text,
     style_plot_axes,
     use_square_top_table_corners,
@@ -40,6 +42,20 @@ PROGRESS_COLUMN_TOOLTIP = (
     "Geometry optimisation progress: latest iteration · convergence criteria met.\n"
     "Hover a cell for each criterion; Inspect plots the history."
 )
+
+
+def _criterion_colour(name: str, index: int) -> str:
+    """Return a CASTEP criterion's series colour, falling back to its place in the grid."""
+
+    series = plot_series_colours()
+    roles = {
+        "dE/ion": series.energy,
+        "|F|max": series.force,
+        "|G|max": series.force,
+        "|dR|max": series.displacement,
+        "Smax": series.stress,
+    }
+    return roles.get(name, categorical_colour(index))
 
 
 def progress_cell_text(progress: GeometryProgress | None) -> str:
@@ -225,14 +241,14 @@ class GeometryProgressDialog(QDialog):
                 marker="o",
                 markersize=3,
                 linewidth=1.4,
-                color=palette.status_running,
+                color=_criterion_colour(name, index),
             )
             axis.plot(
                 steps,
                 [criterion.tolerance for _step, criterion in points],
                 linestyle="--",
                 linewidth=1.2,
-                color=palette.success,
+                color=plot_series_colours().reference,
             )
             axis.set_title(f"{name} ({unit})" if unit else name, fontsize=9)
             if index >= len(names) - columns:

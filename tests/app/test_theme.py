@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import itertools
+import math
+
+from matplotlib.figure import Figure
 import pytest
 
-from PySide6.QtCore import QEvent, QSettings, Qt
+from PySide6.QtCore import QEvent, QPoint, QSettings, Qt
 from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGroupBox,
+    QLabel,
     QMessageBox,
     QProxyStyle,
     QStyle,
@@ -18,6 +25,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -775,38 +783,205 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def test_convergence_plot_colors_keep_the_light_series_colours(qapp) -> None:
-    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
-    colors = theme_module.convergence_plot_colors()
-    palette = theme_module.current_palette()
-
-    assert (colors.energy, colors.force, colors.stress) == ("#1D4ED8", "#B91C1C", "#D97706")
-    assert (colors.fit, colors.converged, colors.stress_converged) == (
-        "#0F766E",
-        "#059669",
-        "#15803D",
-    )
-    assert colors.threshold == palette.warning
-    assert colors.recommended == palette.text_muted
-
-
-def test_convergence_plot_colors_contrast_with_the_dark_plot_backgrounds(qapp) -> None:
-    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
-    try:
-        colors = theme_module.convergence_plot_colors()
-        palette = theme_module.current_palette()
+def _plot_series_roles(colours) -> dict[str, str]:
+    return {
+        role: getattr(colours, role)
         for role in (
             "energy",
             "force",
             "stress",
+            "displacement",
             "threshold",
-            "recommended",
+            "reference",
+            "total",
             "fit",
             "converged",
             "stress_converged",
-        ):
-            for background in (palette.bg_surface, palette.bg_surface_alt):
-                ratio = _contrast_ratio(getattr(colors, role), background)
-                assert ratio >= 3.0, f"{role} on {background}: {ratio:.2f}"
+        )
+    } | {f"categorical[{index}]": colour for index, colour in enumerate(colours.categorical)}
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_plot_series_colours_contrast_with_the_plot_backgrounds(qapp, mode) -> None:
+    theme_module.apply_theme(qapp, mode)
+    try:
+        palette = theme_module.current_palette()
+        roles = _plot_series_roles(theme_module.plot_series_colours())
+        for role, colour in roles.items():
+            for background in (palette.bg_primary, palette.bg_surface, palette.bg_surface_alt):
+                ratio = _contrast_ratio(colour, background)
+                assert ratio >= 3.0, f"{mode} {role} on {background}: {ratio:.2f}"
     finally:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_plot_series_colours_change_with_the_theme(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    light = theme_module.plot_series_colours()
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        dark = theme_module.plot_series_colours()
+        assert dark.reference == theme_module.current_palette().text_muted
+        assert dark.total == theme_module.current_palette().text_primary
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert light.energy != dark.energy
+    assert set(light.categorical).isdisjoint(dark.categorical)
+    assert light.label_on_tint == dark.label_on_tint
+    for colours in (light, dark):
+        assert len(set(colours.categorical)) == len(colours.categorical)
+
+
+def test_categorical_colour_repeats_past_the_end_of_the_list(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    colours = theme_module.plot_series_colours().categorical
+
+    assert theme_module.categorical_colour(0) == colours[0]
+    assert theme_module.categorical_colour(len(colours) + 1) == colours[1]
+
+
+def test_cluster_color_map_follows_label_order_whatever_the_input_order(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    colours = theme_module.plot_series_colours().categorical
+
+    assert theme_module.cluster_color_map([7, 2, 7, 4]) == {
+        2: colours[0],
+        4: colours[1],
+        7: colours[2],
+    }
+    assert theme_module.cluster_color_map([]) == {}
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_labels_and_checkboxes_in_cards_show_the_card_behind_them(qapp, mode) -> None:
+    previous_sheet = qapp.styleSheet()
+    theme_module.apply_theme(qapp, mode)
+    try:
+        dialog = QDialog()
+        dialog.setStyleSheet(theme_module.feature_dialog_stylesheet())
+        layout = QVBoxLayout(dialog)
+        group = QGroupBox("Options", dialog)
+        group_layout = QVBoxLayout(group)
+        card = QFrame(group)
+        theme_module.style_option_card(card)
+        card_layout = QVBoxLayout(card)
+        widgets = [QLabel("Label", group), QCheckBox("Check", group)]
+        card_widgets = [QLabel("Card label", card), QCheckBox("Card check", card)]
+        for widget in widgets:
+            group_layout.addWidget(widget)
+        for widget in card_widgets:
+            card_layout.addWidget(widget)
+        group_layout.addWidget(card)
+        layout.addWidget(group)
+        dialog.resize(420, 320)
+        dialog.show()
+        qapp.processEvents()
+
+        palette = theme_module.current_palette()
+        image = dialog.grab().toImage()
+        for widget, expected in [(w, palette.bg_surface) for w in widgets] + [
+            (w, palette.bg_surface_alt) for w in card_widgets
+        ]:
+            # The far end of the widget holds no text or indicator.
+            spot = widget.mapTo(dialog, QPoint(widget.width() - 2, widget.height() // 2))
+            colour = image.pixelColor(spot)
+            assert colour.name().upper() == expected, f"{widget.text()} in {mode}"
+        dialog.close()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        qapp.setStyleSheet(previous_sheet)
+
+
+def test_style_transparent_surface_lets_the_parent_show_through(qapp) -> None:
+    previous_sheet = qapp.styleSheet()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    try:
+        parent = QFrame()
+        parent.setStyleSheet("QFrame { background: #123456; }")
+        parent.resize(120, 80)
+        surface = QWidget(parent)
+        surface.setGeometry(0, 0, 120, 80)
+        theme_module.style_transparent_surface(surface)
+        parent.show()
+        qapp.processEvents()
+
+        assert parent.grab().toImage().pixelColor(60, 40).name() == "#123456"
+        parent.close()
+    finally:
+        qapp.setStyleSheet(previous_sheet)
+
+
+def _colour_distance(first: str, second: str) -> float:
+    """Return the CIE76 distance between two colours; below about 25 they read as one hue."""
+
+    def lab(colour: str) -> tuple[float, float, float]:
+        channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+        red, green, blue = (
+            value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+            for value in channels
+        )
+        scaled = (
+            (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047,
+            0.2126 * red + 0.7152 * green + 0.0722 * blue,
+            (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883,
+        )
+        x, y, z = (
+            value ** (1 / 3) if value > 0.008856 else 7.787 * value + 16 / 116 for value in scaled
+        )
+        return 116 * y - 16, 500 * (x - y), 200 * (y - z)
+
+    return math.dist(lab(first), lab(second))
+
+
+#: The roles drawn together on one plot: the two convergence panels, and a
+#: geometry-progress criterion or scan against its tolerance line.
+_ROLES_SHARING_A_PLOT = (
+    ("energy", "fit", "converged", "reference"),
+    ("force", "stress", "threshold", "converged", "stress_converged", "reference"),
+    ("displacement", "reference"),
+)
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_plot_series_roles_sharing_a_plot_read_as_different_colours(qapp, mode) -> None:
+    theme_module.apply_theme(qapp, mode)
+    try:
+        colours = theme_module.plot_series_colours()
+        for roles in _ROLES_SHARING_A_PLOT:
+            for first, second in itertools.combinations(roles, 2):
+                distance = _colour_distance(getattr(colours, first), getattr(colours, second))
+                assert distance >= 30.0, f"{mode} {first} and {second}: {distance:.1f}"
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_style_plot_axes_styles_minor_tick_labels_on_a_log_axis(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        figure = Figure()
+        axis = figure.add_subplot(111)
+        theme_module.style_plot_axes(axis, tick_labelsize=8)
+        axis.set_yscale("log")
+        axis.plot([1, 2], [5e-4, 9e-4])
+        figure.canvas.draw()
+
+        minor_labels = [tick.label1 for tick in axis.yaxis.get_minor_ticks()]
+        assert minor_labels
+        for label in minor_labels:
+            assert label.get_color() == theme_module.current_palette().text_primary
+            assert label.get_fontsize() == 8
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_style_plot_axes_can_leave_the_grid_off(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    figure = Figure()
+    axis = figure.add_subplot(111)
+
+    theme_module.style_plot_axes(axis, facecolor="#123456", grid=False)
+    figure.canvas.draw()
+
+    assert not any(line.get_visible() for line in axis.get_xgridlines())
+    assert axis.xaxis.label.get_color() == theme_module.current_palette().text_primary

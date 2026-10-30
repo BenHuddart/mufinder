@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib.resources import files
 import logging
@@ -652,18 +653,20 @@ def style_plot_axes(
     tick_labelsize: float | None = None,
     grid_alpha: float = 0.35,
     grid_linewidth: float | None = None,
+    grid: bool = True,
 ) -> None:
     """Paint a matplotlib axis in the current palette.
 
     The axis background defaults to ``bg_surface_alt`` and the ticks to
     ``text_primary``; axis labels and the title use ``text_primary``, spines and
-    grid lines use ``border``. Label and title colours persist, so this may run
-    before or after the text is set.
+    grid lines use ``border``, and ``grid=False`` leaves the grid off. Major and
+    minor ticks are both styled, because a log axis labels its minor ticks. Label
+    and title colours persist, so this may run before or after the text is set.
     """
 
     palette = current_palette()
     axis.set_facecolor(facecolor or palette.bg_surface_alt)
-    tick_kwargs: dict[str, Any] = {"colors": tick_color or palette.text_primary}
+    tick_kwargs: dict[str, Any] = {"which": "both", "colors": tick_color or palette.text_primary}
     if tick_labelsize is not None:
         tick_kwargs["labelsize"] = tick_labelsize
     axis.tick_params(**tick_kwargs)
@@ -672,6 +675,9 @@ def style_plot_axes(
     axis.title.set_color(palette.text_primary)
     for spine in axis.spines.values():
         spine.set_color(palette.border)
+    if not grid:
+        axis.grid(False)
+        return
     grid_kwargs: dict[str, Any] = {"color": palette.border, "alpha": grid_alpha}
     if grid_linewidth is not None:
         grid_kwargs["linewidth"] = grid_linewidth
@@ -714,55 +720,150 @@ def style_plot_legend(legend: Legend | None, *, frame_alpha: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ConvergencePlotColors:
-    """Series colours of the convergence plot, by role, for the current theme.
+class PlotSeriesColours:
+    """Colours of plotted data, by role, for one theme.
 
-    ``energy``, ``force`` and ``stress`` colour each quantity's line, markers,
-    axis and threshold badge; ``threshold`` is the force threshold line and
-    ``recommended`` the recommended-value line and its grid label. ``fit`` is
-    the power-law fit and its fitted limit, ``converged`` the line where the
+    ``energy``, ``force``, ``stress`` and ``displacement`` give a quantity the
+    same colour on every plot. ``threshold`` is a tolerance, criterion or cut
+    line and ``reference`` a neutral marker line such as a recommended value or
+    zero. ``total`` is the sum or average drawn over the individual series.
+    ``fit`` is a fitted curve and its limit, ``converged`` the line where an
     energy or force criterion converged and ``stress_converged`` the stress one.
+    ``categorical`` colours series that have no role (sites, clusters, one
+    unnamed curve), in order: take them with ``categorical_colour``.
+    ``label_on_tint`` is text drawn on a pale tint of a series colour, such as a
+    number inside a graph node, so it is dark in both themes.
+
+    Every role but ``label_on_tint``, and every categorical colour, keeps at
+    least 3:1 contrast against the plot backgrounds (``bg_primary``,
+    ``bg_surface`` and ``bg_surface_alt``), and roles drawn on the same plot stay
+    far enough apart to read as different lines.
     """
 
     energy: str
     force: str
     stress: str
+    displacement: str
     threshold: str
-    recommended: str
+    reference: str
+    total: str
     fit: str
     converged: str
     stress_converged: str
+    label_on_tint: str
+    categorical: tuple[str, ...]
 
 
-def convergence_plot_colors() -> ConvergencePlotColors:
-    """Return the convergence plot's series colours for the current theme.
-
-    The dark-theme series colours keep at least 3:1 contrast against the dark
-    plot backgrounds (``bg_surface`` and ``bg_surface_alt``).
-    """
+def plot_series_colours() -> PlotSeriesColours:
+    """Return the plot series palette of the current theme."""
 
     palette = current_palette()
     if palette.mode == THEME_DARK:
-        return ConvergencePlotColors(
+        return PlotSeriesColours(
             energy="#60A5FA",
             force="#F87171",
             stress="#FBBF24",
-            threshold=palette.warning,
-            recommended=palette.text_muted,
+            displacement="#C4B5FD",
+            threshold="#E879F9",
+            reference=palette.text_muted,
+            total=palette.text_primary,
             fit="#2DD4BF",
-            converged="#34D399",
-            stress_converged="#86EFAC",
+            converged="#A3E635",
+            stress_converged="#5EEAD4",
+            label_on_tint="#111111",
+            categorical=(
+                "#60A5FA",
+                "#F87171",
+                "#2DD4BF",
+                "#FBBF24",
+                "#C4B5FD",
+                "#4ADE80",
+                "#F472B6",
+                "#7DD3FC",
+                "#BEF264",
+                "#E879F9",
+                "#D6A77A",
+                "#CBD5E1",
+            ),
         )
-    return ConvergencePlotColors(
+    return PlotSeriesColours(
         energy="#1D4ED8",
         force="#B91C1C",
-        stress="#D97706",
-        threshold=palette.warning,
-        recommended=palette.text_muted,
+        stress="#B85C00",
+        displacement="#7C3AED",
+        threshold="#A21CAF",
+        reference=palette.text_muted,
+        total=palette.text_primary,
         fit="#0F766E",
-        converged="#059669",
-        stress_converged="#15803D",
+        converged="#15803D",
+        stress_converged="#0E7490",
+        label_on_tint="#111111",
+        categorical=(
+            "#1D4ED8",
+            "#B91C1C",
+            "#0F766E",
+            "#B45309",
+            "#7C3AED",
+            "#15803D",
+            "#BE185D",
+            "#0369A1",
+            "#4D7C0F",
+            "#A21CAF",
+            "#78350F",
+            "#475569",
+        ),
     )
+
+
+def categorical_colour(index: int) -> str:
+    """Return the ``index``-th categorical series colour, repeating past the end of the list."""
+
+    colours = plot_series_colours().categorical
+    return colours[index % len(colours)]
+
+
+def cluster_color_map(cluster_labels: Iterable[int]) -> dict[int, str]:
+    """Return each cluster label's categorical colour, in ascending label order."""
+
+    colours = plot_series_colours().categorical
+    return {
+        label: colours[index % len(colours)]
+        for index, label in enumerate(sorted({int(label) for label in cluster_labels}))
+    }
+
+
+def cell_survey_species_tones() -> tuple[str, ...]:
+    """Return the muted atom tones of the project home's cell survey, for the current theme."""
+
+    if current_palette().mode == THEME_DARK:
+        return ("#B8A898", "#8FAABB", "#A9BB8F", "#BB8FA3", "#9C9CBB", "#BBB38F")
+    return ("#8C7B6B", "#5E7A8C", "#7A8C5E", "#8C5E73", "#6B6B8C", "#8C845E")
+
+
+@dataclass(frozen=True, slots=True)
+class StructureOverlayColours:
+    """Fixed colours of what a workflow draws over a 3D structure, the same in both themes.
+
+    ``muon`` is a muon site or the muon's phonon displacement, ``path_start``
+    and ``path_end`` the endpoints of an energy-barrier path and ``path_arrow``
+    the arrow between them, ``spin_up`` and ``spin_down`` the two spin
+    directions, and ``line`` a line overlay given no colour of its own.
+    """
+
+    muon: str = "#E11D48"
+    path_start: str = "#FF7A18"
+    path_end: str = "#0F8AA8"
+    path_arrow: str = "#2F6F4F"
+    spin_up: str = "#1F78B4"
+    spin_down: str = "#D7301F"
+    line: str = "#15A3A3"
+
+
+STRUCTURE_OVERLAY_COLOURS = StructureOverlayColours()
+
+#: The comparison table's best-agreement value, fixed because a table item keeps
+#: its colour when the theme changes.
+BEST_AGREEMENT_COLOUR = "#15803D"
 
 
 def style_section_title(label: QLabel) -> None:
@@ -816,6 +917,17 @@ def style_inline_group(widget: QWidget) -> None:
     """Tag a compact row/group widget as transparent inline UI chrome."""
 
     widget.setObjectName("mufinderInlineGroup")
+
+
+def style_transparent_surface(widget: QWidget) -> None:
+    """Let what lies behind a widget and everything inside it show through.
+
+    For containers and canvases drawn over another surface. Labels, checkboxes
+    and radio buttons need no call: the application stylesheet already makes
+    them transparent wherever they sit.
+    """
+
+    widget.setStyleSheet("background: transparent;")
 
 
 def style_option_card(card: QWidget) -> None:
@@ -1027,6 +1139,61 @@ def feature_dialog_stylesheet(
         }}
         {scroll_area}
         {radio_buttons}
+        """
+
+
+def uep_clustering_toolbar_stylesheet() -> str:
+    """Return the stylesheet of the clustering dendrogram's navigation toolbar."""
+
+    palette = current_palette()
+    return f"""
+        QToolBar#uepClusteringDendrogramToolbar {{
+            border: none;
+            background: transparent;
+            spacing: 8px;
+            padding: 0px;
+        }}
+        QPushButton#uepClusteringToolbarButton {{
+            border: 1px solid {palette.border};
+            border-radius: 10px;
+            padding: 6px 14px;
+            background: {palette.bg_surface};
+            color: {palette.text_primary};
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        QPushButton#uepClusteringToolbarButton:hover {{
+            border-color: {palette.accent};
+            background: {palette.bg_surface_alt};
+        }}
+        QPushButton#uepClusteringToolbarButton:pressed {{
+            border-color: {palette.accent_hover};
+            background: {palette.bg_surface_alt};
+        }}
+        QPushButton#uepClusteringToolbarButton:checked,
+        QPushButton#uepClusteringToolbarButton[active="true"] {{
+            border-color: {palette.accent_pressed};
+            background: {palette.accent};
+            color: #FFFFFF;
+        }}
+        QPushButton#uepClusteringToolbarButton:checked:hover,
+        QPushButton#uepClusteringToolbarButton[active="true"]:hover {{
+            background: {palette.accent_hover};
+        }}
+        """
+
+
+def transparent_spin_box_stylesheet() -> str:
+    """Return the stylesheet of a spin box drawn straight on its card, arrows included."""
+
+    return """
+        QSpinBox {
+            background: transparent;
+        }
+        QSpinBox::up-button,
+        QSpinBox::down-button {
+            background: transparent;
+        }
         """
 
 

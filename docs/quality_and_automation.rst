@@ -846,6 +846,11 @@ The harness tests currently verify:
   ``NoToAll`` included): confirmations go through ``confirm_destructive`` or
   ``confirm_choice`` in ``mufinder.app.workflow_table_utils``, whose buttons
   name their action.
+- No module under ``src/mufinder`` other than ``mufinder.app.theme`` and
+  ``mufinder.app.splash_screen`` contains a ``#rrggbb`` literal or a
+  ``background: transparent`` stylesheet, apart from the allow-lists
+  ``PINNED_HEX_COLOUR_LITERALS`` and ``PINNED_TRANSPARENT_STYLESHEETS``, which
+  give a reason for each module and may only shrink.
 - No string literal under ``src/mufinder`` (docstrings and ``numpy.einsum``
   subscripts excepted) contains ``(s)`` after a word, three dots or ``->``:
   counts go through ``mufinder.domain.text.plural``, the ellipsis is ``…`` and

@@ -41,7 +41,9 @@ from mufinder.app.export_dialogs import (
 from mufinder.app.result_notes import unrelaxed_results_note
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
+    categorical_colour,
     current_palette,
+    plot_series_colours,
     style_hint_text,
     style_inline_group,
     style_plot_axes,
@@ -1041,15 +1043,17 @@ class PolarisationWidget(QWidget):
             self._canvas.draw_idle()
             return
 
+        series = plot_series_colours()
         static = record.simulation.static
         times = static.times_us
         sites = np.atleast_2d(static.site_polarisations)
         many = sites.shape[0] > _MAX_LEGEND_SITES
         if sites.shape[0] > 1:
-            for label, trace in zip(static.site_labels, sites, strict=True):
+            for index, (label, trace) in enumerate(zip(static.site_labels, sites, strict=True)):
                 time_axis.plot(
                     times,
                     trace,
+                    color=categorical_colour(index),
                     linewidth=0.6,
                     alpha=0.18 if many else 0.3,
                     label=None if many else label,
@@ -1062,14 +1066,14 @@ class PolarisationWidget(QWidget):
                 linestyle="--",
                 linewidth=1.0,
                 alpha=0.7,
-                color=palette.text_muted,
+                color=series.reference,
                 label="static average",
             )
             time_axis.plot(
                 times,
                 dynamic.polarisation,
                 linewidth=2.2,
-                color=palette.text_primary,
+                color=series.total,
                 label=f"dynamic, ν = {dynamic.collision_rate_per_us:g} μs⁻¹",
             )
         else:
@@ -1077,7 +1081,7 @@ class PolarisationWidget(QWidget):
                 times,
                 static.polarisation,
                 linewidth=2.2,
-                color=palette.text_primary,
+                color=series.total,
                 label="weighted average" if sites.shape[0] > 1 else static.site_labels[0],
             )
         time_axis.set_xlim(float(times[0]), float(times[-1]))
@@ -1087,10 +1091,10 @@ class PolarisationWidget(QWidget):
         spectrum = record.simulation.spectrum
         nyquist = float(spectrum.frequencies_MHz[-1]) if spectrum.frequencies_MHz.size else 1.0
         spectrum_axis.plot(
-            spectrum.frequencies_MHz, spectrum.amplitudes, linewidth=1.6, color=palette.text_primary
+            spectrum.frequencies_MHz, spectrum.amplitudes, linewidth=1.6, color=series.total
         )
         spectrum_axis.fill_between(
-            spectrum.frequencies_MHz, spectrum.amplitudes, color=palette.text_primary, alpha=0.12
+            spectrum.frequencies_MHz, spectrum.amplitudes, color=series.total, alpha=0.12
         )
         spectrum_axis.set_xlim(
             0.0, _spectrum_upper_limit(spectrum.frequencies_MHz, spectrum.amplitudes, nyquist)

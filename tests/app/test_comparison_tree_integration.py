@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+
 from mufinder.app import workflow_table_utils
 from mufinder.app.workflow_controllers.comparison_tables import comparison_route
 from mufinder.domain.models import ComparisonTable, Structure
 from mufinder.services.project_service import ProjectService
+from tests.support.main_window import open_project_with_host
 from tests.support.qt import find_tree_item_by_route
 
 
@@ -162,3 +168,99 @@ def test_comparison_delete_button_confirms_once_through_the_shared_helper(
         prompts
         == [("Delete comparison table", "Delete this comparison table?", "Delete table")] * 2
     )
+
+
+@pytest.fixture
+def renaming_table(main_window, tmp_path: Path):
+    """``(window, table, title_edit)``: a table on screen with an edited title holding focus."""
+
+    window = main_window
+    service, doc, host = open_project_with_host(window, tmp_path)
+    table = ComparisonTable(
+        label="Original",
+        experimental_structure_id=host.id,
+        dft_structure_ids=[host.id],
+        dft_labels=["DFT-1"],
+        result_data={
+            "experimental_values": {},
+            "dft_columns": [],
+            "parameter_differences": [],
+            "warnings": [],
+        },
+    )
+    service.add_comparison_table(doc, table)
+    window._refresh_ui_after_project_change()
+    window._set_active_route(comparison_route(table.id))
+    window.show()
+    window.activateWindow()
+    assert QTest.qWaitForWindowActive(window)
+
+    title_edit = window._comparison_tables_view.table_widget(table.id)._title_edit
+    title_edit.setFocus()
+    QApplication.processEvents()
+    assert title_edit.hasFocus()
+    title_edit.setText("Renamed")
+
+    yield window, table, title_edit
+
+    # Hidden, the window closes at clean-up without asking to save the project.
+    window.hide()
+
+
+def _assert_renamed_in_tree(window, table: ComparisonTable) -> None:
+    assert table.label == "Renamed"
+    item = find_tree_item_by_route(window._project_tree, comparison_route(table.id))
+    assert item is not None
+    assert item.text(0) == "Renamed"
+
+
+def test_rename_caused_by_navigating_away_stays_on_the_new_page(renaming_table) -> None:
+    window, table, _title_edit = renaming_table
+
+    window._set_active_route("provenance_log")
+    QApplication.processEvents()
+
+    assert window._active_route() == "provenance_log"
+    assert window._main_stack.currentWidget() is window._journal_view
+    _assert_renamed_in_tree(window, table)
+
+
+def test_rename_caused_by_going_home_leaves_nothing_selected(renaming_table) -> None:
+    window, table, _title_edit = renaming_table
+
+    window._show_project_home()
+    QApplication.processEvents()
+
+    assert window._active_route() is None
+    assert window._main_stack.currentWidget() is window._home_page
+    _assert_renamed_in_tree(window, table)
+
+
+def test_rename_caused_by_clicking_the_tree_opens_the_clicked_page(renaming_table) -> None:
+    window, table, _title_edit = renaming_table
+    tree = window._project_tree
+    item = find_tree_item_by_route(tree, "provenance_log")
+    tree.scrollToItem(item)
+
+    QTest.mouseClick(
+        tree.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        tree.visualItemRect(item).center(),
+    )
+    QApplication.processEvents()
+
+    assert window._active_route() == "provenance_log"
+    assert window._main_stack.currentWidget() is window._journal_view
+    _assert_renamed_in_tree(window, table)
+
+
+def test_rename_with_enter_keeps_the_table_open(renaming_table) -> None:
+    window, table, title_edit = renaming_table
+
+    QTest.keyClick(title_edit, Qt.Key.Key_Return)
+    QApplication.processEvents()
+
+    assert window._active_route() == comparison_route(table.id)
+    assert window._main_stack.currentWidget() is window._comparison_tables_view
+    _assert_renamed_in_tree(window, table)

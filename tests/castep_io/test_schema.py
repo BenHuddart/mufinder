@@ -746,11 +746,18 @@ def _refresh_with_retired_keywords(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             "xc_vxc_deriv_epsilon": catalog_entry(
                 "Real", "OBSOLETE: This keyword was once used.", level="Expert"
             ),
+            "nlxc_exchange_fraction": catalog_entry(
+                "Real", "NB This keyword has been removed.", level="Expert"
+            ),
+            # The word "removed" alone is not the marker.
+            "nlxc_exchange_reflect_kpts": catalog_entry(
+                "Logical", "Whether duplicate k-points are removed.", level="Expert"
+            ),
         },
     )
 
 
-def test_full_catalog_hides_obsolete_and_dummy_level_keywords(
+def test_full_catalog_hides_obsolete_removed_and_dummy_level_keywords(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -758,7 +765,9 @@ def test_full_catalog_hides_obsolete_and_dummy_level_keywords(
 
     assert _param("md_nose_t").user_visible is False
     assert _param("xc_vxc_deriv_epsilon").user_visible is False
+    assert _param("nlxc_exchange_fraction").user_visible is False
     assert _param("bs_max_iter").user_visible is False
+    assert _param("nlxc_exchange_reflect_kpts").user_visible is True
     assert _param("md_ion_t").user_visible is True
     assert _param("iprint").user_visible is True
     dummy_cell = get_keyword_spec("cell", "bs_kpoint_mp_grid")
@@ -767,7 +776,7 @@ def test_full_catalog_hides_obsolete_and_dummy_level_keywords(
     assert kpoint_grid is not None and kpoint_grid.user_visible is True
 
 
-def test_obsolete_and_dummy_level_keywords_still_parse_and_write(
+def test_obsolete_removed_and_dummy_level_keywords_still_parse_and_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -775,13 +784,20 @@ def test_obsolete_and_dummy_level_keywords_still_parse_and_write(
 
     _refresh_with_retired_keywords(tmp_path, monkeypatch)
 
-    parsed = parse_param_text("MD_NOSE_T : 0.1 ps\nBS_MAX_ITER : 40\n")
+    parsed = parse_param_text(
+        "MD_NOSE_T : 0.1 ps\nBS_MAX_ITER : 40\nNLXC_EXCHANGE_FRACTION : 0.25\n"
+    )
 
     assert parsed.unmapped == ()
-    assert {item.name for item in parsed.param_file.keywords} == {"md_nose_t", "bs_max_iter"}
+    assert {item.name for item in parsed.param_file.keywords} == {
+        "md_nose_t",
+        "bs_max_iter",
+        "nlxc_exchange_fraction",
+    }
     rendered = write_param(ParamFile(keywords=parsed.param_file.keywords))
     assert "MD_NOSE_T : 0.1 ps" in rendered
     assert "BS_MAX_ITER : 40" in rendered
+    assert "NLXC_EXCHANGE_FRACTION : 0.25" in rendered
 
 
 def test_an_override_can_show_a_keyword_the_catalog_marks_hidden(

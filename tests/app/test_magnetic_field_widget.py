@@ -2153,6 +2153,127 @@ def test_magnetic_field_widget_calculates_incommensurate_distribution(
     widget.close()
 
 
+def _watch_result_row_resizes(widget: MagneticFieldWidget) -> list[None]:
+    """Make new result rows too tall until resized, and return a list that grows per resize."""
+
+    table = widget._result_table
+    table.verticalHeader().setDefaultSectionSize(200)
+    resizes: list[None] = []
+    resize_rows = table.resizeRowsToContents
+
+    def counted_resize() -> None:
+        resizes.append(None)
+        resize_rows()
+
+    table.resizeRowsToContents = counted_resize
+    return resizes
+
+
+def _assert_one_resize_fits_every_row(
+    widget: MagneticFieldWidget, resizes: list[None], row_count: int
+) -> None:
+    table = widget._result_table
+    assert table.rowCount() == row_count
+    assert len(resizes) == 1
+    heights = [table.rowHeight(row) for row in range(row_count)]
+    assert max(heights) < 200
+    table.resizeRowsToContents()
+    assert [table.rowHeight(row) for row in range(row_count)] == heights
+
+
+@pytest.mark.parametrize("row_count", [1, 5])
+@pytest.mark.parametrize(
+    ("classification", "science_call", "result_attributes"),
+    [
+        pytest.param(
+            "commensurate",
+            "calculate_commensurate_fields",
+            {"total": (0.1, 0.2, 0.3), "magnitude": 0.37, "distortion": None},
+            id="commensurate",
+        ),
+        pytest.param(
+            "incommensurate",
+            "calculate_incommensurate_field_distributions",
+            {"fields_T": np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)},
+            id="distribution",
+        ),
+    ],
+)
+def test_magnetic_field_widget_resizes_calculated_result_rows_once(
+    qapp, tmp_path, monkeypatch, classification, science_call, result_attributes, row_count
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-rows.mufinder", "Magnetic Rows")
+    service.add_structure(document, feo_host_structure())
+
+    result_type = type("_Result", (), {"site_label": "site 1", **result_attributes})
+    monkeypatch.setattr(
+        magnetic_field_calculation_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: classification,
+    )
+    monkeypatch.setattr(
+        magnetic_field_calculation_module,
+        science_call,
+        lambda *_args, **_kwargs: tuple(result_type() for _ in range(row_count)),
+    )
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
+    widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
+    resizes = _watch_result_row_resizes(widget)
+
+    widget.calculate_fields()
+
+    _assert_one_resize_fits_every_row(widget, resizes, row_count)
+    assert widget._result_table.selectedItems()[0].row() == 0
+    widget.close()
+
+
+@pytest.mark.parametrize("row_count", [1, 5])
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        pytest.param(
+            "commensurate",
+            {"site_label": "site 1", "total_T": [0.1, 0.2, 0.3], "magnitude_T": 0.37},
+            id="commensurate",
+        ),
+        pytest.param(
+            "distribution",
+            {
+                "site_label": "site 1",
+                "muon_position": [0.0, 0.0, 0.0],
+                "fields_T": [[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]],
+                "histogram_centres_T": [1.0, 3.0],
+                "histogram_counts": [1.0, 1.0],
+                "calculation_parameters": {"nangles": 4096},
+            },
+            id="distribution",
+        ),
+    ],
+)
+def test_magnetic_field_widget_resizes_restored_result_rows_once(
+    qapp, tmp_path, kind, payload, row_count
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-rows.mufinder", "Magnetic Rows")
+    service.add_structure(document, feo_host_structure())
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    resizes = _watch_result_row_resizes(widget)
+
+    widget.set_form_state(
+        {"magnetic_field_results": {"kind": kind, "results": [payload] * row_count}}
+    )
+
+    _assert_one_resize_fits_every_row(widget, resizes, row_count)
+    assert widget._result_table.selectedItems()[0].row() == 0
+    widget.close()
+
+
 def _breakdown_headers(widget: MagneticFieldWidget) -> list[str]:
     table = widget._breakdown_table
     return [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())]

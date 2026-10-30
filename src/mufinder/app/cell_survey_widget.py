@@ -31,9 +31,9 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import (
-    THEME_LIGHT,
     arrow_icon,
     body_font_family,
+    cell_survey_species_tones,
     current_palette,
     style_hint_text,
 )
@@ -48,8 +48,6 @@ from mufinder.science.cell_projection import (
 from mufinder.science.lattice import LatticeError
 from mufinder.services.project_survey import SurveyLayer, SurveyMarker, SurveyMarkerKind
 
-_SPECIES_TONES_LIGHT = ("#8C7B6B", "#5E7A8C", "#7A8C5E", "#8C5E73", "#6B6B8C", "#8C845E")
-_SPECIES_TONES_DARK = ("#B8A898", "#8FAABB", "#A9BB8F", "#BB8FA3", "#9C9CBB", "#BBB38F")
 FALLBACK_NOTE = "No positions at this stage: showing the sites found so far."
 
 
@@ -150,7 +148,7 @@ class _SurveyCanvas(QWidget):
         self, painter: QPainter, palette, projection: CellProjection, to_screen
     ) -> None:
         assert self.host is not None
-        tones = _SPECIES_TONES_LIGHT if palette.mode == THEME_LIGHT else _SPECIES_TONES_DARK
+        tones = cell_survey_species_tones()
         elements: list[str] = []
         atoms: list[tuple[float, QPointF, str]] = []
         for label, position in zip(self.host.species, self.host.fractional_positions):
