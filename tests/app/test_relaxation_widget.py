@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
@@ -13,11 +15,21 @@ from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
+from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint
-from mufinder.app.relaxation_types import RelaxationRunState
+from mufinder.app.relaxation_types import (
+    PristineRelaxationConfig,
+    PristineRelaxationRow,
+    RelaxationRunState,
+)
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, SelectionSnapshotToolButton
+from mufinder.app.workflow_config_codecs import (
+    deserialize_pristine_relaxation_config,
+    serialize_pristine_relaxation_config,
+)
 from mufinder.app.workflow_table_utils import EXPORT_RELAXED_STRUCTURE_ACTION_TEXT
+from mufinder.castep_io import write_cell
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.models import Structure
 from mufinder.services.structure_export import (
@@ -25,7 +37,9 @@ from mufinder.services.structure_export import (
     NOT_COMPLETED_REASON,
     RelaxedStructureExport,
 )
+from mufinder.persistence.codec import to_jsonable
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
+from tests.support.structures import si_pair_host
 
 
 def test_relaxation_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
@@ -1669,3 +1683,84 @@ def test_relaxation_widget_row_controls_are_named_after_their_row(qapp) -> None:
     assert (
         widget._table.cellWidget(0, widget._REMOVE_COLUMN).accessibleName() == "Remove Host Relax"
     )
+
+
+def _expand_pristine_row(values: dict[str, object]) -> str:
+    config = PristineRelaxationConfig(
+        name_prefix="relax",
+        rows=(
+            PristineRelaxationRow(
+                label="row_a",
+                fix_all_cell=False,
+                supercell_matrix=None,
+                parameter_values=values,
+            ),
+        ),
+    )
+    expansion = expand_pristine_relaxation_jobs(
+        host_structure=si_pair_host(),
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(3, 3, 3),
+        project_kpoint_reference_lattice=None,
+    )
+    return write_cell(expansion.jobs[0].cell_file)
+
+
+def test_relaxation_widget_disabled_symmetry_survives_saving_and_reaches_the_cell(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="pristine_relaxation",
+        values=dict(widget._default_params),
+        advanced_names={"symmetry_generate"},
+    )
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+    collected = dialog.collect_values()
+    assert "SYMMETRY_GENERATE" not in _expand_pristine_row(collected)
+
+    state = {
+        "name_prefix": "relax",
+        "rows": [
+            {
+                "label": "row_a",
+                "fix_all_cell": False,
+                "params": to_jsonable(collected),
+                "added_advanced": list(dialog.advanced_names()),
+            }
+        ],
+    }
+    reloaded = PristineRelaxationWidget()
+    reloaded.set_form_state(json.loads(json.dumps(state)))
+    saved_row = reloaded.collect_state()["rows"][0]
+    assert saved_row["params"]["symmetry_generate"] is False
+    row_id = next(reloaded._row_entries()).row_id
+    assert reloaded._stored_row_values(row_id, collected)["symmetry_generate"] is False
+
+    config = PristineRelaxationConfig(
+        name_prefix="relax",
+        rows=(
+            PristineRelaxationRow(
+                label="row_a",
+                fix_all_cell=False,
+                supercell_matrix=None,
+                parameter_values=saved_row["params"],
+            ),
+        ),
+    )
+    stored = json.loads(json.dumps(serialize_pristine_relaxation_config(config)))
+    restored = deserialize_pristine_relaxation_config(stored)
+    assert restored.rows[0].parameter_values["symmetry_generate"] is False
+
+    reopened = ParameterDialog(
+        specs=reloaded._specs,
+        workflow_stage="pristine_relaxation",
+        values=saved_row["params"],
+        advanced_names=saved_row["added_advanced"],
+    )
+    assert reopened._rows["symmetry_generate"].editor.value() is False
+    assert "SYMMETRY_GENERATE" not in _expand_pristine_row(reopened.collect_values())
+
+
+def test_pristine_row_keeps_symmetry_on_when_it_says_nothing() -> None:
+    assert "SYMMETRY_GENERATE" in _expand_pristine_row({"task": "GEOMETRYOPTIMIZATION"})

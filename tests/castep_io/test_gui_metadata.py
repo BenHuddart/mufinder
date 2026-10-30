@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 
 import pytest
 
@@ -10,6 +11,8 @@ from mufinder.castep_io.gui_metadata import (
     default_assignments,
     exclusive_partner_labels,
     get_gui_keyword_specs,
+    gui_flag_is_explicitly_off,
+    gui_flag_is_unset,
     gui_value_is_active,
     infer_task,
     keyword_category_label,
@@ -209,6 +212,15 @@ def test_gui_values_report_activity_task_and_conflict_errors_and_defaults() -> N
 
     assert gui_value_is_active(flag_spec, True) is True
     assert gui_value_is_active(flag_spec, False) is False
+    assert gui_flag_is_explicitly_off(flag_spec, False) is True
+    assert gui_flag_is_explicitly_off(flag_spec, True) is False
+    assert gui_flag_is_explicitly_off(flag_spec, None) is False
+    assert gui_flag_is_explicitly_off(replace(flag_spec, default_value=None), False) is False
+    assert gui_flag_is_explicitly_off(bool_spec, False) is False
+    assert gui_flag_is_unset(flag_spec, False) is False
+    assert gui_flag_is_unset(flag_spec, True) is False
+    assert gui_flag_is_unset(replace(flag_spec, default_value=None), False) is True
+    assert gui_flag_is_unset(bool_spec, False) is False
     assert gui_value_is_active(bool_spec, False) is False
     assert gui_value_is_active(enum_spec, "") is False
 

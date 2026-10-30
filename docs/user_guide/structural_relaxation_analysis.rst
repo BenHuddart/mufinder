@@ -94,6 +94,10 @@ axis and always rounds up, so the cell is never undersampled. For example, a
 ``4x4x4`` default becomes ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3``
 supercells.
 
+``Generate Symmetry`` is on by default, so the ``.cell`` file carries
+``SYMMETRY_GENERATE``. Unchecking it in the parameter dialog leaves the keyword
+out for that row, and the choice is saved with the project.
+
 What MuFinder writes
 ~~~~~~~~~~~~~~~~~~~~
 

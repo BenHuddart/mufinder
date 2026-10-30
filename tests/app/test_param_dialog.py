@@ -1195,3 +1195,67 @@ def test_parameter_dialog_search_matches_the_group_heading(qapp) -> None:
     dialog._search_input.setText("geometry optimisation")
 
     assert dialog._displayed_names() == ["geom_method"]
+
+
+def _symmetry_flag_spec() -> KeywordSpec:
+    return KeywordSpec(
+        name="symmetry_generate",
+        file="cell",
+        kind="flag",
+        value_type="bool",
+        widget_hint="flag",
+        advanced_workflows=("pristine_relaxation",),
+        default_value=True,
+    )
+
+
+def test_parameter_dialog_collects_an_unchecked_flag_as_false(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=[_symmetry_flag_spec()],
+        workflow_stage="pristine_relaxation",
+        advanced_names={"symmetry_generate"},
+    )
+    assert dialog.collect_values()["symmetry_generate"] is True
+
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+
+    assert dialog.collect_values()["symmetry_generate"] is False
+    assert dialog.validate() == []
+
+
+def test_parameter_dialog_leaves_out_a_flag_that_has_no_row(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=[_symmetry_flag_spec()],
+        workflow_stage="pristine_relaxation",
+    )
+
+    assert "symmetry_generate" not in dialog.collect_values()
+
+
+def test_parameter_dialog_keeps_the_row_of_a_stored_disabled_flag(qapp) -> None:
+    # Without its row the value would not be collected, so accepting the dialog
+    # would hand the row back to the workflow default.
+    dialog = ParameterDialog(
+        specs=[_symmetry_flag_spec()],
+        workflow_stage="pristine_relaxation",
+        values={"symmetry_generate": False},
+        advanced_names=(),
+    )
+
+    assert dialog._rows["symmetry_generate"].editor.value() is False
+    assert dialog.collect_values()["symmetry_generate"] is False
+    assert dialog.advanced_names() == ("symmetry_generate",)
+
+
+def test_parameter_dialog_removing_a_disabled_flag_returns_it_to_the_default(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=[_symmetry_flag_spec()],
+        workflow_stage="pristine_relaxation",
+        values={"symmetry_generate": False},
+        advanced_names={"symmetry_generate"},
+    )
+
+    dialog._remove_advanced("symmetry_generate")
+
+    assert "symmetry_generate" not in dialog.collect_values()
+    assert dialog.advanced_names() == ()

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.help_dialog import ParameterHelpDialog
 from mufinder.app.param_widgets import ParamEditorBase, create_param_editor
 from mufinder.castep_io.gui_metadata import (
+    gui_flag_is_unset,
     gui_value_is_active,
     infer_task,
     keyword_visible_for_task,
@@ -135,14 +136,18 @@ class CastepParamForm(QWidget):
         self.form_state_changed.emit(self.collect_values())
 
     def collect_values(self) -> dict[str, Any]:
-        """Collect structured values for every parameter row."""
+        """Collect structured values for every parameter row.
+
+        An unchecked flag is left out unless it is on by default; then it is
+        collected as ``False``, so the workflow default does not turn it back on.
+        """
 
         values: dict[str, Any] = {}
         for name, row in self._rows.items():
             if not self._row_participates(row):
                 continue
             value = row.editor.value()
-            if row.spec.kind == "flag" and not bool(value):
+            if gui_flag_is_unset(row.spec, value):
                 continue
             values[name] = value
         return values

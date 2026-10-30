@@ -13,10 +13,13 @@ from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.uep_types import UepRunState
+from mufinder.app.uep_adapter import expand_uep_jobs
+from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
 from mufinder.app.uep_widget import UEPWidget
+from mufinder.castep_io import write_cell
 from mufinder.castep_io.types import ValueWithUnit
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
+from tests.support.structures import si_pair_host
 
 
 def test_uep_widget_source_structure_selector_emits_selection_signal(qapp) -> None:
@@ -891,3 +894,28 @@ def test_uep_supercell_choice_skips_locked_rows_in_a_multi_row_selection(qapp, m
 
     assert widget.row_supercell_matrix(first_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
     assert widget.row_supercell_matrix(second_id) is None
+
+
+def test_uep_widget_disabled_symmetry_is_stored_and_omitted_from_the_cell(qapp) -> None:
+    widget = UEPWidget()
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="uep",
+        values=dict(widget._default_params),
+    )
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+    collected = dialog.collect_values()
+    assert collected["symmetry_generate"] is False
+
+    expansion = expand_uep_jobs(
+        host_structure=si_pair_host(),
+        config=UepConfig(
+            name_prefix="uep",
+            rows=(UepSourceRow(label="row_a", parameter_values=collected),),
+        ),
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(3, 3, 3),
+        project_kpoint_reference_lattice=None,
+    )
+
+    assert "SYMMETRY_GENERATE" not in write_cell(expansion.jobs[0].cell_file)
