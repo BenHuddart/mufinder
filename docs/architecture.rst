@@ -1670,7 +1670,17 @@ each platform's native look:
   remain only as a fallback.
 - Action and toolbar icons are MuFinder's own vector glyphs
   (``mufinder.app.icons``) rather than the platform's ``QStyle.standardIcon``
-  artwork, which is used only for names without a branded glyph.
+  artwork, which is used only for names without a branded glyph. Each glyph is
+  drawn on a grid the size it is shown at (16 units for menu, button and
+  workflow-stage icons, 22 for the project-home and help buttons), with straight
+  strokes centred on pixel centres. A ``QIconEngine`` paints the glyph when Qt
+  asks for a pixmap, at the requested size and the device pixel ratio of the
+  screen it is shown on, so a glyph is never a resampled bitmap. The engine
+  reads the palette at paint time: after ``apply_theme`` an existing glyph icon
+  paints in the new theme's colours the next time it is drawn, so widgets do not
+  re-create their glyph icons on a theme change. One icon per glyph is shared by
+  every widget that shows it. Disabled and selected looks are derived from the
+  current rendering by the style, as for a plain pixmap icon.
 - Checkbox and radio-button indicators are drawn by the stylesheet with bundled
   tick and dot glyphs and tinted with the muon-red accent, instead of each
   operating system's native artwork and accent colour. Checkable rows in tree,

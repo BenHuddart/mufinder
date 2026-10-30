@@ -1540,6 +1540,15 @@ def _header_styles(p: MuFinderPalette) -> str:
 
 def _button_styles(p: MuFinderPalette) -> str:
     return f"""
+    QToolButton#plotPopOutButton {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+        padding: 2px;
+    }}
+    QToolButton#plotPopOutButton:hover {{
+        border-color: {p.accent};
+    }}
     QPushButton {{
         border: 1px solid {p.border};
         border-radius: 8px;
