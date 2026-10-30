@@ -9,7 +9,10 @@ from uuid import uuid4
 import pytest
 
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import ProvenanceRecord
+from mufinder.domain.models import Project, ProvenanceRecord
+from mufinder.services import site_generation_service
+from mufinder.services.project_document import ProjectDocument
+from tests.support.symmetry_hosts import cof2_host
 from tests.support.journal import generation_record
 from mufinder.services.journal import (
     build_journal,
@@ -349,3 +352,127 @@ def test_extend_journal_refuses_a_record_older_than_the_last_entry() -> None:
     journal = build_journal("Stream", [generation_record(9, day=22)])
 
     assert extend_journal(journal, [generation_record(9, day=21)]) is None
+
+
+def _muon_sites_record(action: str, **fields: object) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 10, 30, 9, 0, tzinfo=UTC),
+        action=action,
+        workflow_stage=WorkflowStage.MUON_GENERATION,
+        actor="user",
+        **fields,  # type: ignore[arg-type]
+    )
+
+
+def test_a_generation_entry_prints_the_run_line_and_seed(tmp_path: Path) -> None:
+    document = ProjectDocument(project_root=tmp_path, project=Project(name="Runs"))
+    host = cof2_host()
+    document.structures[host.id] = host
+    document.project.host_structure_id = host.id
+    outcome = site_generation_service.generate_candidate_sites(
+        document,
+        method="random",
+        parameters={"selection_mode": "count", "count": 3, "min_muon_atom": 1.0, "seed": 42},
+    )
+
+    entry = build_journal("Runs", outcome.provenance).days[0].entries[0]
+
+    assert entry.title == "Muon sites generated"
+    assert entry.body.startswith("Random, 3 starts, ≥ ")
+    assert entry.body.endswith(", ≥ 1.0 Å from atoms, P4₂/mnm (16 ops), seed 42.")
+
+
+def test_a_generation_entry_without_a_run_keeps_the_older_sentence() -> None:
+    entry = build_journal("Old", [generation_record(9, count=2)]).days[0].entries[0]
+
+    assert entry.body == "Generated 0 muon sites using random."
+
+
+def test_journal_describes_cluster_positions_staging_and_removal() -> None:
+    ids = [uuid4(), uuid4()]
+    labels = {"site_labels": ["Random Site 1", "Random Site 2"]}
+    records = [
+        _muon_sites_record(
+            "cluster_candidate_positions",
+            parameters={**labels, "anchor_fractional": [0.25, 0.25, 0.25]},
+            input_entity_ids=ids,
+            output_entity_ids=ids,
+        ),
+        _muon_sites_record(
+            "stage_muon_relaxation_sites",
+            parameters=labels,
+            input_entity_ids=ids,
+            output_entity_ids=ids,
+        ),
+        _muon_sites_record("delete_candidates", parameters=labels, input_entity_ids=ids),
+    ]
+
+    entries = build_journal("Starts", records).days[0].entries
+
+    assert [(entry.title, entry.body) for entry in entries] == [
+        (
+            "Muon starts clustered",
+            "Moved 2 generated muon sites to the symmetry-equivalent positions nearest the "
+            "anchor (0.2500, 0.2500, 0.2500): Random Site 1, Random Site 2. The original "
+            "positions are kept in the project's provenance.",
+        ),
+        (
+            "Muon sites staged for relaxation",
+            "Staged 2 generated muon sites for relaxation: Random Site 1, Random Site 2.",
+        ),
+        (
+            "Generated muon sites removed",
+            "Removed 2 generated muon sites: Random Site 1, Random Site 2.",
+        ),
+    ]
+
+
+def test_journal_describes_workspace_creation_and_grouping() -> None:
+    records = [
+        _muon_sites_record(
+            "create_analysis_workspace",
+            parameters={
+                "workspace_name": "Mu+ sites",
+                "charge_state_label": "positive muon",
+                "relaxation_count": 6,
+            },
+        ),
+        _muon_sites_record(
+            "group_relaxed_sites",
+            parameters={
+                "workspace_name": "Mu+ sites",
+                "site_count": 6,
+                "distinct_site_count": 2,
+                "grouping_summary": "Connected components within 0.25 Å",
+            },
+        ),
+    ]
+
+    entries = build_journal("Analysis", records).days[0].entries
+
+    assert [(entry.title, entry.body) for entry in entries] == [
+        ("Analysis workspace created", "Created 'Mu+ sites' with 6 positive muon relaxations."),
+        (
+            "Relaxed sites grouped",
+            "Grouped 6 relaxed sites in 'Mu+ sites' into 2 distinct sites: Connected "
+            "components within 0.25 Å.",
+        ),
+    ]
+
+
+def test_a_cluster_positions_entry_names_the_run_only_when_the_starts_had_one() -> None:
+    record = _muon_sites_record(
+        "cluster_candidate_positions",
+        parameters={
+            "site_labels": ["Random Site 1"],
+            "anchor_fractional": [0.5, 0.5, 0.5],
+            "generation_run_ids": [str(uuid4())],
+        },
+        output_entity_ids=[uuid4()],
+    )
+
+    body = build_journal("Starts", [record]).days[0].entries[0].body
+
+    assert body.endswith(
+        "The original positions are kept in the project's provenance and with the generation run."
+    )

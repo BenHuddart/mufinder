@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, Qt, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -45,6 +48,11 @@ from mufinder.science.site_generation import (
     estimate_muon_muon_separation_for_count,
     lattice_frac_to_cart,
 )
+
+#: Item role of a run header row's group: its ``title``, ``description`` and ``site_ids``.
+_RUN_GROUP_ROLE = Qt.ItemDataRole.UserRole + 1
+#: Context-menu action that copies a run's methods-section description.
+COPY_RUN_DESCRIPTION_TEXT = "Copy description"
 
 
 class _ClusterPositionsDialog(QDialog):
@@ -152,6 +160,7 @@ class MuonGenerationWidget(QWidget):
         self._host_structure: Structure | None = None
         self._active_host: Structure | None = None
         self._site_rows: list[dict[str, Any]] = []
+        self._site_groups: list[dict[str, Any]] = []
         self._uep_cluster_rows: list[dict[str, Any]] = []
         # Flush-path guards: skip the expensive viewer/table rebuild when the
         # inputs are byte-for-byte unchanged (see structure_render_guard).
@@ -190,8 +199,6 @@ class MuonGenerationWidget(QWidget):
         self._random_max_attempts.setRange(100, 1_000_000)
         self._random_max_attempts.setSingleStep(100)
         self._random_max_attempts.setValue(20000)
-
-        self._random_seed = ""
 
         self._near_element = QComboBox()
         self._near_element.setEditable(False)
@@ -236,6 +243,8 @@ class MuonGenerationWidget(QWidget):
         )
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)
+        self._site_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._site_table.customContextMenuRequested.connect(self._open_site_table_menu)
 
         # Columns are sized by resizeColumnsToContents() after each repopulation
         # (see _set_uep_cluster_rows), so this table opts out of the shared
@@ -776,7 +785,6 @@ class MuonGenerationWidget(QWidget):
             self._random_max_attempts.setValue(
                 int(random_state.get("max_attempts", self._random_max_attempts.value()))
             )
-            self._random_seed = str(random_state.get("seed", self._random_seed))
             random_mode = (
                 str(random_state.get("selection_mode", random_state.get("mode", "")))
                 .strip()
@@ -827,45 +835,118 @@ class MuonGenerationWidget(QWidget):
         self._set_current_method(method)
         self._on_method_changed()
 
-    def set_sites(self, rows: list[dict[str, Any]]) -> None:
-        """Render generated sites in the table.
+    def set_sites(
+        self,
+        rows: list[dict[str, Any]],
+        groups: Sequence[dict[str, Any]] | None = None,
+    ) -> None:
+        """Render generated sites in the table, under one header row per generation run.
+
+        Each of ``groups`` has a ``title`` (the header row's text), a
+        ``description`` (the sentence ``Copy description`` copies) and the
+        ``site_ids`` of its rows, in order. A group with none of ``rows`` gets
+        no header; rows in no group follow the groups without one.
 
         Skips the full table rebuild (and the overlay resync it triggers) when
-        the row payloads are unchanged. The rows are plain dicts, so an ``==``
-        compare against the stored copy is exact and cheap. Skipping the rebuild
-        also preserves the user's current row selection across dashboard
-        flushes, which the rebuild would otherwise clear. Stale-row styling
-        depends on the active host, not on the rows, and is re-applied by
-        :meth:`set_active_host` whenever the host changes, so it is safe to skip
-        here when the rows themselves have not changed.
+        the row and group payloads are unchanged. They are plain dicts, so an
+        ``==`` compare against the stored copy is exact and cheap. Skipping the
+        rebuild also preserves the user's current row selection across
+        dashboard flushes, which the rebuild would otherwise clear. Stale-row
+        styling depends on the active host, not on the rows, and is re-applied
+        by :meth:`set_active_host` whenever the host changes, so it is safe to
+        skip here when the rows themselves have not changed.
         """
-        if rows == self._site_rows:
+        group_list = [dict(group) for group in groups or ()]
+        if rows == self._site_rows and group_list == self._site_groups:
             return
         self._site_rows = [dict(row) for row in rows]
+        self._site_groups = group_list
+        self._site_table.clearSpans()
         self._site_table.setRowCount(0)
+        rows_by_id = {str(row.get("id", "")): row for row in self._site_rows}
+        placed: set[str] = set()
+        for group in self._site_groups:
+            members = [
+                rows_by_id[str(site_id)]
+                for site_id in group.get("site_ids", [])
+                if str(site_id) in rows_by_id and str(site_id) not in placed
+            ]
+            if not members:
+                continue
+            self._insert_run_header(group)
+            for row_data in members:
+                placed.add(str(row_data.get("id", "")))
+                self._insert_site_row(row_data)
         for row_data in self._site_rows:
-            row = self._site_table.rowCount()
-            self._site_table.insertRow(row)
-            for column, value in enumerate(
-                [
-                    str(row_data.get("label", "")),
-                    self._display_generation_method(row_data.get("method", "")),
-                    self._display_site_status(row_data.get("status", "")),
-                ]
-            ):
-                item = QTableWidgetItem(value)
-                item.setData(Qt.ItemDataRole.UserRole, row_data)
-                self._site_table.setItem(row, column, item)
-            frac = row_data.get("fractional", [0.0, 0.0, 0.0])
-            for offset, value in enumerate(frac[:3], start=3):
-                item = QTableWidgetItem(f"{float(value):.4f}")
-                item.setData(Qt.ItemDataRole.UserRole, row_data)
-                self._site_table.setItem(row, offset, item)
+            if str(row_data.get("id", "")) not in placed:
+                self._insert_site_row(row_data)
         self._apply_stale_row_styling()
         self._update_delete_button_state()
         self._update_cluster_button_state()
         self._update_create_jobs_button_state()
         self._sync_viewer_overlays()
+
+    def _insert_run_header(self, group: dict[str, Any]) -> None:
+        """Add a header row, spanning the table, that states one generation run's parameters."""
+
+        row = self._site_table.rowCount()
+        self._site_table.insertRow(row)
+        item = QTableWidgetItem(str(group.get("title", "")))
+        # Enabled but not selectable: selecting starts never selects a header.
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setData(_RUN_GROUP_ROLE, group)
+        item.setToolTip(str(group.get("description", "")))
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        self._site_table.setItem(row, 0, item)
+        self._site_table.setSpan(row, 0, 1, self._site_table.columnCount())
+
+    def _insert_site_row(self, row_data: dict[str, Any]) -> None:
+        row = self._site_table.rowCount()
+        self._site_table.insertRow(row)
+        for column, value in enumerate(
+            [
+                str(row_data.get("label", "")),
+                self._display_generation_method(row_data.get("method", "")),
+                self._display_site_status(row_data.get("status", "")),
+            ]
+        ):
+            item = QTableWidgetItem(value)
+            item.setData(Qt.ItemDataRole.UserRole, row_data)
+            self._site_table.setItem(row, column, item)
+        frac = row_data.get("fractional", [0.0, 0.0, 0.0])
+        for offset, value in enumerate(frac[:3], start=3):
+            item = QTableWidgetItem(f"{float(value):.4f}")
+            item.setData(Qt.ItemDataRole.UserRole, row_data)
+            self._site_table.setItem(row, offset, item)
+
+    def run_header_titles(self) -> list[str]:
+        """Return the header line of each generation run shown in the table, in order."""
+
+        titles: list[str] = []
+        for row in range(self._site_table.rowCount()):
+            item = self._site_table.item(row, 0)
+            group = item.data(_RUN_GROUP_ROLE) if item is not None else None
+            if isinstance(group, dict):
+                titles.append(str(group.get("title", "")))
+        return titles
+
+    def _open_site_table_menu(self, position: QPoint) -> None:
+        """Offer ``Copy description`` on a generation run's header row."""
+
+        item = self._site_table.item(self._site_table.rowAt(position.y()), 0)
+        group = item.data(_RUN_GROUP_ROLE) if item is not None else None
+        if not isinstance(group, dict):
+            return
+        description = str(group.get("description", ""))
+        menu = QMenu(self)
+        action = menu.addAction(COPY_RUN_DESCRIPTION_TEXT)
+        action.setEnabled(bool(description))
+        action.triggered.connect(
+            lambda _checked=False, text=description: QApplication.clipboard().setText(text)
+        )
+        menu.exec(self._site_table.viewport().mapToGlobal(position))
 
     def _apply_stale_row_styling(self) -> None:
         """Dim rows whose source_structure_id doesn't match the active host."""
@@ -877,9 +958,10 @@ class MuonGenerationWidget(QWidget):
             if item0 is None:
                 continue
             row_data = item0.data(Qt.ItemDataRole.UserRole)
-            source_id = (
-                str(row_data.get("source_structure_id", "")) if isinstance(row_data, dict) else ""
-            )
+            if not isinstance(row_data, dict):
+                # A generation run's header row.
+                continue
+            source_id = str(row_data.get("source_structure_id", ""))
             stale = active_host_id is not None and source_id and source_id != active_host_id
             for col in range(self._site_table.columnCount()):
                 item = self._site_table.item(row, col)

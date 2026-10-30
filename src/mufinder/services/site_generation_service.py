@@ -26,13 +26,16 @@ from collections.abc import Callable, Iterable, Sequence
 import copy
 from dataclasses import dataclass, field
 import re
+import secrets
 from typing import Any
 from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import MuonSite, ProvenanceRecord
+from mufinder.domain.models import GenerationRun, GenerationRunMove, MuonSite, ProvenanceRecord
 from mufinder.domain.text import plural
+from mufinder.persistence.codec import to_jsonable
 from mufinder.science.site_generation import (
+    ATTACHED_NEIGHBOUR_CUTOFF_ANG,
     SiteGenerationError,
     closest_symmetry_equivalent_position,
     estimate_muon_muon_separation_for_count,
@@ -41,9 +44,15 @@ from mufinder.science.site_generation import (
     generate_random_sites,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
+    smallest_start_separation,
     symmetry_distinct_atom_indexes,
+    symmetry_distinct_position_count,
 )
-from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, symmetry_detection_warning
+from mufinder.science.spglib_compat import (
+    SYMMETRY_TOLERANCE_ANG,
+    host_symmetry,
+    symmetry_detection_warning,
+)
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 
 #: Status of a freshly generated muon site.
@@ -58,6 +67,8 @@ _IDENTITY_LATTICE = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 _UEP_CLUSTER_METHODS = {"uep_cluster", "uep_cluster_member"}
 _RANDOM_COUNT_RETRIES = 6
 _RANDOM_COUNT_SEPARATION_SHRINK = 0.9
+#: Seeds drawn for a random run that was given none are 1 to this, short enough to quote.
+_DRAWN_SEED_LIMIT = 999_999
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -79,11 +90,14 @@ class SiteGenerationOutcome:
     """Sites a generation, clustering, removal or staging step touched.
 
     ``provenance`` holds the records describing the change, in order; the
-    caller appends them to the project's provenance log.
+    caller appends them to the project's provenance log. ``run`` is the
+    generation run a generation step made, which is added to the document
+    with its sites; other steps leave it ``None``.
     """
 
     sites: list[MuonSite]
     provenance: list[ProvenanceRecord] = field(default_factory=list)
+    run: GenerationRun | None = None
 
 
 @dataclass(slots=True)
@@ -134,10 +148,16 @@ class CandidateSiteRequest:
 
 @dataclass(slots=True)
 class _GeneratedBatch:
-    """The sites one generation method produced and the attempts it took."""
+    """The sites one generation method produced, the inputs it read and the attempts it took.
+
+    ``inputs`` are the values the generation run records for the method;
+    ``attempts_used`` and ``retries`` are ``None`` for methods that draw nothing.
+    """
 
     sites: list[MuonSite]
-    attempts_used: int = 1
+    inputs: dict[str, Any] = field(default_factory=dict)
+    attempts_used: int | None = None
+    retries: int | None = None
 
 
 @dataclass(slots=True)
@@ -148,6 +168,7 @@ class _RandomDraw:
     attempts_used: int
     min_muon_muon: float
     estimated_min_muon_muon: float | None = None
+    retries: int = 0
 
 
 def generate_candidate_sites(
@@ -164,11 +185,15 @@ def generate_candidate_sites(
     constraints. Element-attached generation ranks alternative starts for
     each selected host atom by local clearance from the surrounding host.
 
-    The new sites are added to ``document.sites``. The outcome's provenance
-    holds a ``generate_candidates`` record, followed by a
-    ``generation_partial`` record when fewer sites were generated than
-    requested and a ``symmetry_unavailable`` record when the method uses the
-    host's symmetry but it could not be detected, so the host was treated as P1.
+    The new sites are added to ``document.sites`` and the outcome's
+    :class:`~mufinder.domain.models.GenerationRun` to
+    ``document.generation_runs``; each site's ``source_generation_batch_id`` is
+    the run's id. A random run given no ``seed`` draws one, which the run
+    records. The outcome's provenance holds a ``generate_candidates`` record
+    (with the run), followed by a ``generation_partial`` record when fewer
+    sites were generated than requested and a ``symmetry_unavailable`` record
+    when the method uses the host's symmetry but it could not be detected, so
+    the host was treated as P1.
     """
 
     if method in WORKER_GENERATION_METHODS:
@@ -184,8 +209,7 @@ def generate_candidate_sites(
         else:
             raise SiteGenerationError(f"Unknown generation method '{method}'.")
         outcome = _generation_outcome(method, parameters, host, batch, requested_count)
-    for site in outcome.sites:
-        document.sites[site.id] = site
+    _add_outcome(document, outcome)
     return outcome
 
 
@@ -195,14 +219,19 @@ def prepare_candidate_sites(
     """Capture a random or element-attached request for :func:`compute_candidate_sites`.
 
     Runs on the thread that owns ``document``; the request it returns is safe
-    to compute on another thread.
+    to compute on another thread. A random request given no ``seed`` gets a
+    drawn one here, so the request and the run it makes record the same seed.
     """
 
     if method not in WORKER_GENERATION_METHODS:
         raise SiteGenerationError(f"'{method}' generation cannot run on a worker thread.")
+    request_parameters = copy.deepcopy(dict(parameters))
+    if method == "random":
+        seed = _parse_optional_int(request_parameters.get("seed"), field_name="seed")
+        request_parameters["seed"] = seed if seed is not None else _draw_seed()
     return CandidateSiteRequest(
         method=method,
-        parameters=copy.deepcopy(dict(parameters)),
+        parameters=request_parameters,
         host=_HostContext.for_document(document),
         site_labels=tuple(_site_labels(document)),
     )
@@ -254,8 +283,22 @@ def apply_candidate_sites(
             "so they were not added. Generate them again for the new host."
         )
     _renumber_taken_labels(document, outcome.sites)
+    _add_outcome(document, outcome)
+
+
+def _add_outcome(document: ProjectDocument, outcome: SiteGenerationOutcome) -> None:
+    """Add a generation outcome's sites and run to ``document``."""
+
     for site in outcome.sites:
         document.sites[site.id] = site
+    if outcome.run is not None:
+        document.generation_runs[outcome.run.id] = outcome.run
+
+
+def _draw_seed() -> int:
+    """Return a fresh seed for a random run that was given none."""
+
+    return secrets.randbelow(_DRAWN_SEED_LIMIT) + 1
 
 
 def _renumber_taken_labels(document: ProjectDocument, sites: Sequence[MuonSite]) -> None:
@@ -299,9 +342,12 @@ def _generation_outcome(
     batch: _GeneratedBatch,
     requested_count: int | None,
 ) -> SiteGenerationOutcome:
-    """Describe a generated batch: its sites, and the provenance of the request."""
+    """Describe a generated batch: its sites, its generation run and the provenance of the request."""
 
-    provenance = _generation_provenance(method, parameters, batch, requested_count)
+    run = _generation_run(method, parameters, host, batch, requested_count)
+    for site in batch.sites:
+        site.source_generation_batch_id = run.id
+    provenance = _generation_provenance(method, parameters, batch, requested_count, run)
     warning = _symmetry_warning(method, parameters, host)
     if warning is not None:
         provenance.append(
@@ -314,7 +360,84 @@ def _generation_outcome(
                 output_entity_ids=[site.id for site in batch.sites],
             )
         )
-    return SiteGenerationOutcome(sites=batch.sites, provenance=provenance)
+    return SiteGenerationOutcome(sites=batch.sites, provenance=provenance, run=run)
+
+
+def _uses_symmetry(method: str, parameters: dict[str, Any]) -> bool:
+    """Return whether ``method`` places its starts using the host's symmetry."""
+
+    return method == "near_element" or (
+        method == "random" and bool(parameters.get("include_symmetry_equivalents", True))
+    )
+
+
+def _generation_run(
+    method: str,
+    parameters: dict[str, Any],
+    host: _HostContext,
+    batch: _GeneratedBatch,
+    requested_count: int | None,
+) -> GenerationRun:
+    """Record a generated batch's inputs, seed, host symmetry and outcome."""
+
+    positions = [list(site.initial_fractional_position) for site in batch.sites]
+    has_cell = host.lattice is not None and bool(host.species)
+    symmetry = (
+        host_symmetry(
+            lattice_vectors=host.lattice,
+            species=host.species,
+            fractional_positions=host.positions,
+            symprec=SYMMETRY_TOLERANCE_ANG,
+        )
+        if has_cell
+        else None
+    )
+    return GenerationRun(
+        method=method,
+        parameters=dict(batch.inputs),
+        seed=(
+            _parse_optional_int(parameters.get("seed"), field_name="seed")
+            if method == "random"
+            else None
+        ),
+        uses_symmetry=_uses_symmetry(method, parameters),
+        symmetry_tolerance_ang=None if symmetry is None else symmetry.symprec,
+        space_group_symbol=None if symmetry is None else symmetry.symbol,
+        space_group_number=None if symmetry is None else symmetry.number,
+        symmetry_operation_count=None if symmetry is None else symmetry.operation_count,
+        site_ids=[site.id for site in batch.sites],
+        requested_count=requested_count,
+        distinct_site_count=_distinct_site_count(method, parameters, host, positions),
+        min_muon_muon_ang=(
+            smallest_start_separation(positions, lattice_vectors=host.lattice)
+            if host.lattice is not None
+            else None
+        ),
+        attempts_used=batch.attempts_used,
+        retries=batch.retries,
+        source_structure_id=host.structure_id,
+    )
+
+
+def _distinct_site_count(
+    method: str, parameters: dict[str, Any], host: _HostContext, positions: list[list[float]]
+) -> int | None:
+    """Return how many starts are symmetry-distinct, or ``None`` without a host cell.
+
+    A random run that excluded symmetry images made only distinct starts, so
+    it is not counted again.
+    """
+
+    if host.lattice is None or not host.species:
+        return None
+    if method == "random" and _uses_symmetry(method, parameters):
+        return len(positions)
+    return symmetry_distinct_position_count(
+        positions,
+        lattice_vectors=host.lattice,
+        host_species=host.species,
+        host_positions_frac=host.positions,
+    )
 
 
 def requested_site_count(
@@ -332,10 +455,7 @@ def requested_site_count(
 def _symmetry_warning(method: str, parameters: dict[str, Any], host: _HostContext) -> str | None:
     """Return why the host's symmetry was not detected, when ``method`` uses it."""
 
-    uses_symmetry = method == "near_element" or (
-        method == "random" and bool(parameters.get("include_symmetry_equivalents", True))
-    )
-    if not uses_symmetry or host.lattice is None or not host.species:
+    if not _uses_symmetry(method, parameters) or host.lattice is None or not host.species:
         return None
     return symmetry_detection_warning(
         lattice_vectors=host.lattice,
@@ -352,8 +472,11 @@ def cluster_candidate_positions(
 ) -> SiteGenerationOutcome:
     """Move selected generated muon sites to symmetry representatives near an anchor.
 
-    Sites that are missing or no longer generated are skipped. The outcome's
-    provenance holds one ``cluster_candidate_positions`` record.
+    Sites that are missing or no longer generated are skipped. Each moved
+    site's generation run records the anchor and the site's position before
+    the move (a :class:`~mufinder.domain.models.GenerationRunMove`). The
+    outcome's provenance holds one ``cluster_candidate_positions`` record,
+    which also keeps the original positions.
     """
 
     host = active_host_structure(document)
@@ -369,6 +492,7 @@ def cluster_candidate_positions(
     lattice = host.lattice_vectors
     anchor = [float(value) % 1.0 for value in anchor_fractional]
     updated: list[MuonSite] = []
+    originals: dict[UUID, list[float]] = {}
     for site_id in site_ids:
         site = document.sites.get(site_id)
         if site is None or site.status not in LEGACY_GENERATED_SITE_STATUSES:
@@ -384,12 +508,14 @@ def cluster_candidate_positions(
             host_species=host.species,
             host_positions_frac=host.fractional_positions,
         )
+        originals[site.id] = [float(value) for value in site.initial_fractional_position]
         site.initial_fractional_position = clustered
         site.initial_cartesian_position = lattice_frac_to_cart(clustered, lattice)
         updated.append(site)
 
     if not updated:
         raise SiteGenerationError("Selected rows did not contain any generated muon positions.")
+    run_ids = _record_cluster_move(document, updated, originals, anchor)
 
     record = ProvenanceRecord(
         action="cluster_candidate_positions",
@@ -399,11 +525,33 @@ def cluster_candidate_positions(
         parameters={
             "anchor_fractional": anchor,
             "site_labels": [site.label for site in updated],
+            "original_fractional_positions": {site.label: originals[site.id] for site in updated},
+            "generation_run_ids": [str(run_id) for run_id in run_ids],
         },
         input_entity_ids=[site.id for site in updated],
         output_entity_ids=[site.id for site in updated],
     )
     return SiteGenerationOutcome(sites=updated, provenance=[record])
+
+
+def _record_cluster_move(
+    document: ProjectDocument,
+    sites: Sequence[MuonSite],
+    originals: dict[UUID, list[float]],
+    anchor: list[float],
+) -> list[UUID]:
+    """Add one move to the run of each moved site; return the runs that got one."""
+
+    by_run: dict[UUID, dict[str, list[float]]] = {}
+    for site in sites:
+        run_id = site.source_generation_batch_id
+        if run_id is not None and run_id in document.generation_runs:
+            by_run.setdefault(run_id, {})[str(site.id)] = originals[site.id]
+    for run_id, positions in by_run.items():
+        document.generation_runs[run_id].moves.append(
+            GenerationRunMove(anchor_fractional=list(anchor), original_positions=positions)
+        )
+    return list(by_run)
 
 
 def remove_candidate_sites(
@@ -525,7 +673,9 @@ def _generate_manual_site(
         source_structure_id=host.structure_id,
         properties={"coordinate_system": coord_system},
     )
-    return _GeneratedBatch(sites=[site])
+    return _GeneratedBatch(
+        sites=[site], inputs={"coord_system": coord_system, "coordinates": coords}
+    )
 
 
 def _generate_random_sites(
@@ -584,7 +734,23 @@ def _generate_random_sites(
         )
         for idx, point in enumerate(draw.points, start=1)
     ]
-    return _GeneratedBatch(sites=sites, attempts_used=draw.attempts_used)
+    inputs: dict[str, Any] = {
+        "selection_mode": selection_mode,
+        "min_muon_muon": draw.min_muon_muon,
+        "min_muon_atom": min_muon_atom,
+        "max_attempts": int(parameters.get("max_attempts", 20000)),
+        "include_symmetry_equivalents": include_symmetry_equivalents,
+    }
+    if selection_mode == "count":
+        inputs["count"] = int(requested_count or 0)
+    if draw.estimated_min_muon_muon is not None:
+        inputs["estimated_min_muon_muon"] = draw.estimated_min_muon_muon
+    return _GeneratedBatch(
+        sites=sites,
+        inputs=inputs,
+        attempts_used=draw.attempts_used,
+        retries=draw.retries if selection_mode == "count" else None,
+    )
 
 
 def _random_draw_by_separation(
@@ -647,8 +813,9 @@ def _random_draw_by_count(
         include_symmetry_equivalents=include_symmetry_equivalents,
     )
     min_muon_muon = estimated_min_muon_muon
+    max_attempts = int(parameters.get("max_attempts", 20000))
     last_error: SiteGenerationError | None = None
-    for _attempt in range(_RANDOM_COUNT_RETRIES):
+    for retry in range(_RANDOM_COUNT_RETRIES):
         try:
             points, attempts_used = generate_random_sites(
                 lattice_vectors=host.lattice,
@@ -657,7 +824,7 @@ def _random_draw_by_count(
                 count=target_count,
                 min_muon_muon=min_muon_muon,
                 min_muon_atom=min_muon_atom,
-                max_attempts=int(parameters.get("max_attempts", 20000)),
+                max_attempts=max_attempts,
                 seed=seed,
                 include_symmetry_equivalents=include_symmetry_equivalents,
                 progress_callback=progress_callback,
@@ -666,11 +833,13 @@ def _random_draw_by_count(
             last_error = exc
             min_muon_muon *= _RANDOM_COUNT_SEPARATION_SHRINK
             continue
+        # A try that falls short has drawn its whole attempt limit.
         return _RandomDraw(
             points=points,
-            attempts_used=attempts_used,
+            attempts_used=retry * max_attempts + attempts_used,
             min_muon_muon=min_muon_muon,
             estimated_min_muon_muon=estimated_min_muon_muon,
+            retries=retry,
         )
     assert last_error is not None
     raise last_error
@@ -718,7 +887,14 @@ def _generate_attached_element_sites(
         )
         for idx, point in enumerate(points, start=1)
     ]
-    return _GeneratedBatch(sites=sites, attempts_used=attempts_used)
+    inputs = {
+        "element": target_element,
+        "muons_per_atom": muons_per_atom,
+        "bond_distance": bond_distance,
+        "min_muon_atom": min_muon_atom,
+        "neighbour_cutoff_ang": ATTACHED_NEIGHBOUR_CUTOFF_ANG,
+    }
+    return _GeneratedBatch(sites=sites, inputs=inputs, attempts_used=attempts_used)
 
 
 def _generate_uep_cluster_sites(
@@ -751,7 +927,44 @@ def _generate_uep_cluster_sites(
         raise SiteGenerationError(
             "Selected UEP cluster rows did not contain any usable generated sites."
         )
-    return _GeneratedBatch(sites=sites)
+    return _GeneratedBatch(sites=sites, inputs=_uep_run_inputs(selections))
+
+
+#: UEP clustering settings a UEP cluster row carries, which a generation run records.
+_UEP_GROUPING_KEYS = (
+    "clustering_method",
+    "clustering_hier_t",
+    "clustering_kmeans_k",
+    "clustering_linkage_method",
+    "feature_mode",
+    "threshold_ang",
+)
+
+
+def _uep_run_inputs(selections: Sequence[object]) -> dict[str, Any]:
+    """Return the source jobs and UEP grouping settings of the selected UEP rows."""
+
+    source_jobs: list[dict[str, str]] = []
+    grouping: dict[str, Any] = {}
+    for selection in selections:
+        if not isinstance(selection, dict):
+            continue
+        properties = selection.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        job = {
+            "id": str(properties.get("source_job_id", selection.get("source_job_id", "")) or ""),
+            "label": str(properties.get("source_job_label", "") or ""),
+        }
+        if (job["id"] or job["label"]) and job not in source_jobs:
+            source_jobs.append(job)
+        if not grouping:
+            grouping = {
+                key: properties[key]
+                for key in _UEP_GROUPING_KEYS
+                if properties.get(key) is not None
+            }
+    return {"source_jobs": source_jobs, "grouping": grouping}
 
 
 def _uep_cluster_site(
@@ -823,8 +1036,14 @@ def _generation_provenance(
     parameters: dict[str, Any],
     batch: _GeneratedBatch,
     requested_count: int | None,
+    run: GenerationRun,
 ) -> list[ProvenanceRecord]:
-    """Describe a generation request, flagging a shortfall against the requested count."""
+    """Describe a generation request and its run, flagging a shortfall against the requested count.
+
+    The ``generate_candidates`` record keeps the request's parameters and the
+    whole run under ``generation_run``, so the record alone says how the starts
+    were made.
+    """
 
     created_ids = [site.id for site in batch.sites]
     records = [
@@ -833,7 +1052,12 @@ def _generation_provenance(
             workflow_stage=WorkflowStage.MUON_GENERATION,
             actor="user",
             description=f"Generated {plural(len(batch.sites), 'site')} via {method}",
-            parameters={"method": method, **parameters},
+            parameters={
+                "method": method,
+                **parameters,
+                "generation_run_id": str(run.id),
+                "generation_run": to_jsonable(run),
+            },
             output_entity_ids=list(created_ids),
         )
     ]
@@ -852,7 +1076,7 @@ def _generation_provenance(
                 parameters={
                     "requested": requested_count,
                     "generated": len(batch.sites),
-                    "attempts": batch.attempts_used,
+                    "attempts": batch.attempts_used if batch.attempts_used is not None else 1,
                 },
                 output_entity_ids=list(created_ids),
             )

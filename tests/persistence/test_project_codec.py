@@ -11,6 +11,8 @@ import pytest
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CONVERGED_DEFAULT_METHOD,
+    GenerationRun,
+    GenerationRunMove,
     MANUAL_DEFAULT_METHOD,
     Job,
     MuonSite,
@@ -234,3 +236,52 @@ def test_project_from_dict_keeps_a_manual_default() -> None:
 
     assert project.recommended_cutoff_method == MANUAL_DEFAULT_METHOD
     assert project.recommended_kpoint_method == MANUAL_DEFAULT_METHOD
+
+
+def test_a_generation_run_round_trips_and_reads_malformed_optional_values_as_none() -> None:
+    run = GenerationRun(
+        method="random",
+        parameters={"count": 4},
+        seed=7,
+        uses_symmetry=True,
+        symmetry_tolerance_ang=1e-3,
+        space_group_symbol="P4_2/mnm",
+        space_group_number=136,
+        symmetry_operation_count=16,
+        site_ids=[uuid4()],
+        moves=[GenerationRunMove(anchor_fractional=[0.5, 0.5, 0.5], original_positions={})],
+    )
+
+    assert project_codec.generation_run_from_dict(to_jsonable(run)) == run
+
+    sparse = project_codec.generation_run_from_dict(
+        {"id": str(uuid4()), "seed": "not a seed", "min_muon_muon_ang": "x", "moves": "bad"}
+    )
+    assert (sparse.seed, sparse.min_muon_muon_ang, sparse.moves, sparse.method) == (
+        None,
+        None,
+        [],
+        "",
+    )
+
+
+def test_a_generation_run_with_malformed_moves_and_site_ids_still_loads() -> None:
+    good = uuid4()
+    run = project_codec.generation_run_from_dict(
+        {
+            "id": str(uuid4()),
+            "site_ids": [str(good), "not-a-uuid", None],
+            "created_at": "yesterday",
+            "moves": [
+                {
+                    "anchor_fractional": [None, 0, 0],
+                    "original_positions": {"a": [0.1, 0.2, 0.3], "b": "bad"},
+                    "moved_at": 3,
+                }
+            ],
+        }
+    )
+
+    assert run.site_ids == [good]
+    assert run.moves[0].anchor_fractional == [0.0, 0.0, 0.0]
+    assert run.moves[0].original_positions == {"a": [0.1, 0.2, 0.3]}

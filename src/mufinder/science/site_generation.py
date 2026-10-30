@@ -529,6 +529,71 @@ def _fibonacci_sphere_directions(count: int) -> list[list[float]]:
     return directions
 
 
+#: Two starts closer than this (Angstrom) under a symmetry operation are the same start.
+DISTINCT_START_TOLERANCE_ANG = 1e-3
+
+
+def symmetry_distinct_position_count(
+    positions_frac: Sequence[Sequence[float]],
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None,
+    host_species: Sequence[str],
+    host_positions_frac: Sequence[Sequence[float]],
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+    tolerance_ang: float = DISTINCT_START_TOLERANCE_ANG,
+) -> int:
+    """Return how many of ``positions_frac`` are not symmetry images of an earlier one.
+
+    A position counts once unless an image of it under the host's symmetry
+    operations lies within ``tolerance_ang`` (nearest image) of a position
+    already counted. Without detected symmetry the count is the number of
+    distinct positions.
+    """
+
+    if not positions_frac:
+        return 0
+    lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
+    operations = (
+        _symmetry_operations(
+            lattice_vectors=lattice,
+            host_species=host_species,
+            host_positions_frac=host_positions_frac,
+            symprec=symprec,
+        )
+        if host_species
+        else None
+    )
+    kept: list[list[float]] = []
+    for position in positions_frac:
+        orbit = symmetry_orbit(
+            position, operations, lattice_vectors=lattice, tolerance=_ORBIT_TOLERANCE_ANG
+        )
+        if kept and float(nearest_image_distance_matrix(kept, orbit, lattice).min()) <= float(
+            tolerance_ang
+        ):
+            continue
+        kept.append(wrap_fractional(position))
+    return len(kept)
+
+
+def smallest_start_separation(
+    positions_frac: Sequence[Sequence[float]],
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None,
+) -> float | None:
+    """Return the smallest nearest-image distance (Angstrom) between two of the positions.
+
+    ``None`` when there are fewer than two positions.
+    """
+
+    if len(positions_frac) < 2:
+        return None
+    lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
+    distances = nearest_image_distance_matrix(positions_frac, positions_frac, lattice)
+    np.fill_diagonal(distances, np.inf)
+    return float(distances.min())
+
+
 def symmetry_distinct_atom_indexes(
     *,
     lattice_vectors: Sequence[Sequence[float]] | None,

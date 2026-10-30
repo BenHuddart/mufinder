@@ -124,7 +124,7 @@ from mufinder.app.export_dialogs import open_containing_folder
 from mufinder.app.failed_job_dialog import FailedJobAction, FailedJobDialog
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
-from mufinder.domain.text import natural_sort_key, plural
+from mufinder.domain.text import plural
 from mufinder.services.legacy_import import LegacyFolderScan
 from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
 from mufinder.services.legacy_import_removal import (
@@ -276,7 +276,7 @@ from mufinder.app.workflow_controllers import (
 from mufinder.castep_io.geometry_progress import GeometryProgress
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
-from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.cluster_runner import CheckpointProbeResult
 from mufinder.services.cluster_submission_planner import (
@@ -342,9 +342,12 @@ from mufinder.services.magnetic_field_results import (
     remove_magnetic_field_results,
     store_magnetic_field_results,
 )
+from mufinder.services.generation_runs import generation_run_groups
 from mufinder.services.muon_sites_summary import (
+    analysis_workspace_created_record,
     build_muon_sites_summary_snapshot,
     muon_sites_summary_snapshots,
+    relaxed_sites_grouped_record,
     store_muon_sites_summary_snapshot,
     validated_muon_sites_summary_snapshot,
 )
@@ -938,6 +941,7 @@ class MainWindow(QMainWindow):
         self._relaxation_analysis_view.pin_summary_requested.connect(
             self._on_muon_sites_pin_requested
         )
+        self._relaxation_analysis_view.grouping_applied.connect(self._record_relaxed_sites_grouped)
         self._relaxation_analysis_view.delete_requested.connect(
             self._delete_relaxation_analysis_workspace
         )
@@ -6782,6 +6786,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Generation blocked", str(exc))
             return
 
+        self._persist_document_ui_state(
+            failure_message="Muon sites were generated, but autosave failed."
+        )
         self._refresh_muon_generation_table()
         self._refresh_journal_view()
         self._finish_generation_status(method, parameters, created)
@@ -6896,6 +6903,9 @@ class MainWindow(QMainWindow):
         except SiteGenerationError as exc:
             self._on_threaded_generation_failed(method, str(exc))
             return
+        self._persist_document_ui_state(
+            failure_message="Muon sites were generated, but autosave failed."
+        )
         used_spacing: object | None = None
         if method == "random" and sites:
             used_spacing = sites[0].properties.get(
@@ -7026,6 +7036,9 @@ class MainWindow(QMainWindow):
             return
 
         clustered_ids = [str(site.id) for site in clustered]
+        self._persist_document_ui_state(
+            failure_message="Muon positions were clustered, but autosave failed."
+        )
         self._refresh_muon_generation_table()
         self._muon_generation_view.select_site_ids(clustered_ids)
         self._refresh_journal_view()
@@ -7075,6 +7088,9 @@ class MainWindow(QMainWindow):
             for site in staged
         ]
         self._muon_relaxation_view.add_staged_sites(rows, charge_states=charge_states)
+        self._persist_document_ui_state(
+            failure_message="Muon sites were staged, but autosave failed."
+        )
         self._refresh_muon_generation_table()
         self._refresh_workflow_defaults(self._muon_relaxation_view)
         self._refresh_muon_relaxation_rows()
@@ -7151,8 +7167,16 @@ class MainWindow(QMainWindow):
         workspaces = self._relaxation_analysis_workspaces()
         workspaces.append(workspace)
         self._set_relaxation_analysis_workspaces(workspaces)
+        self._project_service.append_provenance(
+            self._document, analysis_workspace_created_record(workspace)
+        )
+        # The Journal now names the workspace, so save it with its record.
+        self._persist_document_ui_state(
+            failure_message="The analysis workspace was created, but autosave failed."
+        )
         self._refresh_relaxation_analysis_context()
         self._populate_project_tree()
+        self._refresh_journal_view()
         self._set_active_route(self._relaxation_analysis_workspace_route(str(workspace["id"])))
         self.statusBar().showMessage(f"Created analysis workspace '{workspace['name']}'")
 
@@ -7330,6 +7354,36 @@ class MainWindow(QMainWindow):
             f"Added {plural(len(selected), 'relaxation result')} to the analysis workspace"
         )
 
+    def _record_relaxed_sites_grouped(self, workspace_id: str) -> None:
+        if self._document is None:
+            return
+        workspace = next(
+            (
+                entry
+                for entry in self._relaxation_analysis_workspaces()
+                if str(entry.get("id", "")) == str(workspace_id)
+            ),
+            None,
+        )
+        if workspace is None:
+            return
+        record = relaxed_sites_grouped_record(workspace, self._workspace_host(workspace))
+        if record is None:
+            return
+        self._project_service.append_provenance(self._document, record)
+        self._persist_document_ui_state(
+            failure_message="The grouping was applied, but autosave failed."
+        )
+        self._refresh_journal_view()
+
+    def _workspace_host(self, workspace: dict) -> Structure | None:
+        """Return the host structure a relaxation analysis workspace was made for."""
+
+        if self._document is None:
+            return None
+        host_id = uuid_or_none(workspace.get("host_structure_id"))
+        return self._document.structures.get(host_id) if host_id is not None else None
+
     # --- Muon Sites summary (pinned analyses) -------------------------------
 
     @staticmethod
@@ -7381,7 +7435,7 @@ class MainWindow(QMainWindow):
         )
         if workspace is None:
             return
-        snapshot = build_muon_sites_summary_snapshot(workspace)
+        snapshot = build_muon_sites_summary_snapshot(workspace, self._workspace_host(workspace))
         if snapshot is None:
             QMessageBox.information(
                 self,
@@ -10019,7 +10073,8 @@ class MainWindow(QMainWindow):
             for site in self._document.sites.values()
             if site.status in {"generated", "candidate", "staged"}
         ]
-        candidates.sort(key=lambda item: natural_sort_key(item.label))
+        groups = generation_run_groups(self._document, candidates)
+        by_id = {site.id: site for site in candidates}
         rows = [
             {
                 "id": str(site.id),
@@ -10032,9 +10087,21 @@ class MainWindow(QMainWindow):
                     str(site.source_structure_id) if site.source_structure_id else ""
                 ),
             }
-            for site in candidates
+            for group in groups
+            for site in (by_id[site_id] for site_id in group.site_ids)
         ]
-        self._muon_generation_view.set_sites(rows)
+        self._muon_generation_view.set_sites(
+            rows,
+            groups=[
+                {
+                    "key": group.key,
+                    "title": group.title,
+                    "description": group.description,
+                    "site_ids": [str(site_id) for site_id in group.site_ids],
+                }
+                for group in groups
+            ],
+        )
         self._muon_generation_view.set_uep_cluster_sources(self._uep_cluster_source_rows())
         self._refresh_workflow_stage_icons()
         self._sync_project_home()

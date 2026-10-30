@@ -627,6 +627,11 @@ defined by two of these modules, and a pinned count may only fall.
        ``pinned_sites_by_representative``), and the per-workflow "Show every relaxed
        site" choice and notice that decide which sites quantum corrections,
        energy barriers and magnetic fields list (``downstream_site_scope``).
+       The snapshot keeps how the sites were grouped (``relaxed_site_grouping``:
+       method, tolerances, symmetry tolerance and space group), which the
+       summary card and its CIF export state; the module also builds the
+       provenance records of a new analysis workspace and of an applied grouping
+       (``analysis_workspace_created_record``, ``relaxed_sites_grouped_record``).
    * - ``mufinder.services.convergence_defaults``
      - The pinned cutoff and k-point plots on the Convergence Testing
        overview: building a snapshot from the examiner's saved plot data when
@@ -722,7 +727,19 @@ defined by two of these modules, and a pinned count may only fall.
        refusing them if the active host or its geometry changed and
        renumbering a label another site took meanwhile. The main window's
        ``MuonGenerationThread`` runs only the middle step. The placement maths
-       is ``mufinder.science.site_generation``.
+       is ``mufinder.science.site_generation``. Every generation records a
+       ``GenerationRun`` (inputs, seed, host space group, outcome) that its
+       sites point to through ``source_generation_batch_id``; a random run
+       given no seed draws one in ``prepare_candidate_sites``. Clustering near an
+       anchor adds the starts' positions before the move to their run.
+   * - ``mufinder.services.generation_runs``
+     - The words for a generation run: its one-line summary
+       (``run_summary_line``, also the Journal's line with the seed,
+       ``run_journal_line``), its methods-section sentence
+       (``run_methods_sentence``), and the grouping of generated starts by run
+       for the Generation page (``generation_run_groups``), with starts made
+       before runs were recorded grouped as "Earlier starts" from their
+       ``properties``.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
        submission: the workflow directory fragment and remote path

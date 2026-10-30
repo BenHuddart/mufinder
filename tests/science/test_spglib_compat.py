@@ -358,3 +358,16 @@ def test_orbit_tolerance_units_follow_the_lattice_argument() -> None:
     assert len(in_fractions) == 48
     closest = min(minimum_image_distance(in_fractions[0], other) for other in in_fractions[1:])
     assert 1e-7 < closest < 2e-6
+
+
+def test_host_symmetry_reports_the_space_group_and_its_operation_count() -> None:
+    symmetry = spglib_compat.host_symmetry(cof2_host())
+
+    assert (symmetry.symbol, symmetry.number, symmetry.operation_count) == ("P4_2/mnm", 136, 16)
+    assert symmetry.symprec == SYMMETRY_TOLERANCE_ANG
+
+
+def test_host_symmetry_without_detected_symmetry_is_p1_with_one_operation() -> None:
+    symmetry = spglib_compat.host_symmetry(cof2_host(cobalt_label="Xx"))
+
+    assert (symmetry.symbol, symmetry.number, symmetry.operation_count) == (None, None, 1)

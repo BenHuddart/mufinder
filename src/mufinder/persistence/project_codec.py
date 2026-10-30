@@ -22,6 +22,8 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
+    GenerationRun,
+    GenerationRunMove,
     Job,
     MuonSite,
     Project,
@@ -31,7 +33,14 @@ from mufinder.domain.models import (
     normalize_default_method,
     utc_now,
 )
-from mufinder.persistence.codec import parse_datetime, parse_uuid
+from mufinder.persistence.codec import (
+    float_or_none,
+    float_triplet_or_none,
+    int_or_none,
+    parse_datetime,
+    parse_uuid,
+    uuid_or_none,
+)
 
 #: Status a freshly generated muon site loads with.
 _GENERATED_SITE_STATUS = "generated"
@@ -275,6 +284,75 @@ def comparison_table_from_dict(payload: dict[str, Any]) -> ComparisonTable:
     )
 
 
+def generation_run_from_dict(payload: dict[str, Any]) -> GenerationRun:
+    """Decode one muon generation run; malformed optional values load as ``None``."""
+
+    raw_parameters = payload.get("parameters")
+    raw_moves = payload.get("moves")
+    return GenerationRun(
+        id=UUID(payload["id"]),
+        method=str(payload.get("method", "")),
+        parameters=dict(raw_parameters) if isinstance(raw_parameters, dict) else {},
+        seed=int_or_none(payload.get("seed")),
+        uses_symmetry=bool(payload.get("uses_symmetry", False)),
+        symmetry_tolerance_ang=float_or_none(payload.get("symmetry_tolerance_ang")),
+        space_group_symbol=(
+            str(payload["space_group_symbol"]) if payload.get("space_group_symbol") else None
+        ),
+        space_group_number=int_or_none(payload.get("space_group_number")),
+        symmetry_operation_count=int_or_none(payload.get("symmetry_operation_count")),
+        site_ids=[
+            site_id
+            for site_id in map(uuid_or_none, _list_or_empty(payload.get("site_ids")))
+            if site_id is not None
+        ],
+        requested_count=int_or_none(payload.get("requested_count")),
+        distinct_site_count=int_or_none(payload.get("distinct_site_count")),
+        min_muon_muon_ang=float_or_none(payload.get("min_muon_muon_ang")),
+        attempts_used=int_or_none(payload.get("attempts_used")),
+        retries=int_or_none(payload.get("retries")),
+        source_structure_id=uuid_or_none(payload.get("source_structure_id")),
+        created_at=_datetime_or_now(payload.get("created_at")),
+        moves=[
+            _generation_run_move_from_dict(move)
+            for move in (raw_moves if isinstance(raw_moves, list) else [])
+            if isinstance(move, dict)
+        ],
+    )
+
+
+def _list_or_empty(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _datetime_or_now(value: object) -> datetime:
+    try:
+        return parse_datetime(value) or utc_now()  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return utc_now()
+
+
+def _position_or_none(value: object) -> list[float] | None:
+    triplet = float_triplet_or_none(value)
+    return None if triplet is None else list(triplet)
+
+
+def _generation_run_move_from_dict(payload: dict[str, Any]) -> GenerationRunMove:
+    """Decode one Cluster Positions step; a malformed position is left out, never fatal."""
+
+    raw_positions = payload.get("original_positions")
+    positions = {
+        str(site_id): position
+        for site_id, raw in (raw_positions.items() if isinstance(raw_positions, dict) else ())
+        if (position := _position_or_none(raw)) is not None
+    }
+    return GenerationRunMove(
+        anchor_fractional=_position_or_none(payload.get("anchor_fractional")) or [0.0, 0.0, 0.0],
+        original_positions=positions,
+        moved_at=_datetime_or_now(payload.get("moved_at")),
+    )
+
+
 def jobs_in_creation_order(
     payloads: list[dict[str, Any]],
     provenance: Sequence[ProvenanceRecord],
@@ -453,4 +531,5 @@ ENTITY_DECODERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "runs": run_from_dict,
     "results": result_from_dict,
     "comparison_tables": comparison_table_from_dict,
+    "generation_runs": generation_run_from_dict,
 }
