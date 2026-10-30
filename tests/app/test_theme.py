@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QEvent, QSettings, Qt
 from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
+    QMessageBox,
+    QProxyStyle,
+    QStyle,
     QTableWidget,
     QToolButton,
     QTreeWidget,
@@ -646,3 +652,46 @@ def test_style_plot_legend_paints_frame_and_text(qapp) -> None:
     assert frame.get_alpha() == pytest.approx(0.95)
     assert [text.get_color() for text in legend.get_texts()] == [palette.text_primary]
     theme_module.style_plot_legend(None)
+
+
+class _DesktopIconsStyle(QProxyStyle):
+    """Fusion as a Linux desktop's platform theme sets it: standard buttons get icons."""
+
+    def __init__(self) -> None:
+        super().__init__("Fusion")
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None) -> int:  # noqa: N802
+        if hint == QStyle.StyleHint.SH_DialogButtonBox_ButtonsHaveIcons:
+            return 1
+        return super().styleHint(hint, option, widget, returnData)
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_apply_theme_keeps_dialog_standard_buttons_plain(qapp, mode) -> None:
+    previous_sheet = qapp.styleSheet()
+    previous_mode = theme_module.current_palette().mode
+    theme_module.apply_theme(qapp, mode)
+    # Swap in a desktop-like base style; Qt keeps the app stylesheet on top of it.
+    qapp.setStyle(_DesktopIconsStyle())
+    widgets = []
+    try:
+        dialog = QDialog()
+        widgets.append(dialog)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        box = QMessageBox(QMessageBox.Icon.Question, "Remove", "Remove it?")
+        widgets.append(box)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        standard_buttons = [*buttons.buttons(), *box.buttons()]
+        assert len(standard_buttons) == 4
+        assert all(button.icon().isNull() for button in standard_buttons)
+    finally:
+        for widget in widgets:
+            widget.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qapp.setStyle("Fusion")  # the base style apply_theme installs
+        theme_module.apply_theme(qapp, previous_mode)
+        qapp.setStyleSheet(previous_sheet)

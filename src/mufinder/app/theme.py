@@ -1539,7 +1539,13 @@ def _header_styles(p: MuFinderPalette) -> str:
 
 
 def _button_styles(p: MuFinderPalette) -> str:
+    # Standard dialog buttons (OK, Cancel, Yes, No, also inside QMessageBox)
+    # stay plain like every other MuFinder button. Without this, a Linux
+    # desktop's platform theme makes Fusion add an icon to each one.
     return f"""
+    QDialogButtonBox {{
+        dialogbuttonbox-buttons-have-icons: 0;
+    }}
     QToolButton#plotPopOutButton {{
         background: {p.bg_surface};
         border: 1px solid {p.border};

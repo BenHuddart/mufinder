@@ -1681,6 +1681,12 @@ each platform's native look:
   re-create their glyph icons on a theme change. One icon per glyph is shared by
   every widget that shows it. Disabled and selected looks are derived from the
   current rendering by the style, as for a plain pixmap icon.
+- Standard dialog buttons (``OK``, ``Cancel``, ``Yes``, ``No`` and the rest, in
+  every ``QDialogButtonBox`` and ``QMessageBox``) carry no icon, whatever the
+  platform theme asks for. The app stylesheet sets
+  ``dialogbuttonbox-buttons-have-icons: 0`` on ``QDialogButtonBox``, overriding
+  the platform theme that would otherwise make Fusion add an icon to each button
+  on a Linux desktop. Dialogs need no code of their own for this.
 - Checkbox and radio-button indicators are drawn by the stylesheet with bundled
   tick and dot glyphs and tinted with the muon-red accent, instead of each
   operating system's native artwork and accent colour. Checkable rows in tree,
