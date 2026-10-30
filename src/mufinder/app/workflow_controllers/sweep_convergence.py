@@ -11,16 +11,27 @@ spelling in the job mapping), :meth:`parse_mapping_key` (its inverse),
 :meth:`sweep_point_signatures` (what makes two definitions' sweep points
 equivalent, for :meth:`sync_mappings`) and :meth:`legacy_job_for_key` (the
 lookup for a definition written before the mapping existed).
+
+The controller also examines a sweep and adopts its result as the project
+default (:meth:`~SweepConvergenceController.examine`,
+:meth:`~SweepConvergenceController.adopt`). Three more hooks carry what
+differs between the sweeps: ``examiner_input`` (the examiner's points and its
+sweep-specific options), ``resolve_adopted_key`` (the sweep key an adopted
+value names) and ``record_adopted_default`` (the project-default setter and the
+pinned overview snapshot). The examiner dialog, the confirmation and the window
+refreshes come in through the deps.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
-from mufinder.domain.models import CalculationDefinition, Job
+from mufinder.domain.models import CalculationDefinition, Job, Structure
+from mufinder.persistence.codec import to_jsonable
+from mufinder.services.project_document import ProjectDocument
 from mufinder.services.definition_mappings import (
     convergence_mapping_job_priority,
     sweep_definition_context_matches,
@@ -29,7 +40,12 @@ from mufinder.services.definition_mappings import (
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
-from mufinder.app.convergence_types import ConvergenceConfig, SweepKeyCodec, SweepPointRunState
+from mufinder.app.convergence_types import (
+    ConvergenceConfig,
+    SweepKeyCodec,
+    SweepPointRunState,
+    convergence_config_xc_functional,
+)
 from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
@@ -55,6 +71,18 @@ class SweepConvergenceDeps(Protocol):
     @property
     def max_stress_for_job(self) -> Callable[[UUID], float | None]: ...
 
+    @property
+    def run_examiner(self) -> Callable[..., dict[str, object]]: ...
+
+    @property
+    def show_warning(self) -> Callable[[str, str], None]: ...
+
+    @property
+    def confirm_choice(self) -> Callable[..., str]: ...
+
+    @property
+    def refresh_after_default_adopted(self) -> Callable[[], None]: ...
+
 
 class SweepConvergenceController(WorkflowJobController):
     """Submit, materialize and refresh cycle for one convergence sweep.
@@ -68,7 +96,10 @@ class SweepConvergenceController(WorkflowJobController):
     - ``mapping_name``: the definition's ``job_ids_by_<key>`` mapping;
     - ``form_state_key`` / ``keys_state_field`` / ``default_name_prefix``: where
       the widget's form state lives in ``ui_state``, its key list and its
-      default job-name prefix.
+      default job-name prefix;
+    - ``examiner_state_key``: where the examiner's state lives in ``ui_state``;
+    - ``snapshot_persist_failure_message``: the status shown when saving an
+      adopted default's overview snapshot fails.
     """
 
     key_codec: SweepKeyCodec[Any]
@@ -78,6 +109,8 @@ class SweepConvergenceController(WorkflowJobController):
     form_state_key = ""
     keys_state_field = ""
     default_name_prefix = ""
+    examiner_state_key = ""
+    snapshot_persist_failure_message = ""
 
     def __init__(
         self,
@@ -391,6 +424,213 @@ class SweepConvergenceController(WorkflowJobController):
                 return name_prefix, keys
 
         return self.default_name_prefix, ()
+
+    # --- examine and adopt ---
+
+    def examiner_input(
+        self, states: Mapping[Any, SweepPointRunState], cell: Structure
+    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], dict[str, object]]:
+        """Return the examiner's points by axis value, their labels and its options.
+
+        The options are the sweep-specific keyword arguments of the examiner
+        dialog; ``cell`` is the structure the sweep ran on.
+        """
+
+        raise NotImplementedError
+
+    def resolve_adopted_key(self, value: float, point_labels: Mapping[float, str]) -> Any | None:
+        """Return the sweep key the adopted axis ``value`` names, or ``None``.
+
+        ``None`` shows an ``Adopt failed`` warning with
+        :meth:`unresolved_adopt_message`.
+        """
+
+        raise NotImplementedError
+
+    def unresolved_adopt_message(self) -> str:
+        """Return the warning text for a value :meth:`resolve_adopted_key` cannot resolve."""
+
+        return ""
+
+    def record_adopted_default(
+        self,
+        document: ProjectDocument,
+        key: Any,
+        definition: CalculationDefinition | None,
+        *,
+        method: str,
+        energy_threshold: float,
+        force_threshold: float,
+        stress_threshold: float | None,
+        cell_id: str | None,
+        definition_cell_id: str | None,
+        xc_functional: str | None,
+        point_labels: Mapping[float, str],
+    ) -> str:
+        """Set ``key`` as the project default and pin its overview snapshot.
+
+        ``cell_id`` is the cell recorded with the default (the sweep's cell,
+        else the active host); ``definition_cell_id`` is the sweep's own cell
+        only. Returns the status-bar message.
+        """
+
+        raise NotImplementedError
+
+    def sweep_cell(self, definition: CalculationDefinition | None) -> Structure | None:
+        """Return the cell a convergence sweep ran on: its definition's input structure.
+
+        That is the unit cell or the saved supercell chosen under ``Simulation
+        Cell``. Per-atom energies and k-point spacings must use this cell, not the
+        host unit cell, or a supercell sweep is normalized by the wrong atom count
+        and its grids are related to the wrong lattice.
+        """
+
+        document = self._context.document()
+        if document is None or definition is None or not definition.input_structure_ids:
+            return None
+        return document.structures.get(definition.input_structure_ids[0])
+
+    def examine(self) -> None:
+        """Open the examiner on the active sweep and keep its state when it closes."""
+
+        document = self._context.document()
+        if document is None:
+            self._context.show_info("No project", "Create or open a project first.")
+            return
+
+        host_id = document.project.host_structure_id
+        host = document.structures.get(host_id) if host_id is not None else None
+        if host is None:
+            self._deps.show_warning(
+                "No host structure",
+                "Load a host structure before examining convergence.",
+            )
+            return
+
+        cell = self.sweep_cell(self.active_definition()) or host
+        points, labels, options = self.examiner_input(self.build_states(), cell)
+
+        persisted_state = document.ui_state.get(self.examiner_state_key, {})
+        if not isinstance(persisted_state, dict):
+            persisted_state = {}
+
+        final_state = self._deps.run_examiner(
+            points,
+            num_atoms=len(cell.species),
+            initial_state=persisted_state,
+            on_adopted=lambda value, method, et, ft, st: self.adopt(
+                value, method, et, ft, st, point_labels=labels
+            ),
+            on_state_changed=self.store_examiner_state,
+            **options,
+        )
+        self.store_examiner_state(final_state)
+
+    def store_examiner_state(self, state: dict) -> None:
+        """Keep the examiner's state in ``ui_state``; the project is not saved."""
+
+        document = self._context.document()
+        if document is None:
+            return
+
+        serialized_state = to_jsonable(state)
+        if not isinstance(serialized_state, dict):
+            return
+
+        document.ui_state[self.examiner_state_key] = serialized_state
+
+    def adopt(
+        self,
+        value: float,
+        method: str,
+        energy_threshold: float,
+        force_threshold: float,
+        stress_threshold: float | None = None,
+        *,
+        point_labels: Mapping[float, str],
+    ) -> None:
+        """Make the examiner's adopted axis ``value`` the project default.
+
+        ``point_labels`` are the labels the examiner was opened with. A result
+        converged with a functional other than the project's is confirmed
+        first, since adopting it also changes the project functional.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return
+
+        key = self.resolve_adopted_key(value, point_labels)
+        if key is None:
+            self._deps.show_warning("Adopt failed", self.unresolved_adopt_message())
+            return
+
+        definition = self.active_definition()
+        definition_cell_id = None
+        if definition is not None and definition.input_structure_ids:
+            definition_cell_id = str(definition.input_structure_ids[0])
+        xc_functional = self.definition_xc_functional(definition)
+        if not self.confirm_adopted_xc_functional(xc_functional):
+            return
+        host_id = document.project.host_structure_id
+        status = self.record_adopted_default(
+            document,
+            key,
+            definition,
+            method=method,
+            energy_threshold=energy_threshold,
+            force_threshold=force_threshold,
+            stress_threshold=stress_threshold,
+            cell_id=(
+                definition_cell_id
+                if definition_cell_id is not None
+                else (str(host_id) if host_id else None)
+            ),
+            definition_cell_id=definition_cell_id,
+            xc_functional=xc_functional,
+            point_labels=point_labels,
+        )
+        self._deps.refresh_after_default_adopted()
+        self._context.persist_ui_state(failure_message=self.snapshot_persist_failure_message)
+        self._context.status_message(status)
+
+    def definition_xc_functional(self, definition: CalculationDefinition | None) -> str | None:
+        """Return the one functional a convergence definition's sweep ran with."""
+
+        if definition is None:
+            return None
+        config = self._deps.deserialize_convergence_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return None
+        return convergence_config_xc_functional(config)
+
+    def confirm_adopted_xc_functional(self, xc_functional: str | None) -> bool:
+        """Confirm adopting a result converged with a non-default functional.
+
+        Adopting a convergence result also makes the functional it was
+        converged with the project default, so switching functional is
+        confirmed rather than done silently.
+        """
+
+        document = self._context.document()
+        if document is None or xc_functional is None:
+            return True
+        current = document.project.recommended_xc_functional
+        if current is None or current == xc_functional:
+            return True
+        answer = self._deps.confirm_choice(
+            "Change project functional?",
+            f"These convergence calculations used the {xc_functional} functional, "
+            f"but the project default functional is {current}.\n\n"
+            f"Adopting this result will also change the project default "
+            f"functional to {xc_functional}. Continue?",
+            [("change", "Change functional"), ("cancel", "Cancel")],
+            default="cancel",
+            escape="cancel",
+        )
+        return answer == "change"
 
 
 __all__ = ["SweepConvergenceController"]

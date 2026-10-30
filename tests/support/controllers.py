@@ -9,7 +9,11 @@ live here:
   records ``(jobs, kwargs)`` for each call.
 - ``make_context`` builds a :class:`WorkflowControllerContext` from a document,
   a ``ProjectService`` and recording backends, with a real ``JobFileCleanup``
-  over the given job readers; every other callable is a no-op.
+  over the given job readers; ``infos``, ``statuses`` and ``persisted`` record
+  the information boxes, status messages and ``persist_ui_state`` failure
+  messages; every other callable is a no-op.
+- ``RecordingSweepWindow`` stands in for the window side of a convergence
+  sweep's deps (the examiner dialog, warnings, confirmations, refreshes).
 - ``FakeRowState`` stands in for a workflow's per-row run state (a ``status``
   and an optional ``job_id``).
 - ``no_artifacts`` and ``completed_castep_result`` are the parsed-output
@@ -64,6 +68,8 @@ def make_context(
     local_backend: RecordingBackend | None = None,
     cluster_backend: RecordingBackend | None = None,
     infos: list[tuple[str, str]] | None = None,
+    statuses: list[str] | None = None,
+    persisted: list[str] | None = None,
     prepare_jobs_for_resubmission: Callable[[object], bool] | None = None,
     definition_output_directory: Callable[[object], object] = lambda _d: None,
     job_output_directory: Callable[[object], object] = lambda _j: None,
@@ -85,8 +91,10 @@ def make_context(
         if infos is not None
         else (lambda *_: None),
         request_dashboard_flush=lambda **_: None,
-        persist_ui_state=lambda **_: None,
-        status_message=lambda _message: None,
+        persist_ui_state=(lambda *, failure_message: persisted.append(failure_message))
+        if persisted is not None
+        else (lambda **_: None),
+        status_message=statuses.append if statuses is not None else (lambda _message: None),
         definition_output_directory=definition_output_directory,
         job_output_directory=job_output_directory,
         job_seed_name=job_seed_name,
@@ -99,6 +107,65 @@ def make_context(
         total_energy_for_job=total_energy_for_job,
         max_force_for_job=max_force_for_job,
     )
+
+
+class RecordingSweepWindow:
+    """The window side of a convergence sweep's deps, recording every call.
+
+    ``run_examiner`` records the points and dialog options, keeps the adopt and
+    state callbacks for the test to fire, and returns ``examiner_state`` as the
+    dialog's final state. ``confirm_choice`` answers ``confirm_answer``.
+    """
+
+    def __init__(
+        self,
+        *,
+        examiner_state: dict[str, object] | None = None,
+        confirm_answer: str = "change",
+    ) -> None:
+        self.examiner_state = examiner_state if examiner_state is not None else {}
+        self.confirm_answer = confirm_answer
+        self.examiner_calls: list[tuple[dict[float, object], dict[str, object]]] = []
+        self.on_adopted: Callable[..., None] | None = None
+        self.on_state_changed: Callable[[dict], None] | None = None
+        self.warnings: list[tuple[str, str]] = []
+        self.confirmations: list[tuple[str, str, list[tuple[str, str]], dict[str, object]]] = []
+        self.refreshes = 0
+
+    def run_examiner(
+        self,
+        points: dict[float, object],
+        *,
+        on_adopted: Callable[..., None],
+        on_state_changed: Callable[[dict], None],
+        **options: object,
+    ) -> dict[str, object]:
+        self.examiner_calls.append((dict(points), dict(options)))
+        self.on_adopted = on_adopted
+        self.on_state_changed = on_state_changed
+        return dict(self.examiner_state)
+
+    def show_warning(self, title: str, text: str) -> None:
+        self.warnings.append((title, text))
+
+    def confirm_choice(
+        self, title: str, text: str, choices: list[tuple[str, str]], **kwargs: object
+    ) -> str:
+        self.confirmations.append((title, text, list(choices), dict(kwargs)))
+        return self.confirm_answer
+
+    def refresh_after_default_adopted(self) -> None:
+        self.refreshes += 1
+
+    def deps(self) -> dict[str, Callable[..., object]]:
+        """Return the deps fields both sweeps' deps dataclasses take."""
+
+        return {
+            "run_examiner": self.run_examiner,
+            "show_warning": self.show_warning,
+            "confirm_choice": self.confirm_choice,
+            "refresh_after_default_adopted": self.refresh_after_default_adopted,
+        }
 
 
 class FakeRowState:

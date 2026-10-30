@@ -15,7 +15,6 @@ from mufinder.app.workflow_config_codecs import deserialize_convergence_config
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
-from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.convergence_defaults import (
     CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
@@ -1864,7 +1863,30 @@ def test_main_window_remove_convergence_cutoff_preserves_other_contexts(
     window.close()
 
 
-def test_main_window_examine_convergence_launches_dialog(
+class _FakeExaminerDialog:
+    """Records how the window opens the examiner and keeps the callbacks it connects."""
+
+    instances: list[_FakeExaminerDialog] = []
+
+    def __init__(self, points, **kwargs) -> None:
+        self.points = points
+        self.kwargs = kwargs
+        self.adopted_callbacks: list = []
+        self.state_callbacks: list = []
+        self.default_adopted = SimpleNamespace(connect=self.adopted_callbacks.append)
+        self.state_changed = SimpleNamespace(connect=self.state_callbacks.append)
+        self.opened = False
+        type(self).instances.append(self)
+
+    def exec(self) -> int:
+        self.opened = True
+        return 0
+
+    def state_snapshot(self) -> dict[str, object]:
+        return {"restored": True}
+
+
+def test_main_window_examine_button_opens_the_examiner_and_adopts_through_it(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
@@ -1879,45 +1901,36 @@ def test_main_window_examine_convergence_launches_dialog(
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
     window._document = doc
+    window._refresh_ui_after_project_change()
 
     states = {
         300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
         400.0: SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.15),
     }
     monkeypatch.setattr(window._convergence_controller, "build_states", lambda: states)
+    monkeypatch.setattr(_FakeExaminerDialog, "instances", [])
+    monkeypatch.setattr(main_window_module, "ConvergenceExaminerDialog", _FakeExaminerDialog)
 
-    captured: dict[str, object] = {}
+    window._convergence_view.examine_requested.emit()
 
-    class _FakeDialog:
-        def __init__(self, cutoff_data, *, num_atoms, initial_state=None, parent=None) -> None:
-            captured["cutoff_data"] = cutoff_data
-            captured["num_atoms"] = num_atoms
-            captured["initial_state"] = initial_state
-            captured["parent"] = parent
-            self.cutoff_adopted = SimpleNamespace(connect=lambda _cb: None)
-            self.state_changed = SimpleNamespace(connect=lambda _cb: None)
-
-        def exec(self) -> int:
-            captured["opened"] = True
-            return 0
-
-        def state_snapshot(self) -> dict[str, object]:
-            return {"restored": True}
-
-    monkeypatch.setattr(main_window_module, "ConvergenceExaminerDialog", _FakeDialog)
-
-    window._on_examine_convergence()
-
-    assert captured["cutoff_data"] == states
-    assert captured["num_atoms"] == 2
-    assert captured["initial_state"] == {}
-    assert captured["parent"] is window
-    assert captured["opened"] is True
+    (dialog,) = _FakeExaminerDialog.instances
+    assert dialog.points == states
+    assert dialog.kwargs == {"num_atoms": 2, "initial_state": {}, "parent": window}
+    assert dialog.opened is True
     assert doc.ui_state[CUTOFF_EXAMINER_STATE_KEY] == {"restored": True}
+
+    (state_changed,) = dialog.state_callbacks
+    state_changed({"results_text": "cached"})
+    assert doc.ui_state[CUTOFF_EXAMINER_STATE_KEY] == {"results_text": "cached"}
+
+    (adopted,) = dialog.adopted_callbacks
+    adopted(400.0, "converged", 0.001, 0.05, None)
+    assert doc.project.recommended_cutoff_energy == pytest.approx(400.0)
+    assert window.statusBar().currentMessage() == "Project default cutoff set to 400 eV"
     window.close()
 
 
-def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_path: Path) -> None:
+def test_main_window_adopted_cutoff_refreshes_the_window(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_adopt_default.mufinder", "ConvAdoptDefault")
@@ -1957,83 +1970,18 @@ def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_pat
     select_route(window, "convergence_cutoff")
     assert window._main_stack.currentWidget() is window._convergence_view
 
-    window._on_cutoff_adopted(550.0, "converged", 0.001, 0.05)
+    window._convergence_controller.adopt(550.0, "converged", 0.001, 0.05, point_labels={})
 
-    assert doc.project.recommended_cutoff_energy == pytest.approx(550.0)
-    assert doc.project.recommended_cutoff_method == "converged"
-    assert doc.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
-    assert doc.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
-    assert RETIRED_UI_STATE_KEYS.isdisjoint(doc.ui_state)
-    snapshot = doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["cutoff"]
-    assert "method" not in snapshot
-    assert snapshot["host_structure_id"] == str(host.id)
-    assert snapshot["simulation_cell_structure_id"] == str(host.id)
-    assert snapshot["default_value"] == pytest.approx(550.0)
-    assert snapshot["plot_data"]["cutoffs"] == [300.0, 400.0, 550.0]
-    assert doc.provenance[-1].action == "set_recommended_cutoff"
+    for strip in window._project_defaults_strips():
+        assert strip._cutoff_value.text() == "550 eV"
+    # The overview shows the pinned plot instead of its placeholder.
+    assert window._convergence_overview_view._cutoff_card._plot._placeholder.isHidden() is True
+    # The adoption is saved with the pinned snapshot.
+    loaded = service.load_project(doc.project_root)
+    assert loaded.project.recommended_cutoff_energy == pytest.approx(550.0)
+    assert CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY in loaded.ui_state
     assert "550" in window.statusBar().currentMessage()
     assert window._main_stack.currentWidget() is window._convergence_view
-    window.close()
-
-
-def test_main_window_convergence_examiner_state_changed_updates_ui_state_without_saving_project(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "conv_examiner_state_update.mufinder", "ConvExaminerStateUpdate"
-    )
-    window._document = doc
-    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
-
-    saves: list[bool] = []
-    monkeypatch.setattr(window._project_service, "save_project", lambda _doc: saves.append(True))
-
-    window._on_convergence_examiner_state_changed({"results_text": "cached"})
-
-    assert doc.ui_state[CUTOFF_EXAMINER_STATE_KEY] == {"results_text": "cached"}
-    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
-    assert saves == []
-    window.close()
-
-
-def test_main_window_convergence_examiner_state_persists_across_project_reload_after_explicit_save(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    root = tmp_path / "conv_examiner_state_reload.mufinder"
-    doc = service.create_project(root, "ConvExaminerStateReload")
-    window._document = doc
-    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
-
-    window._on_convergence_examiner_state_changed(
-        {
-            "results_text": "Recommended cutoff: 500 eV",
-            "plot_data": {
-                "cutoffs": [300.0, 400.0, 500.0],
-                "energies": [-10.0, -10.01, -10.0105],
-                "forces": [0.3, 0.2, 0.19],
-                "energy_threshold": 0.001,
-                "force_threshold": 0.05,
-            },
-        }
-    )
-
-    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
-
-    service.save_project(doc)
-    loaded = service.load_project(root)
-
-    assert (
-        loaded.ui_state[CUTOFF_EXAMINER_STATE_KEY]["results_text"] == "Recommended cutoff: 500 eV"
-    )
-    assert loaded.ui_state[CUTOFF_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [
-        300.0,
-        400.0,
-        500.0,
-    ]
     window.close()
 
 

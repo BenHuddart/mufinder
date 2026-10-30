@@ -409,7 +409,8 @@ no two workflow widgets may define the same private method.
        row-parameter mirroring.
    * - ``mufinder.app.workflow_controllers.sweep_convergence``
      - The cycle the two convergence sweeps share
-       (``SweepConvergenceController``).
+       (``SweepConvergenceController``), including examining a sweep and
+       adopting its result as the project default.
    * - ``mufinder.app.project_defaults_widget``
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
@@ -1259,6 +1260,23 @@ Controller summary
        belongs to is the active definition when its configuration sweeps that
        key. No ``build_result``: the convergence metrics come from the primary
        ``.castep`` parse.
+
+       ``SweepConvergenceController`` also owns the Examine button and the
+       adoption of a result as the project default. ``examine`` opens the
+       examiner on the cell the sweep ran on (``sweep_cell``: the
+       definition's input structure, else the host) and keeps the examiner's
+       state in ``ui_state``; ``adopt`` confirms a change of project
+       functional, records the default and pins its overview snapshot through
+       ``mufinder.services.convergence_defaults``, saves, and reports in the
+       status bar. Three hooks carry what differs: ``examiner_input`` (the
+       k-point sweep keeps one grid per k-point count, labelled ``Grid: a x b
+       x c``, and passes the lattice), ``resolve_adopted_key`` (the k-point
+       sweep reads the grid back from that label) and
+       ``record_adopted_default`` (the project-service setter and the
+       snapshot). The examiner dialog, the message boxes and the window
+       refreshes come in through the deps (``run_examiner``,
+       ``show_warning``, ``confirm_choice``,
+       ``refresh_after_default_adopted``).
    * - ``PristineRelaxationController``
      - Keyed by row label; rows sync by row signature under the relaxation
        priority order. ``build_result`` reads the carrier's relaxed cell,
