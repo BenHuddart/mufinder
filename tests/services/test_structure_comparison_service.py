@@ -102,6 +102,28 @@ def test_comparison_inputs_skip_a_job_whose_structure_is_gone(tmp_path: Path) ->
     assert inputs[0].structure is kept
 
 
+def test_parameter_differences_cover_only_the_jobs_that_have_a_column() -> None:
+    host = _cubic("Host", 5.0)
+    first = _cubic("First", 5.1)
+    third = _cubic("Third", 5.2)
+    jobs = [
+        _job("first", first, cut_off_energy=600, only_the_gone_job_differs=1),
+        _job("gone", _cubic("Gone", 5.3), cut_off_energy=700, only_the_gone_job_differs=2),
+        _job("third", third, cut_off_energy=800, only_the_gone_job_differs=1),
+    ]
+    inputs = [
+        DftComparisonInput(label=f"DFT ({label})", structure=structure, structure_id=structure.id)
+        for label, structure in (("first", first), ("third", third))
+    ]
+
+    table = build_comparison_table(label="Table", host=host, inputs=inputs, jobs=jobs)
+
+    assert table.dft_labels == ["DFT (first)", "DFT (third)"]
+    assert table.result_data["parameter_differences"] == [
+        {"name": "cut_off_energy", "values": ["600", "800"]}
+    ]
+
+
 def test_parameter_differences_need_two_jobs_and_list_only_what_differs() -> None:
     structure = _cubic("Relaxed", 5.1)
     same = _job("a", structure, xc_functional="PBE", cut_off_energy=600)

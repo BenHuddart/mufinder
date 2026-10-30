@@ -3356,6 +3356,13 @@ class MainWindow(QMainWindow):
         self._project_tree.setCurrentItem(item)
         self._on_tree_selection_changed()
 
+    def _set_tree_item_label(self, route: str, label: str) -> None:
+        """Relabel one route's project-tree item, leaving the selection and the page alone."""
+
+        item = self._find_tree_item_by_route(route)
+        if item is not None:
+            item.setText(0, label)
+
     def _active_route(self) -> str | None:
         selected_items = self._project_tree.selectedItems()
         if not selected_items:
@@ -5799,6 +5806,7 @@ class MainWindow(QMainWindow):
             show_warning=lambda title, text: QMessageBox.warning(self, title, text),
             refresh_project_tree=lambda: self._populate_project_tree(),
             refresh_journal_view=lambda: self._refresh_journal_view(),
+            set_tree_label=lambda route, label: self._set_tree_item_label(route, label),
             active_route=lambda: self._active_route(),
             open_route=lambda route: self._set_active_route(route),
             shutting_down=lambda: self._shutting_down,

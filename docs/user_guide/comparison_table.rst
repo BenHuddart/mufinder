@@ -83,7 +83,9 @@ and notes each supercell column, for example ``DFT (CoF2 2x2x2): 2 × 2 × 2
 supercell; its lattice parameters are shown per host cell.``
 
 The collapsible ``DFT Parameter Differences`` section lists only those CASTEP
-input parameters that differ across the selected pristine-relaxation jobs.
+input parameters that differ across the table's DFT columns. A selected job
+whose relaxed structure has been removed from the project gets no column and
+is left out of this comparison.
 
 A saved table shows the values computed when it was generated; opening it
 does not recompute them, so generate the table again to read it with the
