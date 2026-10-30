@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QModelIndex, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -14,15 +15,19 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +37,7 @@ from mufinder.app.param_widgets import ParamEditorBase, create_param_editor
 from mufinder.castep_io.gui_metadata import (
     gui_value_is_active,
     infer_task,
+    keyword_category_label,
     keyword_locked_in_workflow,
     keyword_visible_for_task,
     keyword_visible_in_workflow,
@@ -39,6 +45,7 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
+from mufinder.app.theme import track_item_view_corners
 from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_status
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
@@ -63,12 +70,16 @@ class _DialogRow:
 
 
 class _AdvancedSelectionDialog(QDialog):
-    """Dialog that allows selecting one or more advanced parameters to add."""
+    """Dialog that allows selecting one or more advanced parameters to add.
+
+    Parameters are grouped under their category heading, both sorted by name,
+    with the description wrapped in a second column.
+    """
 
     def __init__(self, specs: list[KeywordSpec], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add Advanced Parameters")
-        self.resize(420, 460)
+        self.resize(640, 560)
 
         layout = QVBoxLayout(self)
 
@@ -77,33 +88,74 @@ class _AdvancedSelectionDialog(QDialog):
         layout.addWidget(blurb)
 
         self._search = QLineEdit(self)
-        self._search.setPlaceholderText("Search by name, alias, description, or category")
+        self._search.setPlaceholderText("Search by name, keyword, description, or group")
+        self._search.setAccessibleName("Search parameters")
         self._search.textChanged.connect(self._apply_filter)
         layout.addWidget(self._search)
 
-        self._list = QListWidget(self)
-        self._list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._tree = QTreeWidget(self)
+        self._tree.setAccessibleName("Parameters to add")
+        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Parameter", "Description"])
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._tree.setRootIsDecorated(False)
+        self._tree.setItemsExpandable(False)
+        self._tree.setUniformRowHeights(False)
+        self._tree.setWordWrap(True)
+        self._tree.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        header = self._tree.header()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._tree.setItemDelegate(_WrappedRowDelegate(self._tree))
+        # Row heights follow the description column's width; a resize drag
+        # re-wraps the rows once it settles, not on every pixel.
+        self._relayout_timer = QTimer(self)
+        self._relayout_timer.setSingleShot(True)
+        self._relayout_timer.setInterval(0)
+        self._relayout_timer.timeout.connect(self._tree.doItemsLayout)
+        header.sectionResized.connect(self._on_section_resized)
+        track_item_view_corners(self._tree)
+
+        groups: dict[str, list[KeywordSpec]] = {}
         for spec in specs:
-            label = spec.label or spec.name.upper()
-            text = label if not spec.description else f"{label} - {spec.description}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, spec.name)
-            item.setData(
-                Qt.ItemDataRole.UserRole + 1,
-                " ".join(
-                    [
-                        spec.name,
-                        *(spec.aliases or ()),
-                        spec.label or "",
-                        spec.description or "",
-                        spec.category or "",
-                    ]
-                ).lower(),
-            )
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self._list.addItem(item)
-        layout.addWidget(self._list)
+            groups.setdefault(keyword_category_label(spec.category), []).append(spec)
+        heading_font = QFont(self._tree.font())
+        heading_font.setBold(True)
+        for heading in sorted(groups, key=str.casefold):
+            group = QTreeWidgetItem([heading])
+            group.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            group.setFont(0, heading_font)
+            self._tree.addTopLevelItem(group)
+            group.setFirstColumnSpanned(True)
+            for spec in sorted(groups[heading], key=_spec_display_key):
+                label = spec.label or spec.name.upper()
+                item = QTreeWidgetItem([label, spec.description or ""])
+                item.setData(0, Qt.ItemDataRole.UserRole, spec.name)
+                item.setData(
+                    0,
+                    Qt.ItemDataRole.UserRole + 1,
+                    " ".join(
+                        [
+                            spec.name,
+                            *(spec.aliases or ()),
+                            label,
+                            spec.description or "",
+                            heading,
+                        ]
+                    ).lower(),
+                )
+                item.setToolTip(0, spec.name.upper())
+                item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                    | Qt.ItemFlag.ItemNeverHasChildren
+                )
+                item.setCheckState(0, Qt.CheckState.Unchecked)
+                group.addChild(item)
+        self._tree.expandAll()
+        layout.addWidget(self._tree, 1)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -113,23 +165,79 @@ class _AdvancedSelectionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _on_section_resized(self, logical_index: int, old_size: int, new_size: int) -> None:
+        if logical_index == 1 and old_size != new_size:
+            self._relayout_timer.start()
+
+    def _parameter_items(self) -> Iterator[QTreeWidgetItem]:
+        for group_index in range(self._tree.topLevelItemCount()):
+            group = self._tree.topLevelItem(group_index)
+            for child_index in range(group.childCount()):
+                yield group.child(child_index)
+
     def selected_names(self) -> tuple[str, ...]:
         selected: list[str] = []
-        for index in range(self._list.count()):
-            item = self._list.item(index)
-            if item.checkState() != Qt.CheckState.Checked:
+        for item in self._parameter_items():
+            if item.checkState(0) != Qt.CheckState.Checked:
                 continue
-            name = item.data(Qt.ItemDataRole.UserRole)
+            name = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(name, str):
                 selected.append(name)
         return tuple(selected)
 
     def _apply_filter(self) -> None:
         query = self._search.text().strip().lower()
-        for index in range(self._list.count()):
-            item = self._list.item(index)
-            haystack = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
-            item.setHidden(bool(query) and query not in haystack)
+        for group_index in range(self._tree.topLevelItemCount()):
+            group = self._tree.topLevelItem(group_index)
+            any_visible = False
+            for child_index in range(group.childCount()):
+                item = group.child(child_index)
+                haystack = str(item.data(0, Qt.ItemDataRole.UserRole + 1) or "")
+                hidden = bool(query) and query not in haystack
+                item.setHidden(hidden)
+                any_visible = any_visible or not hidden
+            group.setHidden(not any_visible)
+
+
+class _WrappedRowDelegate(QStyledItemDelegate):
+    """Size picker rows to the wrapped description and a whole check box.
+
+    The default delegate sizes a row to one line of text, so a long description
+    is cut short and the themed check box is clipped at the top and bottom.
+    """
+
+    def __init__(self, tree: QTreeWidget) -> None:
+        super().__init__(tree)
+        self._tree = tree
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+        hint = super().sizeHint(option, index)
+        style = self._tree.style()
+        indicator_width = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, None, self._tree)
+        indicator_height = style.pixelMetric(
+            QStyle.PixelMetric.PM_IndicatorHeight, None, self._tree
+        )
+        width = hint.width()
+        height = max(hint.height(), indicator_height + _ROW_PADDING)
+        if index.column() == 0 and index.parent().isValid():
+            # Measured: without this the themed check box pushes the longest
+            # names into an ellipsis under ResizeToContents.
+            width += indicator_width
+        elif index.column() == 1:
+            text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+            available = max(self._tree.header().sectionSize(1) - 2 * _ROW_PADDING, 1)
+            bounds = option.fontMetrics.boundingRect(
+                QRect(0, 0, available, 1_000_000), int(Qt.TextFlag.TextWordWrap), text
+            )
+            height = max(height, bounds.height() + _ROW_PADDING)
+        return QSize(width, height)
+
+
+_ROW_PADDING = 6
+
+
+def _spec_display_key(spec: KeywordSpec) -> tuple[str, str]:
+    return ((spec.label or spec.name).casefold(), spec.name)
 
 
 class ParameterDialog(QDialog):
@@ -970,7 +1078,11 @@ class ParameterDialog(QDialog):
                 continue
             if name in self._added_advanced:
                 continue
-            specs.append(self._specs_by_name[name])
+            spec = self._specs_by_name[name]
+            # Internal keywords stay valid in files but are never offered.
+            if not spec.user_visible:
+                continue
+            specs.append(spec)
         return specs
 
     def _matches_search(self, spec: KeywordSpec, query: str) -> bool:
@@ -980,6 +1092,7 @@ class ParameterDialog(QDialog):
             spec.label or "",
             spec.description or "",
             spec.category or "",
+            keyword_category_label(spec.category),
         ]
         return any(query in candidate.lower() for candidate in haystacks if candidate)
 

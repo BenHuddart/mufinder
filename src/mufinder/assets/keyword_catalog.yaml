@@ -57,7 +57,7 @@ keywords:
       Fe 0 0 0 SPIN=2
       Fe 0.5 0.5 0.5 SPIN=-2
       %ENDBLOCK POSITIONS_FRAC
-    notes: Species may be labels or atomic numbers according to CASTEP docs, but MuFinder stores them as strings. For spin-polarized jobs, MuFinder can append inline `SPIN=<value>` tokens on `POSITIONS_FRAC` rows using per-atom spins in units of hbar/2. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
+    notes: CASTEP accepts species labels or atomic numbers; MuFinder stores them as strings. For spin-polarized jobs, MuFinder can append inline `SPIN=<value>` tokens on `POSITIONS_FRAC` rows using per-atom spins in units of hbar/2. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
 
   - name: POSITIONS_ABS
     canonical_name: positions_abs
@@ -154,7 +154,7 @@ keywords:
       %BLOCK SPECIES_POT
       Si Si_00.recpot
       %ENDBLOCK SPECIES_POT
-    notes: Starter implementation handles one species/pseudopotential pair per row.
+    notes: Each row pairs one species with one pseudopotential.
 
   - name: SPECIES_MASS
     canonical_name: species_mass
@@ -170,7 +170,7 @@ keywords:
       AMU
       H:mu 0.1134
       %ENDBLOCK SPECIES_MASS
-    notes: Optional first line stores the mass unit (AMU). Each row assigns a mass to a species label; muon relaxation and quantum-correction workflows set the H:mu pseudo-species mass to the CODATA muon mass from scipy.constants (mufinder.domain.constants.MUON_MASS_AMU).
+    notes: Each row assigns a mass to a species label; an optional first line gives the mass unit (AMU). Muon relaxation and Quantum Corrections set the mass of the muon species H:mu to the CODATA muon mass.
 
   - name: HUBBARD_U
     canonical_name: hubbard_u
@@ -189,7 +189,7 @@ keywords:
       U d: 1.2
       U f: 2.1
       %ENDBLOCK HUBBARD_U
-    notes: Optional first line stores the Hubbard U unit, currently eV or Ha. The guided editor writes one row per species/orbital target, using `s:`, `p:`, `d:`, or `f:` values for all atoms of that species.
+    notes: An optional first line gives the unit, eV or Ha. The editor writes one row per species and orbital, with an `s:`, `p:`, `d:` or `f:` value that applies to every atom of that species.
     gui:
       label: Hubbard U
       category: electronic
@@ -225,7 +225,7 @@ keywords:
     locked_in_workflows: [convergence_kpoint]
     requires: []
     example: KPOINT_MP_GRID 4 4 4
-    notes: Alias forms like `KPOINTS_MP_GRID` are normalized internally.
+    notes: Alias spellings such as `KPOINTS_MP_GRID` are read as this keyword.
     gui:
       label: K-Point MP Grid
       category: kpoints
@@ -244,7 +244,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: PHONON_KPOINT_MP_GRID 1 1 1
-    notes: Monkhorst-Pack grid for phonon q-point sampling. Alias forms like `PHONON_KPOINTS_MP_GRID` are normalized internally.
+    notes: Monkhorst-Pack grid for phonon q-point sampling. Alias spellings such as `PHONON_KPOINTS_MP_GRID` are read as this keyword.
 
   - name: KPOINT_MP_SPACING
     canonical_name: kpoint_mp_spacing
@@ -256,7 +256,7 @@ keywords:
     mutually_exclusive_with: [KPOINTS_LIST, KPOINT_MP_GRID]
     requires: []
     example: KPOINT_MP_SPACING 0.05 1/ang
-    notes: The serializer preserves an explicit unit when one is supplied.
+    notes: A unit given with the value is kept in the written input.
     gui:
       label: K-Point MP Spacing
       category: kpoints
@@ -274,7 +274,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: SYMMETRY_GENERATE
-    notes: Presence-only keyword.
+    notes: Takes no value; the keyword is either present or absent.
     gui:
       label: Generate Symmetry
       category: structure
@@ -373,7 +373,7 @@ keywords:
     mutually_exclusive_with: [CALCULATE_POLARISATION]
     requires: []
     example: CALCULATE_POLARIZATION : TRUE
-    notes: American spelling for the polarization toggle.
+    notes: American spelling of `CALCULATE_POLARISATION`, which turns CASTEP's polarisation analysis on or off.
 
   - name: CALCULATE_STRESS
     canonical_name: calculate_stress
@@ -456,7 +456,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: TASK : SINGLEPOINT
-    notes: Allowed values were verified against local CASTEP metadata during development; do not vendor the upstream JSON into MuFinder.
+    notes: The values offered are taken from CASTEP's keyword metadata.
     gui:
       label: Task
       category: workflow
@@ -515,7 +515,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: XC_FUNCTIONAL : PBE
-    notes: CASTEP also supports libXC-backed values; this starter validator only accepts the explicitly catalogued set.
+    notes: CASTEP also accepts libXC functionals; with the built-in keyword set, MuFinder accepts only the values listed here.
     gui:
       label: XC Functional
       category: electronic
@@ -534,7 +534,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: TSSEARCH_METHOD : LSTQST
-    notes: Transition-state search method used by MuFinder Energy Barriers jobs. Supported values are limited to the CASTEP runtime metadata verified during development.
+    notes: Transition-state search method used by MuFinder Energy Barriers jobs. The values offered are taken from CASTEP's keyword metadata.
     gui:
       label: TS Search Method
       category: workflow
@@ -571,7 +571,7 @@ keywords:
     locked_in_workflows: [convergence_cutoff]
     requires: []
     example: CUT_OFF_ENERGY : 340 eV
-    notes: Direct CASTEP docs say this overrides `BASIS_PRECISION`.
+    notes: Overrides `BASIS_PRECISION` when both are set.
     gui:
       label: Cutoff Energy
       category: electronic
@@ -638,7 +638,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: SMEARING_WIDTH : 0.1 eV
-    notes: Starter implementation validates only the scalar shape and positivity.
+    notes: MuFinder checks only that the value is a single positive number.
     gui:
       label: Smearing Width
       category: scf
@@ -674,7 +674,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: ELEC_ENERGY_TOL : 1e-6 eV
-    notes: Rendered with explicit units when supplied.
+    notes: A unit given with the value is kept in the written input.
     gui:
       label: SCF Energy Tolerance
       category: scf
@@ -710,7 +710,7 @@ keywords:
     mutually_exclusive_with: []
     requires: [TASK=GEOMETRYOPTIMIZATION]
     example: GEOM_ENERGY_TOL : 2e-5 eV
-    notes: Task-specific validation is intentionally conservative.
+    notes: Used only when TASK is GEOMETRYOPTIMIZATION.
     gui:
       label: Geometry Energy Tolerance
       category: geometry
@@ -728,7 +728,7 @@ keywords:
     mutually_exclusive_with: []
     requires: [TASK=GEOMETRYOPTIMIZATION]
     example: GEOM_FORCE_TOL : 0.05 eV/ang
-    notes: Starter task rule only allows this under `GEOMETRYOPTIMIZATION`.
+    notes: Used only when TASK is GEOMETRYOPTIMIZATION.
     gui:
       label: Geometry Force Tolerance
       category: geometry
@@ -746,7 +746,7 @@ keywords:
     mutually_exclusive_with: []
     requires: [TASK=GEOMETRYOPTIMIZATION]
     example: GEOM_STRESS_TOL : 0.1 GPa
-    notes: Unit is optional in the Python object and preserved when explicit.
+    notes: The unit is optional; a unit given with the value is kept in the written input.
     gui:
       label: Geometry Stress Tolerance
       category: geometry
@@ -764,7 +764,7 @@ keywords:
     mutually_exclusive_with: []
     requires: [TASK=GEOMETRYOPTIMIZATION]
     example: GEOM_MAX_ITER : 30
-    notes: Stored as a simple integer control.
+    notes: A whole number of iterations.
     gui:
       label: Geometry Max Iterations
       category: geometry
@@ -818,7 +818,7 @@ keywords:
     mutually_exclusive_with: []
     requires: [TASK=MOLECULARDYNAMICS]
     example: MD_DELTA_T : 1 fs
-    notes: Task-specific validation is conservative and only permits this in `MOLECULARDYNAMICS`.
+    notes: Used only when TASK is MOLECULARDYNAMICS.
     gui:
       label: MD Time Step
       category: molecular_dynamics
@@ -854,7 +854,7 @@ keywords:
     mutually_exclusive_with: []
     requires: [TASK=MOLECULARDYNAMICS]
     example: MD_TEMPERATURE : 300 K
-    notes: This is a starter subset, not a complete MD schema.
+    notes: The built-in keyword set has only a few molecular-dynamics keywords.
     gui:
       label: MD Temperature
       category: molecular_dynamics
@@ -876,7 +876,7 @@ keywords:
       1 2 3
       0 0 0
       %ENDBLOCK CELL_CONSTRAINTS
-    notes: Two-row block of lattice length and angle constraint indices. Treated as a free-form constraint block by MuFinder.
+    notes: Two-row block of lattice length and angle constraint indices. MuFinder writes the rows as given, without checking them.
 
   - name: SPECIES_GAMMA
     canonical_name: species_gamma
@@ -892,7 +892,7 @@ keywords:
       radsectesla
       H:mu 851615456.598
       %ENDBLOCK SPECIES_GAMMA
-    notes: Per-species gyromagnetic ratios. Muon workflows set the H:mu pseudo-species value to the CODATA muon gyromagnetic ratio, 2|mu_mu|/hbar from scipy.constants (mufinder.domain.constants.MUON_GAMMA_RAD_S_T).
+    notes: Per-species gyromagnetic ratios. Muon workflows set the value of the muon species H:mu to the CODATA muon gyromagnetic ratio, 2|mu_mu|/hbar.
 
   - name: SYMMETRY_TOL
     canonical_name: symmetry_tol

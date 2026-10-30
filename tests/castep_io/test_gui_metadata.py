@@ -8,9 +8,11 @@ import pytest
 
 from mufinder.castep_io.gui_metadata import (
     default_assignments,
+    exclusive_partner_labels,
     get_gui_keyword_specs,
     gui_value_is_active,
     infer_task,
+    keyword_category_label,
     keyword_locked_in_workflow,
     keyword_visible_for_task,
     make_block_section,
@@ -18,7 +20,7 @@ from mufinder.castep_io.gui_metadata import (
     normalize_gui_value,
     validate_gui_values,
 )
-from mufinder.castep_io.schema import get_keyword_spec
+from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
 from tests.support.golden_inputs import pinned_starter_catalog
 
@@ -236,3 +238,57 @@ def test_gui_values_report_activity_task_and_conflict_errors_and_defaults() -> N
     assignments = default_assignments(spec for spec in default_specs if spec is not None)
     names = {assignment.name for assignment in assignments}
     assert {"symmetry_generate", "max_scf_cycles", "cut_off_energy"} <= names
+
+
+@pytest.mark.parametrize(
+    ("category", "label"),
+    [
+        ("kpoints", "K-points"),
+        ("io", "Input and output"),
+        ("scf", "SCF"),
+        ("tssearch", "Transition-state search"),
+        ("molecular_dynamics", "Molecular dynamics"),
+        ("new_area", "New area"),
+        (None, "General"),
+        ("", "General"),
+    ],
+)
+def test_keyword_category_label_is_sentence_case(category, label) -> None:
+    assert keyword_category_label(category) == label
+
+
+def test_exclusive_partner_labels_use_the_schema_labels() -> None:
+    cutoff = get_keyword_spec("param", "cut_off_energy")
+    precision = get_keyword_spec("param", "basis_precision")
+    assert cutoff is not None and precision is not None
+
+    assert exclusive_partner_labels(cutoff) == (precision.label,)
+    assert exclusive_partner_labels(precision) == (cutoff.label,)
+
+
+def test_exclusive_partner_labels_fall_back_to_the_keyword_name() -> None:
+    spec = KeywordSpec(
+        name="test_choice",
+        file="param",
+        kind="scalar",
+        value_type="int",
+        mutually_exclusive_with=("not_in_schema", "test_choice"),
+    )
+
+    assert exclusive_partner_labels(spec) == ("NOT_IN_SCHEMA",)
+
+
+def test_exclusive_partner_labels_are_empty_without_a_choice() -> None:
+    spec = get_keyword_spec("param", "max_scf_cycles")
+    assert spec is not None
+
+    assert exclusive_partner_labels(spec) == ()
+
+
+def test_exclusive_partner_labels_include_a_one_sided_exclusion() -> None:
+    cutoff = get_keyword_spec("param", "cut_off_energy")
+    assert cutoff is not None and "basis_precision" in cutoff.mutually_exclusive_with
+    # Only the other keyword declares the exclusion.
+    spec = KeywordSpec(name="basis_precision", file="param", kind="scalar", value_type="enum")
+
+    assert exclusive_partner_labels(spec) == (cutoff.label,)

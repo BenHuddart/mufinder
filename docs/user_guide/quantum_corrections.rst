@@ -220,9 +220,9 @@ rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
 The ``Task`` row is shown locked at ``PHONON``. There is no phonon-method
 choice: every row runs finite displacement (see `CASTEP phonon methods`_).
 Further CASTEP parameters supported for this workflow (for example
-``NONSCF_EIGENVALUE_TOL``) can be added with ``Add Parameter``, which searches
-keyword names, aliases, descriptions, and categories; ``PHONON_METHOD`` is not
-among them.
+``NONSCF_EIGENVALUE_TOL``) can be added with ``Add Parameter``, which lists
+them by group and searches their names, CASTEP keywords, descriptions and
+groups; ``PHONON_METHOD`` is not among them.
 
 **Rows configured by an older version.** A row an older version configured
 for ``DFPT`` or ``LINEARRESPONSE`` still loads. Submitting it writes
