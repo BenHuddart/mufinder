@@ -341,6 +341,14 @@ Click ``Unpin`` to clear a card. A pinned card is a snapshot, independent of the
 live workspaces, and each pinned site remembers the relaxation that represents
 its cluster.
 
+The card also states how the sites were grouped, ready to quote: ``Grouping``
+gives the clustering method with its setting (the distance tolerance for
+``Connected Components``, ``t`` for ``Hierarchical``, ``k`` for ``K-means``) and
+the Wyckoff tolerance, and ``Symmetry`` gives the host's space group, its number
+of symmetry operations and the 0.001 Å tolerance spglib detected it at, for
+example ``P4₂/mnm (16 ops), tolerance 0.001 Å``. A card pinned before MuFinder
+recorded these shows neither line; pin the analysis again to add them.
+
 Quantum Corrections, Energy Barriers and the Magnetic Fields muon-site dialog
 list the pinned sites by default, labelled by Wyckoff label and cluster and
 ranked by relative energy as on the summary. Each page has a ``Show every
@@ -377,8 +385,10 @@ break the host's symmetry.
   rather than a clustered summary.
 - On the ``Muon Sites`` summary page, each card's ``Export CIF…`` button
   exports only the pinned, distinct clustered sites (one representative per
-  cluster), matching what the card's table and 3D preview show. It stays
-  disabled until the card is populated.
+  cluster), matching what the card's table and 3D preview show. The file
+  starts with comment lines naming the source analysis and its ``Grouping``
+  and ``Symmetry`` lines, with spglib's symbol as written (``P4_2/mnm``). It
+  stays disabled until the card is populated.
 
 The standard ``_atom_site`` loop carries no MuFinder-specific columns, because
 an extra column can desynchronize the column count in some CIF readers (VESTA

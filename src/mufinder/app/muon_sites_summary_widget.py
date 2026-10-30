@@ -53,6 +53,11 @@ from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
 from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
+from mufinder.services.muon_sites_summary import (
+    grouping_method_text,
+    grouping_symmetry_text,
+    summary_export_header_lines,
+)
 
 _MUON_SPECIES_LABEL = "H:mu"
 _CLUSTER_ROLE = Qt.ItemDataRole.UserRole
@@ -134,6 +139,7 @@ class _ChargeStatePanel(QFrame):
         # without re-deriving it from the preview viewer.
         self._host_structure: Structure | None = None
         self._sites: list[Mapping[str, object]] = []
+        self._export_header_lines: list[str] = []
         # Signature of the currently rendered snapshot; lets repeated set_snapshot
         # calls (e.g. re-navigating to the page) skip an expensive viewer rebuild
         # when nothing changed. None whenever the placeholder is showing.
@@ -263,6 +269,7 @@ class _ChargeStatePanel(QFrame):
         self._render_signature = None
         self._host_structure = None
         self._sites = []
+        self._export_header_lines = []
         self._table.setRowCount(0)
         self._viewer.set_structure(None)
         self._set_summary_rows([])
@@ -292,6 +299,7 @@ class _ChargeStatePanel(QFrame):
             # Include the workspace name so a rename (same sites) still refreshes
             # the "Source analysis" summary row rather than hitting the early return.
             str(snapshot.get("workspace_name", "")).strip(),
+            repr(snapshot.get("grouping")),
             # Fingerprint the host geometry that feeds the preview, not just its
             # id: a host edited in place (same id, new lattice/species/positions)
             # must invalidate the cache so the 3D view is not left stale.
@@ -314,6 +322,7 @@ class _ChargeStatePanel(QFrame):
         workspace_name = str(snapshot.get("workspace_name", "")).strip() or "Analysis workspace"
         self._host_structure = host_structure
         self._sites = list(sites)
+        self._export_header_lines = summary_export_header_lines(snapshot)
 
         self._placeholder.hide()
         self._content.show()
@@ -324,12 +333,17 @@ class _ChargeStatePanel(QFrame):
             host_structure is not None and bool(host_structure.species)
         )
 
-        self._set_summary_rows(
-            [
-                ("Source analysis", workspace_name),
-                ("Distinct sites", str(len(sites))),
-            ]
-        )
+        rows = [
+            ("Source analysis", workspace_name),
+            ("Distinct sites", str(len(sites))),
+        ]
+        grouping = snapshot.get("grouping")
+        if isinstance(grouping, Mapping):
+            rows.append(("Grouping", grouping_method_text(grouping)))
+            symmetry = grouping_symmetry_text(grouping)
+            if symmetry:
+                rows.append(("Symmetry", symmetry))
+        self._set_summary_rows(rows)
         self._populate_table(sites)
         self._populate_viewer(sites, host_structure)
 
@@ -441,7 +455,7 @@ class _ChargeStatePanel(QFrame):
 
         try:
             proximity_warnings = export_structure_with_muon_sites(
-                host_structure, muon_sites, file_path
+                host_structure, muon_sites, file_path, header_lines=self._export_header_lines
             )
         except OSError as exc:
             report_export_failed(self, exc)

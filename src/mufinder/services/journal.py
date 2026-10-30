@@ -11,6 +11,7 @@ from uuid import UUID
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import MANUAL_DEFAULT_METHOD, ProvenanceRecord
 from mufinder.domain.text import plural
+from mufinder.services.generation_runs import generation_run_from_provenance, run_journal_line
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +203,11 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "generate_candidates": _generate_candidates_entry,
         "generation_partial": _generation_partial_entry,
         "symmetry_unavailable": _symmetry_unavailable_entry,
+        "cluster_candidate_positions": _cluster_positions_entry,
+        "stage_muon_relaxation_sites": _stage_sites_entry,
+        "delete_candidates": _delete_candidates_entry,
+        "create_analysis_workspace": _create_analysis_workspace_entry,
+        "group_relaxed_sites": _group_relaxed_sites_entry,
         "promote_uep_candidate": _promote_uep_candidate_entry,
         "submit_jobs": _submit_jobs_entry,
         "job_completed": _job_completed_entry,
@@ -474,14 +480,86 @@ def _recommended_xc_functional_entry(record: ProvenanceRecord) -> JournalEntry:
 
 
 def _generate_candidates_entry(record: ProvenanceRecord) -> JournalEntry:
+    run = generation_run_from_provenance(record.parameters)
+    if run is not None:
+        body = run_journal_line(run)
+    else:
+        # Records written before generation runs were recorded keep only the request.
+        count = len(record.output_entity_ids)
+        method = _text_param(record, "method") or "configured method"
+        body = f"Generated {plural(count, 'muon site')} using {method}."
+    return _entry(record, stamp_kind="milestone", title="Muon sites generated", body=body)
+
+
+def _site_labels_text(record: ProvenanceRecord) -> str:
+    labels = _label_summary(record.parameters.get("site_labels"))
+    return f": {labels}" if labels else ""
+
+
+def _cluster_positions_entry(record: ProvenanceRecord) -> JournalEntry:
     count = len(record.output_entity_ids)
-    method = _text_param(record, "method") or "configured method"
+    anchor = record.parameters.get("anchor_fractional")
+    anchor_text = (
+        " (" + ", ".join(f"{float(value):.4f}" for value in anchor) + ")"
+        if isinstance(anchor, list) and len(anchor) == 3
+        else ""
+    )
     return _entry(
         record,
         stamp_kind="milestone",
-        title="Muon sites generated",
-        body=f"Generated {plural(count, 'muon site')} using {method}.",
+        title="Muon starts clustered",
+        body=(
+            f"Moved {plural(count, 'generated muon site')} to the symmetry-equivalent "
+            f"positions nearest the anchor{anchor_text}{_site_labels_text(record)}. "
+            "The original positions are kept with the generation run."
+        ),
     )
+
+
+def _stage_sites_entry(record: ProvenanceRecord) -> JournalEntry:
+    count = len(record.output_entity_ids)
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Muon sites staged for relaxation",
+        body=f"Staged {plural(count, 'generated muon site')} for relaxation{_site_labels_text(record)}.",
+    )
+
+
+def _delete_candidates_entry(record: ProvenanceRecord) -> JournalEntry:
+    count = len(record.input_entity_ids)
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Generated muon sites removed",
+        body=f"Removed {plural(count, 'generated muon site')}{_site_labels_text(record)}.",
+    )
+
+
+def _create_analysis_workspace_entry(record: ProvenanceRecord) -> JournalEntry:
+    name = _text_param(record, "workspace_name") or "analysis workspace"
+    count = _int_param(record, "relaxation_count") or 0
+    charge = _text_param(record, "charge_state_label")
+    relaxations = f"{charge} relaxation" if charge else "relaxation"
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Analysis workspace created",
+        body=f"Created '{name}' with {plural(count, relaxations)}.",
+    )
+
+
+def _group_relaxed_sites_entry(record: ProvenanceRecord) -> JournalEntry:
+    name = _text_param(record, "workspace_name") or "analysis workspace"
+    site_count = _int_param(record, "site_count") or 0
+    distinct = _int_param(record, "distinct_site_count") or 0
+    summary = _text_param(record, "grouping_summary")
+    body = (
+        f"Grouped {plural(site_count, 'relaxed site')} in '{name}' into "
+        f"{plural(distinct, 'distinct site')}"
+    )
+    body += f": {summary}." if summary else "."
+    return _entry(record, stamp_kind="success", title="Relaxed sites grouped", body=body)
 
 
 def _generation_partial_entry(record: ProvenanceRecord) -> JournalEntry:

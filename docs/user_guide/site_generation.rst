@@ -73,7 +73,17 @@ Sites`` viewer on the right (see :doc:`/user_guide/structure_viewer`) shows the
 host structure with the selected positions overlaid. The table has the columns ``Site``, ``Method``, ``State``
 and the fractional coordinates ``fX``, ``fY`` and ``fZ``.
 
-The table is ordered with natural numeric sorting, so ``Random Site 2`` appears
+The rows are grouped by the ``Generate Sites`` run that made them, oldest run
+first. Each run has a header row that states its parameters in one line, for
+example ``Random, 6 starts, ≥ 1.79 Å apart, ≥ 1.0 Å from atoms, P4₂/mnm (16
+ops)``; its tooltip is the run's full description. Right-click a header row and
+choose ``Copy description`` to copy a sentence for a methods section (see `What
+MuFinder records about a generation run`_). Header rows are not selected with
+the rows under them. Sites generated before MuFinder recorded runs are grouped
+under an ``Earlier starts`` header, one per method and set of inputs, built from
+what each site kept.
+
+Within a run the rows are ordered with natural numeric sorting, so ``Random Site 2`` appears
 before ``Random Site 10``. Selected rows can be clustered around an anchor with
 ``Cluster Positions…``, staged with ``Create Jobs from Selected``, or removed
 with ``Remove Selected`` or the ``Delete`` key (``Backspace`` on macOS) before
@@ -183,7 +193,8 @@ makes it easy to rerun the same setup in separation mode if desired.
 Each generated site remembers whether it came from ``count`` or ``separation``
 mode, the muon-muon spacing actually used, the requested target count (count
 mode), the estimated spacing from the volume model, the muon-atom distance and
-the symmetry-equivalent-position setting.
+the symmetry-equivalent-position setting. The run records all of these too,
+with the random seed (see `What MuFinder records about a generation run`_).
 
 The estimated spacing is a heuristic, not a guarantee about the true topology of
 the potential-energy surface. It depends on the free-volume approximation, the
@@ -296,8 +307,10 @@ For each selected row, MuFinder asks spglib for the symmetry operations of the
 active host structure, applies those operations to the row's current fractional
 position, wraps the resulting orbit into the unit cell, and picks the orbit
 member whose nearest periodic image is closest to the anchor. The row's fractional
-and Cartesian coordinates are updated in the generated table and a provenance
-entry records the anchor and affected site labels.
+and Cartesian coordinates are updated in the generated table. The site's
+generation run records the anchor and the positions the starts had before the
+move, so the starts the run made are never lost, and the
+:doc:`/user_guide/journal` records the step.
 
 This is most useful when random generation has produced several candidates from
 related symmetry orbits, when UEP cluster representatives or manually entered
@@ -414,12 +427,51 @@ charge-state directory.
 Saving
 ~~~~~~
 
-Staging generated sites and saving a relaxation configuration update the
-project in memory but do not write project files immediately. Those staged rows
-and configurations are written when you choose ``Save Project`` or accept the
-close-project save prompt. Creating or deleting generated muon sites, and
-creating the job records and input files when you submit, are saved
-automatically.
+Generating sites, ``Cluster Positions…``, removing generated sites and staging
+them as relaxation rows save the project straight away, as does creating the
+job records and input files when you submit. Saving a relaxation configuration
+updates the project in memory; it is written when you choose ``Save Project``
+or accept the close-project save prompt.
+
+What MuFinder records about a generation run
+--------------------------------------------
+
+Every click of ``Generate Sites`` records a generation run with the project, so
+the starts can be quoted and reproduced. The run holds:
+
+- **The method and every input.** Random: the muon-muon separation used (and,
+  in count mode, the requested count and the estimated separation), the
+  muon-atom distance, the attempt limit and whether symmetry-equivalent
+  positions were excluded. Attached: the element, muons per atom, the
+  muon-element distance, the muon-atom distance and the 2.6 Å neighbour cutoff
+  used to find directions. Custom: the coordinate system and coordinates. UEP:
+  the source UEP jobs and their clustering settings.
+- **The random seed.** A random run draws a seed when none is given and records
+  it, so the same seed and inputs give the same starts. The seed is shown in
+  the Journal entry and in the run's description, not on the Generation page.
+- **The symmetry.** The tolerance spglib used (0.001 Å), the space group it
+  detected (symbol and number) and its number of symmetry operations. A host
+  whose symmetry could not be detected is recorded as such, so a fall-back to
+  P1 is never silent.
+- **The outcome.** The starts made, how many of them are symmetry-distinct,
+  the smallest separation between two starts, the attempts used and, in count
+  mode, how many times the separation was reduced to fit.
+- **The source structure** and when the run was made, and any ``Cluster
+  Positions…`` steps applied to its starts afterwards (the anchor and the
+  starts' positions before the move).
+
+``Copy description`` on a run's header row turns the record into a sentence.
+For six random starts in CoF₂ it reads, for example:
+
+    MuFinder generated 6 initial muon positions at random in CoF2, each at
+    least 1.79 Å from the other starts and their symmetry images and at least
+    1.0 Å from every host atom. The separation was estimated as 1.99 Å from the
+    requested 6 starts and reduced to 1.79 Å after 1 retry so that they fitted.
+    314 trial positions were drawn (limit 20000). Symmetry images were taken
+    from the P4₂/mnm space group (16 operations) detected by spglib at a
+    tolerance of 0.001 Å. The random seed was 418273.
+
+The Journal's generation entry prints the header line followed by the seed.
 
 Method
 ------
@@ -497,8 +549,9 @@ Limitations
 - Generated positions are starting points only; final site assignment requires
   structural relaxation followed by clustering or comparison of the relaxed
   endpoints.
-- The random seed used by the generators is internal; the generation setup does
-  not expose it.
+- The Generation page has no seed field. To reproduce a random run, read its
+  seed from the Journal or the run's description; generating again with that
+  seed and the same inputs gives the same starts.
 - ``Cluster Positions…`` only changes which symmetry-equivalent coordinate a
   row uses; it does not merge rows or judge which final sites are distinct.
 - Host symmetry is detected with spglib at a tolerance of 0.001 Å, loose enough
@@ -512,6 +565,9 @@ For developers
 --------------
 
 Generated-site metadata records ``selection_mode`` as ``count`` or
-``separation`` alongside the spacing and distances listed above. The package
+``separation`` alongside the spacing and distances listed above. Each site's
+``source_generation_batch_id`` names the ``GenerationRun`` that made it, which
+the project keeps under ``entities/generation_runs``; the
+``generate_candidates`` provenance record carries a copy of the run. The package
 layers, shared helpers and controller contract used by the generation and
 relaxation workflows are described in :doc:`/architecture`.

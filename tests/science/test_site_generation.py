@@ -943,3 +943,43 @@ def test_spacing_check_applies_each_limit_to_its_own_references() -> None:
     # The near reference only breaks the larger limit; the far one breaks neither.
     assert site_generation._violates_spacing(point, ((near, 1.6), (far, 2.0)), lattice) is False
     assert site_generation._violates_spacing(point, ((far, 1.6), (near, 2.0)), lattice) is True
+
+
+def test_symmetry_distinct_position_count_counts_one_start_per_orbit() -> None:
+    host = cof2_host()
+    start = [0.1, 0.2, 0.3]
+    images = symmetry_equivalent_positions(
+        start,
+        lattice_vectors=host.lattice_vectors,
+        host_species=host.species,
+        host_positions_frac=host.fractional_positions,
+    )
+    other = [0.4, 0.15, 0.05]
+
+    count = site_generation.symmetry_distinct_position_count(
+        [start, images[3], other],
+        lattice_vectors=host.lattice_vectors,
+        host_species=host.species,
+        host_positions_frac=host.fractional_positions,
+    )
+    without_symmetry = site_generation.symmetry_distinct_position_count(
+        [start, images[3], other],
+        lattice_vectors=host.lattice_vectors,
+        host_species=[],
+        host_positions_frac=host.fractional_positions,
+    )
+
+    assert len(images) > 3
+    assert count == 2
+    assert without_symmetry == 3
+
+
+def test_smallest_start_separation_is_the_nearest_image_distance_of_the_closest_pair() -> None:
+    separation = site_generation.smallest_start_separation(
+        [[0.05, 0.0, 0.0], [0.95, 0.0, 0.0], [0.5, 0.5, 0.5]], lattice_vectors=_CUBIC
+    )
+
+    assert separation == pytest.approx(0.5)
+    assert (
+        site_generation.smallest_start_separation([[0.1, 0.1, 0.1]], lattice_vectors=_CUBIC) is None
+    )

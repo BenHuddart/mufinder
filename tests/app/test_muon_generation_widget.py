@@ -10,6 +10,7 @@ from mufinder.app import theme as theme_module
 from mufinder.app import muon_generation_widget as widget_module
 from mufinder.app.muon_generation_widget import MuonGenerationWidget, _ClusterPositionsDialog
 from mufinder.domain.models import Structure
+from tests.support.reset_menu import install_fake_menu
 
 
 def test_widget_state_roundtrip_and_table_render(qapp) -> None:
@@ -928,3 +929,95 @@ def test_theme_change_reapplies_stale_row_styling(qapp) -> None:
     # though set_sites is now skipped for unchanged rows.
     widget.changeEvent(QEvent(QEvent.Type.PaletteChange))
     assert widget._site_table.item(0, 0).text().endswith(" (stale)")
+
+
+_RUN_ROWS = [
+    {"id": "a1", "label": "Attached-F Site 1", "method": "near_element", "status": "generated"},
+    {"id": "r1", "label": "Random Site 1", "method": "random", "status": "generated"},
+    {"id": "r2", "label": "Random Site 2", "method": "random", "status": "staged"},
+]
+_RUN_GROUPS = [
+    {
+        "key": "run-a",
+        "title": "Attached to F, 1 start, 1 per atom, 1.0 Å from F, P4₂/mnm (16 ops)",
+        "description": "MuFinder placed 1 initial muon position in CoF2.",
+        "site_ids": ["a1"],
+    },
+    {
+        "key": "run-r",
+        "title": "Random, 2 starts, ≥ 1.79 Å apart, ≥ 1.0 Å from atoms, P4₂/mnm (16 ops)",
+        "description": "MuFinder generated 2 initial muon positions at random in CoF2.",
+        "site_ids": ["r1", "r2"],
+    },
+    {"key": "empty", "title": "Removed run", "description": "", "site_ids": ["gone"]},
+]
+
+
+def _grouped_widget() -> MuonGenerationWidget:
+    widget = MuonGenerationWidget()
+    widget.set_sites([dict(row) for row in _RUN_ROWS], groups=_RUN_GROUPS)
+    return widget
+
+
+def test_generated_sites_are_listed_under_one_header_row_per_run(qapp) -> None:
+    widget = _grouped_widget()
+    table = widget._site_table
+
+    assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+        _RUN_GROUPS[0]["title"],
+        "Attached-F Site 1",
+        _RUN_GROUPS[1]["title"],
+        "Random Site 1",
+        "Random Site 2",
+    ]
+    assert widget.run_header_titles() == [_RUN_GROUPS[0]["title"], _RUN_GROUPS[1]["title"]]
+    assert table.columnSpan(0, 0) == table.columnCount()
+    assert table.item(0, 0).toolTip() == _RUN_GROUPS[0]["description"]
+
+
+def test_selecting_every_row_selects_the_starts_but_no_header(qapp) -> None:
+    widget = _grouped_widget()
+
+    widget._site_table.selectAll()
+    qapp.processEvents()
+
+    assert widget._selected_site_ids() == ["a1", "r1", "r2"]
+    assert not widget._site_table.item(0, 0).isSelected()
+
+
+def test_copy_description_puts_the_runs_methods_sentence_on_the_clipboard(
+    qapp, monkeypatch
+) -> None:
+    menus = install_fake_menu(monkeypatch)
+    monkeypatch.setattr(widget_module, "QMenu", menus)
+    widget = _grouped_widget()
+    widget.resize(700, 400)
+    table = widget._site_table
+    qapp.clipboard().clear()
+
+    header = table.visualRect(table.model().index(2, 0)).center()
+    table.customContextMenuRequested.emit(header)
+    action = menus.instances[-1].action(widget_module.COPY_RUN_DESCRIPTION_TEXT)
+    assert action is not None and action.enabled
+    action.triggered.emit()
+
+    assert qapp.clipboard().text() == _RUN_GROUPS[1]["description"]
+
+    site_row = table.visualRect(table.model().index(3, 0)).center()
+    table.customContextMenuRequested.emit(site_row)
+    assert len(menus.instances) == 1
+
+
+def test_rows_outside_every_group_follow_the_groups_without_a_header(qapp) -> None:
+    widget = MuonGenerationWidget()
+    widget.set_sites(
+        [dict(row) for row in _RUN_ROWS], groups=[dict(_RUN_GROUPS[1], site_ids=["r1"])]
+    )
+
+    table = widget._site_table
+    assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+        _RUN_GROUPS[1]["title"],
+        "Random Site 1",
+        "Attached-F Site 1",
+        "Random Site 2",
+    ]

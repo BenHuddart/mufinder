@@ -1622,6 +1622,8 @@ class RelaxationAnalysisWidget(QWidget):
     """Container for persistent structural-relaxation analysis workspaces."""
 
     state_changed = Signal(list)
+    #: A workspace's id, once a grouping (clustering) has been applied to it.
+    grouping_applied = Signal(str)
     add_sites_requested = Signal(str)
     pin_summary_requested = Signal(str)
     delete_requested = Signal(str)
@@ -2371,6 +2373,7 @@ class RelaxationAnalysisWidget(QWidget):
         workspace["clustering"] = dict(clustering)
         self._emit_state()
         self._refresh_workspace_tab(workspace_id)
+        self.grouping_applied.emit(str(workspace_id))
 
     def _open_displacements(self, workspace_id: str) -> None:
         workspace = self._workspace_by_id(workspace_id)

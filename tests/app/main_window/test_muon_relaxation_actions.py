@@ -243,9 +243,7 @@ def test_materialize_muon_relaxation_filters_charge_qualified_selection(
     window.close()
 
 
-def test_muon_relaxation_staging_updates_memory_without_autosave(
-    main_window, tmp_path: Path
-) -> None:
+def test_muon_relaxation_staging_saves_the_project(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "muon_stage_autosave.mufinder", "MuonStageAutosave")
@@ -282,11 +280,10 @@ def test_muon_relaxation_staging_updates_memory_without_autosave(
 
     window._on_create_muon_relaxation_jobs_requested(str(site.id))
 
-    assert save_calls == []
+    assert save_calls == ["save"]
     assert site.status == "staged"
     reloaded = service.load_project(doc.project_root)
-    assert reloaded.sites[site.id].status == "generated"
-    assert "muon_relaxation_form" not in reloaded.ui_state
+    assert reloaded.sites[site.id].status == "staged"
     monkeypatch.undo()
     window.close()
 

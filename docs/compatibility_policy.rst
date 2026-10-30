@@ -74,6 +74,22 @@ Compatibility ledger
        key. A site whose key is present but ``null`` is never repaired this way.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that adds the key to stored snapshots.
+   * - ``generation_runs`` entities and generated sites without a run
+     - ``entities/generation_runs`` (``mufinder.persistence.project_codec``,
+       ``generation_run_from_dict``); ``MuonSite.source_generation_batch_id``;
+       ``mufinder.services.generation_runs`` (``generation_run_groups``)
+     - Each ``Generate Sites`` run is saved as a ``GenerationRun`` and its sites
+       name it in ``source_generation_batch_id``. A project saved before runs
+       existed has no ``generation_runs`` directory and loads with none; its
+       sites keep ``source_generation_batch_id`` ``null`` and are listed under
+       an "Earlier starts" header built from their ``properties``, as is a site
+       whose run is missing. Optional run fields that are missing or malformed
+       load as ``None``. The same additive rule covers the ``grouping`` key of a
+       Muon Sites summary snapshot: a snapshot pinned before it existed shows no
+       grouping lines and exports none, until the analysis is pinned again.
+     - Current project data, not deprecated. Additive with defaults, so no
+       migration; runs may not be dropped without a schema migration that keeps
+       the seed and inputs elsewhere.
    * - ``relative_energy_eV`` muon-site key
      - ``mufinder.persistence.project_codec`` (``site_from_dict``)
      - ``MuonSite`` stored the source relaxation's absolute final total energy

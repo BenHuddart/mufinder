@@ -24,7 +24,11 @@ from mufinder.domain.charge_states import (
     canonical_charge_state,
     muon_charge_state_label,
 )
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import ProvenanceRecord, Structure
+from mufinder.domain.text import space_group_text
 from mufinder.persistence.codec import to_jsonable, uuid_or_none
+from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG, host_symmetry
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.project_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
@@ -133,14 +137,178 @@ def muon_site_wyckoff_labels(result: Mapping[str, object]) -> dict[int, str]:
     return labels
 
 
-def build_muon_sites_summary_snapshot(workspace: Mapping[str, object]) -> dict[str, object] | None:
+#: Name of each relaxed-site grouping method, keyed as the workspace's clustering stores it.
+_GROUPING_METHOD_NAMES = {
+    "connected": "Connected components",
+    "hier": "Hierarchical",
+    "kmeans": "K-means",
+}
+
+
+def relaxed_site_grouping(
+    clustering: Mapping[str, object], host_structure: Structure | None
+) -> dict[str, object]:
+    """Return how a workspace's relaxed sites were grouped: method, tolerances, symmetry.
+
+    The method's own setting is kept (the distance tolerance for connected
+    components, ``t`` for hierarchical, ``k`` for k-means), with the Wyckoff
+    matching tolerance and the host's space group at the one symmetry
+    tolerance the grouping uses.
+    """
+
+    method = str(clustering.get("method", "connected") or "connected")
+    grouping: dict[str, object] = {"method": method}
+    setting_key = {
+        "connected": "connected_tolerance_ang",
+        "hier": "hierarchical_t",
+        "kmeans": "kmeans_k",
+    }.get(method)
+    if setting_key is not None and clustering.get(setting_key) is not None:
+        grouping[setting_key] = clustering[setting_key]
+    if clustering.get("wyckoff_match_tolerance_ang") is not None:
+        grouping["wyckoff_match_tolerance_ang"] = clustering["wyckoff_match_tolerance_ang"]
+    grouping["symmetry_tolerance_ang"] = SYMMETRY_TOLERANCE_ANG
+    if host_structure is not None and host_structure.species:
+        symmetry = host_symmetry(host_structure, symprec=SYMMETRY_TOLERANCE_ANG)
+        grouping["space_group_symbol"] = symmetry.symbol
+        grouping["space_group_number"] = symmetry.number
+        grouping["symmetry_operation_count"] = symmetry.operation_count
+    return grouping
+
+
+def grouping_method_text(grouping: Mapping[str, object]) -> str:
+    """Return the grouping method and its tolerances in one line.
+
+    For example ``"Connected components within 0.25 Å, Wyckoff tolerance 0.25 Å"``.
+    """
+
+    method = str(grouping.get("method", ""))
+    text = _GROUPING_METHOD_NAMES.get(method, method or "Unknown method")
+    if method == "connected" and grouping.get("connected_tolerance_ang") is not None:
+        text += f" within {float(grouping['connected_tolerance_ang']):g} Å"  # type: ignore[arg-type]
+    elif method == "hier" and grouping.get("hierarchical_t") is not None:
+        text += f", t = {float(grouping['hierarchical_t']):g}"  # type: ignore[arg-type]
+    elif method == "kmeans" and grouping.get("kmeans_k") is not None:
+        text += f", k = {int(grouping['kmeans_k'])}"  # type: ignore[call-overload]
+    if grouping.get("wyckoff_match_tolerance_ang") is not None:
+        tolerance = float(grouping["wyckoff_match_tolerance_ang"])  # type: ignore[arg-type]
+        text += f", Wyckoff tolerance {tolerance:g} Å"
+    return text
+
+
+def grouping_symmetry_text(grouping: Mapping[str, object], *, plain: bool = False) -> str | None:
+    """Return the space group the grouping used and its tolerance, or ``None`` when not recorded.
+
+    For example ``"P4₂/mnm (16 ops), tolerance 0.001 Å"``. ``plain`` keeps
+    spglib's symbol as it is (``P4_2/mnm``), for files written in Latin-1.
+    """
+
+    if "space_group_symbol" not in grouping or grouping.get("symmetry_tolerance_ang") is None:
+        return None
+    tolerance = float(grouping["symmetry_tolerance_ang"])  # type: ignore[arg-type]
+    symbol = grouping.get("space_group_symbol")
+    if not symbol:
+        return f"no symmetry detected (P1), tolerance {tolerance:g} Å"
+    shown = str(symbol) if plain else space_group_text(str(symbol))
+    operations = grouping.get("symmetry_operation_count") or 1
+    return f"{shown} ({operations} ops), tolerance {tolerance:g} Å"
+
+
+def grouping_summary(grouping: Mapping[str, object]) -> str:
+    """Return the grouping method, its tolerances and the symmetry in one line."""
+
+    symmetry = grouping_symmetry_text(grouping)
+    method = grouping_method_text(grouping)
+    return f"{method}, {symmetry}" if symmetry else method
+
+
+def _workspace_job_ids(workspace: Mapping[str, object]) -> list[UUID]:
+    raw = workspace.get("job_ids")
+    job_ids = [uuid_or_none(value) for value in (raw if isinstance(raw, list) else [])]
+    return [job_id for job_id in job_ids if job_id is not None]
+
+
+def analysis_workspace_created_record(workspace: Mapping[str, object]) -> ProvenanceRecord:
+    """Return the provenance record of a new relaxation analysis workspace."""
+
+    name = str(workspace.get("name", "")).strip() or "Analysis workspace"
+    charge_state = canonical_charge_state(workspace.get("charge_state"))
+    job_ids = _workspace_job_ids(workspace)
+    return ProvenanceRecord(
+        action="create_analysis_workspace",
+        workflow_stage=WorkflowStage.SITE_ANALYSIS,
+        actor="user",
+        description=f"Created analysis workspace '{name}'",
+        parameters={
+            "workspace_id": str(workspace.get("id", "")),
+            "workspace_name": name,
+            "charge_state": charge_state,
+            "charge_state_label": muon_charge_state_label(charge_state) if charge_state else None,
+            "relaxation_count": len(job_ids),
+        },
+        input_entity_ids=job_ids,
+    )
+
+
+def relaxed_sites_grouped_record(
+    workspace: Mapping[str, object], host_structure: Structure | None
+) -> ProvenanceRecord | None:
+    """Return the provenance record of a grouping applied to a workspace, or ``None`` without one."""
+
+    clustering = workspace.get("clustering")
+    result = clustering.get("result") if isinstance(clustering, Mapping) else None
+    clusters = result.get("clusters") if isinstance(result, Mapping) else None
+    labels = result.get("cluster_labels") if isinstance(result, Mapping) else None
+    if not isinstance(clustering, Mapping) or not isinstance(clusters, list):
+        return None
+    name = str(workspace.get("name", "")).strip() or "Analysis workspace"
+    grouping = relaxed_site_grouping(clustering, host_structure)
+    return ProvenanceRecord(
+        action="group_relaxed_sites",
+        workflow_stage=WorkflowStage.SITE_ANALYSIS,
+        actor="user",
+        description=f"Grouped the relaxed sites of analysis workspace '{name}'",
+        parameters={
+            "workspace_id": str(workspace.get("id", "")),
+            "workspace_name": name,
+            "site_count": len(labels) if isinstance(labels, list) else None,
+            "distinct_site_count": len(clusters),
+            "grouping": grouping,
+            "grouping_summary": grouping_summary(grouping),
+        },
+        input_entity_ids=_workspace_job_ids(workspace),
+    )
+
+
+def summary_export_header_lines(snapshot: Mapping[str, object]) -> list[str]:
+    """Return the comment lines an exported summary CIF starts with: its source and grouping."""
+
+    lines = [
+        f"Muon sites pinned from the MuFinder analysis "
+        f"'{str(snapshot.get('workspace_name', '')).strip() or 'Analysis workspace'}'"
+    ]
+    grouping = snapshot.get("grouping")
+    if isinstance(grouping, Mapping):
+        lines.append(f"Grouping: {grouping_method_text(grouping)}")
+        symmetry = grouping_symmetry_text(grouping, plain=True)
+        if symmetry:
+            lines.append(f"Symmetry: {symmetry}")
+    return lines
+
+
+def build_muon_sites_summary_snapshot(
+    workspace: Mapping[str, object], host_structure: Structure | None = None
+) -> dict[str, object] | None:
     """Return the snapshot "Pin to Summary" stores for a clustered workspace.
 
     Each site records its cluster index, representative fractional position,
     relative energy, Wyckoff label and the representative relaxation's job id,
     which is what resolves the site to a relaxed muon site downstream. Sites are
     ranked by relative energy (sites without one last, cluster index breaking
-    ties). Returns ``None`` when the workspace has no host or no clusters.
+    ties). The snapshot also keeps how the sites were grouped
+    (:func:`relaxed_site_grouping`, with the space group of ``host_structure``,
+    the workspace's host). Returns ``None`` when the workspace has no host or no
+    clusters.
     """
 
     # Key the snapshot to the workspace's own host, not the active project host:
@@ -203,6 +371,7 @@ def build_muon_sites_summary_snapshot(workspace: Mapping[str, object]) -> dict[s
         "workspace_name": str(workspace.get("name", "")).strip() or "Analysis workspace",
         "host_structure_id": host_structure_id,
         "sites": sites,
+        "grouping": relaxed_site_grouping(clustering, host_structure),  # type: ignore[arg-type]
     }
 
 
@@ -547,7 +716,14 @@ __all__ = [
     "PinnedMuonSite",
     "PinnedQuantumSource",
     "PinnedSourceSelection",
+    "analysis_workspace_created_record",
     "build_muon_sites_summary_snapshot",
+    "grouping_method_text",
+    "relaxed_sites_grouped_record",
+    "grouping_summary",
+    "grouping_symmetry_text",
+    "relaxed_site_grouping",
+    "summary_export_header_lines",
     "muon_site_wyckoff_labels",
     "muon_sites_summary_snapshots",
     "has_pinned_sites",

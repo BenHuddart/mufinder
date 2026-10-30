@@ -23,6 +23,7 @@ class ProjectStore:
         "jobs",
         "results",
         "comparison_tables",
+        "generation_runs",
     )
 
     def __init__(self, project_root: Path) -> None:

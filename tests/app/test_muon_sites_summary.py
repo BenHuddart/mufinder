@@ -691,3 +691,59 @@ def test_pin_with_unsupported_charge_state_is_rejected(qapp, tmp_path: Path, mon
         assert muon_sites_summary_snapshots(doc) == {}
     finally:
         window.close()
+
+
+def test_pinned_summary_shows_and_exports_how_the_sites_were_grouped(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        workspace = _clustered_workspace(host, uuid4())
+        window._set_relaxation_analysis_workspaces([workspace])
+
+        window._on_muon_sites_pin_requested(str(workspace["id"]))
+
+        grouping = doc.ui_state[MUON_SITES_SUMMARY_SNAPSHOTS_KEY][POSITIVE_MUON_CHARGE_STATE][
+            "grouping"
+        ]
+        assert grouping["method"] == "connected"
+        assert grouping["connected_tolerance_ang"] == 0.25
+        assert grouping["symmetry_tolerance_ang"] == 1e-3
+        assert grouping["space_group_symbol"]
+        panel = window._muon_sites_summary_view._panels[POSITIVE_MUON_CHARGE_STATE]
+        assert "Connected components within 0.25 Å" in panel._summary_labels["Grouping"].text()
+        assert "tolerance 0.001 Å" in panel._summary_labels["Symmetry"].text()
+
+        output_path = tmp_path / "pinned.cif"
+        monkeypatch.setattr(
+            "mufinder.app.export_dialogs.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.export_dialogs.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        panel._export_cif_button.click()
+
+        text = output_path.read_text(encoding="latin-1")
+        assert "# Grouping: Connected components within 0.25 Å, Wyckoff tolerance 0.25 Å" in text
+        assert "# Symmetry: " in text
+    finally:
+        window.close()
+
+
+def test_applying_a_grouping_writes_a_journal_record(qapp, tmp_path: Path) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        workspace = _clustered_workspace(host, uuid4())
+        window._set_relaxation_analysis_workspaces([workspace])
+
+        window._relaxation_analysis_view.grouping_applied.emit(str(workspace["id"]))
+
+        record = doc.provenance[-1]
+        assert record.action == "group_relaxed_sites"
+        assert record.parameters["distinct_site_count"] == 2
+        assert record.parameters["grouping_summary"].startswith(
+            "Connected components within 0.25 Å"
+        )
+    finally:
+        window.close()

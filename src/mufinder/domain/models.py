@@ -183,6 +183,55 @@ class MuonSite:
 
 
 @dataclass(slots=True)
+class GenerationRunMove:
+    """One ``Cluster Positions`` step applied to some of a generation run's starts.
+
+    ``original_positions`` maps each moved site's id (as text) to its initial
+    fractional position before the move, so the starts the run produced can
+    always be recovered.
+    """
+
+    anchor_fractional: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    original_positions: dict[str, list[float]] = field(default_factory=dict)
+    moved_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
+class GenerationRun:
+    """One ``Generate Sites`` request: its inputs, seed, symmetry and outcome.
+
+    ``parameters`` holds every input the method read. ``seed`` is the random
+    seed a random run used (``None`` for the deterministic methods).
+    ``uses_symmetry`` says whether the method used the host's symmetry; the
+    space group is the one spglib detected at ``symmetry_tolerance_ang``, and
+    ``space_group_symbol`` is ``None`` when none was detected and the host was
+    treated as P1. ``site_ids`` are the starts the run made, which
+    :attr:`MuonSite.source_generation_batch_id` points back to; the run keeps
+    them after a start is removed. ``moves`` records each ``Cluster
+    Positions`` step with the starts' coordinates before it.
+    """
+
+    id: UUID = field(default_factory=uuid4)
+    method: str = ""
+    parameters: dict[str, Any] = field(default_factory=dict)
+    seed: int | None = None
+    uses_symmetry: bool = False
+    symmetry_tolerance_ang: float | None = None
+    space_group_symbol: str | None = None
+    space_group_number: int | None = None
+    symmetry_operation_count: int | None = None
+    site_ids: list[UUID] = field(default_factory=list)
+    requested_count: int | None = None
+    distinct_site_count: int | None = None
+    min_muon_muon_ang: float | None = None
+    attempts_used: int | None = None
+    retries: int | None = None
+    source_structure_id: UUID | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    moves: list[GenerationRunMove] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class Job:
     """A submitted or planned execution unit."""
 

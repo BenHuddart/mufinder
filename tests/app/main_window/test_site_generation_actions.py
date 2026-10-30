@@ -12,6 +12,7 @@ import mufinder.app.main_window as main_window_module
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import ProjectService
+from tests.support.symmetry_hosts import cof2_host
 
 
 def test_generate_requested_handles_errors(
@@ -104,7 +105,8 @@ def test_cluster_muon_positions_requested_updates_rows(main_window, tmp_path: Pa
     )
 
     assert site.initial_fractional_position == pytest.approx([0.9, 0.8, 0.7])
-    assert window._muon_generation_view._site_table.item(0, 3).text() == "0.9000"
+    # Row 0 heads the earlier starts the site belongs to.
+    assert window._muon_generation_view._site_table.item(1, 3).text() == "0.9000"
     assert window._muon_generation_view._selected_site_ids() == [str(site.id)]
     window.close()
 
@@ -125,6 +127,7 @@ def test_muon_generation_table_uses_natural_candidate_label_order(
 
     table = window._muon_generation_view._site_table
     assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+        "Earlier starts: Random, 3 starts",
         "Random Site 1",
         "Random Site 2",
         "Random Site 10",
@@ -442,4 +445,66 @@ def test_a_run_started_in_a_closed_project_is_discarded(
     assert first.sites == {}
     assert second.sites == {}
     assert window._muon_generation_view._generation_progress.format() == "Ready"
+    window.close()
+
+
+def _counting_saves(window) -> list[str]:
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+    return save_calls
+
+
+def test_generation_saves_the_project_and_lists_the_run_under_its_header(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "saved_run.mufinder", "SavedRun")
+    service.add_structure(window._document, cof2_host())
+    save_calls = _counting_saves(window)
+
+    window._on_generate_requested(
+        "manual", {"coord_system": "fractional", "x": 0.25, "y": 0.25, "z": 0.5}
+    )
+
+    assert save_calls == ["save"]
+    reloaded = service.load_project(window._document.project_root)
+    assert len(reloaded.generation_runs) == 1
+    assert window._muon_generation_view.run_header_titles() == [
+        "Custom coordinates, 1 start, fractional"
+    ]
+    window.close()
+
+
+def test_cluster_positions_saves_the_project_with_the_original_starts(
+    main_window, tmp_path: Path
+) -> None:
+    window = main_window
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "cluster_run.mufinder", "ClusterRun")
+    service.add_structure(window._document, cof2_host())
+    created = service.generate_candidate_sites(
+        window._document,
+        method="random",
+        parameters={"selection_mode": "count", "count": 2, "min_muon_atom": 1.0, "seed": 5},
+    )
+    original = list(created[0].initial_fractional_position)
+    save_calls = _counting_saves(window)
+
+    window._on_cluster_muon_positions_requested(
+        {"site_ids": [str(created[0].id)], "anchor_fractional": [0.5, 0.5, 0.5]}
+    )
+
+    assert save_calls == ["save"]
+    reloaded = service.load_project(window._document.project_root)
+    run = next(iter(reloaded.generation_runs.values()))
+    assert run.moves[0].anchor_fractional == [0.5, 0.5, 0.5]
+    assert run.moves[0].original_positions == {str(created[0].id): original}
+    assert window._document.provenance[-1].action == "cluster_candidate_positions"
     window.close()

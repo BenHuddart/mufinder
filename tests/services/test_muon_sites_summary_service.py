@@ -14,7 +14,12 @@ from mufinder.services.muon_sites_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
     NO_PINNED_SITES_NOTICE,
     QUANTUM_CORRECTIONS_SCOPE,
+    analysis_workspace_created_record,
     build_muon_sites_summary_snapshot,
+    grouping_method_text,
+    grouping_symmetry_text,
+    relaxed_sites_grouped_record,
+    summary_export_header_lines,
     downstream_site_scope,
     has_pinned_sites,
     pinned_muon_sites,
@@ -36,6 +41,7 @@ from tests.support.muon_sites import (
     store_workspaces,
 )
 from tests.support.structures import host_structure
+from tests.support.symmetry_hosts import cof2_host
 
 
 @pytest.fixture
@@ -283,3 +289,77 @@ def test_show_every_relaxed_site_survives_save_and_reload(project) -> None:
 
     assert show_every_relaxed_site(reloaded, ENERGY_BARRIERS_SCOPE)
     assert not show_every_relaxed_site(reloaded, QUANTUM_CORRECTIONS_SCOPE)
+
+
+# --- grouping parameters ----------------------------------------------------------
+
+
+def _grouped_workspace(doc, host) -> dict:
+    _low_a, _low_b, _high, workspace = _two_site_project(doc, host)
+    workspace["clustering"].update(
+        {
+            "method": "connected",
+            "connected_tolerance_ang": 0.25,
+            "hierarchical_t": 0.3,
+            "kmeans_k": 4,
+            "wyckoff_match_tolerance_ang": 0.2,
+        }
+    )
+    workspace["clustering"]["result"]["cluster_labels"] = [0, 0, 1]
+    return workspace
+
+
+def test_the_snapshot_keeps_the_grouping_method_tolerances_and_space_group(project) -> None:
+    _service, doc, _host = project
+    host = cof2_host()
+    workspace = _grouped_workspace(doc, host)
+
+    snapshot = build_muon_sites_summary_snapshot(workspace, host)
+
+    assert snapshot is not None
+    assert snapshot["grouping"] == {
+        "method": "connected",
+        "connected_tolerance_ang": 0.25,
+        "wyckoff_match_tolerance_ang": 0.2,
+        "symmetry_tolerance_ang": 1e-3,
+        "space_group_symbol": "P4_2/mnm",
+        "space_group_number": 136,
+        "symmetry_operation_count": 16,
+    }
+    assert grouping_method_text(snapshot["grouping"]) == (
+        "Connected components within 0.25 Å, Wyckoff tolerance 0.2 Å"
+    )
+    assert grouping_symmetry_text(snapshot["grouping"]) == "P4₂/mnm (16 ops), tolerance 0.001 Å"
+    assert summary_export_header_lines(snapshot) == [
+        "Muon sites pinned from the MuFinder analysis 'Analysis'",
+        "Grouping: Connected components within 0.25 Å, Wyckoff tolerance 0.2 Å",
+        "Symmetry: P4_2/mnm (16 ops), tolerance 0.001 Å",
+    ]
+
+
+def test_a_snapshot_pinned_without_grouping_parameters_exports_only_its_source() -> None:
+    assert summary_export_header_lines({"workspace_name": "Old"}) == [
+        "Muon sites pinned from the MuFinder analysis 'Old'"
+    ]
+
+
+def test_workspace_creation_and_grouping_records_carry_the_parameters(project) -> None:
+    _service, doc, _host = project
+    host = cof2_host()
+    workspace = _grouped_workspace(doc, host)
+
+    created = analysis_workspace_created_record(workspace)
+    grouped = relaxed_sites_grouped_record(workspace, host)
+
+    assert created.action == "create_analysis_workspace"
+    assert created.parameters["relaxation_count"] == 2
+    assert created.parameters["charge_state_label"] == "positive muon"
+    assert grouped is not None
+    assert grouped.action == "group_relaxed_sites"
+    assert grouped.parameters["site_count"] == 3
+    assert grouped.parameters["distinct_site_count"] == 2
+    assert grouped.parameters["grouping_summary"] == (
+        "Connected components within 0.25 Å, Wyckoff tolerance 0.2 Å, "
+        "P4₂/mnm (16 ops), tolerance 0.001 Å"
+    )
+    assert relaxed_sites_grouped_record({"name": "Empty"}, host) is None

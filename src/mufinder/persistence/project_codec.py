@@ -22,6 +22,8 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
+    GenerationRun,
+    GenerationRunMove,
     Job,
     MuonSite,
     Project,
@@ -31,7 +33,7 @@ from mufinder.domain.models import (
     normalize_default_method,
     utc_now,
 )
-from mufinder.persistence.codec import parse_datetime, parse_uuid
+from mufinder.persistence.codec import float_or_none, int_or_none, parse_datetime, parse_uuid
 
 #: Status a freshly generated muon site loads with.
 _GENERATED_SITE_STATUS = "generated"
@@ -275,6 +277,53 @@ def comparison_table_from_dict(payload: dict[str, Any]) -> ComparisonTable:
     )
 
 
+def generation_run_from_dict(payload: dict[str, Any]) -> GenerationRun:
+    """Decode one muon generation run; malformed optional values load as ``None``."""
+
+    raw_parameters = payload.get("parameters")
+    raw_moves = payload.get("moves")
+    return GenerationRun(
+        id=UUID(payload["id"]),
+        method=str(payload.get("method", "")),
+        parameters=dict(raw_parameters) if isinstance(raw_parameters, dict) else {},
+        seed=int_or_none(payload.get("seed")),
+        uses_symmetry=bool(payload.get("uses_symmetry", False)),
+        symmetry_tolerance_ang=float_or_none(payload.get("symmetry_tolerance_ang")),
+        space_group_symbol=(
+            str(payload["space_group_symbol"]) if payload.get("space_group_symbol") else None
+        ),
+        space_group_number=int_or_none(payload.get("space_group_number")),
+        symmetry_operation_count=int_or_none(payload.get("symmetry_operation_count")),
+        site_ids=[UUID(value) for value in payload.get("site_ids", [])],
+        requested_count=int_or_none(payload.get("requested_count")),
+        distinct_site_count=int_or_none(payload.get("distinct_site_count")),
+        min_muon_muon_ang=float_or_none(payload.get("min_muon_muon_ang")),
+        attempts_used=int_or_none(payload.get("attempts_used")),
+        retries=int_or_none(payload.get("retries")),
+        source_structure_id=parse_uuid(payload.get("source_structure_id")),
+        created_at=parse_datetime(payload.get("created_at")) or utc_now(),
+        moves=[
+            _generation_run_move_from_dict(move)
+            for move in (raw_moves if isinstance(raw_moves, list) else [])
+            if isinstance(move, dict)
+        ],
+    )
+
+
+def _generation_run_move_from_dict(payload: dict[str, Any]) -> GenerationRunMove:
+    raw_positions = payload.get("original_positions")
+    return GenerationRunMove(
+        anchor_fractional=[float(value) for value in payload.get("anchor_fractional", [])],
+        original_positions={
+            str(site_id): [float(value) for value in position]
+            for site_id, position in (
+                raw_positions.items() if isinstance(raw_positions, dict) else ()
+            )
+        },
+        moved_at=parse_datetime(payload.get("moved_at")) or utc_now(),
+    )
+
+
 def jobs_in_creation_order(
     payloads: list[dict[str, Any]],
     provenance: Sequence[ProvenanceRecord],
@@ -453,4 +502,5 @@ ENTITY_DECODERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "runs": run_from_dict,
     "results": result_from_dict,
     "comparison_tables": comparison_table_from_dict,
+    "generation_runs": generation_run_from_dict,
 }
