@@ -382,7 +382,8 @@ Pristine relaxation
   workflow table and the result payload.
 - A ``Generate Comparison Table`` feature compares one or more completed DFT
   relaxations against the active experimental host structure as a persisted
-  subtab with editable title, per-metric information dialogs and CSV export
+  subtab with editable title, a one-line tooltip on each metric, a link to the
+  metric descriptions in the user guide and CSV export
   (see :doc:`/user_guide/comparison_table`).
 
 Muon site generation and relaxation
