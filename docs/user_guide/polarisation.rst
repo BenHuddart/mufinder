@@ -45,7 +45,7 @@ Simulate the polarisation
 Selecting a simulation in the table draws it and loads its settings and field
 results into the form. ``Recalculate`` runs the selected simulation again with
 the form's settings and the current fields; ``Add Simulation`` keeps it and adds
-another. ``Remove…``, or Delete or Backspace in the table, removes the
+another. ``Delete…``, or Delete or Backspace in the table, deletes the
 selected simulation after asking. ``Export Data…`` writes it to a text file
 (see `Exported data`_). A long calculation shows a busy dialog that can cancel
 it.

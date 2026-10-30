@@ -692,36 +692,52 @@ UI_TEXT_FORBIDDEN = (
 )
 
 #: ``numpy.einsum`` subscripts use ``...`` and ``->`` as syntax, not as text.
-EINSUM_SUBSCRIPTS = re.compile(r"^[\w.,]+->[\w.]*$")
+EINSUM_SUBSCRIPTS = re.compile(r"^[a-z.,]+->[a-z.]*$")
 
 
 def _ui_text_violations(source: str) -> list[tuple[int, str]]:
-    """Return ``(line, problem)`` for each string constant that breaks the UI style.
+    """Return ``(line, problem)`` for each string literal that breaks the UI style.
 
-    Every string literal counts (f-string pieces included) except docstrings and
-    einsum subscripts, so a message built in ``services`` or ``science`` and
-    shown by the app is held to the same rules as a label in ``app``.
+    Every string literal counts except docstrings and einsum subscripts, so a
+    message built in ``services`` or ``science`` and shown by the app is held to
+    the same rules as a label in ``app``. An f-string is read whole, with each
+    replacement field standing in as a word, so ``f"{noun}(s)"`` is caught.
     """
 
     tree = ast.parse(source)
-    docstrings: set[int] = set()
+    skipped: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             first = node.body[0] if node.body else None
             if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
-                docstrings.add(id(first.value))
-    violations: list[tuple[int, str]] = []
+                skipped.add(id(first.value))
+        elif isinstance(node, ast.JoinedStr):
+            skipped.update(id(value) for value in node.values)
+    texts: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-            continue
-        if id(node) in docstrings or EINSUM_SUBSCRIPTS.match(node.value):
-            continue
-        violations.extend(
-            (node.lineno, problem)
-            for pattern, problem in UI_TEXT_FORBIDDEN
-            if pattern.search(node.value)
-        )
-    return violations
+        if isinstance(node, ast.JoinedStr):
+            texts.append(
+                (
+                    node.lineno,
+                    "".join(
+                        value.value if isinstance(value, ast.Constant) else "x"
+                        for value in node.values
+                    ),
+                )
+            )
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in skipped
+        ):
+            texts.append((node.lineno, node.value))
+    return [
+        (line, problem)
+        for line, text in texts
+        if not EINSUM_SUBSCRIPTS.match(text)
+        for pattern, problem in UI_TEXT_FORBIDDEN
+        if pattern.search(text)
+    ]
 
 
 def test_ui_text_check_flags_text_and_skips_docstrings_and_einsum() -> None:
@@ -732,6 +748,8 @@ def test_ui_text_check_flags_text_and_skips_docstrings_and_einsum() -> None:
         '    np.einsum("...i,ij->...j", a, b)\n'
         '    label = "Export..."\n'
         '    return f"Submitted {n} job(s) in Setup -> CASTEP"\n'
+        'deleted = f"Deleted {n} {noun}(s)"\n'
+        'swap = "Fe->Co"\n'
     )
 
     assert sorted(_ui_text_violations(source)) == sorted(
@@ -739,6 +757,8 @@ def test_ui_text_check_flags_text_and_skips_docstrings_and_einsum() -> None:
             (5, UI_TEXT_FORBIDDEN[1][1]),
             (6, UI_TEXT_FORBIDDEN[0][1]),
             (6, UI_TEXT_FORBIDDEN[2][1]),
+            (7, UI_TEXT_FORBIDDEN[0][1]),
+            (8, UI_TEXT_FORBIDDEN[2][1]),
         ]
     )
 

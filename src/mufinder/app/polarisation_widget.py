@@ -239,7 +239,7 @@ class PolarisationWidget(QWidget):
             "Run the selected simulation again with these settings and the current fields."
         )
         self._recalculate_button.clicked.connect(self._recalculate_simulation)
-        self._remove_button = QPushButton("Remove…", self)
+        self._remove_button = QPushButton("Delete…", self)
         self._remove_button.clicked.connect(self._remove_selected_simulation)
         self._export_button = QPushButton("Export Data…", self)
         self._export_button.clicked.connect(self._export_data)
@@ -910,13 +910,14 @@ class PolarisationWidget(QWidget):
             return
         if not workflow_table_utils.confirm_destructive(
             self,
-            "Remove simulation",
-            f"Remove the simulation {record.title!r}?",
+            "Delete simulation",
+            f"Delete the simulation '{record.title}'?",
             "Its traces and settings are deleted from the project.",
+            "Delete simulation",
         ):
             return
         remove_polarisation_simulation(self._document, record.simulation_id)
-        self._status.setText(f"Removed {record.title}.")
+        self._status.setText(f"Deleted '{record.title}'")
         self._refresh_simulations()
         # The form first, so the save that follows carries it.
         self._emit_form_state()

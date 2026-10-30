@@ -772,6 +772,13 @@ dialog, and the Supercell Editor was the only caller of the private forwarder.
 - ``ProjectService._supercell_asset``: call ``supercell_asset`` from
   ``mufinder.services.supercell_assets``.
 
+The helper below was removed without a deprecation period. It is not in the API
+reference, no project data depends on it, and only MuFinder's own code called it.
+
+- ``count_phrase`` (``mufinder.app.workflow_table_utils``): call ``plural`` from
+  ``mufinder.domain.text``; ``count_phrase(n, ("row", "rows"))`` is
+  ``plural(n, "row", "rows")``.
+
 The keywords below were removed without a deprecation period. They belonged to
 an unpersisted record that is not in the API reference and that only MuFinder
 constructs, so no project data or packaged build depends on them. Code that

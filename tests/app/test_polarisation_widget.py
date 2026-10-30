@@ -308,7 +308,7 @@ def test_remove_asks_first_and_binds_delete_and_backspace(
     page._select_simulation(polarisation_simulations(document)[0].simulation_id)
     page._delete_shortcuts[1].activated.emit()
     assert polarisation_simulations(document) == []
-    assert confirmed_destructive_actions[-1]["text"].startswith("Remove the simulation")
+    assert confirmed_destructive_actions[-1]["text"].startswith("Delete the simulation")
     assert not page._remove_button.isEnabled()
 
 

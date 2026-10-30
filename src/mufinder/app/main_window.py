@@ -1770,7 +1770,7 @@ class MainWindow(QMainWindow):
             count = len(reconciled)
             self.statusBar().showMessage(
                 f"{plural(count, 'local job was', 'local jobs were')} stopped because MuFinder closed "
-                f"while {'it was' if count == 1 else 'they were'} in progress."
+                f"while {'it was' if count == 1 else 'they were'} in progress"
             )
         else:
             self.statusBar().showMessage(f"Opened project {self._document.project.name}")
@@ -3598,7 +3598,7 @@ class MainWindow(QMainWindow):
         try:
             self._project_service.save_project(self._document)
         except ValueError:
-            self.statusBar().showMessage("Comparison table title was updated, but autosave failed.")
+            self.statusBar().showMessage("Comparison table title was updated, but autosave failed")
             return
         self.statusBar().showMessage(f"Renamed comparison table to '{table.label}'")
 
@@ -6299,7 +6299,7 @@ class MainWindow(QMainWindow):
         offset only, so an inspect on a runaway multi-hundred-MB job output
         never loads the whole file into memory; a partial leading line (cut
         mid-line by the seek) is dropped and a truncation marker is prefixed,
-        matching the "... [truncated]" convention used elsewhere in this file.
+        matching the "… [truncated]" convention used elsewhere in this file.
         """
 
         limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
@@ -6924,7 +6924,7 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(
             f"{plural(stopped, 'job was', 'jobs were')} stopped by the job watchdog because no runner "
-            "was tracking them."
+            f"was tracking {'it' if stopped == 1 else 'them'}"
         )
 
     def _sync_cluster_tracking_from_document(self) -> None:
@@ -7826,7 +7826,7 @@ class MainWindow(QMainWindow):
         )
         if not resolved:
             self.statusBar().showMessage(
-                "The pinned analysis has changed — opened the Analysis tab instead."
+                "The pinned analysis has changed — opened the Analysis tab instead"
             )
 
     def _on_open_muon_analysis_requested(self, workspace_id: str) -> None:

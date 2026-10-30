@@ -11,7 +11,7 @@ Capitalisation
 
 - **Sentence case everywhere**: buttons, menu items, tabs, window and dialog
   titles, message boxes and labels. Capitalise the first word and proper
-  nouns only (``Delete supercell``, ``Import legacy relaxations…``).
+  nouns only (``Delete supercell``, ``Clean and reset``).
 - Proper nouns keep their capitals: product and program names (MuFinder,
   CASTEP, SLURM), abbreviations (UEP, NEB, DFT, MPI, SSH) and the names of
   workflow pages when the text refers to the page (Magnetic Fields, Quantum
@@ -21,8 +21,8 @@ Punctuation
 -----------
 
 - **Ellipsis.** A command that opens a dialog needing more input ends in
-  ``…``, the one-character ellipsis (``Export CSV…``, ``Configure…``). A
-  command that acts at once, or only asks to confirm, has none. Progress text
+  ``…``, the one-character ellipsis (``Export CSV…``, ``Configure…``); a
+  command that acts at once has none. Progress text
   ends in ``…`` too (``Connecting to SCARF…``), and so does text cut short.
   Never write three dots.
 - **Status messages** are in the past tense and have no final period
