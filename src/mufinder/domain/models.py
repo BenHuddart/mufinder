@@ -196,6 +196,16 @@ class GenerationRunMove:
     moved_at: datetime = field(default_factory=utc_now)
 
 
+#: Name of each :attr:`GenerationRun.method`, as the ``Generate Sites`` method
+#: picker shows it and the Journal writes it.
+GENERATION_METHOD_LABELS: dict[str, str] = {
+    "random": "Random generation",
+    "near_element": "Attach muon to element",
+    "manual": "Custom coordinates",
+    "uep_clusters": "UEP clusters",
+}
+
+
 @dataclass(slots=True)
 class GenerationRun:
     """One ``Generate Sites`` request: its inputs, seed, symmetry and outcome.

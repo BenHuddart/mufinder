@@ -706,8 +706,11 @@ defined by two of these modules, and a pinned count may only fall.
      - The in-memory project aggregate (``ProjectDocument``), the active host
        (``active_host_structure``) and the read-only definition and job
        lookups (``definitions_for_stage``, ``active_definition``,
-       ``job_for_mapping_key``; see Workflow controllers).
-       ``mufinder.services.project_service`` re-exports these names.
+       ``job_for_mapping_key``; see Workflow controllers), and the label of
+       the workflow row that owns a job (``job_row_label``), which job
+       provenance records carry for the Journal.
+       ``mufinder.services.project_service`` re-exports all but
+       ``job_row_label``.
    * - ``mufinder.services.supercell_assets``
      - Saved supercell assets built from a host (create, rename, regenerate,
        delete, the frozen rule and its references), each workflow's
@@ -855,9 +858,13 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.domain.text``
      - Helpers for text shown to the user, for every layer that builds it:
        ``plural`` writes a count that agrees with its number (``1 job``,
-       ``3 jobs``; see :doc:`/ui_text`), and ``natural_sort_key`` orders
+       ``3 jobs``; see :doc:`/ui_text`), ``natural_sort_key`` orders
        labels with their numbers compared as numbers (``site_2`` before
-       ``site_10``).
+       ``site_10``), and ``execution_target_text`` names where a job runs
+       (``this computer``, or the cluster's name). The name of each muon
+       generation method, which the ``Generate Sites`` picker and the Journal
+       both show, is ``GENERATION_METHOD_LABELS`` in
+       ``mufinder.domain.models``.
 
 Widget contract
 ~~~~~~~~~~~~~~~

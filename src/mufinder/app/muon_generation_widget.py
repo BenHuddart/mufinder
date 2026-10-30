@@ -42,7 +42,7 @@ from mufinder.app.structure_render_guard import (
 from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import create_workflow_table
-from mufinder.domain.models import Structure
+from mufinder.domain.models import GENERATION_METHOD_LABELS, Structure
 from mufinder.science.site_generation import (
     SiteGenerationError,
     estimate_muon_muon_separation_for_count,
@@ -153,10 +153,8 @@ class MuonGenerationWidget(QWidget):
         super().__init__(parent)
 
         self._method_combo = QComboBox()
-        self._method_combo.addItem("Random generation", "random")
-        self._method_combo.addItem("Attach muon to element", "near_element")
-        self._method_combo.addItem("Custom coordinates", "manual")
-        self._method_combo.addItem("UEP clusters", "uep_clusters")
+        for method, method_label in GENERATION_METHOD_LABELS.items():
+            self._method_combo.addItem(method_label, method)
         self._host_structure: Structure | None = None
         self._active_host: Structure | None = None
         self._site_rows: list[dict[str, Any]] = []

@@ -20,6 +20,7 @@ from mufinder.services.journal import (
     extend_journal,
     render_journal_markdown,
     render_journal_text,
+    stamp_label,
 )
 
 
@@ -385,7 +386,16 @@ def test_a_generation_entry_prints_the_run_line_and_seed(tmp_path: Path) -> None
 def test_a_generation_entry_without_a_run_keeps_the_older_sentence() -> None:
     entry = build_journal("Old", [generation_record(9, count=2)]).days[0].entries[0]
 
-    assert entry.body == "Generated 0 muon sites using random."
+    assert entry.body == "Generated 0 muon sites with 'Random generation'."
+
+
+def test_a_generation_entry_without_a_run_never_shows_an_unknown_method_id() -> None:
+    record = generation_record(9)
+    record.parameters["method"] = "legacy_grid"
+
+    entry = build_journal("Old", [record]).days[0].entries[0]
+
+    assert entry.body == "Generated 0 muon sites."
 
 
 def test_journal_describes_cluster_positions_staging_and_removal() -> None:
@@ -476,3 +486,375 @@ def test_a_cluster_positions_entry_names_the_run_only_when_the_starts_had_one() 
     assert body.endswith(
         "The original positions are kept in the project's provenance and with the generation run."
     )
+
+
+def _job_record(action: str, stage: WorkflowStage, hour: int = 9, **parameters) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, hour, 0, tzinfo=UTC),
+        action=action,
+        workflow_stage=stage,
+        parameters=parameters,
+        job_id=None if action == "submit_jobs" else uuid4(),
+    )
+
+
+def _batch(charge_state: str, hour: int) -> list[ProvenanceRecord]:
+    """A muon-relaxation submission of two sites and one completion, in ``charge_state``."""
+
+    jobs = [
+        {"label": label, "row_label": label, "charge_state": charge_state}
+        for label in ("Attached-F Site 1", "Random Site 1")
+    ]
+    return [
+        _job_record(
+            "submit_jobs",
+            WorkflowStage.MUON_RELAXATION,
+            hour,
+            execution_target="local",
+            job_count=2,
+            job_labels=[job["label"] for job in jobs],
+            charge_state=charge_state,
+            jobs=jobs,
+        ),
+        _job_record(
+            "job_completed",
+            WorkflowStage.MUON_RELAXATION,
+            hour + 1,
+            job_label="Random Site 1",
+            row_label="Random Site 1",
+            charge_state=charge_state,
+            execution_target="local",
+        ),
+    ]
+
+
+def test_positive_muon_and_muonium_batches_read_differently() -> None:
+    entries = build_journal("Mu", [*_batch("positive_muon", 9), *_batch("muonium", 12)])
+    texts = [(entry.title, entry.body) for entry in entries.days[0].entries]
+
+    assert texts == [
+        (
+            "Muon relaxations launched: positive muon",
+            "Submitted 2 jobs to run on this computer: Attached-F Site 1, Random Site 1.",
+        ),
+        (
+            "Positive muon relaxation completed",
+            "Positive muon relaxation Random Site 1 finished on this computer.",
+        ),
+        (
+            "Muon relaxations launched: muonium",
+            "Submitted 2 jobs to run on this computer: Attached-F Site 1, Random Site 1.",
+        ),
+        (
+            "Muonium relaxation completed",
+            "Muonium relaxation Random Site 1 finished on this computer.",
+        ),
+    ]
+
+
+def test_a_batch_of_both_charge_states_names_both() -> None:
+    record = _job_record(
+        "submit_jobs",
+        WorkflowStage.MUON_RELAXATION,
+        execution_target="SCARF",
+        job_count=2,
+        job_labels=["Site 1", "Site 1"],
+        jobs=[
+            {"label": "Site 1", "row_label": "Site 1", "charge_state": "positive_muon"},
+            {"label": "Site 1", "row_label": "Site 1", "charge_state": "muonium"},
+        ],
+    )
+
+    entry = build_journal("Mu", [record]).days[0].entries[0]
+
+    assert entry.title == "Muon relaxations launched: positive muon and muonium"
+    assert (
+        entry.body == "Submitted 2 jobs to run on SCARF: Site 1 (positive muon), Site 1 (muonium)."
+    )
+
+
+def test_a_batch_from_several_workflows_keeps_the_general_title() -> None:
+    record = _job_record(
+        "submit_jobs",
+        None,
+        execution_target="local",
+        job_count=2,
+        job_labels=["pristine_relax_relax_1", "Site 1"],
+        jobs=[
+            {"label": "pristine_relax_relax_1", "row_label": "relax_1"},
+            {"label": "Site 1", "row_label": "Site 1", "charge_state": "positive_muon"},
+        ],
+    )
+
+    entry = build_journal("Mixed", [record]).days[0].entries[0]
+
+    assert entry.title == "Calculations launched"
+    assert entry.body == "Submitted 2 jobs to run on this computer: relax_1, Site 1."
+
+
+def test_an_unknown_charge_state_is_not_named_and_a_nameless_job_starts_a_sentence() -> None:
+    record = _job_record(
+        "job_completed",
+        WorkflowStage.MUON_RELAXATION,
+        charge_state="negative",
+        execution_target="local",
+    )
+
+    entry = build_journal("Odd", [record]).days[0].entries[0]
+
+    assert entry.title == "Calculation completed"
+    assert entry.body == "A calculation finished on this computer."
+
+
+@pytest.mark.parametrize(
+    ("action", "title"),
+    [
+        ("job_failed", "Muonium relaxation failed"),
+        ("job_stopped", "Muonium relaxation stopped"),
+        ("job_cancelled", "Muonium relaxation cancelled"),
+    ],
+)
+def test_every_outcome_of_a_muon_relaxation_names_its_charge_state(action: str, title: str) -> None:
+    record = _job_record(
+        action,
+        WorkflowStage.MUON_RELAXATION,
+        job_label="Random Site 2",
+        row_label="Random Site 2",
+        charge_state="muonium",
+        execution_target="SCARF",
+    )
+
+    entry = build_journal("Mu", [record]).days[0].entries[0]
+
+    assert entry.title == title
+    assert entry.body == "Muonium relaxation Random Site 2 finished on SCARF."
+
+
+def test_a_job_is_described_by_its_workflow_and_row_label() -> None:
+    records = [
+        _job_record(
+            "job_completed",
+            WorkflowStage.PRISTINE_RELAXATION,
+            job_label="pristine_relax_relax_1",
+            row_label="relax_1",
+            execution_target="local",
+        ),
+        _job_record(
+            "job_reset",
+            WorkflowStage.UEP,
+            10,
+            job_label="uep_source_01",
+            row_label="source_01",
+            cleaned_output_directory=False,
+        ),
+        _job_record(
+            "job_continuation",
+            WorkflowStage.QUANTUM_CORRECTIONS,
+            11,
+            job_label="quantum_phonon_Attached-F_Site_1",
+            row_label="Attached-F Site 1",
+        ),
+    ]
+
+    bodies = [entry.body for entry in build_journal("Rows", records).days[0].entries]
+
+    assert bodies == [
+        "Pristine relaxation relax_1 finished on this computer.",
+        "Reset UEP calculation source_01 back to the ready-to-submit state.",
+        "Queued phonon calculation for Attached-F Site 1 for a continuation run.",
+    ]
+
+
+def test_old_job_records_without_a_charge_state_or_row_label_read_as_before() -> None:
+    records = [
+        _job_record(
+            "submit_jobs",
+            WorkflowStage.MUON_RELAXATION,
+            execution_target="local",
+            job_count=2,
+            job_labels=["Attached-F Site 1", "Random Site 1"],
+        ),
+        _job_record(
+            "job_completed",
+            WorkflowStage.PRISTINE_RELAXATION,
+            10,
+            job_label="pristine_relax_relax_1",
+            calc_type="castep_pristine_relaxation",
+            execution_target="local",
+        ),
+    ]
+
+    entries = build_journal("Old", records).days[0].entries
+
+    assert [(entry.title, entry.body) for entry in entries] == [
+        (
+            "Calculations launched",
+            "Submitted 2 jobs to run on this computer: Attached-F Site 1, Random Site 1.",
+        ),
+        ("Calculation completed", "pristine_relax_relax_1 finished on this computer."),
+    ]
+
+
+def test_a_single_job_quotes_its_energy_to_a_tenth_of_a_mev_and_its_force_to_three_figures() -> (
+    None
+):
+    record = _job_record(
+        "job_completed",
+        WorkflowStage.PRISTINE_RELAXATION,
+        job_label="relax_1",
+        execution_target="local",
+        result_total_energy=-5621.874312345,
+        result_max_force=0.012300682907871417,
+        warnings_count=2,
+    )
+
+    body = build_journal("Precision", [record]).days[0].entries[0].body
+
+    assert body == (
+        "relax_1 finished on this computer. Total energy -5621.8743 eV. Max force 0.0123 eV/Å. "
+        "Recorded 2 warnings."
+    )
+
+
+def test_an_adopted_default_names_the_criterion_it_converged_under() -> None:
+    records = [
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+            action="set_recommended_cutoff",
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            parameters={
+                "recommended_cutoff_energy": 600.0,
+                "recommended_cutoff_method": "converged",
+                "recommended_cutoff_energy_threshold": 0.001,
+                "recommended_cutoff_force_threshold": 0.05,
+                "recommended_cutoff_xc_functional": "PBE",
+            },
+        ),
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 10, 0, tzinfo=UTC),
+            action="set_recommended_kpoint_grid",
+            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+            parameters={
+                "recommended_kpoint_grid": [4, 4, 6],
+                "recommended_kpoint_method": "delta-threshold",
+                "recommended_kpoint_energy_threshold": 0.001,
+                "recommended_kpoint_force_threshold": 0.05,
+                "recommended_kpoint_stress_threshold": 0.1,
+            },
+        ),
+    ]
+
+    bodies = [entry.body for entry in build_journal("Defaults", records).days[0].entries]
+
+    assert bodies == [
+        "Set the project default cutoff to 600 eV (converged with the PBE functional): energy "
+        "within 0.001 eV/atom and max force within 0.05 eV/Å of the finest cutoff.",
+        "Set the project default k-point grid to 4x4x6: energy within 0.001 eV/atom, max force "
+        "within 0.05 eV/Å and max stress within 0.1 GPa of the densest grid.",
+    ]
+    assert not any("delta" in body for body in bodies)
+
+
+def _configure_record(action: str, stage: WorkflowStage, configuration: dict) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action=action,
+        workflow_stage=stage,
+        parameters={"configuration": configuration},
+    )
+
+
+def test_journal_shows_muon_relaxation_quantum_and_barrier_configuration() -> None:
+    rows = [{"label": f"Site {n}", "charge_state": "positive_muon"} for n in range(3)]
+    rows.append({"label": "Site 0", "charge_state": "muonium"})
+    records = [
+        _configure_record(
+            "configure_muon_relaxation", WorkflowStage.MUON_RELAXATION, {"rows": rows}
+        ),
+        _configure_record(
+            "configure_quantum_corrections",
+            WorkflowStage.QUANTUM_CORRECTIONS,
+            {"sources": [{"key": "a"}]},
+        ),
+        _configure_record(
+            "configure_energy_barriers",
+            WorkflowStage.ENERGY_BARRIERS,
+            {"method": "NEB", "sources": [{"key": "a"}, {"key": "b"}]},
+        ),
+    ]
+
+    entries = build_journal("Configured", records).days[0].entries
+
+    assert [(entry.title, entry.body, entry.workflow_label) for entry in entries] == [
+        (
+            "Muon relaxations configured",
+            "Prepared 4 muon relaxations for later submission (3 positive muon, 1 muonium).",
+            "Muon Relaxations",
+        ),
+        (
+            "Quantum Corrections configured",
+            "Prepared phonon calculations for 1 relaxed muon site.",
+            "Quantum Corrections",
+        ),
+        (
+            "Energy Barriers configured",
+            "Prepared NEB calculations for 2 paths.",
+            "Energy Barriers",
+        ),
+    ]
+
+
+def test_journal_names_the_new_active_host_and_reads_older_records_from_their_description() -> None:
+    new = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action="set_active_host_structure",
+        parameters={
+            "new_host_structure_label": "CoF2 relaxed",
+            "previous_host_structure_label": "CoF2",
+        },
+    )
+    old = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 10, 0, tzinfo=UTC),
+        action="set_active_host_structure",
+        description="Changed active host from 'CoF2 relaxed' to 'CoF2'",
+        parameters={"new_host_structure_id": str(uuid4())},
+    )
+
+    entries = build_journal("Host", [new, old]).days[0].entries
+
+    assert [(entry.title, entry.body) for entry in entries] == [
+        (
+            "Active host changed",
+            "Made 'CoF2 relaxed' the active host structure in place of 'CoF2'.",
+        ),
+        ("Active host changed", "Changed active host from 'CoF2 relaxed' to 'CoF2'."),
+    ]
+
+
+def test_journal_shows_a_calculation_dismissed_from_the_dashboard() -> None:
+    record = _job_record(
+        "job_dismissed",
+        WorkflowStage.MUON_RELAXATION,
+        job_label="Random Site 3",
+        row_label="Random Site 3",
+        charge_state="positive_muon",
+        execution_target="local",
+    )
+
+    entry = build_journal("Dismissed", [record]).days[0].entries[0]
+
+    assert (entry.title, entry.body, entry.stamp_kind) == (
+        "Calculation dismissed",
+        "Dismissed positive muon relaxation Random Site 3 from the Job Dashboard.",
+        "milestone",
+    )
+
+
+def test_stamp_label_names_each_stamp_kind() -> None:
+    assert [stamp_label(kind) for kind in ("milestone", "success", "warning", "danger", "x")] == [
+        "Milestone",
+        "Completed",
+        "Attention",
+        "Failed",
+        "Entry",
+    ]
