@@ -347,7 +347,9 @@ defined by two of these modules, and a pinned count may only fall.
        beside ``mufinder.app.sample_photo_dialog``); and the dipolar-tensor and
        nuclear-width dialogs (``mufinder.app.magnetic_analysis_dialogs``). The
        dialogs never import the page. Its site options come from
-       ``mufinder.services.magnetic_field_sites``.
+       ``mufinder.services.magnetic_field_sites``, and its calculations run
+       off the GUI thread through ``mufinder.services.magnetic_field_calculation``
+       and ``mufinder.app.blocking_call``.
    * - ``mufinder.app.magnetic_component_dialogs``
      - The component, atom-phase and preset dialogs, and what the Magnetic
        Fields dialogs share: the atom-target cards and their selector
@@ -368,8 +370,9 @@ defined by two of these modules, and a pinned count may only fall.
      - Running a blocking call off the GUI thread with the caller's
        synchronous semantics (``run_blocking_call``): user input is held back,
        a busy dialog appears once the call takes noticeably long, and a
-       cancellable call raises ``BlockingCallCancelled``. Filesystem retries
-       and keyring password lookups use it.
+       cancellable call raises ``BlockingCallCancelled``. Filesystem retries,
+       keyring password lookups, polarisation simulations and the Magnetic
+       Fields calculations use it.
    * - ``mufinder.app.gui_garbage_collector``
      - Freeing reference cycles on the GUI thread only
        (``GuiGarbageCollector``, ``install_gui_garbage_collector``). Automatic
@@ -660,6 +663,19 @@ defined by two of these modules, and a pinned count may only fall.
        (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
        per-stage project summary (``summarize_project``; see
        :doc:`/user_guide/project_home`).
+   * - ``mufinder.services.magnetic_field_calculation``
+     - The Magnetic Fields page's field, dipolar-tensor and nuclear-relaxation
+       calculations, each in two steps for a worker thread: a ``prepare_…``
+       function copies what it needs out of the page and the project, and a
+       ``run_prepared_…`` function calculates without them
+       (``run_prepared_magnetic_field_calculation`` chooses the commensurate,
+       approximant or distribution calculation and words its status line);
+       ``run_magnetic_field_calculation``, ``run_dipolar_tensor_calculation``
+       and ``run_nuclear_relaxation_calculation`` run in one call. It also
+       refuses a field that is not a finite number (``NonFiniteFieldError``,
+       ``non_finite_field_label``), counts the sites a calculation covers
+       (``equivalent_site_count``) and words a cancelled calculation's status
+       (``cancelled_status``).
    * - ``mufinder.services.magnetic_field_results``
      - The Magnetic Fields page's and each saved magnetic-field workspace's
        latest field, dipolar-tensor, nuclear-relaxation and muon-polarisation

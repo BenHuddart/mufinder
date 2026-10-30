@@ -6,12 +6,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import importlib
 import sys
+import threading
 from types import ModuleType
 import warnings
 
 import numpy as np
 
 _CGI_DEPRECATION_MESSAGE = "'cgi' is deprecated and slated for removal in Python 3.13"
+# The calculations run on worker threads, and a cancelled one may still be
+# importing when the next starts: one import context at a time keeps the
+# warning filters and the ``cgi`` stand-in of one from undoing the other's.
+_IMPORT_LOCK = threading.RLock()
 
 
 def patch_numpy_aliases_for_muesr() -> None:
@@ -39,10 +44,11 @@ def muesr_imports() -> Iterator[None]:
     imports ``cgi`` at module level but only calls ``cgi.escape`` from its HTML
     table renderer, which MuFinder never uses and which Python 3.8 already broke
     by removing ``cgi.escape``. The stand-in is removed again on exit, so code
-    outside muesr still sees ``cgi`` as missing.
+    outside muesr still sees ``cgi`` as missing. One thread at a time is
+    inside the context.
     """
     patch_numpy_aliases_for_muesr()
-    with warnings.catch_warnings():
+    with _IMPORT_LOCK, warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore", message=_CGI_DEPRECATION_MESSAGE, category=DeprecationWarning
         )

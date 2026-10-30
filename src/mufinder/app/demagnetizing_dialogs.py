@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -29,7 +29,11 @@ from mufinder.app.atomic_structure_viewer import (
     _shutdown_pyvista_widget,
 )
 from mufinder.app.magnetic_component_dialogs import DecimalTriple, direction_group, direction_inputs
-from mufinder.app.sample_photo_dialog import SamplePhotoDialog, demag_length_input
+from mufinder.app.sample_photo_dialog import (
+    PREVIEW_DEBOUNCE_MS,
+    SamplePhotoDialog,
+    demag_length_input,
+)
 from mufinder.app.theme import (
     current_palette,
     style_hint_text,
@@ -342,6 +346,12 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self.setWindowTitle("Advanced Demagnetizing Field")
         self.resize(860, 560)
         self._preview: _DemagnetizingPyVistaCanvas | QLabel
+        # The tensor follows every edit at once; the 3D preview redraws once edits pause.
+        self._pending_preview: DemagnetizingSample | None = None
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(PREVIEW_DEBOUNCE_MS)
+        self._preview_timer.timeout.connect(self._draw_pending_preview)
         self._lattice_vectors = (
             None if lattice_vectors is None else [list(row) for row in lattice_vectors]
         )
@@ -488,6 +498,8 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         for edit in (*self._normal_inputs, *self._in_plane_inputs):
             edit.textChanged.connect(self._sync)
         self._sync()
+        # The dialog opens with its preview drawn.
+        self._draw_pending_preview()
 
     def selected_sample(self) -> DemagnetizingSample:
         """Return the configured sample, oriented when ``Crystal directions`` is chosen.
@@ -552,7 +564,16 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._plate_sample = dialog.selected_sample()
         self._sync()
 
+    def done(self, result: int) -> None:
+        """Close the dialog; a preview still waiting for edits to pause is not drawn."""
+
+        self._preview_timer.stop()
+        self._pending_preview = None
+        super().done(result)
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._preview_timer.stop()
+        self._pending_preview = None
         if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
             self._preview.shutdown()
         super().closeEvent(event)
@@ -661,8 +682,7 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
             self._orientation_hint.setText(f"Orientation unavailable: {exc}")
             self._tensor_label.setText("Tensor unavailable until the orientation is valid.")
             self._use_button.setEnabled(False)
-            if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
-                self._preview.set_sample(sample, self._lattice_vectors)
+            self._schedule_preview(sample)
             return
         try:
             tensor = sample.rotate(self._principal_tensor(sample))
@@ -687,5 +707,16 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
                 )
             self._tensor_label.setText(text)
             self._use_button.setEnabled(True)
-        if isinstance(self._preview, _DemagnetizingPyVistaCanvas):
+        self._schedule_preview(sample)
+
+    def _schedule_preview(self, sample: DemagnetizingSample) -> None:
+        """Show ``sample`` in the 3D preview once no edit has come for ``PREVIEW_DEBOUNCE_MS``."""
+
+        self._pending_preview = sample
+        self._preview_timer.start()
+
+    def _draw_pending_preview(self) -> None:
+        self._preview_timer.stop()
+        sample, self._pending_preview = self._pending_preview, None
+        if sample is not None and isinstance(self._preview, _DemagnetizingPyVistaCanvas):
             self._preview.set_sample(sample, self._lattice_vectors)

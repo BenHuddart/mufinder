@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PySide6.QtGui import QImage
+from PySide6.QtTest import QTest
 
 import mufinder.app.sample_photo_dialog as photo_module
 from mufinder.app.sample_photo_dialog import SamplePhotoDialog, load_greyscale_image
@@ -263,3 +264,35 @@ def test_choosing_a_photo_after_a_missing_one_reenables_segmentation(qapp, tmp_p
     ):
         assert widget.isEnabled()
     dialog.close()
+
+
+def test_dragging_the_threshold_redraws_the_photo_once_the_drag_pauses(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog = SamplePhotoDialog()
+    assert dialog.load_photo(_plate_photo(tmp_path))
+    drawn: list[object] = []
+    monkeypatch.setattr(dialog, "_render", lambda _grey, mask: drawn.append(mask))
+
+    for level in (60, 90, 120):
+        dialog._threshold_slider.setValue(level)
+
+    # Each step re-segments at once; the image waits for the drag to pause.
+    assert "threshold" in dialog._status.text()
+    assert drawn == []
+    QTest.qWait(photo_module.PREVIEW_DEBOUNCE_MS + 100)
+    assert len(drawn) == 1
+    dialog.close()
+
+
+def test_the_photo_dialog_draws_no_outline_after_it_is_closed(qapp, tmp_path, monkeypatch) -> None:
+    dialog = SamplePhotoDialog()
+    assert dialog.load_photo(_plate_photo(tmp_path))
+    drawn: list[object] = []
+    monkeypatch.setattr(dialog, "_render", lambda _grey, mask: drawn.append(mask))
+    dialog._threshold_slider.setValue(90)
+
+    dialog.reject()
+    QTest.qWait(2 * photo_module.PREVIEW_DEBOUNCE_MS)
+
+    assert drawn == []

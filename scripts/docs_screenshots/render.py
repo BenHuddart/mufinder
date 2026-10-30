@@ -45,7 +45,14 @@ for _variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONF
 import numpy as np  # noqa: E402
 from PySide6.QtCore import QEvent, QRect, QTimer  # noqa: E402
 from PySide6.QtGui import QImage, QPainter  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialog, QDockWidget, QGroupBox, QWidget  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QDialog,
+    QDockWidget,
+    QGroupBox,
+    QProgressDialog,
+    QWidget,
+)
 
 from mufinder.domain.models import Structure  # noqa: E402
 from mufinder.services.project_service import ProjectDocument, ProjectService  # noqa: E402
@@ -513,8 +520,18 @@ def _dismiss_modals(app: QApplication) -> None:
         app.processEvents()
 
 
+def _busy(app: QApplication) -> bool:
+    """Whether a busy dialog of a blocking call is the active modal."""
+
+    return isinstance(app.activeModalWidget(), QProgressDialog)
+
+
 def _active_modal(app: QApplication, kind: str) -> QDialog | None:
+    """The active modal dialog when it inherits ``kind``; never a busy dialog."""
+
     dialog = app.activeModalWidget()
+    if _busy(app):
+        return None
     return dialog if isinstance(dialog, QDialog) and dialog.inherits(kind) else None
 
 
@@ -524,7 +541,9 @@ def when_modal(
     """Run ``step`` on the active modal dialog once it inherits the class named ``kind``.
 
     After ``timeout_ms`` without one, every open dialog is dismissed so a
-    blocking ``exec`` returns and the scene fails instead of hanging.
+    blocking ``exec`` returns and the scene fails instead of hanging. The time
+    a busy dialog is up does not count: dismissing it would cancel the
+    calculation the scene is waiting for (the scene watchdog still bounds it).
     """
 
     app = QApplication.instance()
@@ -534,6 +553,8 @@ def when_modal(
         dialog = _active_modal(app, kind)
         if dialog is not None:
             step(dialog)
+        elif _busy(app):
+            QTimer.singleShot(MODAL_POLL_MS, poll)
         elif remaining[0] > 0:
             remaining[0] -= 1
             QTimer.singleShot(MODAL_POLL_MS, poll)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -52,6 +52,8 @@ from mufinder.science.sample_image import (
 PHOTO_WORKING_EDGE = 1024
 PHOTO_FILE_FILTER = "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp);;All files (*)"
 _PREVIEW_SIZE = (440, 330)
+#: How long a preview waits after the last edit before it redraws, in milliseconds.
+PREVIEW_DEBOUNCE_MS = 150
 
 
 def load_greyscale_image(path: str | Path, *, max_edge: int = PHOTO_WORKING_EDGE) -> np.ndarray:
@@ -131,6 +133,12 @@ class SamplePhotoDialog(QDialog):
         self._outline_mask: VoxelMask | None = self._saved_outline
         self._threshold: float | None = photo.threshold
         self._updating = False
+        # Dragging the threshold re-segments at once; the image redraws once the drag pauses.
+        self._pending_render: tuple[np.ndarray, np.ndarray | None] | None = None
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(PREVIEW_DEBOUNCE_MS)
+        self._render_timer.timeout.connect(self._draw_pending_render)
 
         self._path = QLineEdit(self)
         self._path.setReadOnly(True)
@@ -284,6 +292,13 @@ class SamplePhotoDialog(QDialog):
         else:
             self._show_saved_outline(photo.path)
 
+    def done(self, result: int) -> None:
+        """Close the dialog; an outline still waiting for the drag to pause is not drawn."""
+
+        self._render_timer.stop()
+        self._pending_render = None
+        super().done(result)
+
     def selected_sample(self) -> DemagnetizingSample:
         """Return the plate as an ``image_plate`` sample along its own axes.
 
@@ -330,6 +345,8 @@ class SamplePhotoDialog(QDialog):
             self._threshold = None
             self._invert.setChecked(False)
         self._resegment()
+        # A newly loaded photo is drawn at once.
+        self._draw_pending_render()
         if not keep_settings and self._segmentation is not None:
             self._match_photo_aspect()
         return True
@@ -373,7 +390,7 @@ class SamplePhotoDialog(QDialog):
             )
         except SampleImageError as exc:
             self._status.setText(f"No outline: {exc}.")
-            self._render(self._grey, None)
+            self._schedule_render(self._grey, None)
             self._check_box()
             return
         self._outline_mask = plate_outline_mask(self._segmentation.in_plane_mask())
@@ -383,7 +400,7 @@ class SamplePhotoDialog(QDialog):
         self._status.setText(
             f"The outline is {c1 - c0} x {r1 - r0} pixels, a {polarity} sample at the {source}."
         )
-        self._render(self._grey, self._segmentation.mask)
+        self._schedule_render(self._grey, self._segmentation.mask)
         self._check_box()
 
     def _segmenting_widgets(self) -> tuple[QWidget, ...]:
@@ -438,6 +455,19 @@ class SamplePhotoDialog(QDialog):
         self._threshold_value.setText(
             f"{level:.1f}" + (" (auto)" if self._threshold is None else "")
         )
+
+    def _schedule_render(self, grey: np.ndarray, mask: np.ndarray | None) -> None:
+        """Draw ``grey`` and ``mask`` once no edit has come for ``PREVIEW_DEBOUNCE_MS``."""
+
+        self._pending_render = (grey, mask)
+        self._render_timer.start()
+
+    def _draw_pending_render(self) -> None:
+        self._render_timer.stop()
+        if self._pending_render is not None:
+            grey, mask = self._pending_render
+            self._pending_render = None
+            self._render(grey, mask)
 
     def _render(self, grey: np.ndarray, mask: np.ndarray | None) -> None:
         pixmap = QPixmap.fromImage(_grey_qimage(grey).convertToFormat(QImage.Format.Format_RGB32))
