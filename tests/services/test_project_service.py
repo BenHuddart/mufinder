@@ -964,6 +964,30 @@ def test_record_job_submission_appends_one_provenance_milestone(tmp_path: Path) 
     ]
 
 
+def test_record_job_submission_includes_a_job_already_running(tmp_path: Path) -> None:
+    # A job can start before its batch is recorded; the Journal folds its outcome
+    # into the batch only if the submission lists it.
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_running_log.mufinder", "JobRunningLog")
+    queued, running, failed = (
+        service.add_job(
+            doc,
+            label=label,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+        )
+        for label in ("Queued", "Running", "Failed")
+    )
+    for job in (queued, running, failed):
+        service.submit_job(job)
+    running.status = JobStatus.RUNNING
+    failed.status = JobStatus.FAILED
+
+    service.record_job_submission(doc, jobs=[queued, running, failed], execution_target="local")
+
+    assert doc.provenance[-1].parameters["job_labels"] == ["Queued", "Running"]
+
+
 def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "job_terminal_log.mufinder", "JobTerminalLog")
