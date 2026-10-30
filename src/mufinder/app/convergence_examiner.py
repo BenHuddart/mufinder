@@ -9,7 +9,7 @@ import math
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -165,11 +165,6 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._include_stress = QCheckBox("Stress threshold (GPa)", self)
         self._include_stress.setChecked(False)
-        # Match the surrounding QGroupBox frame so the checkbox label does not
-        # render with a different (default widget) background colour.
-        self._include_stress.setAttribute(Qt.WA_TranslucentBackground, True)
-        self._include_stress.setAutoFillBackground(False)
-        self._include_stress.setStyleSheet("QCheckBox { background: transparent; }")
         self._stress_threshold = DecimalLineEdit(self)
         self._stress_threshold.setRange(_MIN_STRESS_THRESHOLD, 100.0)
         self._stress_threshold.setDecimals(_THRESHOLD_DECIMALS)

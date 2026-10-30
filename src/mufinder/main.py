@@ -116,7 +116,6 @@ def _prompt_for_keyword_catalog(window: object) -> None:
 # The --page values: the fixed routes of the project navigator.
 PAGE_ROUTES = (
     "host_structure",
-    "supercell_editor",
     "convergence",
     "convergence_cutoff",
     "convergence_kpoint",

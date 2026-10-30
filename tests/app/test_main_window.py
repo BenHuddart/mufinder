@@ -2926,7 +2926,6 @@ def test_project_home_shows_the_workflow_chart_and_opens_the_journal(qapp, tmp_p
     assert summary is not None
     assert [stage.key for stage in summary.stages] == [
         "host_structure",
-        "supercell_editor",
         "convergence_cutoff",
         "convergence_kpoint",
         "pristine_relaxation",
@@ -3104,69 +3103,6 @@ def test_main_window_refreshes_uep_and_muon_site_completion_from_live_document(
     summary = summarize_project(doc)
     assert summary.stage("uep").status == StageStatus.COMPLETE
     assert summary.stage("muon_candidates").status == StageStatus.COMPLETE
-
-    window.close()
-
-
-def test_main_window_supercell_editor_complete_when_active_host_has_saved_asset(
-    qapp,
-    tmp_path: Path,
-) -> None:
-    window = MainWindow()
-
-    service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "ui_supercell_progress.mufinder", "UI Supercell Progress"
-    )
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-
-    window._document = doc
-    window._refresh_ui_after_project_change()
-
-    supercell_item = find_tree_item_by_route(window._project_tree, "supercell_editor")
-    assert supercell_item is not None
-    assert supercell_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
-    assert "Save reusable supercells" in str(supercell_item.data(0, window._WORKFLOW_GOAL_ROLE))
-
-    other_host = Structure(
-        label="Other host",
-        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, other_host)
-    service.create_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        host_structure_id=other_host.id,
-        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
-        reuse_existing=False,
-    )
-    window._populate_project_tree()
-
-    supercell_item = find_tree_item_by_route(window._project_tree, "supercell_editor")
-    assert supercell_item is not None
-    assert supercell_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
-
-    service.create_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        host_structure_id=host.id,
-        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
-        reuse_existing=False,
-    )
-    window._populate_project_tree()
-
-    supercell_item = find_tree_item_by_route(window._project_tree, "supercell_editor")
-    assert supercell_item is not None
-    assert supercell_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
 
     window.close()
 

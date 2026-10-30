@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import asdict
 
-from matplotlib import colormaps, colors as mcolors
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 import numpy as np
 from PySide6.QtCore import QTimer, Qt, Signal
@@ -30,10 +29,16 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.theme import (
+    cluster_color_map,
     current_palette,
+    plot_series_colours,
     style_hint_text,
+    style_plot_axes,
     style_section_subtitle,
     style_section_title,
+    style_transparent_surface,
+    transparent_spin_box_stylesheet,
+    uep_clustering_toolbar_stylesheet,
 )
 from mufinder.domain.models import Structure
 from mufinder.science.uep import UepError, UepOptimizationResult
@@ -55,17 +60,6 @@ _BUBBLE_CANVAS_MINIMUM_SIZE = (220, 150)
 # second. Each emitted snapshot makes the UEP wizard rebuild and re-serialize its
 # whole state (potential grid included), so these emit once the gesture settles.
 _GEOMETRY_STATE_EMIT_DELAY_MS = 250
-
-
-def cluster_color_map(cluster_labels: Iterable[int]) -> dict[int, str]:
-    """Return the shared cluster-colour palette used by UEP clustering views."""
-
-    cmap = colormaps["tab20"]
-    unique_labels = sorted({int(label) for label in cluster_labels})
-    colors: dict[int, str] = {}
-    for index, label in enumerate(unique_labels):
-        colors[int(label)] = mcolors.to_hex(cmap(index % cmap.N))
-    return colors
 
 
 def _pyvista_camera_snapshots_match(
@@ -99,44 +93,7 @@ class _DendrogramNavigationToolbar(NavigationToolbar2QT):
         for action in tuple(self.actions()):
             self.removeAction(action)
 
-        palette = current_palette()
-        self.setStyleSheet(
-            f"""
-            QToolBar#uepClusteringDendrogramToolbar {{
-                border: none;
-                background: transparent;
-                spacing: 8px;
-                padding: 0px;
-            }}
-            QPushButton#uepClusteringToolbarButton {{
-                border: 1px solid {palette.border};
-                border-radius: 10px;
-                padding: 6px 14px;
-                background: {palette.bg_surface};
-                color: {palette.text_primary};
-                font-size: 12px;
-                font-weight: 600;
-            }}
-            QPushButton#uepClusteringToolbarButton:hover {{
-                border-color: {palette.accent};
-                background: {palette.bg_surface_alt};
-            }}
-            QPushButton#uepClusteringToolbarButton:pressed {{
-                border-color: {palette.accent_hover};
-                background: {palette.bg_surface_alt};
-            }}
-            QPushButton#uepClusteringToolbarButton:checked,
-            QPushButton#uepClusteringToolbarButton[active="true"] {{
-                border-color: {palette.accent_pressed};
-                background: {palette.accent};
-                color: #FFFFFF;
-            }}
-            QPushButton#uepClusteringToolbarButton:checked:hover,
-            QPushButton#uepClusteringToolbarButton[active="true"]:hover {{
-                background: {palette.accent_hover};
-            }}
-            """
-        )
+        self.setStyleSheet(uep_clustering_toolbar_stylesheet())
         self._home_button = self._add_button("home", "Reset", checkable=False)
         self._pan_button = self._add_button("pan", "Pan", checkable=True)
         self._zoom_button = self._add_button("zoom", "Zoom", checkable=True)
@@ -364,27 +321,25 @@ class UepClusteringDialog(QDialog):
         controls_layout.addWidget(self._method_combo, 0, 1)
 
         self._hier_controls = QWidget(controls_card)
-        self._hier_controls.setStyleSheet("background: transparent;")
+        style_transparent_surface(self._hier_controls)
         self._hier_controls.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         hier_layout = QHBoxLayout(self._hier_controls)
         hier_layout.setContentsMargins(0, 0, 0, 0)
         hier_layout.setSpacing(8)
         hier_label = QLabel("Tolerance t", self._hier_controls)
         hier_label.setObjectName("uepIsosurfaceMinorLabel")
-        hier_label.setStyleSheet("background: transparent;")
         self._hier_t_input = DecimalLineEdit(self._hier_controls)
         self._hier_t_input.setRange(0.0, max(self._hierarchical_distance_max, 1.0))
         self._hier_t_input.setDecimals(6)
         self._hier_t_input.setMinimumWidth(96)
         self._hier_t_input.setMaximumWidth(126)
-        self._hier_t_input.setStyleSheet("QLineEdit { background: transparent; }")
         self._hier_t_input.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._hier_t_input.editingFinished.connect(self._on_hier_input_changed)
         hier_layout.addWidget(hier_label)
         hier_layout.addWidget(self._hier_t_input, 0)
 
         self._kmeans_controls = QWidget(controls_card)
-        self._kmeans_controls.setStyleSheet("background: transparent;")
+        style_transparent_surface(self._kmeans_controls)
         self._kmeans_controls.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
         )
@@ -393,20 +348,9 @@ class UepClusteringDialog(QDialog):
         kmeans_layout.setSpacing(8)
         kmeans_label = QLabel("Clusters k", self._kmeans_controls)
         kmeans_label.setObjectName("uepIsosurfaceMinorLabel")
-        kmeans_label.setStyleSheet("background: transparent;")
         self._kmeans_k_spin = QSpinBox(self._kmeans_controls)
         self._kmeans_k_spin.setRange(1, max(len(self._optimizations), 1))
-        self._kmeans_k_spin.setStyleSheet(
-            """
-            QSpinBox {
-                background: transparent;
-            }
-            QSpinBox::up-button,
-            QSpinBox::down-button {
-                background: transparent;
-            }
-            """
-        )
+        self._kmeans_k_spin.setStyleSheet(transparent_spin_box_stylesheet())
         self._kmeans_k_spin.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._kmeans_k_spin.valueChanged.connect(self._on_kmeans_spin_changed)
         kmeans_layout.addWidget(kmeans_label)
@@ -885,11 +829,18 @@ class UepClusteringDialog(QDialog):
         if linkage_matrix.size == 0:
             self._hier_cut_line_artist = None
             axis.axis("off")
-            axis.text(0.5, 0.5, "Only one relaxed site is available.", ha="center", va="center")
+            axis.text(
+                0.5,
+                0.5,
+                "Only one relaxed site is available.",
+                ha="center",
+                va="center",
+                color=current_palette().text_muted,
+            )
             self._left_canvas.draw_idle()
             return
 
-        muted = current_palette().text_muted
+        muted = plot_series_colours().reference
         node_clusters = self._hierarchical_node_cluster_map(result)
         hierarchy.dendrogram(
             linkage_matrix,
@@ -906,7 +857,7 @@ class UepClusteringDialog(QDialog):
         )
         self._hier_cut_line_artist = axis.axhline(
             result.config.clustering_hier_t,
-            color=current_palette().accent,
+            color=plot_series_colours().threshold,
             linestyle="--",
             linewidth=1.4,
             picker=False,
@@ -914,11 +865,9 @@ class UepClusteringDialog(QDialog):
         axis.set_ylabel("Distance")
         axis.set_xlabel("Relaxed site")
         axis.tick_params(axis="x", labelrotation=0)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
         self._left_canvas.draw_idle()
 
     def _project_pca_points(self, points: np.ndarray) -> np.ndarray:
@@ -936,7 +885,14 @@ class UepClusteringDialog(QDialog):
         axis.set_facecolor(current_palette().bg_surface)
         if len(self._pca_points) == 0:
             axis.axis("off")
-            axis.text(0.5, 0.5, "No relaxed sites are available.", ha="center", va="center")
+            axis.text(
+                0.5,
+                0.5,
+                "No relaxed sites are available.",
+                ha="center",
+                va="center",
+                color=current_palette().text_muted,
+            )
             self._left_canvas.draw_idle()
             return
 
@@ -975,9 +931,7 @@ class UepClusteringDialog(QDialog):
         axis.set_ylabel("PC2")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         self._left_canvas.draw_idle()
 
     def _render_structure_view(
@@ -1076,10 +1030,13 @@ class UepClusteringDialog(QDialog):
                 linewidths=0.6,
                 zorder=4,
             )
-            axis.text(
-                x_value,
-                y_value,
-                f" {cluster.cluster_index}",
+            # Beside the bubble, on the plot background: no one text colour
+            # reads on every series colour.
+            axis.annotate(
+                str(cluster.cluster_index),
+                (x_value, y_value),
+                xytext=(0.5 * float(np.sqrt(size)) + 2.0, 0.0),
+                textcoords="offset points",
                 color=current_palette().text_primary,
                 va="center",
             )
@@ -1089,9 +1046,7 @@ class UepClusteringDialog(QDialog):
         axis.set_ylabel("Std. dev. (eV)")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         self._bubble_note_label.setText(
             ""
             if omitted == 0
@@ -1121,7 +1076,9 @@ class UepClusteringDialog(QDialog):
             self._left_figure.clear()
             axis = self._left_figure.add_subplot(111)
             axis.axis("off")
-            axis.text(0.5, 0.5, str(exc), ha="center", va="center")
+            axis.text(
+                0.5, 0.5, str(exc), ha="center", va="center", color=current_palette().text_muted
+            )
             self._left_canvas.draw_idle()
             return
 

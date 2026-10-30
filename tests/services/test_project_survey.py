@@ -74,7 +74,6 @@ def test_stages_without_positions_have_no_layers(tmp_path: Path) -> None:
 
     for stage in (
         "host_structure",
-        "supercell_editor",
         "convergence_cutoff",
         "pristine_relaxation",
     ):

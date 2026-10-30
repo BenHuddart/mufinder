@@ -244,16 +244,40 @@ def test_load_structure_requested_handles_import_error(
     window.close()
 
 
-def test_supercell_editor_route_uses_project_page(main_window, tmp_path: Path) -> None:
+def test_host_page_button_opens_the_supercell_editor(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "supercell_route.mufinder", "SupercellRoute")
+    doc = service.create_project(tmp_path / "supercell_button.mufinder", "SupercellButton")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
     window._document = doc
-    window._populate_project_tree()
+    window._refresh_ui_after_project_change()
+    opened: list[dict[str, object]] = []
 
-    window._set_active_route("supercell_editor")
+    class _FakeDialog:
+        def matrix(self):
+            return [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
 
-    assert window._main_stack.currentWidget() == window._supercell_editor_page
+    def fake_open(**kwargs):
+        opened.append(kwargs)
+        return _FakeDialog()
+
+    monkeypatch.setattr(window, "_open_supercell_editor", fake_open)
+
+    window._host_structure_view._supercell_button.click()
+
+    assert len(opened) == 1
+    assert opened[0]["source_structure"].id == host.id
+    assert opened[0]["select_mode"] is False
+    assert window._host_structure_view._supercell_matrix == [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
     window.close()
 
 

@@ -75,7 +75,7 @@ adopted cutoff as its default ``CUT_OFF_ENERGY``.
    thresholds and click ``Analyse Convergence`` (see `Examining the
    results`_).
 6. **Adopt the cutoff.** Read the ``Energy``, ``Force`` and ``Sweep length``
-   rows, then click ``Set <value> eV as Project Default Cutoff``. The cutoff
+   rows (see :doc:`/user_guide/convergence_criteria`), then click ``Set <value> eV as Project Default Cutoff``. The cutoff
    appears on the ``Project defaults`` strip and its plot is pinned on the
    overview page.
 7. **Open the k-point sweep.** Select ``K-Point Grid`` in the navigator and
@@ -322,138 +322,24 @@ summary of how many completed points have energy, force, and stress values and
 how many atoms are used for per-atom normalization.
 
 ``Convergence Criteria``
-   ``Energy threshold (eV/atom)`` (default 0.001), ``Force threshold
-   (eV/Ang)`` (default 0.05), and an optional ``Stress threshold (GPa)``
-   (default 0.1, matching the usual ``GEOM_STRESS_TOL``). The force and
-   stress thresholds cannot go below the precision CASTEP prints those
-   quantities to, 0.00001 eV/Ang and 0.000001 GPa: a finer threshold could only be met by values that print identically. A
-   smaller value snaps to the minimum, and the field shows the value the
-   analysis used. The energy threshold only has to be positive, since CASTEP
-   prints energies to 13 significant figures. The stress box can only be
-   ticked when every completed job reported a stress, that is, when every job
-   was run with ``Calculate Stress`` on.
+   The energy threshold, the force threshold, and an optional stress threshold.
 ``Analyse Convergence``
    Runs the analysis on every completed point that has both an energy and a
-   force (at least two are needed), writes the results beside the plot, and
-   redraws the plot.
+   force (at least two are needed), writes the results, and redraws the plot.
 
-The results are a list of labelled rows, grouped by blank lines:
-
-.. code-block:: text
-
-   Thresholds          energy 0.001 eV/atom, force 0.05 eV/Ang
-   Reference           800 eV, the finest cutoff in the sweep
-
-   Energy              converged at 600 eV
-                       within 0.00082 eV/atom of 800 eV, as is every finer cutoff
-   Force               converged at 600 eV
-                       within 0.023 eV/Ang of 800 eV, as is every finer cutoff
-
-   Sweep length        long enough
-                       800 eV is within 0.00001 eV/atom of the fitted limit
-
-   Recommended cutoff  600 eV
-
-The first line of each row is the result and the second explains it. A
-``Stress`` row follows ``Force`` when stress is included, and a ``Notes`` row
-ends the list when the sweep has caveats. A k-point sweep has no ``Sweep
-length`` row, names grids rather than cutoffs (``converged at 4 x 4 x 6
-(spacing 0.05 1/Ang)``), and adds under ``Reference`` that a sweep should
-extend beyond the grid it is meant to certify. A ``too short`` sweep length and
-a recommendation of ``none`` are shown in the warning colour.
-
-The plot has an energy panel above a force panel, with the thresholds, the
-value at which each criterion converged, and the recommended value marked. On
-a cutoff plot the energy panel also draws the power-law fit of the sweep-length
-check over the cutoffs it used, and the fitted limit as a dotted line.
-When stress is used it is drawn on a second axis of the force panel. Hover a
-point to see its value; on a k-point plot the tooltip also names the grid. For a k-point sweep the horizontal axis is the
-``Number of k-points``, the product ``a x b x c`` of the grid divisions, on a
-logarithmic scale; a second axis along the top marks round ``K-point spacing
-(1/Ang)`` values at the matching positions. The recommended grid is named in
-the energy panel's legend; the other grids are named only in the tooltip.
+The results list the thresholds, the reference point, the outcome for each
+quantity, the sweep length of a cutoff sweep, and the recommended value. The
+plot has an energy panel above a force panel. Every quantity is judged against
+the finest point of the sweep; :doc:`/user_guide/convergence_criteria` gives
+the rule, the thresholds' defaults and limits, the sweep-length check, and how
+to read the results and the plot.
 
 The thresholds, results, and plot are saved with the project, so reopening
-the examiner shows the last analysis. An analysis saved by an earlier MuFinder
-version, which chose between several energy methods, is not shown: the
-examiner keeps its thresholds and plotted points and opens at the summary with
-an ``Earlier analysis`` row saying it was set aside, so click ``Analyse
-Convergence`` to judge the sweep again.
-
-How convergence is judged
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Points are sorted by cutoff, or by number of k-points, and every quantity is
-judged against the **finest point of the sweep**, the highest cutoff or the
-densest grid:
-
-- **Energy.** The difference from the finest point's total energy, divided by
-  the number of atoms, is compared with the energy threshold.
-- **Force.** The difference from the finest point's maximum force (not per
-  atom) is compared with the force threshold.
-- **Stress (optional).** The same test on the maximum stress, in GPa.
-
-A quantity is converged at the first point from which it, and every finer
-point, lies within the threshold of the finest point. The finest point is the
-reference, so it is never converged on its own: a finer point must exist. A
-point that agrees with the reference by accident does not count if a finer
-point lies outside the threshold again. The test does not depend on the step:
-sampling the same sweep every 50 eV instead of every 100 eV gives the same
-answer.
-
-The recommendation (``Recommended cutoff`` or ``Recommended k-point grid``) is
-the largest of the converged values, so the adopted setting satisfies every
-criterion. Every criterion in use must converge: energy, force, and stress
-when it is included. If any does not converge within the sweep the
-recommendation reads ``none``, the adopt button stays disabled, and the row
-says which criterion failed, for example *the force criterion did not converge
-within the sweep*. Extend the sweep to larger cutoffs or denser grids, or relax
-the threshold, and analyse again. A k-point recommendation restored from an
-earlier analysis whose k-point count no longer has a grid in the sweep cannot be
-adopted either; its button stays disabled until you analyse again.
-
-**Sweep length (cutoff sweeps).** The finest cutoff is only the best answer the
-sweep has, so a sweep that stops too early gives an optimistic
-recommendation. The examiner therefore fits
-
-.. math::
-
-   E(E_\text{cut}) = E_\infty + c\,E_\text{cut}^{\,m}
-
-to the energies, with a free exponent :math:`m` between −20 and −0.5,
-:math:`c \ge 0` and :math:`E_\infty` no higher than the lowest energy. This
-is the power-law form CASTEP's own finite-basis-set correction assumes. The
-fit uses the longest run of four or more of the highest cutoffs along which
-the energy does not rise between neighbours by more than a quarter of the
-energy threshold per atom, dropping the lowest cutoffs first. The fit is used
-only when its exponent is not at either bound and its RMS residual is within a
-quarter of the energy threshold per atom. Then the ``Sweep length`` row says:
-
-- ``long enough`` when the finest cutoff is within the energy threshold of the
-  fitted limit :math:`E_\infty`;
-- ``too short`` when it is not, with the cutoff at which the fitted curve
-  reaches the threshold, rounded up to a multiple of the sweep's last step:
-  *extend the sweep to 1300 eV and analyse again*.
-
-Otherwise it reads ``limit not estimated`` with the reason: fewer than four
-cutoffs, an energy that does not fall steadily towards the finest cutoff, a
-fit whose exponent sits at a bound (*the decay is not a power law*), or one
-that does not follow the points closely enough. Real CASTEP sweeps often wobble
-by a fraction of a meV per atom, so this is common once a sweep has
-converged. The sweep-length check never changes the recommendation and never
-blocks adoption; it says whether the reference can be trusted.
-
-**K-point sweeps** get no fit: convergence with k-point sampling oscillates
-rather than decaying smoothly, so there is no limit to extrapolate. The densest
-grid is the reference, so extend a k-point sweep beyond the grid you want to
-certify.
-
-For a k-point recommendation the result line also gives the grid's spacing,
-``(spacing s 1/Ang)``. This is the largest ``KPOINT_MP_SPACING`` for which
-CASTEP reproduces exactly that grid on the swept cell, so it can be copied into
-a ``.cell`` file. ``1 x 1 x 1`` has no such spacing and is shown without one.
-The convention, and its round-trip guarantee, are described in
-:doc:`/castep/kpoint_spacing_convention`.
+the examiner shows the last analysis. A saved analysis that did not use this
+criterion is not shown: the examiner keeps its
+thresholds and plotted points and opens at the summary with an ``Earlier
+analysis`` row saying it was set aside, so click ``Analyse Convergence`` to
+judge the sweep again.
 
 Adopting a result as a project default
 --------------------------------------
@@ -478,6 +364,9 @@ workflows default to the adopted functional, cutoff, and grid; rows you have
 configured with your own values keep them. The k-point sweep's own rows pick
 up the adopted cutoff. For supercell rows MuFinder rescales the grid to keep
 the same reciprocal-space sampling density.
+The parameter dialogs of those workflows can also use the grid as a ``K-Point MP
+Spacing``; see
+:doc:`/user_guide/convergence_criteria`.
 
 The ``Project Defaults`` dialog (``Edit…`` on the strip) shows, for the cutoff
 and the grid, the criteria and converged-with functional, and lets you
@@ -502,19 +391,6 @@ says *Converged with PBE, but the project functional is LDA. Re-run the
 convergence test to confirm this value.* Re-run the sweep with the new
 functional and adopt the new result. Values set manually, and values whose
 functional was not recorded, are never flagged.
-
-Using the grid as a k-point spacing
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The pristine-relaxation, muon-relaxation, and UEP parameter dialogs show
-``K-Point MP Grid`` and ``K-Point MP Spacing`` as a pair of mutually exclusive
-rows with a radio button each; only the selected one is written. When you
-select ``K-Point MP Spacing``, MuFinder pre-fills it with the spacing that
-reproduces the project default grid (the same value as in the examiner's
-recommendation line). A grid adopted from the examiner is recorded against
-the cell the sweep ran on, and a grid typed into the ``Project Defaults``
-dialog against the host unit cell, so the spacing is pre-filled in both cases.
-No spacing is pre-filled for a ``1 x 1 x 1`` default.
 
 Limitations
 -----------
@@ -545,4 +421,4 @@ Limitations
   assumed converged. The sweep-length check tests that assumption for cutoff
   sweeps when the energies decay smoothly enough to fit; for k-point sweeps,
   and when the limit cannot be estimated, extend the sweep beyond the value
-  you want to certify.
+  you want to certify (see :doc:`/user_guide/convergence_criteria`).

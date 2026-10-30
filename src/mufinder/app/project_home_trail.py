@@ -105,7 +105,6 @@ class ProjectHomeChartWidget(QWidget):
     #: Where each stage sits, as fractions of the chart's drawing area.
     NODE_POSITIONS: dict[str, tuple[float, float]] = {
         "host_structure": (0.05, 0.42),
-        "supercell_editor": (0.10, 0.86),
         "convergence_cutoff": (0.22, 0.22),
         "convergence_kpoint": (0.22, 0.62),
         "pristine_relaxation": (0.37, 0.86),

@@ -99,7 +99,7 @@ def test_convergence_defaults_and_active_jobs_are_reported(tmp_path: Path) -> No
 
     summary = summarize_project(document)
 
-    assert summary.stage("host_structure").facts == ("SrTiO3 · 5 atoms",)
+    assert summary.stage("host_structure").facts == ("SrTiO3 · 5 atoms", "No saved supercells")
     cutoff = summary.stage("convergence_cutoff")
     assert cutoff.status == StageStatus.COMPLETE
     assert cutoff.facts[0] == "Default cutoff 700 eV"
@@ -165,6 +165,46 @@ def test_saved_stage_is_shown_first_and_an_unknown_one_is_ignored(tmp_path: Path
 
     project.document.ui_state[PROJECT_HOME_STAGE_KEY] = "provenance_log"
     assert summarize_project(project.document).current_stage == "muon_relaxations"
+
+
+def test_saved_supercell_editor_stage_falls_back_to_the_current_stage(tmp_path: Path) -> None:
+    project = muon_project(tmp_path)
+
+    project.document.ui_state[PROJECT_HOME_STAGE_KEY] = "supercell_editor"
+
+    assert summarize_project(project.document).current_stage == "muon_relaxations"
+
+
+def test_host_facts_report_the_active_hosts_saved_supercells(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _empty_project(tmp_path)
+    host = perovskite_host()
+    other_host = perovskite_host()
+    service.add_structure(document, host)
+    service.add_structure(document, other_host)
+    document.project.host_structure_id = host.id
+
+    def add_supercell(structure, scale: int) -> None:
+        service.create_workflow_supercell_asset(
+            document,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            host_structure_id=structure.id,
+            matrix=[[scale, 0, 0], [0, 1, 0], [0, 0, 1]],
+            reuse_existing=False,
+        )
+
+    add_supercell(other_host, 2)
+    assert summarize_project(document).stage("host_structure").facts[-1] == "No saved supercells"
+
+    add_supercell(host, 2)
+    facts = summarize_project(document).stage("host_structure").facts
+    assert facts[-1].startswith("1 saved supercell: ")
+
+    for scale in (3, 4, 5):
+        add_supercell(host, scale)
+    facts = summarize_project(document).stage("host_structure").facts
+    assert facts[-1].startswith("4 saved supercells: ")
+    assert facts[-1].endswith(" and 1 more")
 
 
 def test_barrier_facts_count_neb_results(tmp_path: Path) -> None:

@@ -213,6 +213,24 @@ def test_show_page_warns_about_an_unknown_page(
     assert window._main_stack.currentWidget() is current
 
 
+def test_show_page_treats_the_removed_supercell_editor_route_as_unknown(
+    project_with_host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _document = project_with_host
+    current = window._main_stack.currentWidget()
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _text: warnings.append(title),
+    )
+
+    assert not window.show_page("supercell_editor")
+
+    assert warnings == ["Unknown page"]
+    assert window._main_stack.currentWidget() is current
+
+
 def test_show_page_needs_an_open_project(main_window, monkeypatch: pytest.MonkeyPatch) -> None:
     warnings: list[str] = []
     monkeypatch.setattr(

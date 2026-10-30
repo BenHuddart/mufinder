@@ -15,6 +15,7 @@ from mufinder.app.geometry_progress_dialog import (
     progress_tooltip,
 )
 from mufinder.app.main_window import MainWindow
+from mufinder.app.theme import plot_series_colours
 from mufinder.castep_io.geometry_progress import GeometryProgress, parse_geometry_progress
 from mufinder.domain.enums import JobStatus
 from mufinder.services.project_service import ProjectService
@@ -85,6 +86,14 @@ def test_progress_dialog_tabulates_the_latest_step_and_plots_each_criterion(qapp
         assert list(value_line.get_xdata()) == list(range(8))
         assert set(tolerance_line.get_ydata()) == {0.02}
         assert axes[0].get_yscale() == "log"
+        series = plot_series_colours()
+        assert [axis.lines[0].get_color() for axis in axes] == [
+            series.energy,
+            series.force,
+            series.displacement,
+            series.stress,
+        ]
+        assert tolerance_line.get_color() == series.reference
     finally:
         dialog.close()
 

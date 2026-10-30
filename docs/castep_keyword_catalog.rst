@@ -61,9 +61,8 @@ writers render it, but the parameter dialog's ``Add Parameter`` picker never
 offers it. A value already stored for it still shows as a row, so it can be
 inspected and removed.
 
-With a full catalog, ``user_visible`` follows CASTEP's own markers. CASTEP
-keeps two kinds of keyword only so older input files still run, and both are
-hidden by rule:
+With a full catalog, ``user_visible`` follows CASTEP's own markers. Three kinds
+of keyword that CASTEP keeps so older input files still run are hidden by rule:
 
 - **Obsolete keywords**, whose CASTEP help text calls the keyword itself
   obsolete: it opens with ``OBSOLETE:`` or says ``This is an OBSOLETE form``,
@@ -71,6 +70,12 @@ hidden by rule:
   ``MD_ION_T``) or ``PPD_SIZE_X`` (now ``NLXC_PPD_SIZE_X``). A help text that
   only mentions another keyword as obsolete does not hide its own keyword.
   CASTEP 26.11 has 17, all in ``.param``.
+- **Removed keywords**, whose CASTEP help text says ``has been removed``, at an
+  ordinary help level and without the ``OBSOLETE`` marker. CASTEP 26.11 has 7,
+  all in ``.param``: ``PPD_INTEGRAL``, ``NLXC_PPD_INTEGRAL``,
+  ``K_SCRN_DEN_FUNCTION``, ``NLXC_K_SCRN_DEN_FUNCTION``,
+  ``NLXC_EXCHANGE_SCREENING``, ``NLXC_EXCHANGE_FRACTION`` and
+  ``NLXC_DIV_CORR_ON``. The phrase counts wherever it appears in the help text.
 - **Dummy-level keywords**, which CASTEP lists at its ``Dummy`` help level: the
   settings of withdrawn tasks (``BANDSTRUCTURE``, ``OPTICS``, ``ELNES`` and
   ``WANNIER``, such as ``BS_MAX_ITER`` or ``BS_KPOINT_PATH``) and ``ATOMIC_INIT``,
@@ -78,6 +83,10 @@ hidden by rule:
   folds some of their alternative spellings into one keyword (``BS_KPOINTS_LIST``
   into ``BS_KPOINT_LIST``, for example), which leaves 52 keywords, 18 in
   ``.cell`` and 34 in ``.param``.
+
+Help text with other wording does not hide its keyword: ``CML_FILENAME`` and
+``PHONON_CONST_BASIS`` (``Withdrawn``) and ``SECONDD_METHOD`` and
+``PHONON_SUM_RULE`` (``Deprecated``) stay in the picker.
 
 An entry in ``KEYWORD_OVERRIDES`` (``mufinder.castep_io.catalog_overrides``)
 may also set ``user_visible``, which takes precedence over the rule. The
