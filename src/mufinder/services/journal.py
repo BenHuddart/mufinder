@@ -1344,7 +1344,8 @@ def _shared_value(
 
 
 def _row_parameter(row: Mapping[str, object], key: str) -> object:
-    values = row.get("parameter_values")
+    # Older records keep a row's settings under ``params``; provenance is never rewritten.
+    values = row.get("parameter_values", row.get("params"))
     return values.get(key) if isinstance(values, dict) else None
 
 

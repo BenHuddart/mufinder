@@ -1463,6 +1463,18 @@ def test_configuration_details_omit_a_value_the_rows_disagree_on_and_show_a_skew
     assert entry_details(entry).lines == ("Supercell [1 1 0; 0 1 0; 0 0 1]", "2 rows: a, b")
 
 
+def test_configuration_details_read_the_legacy_row_parameter_key() -> None:
+    entry = _only_entry(
+        _details_record(
+            "configure_pristine_relaxation",
+            WorkflowStage.PRISTINE_RELAXATION,
+            configuration={"rows": [{"label": "a", "params": {"xc_functional": "PBE"}}]},
+        )
+    )
+
+    assert entry_details(entry).lines == ("PBE", "1 row: a")
+
+
 def test_quantum_and_barrier_details_count_their_sources() -> None:
     entry = _only_entry(
         _details_record(
