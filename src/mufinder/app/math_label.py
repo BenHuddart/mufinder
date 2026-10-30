@@ -108,7 +108,7 @@ class MathLabel(QWidget):
         self._display_mode = display_mode
         self._line_widgets: list[QWidget] = []
         self._render_device_pixel_ratio = 1.0
-        self._render_color = "#000000"
+        self._render_color = ""
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)

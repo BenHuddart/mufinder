@@ -102,6 +102,10 @@ def test_uep_clustering_dialog_hierarchical_view_keeps_entry_and_overlay_in_sync
         if cluster.average_energy_ev is not None and cluster.standard_deviation_ev is not None
     ]
     assert len(dialog._bubble_figure.axes[0].collections) >= 2 * len(finite_clusters)
+    # Each cluster number sits beside its bubble, clear of the series colour.
+    bubble_labels = dialog._bubble_figure.axes[0].texts
+    assert len(bubble_labels) == len(finite_clusters)
+    assert all(label.get_position()[0] > 0.0 for label in bubble_labels)
 
     dialog._hier_t_input.setValue(0.18)
     dialog._on_hier_input_changed()

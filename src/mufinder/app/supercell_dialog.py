@@ -105,7 +105,6 @@ class SupercellEditorDialog(StructureViewerDialog):
             spinbox.valueChanged.connect(lambda *_: self._generate_preview())
 
         self._advanced_toggle = QCheckBox("Advanced 3x3 matrix")
-        self._advanced_toggle.setStyleSheet("QCheckBox { background: transparent; }")
         self._advanced_toggle.toggled.connect(self._on_advanced_toggled)
 
         self._advanced_cells: list[list[QSpinBox]] = []
