@@ -80,8 +80,6 @@ PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
 # a new embedded plot must use the shared helper.
 PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
     {
-        "convergence_examiner.py",
-        "convergence_overview_widget.py",
         "uep_wizard.py",
     }
 )

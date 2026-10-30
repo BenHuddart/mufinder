@@ -678,6 +678,22 @@ def style_plot_axes(
     axis.grid(True, **grid_kwargs)
 
 
+def plot_badge_box(*, pad: float = 0.18) -> dict[str, object]:
+    """Return the ``bbox`` style of a badge or hover annotation drawn on a plot.
+
+    A rounded box in the surface colour with a border, nearly opaque, so the
+    text stays legible over lines and grid.
+    """
+
+    palette = current_palette()
+    return {
+        "boxstyle": f"round,pad={pad:g}",
+        "fc": palette.bg_surface,
+        "ec": palette.border,
+        "alpha": 0.95,
+    }
+
+
 def style_plot_legend(legend: Legend | None, *, frame_alpha: float | None = None) -> None:
     """Paint a matplotlib legend frame and text in the current palette.
 
@@ -695,6 +711,58 @@ def style_plot_legend(legend: Legend | None, *, frame_alpha: float | None = None
         frame.set_alpha(frame_alpha)
     for text in legend.get_texts():
         text.set_color(palette.text_primary)
+
+
+@dataclass(frozen=True, slots=True)
+class ConvergencePlotColors:
+    """Series colours of the convergence plot, by role, for the current theme.
+
+    ``energy``, ``force`` and ``stress`` colour each quantity's line, markers,
+    axis and threshold badge; ``threshold`` is the force threshold line and
+    ``recommended`` the recommended-value line and its grid label. ``fit`` is
+    the power-law fit and its fitted limit, ``converged`` the line where the
+    energy or force criterion converged and ``stress_converged`` the stress one.
+    """
+
+    energy: str
+    force: str
+    stress: str
+    threshold: str
+    recommended: str
+    fit: str
+    converged: str
+    stress_converged: str
+
+
+def convergence_plot_colors() -> ConvergencePlotColors:
+    """Return the convergence plot's series colours for the current theme.
+
+    The dark-theme series colours keep at least 3:1 contrast against the dark
+    plot backgrounds (``bg_surface`` and ``bg_surface_alt``).
+    """
+
+    palette = current_palette()
+    if palette.mode == THEME_DARK:
+        return ConvergencePlotColors(
+            energy="#60A5FA",
+            force="#F87171",
+            stress="#FBBF24",
+            threshold=palette.warning,
+            recommended=palette.text_muted,
+            fit="#2DD4BF",
+            converged="#34D399",
+            stress_converged="#86EFAC",
+        )
+    return ConvergencePlotColors(
+        energy="#1D4ED8",
+        force="#B91C1C",
+        stress="#D97706",
+        threshold=palette.warning,
+        recommended=palette.text_muted,
+        fit="#0F766E",
+        converged="#059669",
+        stress_converged="#15803D",
+    )
 
 
 def style_section_title(label: QLabel) -> None:

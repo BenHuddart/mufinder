@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from html import escape
+import json
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -14,20 +13,20 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from mufinder.app.plot_canvas import PlotFrame
+from mufinder.app.convergence_plot import ConvergencePlotData, draw_convergence_plot
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     current_palette,
     make_empty_state_label,
     style_hint_text,
-    style_plot_axes,
     style_section_subtitle,
     style_section_title,
 )
+from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count
 
 
 _PINNED_PLOT_TITLES = {"cutoff": "Cut-off convergence", "kpoint": "k-point convergence"}
@@ -40,18 +39,16 @@ class _PinnedPlotWidget(QWidget):
         super().__init__(parent)
         self._sweep_kind = sweep_kind
         self._placeholder = make_empty_state_label(object_name="overviewPlaceholder", parent=self)
+        # What the canvas shows (the snapshot and the theme it was drawn in),
+        # so that an unchanged card is not drawn again on every refresh.
+        self._drawn_fingerprint: str | None = None
 
-        palette = current_palette()
-        self._figure = Figure(
-            figsize=(5.0, 3.8),
-            facecolor=palette.bg_surface_alt,
-            constrained_layout=True,
+        self._figure, self._canvas = create_plot_canvas(
+            figsize=(5.0, 3.8), facecolor=current_palette().bg_surface_alt
         )
         layout_engine = self._figure.get_layout_engine()
         if layout_engine is not None:
             layout_engine.set(w_pad=0.02, h_pad=0.02, hspace=0.04, wspace=0.03)
-        self._canvas = FigureCanvasQTAgg(self._figure)
-        self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumHeight(280)
 
         layout = QVBoxLayout(self)
@@ -72,8 +69,10 @@ class _PinnedPlotWidget(QWidget):
         self._canvas_frame.show_here()
         self._canvas.hide()
         self._canvas_frame.hide()
-        self._figure.clear()
-        self._canvas.draw_idle()
+        self._drawn_fingerprint = None
+        if self._figure.axes:
+            self._figure.clear()
+            self._canvas.draw_idle()
 
     def set_snapshot(
         self,
@@ -84,268 +83,60 @@ class _PinnedPlotWidget(QWidget):
         if not isinstance(snapshot, Mapping):
             self.show_placeholder(placeholder_message)
             return
-
-        plot_data = snapshot.get("plot_data")
-        if not isinstance(plot_data, Mapping):
+        data = ConvergencePlotData.from_mapping(snapshot.get("plot_data"))
+        if data is None:
             self.show_placeholder(placeholder_message)
             return
 
         try:
-            x_values = [float(value) for value in plot_data.get("cutoffs", [])]
-            energies = [float(value) for value in plot_data.get("energies", [])]
-            forces = [float(value) for value in plot_data.get("forces", [])]
-            energy_threshold = float(plot_data.get("energy_threshold", 0.001))
-            force_threshold = float(plot_data.get("force_threshold", 0.05))
-        except (TypeError, ValueError):
-            self.show_placeholder(placeholder_message)
-            return
-
-        if not x_values or len(x_values) != len(energies) or len(x_values) != len(forces):
-            self.show_placeholder(placeholder_message)
-            return
-
-        point_spacings: dict[float, float] = {}
-        raw_spacings = plot_data.get("point_spacings")
-        if isinstance(raw_spacings, Mapping):
-            for key, value in raw_spacings.items():
-                try:
-                    point_spacings[float(key)] = float(value)
-                except (TypeError, ValueError):
-                    continue
-
-        stresses: list[float] = []
-        stress_threshold: float | None = None
-        try:
-            raw_stresses = plot_data.get("stresses") or []
-            stresses = [float(value) for value in raw_stresses]
-            raw_stress_threshold = plot_data.get("stress_threshold")
-            if raw_stress_threshold is not None:
-                stress_threshold = float(raw_stress_threshold)
-        except (TypeError, ValueError):
-            stresses = []
-            stress_threshold = None
-
-        # Only honour stress when the series matches the x-axis 1:1 and a
-        # threshold was actually adopted. The examiner enforces this when
-        # building the snapshot; this is a defensive check for partial payloads.
-        if not stresses or len(stresses) != len(x_values) or stress_threshold is None:
-            stresses = []
-            stress_threshold = None
-
-        point_labels_raw = snapshot.get("point_labels")
-        point_labels: dict[float, str] = {}
-        if isinstance(point_labels_raw, Mapping):
-            for key, value in point_labels_raw.items():
-                try:
-                    point_labels[float(key)] = str(value)
-                except (TypeError, ValueError):
-                    continue
-
-        recommended_raw = snapshot.get("default_value")
-        recommended_value: float | None = None
-        if self._sweep_kind == "cutoff":
-            if recommended_raw is not None:
-                try:
-                    recommended_value = float(recommended_raw)
-                except (TypeError, ValueError):
-                    recommended_value = None
-        else:
-            if isinstance(recommended_raw, (list, tuple)) and len(recommended_raw) == 3:
-                try:
-                    grid = (
-                        int(recommended_raw[0]),
-                        int(recommended_raw[1]),
-                        int(recommended_raw[2]),
-                    )
-                except (TypeError, ValueError):
-                    grid = None
-                if grid is not None:
-                    recommended_value = float(grid[0] * grid[1] * grid[2])
-
-        self._draw_plot(
-            x_values=x_values,
-            energies=energies,
-            forces=forces,
-            energy_threshold=energy_threshold,
-            force_threshold=force_threshold,
-            recommended_value=recommended_value,
-            point_labels=point_labels,
-            point_spacings=point_spacings,
-            stresses=stresses or None,
-            stress_threshold=stress_threshold,
-        )
+            fingerprint: str | None = json.dumps(
+                [current_palette().mode, snapshot], sort_keys=True, default=str
+            )
+        except TypeError:
+            # Keys of mixed types cannot be sorted; draw the card every time.
+            fingerprint = None
+        if fingerprint is None or fingerprint != self._drawn_fingerprint:
+            recommended, recommended_label = self._recommended_point(snapshot.get("default_value"))
+            draw_convergence_plot(
+                self._figure,
+                data,
+                kind=self._sweep_kind,
+                compact=True,
+                recommended=recommended,
+                recommended_label=recommended_label,
+                lattice_vectors=self._lattice_vectors(snapshot.get("lattice_vectors")),
+            )
+            self._canvas.draw_idle()
+            self._drawn_fingerprint = fingerprint
         self._placeholder.hide()
         self._canvas_frame.show()
         self._canvas.show()
 
-    def _draw_plot(
-        self,
-        *,
-        x_values: list[float],
-        energies: list[float],
-        forces: list[float],
-        energy_threshold: float,
-        force_threshold: float,
-        recommended_value: float | None,
-        point_labels: Mapping[float, str],
-        point_spacings: Mapping[float, float] | None = None,
-        stresses: list[float] | None = None,
-        stress_threshold: float | None = None,
-    ) -> None:
-        palette = current_palette()
-        self._figure.set_facecolor(palette.bg_surface_alt)
-        self._figure.clear()
-        energy_ax = self._figure.add_subplot(2, 1, 1)
-        force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
-
-        energy_ax.plot(x_values, energies, marker="o", linestyle="-", color="#1d4ed8")
-        force_ax.plot(x_values, forces, marker="o", linestyle="-", color="#b91c1c")
-
-        if recommended_value is not None:
-            energy_ax.axvline(
-                recommended_value, color=palette.text_muted, linestyle="-", alpha=0.55
-            )
-            force_ax.axvline(recommended_value, color=palette.text_muted, linestyle="-", alpha=0.55)
-        force_ax.axhline(force_threshold, color=palette.warning, linestyle=":", alpha=0.85)
-
-        energy_ax.set_ylabel("Energy (eV)", fontsize=9)
-        energy_ax.tick_params(axis="x", labelbottom=False)
-        energy_ax.tick_params(axis="y", labelsize=8)
-        force_ax.set_ylabel("Max force\n(eV/Ang)", fontsize=9)
-        force_ax.tick_params(axis="both", labelsize=8)
-
-        # Stress overlay: secondary y-axis on the force subplot, mirroring the
-        # examiner dialog (see _STRESS_COLOR / amber #d97706 in convergence_examiner.py).
-        # The colour literal is intentional and theme-independent so force (red) and
-        # stress (amber) remain visually distinct regardless of palette.
-        show_stress = bool(stresses) and stress_threshold is not None
-        if show_stress:
-            stress_ax = force_ax.twinx()
-            stress_ax.plot(x_values, stresses, marker="s", linestyle="-", color="#d97706")
-            stress_ax.axhline(stress_threshold, color="#d97706", linestyle=":", alpha=0.85)
-            stress_ax.set_ylabel("Max stress\n(GPa)", fontsize=9)
-            stress_ax.yaxis.label.set_color("#d97706")
-            stress_ax.tick_params(axis="y", colors="#d97706", labelcolor="#d97706", labelsize=8)
-            for spine in stress_ax.spines.values():
-                spine.set_color(palette.border)
-            stress_ax.spines["right"].set_color("#d97706")
+    def _recommended_point(self, raw: object) -> tuple[float | None, str | None]:
+        """Return the adopted value on the plot axis and, for a grid, its name."""
 
         if self._sweep_kind == "cutoff":
-            force_ax.set_xlabel("Cutoff energy (eV)", labelpad=6, fontsize=9)
-        else:
-            grid_labels = [
-                point_labels.get(value, str(int(value)))
-                .replace("Grid:", "")
-                .replace(" x ", "x")
-                .strip()
-                for value in x_values
-            ]
-            # Gamma-only (1x1x1) has no unique k-point spacing; treat those
-            # ticks as exempt from the "all grids have spacings" requirement
-            # and suppress their sub-label so the overview is consistent with
-            # the examiner's tooltip which also omits the spacing for 1x1x1.
-            has_spacings = (
-                bool(point_spacings)
-                and all(
-                    grid == "1x1x1" or value in point_spacings
-                    for grid, value in zip(grid_labels, x_values, strict=True)
-                )
-                and any(
-                    grid != "1x1x1" and value in point_spacings
-                    for grid, value in zip(grid_labels, x_values, strict=True)
-                )
-            )
-            if has_spacings:
-                ordered_labels = [
-                    f"{grid}\n{point_spacings[value]:.3g}"
-                    if grid != "1x1x1" and value in point_spacings
-                    else grid
-                    for grid, value in zip(grid_labels, x_values, strict=True)
-                ]
-                force_ax.set_xlabel("K-point grid (spacing, 1/Ang)", labelpad=6, fontsize=9)
-            else:
-                ordered_labels = grid_labels
-                force_ax.set_xlabel("K-point grid", labelpad=6, fontsize=9)
-            force_ax.set_xticks(x_values, ordered_labels, rotation=15, ha="right")
-
-        badge_box = {
-            "boxstyle": "round,pad=0.18",
-            "fc": palette.bg_surface,
-            "ec": palette.border,
-            "alpha": 0.95,
-        }
-        energy_ax.text(
-            0.99,
-            1.01,
-            f"dE <= {energy_threshold:.3g} eV/atom",
-            transform=energy_ax.transAxes,
-            ha="right",
-            va="bottom",
-            fontsize=8,
-            # Match the energy line/marker colour so each badge maps visually
-            # onto the series it describes (parallels the amber dS badge).
-            color="#1d4ed8",
-            bbox=badge_box,
-        )
-        # Force-subplot badges: when stress is absent, dF sits in its historical
-        # top-right corner. When stress is present, dF moves left to make room
-        # for dS on the right (so each badge sits above the axis it describes,
-        # with both right-anchored and separated by a small measured gap).
-        if show_stress:
-            dF_text = f"dF <= {force_threshold:.3g} eV/Ang"
-            dS_text = f"dS <= {stress_threshold:.3g} GPa"
-            dS_badge = force_ax.text(
-                0.99,
-                1.01,
-                dS_text,
-                transform=force_ax.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=8,
-                color="#d97706",
-                bbox=badge_box,
-            )
-            # Measure dS extent so dF can sit immediately to its left with a small gap.
-            self._canvas.draw_idle()
-            renderer = self._canvas.get_renderer()
             try:
-                bbox_pixels = dS_badge.get_window_extent(renderer=renderer)
-                bbox_axes = force_ax.transAxes.inverted().transform_bbox(bbox_pixels)
-                dS_width_axes = float(bbox_axes.width)
-            except Exception:
-                # Fall back to a fixed offset if the renderer can't size the text yet.
-                dS_width_axes = 0.30
-            # ~5% of axes width gives a clear visual separation between the
-            # two right-anchored badges; tighten if it pushes dF off-axis.
-            gap = 0.05
-            dF_anchor_x = max(0.0, 0.99 - dS_width_axes - gap)
-            force_ax.text(
-                dF_anchor_x,
-                1.01,
-                dF_text,
-                transform=force_ax.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=8,
-                color="#b91c1c",
-                bbox=badge_box,
-            )
-        else:
-            force_ax.text(
-                0.99,
-                1.01,
-                f"dF <= {force_threshold:.3g} eV/Ang",
-                transform=force_ax.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=8,
-                # Match the force line/marker colour for visual association.
-                color="#b91c1c",
-                bbox=badge_box,
-            )
-        style_plot_axes(energy_ax, facecolor=current_palette().bg_surface)
-        style_plot_axes(force_ax, facecolor=current_palette().bg_surface)
-        self._canvas.draw_idle()
+                return float(raw), None  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None, None
+        if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+            return None, None
+        try:
+            grid = (int(raw[0]), int(raw[1]), int(raw[2]))
+        except (TypeError, ValueError):
+            return None, None
+        return float(kpoint_count(grid)), format_kpoint_grid(grid)
+
+    @staticmethod
+    def _lattice_vectors(raw: object) -> list[list[float]] | None:
+        if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+            return None
+        try:
+            vectors = [[float(component) for component in vector] for vector in raw]
+        except (TypeError, ValueError):
+            return None
+        return vectors if all(len(vector) == 3 for vector in vectors) else None
 
 
 class _OverviewCard(QFrame):

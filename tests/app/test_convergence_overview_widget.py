@@ -106,93 +106,108 @@ def test_convergence_overview_widget_renders_pinned_snapshots(qapp) -> None:
     widget.close()
 
 
-def test_convergence_overview_widget_pinned_kpoint_plot_shows_spacing_on_tick_labels(qapp) -> None:
+_CUBIC_LATTICE = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
+
+
+def _kpoint_snapshot(**extra: object) -> dict[str, object]:
+    return {
+        "default_value": [3, 3, 3],
+        "point_labels": {
+            "1.0": "Grid: 1 x 1 x 1",
+            "8.0": "Grid: 2 x 2 x 2",
+            "27.0": "Grid: 3 x 3 x 3",
+            "64.0": "Grid: 4 x 4 x 4",
+        },
+        "plot_data": {
+            "cutoffs": [1.0, 8.0, 27.0, 64.0],
+            "energies": [-10.0, -10.01, -10.011, -10.0112],
+            "forces": [0.30, 0.10, 0.04, 0.03],
+            "energy_threshold": 0.001,
+            "force_threshold": 0.05,
+            "point_spacings": {"8.0": 0.1, "27.0": 0.067, "64.0": 0.05},
+        },
+        **extra,
+    }
+
+
+def test_convergence_overview_widget_pinned_kpoint_plot_uses_the_examiner_axis(qapp) -> None:
     widget = ConvergenceOverviewWidget()
     widget.set_kpoint_panel(
         summary_rows=[("Project default", "3 x 3 x 3")],
-        snapshot={
-            "default_value": [3, 3, 3],
-            "point_labels": {"8.0": "Grid: 2 x 2 x 2", "27.0": "Grid: 3 x 3 x 3"},
-            "plot_data": {
-                "cutoffs": [8.0, 27.0],
-                "energies": [-10.0, -10.01],
-                "forces": [0.10, 0.04],
-                "energy_threshold": 0.001,
-                "force_threshold": 0.05,
-                "point_spacings": {"8.0": 0.2, "27.0": 0.1},
-            },
-        },
+        snapshot=_kpoint_snapshot(lattice_vectors=_CUBIC_LATTICE),
         placeholder_message="unused",
     )
 
-    _energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
+    energy_ax, force_ax, spacing_ax = widget._kpoint_card._plot._figure.axes
+    # k-point count on a log axis along the bottom, without minor ticks.
+    assert force_ax.get_xscale() == "log"
+    assert force_ax.get_xlabel() == "Number of k-points"
+    assert force_ax.xaxis.get_minorticklocs().size == 0
+    # Round spacings along the top, at fixed positions.
+    assert spacing_ax.get_xlabel() == "K-point spacing (1/Ang)"
+    spacings = [float(tick.get_text()) for tick in spacing_ax.get_xticklabels()]
+    assert spacings and spacings == sorted(spacings, reverse=True)
+    # The adopted grid is named once; no point carries a grid label.
+    texts = [text.get_text() for text in energy_ax.texts]
+    assert texts.count("3 x 3 x 3") == 1
+    assert not any("2 x 2 x 2" in text or "2x2x2" in text for text in texts)
     tick_texts = [tick.get_text() for tick in force_ax.get_xticklabels()]
-    assert tick_texts == ["2x2x2\n0.2", "3x3x3\n0.1"]
-    assert force_ax.get_xlabel() == "K-point grid (spacing, 1/Ang)"
+    assert not any("x" in text for text in tick_texts)
     widget.close()
 
 
-def test_convergence_overview_widget_pinned_kpoint_plot_falls_back_without_spacings(qapp) -> None:
-    widget = ConvergenceOverviewWidget()
-    widget.set_kpoint_panel(
-        summary_rows=[("Project default", "2 x 2 x 2")],
-        snapshot={
-            "default_value": [2, 2, 2],
-            "point_labels": {"8.0": "Grid: 2 x 2 x 2", "27.0": "Grid: 3 x 3 x 3"},
-            "plot_data": {
-                "cutoffs": [8.0, 27.0],
-                "energies": [-10.0, -10.01],
-                "forces": [0.10, 0.04],
-                "energy_threshold": 0.001,
-                "force_threshold": 0.05,
-            },
-        },
-        placeholder_message="unused",
-    )
-
-    _energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
-    tick_texts = [tick.get_text() for tick in force_ax.get_xticklabels()]
-    assert tick_texts == ["2x2x2", "3x3x3"]
-    assert force_ax.get_xlabel() == "K-point grid"
-    widget.close()
-
-
-def test_convergence_overview_widget_pinned_kpoint_plot_omits_spacing_for_gamma_only_grid(
+def test_convergence_overview_widget_pinned_kpoint_plot_without_lattice_has_no_spacing_axis(
     qapp,
 ) -> None:
-    # Sweeps starting at (1,1,1) must not show a spacing sub-label for that
-    # tick because no single spacing characterises Gamma-only sampling
-    # (every spacing larger than the cell's coarsest reciprocal transition
-    # produces it).
     widget = ConvergenceOverviewWidget()
     widget.set_kpoint_panel(
-        summary_rows=[("Project default", "2 x 2 x 2")],
-        snapshot={
-            "default_value": [2, 2, 2],
-            "point_labels": {
-                "1.0": "Grid: 1 x 1 x 1",
-                "8.0": "Grid: 2 x 2 x 2",
-                "27.0": "Grid: 3 x 3 x 3",
-            },
-            "plot_data": {
-                "cutoffs": [1.0, 8.0, 27.0],
-                "energies": [-10.0, -10.01, -10.011],
-                "forces": [0.30, 0.10, 0.04],
-                "energy_threshold": 0.001,
-                "force_threshold": 0.05,
-                # point_spacings deliberately omits 1.0 (the 1x1x1 entry is
-                # absent because distinct_grid_spacings skips (1,1,1)).
-                "point_spacings": {"8.0": 0.2, "27.0": 0.1},
-            },
-        },
+        summary_rows=[("Project default", "3 x 3 x 3")],
+        snapshot=_kpoint_snapshot(),
         placeholder_message="unused",
     )
 
-    _energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
-    tick_texts = [tick.get_text() for tick in force_ax.get_xticklabels()]
-    # (1,1,1) must have no spacing sub-label; others get one normally.
-    assert tick_texts == ["1x1x1", "2x2x2\n0.2", "3x3x3\n0.1"]
-    assert force_ax.get_xlabel() == "K-point grid (spacing, 1/Ang)"
+    energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
+    assert force_ax.get_xscale() == "log"
+    assert [text.get_text() for text in energy_ax.texts].count("3 x 3 x 3") == 1
+    widget.close()
+
+
+def test_convergence_overview_widget_redraws_a_card_only_when_its_snapshot_changes(
+    qapp, monkeypatch
+) -> None:
+    from mufinder.app import convergence_overview_widget as overview_module
+
+    draws: list[str] = []
+    real_draw = overview_module.draw_convergence_plot
+
+    def counting_draw(figure, data, **kwargs):
+        draws.append(kwargs["kind"])
+        return real_draw(figure, data, **kwargs)
+
+    monkeypatch.setattr(overview_module, "draw_convergence_plot", counting_draw)
+    widget = ConvergenceOverviewWidget()
+    snapshot = _kpoint_snapshot(lattice_vectors=_CUBIC_LATTICE)
+
+    widget.set_kpoint_panel(summary_rows=[], snapshot=snapshot, placeholder_message="unused")
+    widget.set_kpoint_panel(summary_rows=[], snapshot=dict(snapshot), placeholder_message="unused")
+    assert draws == ["kpoint"]
+
+    changed = _kpoint_snapshot(lattice_vectors=_CUBIC_LATTICE, default_value=[4, 4, 4])
+    widget.set_kpoint_panel(summary_rows=[], snapshot=changed, placeholder_message="unused")
+    assert draws == ["kpoint", "kpoint"]
+
+    # A placeholder in between means the plot is drawn again when it returns.
+    widget.set_kpoint_panel(summary_rows=[], snapshot=None, placeholder_message="none")
+    widget.set_kpoint_panel(summary_rows=[], snapshot=changed, placeholder_message="unused")
+    assert draws == ["kpoint", "kpoint", "kpoint"]
+
+    # So is a theme change.
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        widget.set_kpoint_panel(summary_rows=[], snapshot=changed, placeholder_message="unused")
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert len(draws) == 4
     widget.close()
 
 
@@ -360,9 +375,11 @@ def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> No
         assert energy_ax.yaxis.label.get_color().lower() == palette.text_primary.lower()
         assert force_ax.xaxis.label.get_color().lower() == palette.text_primary.lower()
         assert energy_ax.texts
-        # The dE badge now adopts the energy line/marker colour (matches the
-        # dF/dS pattern), so it is intentionally theme-independent.
-        assert energy_ax.texts[-1].get_color().lower() == "#1d4ed8"
+        # The dE badge takes the energy series colour of the active theme.
+        assert (
+            energy_ax.texts[-1].get_color().lower()
+            == theme_module.convergence_plot_colors().energy.lower()
+        )
         widget.close()
     finally:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)

@@ -760,3 +760,53 @@ def test_texture_preview_canvas_colours_follow_the_canvas_not_the_theme(qapp) ->
     finally:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
         qapp.setStyleSheet(previous_sheet)
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(colour: str) -> float:
+        channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+        linear = [
+            value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+            for value in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_convergence_plot_colors_keep_the_light_series_colours(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    colors = theme_module.convergence_plot_colors()
+    palette = theme_module.current_palette()
+
+    assert (colors.energy, colors.force, colors.stress) == ("#1D4ED8", "#B91C1C", "#D97706")
+    assert (colors.fit, colors.converged, colors.stress_converged) == (
+        "#0F766E",
+        "#059669",
+        "#15803D",
+    )
+    assert colors.threshold == palette.warning
+    assert colors.recommended == palette.text_muted
+
+
+def test_convergence_plot_colors_contrast_with_the_dark_plot_backgrounds(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        colors = theme_module.convergence_plot_colors()
+        palette = theme_module.current_palette()
+        for role in (
+            "energy",
+            "force",
+            "stress",
+            "threshold",
+            "recommended",
+            "fit",
+            "converged",
+            "stress_converged",
+        ):
+            for background in (palette.bg_surface, palette.bg_surface_alt):
+                ratio = _contrast_ratio(getattr(colors, role), background)
+                assert ratio >= 3.0, f"{role} on {background}: {ratio:.2f}"
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
