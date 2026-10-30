@@ -93,6 +93,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CONVERGED_DEFAULT_METHOD, Structure
+from mufinder.domain.text import natural_sort_key
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
@@ -642,7 +643,7 @@ def _rank_in_cluster(
         for other in deserialize_muon_relaxation_config(definition.parameters["configuration"]).rows
         if other.charge_state == row.charge_state
     ]
-    rows.sort(key=lambda other: window._natural_label_sort_key(other.label))
+    rows.sort(key=lambda other: natural_sort_key(other.label))
     kind = kind_of(row.initial_fractional_position)
     earlier = rows[: next(index for index, other in enumerate(rows) if other.label == row.label)]
     return sum(1 for other in earlier if kind_of(other.initial_fractional_position) == kind)
@@ -1031,9 +1032,7 @@ def show_saved_supercell_along_a(dialog: QWidget) -> None:
 def open_charge_state_dialog(window: MainWindow) -> None:
     """Select every generated site and click ``Create Relaxation Jobs``, which asks for the charge state."""
 
-    sites = sorted(
-        window._document.sites.values(), key=lambda site: window._natural_label_sort_key(site.label)
-    )
+    sites = sorted(window._document.sites.values(), key=lambda site: natural_sort_key(site.label))
     window._on_create_muon_relaxation_jobs_requested([str(site.id) for site in sites])
 
 
