@@ -1235,6 +1235,8 @@ def test_castep_setup_dialog_login_node_choice_is_used_and_remembered(
     saved = {config.name: config for config in dialog_module.load_cluster_configs(settings)}
     assert saved["SCARF"].keyword_execution_mode == "direct"
     assert saved["Redwood"].keyword_execution_mode == "direct"  # stored preset value, untouched
+    # The remembered method counts as a saved change for the status bar.
+    assert dialog.changes_saved is True
     dialog.close()
 
     reopened = CastepSetupDialog(settings=settings)
@@ -1248,4 +1250,5 @@ def test_castep_setup_dialog_login_node_choice_is_used_and_remembered(
         lambda *_args, **_kwargs: pytest.fail("unchanged method must not be re-saved"),
     )
     reopened._generate_keywords()
+    assert reopened.changes_saved is False
     reopened.close()

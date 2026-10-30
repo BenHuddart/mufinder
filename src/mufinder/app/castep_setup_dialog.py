@@ -345,6 +345,7 @@ class CastepSetupDialog(QDialog):
         updated = replace(config, keyword_execution_mode=mode)
         self._cluster_configs[config.name] = updated
         save_cluster_configs(self._settings, self._cluster_configs.values())
+        self._changes_saved = True
         return updated
 
     def _refresh_generate_target_hint(self) -> None:
