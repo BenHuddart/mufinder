@@ -63,10 +63,15 @@ The ``.param`` entries in the starter catalog are:
 - Phonon settings: ``PHONON_METHOD``.
 - Magnetic-resonance settings: ``MAGRES_TASK`` (``HYPERFINE`` only).
 - Output and property flags: ``WRITE_CELL_STRUCTURE``,
-  ``WRITE_FORMATTED_DENSITY``, ``CALCULATE_STRESS``,
-  ``CALCULATE_POLARIZATION``.
+  ``WRITE_FORMATTED_DENSITY``, ``CALCULATE_STRESS``.
 - Molecular dynamics settings: ``MD_DELTA_T``, ``MD_NUM_ITER``,
   ``MD_TEMPERATURE``.
+
+On the starter catalog, a ``.param`` file read with ``parse_param_text`` keeps
+a keyword outside this subset, such as ``CALCULATE_POLARIZATION``, as an
+unmapped observation: it is reported, not carried into the parsed
+``ParamFile``, and validating or writing a ``ParamFile`` that holds it raises
+``UnknownKeywordError`` pointing at ``Setup > CASTEP``.
 
 Example
 -------

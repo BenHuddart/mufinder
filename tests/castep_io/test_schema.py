@@ -15,6 +15,7 @@ from mufinder.castep_io import (
     LatticeCart,
     ParamFile,
     PositionBlock,
+    UnknownKeywordError,
     write_cell,
     write_param,
 )
@@ -35,7 +36,12 @@ from mufinder.castep_io.starter_catalog import (
     _starter_parse_requirements,
     _starter_sequence,
 )
-from tests.support.keyword_catalogs import write_complete_catalog
+from tests.support.keyword_catalogs import (
+    catalog_entry,
+    isolate_catalog_sources,
+    refresh_from_catalog,
+    write_complete_catalog,
+)
 
 
 def test_repo_does_not_vendor_castep_keyword_json_copy() -> None:
@@ -58,7 +64,6 @@ def test_runtime_schema_covers_every_keyword_from_source_catalog() -> None:
 
 def test_aliases_canonicalize_to_single_runtime_keyword() -> None:
     assert canonical_keyword_name("param", "spin_polarised") == "spin_polarized"
-    assert canonical_keyword_name("param", "calculate_polarisation") == "calculate_polarization"
     assert canonical_keyword_name("cell", "kpoints_mp_grid") == "kpoint_mp_grid"
 
     cell_spec = get_keyword_spec("cell", "kpoints_mp_grid")
@@ -397,26 +402,6 @@ def test_starter_catalog_offers_spin_polarized_but_not_net_spin_in_every_workflo
 # --- Keyword specs inferred from a CASTEP catalog ------------------------------
 
 
-def _entry(option_type: str, docstring: str = "Example") -> dict[str, str]:
-    return {"option_type": option_type, "level": "Basic", "docstring": docstring}
-
-
-def _refresh_from_catalog(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    cell: dict[str, dict[str, str]],
-    param: dict[str, dict[str, str]],
-) -> None:
-    catalog = tmp_path / "castep_keywords.json"
-    catalog.write_text(
-        json.dumps({"castep_version": "test", "cell": cell, "param": param}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(catalog))
-    refresh_keyword_catalog()
-
-
 def _param(name: str) -> KeywordSpec:
     spec = get_keyword_spec("param", name)
     assert spec is not None
@@ -433,13 +418,13 @@ def test_catalog_docstrings_populate_labels_examples_and_allowed_values(
         "Default value: TRUE\n"
         "Example: FLAG : TRUE\n"
     )
-    _refresh_from_catalog(
+    refresh_from_catalog(
         tmp_path,
         monkeypatch,
         cell={},
         param={
-            "xc_test_flag": _entry("String", docstring),
-            "test_free_text": _entry(
+            "xc_test_flag": catalog_entry("String", docstring),
+            "test_free_text": catalog_entry(
                 "String", "Allowed values: libxc-backed supported values; see docs"
             ),
         },
@@ -460,20 +445,20 @@ def test_catalog_docstrings_set_typed_defaults_and_units(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _refresh_from_catalog(
+    refresh_from_catalog(
         tmp_path,
         monkeypatch,
         cell={},
         param={
-            "test_true": _entry("Boolean (Logical)", "Default value: TRUE"),
-            "test_false": _entry("Boolean (Logical)", "Default value: false"),
-            "test_enum": _entry("String", "Allowed values: PBE, LDA\nDefault value: pbe"),
-            "test_int": _entry("Integer", "Default value: 42"),
-            "test_physical": _entry("Physical", "Default value: 0.05 eV"),
-            "test_example_unit": _entry("Physical", "Example: CUT_OFF_ENERGY : 340 eV"),
-            "test_real": _entry("Real", "Default value: 1e-6"),
-            "test_text": _entry("String", "Default value: text-value"),
-            "test_workflow_text": _entry("String", "Default value: set by workflow"),
+            "test_true": catalog_entry("Boolean (Logical)", "Default value: TRUE"),
+            "test_false": catalog_entry("Boolean (Logical)", "Default value: false"),
+            "test_enum": catalog_entry("String", "Allowed values: PBE, LDA\nDefault value: pbe"),
+            "test_int": catalog_entry("Integer", "Default value: 42"),
+            "test_physical": catalog_entry("Physical", "Default value: 0.05 eV"),
+            "test_example_unit": catalog_entry("Physical", "Example: CUT_OFF_ENERGY : 340 eV"),
+            "test_real": catalog_entry("Real", "Default value: 1e-6"),
+            "test_text": catalog_entry("String", "Default value: text-value"),
+            "test_workflow_text": catalog_entry("String", "Default value: set by workflow"),
         },
     )
 
@@ -494,20 +479,20 @@ def test_catalog_keyword_names_set_value_types_categories_and_tasks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _refresh_from_catalog(
+    refresh_from_catalog(
         tmp_path,
         monkeypatch,
         cell={
-            "test_kpoint_grid": _entry("Integer Vector"),
-            "symmetry_test": _entry("Defined"),
-            "species_test": _entry("Block"),
+            "test_kpoint_grid": catalog_entry("Integer Vector"),
+            "symmetry_test": catalog_entry("Defined"),
+            "species_test": catalog_entry("Block"),
         },
         param={
-            "geom_test_tol": _entry("Physical"),
-            "smearing_test": _entry("Physical"),
-            "md_test_temperature": _entry("Physical"),
-            "phonon_test_grid": _entry("Integer Vector"),
-            "test_general": _entry("String"),
+            "geom_test_tol": catalog_entry("Physical"),
+            "smearing_test": catalog_entry("Physical"),
+            "md_test_temperature": catalog_entry("Physical"),
+            "phonon_test_grid": catalog_entry("Integer Vector"),
+            "test_general": catalog_entry("String"),
         },
     )
 
@@ -541,21 +526,21 @@ def test_catalog_blocks_pick_up_curated_layouts_and_aliases_resolve(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _refresh_from_catalog(
+    refresh_from_catalog(
         tmp_path,
         monkeypatch,
-        cell={"positions_frac": _entry("Block"), "lattice_abc": _entry("Block")},
+        cell={"positions_frac": catalog_entry("Block"), "lattice_abc": catalog_entry("Block")},
         param={
-            "test_polarisation": _entry(
+            "test_polarisation": catalog_entry(
                 "String", "Default value: Determined from TEST_POLARIZATION"
             ),
-            "test_polarization": _entry("String"),
-            "test_isation": _entry("String"),
-            "test_ization": _entry("String"),
-            "spin_polarised": _entry("Boolean (Logical)"),
-            "spin_polarized": _entry("Boolean (Logical)"),
-            "test_polarised": _entry("String"),
-            "test_polarized": _entry("String"),
+            "test_polarization": catalog_entry("String"),
+            "test_isation": catalog_entry("String"),
+            "test_ization": catalog_entry("String"),
+            "spin_polarised": catalog_entry("Boolean (Logical)"),
+            "spin_polarized": catalog_entry("Boolean (Logical)"),
+            "test_polarised": catalog_entry("String"),
+            "test_polarized": catalog_entry("String"),
         },
     )
 
@@ -582,8 +567,8 @@ def test_refresh_skips_unusable_catalogs_and_reports_explicit_ones(
         json.dumps(
             {
                 "castep_version": "test",
-                "cell": {"ABC": _entry("Text")},
-                "param": {"TASK": _entry("String")},
+                "cell": {"ABC": catalog_entry("Text")},
+                "param": {"TASK": catalog_entry("String")},
             }
         ),
         encoding="utf-8",
@@ -695,14 +680,14 @@ def test_full_catalog_applies_the_hidden_flag_without_adding_keywords(
 ) -> None:
     # This catalog lacks MAGRES_TASK and TSSEARCH_LST_MAX_ITER; their
     # visibility-only overrides must not invent them.
-    _refresh_from_catalog(
+    refresh_from_catalog(
         tmp_path,
         monkeypatch,
-        cell={"unit_cell": _entry("String")},
+        cell={"unit_cell": catalog_entry("String")},
         param={
-            "num_farms": _entry("Integer"),
-            "devel_code": _entry("Block"),
-            "iprint": _entry("Integer"),
+            "num_farms": catalog_entry("Integer"),
+            "devel_code": catalog_entry("Block"),
+            "iprint": catalog_entry("Integer"),
         },
     )
 
@@ -736,3 +721,128 @@ def test_hidden_keywords_still_parse_and_write() -> None:
         "UNIT_CELL 0.0 0.0 0.0\n"
     )
     assert any(item.name == "unit_cell" for item in cell.cell_file.scalars)
+
+
+def _refresh_with_retired_keywords(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={
+            "bs_kpoint_mp_grid": catalog_entry("Integer Vector", level="Dummy"),
+            "kpoint_mp_grid": catalog_entry("Integer Vector"),
+        },
+        param={
+            "md_nose_t": catalog_entry(
+                "Physical",
+                "NB This is an OBSOLETE form - please use MD_ION_T instead.",
+                level="Intermediate",
+            ),
+            "bs_max_iter": catalog_entry("Integer", level="Dummy"),
+            # Naming another keyword as obsolete does not hide this one.
+            "md_ion_t": catalog_entry(
+                "Physical", "Replaces the OBSOLETE MD_NOSE_T.", level="Intermediate"
+            ),
+            "iprint": catalog_entry("Integer", "Replaces an obsolete verbosity flag."),
+            "xc_vxc_deriv_epsilon": catalog_entry(
+                "Real", "OBSOLETE: This keyword was once used.", level="Expert"
+            ),
+        },
+    )
+
+
+def test_full_catalog_hides_obsolete_and_dummy_level_keywords(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _refresh_with_retired_keywords(tmp_path, monkeypatch)
+
+    assert _param("md_nose_t").user_visible is False
+    assert _param("xc_vxc_deriv_epsilon").user_visible is False
+    assert _param("bs_max_iter").user_visible is False
+    assert _param("md_ion_t").user_visible is True
+    assert _param("iprint").user_visible is True
+    dummy_cell = get_keyword_spec("cell", "bs_kpoint_mp_grid")
+    assert dummy_cell is not None and dummy_cell.user_visible is False
+    kpoint_grid = get_keyword_spec("cell", "kpoint_mp_grid")
+    assert kpoint_grid is not None and kpoint_grid.user_visible is True
+
+
+def test_obsolete_and_dummy_level_keywords_still_parse_and_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mufinder.castep_io.param_parser import parse_param_text
+
+    _refresh_with_retired_keywords(tmp_path, monkeypatch)
+
+    parsed = parse_param_text("MD_NOSE_T : 0.1 ps\nBS_MAX_ITER : 40\n")
+
+    assert parsed.unmapped == ()
+    assert {item.name for item in parsed.param_file.keywords} == {"md_nose_t", "bs_max_iter"}
+    rendered = write_param(ParamFile(keywords=parsed.param_file.keywords))
+    assert "MD_NOSE_T : 0.1 ps" in rendered
+    assert "BS_MAX_ITER : 40" in rendered
+
+
+def test_an_override_can_show_a_keyword_the_catalog_marks_hidden(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        schema_module.KEYWORD_OVERRIDES["param"], "bs_max_iter", {"user_visible": True}
+    )
+
+    _refresh_with_retired_keywords(tmp_path, monkeypatch)
+
+    assert _param("bs_max_iter").user_visible is True
+
+
+# --- CALCULATE_POLARIZATION is outside the starter catalog ----------------------
+
+
+def test_starter_catalog_does_not_offer_calculate_polarization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolate_catalog_sources(monkeypatch)
+
+    assert get_keyword_spec("param", "calculate_polarization") is None
+    assert get_keyword_spec("param", "calculate_polarisation") is None
+    assert "calculate_polarization" not in SOURCE_KEYWORDS["param"]
+
+
+def test_starter_catalog_reads_calculate_polarization_as_unmapped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mufinder.castep_io.param_parser import parse_param_text
+
+    isolate_catalog_sources(monkeypatch)
+
+    parsed = parse_param_text("TASK : SINGLEPOINT\nCALCULATE_POLARIZATION : TRUE\n")
+
+    assert [item.name for item in parsed.param_file.keywords] == ["task"]
+    assert [item.canonical_name for item in parsed.unmapped] == ["calculate_polarization"]
+    with pytest.raises(UnknownKeywordError, match="Setup > CASTEP"):
+        write_param(
+            ParamFile(keywords=(KeywordAssignment(name="calculate_polarization", value=True),))
+        )
+
+
+def test_full_catalog_keeps_calculate_polarization_and_its_english_spelling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docstring = "Specifies whether or not to perform a polarisation analysis."
+    refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={},
+        param={
+            "calculate_polarisation": catalog_entry("Boolean (Logical)", docstring),
+            "calculate_polarization": catalog_entry("Boolean (Logical)", docstring),
+        },
+    )
+
+    spec = _param("calculate_polarization")
+    assert spec.user_visible is True
+    assert spec.aliases == ("calculate_polarisation",)
+    assert canonical_keyword_name("param", "calculate_polarisation") == "calculate_polarization"
