@@ -132,6 +132,11 @@ An analysis workspace needs:
   the host structure that is active when you create it.
 - **One charge state per workspace.** Rows from the ``Positive muon`` and
   ``Muonium`` tabs cannot be mixed; create one workspace for each.
+- **One calculation per workspace, ideally.** Total energies are only
+  comparable between relaxations in the same supercell with the same cutoff,
+  k-points, functional, Hubbard U and spin treatment. Selecting or adding relaxations
+  that differ in any of these asks first (``Different calculations``), with
+  ``Cancel`` the default; ``Use them anyway`` goes on.
 
 Running the workflow
 ~~~~~~~~~~~~~~~~~~~~
@@ -141,15 +146,17 @@ Running the workflow
 2. **Create the workspace.** Click ``Create Analysis Workspace from
    Selection``. In ``Create Analysis Workspace``, enter the ``Workspace name``
    (default ``positive muon analysis`` or ``muonium analysis``) and accept.
-   Selecting rows from both charge states is refused.
+   Selecting rows from both charge states is refused. The new workspace is
+   not grouped yet.
 3. **Add more structures if needed.** The workspace opens as a tab in ``Muon
    Sites -> Analysis`` and appears as a node under ``Analysis`` in the project
    tree. Click ``Add Structure to Analysis`` to add further completed
    relaxations of the same charge state, ticking ``Add`` for each. The dialog
    reports each relaxation's energy as ``dE vs workspace min (eV)``, so a
-   negative value means that adding it would reset the workspace zero.
-4. **Cluster the sites.** Click ``Clustering…``, choose a ``Method`` and
-   click ``Apply Clustering`` (see `Clustering`_).
+   negative value means that adding it would reset the workspace zero. Adding
+   relaxations never regroups the workspace (see `Clustering`_).
+4. **Group the sites.** Click ``Clustering…``, choose a ``Method`` and click
+   ``Apply Clustering`` (see `Clustering`_).
 5. **Inspect distortions (optional).** Click ``Analyse Displacements`` (see
    `Displacement analysis`_).
 6. **Pin the result.** Click ``Pin to Summary`` to copy the distinct sites to
@@ -195,16 +202,32 @@ The header of each workspace has:
    relaxed structures`_). Select site rows in the table with Ctrl or Shift
    click.
 
-Workspaces are saved with the project, so they are restored after a manual
-project save and load. Creating or editing a workspace is not autosaved while
-the application is running; deleting one is.
+Workspaces are saved with the project. Creating a workspace, applying a
+grouping and deleting a workspace save the project straight away; other edits
+are saved with the next project save.
 
 Clustering
 ~~~~~~~~~~
 
-The ``Clustering…`` button opens the ``Clustering - <workspace>`` dialog,
-which provides three methods, selected with ``Method``. Click ``Apply
-Clustering`` to store the result on the workspace.
+A workspace is grouped only when you apply a grouping. The ``Clustering…``
+button opens the ``Clustering - <workspace>`` dialog, which provides three
+methods, selected with ``Method``; it opens on ``Connected Components`` within
+0.25 Å, the method the MuFinder paper uses. Click ``Apply Clustering`` to store
+the result, with the method and its settings, on the workspace. Closing the
+dialog without applying leaves the workspace as it was.
+
+Relaxations added to a grouped workspace do not regroup it. The earlier sites
+keep their clusters, the new ones are listed without one, and a note above the
+table says the grouping is out of date, for example ``The grouping is out of
+date: it leaves out 2 relaxations added after it was applied. Choose
+'Clustering…' and 'Apply Clustering' to group every relaxation.`` The note
+stays, across saves, until a grouping is applied again. Meanwhile the clusters'
+relative energies follow the workspace's lowest energy, and ``Pin to Summary``
+pins only the grouped sites.
+
+The dialog regroups a quarter of a second after you stop editing its
+controls, so a run of edits regroups once, and ``Apply Clustering`` always
+applies what the controls show.
 
 .. figure:: ../_generated/screenshots/relaxation_clustering_dialog.webp
    :alt: The Clustering dialog with Connected Components at 0.25 A: a graph of
@@ -219,13 +242,17 @@ Clustering`` to store the result on the workspace.
    ``Distance tolerance (Å)``. The dialog shows the graph of subclusters and a
    plot of number of clusters against tolerance. Each manual tolerance
    evaluation adds a point to the plot. ``Scan Tolerances`` evaluates a
-   regular tolerance grid so you can choose a stable plateau in the
-   cluster-count curve deliberately.
+   regular tolerance grid in the background (the button reads ``Scanning…``
+   meanwhile) so you can choose a stable plateau in the cluster-count curve
+   deliberately.
 ``Hierarchical``
    Cuts a dendrogram at the threshold ``Hierarchical t``.
 ``K-means``
    Divides the endpoints into the number of clusters you request in
-   ``Clusters k``.
+   ``Clusters k``, but never into more clusters than there are distinct sites:
+   when ``k`` is larger, the dialog says how many clusters it used. ``Apply
+   Clustering`` keeps the ``k`` you asked for, so relaxations that join later
+   can fill it, and the grouping record states the number used.
 
 The ``Wyckoff tolerance (Å)`` control sets the maximum allowed distance from
 every anchored cluster member to the Wyckoff orbit assigned to its cluster (see
@@ -253,6 +280,9 @@ Site ordering
 Within a workspace, muon sites are ordered by increasing total energy. The
 energy column is reported relative to the lowest-energy member of the
 workspace. Final muon coordinates are folded back into the host unit cell.
+A relaxation whose result does not record its host-cell position has its
+relaxed supercell position mapped into the host cell with the supercell
+matrix its row stores; without that row the relaxation is not offered.
 
 ``Show shifted positions`` applies a display-only symmetry anchoring step. It
 chooses a representative site within each cluster and shows
@@ -284,7 +314,10 @@ view of how each relaxed muon site distorts the host; clustering is not
 required. Choose one relaxed muon site from the workspace (``Muon site``) and
 a comparison host structure (``Comparison host``). The comparison structure may
 be the imported host or a completed pristine relaxation, provided the pristine
-relaxation was not run as a free-cell relaxation. Free-cell pristine
+relaxation was not run as a free-cell relaxation. It starts on the most
+recently completed fixed-cell pristine relaxation, else the host: when the
+host is the experimental structure, its displacements would include the
+host's own DFT relaxation. Free-cell pristine
 relaxations are disabled in the selector because cell-shape changes make
 ion-by-ion displacement interpretation ambiguous.
 
@@ -296,7 +329,8 @@ points. Distances are measured from the site the muon relaxed to in the
 relaxed supercell. The plot reports radial ion displacement relative to the
 selected muon site against ion distance from the muon, in the style of Fig. 5(b) in the
 MuFinder paper. Positive radial displacement means the matched ion moved away
-from the muon.
+from the muon. The species legend sits to the right of the plot at the bottom,
+clear of the corner button that opens the plot in its own window.
 
 .. figure:: ../_generated/screenshots/displacement_analysis_dialog.webp
    :alt: The Analyse Displacements dialog for a CoF2 4c site: the two nearest F
@@ -558,9 +592,20 @@ the connected components of that graph. This follows the graph-style treatment
 described for relaxed sites in the MuFinder paper.
 
 ``Hierarchical`` and ``K-means`` use the Soprano and pymuon-suite inspired
-feature representation of the UEP batch-search workflow. The free parameters
+feature representation of the UEP batch-search workflow: each site's energy
+and its fractional position in the asymmetric unit. The free parameters
 are the dendrogram threshold ``Hierarchical t`` and the requested number of
 clusters ``Clusters k``.
+
+Each feature is scaled to its spread over the workspace before sites are
+compared, but the spread is never taken as less than a physical scale:
+0.01 eV for the energy and 0.05 for a fractional coordinate. Plain min–max
+scaling would stretch numerical noise of 10⁻⁷ Å over the whole range and split
+one site into several. Relaxations whose features all differ by less than these
+scales (directly or through a chain of such relaxations) are one site: they are
+compared as one point, so neither method separates them whatever ``t`` or
+``k`` is, and ``K-means`` asks for at most as many clusters as there are such
+sites.
 
 Each distance is to the nearest periodic image, found with the cell's metric,
 so it is right in hexagonal and other non-orthogonal cells. Host symmetry is

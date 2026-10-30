@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
 from mufinder.app.decimal_input import DecimalLineEdit, VectorInput
 from mufinder.app.demagnetizing_dialogs import (
     ADVANCED_DEMAG_SHAPES,
@@ -71,14 +72,9 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
     MagneticFieldError,
     MagneticFieldOptions,
-    calculate_commensurate_approximant_fields,
-    calculate_commensurate_fields,
-    calculate_dipolar_tensors_for_atoms,
-    calculate_incommensurate_field_distributions,
     classify_magnetic_model,
     contact_coupling_to_angstrom_minus3,
     contact_shell_tie_checker,
-    find_commensurate_approximant,
     muon_site_clearance_error,
 )
 from mufinder.science.magnetic_structure import (
@@ -89,8 +85,19 @@ from mufinder.science.magnetic_structure import (
 from mufinder.science.nuclear_relaxation import (
     NuclearRelaxationError,
     NuclearRelaxationOptions,
-    calculate_nuclear_relaxation,
-    calculate_nuclear_relaxation_with_distortion,
+)
+from mufinder.services.magnetic_field_calculation import (
+    COMMENSURATE_RESULTS,
+    NonFiniteFieldError,
+    cancelled_status,
+    non_finite_field_label,
+    prepare_dipolar_tensor_calculation,
+    prepare_magnetic_field_calculation,
+    prepare_nuclear_relaxation_calculation,
+    run_prepared_dipolar_tensor_calculation,
+    run_prepared_magnetic_field_calculation,
+    run_prepared_nuclear_relaxation_calculation,
+    site_count_text,
 )
 from mufinder.services.magnetic_field_results import (
     UNRELAXED_ESTIMATE_SUFFIX,
@@ -442,6 +449,9 @@ class MagneticFieldWidget(QWidget):
         self._host_structure: Structure | None = None
         self._model = MagneticStructureModel()
         self._selected_muon_site: MagneticMuonSiteOption | None = None
+        # Counts set_document and set_form_state calls, so a calculation that
+        # finishes after the project reloaded the page does not overwrite it.
+        self._page_reloads = 0
         self._distribution_results: list[object] = []
         self._field_results_state: dict[str, object] | None = None
         self._dipolar_tensor_selector_state: dict[str, object] = {"mode": "assigned"}
@@ -709,6 +719,7 @@ class MagneticFieldWidget(QWidget):
         title_editable: bool = False,
         deletable: bool = False,
     ) -> None:
+        self._page_reloads += 1
         self._document = document
         self._host_structure = None if document is None else active_host_structure(document)
         self.set_workspace_title(title, editable=title_editable, deletable=deletable)
@@ -779,6 +790,7 @@ class MagneticFieldWidget(QWidget):
 
     def set_form_state(self, state: Mapping[str, object] | None) -> None:
         """Restore magnetic-field tab settings from project UI state."""
+        self._page_reloads += 1
         if not isinstance(state, Mapping) or not state:
             self._reset_form_state()
             return
@@ -1061,127 +1073,96 @@ class MagneticFieldWidget(QWidget):
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
 
     def calculate_fields(self) -> None:
-        """Run the field calculation for the selected site, as the Calculate button does."""
+        """Run the field calculation for the selected site, as the Calculate button does.
 
-        self._clear_results(clear_state=True)
+        The calculation runs off the GUI thread; once it takes noticeably long
+        a busy dialog with a ``Cancel`` button appears, and cancelling keeps
+        the results shown before it.
+        """
+
+        def refuse(status: str) -> None:
+            self._clear_results(clear_state=True)
+            self._calculation_status.setText(status)
+
         if self._host_structure is None:
-            self._calculation_status.setText("Results: load a host structure first.")
+            refuse("Results: load a host structure first.")
             return
         if not self._model.components:
-            self._calculation_status.setText("Results: build or import a magnetic structure first.")
+            refuse("Results: build or import a magnetic structure first.")
             return
         if not enabled_magnetic_components(self._model):
-            self._calculation_status.setText(
-                "Results: enable at least one magnetic-structure component first."
-            )
+            refuse("Results: enable at least one magnetic-structure component first.")
             return
-        try:
-            site = self.selected_muon_site()
-        except ValueError as exc:
-            self._calculation_status.setText(f"Results: invalid muon site - {exc}")
-            return
+        site = self.selected_muon_site()
         if site is None:
-            self._calculation_status.setText("Results: select a muon site first.")
+            refuse("Results: select a muon site first.")
             return
         site_reason = self._muon_site_unavailable_reason()
         if site_reason is not None:
-            self._calculation_status.setText(f"Results: {site_reason}")
+            refuse(f"Results: {site_reason}")
             return
-
         try:
             options = self.field_options()
         except ValueError as exc:
-            self._calculation_status.setText(f"Results: invalid calculation input - {exc}")
+            refuse(f"Results: invalid calculation input - {exc}")
             return
+        reloads = self._page_reloads
         try:
-            distorted_structures = [self._distorted_structure_for_site(site)]
-            classification = classify_magnetic_model(self._host_structure, self._model)
-            corrected = (
-                " with muon-induced distortion corrections" if site.include_distortion else ""
+            # The worker calculates a copy of what it needs and never reads the
+            # project, which may change once the calculation is cancelled.
+            request = prepare_magnetic_field_calculation(
+                self._document,
+                self._host_structure,
+                self._model,
+                site,
+                options,
+                use_approximants=self._settings.use_approximants,
             )
-            if classification == "commensurate":
-                results = calculate_commensurate_fields(
-                    self._host_structure,
-                    self._model,
-                    [site.fractional_position],
-                    options=options,
-                    distorted_structures=distorted_structures,
+            progress = f"the fields at {site_count_text(request.site_count)}…"
+            self._calculation_status.setText(f"Results: calculating {progress}")
+            self._calculate_button.setEnabled(False)
+            try:
+                calculation = run_blocking_call(
+                    self,
+                    lambda: run_prepared_magnetic_field_calculation(request),
+                    title="Magnetic Fields",
+                    description=f"Calculating {progress}",
+                    cancellable=True,
                 )
-                _raise_for_non_finite_fields(results)
-                self._populate_commensurate_results(results, site_source=site.source)
-                self._calculation_status.setText(
-                    f"Results: calculated {plural(len(results), 'commensurate field value')}{corrected}."
-                    + self._estimate_status_suffix()
-                )
-                self._emit_form_state_changed()
-            else:
-                approximant = find_commensurate_approximant(
-                    self._host_structure,
-                    self._model,
-                    tolerance=options.approximant_tolerance,
-                    max_period=options.approximant_max_period,
-                )
-                if approximant is not None and self._settings.use_approximants:
-                    results = calculate_commensurate_approximant_fields(
-                        self._host_structure,
-                        self._model,
-                        [site.fractional_position],
-                        options=options,
-                        distorted_structures=distorted_structures,
-                    )
-                    _raise_for_non_finite_fields(results)
-                    self._populate_commensurate_results(results, site_source=site.source)
-                    self._calculation_status.setText(
-                        f"Results: calculated {plural(len(results), 'field value')} of the commensurate approximant "
-                        f"{approximant.describe()} (q moved by at most {approximant.max_deviation_rlu:.2g} r.l.u.)"
-                        f"{corrected}." + self._estimate_status_suffix()
-                    )
-                else:
-                    results = calculate_incommensurate_field_distributions(
-                        self._host_structure,
-                        self._model,
-                        [site.fractional_position],
-                        options=options,
-                        distorted_structures=distorted_structures,
-                    )
-                    _raise_for_non_finite_fields(results)
-                    self._populate_distribution_results(results, site_source=site.source)
-                    status = f"Results: sampled {plural(len(results), 'incommensurate field distribution')}{corrected}"
-                    flagged = sum(
-                        1
-                        for result in results
-                        for check in getattr(result, "convergence", ())
-                        if not check.converged
-                    )
-                    if flagged:
-                        status += f"; {plural(flagged, 'convergence check needs', 'convergence checks need')} attention, select a row for advice"
-                    status += "."
-                    if approximant is not None:
-                        status += (
-                            f" q is within {approximant.max_deviation_rlu:.2g} r.l.u. of the commensurate "
-                            f"approximant {approximant.describe()}; turn on commensurate approximants in "
-                            "Calculation Settings to list its finite fields."
-                        )
-                    self._calculation_status.setText(status + self._estimate_status_suffix())
-                self._emit_form_state_changed()
+            finally:
+                self._sync_enabled_state()
+        except BlockingCallCancelled:
+            kept = self._result_table.rowCount() > 0
+            self._calculation_status.setText(
+                f"Results: {cancelled_status(keeps_results=kept).lower()}"
+                + (self._estimate_status_suffix() if kept else "")
+            )
+            return
         except MagneticFieldDependencyError as exc:
-            self._calculation_status.setText(f"Results unavailable: {exc}")
-        except _NonFiniteFieldError as exc:
-            self._calculation_status.setText(f"Calculation failed: {exc}")
-            # The earlier results were cleared on entry; save that so they do not come back.
+            refuse(f"Results unavailable: {exc}")
+            return
+        except NonFiniteFieldError as exc:
+            refuse(f"Calculation failed: {exc}")
+            # The earlier results were cleared; save that so they do not come back.
             self._emit_form_state_changed()
+            return
         except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
-            self._calculation_status.setText(f"Calculation failed: {exc}")
-
-    def _distorted_structure_for_site(self, site: MagneticMuonSiteOption) -> Structure | None:
-        if not site.include_distortion:
-            return None
-        distorted = distortion_structure(self._document, site)
-        if distorted is None:
-            raise MagneticFieldError(
-                "the relaxed structure for the muon-induced distortion correction is no longer available"
+            refuse(f"Calculation failed: {exc}")
+            return
+        if self._page_reloads != reloads:
+            # The project reloaded the page while the worker ran: its results
+            # belong to the page as it was, so the reloaded page keeps its own.
+            self._calculation_status.setText(
+                "Results: the page was reloaded during the calculation; calculate again"
             )
-        return distorted
+            return
+        self._clear_results(clear_state=True)
+        if calculation.kind == COMMENSURATE_RESULTS:
+            self._populate_commensurate_results(calculation.results, site_source=site.source)
+        else:
+            self._populate_distribution_results(calculation.results, site_source=site.source)
+        self._calculation_status.setText(calculation.status)
+        self._emit_form_state_changed()
 
     def calculation_settings(self) -> MagneticFieldCalculationSettings:
         """The numerical settings the next calculation uses."""
@@ -1241,22 +1222,26 @@ class MagneticFieldWidget(QWidget):
     def _calculate_dipolar_tensors_from_dialog(
         self, dialog: DipolarTensorDialog
     ) -> Sequence[object]:
+        """Calculate the dialog's tensors off the GUI thread; raises ``BlockingCallCancelled`` on cancel."""
+
         if self._host_structure is None:
             raise MagneticFieldError("load a host structure first")
         site = self.selected_muon_site()
         if site is None:
             raise MagneticFieldError("select a muon site first")
-        ion_indices = dialog.selected_ion_indices()
-        options = MagneticFieldOptions(
-            supercell=self._settings.supercell,
-            find_equivalent_sites=dialog.include_equivalent_sites(),
-            include_lorentz=False,
-        )
-        return calculate_dipolar_tensors_for_atoms(
+        request = prepare_dipolar_tensor_calculation(
             self._host_structure,
-            [site.fractional_position],
-            magnetic_ion_indices=ion_indices,
-            options=options,
+            site,
+            magnetic_ion_indices=dialog.selected_ion_indices(),
+            supercell=self._settings.supercell,
+            include_equivalent_sites=dialog.include_equivalent_sites(),
+        )
+        return run_blocking_call(
+            dialog,
+            lambda: run_prepared_dipolar_tensor_calculation(request),
+            title="Dipolar Tensor",
+            description=f"Calculating the dipolar tensors at {site_count_text(request.site_count)}…",
+            cancellable=True,
         )
 
     def _open_nuclear_relaxation_dialog(self) -> None:
@@ -1287,6 +1272,8 @@ class MagneticFieldWidget(QWidget):
         self._emit_form_state_changed()
 
     def _calculate_nuclear_relaxation_from_dialog(self, dialog: NuclearRelaxationDialog) -> object:
+        """Calculate the dialog's widths off the GUI thread; raises ``BlockingCallCancelled`` on cancel."""
+
         if self._host_structure is None:
             raise NuclearRelaxationError("load a host structure first")
         site = self.selected_muon_site()
@@ -1295,25 +1282,15 @@ class MagneticFieldWidget(QWidget):
         site_reason = self._muon_site_unavailable_reason()
         if site_reason is not None:
             raise NuclearRelaxationError(site_reason)
-        options = dialog.options()
-        if options.use_distortion_correction:
-            if self._document is None or site.distortion_structure_id is None:
-                raise NuclearRelaxationError("selected muon site has no distortion structure")
-            distorted = distortion_structure(self._document, site)
-            if distorted is None:
-                raise NuclearRelaxationError("selected distortion structure is no longer available")
-            return calculate_nuclear_relaxation_with_distortion(
-                self._host_structure,
-                distorted,
-                site.fractional_position,
-                site_label=site.label,
-                options=options,
-            )
-        return calculate_nuclear_relaxation(
-            self._host_structure,
-            site.fractional_position,
-            site_label=site.label,
-            options=options,
+        request = prepare_nuclear_relaxation_calculation(
+            self._document, self._host_structure, site, dialog.options()
+        )
+        return run_blocking_call(
+            dialog,
+            lambda: run_prepared_nuclear_relaxation_calculation(request),
+            title="Nuclear Relaxation",
+            description="Calculating the nuclear relaxation…",
+            cancellable=True,
         )
 
     def _refresh_calculation_settings_summary(self) -> None:
@@ -1763,7 +1740,7 @@ class MagneticFieldWidget(QWidget):
             self._sync_distribution_plot_button()
             return
         result_payloads = [dict(result) for result in results if isinstance(result, Mapping)]
-        non_finite_label = _non_finite_field_label(result_payloads)
+        non_finite_label = non_finite_field_label(result_payloads)
         if non_finite_label is not None:
             self._calculation_status.setText(
                 f"Results: the saved field at {non_finite_label} is not a finite number "
@@ -1938,7 +1915,7 @@ class MagneticFieldWidget(QWidget):
             isinstance(results, Sequence)
             and not isinstance(results, (str, bytes))
             and bool(results)
-            and _non_finite_field_label(
+            and non_finite_field_label(
                 [result for result in results if isinstance(result, Mapping)]
             )
             is None
@@ -1955,43 +1932,3 @@ class MagneticFieldWidget(QWidget):
             results, self, estimate=self._results_are_estimates()
         )
         dialog.exec()
-
-
-def _non_finite_field_label(results: Sequence[object]) -> str | None:
-    """Return the site label of the first result whose field is not finite, or ``None``.
-
-    A result is a calculated field object or a saved payload: its total field
-    and magnitude, or its sampled distribution fields, must all be finite.
-    """
-
-    for index, result in enumerate(results, start=1):
-        if isinstance(result, Mapping):
-            label = result.get("site_label")
-            arrays = [result.get(key) for key in ("total_T", "magnitude_T", "fields_T")]
-        else:
-            label = getattr(result, "site_label", None)
-            arrays = [getattr(result, key, None) for key in ("total", "magnitude", "fields_T")]
-        for values in arrays:
-            if values is None:
-                continue
-            try:
-                finite = bool(np.all(np.isfinite(np.asarray(values, dtype=float))))
-            except (TypeError, ValueError):
-                continue
-            if not finite:
-                return str(label or f"site {index}")
-    return None
-
-
-class _NonFiniteFieldError(MagneticFieldError):
-    """Raised when a calculated field contains a NaN or an infinity."""
-
-
-def _raise_for_non_finite_fields(results: Sequence[object]) -> None:
-    """Refuse calculated fields that contain a NaN or an infinity, naming the site."""
-
-    label = _non_finite_field_label(results)
-    if label is not None:
-        raise _NonFiniteFieldError(
-            f"the field at {label} is not a finite number (NaN or infinity), so it is not shown"
-        )

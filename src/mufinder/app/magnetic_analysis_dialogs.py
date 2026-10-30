@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.blocking_call import BlockingCallCancelled
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.magnetic_component_dialogs import selector_label
 from mufinder.app.result_notes import unrelaxed_results_note
@@ -56,6 +57,7 @@ from mufinder.science.magnetic_structure import (
     viable_atom_selectors,
 )
 from mufinder.science.nuclear_relaxation import NuclearRelaxationOptions
+from mufinder.services.magnetic_field_calculation import cancelled_status
 from mufinder.services.magnetic_field_results import (
     UNRELAXED_ESTIMATE_SUFFIX,
     is_unrelaxed_site_source,
@@ -263,6 +265,9 @@ class NuclearRelaxationDialog(QDialog):
             return
         try:
             result = self._calculate_callback(self)
+        except BlockingCallCancelled:
+            self._status.setText(cancelled_status(keeps_results=bool(self._results_state)))
+            return
         except ValueError as exc:
             self._status.setText(f"Calculation failed: {exc}")
             return
@@ -590,6 +595,9 @@ class DipolarTensorDialog(QDialog):
             return
         try:
             results = tuple(self._calculate_callback(self))
+        except BlockingCallCancelled:
+            self._status.setText(cancelled_status(keeps_results=bool(self._results_state)))
+            return
         except MagneticFieldDependencyError as exc:
             self._status.setText(f"Result unavailable: {exc}")
             return

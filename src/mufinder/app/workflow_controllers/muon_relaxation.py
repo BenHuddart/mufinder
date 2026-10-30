@@ -65,6 +65,7 @@ from mufinder.services.definition_mappings import (
 )
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
 from mufinder.services.site_relaxations import record_site_relaxation
+from mufinder.science.lattice import lattice_frac_to_cart, wrap_fractional
 from mufinder.science.relaxation_analysis import muon_fractional_position_from_cell
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 from mufinder.workflow.muon_site import (
@@ -144,15 +145,9 @@ def _fold_supercell_fractional_to_host(
 ) -> tuple[float, float, float]:
     """Fold a supercell fractional position back into host-cell coordinates."""
 
-    if matrix is None:
-        return tuple(float(component) % 1.0 for component in position)
-    x, y, z = position
-    host_position = (
-        x * matrix[0][0] + y * matrix[1][0] + z * matrix[2][0],
-        x * matrix[0][1] + y * matrix[1][1] + z * matrix[2][1],
-        x * matrix[0][2] + y * matrix[1][2] + z * matrix[2][2],
-    )
-    return tuple(float(component) % 1.0 for component in host_position)
+    # A supercell fractional row vector times the supercell matrix is the host position.
+    host_position = position if matrix is None else lattice_frac_to_cart(position, matrix)
+    return tuple(wrap_fractional(host_position))  # type: ignore[return-value]
 
 
 @dataclass(frozen=True)

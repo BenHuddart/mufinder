@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
+import importlib.util
 from uuid import uuid4
 
 import numpy as np
@@ -22,6 +23,9 @@ from mufinder.science.relaxation_analysis import (
     analyze_displacements,
     anchored_sites,
     cluster_connected_components,
+    cluster_soprano_style,
+    distinct_feature_count,
+    floored_feature_scaling,
     folded_muon_position_from_structure,
     grouped_relative_energies,
     muon_fractional_position_from_cell,
@@ -30,6 +34,12 @@ from mufinder.science.relaxation_analysis import (
 )
 from mufinder.science.wyckoff_analysis import assign_cluster_wyckoff_sites
 from tests.support.structures import host_structure
+
+
+_soprano_required = pytest.mark.skipif(
+    importlib.util.find_spec("soprano") is None,
+    reason="soprano optional dependency not installed",
+)
 
 
 _host_structure = partial(
@@ -578,3 +588,184 @@ def test_grouped_relative_energies_maps_missing_and_non_finite_energies_to_none(
     )
 
     assert relative == {"a": pytest.approx(0.0), "missing": None, "nan": None, "lonely": None}
+
+
+def _noisy_members(
+    centre: tuple[float, float, float], count: int, *, noise: float, energy: float, seed: int
+) -> list[RelaxedMuonSite]:
+    rng = np.random.default_rng(seed)
+    members = []
+    for index in range(count):
+        position = tuple(
+            float(value) for value in np.asarray(centre) + rng.normal(0.0, noise, size=3)
+        )
+        members.append(
+            _bcc_site(f"{centre}-{index}", position, energy + float(rng.normal(0.0, noise)))
+        )
+    return members
+
+
+def _group_count(labels: tuple[int, ...]) -> int:
+    return len(set(labels))
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "connected",
+        pytest.param("hier", marks=_soprano_required),
+        pytest.param("kmeans", marks=_soprano_required),
+    ],
+)
+def test_one_site_with_six_noisy_members_is_one_group_under_every_method(method: str) -> None:
+    host = _bcc_host_structure()
+    sites = _noisy_members((0.5, 0.25, 0.0), 6, noise=1e-7, energy=-10.0, seed=1)
+
+    if method == "connected":
+        labels = cluster_connected_components(sites, host, tolerance_ang=0.25).cluster_labels
+    else:
+        labels = cluster_soprano_style(sites, host, method=method, kmeans_k=4).cluster_labels
+
+    assert _group_count(labels) == 1
+
+
+@_soprano_required
+def test_kmeans_with_more_clusters_than_sites_does_not_invent_sites() -> None:
+    host = _bcc_host_structure()
+    sites = [
+        *_noisy_members((0.5, 0.25, 0.0), 3, noise=1e-3, energy=-10.0, seed=2),
+        *_noisy_members((0.25, 0.25, 0.25), 3, noise=1e-3, energy=-9.6, seed=3),
+        *_noisy_members((0.5, 0.0, 0.0), 3, noise=1e-3, energy=-9.2, seed=4),
+    ]
+
+    result = cluster_soprano_style(sites, host, method="kmeans", kmeans_k=5)
+
+    assert _group_count(result.cluster_labels) == 3
+    assert result.summary.clustering_kmeans_k == 3
+    # Sites are ordered by energy, so each real site's members are adjacent.
+    for start in (0, 3, 6):
+        assert len(set(result.cluster_labels[start : start + 3])) == 1
+
+
+@_soprano_required
+@pytest.mark.parametrize("method", ["hier", "kmeans"])
+def test_relaxations_closer_than_the_floors_are_never_separated(method: str) -> None:
+    host = _bcc_host_structure()
+    # One site relaxed twice, 0.005 eV apart (below the 0.01 eV floor), and a
+    # second site: the pair would scale 0.5 apart, beyond the default t = 0.3.
+    chained = [
+        _bcc_site("chain-0", (0.5, 0.25, 0.0), -10.0),
+        _bcc_site("chain-1", (0.5, 0.25, 0.0), -9.995),
+    ]
+    other = [_bcc_site("other", (0.25, 0.25, 0.25), -9.997)]
+
+    result = cluster_soprano_style(
+        [*chained, *other], host, method=method, hierarchical_t=0.3, kmeans_k=4
+    )
+
+    by_label = dict(
+        zip(
+            (site.job_label for site in normalize_site_energies([*chained, *other])),
+            result.cluster_labels,
+            strict=True,
+        )
+    )
+    assert len({by_label[site.job_label] for site in chained}) == 1
+    assert by_label["other"] != by_label["chain-0"]
+
+
+@_soprano_required
+def test_hierarchical_keeps_distinct_sites_apart_after_the_floor() -> None:
+    host = _bcc_host_structure()
+    sites = [
+        *_noisy_members((0.5, 0.25, 0.0), 3, noise=1e-4, energy=-10.0, seed=5),
+        *_noisy_members((0.25, 0.25, 0.25), 3, noise=1e-4, energy=-9.5, seed=6),
+    ]
+
+    result = cluster_soprano_style(sites, host, method="hier", hierarchical_t=0.3)
+
+    assert _group_count(result.cluster_labels) == 2
+
+
+def test_floored_feature_scaling_keeps_noise_below_the_physical_scales() -> None:
+    vectors = [
+        [-10.0, 0.5, 0.25, 0.0],
+        [-10.0 + 1e-6, 0.5 + 1e-7, 0.25, 0.0],
+        [-10.0 + 2e-6, 0.5, 0.25 - 1e-7, 0.0],
+    ]
+
+    scaled = floored_feature_scaling(vectors)
+
+    assert np.max(np.abs(scaled)) < 1e-3
+
+
+def test_floored_feature_scaling_spans_zero_to_one_above_the_floor() -> None:
+    scaled = floored_feature_scaling([[-10.0, 0.1, 0.1, 0.1], [-9.0, 0.6, 0.1, 0.1]])
+
+    assert scaled[:, 0].tolist() == pytest.approx([0.0, 1.0])
+    assert scaled[:, 1].tolist() == pytest.approx([0.0, 1.0])
+    assert floored_feature_scaling([]).shape == (0, 0)
+
+
+def test_distinct_feature_count_chains_members_within_the_floors() -> None:
+    vectors = [
+        [-10.0, 0.50, 0.25, 0.0],
+        [-10.005, 0.53, 0.25, 0.0],
+        [-10.0, 0.56, 0.25, 0.0],
+        [-9.0, 0.50, 0.25, 0.0],
+    ]
+
+    assert distinct_feature_count(vectors) == 2
+    assert distinct_feature_count([]) == 0
+
+
+def test_anchoring_leaves_ungrouped_sites_where_they_are() -> None:
+    host = _bcc_host_structure()
+    sites = [
+        _bcc_site("grouped", (0.5, 0.25, 0.0), -10.0),
+        _bcc_site("joined later", (0.0, 0.5, 0.25), -9.0),
+    ]
+
+    anchored = anchored_sites(sites, host, [1, 0])
+
+    assert anchored[1].cluster_index == 0
+    assert anchored[1].shifted is False
+    assert anchored[1].shifted_fractional_position == (0.0, 0.5, 0.25)
+
+
+@_soprano_required
+def test_k_means_is_not_weighted_towards_a_site_relaxed_many_times() -> None:
+    host = _bcc_host_structure()
+    sites = [
+        *_noisy_members((0.5, 0.25, 0.0), 25, noise=1e-4, energy=-10.0, seed=7),
+        _bcc_site("second", (0.25, 0.25, 0.25), -9.5),
+        _bcc_site("third", (0.5, 0.0, 0.0), -9.0),
+    ]
+
+    result = cluster_soprano_style(sites, host, method="kmeans", kmeans_k=3)
+
+    assert _group_count(result.cluster_labels) == 3
+
+
+def test_displacements_from_a_same_size_pristine_supercell_measure_from_the_relaxed_muon() -> None:
+    pristine = Structure(
+        label="Pristine 2x1x1",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+    )
+    # The muon is at x = 3 Å: fractional 0.3 in the supercell, 0.6 in the 5 Å host cell.
+    relaxed = Structure(
+        label="Relaxed",
+        lattice_vectors=pristine.lattice_vectors,
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.3, 0.0, 0.0]],
+    )
+
+    result = analyze_displacements(
+        relaxed_structure=relaxed,
+        comparison_structure=pristine,
+        muon_fractional_position=(0.6, 0.0, 0.0),
+    )
+
+    assert [point.distance_from_muon_ang for point in result.points] == pytest.approx([2.0, 3.0])

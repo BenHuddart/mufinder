@@ -49,6 +49,8 @@ from mufinder.services.source_candidates import (
     float_from_source,
     fractional_triplet_from_source,
     keep_stored_path_keys,
+    mixes_calculations,
+    newest_completed_structure_id,
     quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
     quantum_source_key,
@@ -68,6 +70,7 @@ from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
 )
+from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 from tests.support.muon_sites import bind_muon_relaxation_row
 from tests.support.structures import host_structure
 
@@ -663,6 +666,26 @@ def test_completed_neb_candidates_need_run_and_job(document: ProjectDocument) ->
 # --- completed relaxations ----------------------------------------------------
 
 
+def _relaxation_definition(doc: ProjectDocument, rows: list[dict]) -> CalculationDefinition:
+    """A muon-relaxation definition storing ``rows`` (label, charge state, supercell, settings)."""
+
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE,
+        parameters={
+            "configuration": {
+                "rows": [
+                    {"charge_state": POSITIVE_MUON_CHARGE_STATE, "supercell_matrix": None, **row}
+                    for row in rows
+                ]
+            },
+            "job_ids_by_label": {},
+        },
+    )
+    doc.calculations[definition.id] = definition
+    return definition
+
+
 def _completed_relaxation(
     doc: ProjectDocument,
     *,
@@ -670,6 +693,8 @@ def _completed_relaxation(
     data: dict | None = None,
     converged: bool | None = True,
     status: JobStatus = JobStatus.COMPLETED,
+    definition: CalculationDefinition | None = None,
+    label: str = "job",
 ) -> tuple[Job, CalculationRun]:
     species = ["Si", "Si"] + (["H:mu"] if muon is not None else [])
     positions = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]] + ([list(muon)] if muon is not None else [])
@@ -680,7 +705,13 @@ def _completed_relaxation(
         fractional_positions=positions,
     )
     doc.structures[structure.id] = structure
-    job = Job(label="job", status=status)
+    job = Job(
+        label=label,
+        status=status,
+        calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE),
+    )
+    if definition is not None:
+        definition.parameters["job_ids_by_label"][label] = str(job.id)
     run = CalculationRun(job_id=job.id, convergence_achieved=converged)
     result = Result(
         calculation_run_id=run.id, data=data or {}, derived_structure_ids=[structure.id]
@@ -695,9 +726,11 @@ def _completed_relaxation(
 def test_completed_muon_relaxation_sources_filter_and_sort(document: ProjectDocument) -> None:
     runs: dict[UUID, CalculationRun] = {}
     energies: dict[UUID, float | None] = {}
+    labels = ["high", "Low", "unknown", "unconverged", "running", "no-muon"]
+    definition = _relaxation_definition(document, [{"label": label} for label in labels])
 
     def add(label: str, energy: float | None, **kwargs) -> tuple[str, str, UUID | None, Job]:
-        job, run = _completed_relaxation(document, **kwargs)
+        job, run = _completed_relaxation(document, definition=definition, label=label, **kwargs)
         runs[job.id] = run
         energies[job.id] = energy
         return (label, POSITIVE_MUON_CHARGE_STATE, uuid4(), job)
@@ -722,6 +755,120 @@ def test_completed_muon_relaxation_sources_filter_and_sort(document: ProjectDocu
     assert sources[0].folded_fractional_position == pytest.approx((0.25, 0.25, 0.25))
     assert sources[0].site_id == low[2]
     assert sources[0].total_energy_ev == -2.0
+
+
+def _sources_for(
+    document: ProjectDocument, entries: list[tuple[str, dict]]
+) -> list[CompletedRelaxationAnalysisSource]:
+    """Analysis sources for one completed relaxation per ``(label, completion keywords)``."""
+
+    runs: dict[UUID, CalculationRun] = {}
+    rows = []
+    for label, kwargs in entries:
+        job, run = _completed_relaxation(document, label=label, **kwargs)
+        runs[job.id] = run
+        rows.append((label, POSITIVE_MUON_CHARGE_STATE, None, job))
+    return completed_muon_relaxation_sources(
+        document, rows, run_for_job=runs.get, total_energy_for_job=lambda _id: -1.0
+    )
+
+
+def test_a_result_without_a_host_position_maps_its_supercell_through_the_stored_matrix(
+    document: ProjectDocument,
+) -> None:
+    definition = _relaxation_definition(
+        document,
+        [{"label": "doubled", "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]}],
+    )
+
+    sources = _sources_for(
+        document, [("doubled", {"muon": (0.3, 0.1, 0.45), "definition": definition})]
+    )
+
+    # The supercell coordinate is not a host coordinate: (0.3, 0.1, 0.45) is (0.6, 0.2, 0.9).
+    assert sources[0].folded_fractional_position == pytest.approx((0.6, 0.2, 0.9))
+
+
+def test_a_result_without_a_host_position_or_its_row_reports_no_position(
+    document: ProjectDocument,
+) -> None:
+    assert _sources_for(document, [("orphan", {"muon": (0.3, 0.1, 0.45)})]) == []
+
+
+def test_relaxations_in_different_supercells_or_cut_offs_are_different_calculations(
+    document: ProjectDocument,
+) -> None:
+    definition = _relaxation_definition(
+        document,
+        [
+            {"label": "a", "parameter_values": {"cut_off_energy": 600.0}},
+            {"label": "b", "parameter_values": {"cut_off_energy": 600}},
+            {"label": "c", "parameter_values": {"cut_off_energy": 800.0}},
+            {
+                "label": "e",
+                "parameter_values": {
+                    "cut_off_energy": 600.0,
+                    "kpoints_list": [[0.0, 0.0, 0.0, 1.0]],
+                },
+            },
+            {
+                "label": "d",
+                "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+                "parameter_values": {"cut_off_energy": 600.0},
+            },
+        ],
+    )
+    data = {"muon_final_fractional_position_host": [0.1, 0.2, 0.3]}
+    sources = {
+        source.job_label: source
+        for source in _sources_for(
+            document,
+            [(label, {"definition": definition, "data": data}) for label in "abcde"],
+        )
+    }
+
+    assert not mixes_calculations([sources["a"], sources["b"]])
+    assert mixes_calculations([sources["a"], sources["c"]])
+    assert mixes_calculations([sources["a"], sources["d"]])
+    assert mixes_calculations([sources["a"], sources["e"]])
+    assert not mixes_calculations([])
+    # A relaxation whose row is unknown is compared by its cell alone.
+    (orphan,) = _sources_for(document, [("orphan", {"data": data})])
+    assert not mixes_calculations([sources["a"], orphan])
+    (bigger,) = _sources_for(document, [("bigger", {"data": data, "muon": None})])
+    assert mixes_calculations([orphan, bigger])
+
+
+def test_newest_completed_structure_id_picks_the_latest_completion(
+    document: ProjectDocument,
+) -> None:
+    from datetime import UTC, datetime
+
+    from mufinder.services.source_candidates import CompletedPristineJob
+
+    def job(completed_at: datetime | None) -> CompletedPristineJob:
+        record = Job(label="pristine", status=JobStatus.COMPLETED, completed_at=completed_at)
+        document.jobs[record.id] = record
+        return CompletedPristineJob(
+            job_id=record.id,
+            job_label="pristine",
+            structure_id=uuid4(),
+            supercell_label="Unit cell",
+            status="completed",
+            total_energy=None,
+            lattice_a=None,
+            lattice_b=None,
+            lattice_c=None,
+            parameter_values={},
+        )
+
+    older = job(datetime(2026, 1, 1, tzinfo=UTC))
+    newer = job(datetime(2026, 2, 1, tzinfo=UTC))
+    unknown = job(None)
+
+    assert newest_completed_structure_id(document, [older, newer, unknown]) == newer.structure_id
+    assert newest_completed_structure_id(document, [unknown]) is None
+    assert newest_completed_structure_id(None, [newer]) is None
 
 
 def test_relaxation_sources_for_labels_accepts_keyed_and_bare_labels() -> None:

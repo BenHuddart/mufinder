@@ -347,7 +347,9 @@ defined by two of these modules, and a pinned count may only fall.
        beside ``mufinder.app.sample_photo_dialog``); and the dipolar-tensor and
        nuclear-width dialogs (``mufinder.app.magnetic_analysis_dialogs``). The
        dialogs never import the page. Its site options come from
-       ``mufinder.services.magnetic_field_sites``.
+       ``mufinder.services.magnetic_field_sites``, and its calculations run
+       off the GUI thread through ``mufinder.services.magnetic_field_calculation``
+       and ``mufinder.app.blocking_call``.
    * - ``mufinder.app.magnetic_component_dialogs``
      - The component, atom-phase and preset dialogs, and what the Magnetic
        Fields dialogs share: the atom-target cards and their selector
@@ -368,8 +370,9 @@ defined by two of these modules, and a pinned count may only fall.
      - Running a blocking call off the GUI thread with the caller's
        synchronous semantics (``run_blocking_call``): user input is held back,
        a busy dialog appears once the call takes noticeably long, and a
-       cancellable call raises ``BlockingCallCancelled``. Filesystem retries
-       and keyring password lookups use it.
+       cancellable call raises ``BlockingCallCancelled``. Filesystem retries,
+       keyring password lookups, polarisation simulations and the Magnetic
+       Fields calculations use it.
    * - ``mufinder.app.gui_garbage_collector``
      - Freeing reference cycles on the GUI thread only
        (``GuiGarbageCollector``, ``install_gui_garbage_collector``). Automatic
@@ -613,7 +616,10 @@ defined by two of these modules, and a pinned count may only fall.
        diffusion paths, their labels, stored form and preview supercell, the
        Energy Barriers form state they live in and the NEB results for energy
        barriers; and the completed pristine and muon relaxations offered to
-       comparison and relaxation analysis.
+       comparison and relaxation analysis, with what makes two relaxations'
+       energies comparable (``relaxation_calculation_key``,
+       ``mixes_calculations``) and the newest completed pristine relaxation
+       (``newest_completed_structure_id``).
    * - ``mufinder.services.site_relaxations``
      - Recording a completed muon relaxation on its source site
        (``record_site_relaxation``): the charge state a site is first relaxed in
@@ -634,6 +640,12 @@ defined by two of these modules, and a pinned count may only fall.
        summary card and its CIF export state; the module also builds the
        provenance records of a new analysis workspace and of an applied grouping
        (``analysis_workspace_created_record``, ``relaxed_sites_grouped_record``).
+   * - ``mufinder.services.analysis_grouping``
+     - The grouping a relaxation analysis workspace stores: the ``clustering``
+       mapping ``Apply Clustering`` writes, with its grouping record
+       (``grouped_clustering_state``); keeping that grouping, without
+       regrouping, when relaxations join (``extend_grouping_with_new_sites``);
+       and whether it is out of date (``ungrouped_site_count``).
    * - ``mufinder.services.convergence_defaults``
      - The pinned cutoff and k-point plots on the Convergence Testing
        overview: building a snapshot from the examiner's saved plot data when
@@ -660,6 +672,19 @@ defined by two of these modules, and a pinned count may only fall.
        (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
        per-stage project summary (``summarize_project``; see
        :doc:`/user_guide/project_home`).
+   * - ``mufinder.services.magnetic_field_calculation``
+     - The Magnetic Fields page's field, dipolar-tensor and nuclear-relaxation
+       calculations, each in two steps for a worker thread: a ``prepare_…``
+       function copies what it needs out of the page and the project, and a
+       ``run_prepared_…`` function calculates without them
+       (``run_prepared_magnetic_field_calculation`` chooses the commensurate,
+       approximant or distribution calculation and words its status line);
+       ``run_magnetic_field_calculation``, ``run_dipolar_tensor_calculation``
+       and ``run_nuclear_relaxation_calculation`` run in one call. It also
+       refuses a field that is not a finite number (``NonFiniteFieldError``,
+       ``non_finite_field_label``), counts the sites a calculation covers
+       (``equivalent_site_count``) and words a cancelled calculation's status
+       (``cancelled_status``).
    * - ``mufinder.services.magnetic_field_results``
      - The Magnetic Fields page's and each saved magnetic-field workspace's
        latest field, dipolar-tensor, nuclear-relaxation and muon-polarisation
@@ -796,6 +821,15 @@ defined by two of these modules, and a pinned count may only fall.
        pairing to a symmetry-equivalent site
        (``equivalent_site_distortion``). The nuclear-relaxation and
        dipolar-field distortion corrections both use it.
+   * - ``mufinder.science.relaxation_analysis``
+     - Grouping relaxed muon sites into distinct sites: symmetry-aware
+       nearest-image distances (``symmetry_distance_matrix``), connected
+       components within a tolerance (``cluster_connected_components``, the
+       one connected-components grouping of relaxed sites), and the
+       hierarchical and k-means methods over energy and asymmetric-unit
+       position with each feature's span floored at a physical scale
+       (``cluster_soprano_style``, ``floored_feature_scaling``,
+       ``distinct_feature_count``); also anchoring and displacement analysis.
    * - ``mufinder.science.nuclear_relaxation``
      - Nuclear dipolar second moments: isotope data, the lattice sums for each
        mode (``calculate_nuclear_relaxation``) and the moment tensors that give
