@@ -18,6 +18,7 @@ from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.main_window import MainWindow
+from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationRun, Job, ProvenanceRecord
@@ -1187,6 +1188,12 @@ def test_main_window_dashboard_handlers_forward_selected_jobs(
         window,
         "_submit_jobs_locally",
         lambda jobs, **kwargs: resubmitted.append((jobs, kwargs)),
+    )
+    # Resubmit checks for a CASTEP executable before it asks anything.
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path="/opt/castep", mpirun_path=""),
     )
     window._on_resubmit_from_dashboard([job.id])
 
