@@ -661,18 +661,18 @@ defined by two of these modules, and a pinned count may only fall.
        per-stage project summary (``summarize_project``; see
        :doc:`/user_guide/project_home`).
    * - ``mufinder.services.magnetic_field_calculation``
-     - The Magnetic Fields page's calculations, each in two steps for a worker
-       thread: ``prepare_magnetic_field_calculation`` and
-       ``prepare_nuclear_relaxation_calculation`` copy what they need out of
-       the project, and ``run_prepared_magnetic_field_calculation`` (which
-       chooses the commensurate, approximant or distribution calculation and
-       words its status line) and ``run_prepared_nuclear_relaxation_calculation``
-       calculate without it; ``run_magnetic_field_calculation``,
-       ``run_nuclear_relaxation_calculation`` and
-       ``run_dipolar_tensor_calculation`` run in one call. It also refuses a
-       field that is not a finite number (``NonFiniteFieldError``,
-       ``non_finite_field_label``) and counts the sites a calculation covers
-       (``equivalent_site_count``).
+     - The Magnetic Fields page's field, dipolar-tensor and nuclear-relaxation
+       calculations, each in two steps for a worker thread: a ``prepare_…``
+       function copies what it needs out of the page and the project, and a
+       ``run_prepared_…`` function calculates without them
+       (``run_prepared_magnetic_field_calculation`` chooses the commensurate,
+       approximant or distribution calculation and words its status line);
+       ``run_magnetic_field_calculation``, ``run_dipolar_tensor_calculation``
+       and ``run_nuclear_relaxation_calculation`` run in one call. It also
+       refuses a field that is not a finite number (``NonFiniteFieldError``,
+       ``non_finite_field_label``), counts the sites a calculation covers
+       (``equivalent_site_count``) and words a cancelled calculation's status
+       (``cancelled_status``).
    * - ``mufinder.services.magnetic_field_results``
      - The Magnetic Fields page's and each saved magnetic-field workspace's
        latest field, dipolar-tensor, nuclear-relaxation and muon-polarisation

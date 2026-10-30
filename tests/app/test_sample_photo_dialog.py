@@ -283,3 +283,16 @@ def test_dragging_the_threshold_redraws_the_photo_once_the_drag_pauses(
     QTest.qWait(photo_module.PREVIEW_DEBOUNCE_MS + 100)
     assert len(drawn) == 1
     dialog.close()
+
+
+def test_the_photo_dialog_draws_no_outline_after_it_is_closed(qapp, tmp_path, monkeypatch) -> None:
+    dialog = SamplePhotoDialog()
+    assert dialog.load_photo(_plate_photo(tmp_path))
+    drawn: list[object] = []
+    monkeypatch.setattr(dialog, "_render", lambda _grey, mask: drawn.append(mask))
+    dialog._threshold_slider.setValue(90)
+
+    dialog.reject()
+    QTest.qWait(2 * photo_module.PREVIEW_DEBOUNCE_MS)
+
+    assert drawn == []

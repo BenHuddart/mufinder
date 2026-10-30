@@ -6,7 +6,8 @@ reads what the calculation needs from the project (the relaxed structure of a
 distortion correction) and copies it into a request, and a
 ``run_prepared_…`` function calculates the request without reading the
 project, so it can run on a worker thread and be abandoned when the user
-cancels. ``run_magnetic_field_calculation`` and
+cancels; a cancelled worker finishes on its own and its result is discarded.
+``run_magnetic_field_calculation``, ``run_dipolar_tensor_calculation`` and
 ``run_nuclear_relaxation_calculation`` do both in one call.
 
 :func:`run_prepared_magnetic_field_calculation` chooses the calculation the
@@ -121,6 +122,16 @@ def site_count_text(count: int | None) -> str:
     """``4 muon sites`` for a known count; ``the muon site`` when it is unknown."""
 
     return "the muon site" if count is None else plural(count, "muon site")
+
+
+def cancelled_status(*, keeps_results: bool) -> str:
+    """The status line after the user cancels a calculation; the results shown stay."""
+
+    return (
+        "Calculation cancelled; the earlier results are kept"
+        if keeps_results
+        else "Calculation cancelled"
+    )
 
 
 @dataclass(frozen=True)
@@ -265,6 +276,56 @@ def run_magnetic_field_calculation(
     )
 
 
+@dataclass(frozen=True)
+class DipolarTensorRequest:
+    """Everything one dipolar-tensor calculation needs, copied from the page."""
+
+    host: Structure
+    site: MagneticMuonSiteOption
+    magnetic_ion_indices: tuple[int, ...]
+    options: MagneticFieldOptions
+    site_count: int | None
+
+
+def prepare_dipolar_tensor_calculation(
+    host: Structure,
+    site: MagneticMuonSiteOption,
+    *,
+    magnetic_ion_indices: Sequence[int],
+    supercell: Sequence[int],
+    include_equivalent_sites: bool,
+) -> DipolarTensorRequest:
+    """Copy what the dipolar tensors of the chosen ions at ``site`` need."""
+
+    options = MagneticFieldOptions(
+        supercell=tuple(int(value) for value in supercell),
+        find_equivalent_sites=bool(include_equivalent_sites),
+        include_lorentz=False,
+    )
+    return DipolarTensorRequest(
+        host=copy.deepcopy(host),
+        site=site,
+        magnetic_ion_indices=tuple(int(index) for index in magnetic_ion_indices),
+        options=options,
+        site_count=equivalent_site_count(host, site, options),
+    )
+
+
+def run_prepared_dipolar_tensor_calculation(
+    request: DipolarTensorRequest,
+) -> tuple[DipolarTensorResult, ...]:
+    """Calculate the dipolar tensors of ``request``; reads no project."""
+
+    return tuple(
+        calculate_dipolar_tensors_for_atoms(
+            request.host,
+            [request.site.fractional_position],
+            magnetic_ion_indices=list(request.magnetic_ion_indices),
+            options=request.options,
+        )
+    )
+
+
 def run_dipolar_tensor_calculation(
     host: Structure,
     site: MagneticMuonSiteOption,
@@ -273,23 +334,15 @@ def run_dipolar_tensor_calculation(
     supercell: Sequence[int],
     include_equivalent_sites: bool,
 ) -> tuple[DipolarTensorResult, ...]:
-    """The dipolar tensors of the chosen ions at ``site`` and, optionally, its equivalents.
+    """The dipolar tensors at ``site`` and, optionally, its equivalents, in one call."""
 
-    Reads no project and copies nothing: pass a copy of ``host`` when another
-    thread may change it.
-    """
-
-    options = MagneticFieldOptions(
-        supercell=tuple(int(value) for value in supercell),
-        find_equivalent_sites=bool(include_equivalent_sites),
-        include_lorentz=False,
-    )
-    return tuple(
-        calculate_dipolar_tensors_for_atoms(
+    return run_prepared_dipolar_tensor_calculation(
+        prepare_dipolar_tensor_calculation(
             host,
-            [site.fractional_position],
-            magnetic_ion_indices=list(magnetic_ion_indices),
-            options=options,
+            site,
+            magnetic_ion_indices=magnetic_ion_indices,
+            supercell=supercell,
+            include_equivalent_sites=include_equivalent_sites,
         )
     )
 

@@ -3125,7 +3125,7 @@ def test_the_dialogs_calculate_off_the_gui_thread(qapp, tmp_path, monkeypatch) -
         assert cancellable
         return real_run(parent, op, title=title, description=description, cancellable=True)
 
-    def _tensors(*_args, **_kwargs):
+    def _tensors(_request):
         threads.append(threading.current_thread())
         return ("tensor",)
 
@@ -3134,7 +3134,9 @@ def test_the_dialogs_calculate_off_the_gui_thread(qapp, tmp_path, monkeypatch) -
         return "widths"
 
     monkeypatch.setattr(magnetic_field_widget_module, "run_blocking_call", _recording_run)
-    monkeypatch.setattr(magnetic_field_widget_module, "run_dipolar_tensor_calculation", _tensors)
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "run_prepared_dipolar_tensor_calculation", _tensors
+    )
     monkeypatch.setattr(
         magnetic_field_widget_module, "run_prepared_nuclear_relaxation_calculation", _widths
     )
@@ -3158,4 +3160,43 @@ def test_the_dialogs_calculate_off_the_gui_thread(qapp, tmp_path, monkeypatch) -
         "Calculating the dipolar tensors at 1 muon site…",
         "Calculating the nuclear relaxation…",
     ]
+    widget.close()
+
+
+def test_a_calculation_that_ends_after_the_page_reloaded_is_not_shown(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    widget = _ready_widget(tmp_path)
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "run_prepared_magnetic_field_calculation",
+        lambda _request: _stub_calculation("the first field", 0.25),
+    )
+    widget.calculate_fields()
+    saved = widget.collect_state()
+
+    def _reload() -> None:
+        # As the project does when a job finishes while the worker runs.
+        widget.set_document(widget._document)
+        widget.set_form_state(saved)
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "run_prepared_magnetic_field_calculation",
+        lambda _request: _stub_calculation("the stale field", 9.0),
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "run_blocking_call",
+        lambda _parent, op, **_kwargs: (_reload(), op())[1],
+    )
+    emitted: list[object] = []
+    widget.form_state_changed.connect(lambda *args: emitted.append(args))
+    widget.calculate_fields()
+
+    assert widget._calculation_status.text() == (
+        "Results: the page was reloaded during the calculation; calculate again"
+    )
+    assert widget._result_table.item(0, 0).text() == "the first field"
+    assert emitted == []
     widget.close()

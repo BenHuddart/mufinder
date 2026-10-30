@@ -32,6 +32,8 @@ from mufinder.services.magnetic_field_calculation import (
     NonFiniteFieldError,
     equivalent_site_count,
     non_finite_field_label,
+    cancelled_status,
+    prepare_dipolar_tensor_calculation,
     prepare_magnetic_field_calculation,
     prepare_nuclear_relaxation_calculation,
     run_dipolar_tensor_calculation,
@@ -279,3 +281,28 @@ def test_a_nuclear_distortion_correction_needs_a_relaxed_structure() -> None:
 
     with pytest.raises(NuclearRelaxationError, match="no distortion structure"):
         prepare_nuclear_relaxation_calculation(None, _fe(), _site((0.5, 0.0, 0.0)), options)
+
+
+def test_a_prepared_tensor_calculation_copies_the_host_and_counts_its_sites() -> None:
+    host = _fe()
+    request = prepare_dipolar_tensor_calculation(
+        host,
+        _site(_FE_TETRAHEDRAL),
+        magnetic_ion_indices=[0, 1],
+        supercell=(20, 20, 20),
+        include_equivalent_sites=True,
+    )
+    host.species[0] = "Co"
+
+    assert request.host.species == ["Fe", "Fe"]
+    assert request.magnetic_ion_indices == (0, 1)
+    assert request.options.supercell == (20, 20, 20)
+    assert not request.options.include_lorentz
+    assert request.site_count == 12
+
+
+def test_the_cancelled_status_says_whether_results_are_kept() -> None:
+    assert cancelled_status(keeps_results=True) == (
+        "Calculation cancelled; the earlier results are kept"
+    )
+    assert cancelled_status(keeps_results=False) == "Calculation cancelled"

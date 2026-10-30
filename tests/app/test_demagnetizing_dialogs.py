@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QWidget
 
 import mufinder.app.demagnetizing_dialogs as demagnetizing_dialogs_module
+from mufinder.app.sample_photo_dialog import PREVIEW_DEBOUNCE_MS
 from mufinder.app import theme as theme_module
 from mufinder.app.theme import current_palette
 from mufinder.science.demagnetization import DemagnetizingSample, PlatePhoto, demagnetizing_tensor
@@ -538,4 +539,15 @@ def test_demagnetizing_dialog_redraws_its_preview_once_edits_pause(qapp, monkeyp
     sample, _lattice = _shown_preview(dialog)
     assert len(dialog._preview.samples) == 2
     assert sample.semi_axes[2] == pytest.approx(2.5)
+    dialog.close()
+
+
+def test_demagnetizing_dialog_draws_no_preview_after_it_is_accepted(qapp, monkeypatch) -> None:
+    dialog = _demag_dialog(monkeypatch)
+    dialog._ellipsoid_c.setValue(2.0)
+
+    dialog.accept()
+    QTest.qWait(2 * PREVIEW_DEBOUNCE_MS)
+
+    assert len(dialog._preview.samples) == 1
     dialog.close()

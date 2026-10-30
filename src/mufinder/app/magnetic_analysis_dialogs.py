@@ -57,21 +57,12 @@ from mufinder.science.magnetic_structure import (
     viable_atom_selectors,
 )
 from mufinder.science.nuclear_relaxation import NuclearRelaxationOptions
+from mufinder.services.magnetic_field_calculation import cancelled_status
 from mufinder.services.magnetic_field_results import (
     UNRELAXED_ESTIMATE_SUFFIX,
     is_unrelaxed_site_source,
 )
 from mufinder.services.magnetic_field_sites import MagneticMuonSiteOption
-
-
-def _cancelled_status(has_results: bool) -> str:
-    """The status line after the user cancels a calculation; the shown results stay."""
-
-    return (
-        "Calculation cancelled; the earlier results are kept"
-        if has_results
-        else "Calculation cancelled"
-    )
 
 
 class NuclearRelaxationDialog(QDialog):
@@ -275,7 +266,7 @@ class NuclearRelaxationDialog(QDialog):
         try:
             result = self._calculate_callback(self)
         except BlockingCallCancelled:
-            self._status.setText(_cancelled_status(bool(self._results_state)))
+            self._status.setText(cancelled_status(keeps_results=bool(self._results_state)))
             return
         except ValueError as exc:
             self._status.setText(f"Calculation failed: {exc}")
@@ -605,7 +596,7 @@ class DipolarTensorDialog(QDialog):
         try:
             results = tuple(self._calculate_callback(self))
         except BlockingCallCancelled:
-            self._status.setText(_cancelled_status(bool(self._results_state)))
+            self._status.setText(cancelled_status(keeps_results=bool(self._results_state)))
             return
         except MagneticFieldDependencyError as exc:
             self._status.setText(f"Result unavailable: {exc}")

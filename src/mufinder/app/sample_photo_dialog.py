@@ -292,6 +292,13 @@ class SamplePhotoDialog(QDialog):
         else:
             self._show_saved_outline(photo.path)
 
+    def done(self, result: int) -> None:
+        """Close the dialog; an outline still waiting for the drag to pause is not drawn."""
+
+        self._render_timer.stop()
+        self._pending_render = None
+        super().done(result)
+
     def selected_sample(self) -> DemagnetizingSample:
         """Return the plate as an ``image_plate`` sample along its own axes.
 

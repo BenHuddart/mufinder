@@ -564,6 +564,13 @@ class DemagnetizingFieldAdvancedDialog(QDialog):
         self._plate_sample = dialog.selected_sample()
         self._sync()
 
+    def done(self, result: int) -> None:
+        """Close the dialog; a preview still waiting for edits to pause is not drawn."""
+
+        self._preview_timer.stop()
+        self._pending_preview = None
+        super().done(result)
+
     def closeEvent(self, event) -> None:  # noqa: N802
         self._preview_timer.stop()
         self._pending_preview = None

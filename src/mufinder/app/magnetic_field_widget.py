@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-import copy
 from dataclasses import replace
 from typing import Any
 
@@ -90,11 +89,12 @@ from mufinder.science.nuclear_relaxation import (
 from mufinder.services.magnetic_field_calculation import (
     COMMENSURATE_RESULTS,
     NonFiniteFieldError,
-    equivalent_site_count,
+    cancelled_status,
     non_finite_field_label,
+    prepare_dipolar_tensor_calculation,
     prepare_magnetic_field_calculation,
     prepare_nuclear_relaxation_calculation,
-    run_dipolar_tensor_calculation,
+    run_prepared_dipolar_tensor_calculation,
     run_prepared_magnetic_field_calculation,
     run_prepared_nuclear_relaxation_calculation,
     site_count_text,
@@ -449,6 +449,9 @@ class MagneticFieldWidget(QWidget):
         self._host_structure: Structure | None = None
         self._model = MagneticStructureModel()
         self._selected_muon_site: MagneticMuonSiteOption | None = None
+        # Counts set_document and set_form_state calls, so a calculation that
+        # finishes after the project reloaded the page does not overwrite it.
+        self._page_reloads = 0
         self._distribution_results: list[object] = []
         self._field_results_state: dict[str, object] | None = None
         self._dipolar_tensor_selector_state: dict[str, object] = {"mode": "assigned"}
@@ -716,6 +719,7 @@ class MagneticFieldWidget(QWidget):
         title_editable: bool = False,
         deletable: bool = False,
     ) -> None:
+        self._page_reloads += 1
         self._document = document
         self._host_structure = None if document is None else active_host_structure(document)
         self.set_workspace_title(title, editable=title_editable, deletable=deletable)
@@ -786,6 +790,7 @@ class MagneticFieldWidget(QWidget):
 
     def set_form_state(self, state: Mapping[str, object] | None) -> None:
         """Restore magnetic-field tab settings from project UI state."""
+        self._page_reloads += 1
         if not isinstance(state, Mapping) or not state:
             self._reset_form_state()
             return
@@ -1101,6 +1106,7 @@ class MagneticFieldWidget(QWidget):
         except ValueError as exc:
             refuse(f"Results: invalid calculation input - {exc}")
             return
+        reloads = self._page_reloads
         try:
             # The worker calculates a copy of what it needs and never reads the
             # project, which may change once the calculation is cancelled.
@@ -1126,10 +1132,10 @@ class MagneticFieldWidget(QWidget):
             finally:
                 self._sync_enabled_state()
         except BlockingCallCancelled:
+            kept = self._result_table.rowCount() > 0
             self._calculation_status.setText(
-                "Results: calculation cancelled; the earlier results are kept"
-                if self._result_table.rowCount()
-                else "Results: calculation cancelled"
+                f"Results: {cancelled_status(keeps_results=kept).lower()}"
+                + (self._estimate_status_suffix() if kept else "")
             )
             return
         except MagneticFieldDependencyError as exc:
@@ -1142,6 +1148,13 @@ class MagneticFieldWidget(QWidget):
             return
         except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
             refuse(f"Calculation failed: {exc}")
+            return
+        if self._page_reloads != reloads:
+            # The project reloaded the page while the worker ran: its results
+            # belong to the page as it was, so the reloaded page keeps its own.
+            self._calculation_status.setText(
+                "Results: the page was reloaded during the calculation; calculate again"
+            )
             return
         self._clear_results(clear_state=True)
         if calculation.kind == COMMENSURATE_RESULTS:
@@ -1216,25 +1229,18 @@ class MagneticFieldWidget(QWidget):
         site = self.selected_muon_site()
         if site is None:
             raise MagneticFieldError("select a muon site first")
-        ion_indices = tuple(dialog.selected_ion_indices())
-        include_equivalent = dialog.include_equivalent_sites()
-        supercell = self._settings.supercell
-        # The worker gets its own copy of the host, which the page may replace.
-        host = copy.deepcopy(self._host_structure)
-        count = equivalent_site_count(
-            host, site, MagneticFieldOptions(find_equivalent_sites=include_equivalent)
+        request = prepare_dipolar_tensor_calculation(
+            self._host_structure,
+            site,
+            magnetic_ion_indices=dialog.selected_ion_indices(),
+            supercell=self._settings.supercell,
+            include_equivalent_sites=dialog.include_equivalent_sites(),
         )
         return run_blocking_call(
             dialog,
-            lambda: run_dipolar_tensor_calculation(
-                host,
-                site,
-                magnetic_ion_indices=ion_indices,
-                supercell=supercell,
-                include_equivalent_sites=include_equivalent,
-            ),
+            lambda: run_prepared_dipolar_tensor_calculation(request),
             title="Dipolar Tensor",
-            description=f"Calculating the dipolar tensors at {site_count_text(count)}…",
+            description=f"Calculating the dipolar tensors at {site_count_text(request.site_count)}…",
             cancellable=True,
         )
 
