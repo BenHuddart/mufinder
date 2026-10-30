@@ -17,6 +17,11 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def as_aware_utc(stamp: datetime) -> datetime:
+    """Treat a naive timestamp as UTC so it can be compared with aware ones."""
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
+
+
 @dataclass(slots=True)
 class Structure:
     """Crystallographic structure model."""

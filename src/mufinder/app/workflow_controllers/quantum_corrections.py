@@ -53,7 +53,13 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    Job,
+    Result,
+    as_aware_utc,
+)
 from mufinder.domain.text import natural_sort_key
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
@@ -216,17 +222,21 @@ def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
 def _result_order(job: Job | None, result: Result) -> tuple[object, ...]:
     """Return the sort key of a phonon result's row in the Completed Results table.
 
-    Rows are ordered by job label with numbers compared as numbers, then by when
-    the result was stored, then by result id; a result whose job is gone comes
-    last. The order never depends on the order the jobs finished in.
-    ``created_at`` is compared as a POSIX timestamp, so a naive stamp from an
-    older project sorts beside aware ones instead of raising.
+    Rows are ordered by job label with numbers compared as numbers, then (for
+    labels that compare equal, such as ``Site_1`` and ``site_1``) by the exact
+    label and job id, so each job's rows stay together; a job's own results go
+    oldest first, then by result id. A result whose job is gone comes last. The
+    order never depends on the order the jobs finished in. A naive
+    ``created_at`` from an older project is read as UTC.
     """
 
+    label = job.label if job is not None else ""
     return (
         job is None,
-        natural_sort_key(job.label if job is not None else ""),
-        result.created_at.timestamp(),
+        natural_sort_key(label),
+        label,
+        str(job.id) if job is not None else "",
+        as_aware_utc(result.created_at),
         str(result.id),
     )
 

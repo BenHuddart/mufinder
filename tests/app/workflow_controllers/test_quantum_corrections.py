@@ -9,6 +9,7 @@ project that ran the legacy singlepoint job first are read.
 from __future__ import annotations
 
 import math
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -246,30 +247,67 @@ def test_quantum_controller_result_rows_keep_one_order_whatever_the_completion_o
     ]
 
 
-def test_quantum_controller_result_rows_sort_naive_and_aware_stamps_together(
-    tmp_path: Path,
-) -> None:
-    """Two results of one job, one stamped without a time zone as an older project may
-    hold, still give a table rather than failing to compare."""
-
-    service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
-    for stamp in (datetime(2026, 1, 1), datetime(2026, 1, 2, tzinfo=timezone.utc)):
-        run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
-        document.runs[run.id] = run
-        result = Result(
-            result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, created_at=stamp
-        )
-        document.results[result.id] = result
-
+def _refreshed_result_keys(document: ProjectDocument, service: ProjectService) -> list[str]:
     view = _FakeQuantumView()
     controller = QuantumCorrectionsController(
         make_context(document=document, project_service=service), _stub_quantum_deps(), view
     )
     controller.refresh_view()
+    return [row.key for row in view.results[-1]]
 
-    assert len(view.results[-1]) == 2
+
+def _store_phonon_result(document: ProjectDocument, job: Job, created_at: datetime) -> Result:
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, created_at=created_at
+    )
+    document.results[result.id] = result
+    return result
+
+
+def test_quantum_controller_result_rows_read_a_naive_stamp_as_utc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rerun result stamped without a time zone, as an older project may hold, is read
+    as UTC whatever the machine's time zone, so the job's results stay oldest first."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    later = _store_phonon_result(document, job, datetime(2026, 1, 1, 12, 0))
+    earlier = _store_phonon_result(document, job, datetime(2026, 1, 1, 11, 30, tzinfo=timezone.utc))
+    # Read as local time at UTC+05:30, the naive 12:00 would be 06:30 UTC.
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    try:
+        keys = _refreshed_result_keys(document, service)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+    assert keys == [str(earlier.id), str(later.id)]
+
+
+def test_quantum_controller_result_rows_keep_each_job_together_when_labels_compare_equal(
+    tmp_path: Path,
+) -> None:
+    """Jobs whose labels differ only in case keep their results together rather than
+    interleaving them by time."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    upper = _quantum_job(service, document, "Site_1", QUANTUM_PHONON_CALC_TYPE)
+    lower = _quantum_job(service, document, "site_1", QUANTUM_PHONON_CALC_TYPE)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    results = [
+        _store_phonon_result(document, job, start + timedelta(minutes=minutes))
+        for minutes, job in enumerate((lower, upper, lower, upper))
+    ]
+
+    assert _refreshed_result_keys(document, service) == [
+        str(results[index].id) for index in (1, 3, 0, 2)
+    ]
 
 
 def _displayed_witness(tmp_path: Path, data: dict) -> str:

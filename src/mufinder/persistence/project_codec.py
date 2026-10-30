@@ -11,13 +11,14 @@ timestamps); each repair has an entry in the compatibility ledger
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from mufinder._version import current_version
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
+    as_aware_utc,
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
@@ -36,11 +37,6 @@ from mufinder.persistence.codec import parse_datetime, parse_uuid
 _GENERATED_SITE_STATUS = "generated"
 #: Status older projects stored for freshly generated sites; loads as generated.
 _LEGACY_CANDIDATE_SITE_STATUS = "candidate"
-
-
-def _as_aware_utc(stamp: datetime) -> datetime:
-    """Treat a naive timestamp as UTC so it can be compared with aware ones."""
-    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
 
 
 def normalized_xc_functional(value: object) -> str | None:
@@ -326,7 +322,7 @@ def _job_first_mentions(
             mentioned.append(record.job_id)
         for position, entity_id in enumerate(mentioned):
             if entity_id in job_ids and entity_id not in first_mentioned:
-                first_mentioned[entity_id] = _as_aware_utc(record.timestamp) + timedelta(
+                first_mentioned[entity_id] = as_aware_utc(record.timestamp) + timedelta(
                     microseconds=position
                 )
     return first_mentioned
@@ -343,7 +339,7 @@ def _legacy_job_created_at(job: Job, first_mentioned: datetime | None) -> dateti
     if first_mentioned is not None:
         return first_mentioned
     lifecycle = [
-        _as_aware_utc(stamp)
+        as_aware_utc(stamp)
         for stamp in (job.submitted_at, job.started_at, job.completed_at, job.dismissed_at)
         if stamp is not None
     ]
@@ -371,7 +367,7 @@ def job_from_dict(payload: dict[str, Any]) -> Job:
         calc_type=payload.get("calc_type", ""),
         status=JobStatus(payload["status"]),
         execution_target=payload.get("execution_target", "local"),
-        created_at=_as_aware_utc(parse_datetime(payload.get("created_at")) or utc_now()),
+        created_at=as_aware_utc(parse_datetime(payload.get("created_at")) or utc_now()),
         submitted_at=parse_datetime(payload.get("submitted_at")),
         started_at=parse_datetime(payload.get("started_at")),
         completed_at=parse_datetime(payload.get("completed_at")),
