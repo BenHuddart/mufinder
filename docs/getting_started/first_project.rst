@@ -82,7 +82,7 @@ stands (see :doc:`/user_guide/project_home`).
 
 .. figure:: ../_generated/screenshots/project_home.webp
    :alt: The project home of a CoF2 project: the navigator beside the workflow
-         chart, with five stages complete, the field notes and the cell survey.
+         chart, with four stages complete, the field notes and the cell survey.
 
    The project home of the CoF₂ project once the supercell, the convergence
    defaults and the candidate sites are done; the dashed stages are still to
@@ -117,8 +117,7 @@ Save a supercell
 A muon relaxation needs a cell large enough that the muon does not interact
 with its own periodic images.
 
-1. Select ``Supercell Editor`` in the navigator and click ``Open Supercell
-   Editor``.
+1. On the ``Host Structure`` page, click ``Supercell Editor…``.
 2. Click ``New``, then ``Suggest…``. The suggestions list diagonal supercells
    with their atom count and minimum image distance, and mark one
    ``(Recommended)``.
