@@ -293,6 +293,17 @@ from mufinder.services.job_execution_controller import (
     PreparedClusterSubmission,
     awaits_scheduler_reappearance,
 )
+from mufinder.services.convergence_defaults import (
+    CUTOFF_EXAMINER_STATE_KEY,
+    CUTOFF_SNAPSHOT,
+    KPOINT_EXAMINER_STATE_KEY,
+    KPOINT_SNAPSHOT,
+    build_cutoff_overview_snapshot,
+    build_kpoint_overview_snapshot,
+    store_convergence_overview_snapshot,
+    validated_cutoff_overview_snapshot,
+    validated_kpoint_overview_snapshot,
+)
 from mufinder.services.definition_mappings import (
     ensure_job_mapping,
     relaxation_mapping_job_priority,
@@ -525,8 +536,6 @@ class MainWindow(QMainWindow):
     _ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY = PristineRelaxationController.active_key
     _ACTIVE_MUON_RELAXATION_DEFINITION_KEY = MuonRelaxationController.active_key
     _ACTIVE_UEP_DEFINITION_KEY = UepController.active_key
-    _CONVERGENCE_EXAMINER_STATE_KEY = "convergence_examiner_state"
-    _KPOINT_EXAMINER_STATE_KEY = "kpoint_examiner_state"
     _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
     _UEP_POTENTIAL_GRID_RESULT_TYPE = "uep_potential_grid"
     _MAGNETIC_FIELD_FORM_KEY = "magnetic_field_form"
@@ -535,7 +544,6 @@ class MainWindow(QMainWindow):
     _HOME_STAGE_KEYS = frozenset(stage.key for stage in WORKFLOW_STAGES)
     _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
     _RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX = "muon_analysis/workspace/"
-    _CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY = "convergence_overview_snapshots"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
     _COMPARISON_ROUTE_PREFIX = "pristine_relaxation/comparison/"
     _WORKFLOW_COMPLETE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -2091,106 +2099,10 @@ class MainWindow(QMainWindow):
             "Open the analysis dialog in the child workflow and adopt a project default to pin it here."
         )
 
-    @staticmethod
-    def _snapshot_host_id(snapshot: Mapping[str, object]) -> str | None:
-        raw_value = snapshot.get("host_structure_id")
-        if isinstance(raw_value, str) and raw_value.strip():
-            return raw_value.strip()
-        return None
-
-    @staticmethod
-    def _snapshot_simulation_cell_id(snapshot: Mapping[str, object]) -> str | None:
-        raw_value = snapshot.get("simulation_cell_structure_id")
-        if isinstance(raw_value, str) and raw_value.strip():
-            return raw_value.strip()
-        return None
-
     def _host_structure_id_text(self) -> str | None:
         if self._document is None or self._document.project.host_structure_id is None:
             return None
         return str(self._document.project.host_structure_id)
-
-    def _convergence_overview_snapshots_state(self) -> dict[str, object]:
-        if self._document is None:
-            return {}
-        raw_value = self._document.ui_state.get(self._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY, {})
-        if isinstance(raw_value, dict):
-            return raw_value
-        return {}
-
-    def _validated_cutoff_overview_snapshot(self) -> dict[str, object] | None:
-        if self._document is None:
-            return None
-
-        snapshot = self._convergence_overview_snapshots_state().get("cutoff")
-        if not isinstance(snapshot, dict):
-            return None
-        if self._snapshot_host_id(snapshot) != self._host_structure_id_text():
-            return None
-
-        try:
-            snapshot_value = float(snapshot.get("default_value"))
-        except (TypeError, ValueError):
-            return None
-
-        current_value = self._document.project.recommended_cutoff_energy
-        if current_value is None or abs(snapshot_value - float(current_value)) > 1e-9:
-            return None
-        return snapshot
-
-    def _validated_kpoint_overview_snapshot(self) -> dict[str, object] | None:
-        if self._document is None:
-            return None
-
-        snapshot = self._convergence_overview_snapshots_state().get("kpoint")
-        if not isinstance(snapshot, dict):
-            return None
-        if self._snapshot_host_id(snapshot) != self._host_structure_id_text():
-            return None
-
-        raw_value = snapshot.get("default_value")
-        if not isinstance(raw_value, list) or len(raw_value) != 3:
-            return None
-        try:
-            snapshot_grid = (int(raw_value[0]), int(raw_value[1]), int(raw_value[2]))
-        except (TypeError, ValueError):
-            return None
-
-        current_grid = self._document.project.recommended_kpoint_grid
-        if current_grid is None or snapshot_grid != current_grid:
-            return None
-
-        # Recompute point_spacings so that stale values persisted with an older
-        # formula are always refreshed on load — even for projects adopted
-        # before the fix. Use the cell the sweep ran on (recorded with the
-        # snapshot), which may be a saved supercell; older snapshots without it
-        # fall back to the host.
-        cell = self._kpoint_snapshot_cell(snapshot)
-        if cell is not None:
-            try:
-                snapshot = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(
-                    snapshot, cell.lattice_vectors
-                )
-            except Exception:
-                pass  # Safety: fall back to stored spacings on any unexpected error
-
-        return snapshot
-
-    def _kpoint_snapshot_cell(self, snapshot: Mapping[str, object]) -> Structure | None:
-        """Return the structure a k-point overview snapshot's sweep ran on, else the host."""
-
-        if self._document is None:
-            return None
-        raw_cell_id = snapshot.get("simulation_cell_structure_id")
-        if isinstance(raw_cell_id, str) and raw_cell_id.strip():
-            try:
-                cell = self._document.structures.get(UUID(raw_cell_id.strip()))
-            except ValueError:
-                cell = None
-            if cell is not None:
-                return cell
-        host_id = self._document.project.host_structure_id
-        return self._document.structures.get(host_id) if host_id is not None else None
 
     def _cutoff_overview_summary_rows(self) -> list[tuple[str, str]]:
         if self._document is None:
@@ -2249,8 +2161,8 @@ class MainWindow(QMainWindow):
         ]
 
     def _refresh_convergence_overview(self) -> None:
-        cutoff_snapshot = self._validated_cutoff_overview_snapshot()
-        kpoint_snapshot = self._validated_kpoint_overview_snapshot()
+        cutoff_snapshot = validated_cutoff_overview_snapshot(self._document)
+        kpoint_snapshot = validated_kpoint_overview_snapshot(self._document)
         self._convergence_overview_view.set_cutoff_panel(
             summary_rows=self._cutoff_overview_summary_rows(),
             snapshot=cutoff_snapshot,
@@ -3258,92 +3170,6 @@ class MainWindow(QMainWindow):
             )
         )
         trace.log_summary()
-
-    def _store_convergence_overview_snapshot(
-        self, kind: str, snapshot: Mapping[str, object] | None
-    ) -> None:
-        if self._document is None:
-            return
-
-        snapshots = dict(self._convergence_overview_snapshots_state())
-        if snapshot is None:
-            snapshots.pop(kind, None)
-        else:
-            serialized = to_jsonable(dict(snapshot))
-            if isinstance(serialized, dict):
-                snapshots[kind] = serialized
-        self._document.ui_state[self._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = snapshots
-
-    def _build_cutoff_overview_snapshot(
-        self,
-        *,
-        cutoff_energy: float,
-        energy_threshold: float,
-        force_threshold: float,
-        simulation_cell_structure_id: str | None,
-        stress_threshold: float | None = None,
-    ) -> dict[str, object] | None:
-        if self._document is None:
-            return None
-        host_structure_id = self._host_structure_id_text()
-        if host_structure_id is None:
-            return None
-
-        state = self._document.ui_state.get(self._CONVERGENCE_EXAMINER_STATE_KEY, {})
-        if not isinstance(state, Mapping):
-            return None
-        plot_data = state.get("plot_data")
-        if not isinstance(plot_data, Mapping):
-            return None
-
-        snapshot: dict[str, object] = {
-            "host_structure_id": host_structure_id,
-            "simulation_cell_structure_id": simulation_cell_structure_id,
-            "default_value": float(cutoff_energy),
-            "energy_threshold": float(energy_threshold),
-            "force_threshold": float(force_threshold),
-            "plot_data": dict(plot_data),
-        }
-        if stress_threshold is not None:
-            snapshot["stress_threshold"] = float(stress_threshold)
-        return snapshot
-
-    def _build_kpoint_overview_snapshot(
-        self,
-        *,
-        grid: tuple[int, int, int],
-        energy_threshold: float,
-        force_threshold: float,
-        simulation_cell_structure_id: str | None,
-        labels: Mapping[float, str],
-        stress_threshold: float | None = None,
-    ) -> dict[str, object] | None:
-        if self._document is None:
-            return None
-        host_structure_id = self._host_structure_id_text()
-        if host_structure_id is None:
-            return None
-
-        state = self._document.ui_state.get(self._KPOINT_EXAMINER_STATE_KEY, {})
-        if not isinstance(state, Mapping):
-            return None
-        plot_data = state.get("plot_data")
-        if not isinstance(plot_data, Mapping):
-            return None
-
-        serialized_labels = {str(float(key)): value for key, value in labels.items()}
-        snapshot: dict[str, object] = {
-            "host_structure_id": host_structure_id,
-            "simulation_cell_structure_id": simulation_cell_structure_id,
-            "default_value": [int(grid[0]), int(grid[1]), int(grid[2])],
-            "energy_threshold": float(energy_threshold),
-            "force_threshold": float(force_threshold),
-            "plot_data": dict(plot_data),
-            "point_labels": serialized_labels,
-        }
-        if stress_threshold is not None:
-            snapshot["stress_threshold"] = float(stress_threshold)
-        return snapshot
 
     def _on_tree_selection_changed(self) -> None:
         selected_items = self._project_tree.selectedItems()
@@ -4510,7 +4336,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        persisted_state = self._document.ui_state.get(self._CONVERGENCE_EXAMINER_STATE_KEY, {})
+        persisted_state = self._document.ui_state.get(CUTOFF_EXAMINER_STATE_KEY, {})
         if not isinstance(persisted_state, dict):
             persisted_state = {}
 
@@ -4536,7 +4362,7 @@ class MainWindow(QMainWindow):
         if not isinstance(serialized_state, dict):
             return
 
-        self._document.ui_state[self._CONVERGENCE_EXAMINER_STATE_KEY] = serialized_state
+        self._document.ui_state[CUTOFF_EXAMINER_STATE_KEY] = serialized_state
 
     def _on_cutoff_adopted(
         self,
@@ -4573,9 +4399,11 @@ class MainWindow(QMainWindow):
             ),
             xc_functional=xc_functional,
         )
-        self._store_convergence_overview_snapshot(
-            "cutoff",
-            self._build_cutoff_overview_snapshot(
+        store_convergence_overview_snapshot(
+            self._document,
+            CUTOFF_SNAPSHOT,
+            build_cutoff_overview_snapshot(
+                self._document,
                 cutoff_energy=float(cutoff_energy),
                 energy_threshold=float(energy_threshold),
                 force_threshold=float(force_threshold),
@@ -8313,7 +8141,7 @@ class MainWindow(QMainWindow):
         states = self._kpoint_convergence_controller.build_states()
         counts_map, labels, notes = self._kpoint_examiner_points(states, cell.lattice_vectors)
 
-        persisted_state = self._document.ui_state.get(self._KPOINT_EXAMINER_STATE_KEY, {})
+        persisted_state = self._document.ui_state.get(KPOINT_EXAMINER_STATE_KEY, {})
         if not isinstance(persisted_state, dict):
             persisted_state = {}
 
@@ -8401,7 +8229,7 @@ class MainWindow(QMainWindow):
         if not isinstance(serialized_state, dict):
             return
 
-        self._document.ui_state[self._KPOINT_EXAMINER_STATE_KEY] = serialized_state
+        self._document.ui_state[KPOINT_EXAMINER_STATE_KEY] = serialized_state
 
     def _on_kpoint_default_adopted(
         self,
@@ -8467,9 +8295,11 @@ class MainWindow(QMainWindow):
             xc_functional=xc_functional,
         )
         self._refresh_project_defaults_views()
-        self._store_convergence_overview_snapshot(
-            "kpoint",
-            self._build_kpoint_overview_snapshot(
+        store_convergence_overview_snapshot(
+            self._document,
+            KPOINT_SNAPSHOT,
+            build_kpoint_overview_snapshot(
+                self._document,
                 grid=grid,
                 energy_threshold=float(energy_threshold),
                 force_threshold=float(force_threshold),
@@ -8574,7 +8404,7 @@ class MainWindow(QMainWindow):
         # The pinned overview plot documents the adopted value. Drop it, or
         # typing that same number back in later would resurrect the plot for a
         # default that is now manual.
-        self._store_convergence_overview_snapshot("cutoff", None)
+        store_convergence_overview_snapshot(self._document, CUTOFF_SNAPSHOT, None)
         if cutoff_energy is None:
             self._project_service.clear_recommended_cutoff(self._document)
             self._finish_project_default_edit("Project default cutoff cleared")
@@ -8598,7 +8428,7 @@ class MainWindow(QMainWindow):
 
         if self._document is None:
             return
-        self._store_convergence_overview_snapshot("kpoint", None)
+        store_convergence_overview_snapshot(self._document, KPOINT_SNAPSHOT, None)
         if kpoint_grid is None:
             self._project_service.clear_recommended_kpoint_grid(self._document)
             self._finish_project_default_edit("Project default k-point grid cleared")

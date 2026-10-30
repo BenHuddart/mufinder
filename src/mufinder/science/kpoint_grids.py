@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import math
 
 
@@ -275,6 +275,43 @@ def spacing_from_grid(
     if not candidates:
         raise ValueError("No spacing represents the (1, 1, 1) Gamma-only grid.")
     return min(candidates)
+
+
+def distinct_grid_spacings(
+    lattice_vectors: Sequence[Sequence[float]],
+    grids: Mapping[float, tuple[int, int, int]],
+) -> dict[float, float]:
+    """Return the spacing of each grid on ``lattice_vectors``, keyed like ``grids``.
+
+    The keys are visited in ascending order and the series is strictly
+    decreasing: the Gamma-only grid, grids with no spacing, and repeats of the
+    previous spacing are left out.
+    """
+
+    spacings: dict[float, float] = {}
+    last_spacing: float | None = None
+    for x_value in sorted(grids):
+        grid = grids[x_value]
+        # (1,1,1) is Gamma-only sampling; no single spacing characterises
+        # it (every spacing above the cell's coarsest reciprocal transition
+        # produces it) so spacing_from_grid raises. Skip explicitly so the
+        # annotation machinery never exposes it to the UI.
+        if grid == (1, 1, 1):
+            continue
+        try:
+            spacing = spacing_from_grid(lattice_vectors, grid)
+        except ValueError:
+            continue
+        # Skip duplicate spacings: when one axis dominates the round-trip
+        # bound, successive grids can report the same value even as other
+        # axes grow. Once a plateau starts, every subsequent repeat is
+        # suppressed so the annotation series stays strictly decreasing
+        # and does not mislead the user about convergence status.
+        if last_spacing is not None and math.isclose(spacing, last_spacing, rel_tol=1e-9):
+            continue
+        spacings[float(x_value)] = spacing
+        last_spacing = spacing
+    return spacings
 
 
 def supercell_lattice_vectors(

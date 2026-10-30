@@ -17,6 +17,10 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.services.job_paths import definition_output_directory
+from mufinder.services.convergence_defaults import (
+    CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
+    CUTOFF_EXAMINER_STATE_KEY,
+)
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import select_route
 
@@ -1909,7 +1913,7 @@ def test_main_window_examine_convergence_launches_dialog(
     assert captured["initial_state"] == {}
     assert captured["parent"] is window
     assert captured["opened"] is True
-    assert doc.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY] == {"restored": True}
+    assert doc.ui_state[CUTOFF_EXAMINER_STATE_KEY] == {"restored": True}
     window.close()
 
 
@@ -1938,7 +1942,7 @@ def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_pat
         output_directory=doc.project_root / "files" / "convergence_cutoff",
     )
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(definition.id)
-    doc.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY] = {
+    doc.ui_state[CUTOFF_EXAMINER_STATE_KEY] = {
         "plot_data": {
             "cutoffs": [300.0, 400.0, 550.0],
             "energies": [-10.0, -10.1, -10.15],
@@ -1960,7 +1964,7 @@ def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_pat
     assert doc.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
     assert RETIRED_UI_STATE_KEYS.isdisjoint(doc.ui_state)
-    snapshot = doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["cutoff"]
+    snapshot = doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["cutoff"]
     assert "method" not in snapshot
     assert snapshot["host_structure_id"] == str(host.id)
     assert snapshot["simulation_cell_structure_id"] == str(host.id)
@@ -1988,7 +1992,7 @@ def test_main_window_convergence_examiner_state_changed_updates_ui_state_without
 
     window._on_convergence_examiner_state_changed({"results_text": "cached"})
 
-    assert doc.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY] == {"results_text": "cached"}
+    assert doc.ui_state[CUTOFF_EXAMINER_STATE_KEY] == {"results_text": "cached"}
     assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
     assert saves == []
     window.close()
@@ -2023,10 +2027,9 @@ def test_main_window_convergence_examiner_state_persists_across_project_reload_a
     loaded = service.load_project(root)
 
     assert (
-        loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["results_text"]
-        == "Recommended cutoff: 500 eV"
+        loaded.ui_state[CUTOFF_EXAMINER_STATE_KEY]["results_text"] == "Recommended cutoff: 500 eV"
     )
-    assert loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [
+    assert loaded.ui_state[CUTOFF_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [
         300.0,
         400.0,
         500.0,
@@ -2057,7 +2060,7 @@ def test_main_window_convergence_overview_restores_pinned_snapshots_on_reload(
     doc.project.recommended_kpoint_method = "converged"
     doc.project.recommended_kpoint_energy_threshold = 0.001
     doc.project.recommended_kpoint_force_threshold = 0.05
-    doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
+    doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
         "cutoff": {
             "host_structure_id": str(host.id),
             "simulation_cell_structure_id": str(host.id),
@@ -2124,7 +2127,7 @@ def test_main_window_convergence_overview_hides_stale_snapshot_when_host_changes
     doc.project.recommended_cutoff_method = "converged"
     doc.project.recommended_cutoff_energy_threshold = 0.001
     doc.project.recommended_cutoff_force_threshold = 0.05
-    doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
+    doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
         "cutoff": {
             "host_structure_id": "different-host",
             "simulation_cell_structure_id": str(host.id),

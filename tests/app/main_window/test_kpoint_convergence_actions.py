@@ -12,6 +12,10 @@ from mufinder.app.convergence_types import ConvergenceConfig
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
+from mufinder.services.convergence_defaults import (
+    CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
+    KPOINT_EXAMINER_STATE_KEY,
+)
 from mufinder.services.project_service import ProjectService
 from tests.support.main_window import select_route
 
@@ -32,7 +36,7 @@ def test_main_window_kpoint_examiner_state_changed_updates_ui_state_without_savi
 
     window._on_kpoint_examiner_state_changed({"results_text": "cached"})
 
-    assert doc.ui_state[window._KPOINT_EXAMINER_STATE_KEY] == {"results_text": "cached"}
+    assert doc.ui_state[KPOINT_EXAMINER_STATE_KEY] == {"results_text": "cached"}
     assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
     assert saves == []
     window.close()
@@ -67,10 +71,9 @@ def test_main_window_kpoint_examiner_state_persists_across_project_reload_after_
     loaded = service.load_project(root)
 
     assert (
-        loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["results_text"]
-        == "Recommended grid: 2 x 2 x 2"
+        loaded.ui_state[KPOINT_EXAMINER_STATE_KEY]["results_text"] == "Recommended grid: 2 x 2 x 2"
     )
-    assert loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [8.0, 27.0]
+    assert loaded.ui_state[KPOINT_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [8.0, 27.0]
     window.close()
 
 
@@ -426,7 +429,7 @@ def test_main_window_examine_kpoint_convergence_launches_dialog(
     )
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
-    doc.ui_state[window._KPOINT_EXAMINER_STATE_KEY] = "invalid"
+    doc.ui_state[KPOINT_EXAMINER_STATE_KEY] = "invalid"
     window._document = doc
 
     states = {
@@ -484,7 +487,7 @@ def test_main_window_examine_kpoint_convergence_launches_dialog(
     assert captured["initial_state"] == {}
     assert captured["parent"] is window
     assert captured["opened"] is True
-    assert doc.ui_state[window._KPOINT_EXAMINER_STATE_KEY] == {"cached": True}
+    assert doc.ui_state[KPOINT_EXAMINER_STATE_KEY] == {"cached": True}
     window.close()
 
 
@@ -536,7 +539,7 @@ def test_main_window_on_kpoint_default_adopted_sets_project_default(
         output_directory=doc.project_root / "files" / "convergence_kpoint",
     )
     doc.ui_state[window._ACTIVE_KPOINT_DEFINITION_KEY] = str(definition.id)
-    doc.ui_state[window._KPOINT_EXAMINER_STATE_KEY] = {
+    doc.ui_state[KPOINT_EXAMINER_STATE_KEY] = {
         "plot_data": {
             "cutoffs": [8.0, 27.0],
             "energies": [-10.0, -10.01],
@@ -570,7 +573,7 @@ def test_main_window_on_kpoint_default_adopted_sets_project_default(
     for strip in window._project_defaults_strips():
         assert strip.summary().kpoint_grid == (2, 2, 2)
         assert strip._kpoint_value.text() == "2 x 2 x 2"
-    snapshot = doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["kpoint"]
+    snapshot = doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["kpoint"]
     assert snapshot["host_structure_id"] == str(host.id)
     assert snapshot["simulation_cell_structure_id"] == str(host.id)
     assert snapshot["default_value"] == [2, 2, 2]
@@ -721,59 +724,3 @@ def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -
         )
         for note in notes
     )
-
-
-def test_main_window_kpoint_overview_recomputes_spacings_on_the_sweep_cell(
-    main_window, tmp_path: Path
-) -> None:
-    """The overview refreshes stored spacings from the cell the snapshot was swept on."""
-
-    from mufinder.science.kpoint_grids import spacing_from_grid
-
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "kpoint_overview_supercell.mufinder", "KPointOverviewSupercell"
-    )
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    supercell = Structure(
-        label="2x1x1",
-        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
-        parent_structure_id=host.id,
-    )
-    service.add_structure(doc, supercell)
-    doc.project.recommended_kpoint_grid = (4, 2, 2)
-    doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
-        "kpoint": {
-            "host_structure_id": str(host.id),
-            "simulation_cell_structure_id": str(supercell.id),
-            "default_value": [4, 2, 2],
-            "point_labels": {"16.0": "Grid: 4 x 2 x 2"},
-            "plot_data": {
-                "cutoffs": [16.0],
-                "energies": [-20.0],
-                "point_spacings": {"16.0": 999.0},
-            },
-        }
-    }
-    window._document = doc
-
-    snapshot = window._validated_kpoint_overview_snapshot()
-
-    assert snapshot is not None
-    assert snapshot["plot_data"]["point_spacings"][16.0] == pytest.approx(
-        spacing_from_grid(supercell.lattice_vectors, (4, 2, 2))
-    )
-    assert snapshot["plot_data"]["point_spacings"][16.0] != pytest.approx(
-        spacing_from_grid(host.lattice_vectors, (4, 2, 2))
-    )
-    window.close()

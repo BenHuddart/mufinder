@@ -558,6 +558,20 @@ no two workflow widgets may define the same private method.
        ``pinned_sites_by_representative``), and the per-workflow "Show every relaxed
        site" choice and notice that decide which sites quantum corrections,
        energy barriers and magnetic fields list (``downstream_site_scope``).
+   * - ``mufinder.services.convergence_defaults``
+     - The pinned cutoff and k-point plots on the Convergence Testing
+       overview: building a snapshot from the examiner's saved plot data when
+       a default is adopted (``build_cutoff_overview_snapshot``,
+       ``build_kpoint_overview_snapshot``), storing or removing it
+       (``store_convergence_overview_snapshot``), and showing it only while it
+       belongs to the active host and still matches the project default
+       (``validated_cutoff_overview_snapshot``,
+       ``validated_kpoint_overview_snapshot``), with the k-point spacings
+       recomputed on the cell the sweep ran on (``kpoint_snapshot_cell``,
+       ``recompute_snapshot_spacings``), and the parsing of the examiner's
+       ``Grid: a x b x c`` point labels (``kpoint_grids_from_labels``). The
+       spacing series itself is ``distinct_grid_spacings`` in
+       ``mufinder.science.kpoint_grids``, which the examiner also uses.
    * - ``mufinder.services.project_summary``
      - The workflow-stage catalogue the navigator and the project home are built
        from (``WORKFLOW_STAGES``, ``STAGE_GROUPS``: titles, completion goals and
