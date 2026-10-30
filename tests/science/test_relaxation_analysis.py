@@ -648,6 +648,33 @@ def test_kmeans_with_more_clusters_than_sites_does_not_invent_sites() -> None:
 
 
 @_soprano_required
+@pytest.mark.parametrize("method", ["hier", "kmeans"])
+def test_relaxations_closer_than_the_floors_are_never_separated(method: str) -> None:
+    host = _bcc_host_structure()
+    # One site relaxed twice, 0.005 eV apart (below the 0.01 eV floor), and a
+    # second site: the pair would scale 0.5 apart, beyond the default t = 0.3.
+    chained = [
+        _bcc_site("chain-0", (0.5, 0.25, 0.0), -10.0),
+        _bcc_site("chain-1", (0.5, 0.25, 0.0), -9.995),
+    ]
+    other = [_bcc_site("other", (0.25, 0.25, 0.25), -9.997)]
+
+    result = cluster_soprano_style(
+        [*chained, *other], host, method=method, hierarchical_t=0.3, kmeans_k=4
+    )
+
+    by_label = dict(
+        zip(
+            (site.job_label for site in normalize_site_energies([*chained, *other])),
+            result.cluster_labels,
+            strict=True,
+        )
+    )
+    assert len({by_label[site.job_label] for site in chained}) == 1
+    assert by_label["other"] != by_label["chain-0"]
+
+
+@_soprano_required
 def test_hierarchical_keeps_distinct_sites_apart_after_the_floor() -> None:
     host = _bcc_host_structure()
     sites = [

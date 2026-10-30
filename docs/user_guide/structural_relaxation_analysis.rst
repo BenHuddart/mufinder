@@ -598,10 +598,11 @@ Each feature is scaled to its spread over the workspace before sites are
 compared, but the spread is never taken as less than a physical scale:
 0.01 eV for the energy and 0.05 for a fractional coordinate. Plain min–max
 scaling would stretch numerical noise of 10⁻⁷ Å over the whole range and split
-one site into several; with the floor, members of one site stay together. For
-the same reason ``K-means`` asks for at most as many clusters as there are
-distinct sites, counting two sites as one when every feature differs by less
-than its physical scale.
+one site into several. Relaxations whose features all differ by less than these
+scales (directly or through a chain of such relaxations) are one site: they are
+compared as one point, so neither method separates them whatever ``t`` or
+``k`` is, and ``K-means`` asks for at most as many clusters as there are such
+sites.
 
 Each distance is to the nearest periodic image, found with the cell's metric,
 so it is right in hexagonal and other non-orthogonal cells. Host symmetry is

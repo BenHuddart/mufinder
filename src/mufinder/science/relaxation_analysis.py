@@ -569,22 +569,32 @@ def floored_feature_scaling(genome_vectors: Sequence[Sequence[float]]) -> np.nda
     return (vectors - minima) / spans
 
 
-def distinct_feature_count(genome_vectors: Sequence[Sequence[float]]) -> int:
-    """Return how many distinct sites the relaxed-site features describe.
+def same_site_feature_groups(genome_vectors: Sequence[Sequence[float]]) -> list[list[int]]:
+    """Return the indexes of the relaxed sites that describe one site, group by group.
 
     Two sites are the same when every feature differs by less than its
-    physical floor, and sameness is chained (single linkage), so the count is
-    the number of connected components of that graph. K-means never asks for
-    more clusters than this, so it cannot split one site to fill ``k``.
+    physical floor (:data:`FEATURE_SPAN_FLOOR_ENERGY_EV`,
+    :data:`FEATURE_SPAN_FLOOR_FRACTIONAL`), and sameness is chained (single
+    linkage), so the groups are the connected components of that graph.
     """
 
     vectors = np.asarray(genome_vectors, dtype=float)
     if vectors.size == 0:
-        return 0
+        return []
     scaled = vectors / _feature_span_floors(vectors.shape[1])
     differences = np.abs(scaled[:, None, :] - scaled[None, :, :]).max(axis=-1)
     adjacency = ((differences < 1.0) & ~np.eye(len(vectors), dtype=bool)).astype(int)
-    return len(_connected_components(adjacency))
+    return _connected_components(adjacency)
+
+
+def distinct_feature_count(genome_vectors: Sequence[Sequence[float]]) -> int:
+    """Return how many distinct sites the relaxed-site features describe.
+
+    The number of :func:`same_site_feature_groups`. K-means never asks for
+    more clusters than this.
+    """
+
+    return len(same_site_feature_groups(genome_vectors))
 
 
 def cluster_soprano_style(
@@ -600,9 +610,12 @@ def cluster_soprano_style(
 
     The features (energy and asymmetric-unit fractional position) are those
     of the UEP clustering, scaled by :func:`floored_feature_scaling` rather
-    than plain min-max, so noise between relaxations of one site never
-    separates them. K-means asks for at most :func:`distinct_feature_count`
-    clusters; ``summary.clustering_kmeans_k`` holds the number it used.
+    than plain min-max. The sites of one :func:`same_site_feature_groups`
+    group are then compared as one point (their mean scaled features), so
+    neither method can separate relaxations that differ by less than the
+    physical floors, whatever ``t`` or ``k`` is. K-means asks for at most as
+    many clusters as there are groups; ``summary.clustering_kmeans_k`` holds
+    the number it used.
     """
 
     active = UepClusteringConfig(
@@ -618,6 +631,9 @@ def cluster_soprano_style(
     )
     if prepared.optimizations:
         scaled = floored_feature_scaling(prepared.genome_vectors)
+        groups = same_site_feature_groups(prepared.genome_vectors)
+        for members in groups:
+            scaled[members] = scaled[members].mean(axis=0)
         # The cached linkage was built from the plain min-max features, so it is dropped.
         prepared = replace(
             prepared,
@@ -627,8 +643,7 @@ def cluster_soprano_style(
             linkage_matrix=(),
         )
         if active.clustering_method == "kmeans":
-            distinct = max(distinct_feature_count(prepared.genome_vectors), 1)
-            active = replace(active, clustering_kmeans_k=min(int(kmeans_k), distinct))
+            active = replace(active, clustering_kmeans_k=min(int(kmeans_k), max(len(groups), 1)))
     return cluster_prepared_uep_dataset(prepared, config=active)
 
 
