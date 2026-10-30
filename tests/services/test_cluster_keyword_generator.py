@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -1110,6 +1111,10 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
     The login node runs this loop under ``set -e``, so abandoning the trial
     group must survive a ``pkill`` that finds nothing to kill or is not
     installed.
+
+    The test asserts what the loop decided, never how long it took: the fake
+    CASTEP makes no headway while queries overlap, so the trial group cannot
+    beat the time four queries take in turn however loaded the machine is.
     """
 
     if (
@@ -1121,22 +1126,47 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
 
     active = tmp_path / "active"
     active.mkdir()
+    stalled = tmp_path / "stalled"
+    stalled.mkdir()
+    release = tmp_path / "release"
     peak = tmp_path / "peak.log"
+    stalls = tmp_path / "stalls.log"
+    stops = tmp_path / "stops.log"
     executable = tmp_path / "castep"
-    # A query takes about 0.15 s alone but 1.65 s when four overlap: running
-    # side by side is slower than taking turns, as on a single contended core.
+    # A query alone takes about 0.15 s. Queries that overlap make no headway,
+    # as on a single contended core: they wait until they are stopped, until
+    # the test releases them after the run, or until about 15 s have passed,
+    # when they answer after all (so a loop that waits the group out keeps
+    # four at a time, and the test fails rather than hangs).
     executable.write_text(
         "#!/bin/bash\n"
         'if [ "$1" = "--version" ]; then echo " CASTEP version: 25.12 "; exit 0; fi\n'
-        f"marker={str(active)!r}/$2\n"
+        f'marker={str(active)!r}/"$2.$$"\n'
         'touch "$marker"\n'
-        # Exit promptly when the loop abandons the group, as a real process would.
-        'trap \'rm -f "$marker"; kill "$nap" 2>/dev/null; exit 143\' TERM\n'
+        f"stops={str(stops)!r}\n"
+        # Exit promptly when the loop stops the query, as a real process would.
+        'trap \'rm -f "$marker"; kill "$nap" 2>/dev/null; echo $$ >> "$stops"; exit 143\' TERM\n'
         "sleep 0.05 & nap=$!; wait $nap\n"
         f"busy=$(ls {str(active)!r} | wc -l)\n"
-        f'echo "$busy" >> {str(peak)!r}\n'
-        'sleep "$(awk "BEGIN { print 0.1 * $busy * $busy }")" & nap=$!; wait $nap\n'
-        'rm -f "$marker"\n'
+        f'echo "$2 $busy" >> {str(peak)!r}\n'
+        'if [ "$busy" -gt 1 ]; then\n'
+        # A stalled query no longer counts as running, so one that outlives
+        # an abandoned group does not hold up the queries run in turn.
+        '  rm -f "$marker"\n'
+        f'  marker={str(stalled)!r}/"$2.$$"\n'
+        '  touch "$marker"\n'
+        f"  echo $$ >> {str(stalls)!r}\n"
+        "  ticks=0\n"
+        f'  while [ ! -e {str(release)!r} ] && [ "$ticks" -lt 300 ]; do\n'
+        "    sleep 0.05 & nap=$!; wait $nap\n"
+        "    ticks=$((ticks + 1))\n"
+        "  done\n"
+        '  rm -f "$marker"\n'
+        f"  if [ -e {str(release)!r} ]; then exit 143; fi\n"
+        "else\n"
+        "  sleep 0.1 & nap=$!; wait $nap\n"
+        '  rm -f "$marker"\n'
+        "fi\n"
         'echo "help for $2"\n',
         encoding="utf-8",
     )
@@ -1162,21 +1192,40 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
                 "rm",
                 "ls",
                 "wc",
-                "awk",
                 "touch",
                 "grep",
             ):
                 (tools / name).symlink_to(shutil.which(name))
             env["PATH"] = str(tools)
 
-    completed = subprocess.run(
-        ["/bin/bash", "-c", f"set -e\n{command}"],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=env,
-    )
+    try:
+        completed = subprocess.run(
+            ["/bin/bash", "-c", f"set -e\n{command}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+        if pkill == "real":
+            # pkill stopped the abandoned queries themselves, not only the
+            # subshells that started them: each one that stalled was ended by
+            # SIGTERM rather than by the fake's own cap.
+            assert _empties(stalled)
+            stalled_pids = set(stalls.read_text(encoding="utf-8").split())
+            assert stalled_pids
+            stopped_pids = (
+                set(stops.read_text(encoding="utf-8").split()) if stops.exists() else set()
+            )
+            assert stalled_pids <= stopped_pids
+    finally:
+        # Without pkill the abandoned queries outlive the loop, as they would
+        # on a cluster; let them go so that nothing outlives the test.
+        release.touch()
+    assert _empties(stalled)
+    assert not list(active.iterdir())
 
+    # Every keyword is described once, in order: the abandoned queries are
+    # run again and nothing is lost.
     assert [(name, doc) for name, doc, _tail, _status in _sections(completed.stdout)] == [
         (name, f"help for {name}") for name in names
     ]
@@ -1186,19 +1235,34 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
         completed.stderr,
     )
     assert match is not None
-    # The trial group is abandoned as soon as it has used three quarters of
-    # the time four queries take in turn, not waited out (it would take 1.65 s).
+    assert "keeping 4 at a time" not in completed.stderr
+    # The group is abandoned once it has used three quarters of the time four
+    # queries take in turn, and not before.
     abandoned_after, single = int(match.group(1)), int(match.group(2))
-    assert abandoned_after < 1200
     assert abandoned_after >= single * 3
-    # One alone, the abandoned group of four, then all twelve one at a time:
-    # the abandoned queries are described again, and nothing is lost.
-    if pkill == "real":
-        peaks = [int(line) for line in peak.read_text(encoding="utf-8").split()]
-        assert peaks.count(4) == 4
-        assert peaks.count(1) == 13
-        # Nothing is left behind in the scratch directories.
-        assert not list(active.iterdir())
+    # One alone, the trial group of four overlapping, then the other twelve
+    # one at a time: the abandoned four are run again alone, and so is every
+    # keyword after them.
+    peaks: dict[str, list[int]] = {}
+    for line in peak.read_text(encoding="utf-8").splitlines():
+        name, busy = line.split()
+        peaks.setdefault(name, []).append(int(busy))
+    assert peaks["KEY_0"] == [1]
+    trial = names[1:5]
+    assert max(busy for name in trial for busy in peaks[name]) > 1
+    assert all(1 in peaks[name] for name in trial)
+    assert all(peaks[name] == [1] for name in names[5:])
+
+
+def _empties(directory: Path, timeout: float = 30.0) -> bool:
+    """Return whether ``directory`` empties within a ``timeout`` generous enough for a loaded runner."""
+
+    deadline = time.monotonic() + timeout
+    while list(directory.iterdir()):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 def _write_real_timeout(directory: Path) -> None:
