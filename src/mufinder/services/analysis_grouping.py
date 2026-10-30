@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import (
     RelaxationClusterSummary,
@@ -121,7 +123,10 @@ def extend_grouping_with_new_sites(
     Nothing is regrouped. A grouped workspace keeps its groups: each earlier
     site keeps its cluster label, moved to its place in the new energy order,
     and each new site gets label 0 (ungrouped). The clusters' member and
-    representative indexes move the same way. A workspace without a grouping,
+    representative indexes move the same way, their sizes and relative
+    energies follow the new set (whose lowest energy may have moved), and the
+    tolerance scan, which counted the earlier sites, is cleared. The grouping
+    record still describes the grouping as applied. A workspace without a grouping,
     or whose stored labels no longer match ``previous_sites``, is returned as
     it is.
     """
@@ -152,13 +157,26 @@ def extend_grouping_with_new_sites(
         updated = dict(cluster)
         members = cluster.get("member_indexes")
         if isinstance(members, list):
-            updated["member_indexes"] = [moved[int(i)] for i in members if int(i) in moved]
+            kept = [moved[int(i)] for i in members if int(i) in moved]
+            updated["member_indexes"] = kept
+            updated["size"] = len(kept)
+            # Relative energies follow the workspace's new lowest energy.
+            relative = [
+                float(ordered[i].relative_energy_ev)  # type: ignore[arg-type]
+                for i in kept
+                if ordered[i].relative_energy_ev is not None
+            ]
+            updated["minimum_relative_energy_ev"] = min(relative) if relative else None
+            updated["average_relative_energy_ev"] = float(np.mean(relative)) if relative else None
+            updated["standard_deviation_ev"] = float(np.std(relative)) if relative else None
         representative = cluster.get("representative_index")
         if isinstance(representative, int) and representative in moved:
             updated["representative_index"] = moved[representative]
         clusters.append(updated)
     return {
         **clustering,
+        # The scan counted the earlier sites only.
+        "tolerance_scan": [],
         "result": {**result, "cluster_labels": new_labels, "clusters": clusters},  # type: ignore[dict-item]
     }
 

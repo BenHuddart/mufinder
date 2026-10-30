@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
     cluster_connected_components,
@@ -89,6 +91,11 @@ def test_relaxations_that_join_a_grouped_workspace_stay_ungrouped() -> None:
     assert [cluster["member_indexes"] for cluster in extended["result"]["clusters"]] == [[1], [3]]
     assert [cluster["representative_index"] for cluster in extended["result"]["clusters"]] == [1, 3]
     assert extended["grouping"] == clustering["grouping"]
+    assert extended["tolerance_scan"] == []
+    clusters = extended["result"]["clusters"]
+    assert [cluster["size"] for cluster in clusters] == [1, 1]
+    # D moved the zero down by 1 eV, so A's group is now 1 eV above it.
+    assert clusters[0]["minimum_relative_energy_ev"] == pytest.approx(1.0)
     assert ungrouped_site_count(extended, labels) == 2
 
 

@@ -2200,6 +2200,10 @@ class RelaxationAnalysisWidget(QWidget):
             lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid)
         )
         cluster_button = QPushButton("Clustering…", header)
+        cluster_button.setToolTip(
+            "Group the relaxed sites into distinct sites: compare the methods and apply "
+            "one to this workspace."
+        )
         cluster_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid)
         )

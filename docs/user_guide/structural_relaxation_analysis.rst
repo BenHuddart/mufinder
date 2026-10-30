@@ -217,7 +217,9 @@ keep their clusters, the new ones are listed without one, and a note above the
 table says the grouping is out of date, for example ``The grouping is out of
 date: it leaves out 2 relaxations added after it was applied. Choose
 'Clustering…' and 'Apply Clustering' to group every relaxation.`` The note
-stays, across saves, until a grouping is applied again.
+stays, across saves, until a grouping is applied again. Meanwhile the clusters'
+relative energies follow the workspace's lowest energy, and ``Pin to Summary``
+pins only the grouped sites.
 
 The dialog regroups a quarter of a second after you stop editing its
 controls, so a run of edits regroups once, and ``Apply Clustering`` always
