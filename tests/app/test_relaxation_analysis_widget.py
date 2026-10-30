@@ -1692,3 +1692,22 @@ def test_clustering_dialog_says_when_k_means_used_fewer_clusters(qapp) -> None:
         assert applied[-1]["grouping"]["kmeans_k"] == 2
     finally:
         dialog.close()
+
+
+def test_closing_the_clustering_dialog_mid_scan_drops_the_late_result(qapp) -> None:
+    host = host_structure()
+    sites = [
+        _relaxed_site(host, (0.10, 0.10, 0.10), -10.0),
+        _relaxed_site(host, (0.25, 0.25, 0.25), -9.8),
+    ]
+    dialog = _clustering_dialog(host, sites)
+    before = dialog._tolerance_scan
+    dialog._scan_tolerances()
+    thread = dialog._scan_thread
+
+    dialog.reject()
+    qapp.processEvents()
+
+    assert thread.isFinished()
+    assert dialog._tolerance_scan == before
+    assert not dialog._refresh_timer.isActive()

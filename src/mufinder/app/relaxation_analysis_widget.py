@@ -730,6 +730,8 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(_CLUSTERING_EDIT_DELAY_MS)
         self._refresh_timer.timeout.connect(self._refresh)
+        # ``finished`` comes from every way the dialog ends (accept, reject, close).
+        self.finished.connect(self._stop_background_work)
         self._tolerance_scan = parse_tolerance_scan(
             (self._clustering_state()).get("tolerance_scan", [])
         )
@@ -1059,13 +1061,17 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._tolerance_scan = tuple(sorted(rows.items()))
         self._refresh()
 
-    def done(self, result: int) -> None:  # noqa: D401 - Qt API.
-        # A running scan finishes before the dialog goes; it takes well under a second.
+    def _stop_background_work(self, _result: int = 0) -> None:
+        """Stop a pending regroup and let a running scan finish as the dialog ends.
+
+        The scan takes well under a second; its result, delivered after this,
+        is dropped.
+        """
+
         self._closed = True
         self._refresh_timer.stop()
         if self._scan_thread is not None:
             self._scan_thread.wait()
-        super().done(result)
 
     def _refresh(self) -> None:
         self._refresh_timer.stop()
