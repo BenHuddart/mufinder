@@ -9,9 +9,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.models import Structure
+from mufinder.services.convergence_defaults import (
+    CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
+    KPOINT_EXAMINER_STATE_KEY,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
+from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 from mufinder.app.workflow_controllers.convergence_kpoint import (
     ConvergenceKpointController,
@@ -23,6 +31,7 @@ from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 from tests.support.jobs import make_job
 from tests.support.controllers import (
     RecordingBackend,
+    RecordingSweepWindow,
     job_with_status,
     make_context,
     muon_host_document,
@@ -60,6 +69,7 @@ def _stub_kpoint_deps() -> ConvergenceKpointDeps:
         deserialize_convergence_config=lambda _payload: None,
         grid_key=_grid_key,
         max_stress_for_job=lambda _job_id: None,
+        **RecordingSweepWindow().deps(),
     )
 
 
@@ -107,6 +117,7 @@ def _kpoint_context_and_deps(
         deserialize_convergence_config=deserialize,
         grid_key=_grid_key,
         max_stress_for_job=lambda _job_id: None,
+        **RecordingSweepWindow().deps(),
     )
     return context, deps
 
@@ -406,6 +417,7 @@ def test_kpoint_controller_sync_mappings_respells_keys_and_compares_effective_pa
             deserialize_convergence_config=deserialize_convergence_config,
             grid_key=_grid_key,
             max_stress_for_job=lambda _job_id: None,
+            **RecordingSweepWindow().deps(),
         ),
         _FakeKpointView(),
     )
@@ -431,3 +443,262 @@ def test_kpoint_controller_remove_rows_keeps_the_definition(tmp_path: Path) -> N
     assert definition.parameters["configuration"]["sweep_values"] == []
     assert definition.parameters["job_ids_by_grid"] == {}
     assert definition.id in document.calculations
+
+
+# --------------------------------------------------------------------------- #
+# Examine and adopt
+# --------------------------------------------------------------------------- #
+
+
+def _examine_controller(
+    document: ProjectDocument | None,
+    window: RecordingSweepWindow,
+    *,
+    service: ProjectService | None = None,
+    statuses: list[str] | None = None,
+    persisted: list[str] | None = None,
+) -> ConvergenceKpointController:
+    deps = ConvergenceKpointDeps(
+        deserialize_convergence_config=deserialize_convergence_config,
+        grid_key=_grid_key,
+        max_stress_for_job=lambda _job_id: None,
+        **window.deps(),
+    )
+    context = make_context(
+        document=document, project_service=service, statuses=statuses, persisted=persisted
+    )
+    return ConvergenceKpointController(context, deps, _FakeKpointView())
+
+
+def _kpoint_adopt_document(
+    service: ProjectService, tmp_path: Path, *, supercell: bool = False
+) -> tuple[ProjectDocument, Structure]:
+    """A host with a k-point sweep on it, or on a 2x1x1 supercell; returns the sweep's cell."""
+
+    document = service.create_project(tmp_path / "kpoint_adopt.mufinder", "KPointAdopt")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    cell = host
+    if supercell:
+        cell = Structure(
+            label="2x1x1",
+            lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            species=["Si", "Si", "Si", "Si"],
+            fractional_positions=[
+                [0.0, 0.0, 0.0],
+                [0.125, 0.25, 0.25],
+                [0.5, 0.0, 0.0],
+                [0.625, 0.25, 0.25],
+            ],
+            parent_structure_id=host.id,
+        )
+        service.add_structure(document, cell)
+    definition = service.register_convergence_kpoint_definition(
+        document,
+        input_structure_id=cell.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=document.project_root / "files" / "convergence_kpoint",
+    )
+    document.ui_state[ConvergenceKpointController.active_key] = str(definition.id)
+    return document, cell
+
+
+def test_kpoint_examine_keys_points_by_count_with_grid_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    document, host = _kpoint_adopt_document(service, tmp_path)
+    document.ui_state[KPOINT_EXAMINER_STATE_KEY] = "invalid"
+    window = RecordingSweepWindow(examiner_state={"cached": True})
+    controller = _examine_controller(document, window, service=service)
+    states = {
+        (2, 2, 2): SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
+        (3, 3, 3): SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.15),
+    }
+    monkeypatch.setattr(controller, "build_states", lambda: states)
+
+    controller.examine()
+
+    ((points, options),) = window.examiner_calls
+    assert points == {8.0: states[(2, 2, 2)], 27.0: states[(3, 3, 3)]}
+    assert options == {
+        "num_atoms": 2,
+        "initial_state": {},
+        "sweep_kind": "kpoint",
+        "point_labels": {8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
+        "lattice_vectors": host.lattice_vectors,
+        "notes": [],
+    }
+    assert document.ui_state[KPOINT_EXAMINER_STATE_KEY] == {"cached": True}
+
+
+def test_kpoint_examiner_state_is_kept_in_ui_state_without_saving(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "kpoint_examiner_state.mufinder"
+    document = service.create_project(root, "KPointExaminerState")
+    persisted: list[str] = []
+    controller = _examine_controller(
+        document, RecordingSweepWindow(), service=service, persisted=persisted
+    )
+
+    controller.store_examiner_state(
+        {"results_text": "Recommended grid: 2 x 2 x 2", "plot_data": {"cutoffs": [8.0, 27.0]}}
+    )
+
+    assert persisted == []
+    service.save_project(document)
+    loaded = service.load_project(root)
+    assert loaded.ui_state[KPOINT_EXAMINER_STATE_KEY]["results_text"] == (
+        "Recommended grid: 2 x 2 x 2"
+    )
+    assert loaded.ui_state[KPOINT_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [8.0, 27.0]
+
+
+def test_kpoint_adopt_warns_when_the_label_names_no_grid(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kpoint_adopt_warn.mufinder", "KPointAdoptWarn")
+    window = RecordingSweepWindow()
+    controller = _examine_controller(document, window, service=service)
+
+    controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={})
+    controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={8.0: "8 k-points"})
+
+    assert (
+        window.warnings
+        == [
+            (
+                "Adopt failed",
+                "Could not resolve the recommended k-point grid from the plotted data.",
+            )
+        ]
+        * 2
+    )
+    assert document.project.recommended_kpoint_grid is None
+    assert window.refreshes == 0
+
+
+def test_kpoint_adopt_sets_the_grid_with_its_lattice_and_pins_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, host = _kpoint_adopt_document(service, tmp_path)
+    document.ui_state[KPOINT_EXAMINER_STATE_KEY] = {
+        "plot_data": {
+            "cutoffs": [8.0, 27.0],
+            "energies": [-10.0, -10.01],
+            "forces": [0.10, 0.04],
+            "energy_threshold": 0.001,
+            "force_threshold": 0.05,
+        }
+    }
+    window = RecordingSweepWindow()
+    statuses: list[str] = []
+    persisted: list[str] = []
+    controller = _examine_controller(
+        document, window, service=service, statuses=statuses, persisted=persisted
+    )
+
+    controller.adopt(8.0, "converged", 0.001, 0.05, point_labels={8.0: "Grid: 2 x 2 x 2"})
+
+    assert document.project.recommended_kpoint_grid == (2, 2, 2)
+    assert document.project.recommended_kpoint_method == "converged"
+    assert document.project.recommended_kpoint_energy_threshold == pytest.approx(0.001)
+    assert document.project.recommended_kpoint_force_threshold == pytest.approx(0.05)
+    assert document.project.recommended_kpoint_cell_id == str(host.id)
+    # The grid is stored with the lattice it was converged on, so later
+    # workflows can rescale it to their own cell.
+    assert document.project.recommended_kpoint_lattice == host.lattice_vectors
+    snapshot = document.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["kpoint"]
+    assert snapshot["host_structure_id"] == str(host.id)
+    assert snapshot["simulation_cell_structure_id"] == str(host.id)
+    assert snapshot["default_value"] == [2, 2, 2]
+    assert snapshot["point_labels"]["8.0"] == "Grid: 2 x 2 x 2"
+    assert document.provenance[-1].action == "set_recommended_kpoint_grid"
+    assert window.refreshes == 1
+    assert persisted == ["Could not persist k-point convergence overview snapshot to disk"]
+    assert statuses == ["Project default k-point grid set to 2x2x2"]
+
+
+def test_kpoint_examiner_and_adoption_use_the_sweep_supercell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sweep run on a supercell is normalized and adopted against that supercell.
+
+    The examiner's per-atom energies need the supercell's atom count and its
+    spacings the supercell's lattice; the adopted grid must be stored with the
+    supercell lattice, or later workflows would apply it unscaled to other cells.
+    """
+
+    service = ProjectService()
+    document, supercell = _kpoint_adopt_document(service, tmp_path, supercell=True)
+    window = RecordingSweepWindow()
+    controller = _examine_controller(document, window, service=service)
+    states = {
+        (1, 2, 2): SweepPointRunState(status="completed", total_energy=-20.0, max_force=0.2),
+        (2, 4, 4): SweepPointRunState(status="completed", total_energy=-20.02, max_force=0.1),
+    }
+    monkeypatch.setattr(controller, "build_states", lambda: states)
+
+    controller.examine()
+
+    ((_points, options),) = window.examiner_calls
+    assert options["num_atoms"] == 4
+    assert options["lattice_vectors"] == supercell.lattice_vectors
+
+    assert window.on_adopted is not None
+    window.on_adopted(32.0, "converged", 0.001, 0.05, None)
+
+    assert document.project.recommended_kpoint_grid == (2, 4, 4)
+    assert document.project.recommended_kpoint_cell_id == str(supercell.id)
+    assert document.project.recommended_kpoint_lattice == supercell.lattice_vectors
+
+
+def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -> None:
+    """Grids sharing a k-point count cannot share the examiner's axis."""
+
+    lattice = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 6.0]]
+    completed = SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.1)
+    pending = SweepPointRunState(status="ready")
+    states = {
+        (2, 2, 4): completed,  # oversamples the long axis
+        (4, 2, 2): completed,  # more uniform for this cell
+        (2, 2, 2): completed,
+        (2, 2, 1): pending,  # same count as (1, 2, 2) below, but has no result
+        (4, 1, 1): completed,
+    }
+
+    counts, labels, notes = ConvergenceKpointController.examiner_points(states, lattice)
+
+    assert labels[16.0] == "Grid: 4 x 2 x 2"
+    assert counts[16.0] is states[(4, 2, 2)]
+    assert labels[8.0] == "Grid: 2 x 2 x 2"
+    # A completed grid is kept over a uniform one with nothing to examine.
+    assert labels[4.0] == "Grid: 4 x 1 x 1"
+    assert len(notes) == 2
+    # Each note gives the reason that actually decided which grid was kept.
+    assert any(
+        note.startswith(
+            "2 x 2 x 4 left out: same k-point count (16) as 4 x 2 x 2, which is examined instead "
+            "because it samples the cell most uniformly."
+        )
+        for note in notes
+    )
+    assert any(
+        note.startswith(
+            "2 x 2 x 1 left out: same k-point count (4) as 4 x 1 x 1, which is examined instead "
+            "because it is the only one with a completed result."
+        )
+        for note in notes
+    )

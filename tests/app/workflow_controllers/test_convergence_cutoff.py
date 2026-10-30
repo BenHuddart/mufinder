@@ -10,9 +10,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mufinder.domain.enums import JobStatus
+from mufinder.domain.models import Structure
+from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
+from mufinder.services.convergence_defaults import (
+    CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
+    CUTOFF_EXAMINER_STATE_KEY,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
+from mufinder.app.convergence_types import SweepPointRunState
+from mufinder.app.workflow_config_codecs import deserialize_convergence_config
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
@@ -21,7 +31,7 @@ from mufinder.app.workflow_controllers.convergence_cutoff import (
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 
 from tests.support.jobs import make_job
-from tests.support.controllers import RecordingBackend, make_context
+from tests.support.controllers import RecordingBackend, RecordingSweepWindow, make_context
 
 
 # --------------------------------------------------------------------------- #
@@ -51,6 +61,7 @@ def _stub_deps() -> ConvergenceCutoffDeps:
         deserialize_convergence_config=lambda _payload: None,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
+        **RecordingSweepWindow().deps(),
     )
 
 
@@ -97,6 +108,7 @@ def _cutoff_context_and_deps(
         deserialize_convergence_config=deserialize,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
+        **RecordingSweepWindow().deps(),
     )
     return context, deps
 
@@ -358,3 +370,227 @@ def test_cutoff_controller_remove_cutoff_deletes_an_emptied_definition(tmp_path:
     assert definition.parameters["job_ids_by_cutoff"] == {}
     assert definition.id not in document.calculations
     assert controller.active_key not in document.ui_state
+
+
+# --------------------------------------------------------------------------- #
+# Examine and adopt (SweepConvergenceController, through the cutoff sweep)
+# --------------------------------------------------------------------------- #
+
+
+def _examine_controller(
+    document: ProjectDocument | None,
+    window: RecordingSweepWindow,
+    *,
+    service: ProjectService | None = None,
+    infos: list[tuple[str, str]] | None = None,
+    statuses: list[str] | None = None,
+    persisted: list[str] | None = None,
+) -> ConvergenceCutoffController:
+    deps = ConvergenceCutoffDeps(
+        deserialize_convergence_config=deserialize_convergence_config,
+        cutoff_key=lambda value: f"{float(value):.12g}",
+        max_stress_for_job=lambda _job_id: None,
+        **window.deps(),
+    )
+    context = make_context(
+        document=document,
+        project_service=service,
+        infos=infos,
+        statuses=statuses,
+        persisted=persisted,
+    )
+    return ConvergenceCutoffController(context, deps, _FakeConvergenceView())
+
+
+def _adopt_document(
+    service: ProjectService, tmp_path: Path, *, shared_params: dict[str, object] | None = None
+) -> tuple[ProjectDocument, Structure]:
+    document = service.create_project(tmp_path / "adopt.mufinder", "Adopt")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    definition = service.register_convergence_cutoff_definition(
+        document,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "sweep_parameter": "cut_off_energy",
+            "sweep_values": [300.0, 400.0, 550.0],
+            "shared_params": shared_params or {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=document.project_root / "files" / "convergence_cutoff",
+    )
+    document.ui_state[ConvergenceCutoffController.active_key] = str(definition.id)
+    return document, host
+
+
+def test_examine_without_a_project_asks_for_one() -> None:
+    window = RecordingSweepWindow()
+    infos: list[tuple[str, str]] = []
+    controller = _examine_controller(None, window, infos=infos)
+
+    controller.examine()
+
+    assert infos == [("No project", "Create or open a project first.")]
+    assert window.examiner_calls == []
+
+
+def test_examine_without_a_host_structure_warns(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "no_host.mufinder", "NoHost")
+    window = RecordingSweepWindow()
+    controller = _examine_controller(document, window, service=service)
+
+    controller.examine()
+
+    assert window.warnings == [
+        ("No host structure", "Load a host structure before examining convergence.")
+    ]
+    assert window.examiner_calls == []
+
+
+def test_examine_opens_the_examiner_on_the_sweep_and_keeps_its_final_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    document, _host = _adopt_document(service, tmp_path)
+    document.ui_state[CUTOFF_EXAMINER_STATE_KEY] = "invalid"
+    window = RecordingSweepWindow(examiner_state={"restored": True})
+    controller = _examine_controller(document, window, service=service)
+    states = {
+        300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
+        400.0: SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.15),
+    }
+    monkeypatch.setattr(controller, "build_states", lambda: states)
+
+    controller.examine()
+
+    ((points, options),) = window.examiner_calls
+    assert points == states
+    # The cutoff examiner keeps the dialog's cutoff defaults.
+    assert options == {"num_atoms": 2, "initial_state": {}}
+    assert document.ui_state[CUTOFF_EXAMINER_STATE_KEY] == {"restored": True}
+
+
+def test_examiner_state_is_kept_in_ui_state_without_saving(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "examiner_state.mufinder"
+    document = service.create_project(root, "ExaminerState")
+    initial_state_text = document.project_root.joinpath("state.json").read_text(encoding="utf-8")
+    persisted: list[str] = []
+    controller = _examine_controller(
+        document, RecordingSweepWindow(), service=service, persisted=persisted
+    )
+
+    controller.store_examiner_state(
+        {
+            "results_text": "Recommended cutoff: 500 eV",
+            "plot_data": {"cutoffs": [300.0, 400.0, 500.0], "energies": [-10.0, -10.01, -10.0105]},
+        }
+    )
+
+    assert document.ui_state[CUTOFF_EXAMINER_STATE_KEY]["results_text"] == (
+        "Recommended cutoff: 500 eV"
+    )
+    assert persisted == []
+    assert (
+        document.project_root.joinpath("state.json").read_text(encoding="utf-8")
+        == initial_state_text
+    )
+    # An explicit save keeps it across a reload.
+    service.save_project(document)
+    loaded = service.load_project(root)
+    assert loaded.ui_state[CUTOFF_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [
+        300.0,
+        400.0,
+        500.0,
+    ]
+
+
+def test_adopting_from_the_examiner_sets_the_default_and_pins_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, host = _adopt_document(service, tmp_path)
+    examiner_state = {
+        "plot_data": {
+            "cutoffs": [300.0, 400.0, 550.0],
+            "energies": [-10.0, -10.1, -10.15],
+            "forces": [0.3, 0.18, 0.05],
+            "energy_threshold": 0.001,
+            "force_threshold": 0.05,
+        }
+    }
+    document.ui_state[CUTOFF_EXAMINER_STATE_KEY] = examiner_state
+    window = RecordingSweepWindow(examiner_state=examiner_state)
+    statuses: list[str] = []
+    persisted: list[str] = []
+    controller = _examine_controller(
+        document, window, service=service, statuses=statuses, persisted=persisted
+    )
+    controller.examine()
+    assert window.on_adopted is not None
+
+    window.on_adopted(550.0, "converged", 0.001, 0.05, None)
+
+    assert document.project.recommended_cutoff_energy == pytest.approx(550.0)
+    assert document.project.recommended_cutoff_method == "converged"
+    assert document.project.recommended_cutoff_energy_threshold == pytest.approx(0.001)
+    assert document.project.recommended_cutoff_force_threshold == pytest.approx(0.05)
+    assert document.project.recommended_cutoff_cell_id == str(host.id)
+    assert RETIRED_UI_STATE_KEYS.isdisjoint(document.ui_state)
+    snapshot = document.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["cutoff"]
+    assert "method" not in snapshot
+    assert snapshot["host_structure_id"] == str(host.id)
+    assert snapshot["simulation_cell_structure_id"] == str(host.id)
+    assert snapshot["default_value"] == pytest.approx(550.0)
+    assert snapshot["plot_data"]["cutoffs"] == [300.0, 400.0, 550.0]
+    assert document.provenance[-1].action == "set_recommended_cutoff"
+    assert window.refreshes == 1
+    assert persisted == ["Could not persist convergence overview snapshot to disk"]
+    assert statuses == ["Project default cutoff set to 550 eV"]
+
+
+def test_adopting_a_result_from_another_functional_is_confirmed(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _host = _adopt_document(
+        service, tmp_path, shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"}
+    )
+    document.project.recommended_xc_functional = "LDA"
+    window = RecordingSweepWindow(confirm_answer="cancel")
+    statuses: list[str] = []
+    controller = _examine_controller(document, window, service=service, statuses=statuses)
+
+    controller.adopt(400.0, "converged", 0.001, 0.05)
+
+    ((title, text, choices, options),) = window.confirmations
+    assert title == "Change project functional?"
+    assert "PBE" in text and "LDA" in text
+    assert choices == [("change", "Change functional"), ("cancel", "Cancel")]
+    assert options == {"default": "cancel", "escape": "cancel"}
+    assert document.project.recommended_cutoff_energy is None
+    assert window.refreshes == 0
+    assert statuses == []
+
+    window.confirm_answer = "change"
+    controller.adopt(400.0, "converged", 0.001, 0.05)
+
+    assert document.project.recommended_cutoff_energy == pytest.approx(400.0)
+    assert document.project.recommended_xc_functional == "PBE"
+
+
+def test_adopting_without_a_project_does_nothing() -> None:
+    window = RecordingSweepWindow()
+    controller = _examine_controller(None, window)
+
+    controller.adopt(400.0, "converged", 0.001, 0.05)
+
+    assert window.refreshes == 0
+    assert controller.definition_xc_functional(None) is None
+    assert controller.confirm_adopted_xc_functional("PBE") is True

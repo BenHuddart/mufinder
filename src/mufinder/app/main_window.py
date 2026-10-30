@@ -12,7 +12,7 @@ from pathlib import Path
 import posixpath
 import re
 import time
-from typing import TypeVar
+from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
 from PySide6.QtCore import (
@@ -117,8 +117,6 @@ from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
 from mufinder.app.convergence_types import (
     ConvergenceConfig,
     SweepPointRunState,
-    convergence_config_xc_functional,
-    parse_grid_mapping_key,
 )
 from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
@@ -294,12 +292,8 @@ from mufinder.services.job_execution_controller import (
     awaits_scheduler_reappearance,
 )
 from mufinder.services.convergence_defaults import (
-    CUTOFF_EXAMINER_STATE_KEY,
     CUTOFF_SNAPSHOT,
-    KPOINT_EXAMINER_STATE_KEY,
     KPOINT_SNAPSHOT,
-    build_cutoff_overview_snapshot,
-    build_kpoint_overview_snapshot,
     store_convergence_overview_snapshot,
     validated_cutoff_overview_snapshot,
     validated_kpoint_overview_snapshot,
@@ -388,7 +382,6 @@ from mufinder.services.ssh_client import (
     SSHUnknownHostKeyError,
     save_trusted_host_key,
 )
-from mufinder.science.kpoint_grids import kpoint_count, most_uniform_grid
 from mufinder.science.hyperfine import HyperfineError
 from mufinder.science.quantum_phonons import PhononParseError
 from mufinder.science.site_generation import SiteGenerationError
@@ -709,7 +702,9 @@ class MainWindow(QMainWindow):
         )
         self._convergence_view = CutoffConvergenceWidget()
         self._convergence_view.configure_requested.connect(self._on_convergence_configured)
-        self._convergence_view.examine_requested.connect(self._on_examine_convergence)
+        self._convergence_view.examine_requested.connect(
+            lambda: self._convergence_controller.examine()
+        )
         self._convergence_view.form_state_changed.connect(self._on_convergence_form_state_changed)
         self._convergence_view.simulation_cell_create_requested.connect(
             self._on_convergence_simulation_cell_create_requested
@@ -747,7 +742,9 @@ class MainWindow(QMainWindow):
         self._kpoint_convergence_view.configure_requested.connect(
             self._on_kpoint_convergence_configured
         )
-        self._kpoint_convergence_view.examine_requested.connect(self._on_examine_kpoint_convergence)
+        self._kpoint_convergence_view.examine_requested.connect(
+            lambda: self._kpoint_convergence_controller.examine()
+        )
         self._kpoint_convergence_view.form_state_changed.connect(self._on_kpoint_form_state_changed)
         self._kpoint_convergence_view.simulation_cell_create_requested.connect(
             self._on_kpoint_simulation_cell_create_requested
@@ -4321,105 +4318,6 @@ class MainWindow(QMainWindow):
                 return stamp.timestamp()
         return 0.0
 
-    def _on_examine_convergence(self) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        host_id = self._document.project.host_structure_id
-        host = self._document.structures.get(host_id) if host_id is not None else None
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before examining convergence.",
-            )
-            return
-
-        persisted_state = self._document.ui_state.get(CUTOFF_EXAMINER_STATE_KEY, {})
-        if not isinstance(persisted_state, dict):
-            persisted_state = {}
-
-        cell = (
-            self._convergence_sweep_cell(self._convergence_controller.active_definition()) or host
-        )
-        dialog = ConvergenceExaminerDialog(
-            self._convergence_controller.build_states(),
-            num_atoms=len(cell.species),
-            initial_state=persisted_state,
-            parent=self,
-        )
-        dialog.cutoff_adopted.connect(self._on_cutoff_adopted)
-        dialog.state_changed.connect(self._on_convergence_examiner_state_changed)
-        dialog.exec()
-        self._on_convergence_examiner_state_changed(dialog.state_snapshot())
-
-    def _on_convergence_examiner_state_changed(self, state: dict) -> None:
-        if self._document is None:
-            return
-
-        serialized_state = to_jsonable(state)
-        if not isinstance(serialized_state, dict):
-            return
-
-        self._document.ui_state[CUTOFF_EXAMINER_STATE_KEY] = serialized_state
-
-    def _on_cutoff_adopted(
-        self,
-        cutoff_energy: float,
-        method: str,
-        energy_threshold: float,
-        force_threshold: float,
-        stress_threshold: float | None = None,
-    ) -> None:
-        if self._document is None:
-            return
-        definition = self._convergence_controller.active_definition()
-        definition_cell_id = None
-        if definition is not None and definition.input_structure_ids:
-            definition_cell_id = str(definition.input_structure_ids[0])
-        xc_functional = self._convergence_definition_xc_functional(definition)
-        if not self._confirm_adopted_xc_functional(xc_functional):
-            return
-        self._project_service.set_recommended_cutoff(
-            self._document,
-            cutoff_energy,
-            method=method,
-            energy_threshold=energy_threshold,
-            force_threshold=force_threshold,
-            stress_threshold=stress_threshold,
-            cell_id=(
-                definition_cell_id
-                if definition_cell_id is not None
-                else (
-                    str(self._document.project.host_structure_id)
-                    if self._document.project.host_structure_id
-                    else None
-                )
-            ),
-            xc_functional=xc_functional,
-        )
-        store_convergence_overview_snapshot(
-            self._document,
-            CUTOFF_SNAPSHOT,
-            build_cutoff_overview_snapshot(
-                self._document,
-                cutoff_energy=float(cutoff_energy),
-                energy_threshold=float(energy_threshold),
-                force_threshold=float(force_threshold),
-                simulation_cell_structure_id=definition_cell_id,
-                stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
-            ),
-        )
-        self._refresh_project_defaults_views()
-        self._refresh_convergence_overview()
-        self._refresh_journal_view()
-        self._persist_document_ui_state(
-            failure_message="Could not persist convergence overview snapshot to disk"
-        )
-        self._populate_project_tree()
-        self.statusBar().showMessage(f"Project default cutoff set to {float(cutoff_energy):.8g} eV")
-
     def _on_remove_cutoffs_from_convergence(self, cutoff_values: list[float]) -> None:
         if not cutoff_values:
             return
@@ -5876,7 +5774,44 @@ class MainWindow(QMainWindow):
             deserialize_convergence_config=deserialize_convergence_config,
             cutoff_key=lambda value: self._cutoff_key(value),
             max_stress_for_job=lambda job_id: max_stress_for_job(self._document, job_id),
+            **self._sweep_convergence_window_deps(),
         )
+
+    def _sweep_convergence_window_deps(self) -> dict[str, Callable[..., Any]]:
+        """Return the dialogs and refreshes both convergence sweeps reach the window through."""
+
+        return {
+            "run_examiner": lambda *args, **kwargs: self._run_convergence_examiner(*args, **kwargs),
+            "show_warning": lambda title, text: QMessageBox.warning(self, title, text),
+            "confirm_choice": lambda *args, **kwargs: workflow_table_utils.confirm_choice(
+                self, *args, **kwargs
+            ),
+            "refresh_after_default_adopted": lambda: self._refresh_after_convergence_default(),
+        }
+
+    def _run_convergence_examiner(
+        self,
+        points: Mapping[float, SweepPointRunState],
+        *,
+        on_adopted: Callable[..., None],
+        on_state_changed: Callable[[dict], None],
+        **options: Any,
+    ) -> dict[str, object]:
+        """Open the examiner modally on ``points``; return its state when it closes."""
+
+        dialog = ConvergenceExaminerDialog(points, parent=self, **options)
+        dialog.default_adopted.connect(on_adopted)
+        dialog.state_changed.connect(on_state_changed)
+        dialog.exec()
+        return dialog.state_snapshot()
+
+    def _refresh_after_convergence_default(self) -> None:
+        """Refresh the views an adopted convergence default changes."""
+
+        self._refresh_project_defaults_views()
+        self._refresh_convergence_overview()
+        self._refresh_journal_view()
+        self._populate_project_tree()
 
     def _build_convergence_kpoint_deps(self) -> ConvergenceKpointDeps:
         """Build the k-point controller's deps: shared convergence helpers.
@@ -5894,6 +5829,7 @@ class MainWindow(QMainWindow):
             deserialize_convergence_config=deserialize_convergence_config,
             grid_key=lambda grid: self._grid_key(grid),
             max_stress_for_job=lambda job_id: max_stress_for_job(self._document, job_id),
+            **self._sweep_convergence_window_deps(),
         )
 
     def _build_pristine_relaxation_deps(self) -> PristineRelaxationDeps:
@@ -8119,205 +8055,6 @@ class MainWindow(QMainWindow):
         self._kpoint_convergence_view.remove_grids(grids)
         self._kpoint_convergence_controller.refresh_view()
 
-    def _on_examine_kpoint_convergence(self) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        host_id = self._document.project.host_structure_id
-        host = self._document.structures.get(host_id) if host_id is not None else None
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before examining convergence.",
-            )
-            return
-
-        cell = (
-            self._convergence_sweep_cell(self._kpoint_convergence_controller.active_definition())
-            or host
-        )
-        states = self._kpoint_convergence_controller.build_states()
-        counts_map, labels, notes = self._kpoint_examiner_points(states, cell.lattice_vectors)
-
-        persisted_state = self._document.ui_state.get(KPOINT_EXAMINER_STATE_KEY, {})
-        if not isinstance(persisted_state, dict):
-            persisted_state = {}
-
-        dialog = ConvergenceExaminerDialog(
-            counts_map,
-            num_atoms=len(cell.species),
-            sweep_kind="kpoint",
-            point_labels=labels,
-            lattice_vectors=cell.lattice_vectors,
-            initial_state=persisted_state,
-            notes=notes,
-            parent=self,
-        )
-        dialog.default_adopted.connect(
-            lambda value, method, et, ft, st: self._on_kpoint_default_adopted(
-                value, method, et, ft, labels, st
-            )
-        )
-        dialog.state_changed.connect(self._on_kpoint_examiner_state_changed)
-        dialog.exec()
-        self._on_kpoint_examiner_state_changed(dialog.state_snapshot())
-
-    def _convergence_sweep_cell(self, definition) -> Structure | None:
-        """Return the cell a convergence sweep ran on: its definition's input structure.
-
-        That is the unit cell or the saved supercell chosen under ``Simulation
-        Cell``. Per-atom energies and k-point spacings must use this cell, not the
-        host unit cell, or a supercell sweep is normalized by the wrong atom count
-        and its grids are related to the wrong lattice.
-        """
-
-        if self._document is None or definition is None or not definition.input_structure_ids:
-            return None
-        return self._document.structures.get(definition.input_structure_ids[0])
-
-    @staticmethod
-    def _kpoint_examiner_points(
-        states: Mapping[tuple[int, int, int], SweepPointRunState],
-        lattice_vectors: Sequence[Sequence[float]],
-    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], list[str]]:
-        """Key k-point sweep states by k-point count for the examiner's axis.
-
-        Two different grids with the same count (only possible with hand-entered
-        grids) cannot share a point on that axis. One is kept per count: a grid
-        with a completed energy is preferred, then the most uniformly sampled one
-        for the cell (see :func:`~mufinder.science.kpoint_grids.most_uniform_grid`).
-        Each grid left out is described in the returned notes.
-        """
-
-        by_count: dict[int, list[tuple[int, int, int]]] = {}
-        for grid in states:
-            by_count.setdefault(kpoint_count(grid), []).append(tuple(int(n) for n in grid))  # type: ignore[arg-type]
-        counts_map: dict[float, SweepPointRunState] = {}
-        labels: dict[float, str] = {}
-        notes: list[str] = []
-        for count, grids in by_count.items():
-            kept = grids[0]
-            if len(grids) > 1:
-                completed = [grid for grid in grids if states[grid].total_energy is not None]
-                if len(completed) == 1:
-                    kept = completed[0]
-                    reason = "it is the only one with a completed result"
-                else:
-                    kept = most_uniform_grid(lattice_vectors, completed or grids)
-                    reason = "it samples the cell most uniformly" + (
-                        " of those with a completed result"
-                        if completed and len(completed) < len(grids)
-                        else ""
-                    )
-                excluded = ", ".join(format_kpoint_grid(grid) for grid in grids if grid != kept)
-                notes.append(
-                    f"{excluded} left out: same k-point count ({count}) as {format_kpoint_grid(kept)}, "
-                    f"which is examined instead because {reason}. "
-                    "Remove the extra grid from the sweep to examine it."
-                )
-            counts_map[float(count)] = states[kept]
-            labels[float(count)] = f"Grid: {format_kpoint_grid(kept)}"
-        return counts_map, labels, notes
-
-    def _on_kpoint_examiner_state_changed(self, state: dict) -> None:
-        if self._document is None:
-            return
-
-        serialized_state = to_jsonable(state)
-        if not isinstance(serialized_state, dict):
-            return
-
-        self._document.ui_state[KPOINT_EXAMINER_STATE_KEY] = serialized_state
-
-    def _on_kpoint_default_adopted(
-        self,
-        value: float,
-        method: str,
-        energy_threshold: float,
-        force_threshold: float,
-        labels: Mapping[float, str],
-        stress_threshold: float | None = None,
-    ) -> None:
-        if self._document is None:
-            return
-
-        label = labels.get(float(value), "")
-        grid = None
-        if label.startswith("Grid:"):
-            payload = label.split(":", maxsplit=1)[1].strip().replace(" ", "")
-            grid = parse_grid_mapping_key(payload.replace("x", "x"))
-
-        if grid is None:
-            QMessageBox.warning(
-                self,
-                "Adopt failed",
-                "Could not resolve the recommended k-point grid from the plotted data.",
-            )
-            return
-
-        active_definition = self._kpoint_convergence_controller.active_definition()
-        definition_cell_id = None
-        if active_definition is not None and active_definition.input_structure_ids:
-            definition_cell_id = str(active_definition.input_structure_ids[0])
-        xc_functional = self._convergence_definition_xc_functional(active_definition)
-        if not self._confirm_adopted_xc_functional(xc_functional):
-            return
-        # The grid is only meaningful together with the lattice it was converged
-        # on: later workflows rescale it to their own cell with
-        # equivalent_grid_for_supercell, which needs this reference lattice.
-        reference_cell = self._convergence_sweep_cell(active_definition)
-        if reference_cell is None and self._document.project.host_structure_id is not None:
-            reference_cell = self._document.structures.get(self._document.project.host_structure_id)
-
-        self._project_service.set_recommended_kpoint_grid(
-            self._document,
-            grid,
-            lattice_vectors=(
-                [list(row) for row in reference_cell.lattice_vectors]
-                if reference_cell is not None
-                else None
-            ),
-            method=method,
-            energy_threshold=energy_threshold,
-            force_threshold=force_threshold,
-            stress_threshold=stress_threshold,
-            cell_id=(
-                definition_cell_id
-                if definition_cell_id is not None
-                else (
-                    str(self._document.project.host_structure_id)
-                    if self._document.project.host_structure_id
-                    else None
-                )
-            ),
-            xc_functional=xc_functional,
-        )
-        self._refresh_project_defaults_views()
-        store_convergence_overview_snapshot(
-            self._document,
-            KPOINT_SNAPSHOT,
-            build_kpoint_overview_snapshot(
-                self._document,
-                grid=grid,
-                energy_threshold=float(energy_threshold),
-                force_threshold=float(force_threshold),
-                simulation_cell_structure_id=definition_cell_id,
-                labels=labels,
-                stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
-            ),
-        )
-        self._refresh_convergence_overview()
-        self._refresh_journal_view()
-        self._persist_document_ui_state(
-            failure_message="Could not persist k-point convergence overview snapshot to disk"
-        )
-        self._populate_project_tree()
-        self.statusBar().showMessage(
-            f"Project default k-point grid set to {grid[0]}x{grid[1]}x{grid[2]}"
-        )
-
     def _project_defaults_strips(self) -> tuple[ProjectDefaultsStrip, ...]:
         return (
             self._convergence_view.project_defaults_strip,
@@ -8346,42 +8083,6 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_defaults(self._pristine_relaxation_view)
         self._refresh_workflow_defaults(self._muon_relaxation_view)
         self._refresh_workflow_defaults(self._uep_view, supercells=False)
-
-    def _convergence_definition_xc_functional(self, definition) -> str | None:
-        """Return the one functional a convergence definition's sweep ran with."""
-
-        if definition is None:
-            return None
-        config = deserialize_convergence_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return None
-        return convergence_config_xc_functional(config)
-
-    def _confirm_adopted_xc_functional(self, xc_functional: str | None) -> bool:
-        """Confirm adopting a result converged with a non-default functional.
-
-        Adopting a convergence result also makes the functional it was
-        converged with the project default, so switching functional is
-        confirmed rather than done silently.
-        """
-
-        if self._document is None or xc_functional is None:
-            return True
-        current = self._document.project.recommended_xc_functional
-        if current is None or current == xc_functional:
-            return True
-        answer = workflow_table_utils.confirm_choice(
-            self,
-            "Change project functional?",
-            f"These convergence calculations used the {xc_functional} functional, "
-            f"but the project default functional is {current}.\n\n"
-            f"Adopting this result will also change the project default "
-            f"functional to {xc_functional}. Continue?",
-            [("change", "Change functional"), ("cancel", "Cancel")],
-            default="cancel",
-            escape="cancel",
-        )
-        return answer == "change"
 
     def _on_project_xc_functional_change_requested(self, xc_functional: object) -> None:
         if self._document is None:
