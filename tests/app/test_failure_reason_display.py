@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.services.project_service import ProjectService
+from tests.support.main_window import capture_failed_job_dialogs
 
 _SLURM_TIMEOUT = (
     "slurmstepd: error: *** JOB 4242 ON node1 CANCELLED AT 2026-10-04T10:00:00 "
@@ -143,72 +143,45 @@ def test_inspect_leads_with_the_cause_and_its_evidence(
     output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "slurm-4242.out").write_text(f"noise\n{_SLURM_TIMEOUT}\n", encoding="utf-8")
-
-    captured: dict[str, str] = {}
-
-    class _FakeMessageBox:
-        class Icon:
-            Information = 1
-
-        def __init__(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setText(self, text: str) -> None:
-            captured["text"] = text
-
-        def setDetailedText(self, details: str) -> None:
-            captured["details"] = details
-
-        def exec(self) -> int:
-            return 0
-
-        def __getattr__(self, _name):
-            return lambda *_args, **_kwargs: None
-
-    monkeypatch.setattr(main_window_module, "QMessageBox", _FakeMessageBox)
+    dialogs = capture_failed_job_dialogs(monkeypatch)
 
     window._inspect_failed_jobs([job])
 
-    assert captured["text"] == (
-        "timed_out: The scheduler stopped the job when it reached its walltime limit."
-    )
-    assert (
-        "Cause: The scheduler stopped the job when it reached its walltime limit."
-        in captured["details"]
-    )
-    assert f"Evidence (slurm-4242.out): {_SLURM_TIMEOUT}" in captured["details"]
+    (report,) = dialogs[0]._reports
+    assert report.headline == "The scheduler stopped the job when it reached its walltime limit."
+    assert report.notes == (f"From slurm-4242.out: {_SLURM_TIMEOUT}",)
+    assert "[slurm-4242.out]" in report.log_excerpt
+    assert report.output_directory == output_dir
     window.close()
 
 
-def test_inspect_keeps_a_recorded_cause_the_logs_cannot_show(qapp, tmp_path: Path) -> None:
+def test_inspect_headlines_the_recorded_message_when_no_cause_is_found(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _doc, job = _window_with_job(tmp_path, label="scf", status=JobStatus.FAILED)
+    job.error_message = "CASTEP exited with status 1: SCF cycles did not converge"
+    dialogs = capture_failed_job_dialogs(monkeypatch)
+
+    window._inspect_failed_jobs([job])
+
+    (report,) = dialogs[0]._reports
+    assert report.headline == "CASTEP exited with status 1: SCF cycles did not converge"
+    assert report.output_directory is None
+    assert report.log_excerpt == ""
+    assert dialogs[0].log_toggle is None
+    window.close()
+
+
+def test_inspect_keeps_a_recorded_cause_the_logs_cannot_show(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     window, _doc, job = _window_with_job(tmp_path, label="orphan", status=JobStatus.STOPPED)
     job.failure_reason = FailureReason.INTERRUPTED
+    dialogs = capture_failed_job_dialogs(monkeypatch)
 
-    diagnostics = window._failure_diagnostics_for_job(job)
+    window._inspect_failed_jobs([job])
 
-    assert "Cause: MuFinder lost track of the job before it finished." in diagnostics
-    assert "Evidence" not in diagnostics
-    window.close()
-
-
-def test_inspect_headline_is_capped(qapp, tmp_path: Path) -> None:
-    window, doc, first = _window_with_job(tmp_path, label="job0", status=JobStatus.FAILED)
-    service = ProjectService()
-    jobs = [first]
-    for index in range(1, 11):
-        job = service.add_job(
-            doc,
-            label=f"job{index}",
-            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-            calc_type="castep_convergence_cutoff",
-        )
-        job.status = JobStatus.FAILED
-        jobs.append(job)
-
-    diagnoses = [window._job_failure_diagnosis(job) for job in jobs]
-    headline = window._failure_headline(jobs, diagnoses)
-
-    lines = headline.splitlines()
-    assert len(lines) == MainWindow._FAILURE_HEADLINE_LIMIT + 1
-    assert lines[-1] == "…and 3 more jobs."
+    (report,) = dialogs[0]._reports
+    assert report.headline == "MuFinder lost track of the job before it finished."
+    assert not any(note.startswith("From ") for note in report.notes)
     window.close()

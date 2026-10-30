@@ -220,7 +220,7 @@ def test_main_window_submit_jobs_locally_resets_execution_target_after_cluster_r
 
 
 def test_main_window_submit_jobs_locally_warns_if_castep_unconfigured(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answered_choices
 ) -> None:
     window = main_window
     service = ProjectService()
@@ -239,16 +239,18 @@ def test_main_window_submit_jobs_locally_warns_if_castep_unconfigured(
         lambda _settings: CastepSetup(executable_path="", mpirun_path=""),
     )
 
-    warnings: list[str] = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda _parent, title, _message: warnings.append(title),
+        main_window_module,
+        "LocalSubmissionDialog",
+        lambda **_kwargs: pytest.fail("No submission dialog without an executable"),
     )
 
     window._submit_jobs_locally([job])
 
-    assert warnings == ["CASTEP executable missing"]
+    (prompt,) = answered_choices
+    assert prompt["title"] == "CASTEP executable missing"
+    assert prompt["choices"] == [("setup", "Open Setup > CASTEP…"), ("cancel", "Cancel")]
+    assert (prompt["default"], prompt["escape"]) == ("cancel", "cancel")
     window.close()
 
 
