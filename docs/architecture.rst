@@ -323,7 +323,11 @@ defined by two of these modules, and a pinned count may only fall.
      - Typed decimal fields (``DecimalLineEdit``): a validated range, decimals
        and notation (``standard_notation`` refuses exponents), set up in one
        call, with the typed text kept as given for forms that read the text and
-       a ``QDoubleSpinBox``-like value API for those that do not.
+       a ``QDoubleSpinBox``-like value API for those that do not. A page's
+       vector row (``VectorInput``) is three of them named ``<name> x`` to
+       ``<name> z``, where an empty box reads as zero, a component that is not
+       a number is refused by name and a malformed saved vector shows zeros;
+       the Magnetic Fields and Polarisation pages use it.
    * - ``mufinder.app.viewer_dialog``
      - Dialogs that show a 3D structure viewer (``StructureViewerDialog``):
        each viewer registered with ``hold_viewer`` is shut down once, when the
@@ -672,7 +676,10 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.services.polarisation_simulations``
      - The stored field results a polarisation simulation can use
        (``field_sources``), running a weighted selection of them
-       (``run_polarisation_simulation``), each simulation's
+       (``run_polarisation_simulation``, or in two steps for a worker thread:
+       ``prepare_polarisation_simulation`` reads the project and
+       ``run_prepared_polarisation_simulation`` simulates without it), each
+       simulation's
        ``muon_polarisation`` record (``store_polarisation_simulation``,
        ``polarisation_simulations``, ``remove_polarisation_simulation``) and
        whether its sources were recalculated since (``stale_sources``).

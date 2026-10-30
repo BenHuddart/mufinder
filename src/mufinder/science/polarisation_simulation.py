@@ -46,6 +46,8 @@ from mufinder.science.polarisation import (
     PolarisationError,
     PolarisationResult,
     SpectrumResult,
+    _field_samples,
+    _tuple3,
     calculate_lf_polarisation,
     calculate_polarisation,
     calculate_spectrum,
@@ -434,13 +436,6 @@ def _aliasing_warnings(
     )
 
 
-def _field_samples(result: FieldResult) -> np.ndarray:
-    if isinstance(result, MagneticFieldResult):
-        return np.asarray(result.total, dtype=float).reshape(1, 3)
-    fields = np.asarray(result.fields_T, dtype=float)
-    return fields if fields.size else np.zeros((1, 3))
-
-
 def _applied(result: FieldResult) -> tuple[float, float, float]:
     applied = result.applied if isinstance(result, MagneticFieldResult) else result.applied_T
     return (0.0, 0.0, 0.0) if applied is None else _tuple3(applied)
@@ -476,8 +471,3 @@ def _nonzero_vector(values: Sequence[float], name: str) -> np.ndarray:
     if not np.any(vector != 0.0):
         raise PolarisationError(f"{name} must be non-zero")
     return vector
-
-
-def _tuple3(values: object) -> tuple[float, float, float]:
-    x, y, z = (float(value) for value in values)  # type: ignore[union-attr]
-    return (x, y, z)

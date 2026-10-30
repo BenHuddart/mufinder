@@ -150,8 +150,14 @@ def test_decimal_inputs_accept_the_same_text_as_before(qapp) -> None:
     assert _accepted(nuclear._radius) == ("", 0.0, 1e6, 12, True)
     assert _accepted(nuclear._rtol) == ("1e-6", 0.0, 1e6, 12, True)
     assert _accepted(site._custom_x) == ("0.0", 0.0, 1.0, 8, True)
-    assert _accepted(page._applied_field_inputs[0]) == ("0.0", -1000.0, 1000.0, 6, True)
-    assert _accepted(page._measured_magnetization_inputs[1]) == ("0.0", -1000.0, 1000.0, 6, True)
+    assert _accepted(page._applied_field_input.edits[0]) == ("0.0", -1000.0, 1000.0, 6, True)
+    assert _accepted(page._measured_magnetization_input.edits[1]) == (
+        "0.0",
+        -1000.0,
+        1000.0,
+        6,
+        True,
+    )
     assert _accepted(page._hyperfine_coupling) == ("0.0", -1e6, 1e6, 8, True)
     for widget in (component, texture, nuclear, site, page):
         widget.close()
@@ -981,16 +987,16 @@ def test_magnetic_field_widget_measured_magnetisation_reaches_the_options_and_ro
     widget.form_state_changed.connect(emitted.append)
 
     assert widget.field_options().measured_magnetization is None
-    assert not any(edit.isEnabled() for edit in widget._measured_magnetization_inputs)
+    assert not any(edit.isEnabled() for edit in widget._measured_magnetization_input.edits)
     assert widget._measured_magnetization_unit.text().startswith("μB per FeO")
 
     widget._measured_magnetization_check.setChecked(True)
-    x, y, z = widget._measured_magnetization_inputs
+    x, y, z = widget._measured_magnetization_input.edits
     x.setText("0.5")
     y.setText("")
     z.setText("-1.25")
 
-    assert all(edit.isEnabled() for edit in widget._measured_magnetization_inputs)
+    assert all(edit.isEnabled() for edit in widget._measured_magnetization_input.edits)
     assert widget.field_options().measured_magnetization == (0.5, 0.0, -1.25)
     assert emitted[-1]["use_measured_magnetization"] is True
     assert emitted[-1]["measured_magnetization"] == [0.5, 0.0, -1.25]
@@ -1050,8 +1056,8 @@ def test_magnetic_field_widget_applied_field_reaches_the_calculation_and_round_t
     widget.form_state_changed.connect(emitted.append)
 
     assert widget.field_options().applied_field == (0.0, 0.0, 0.0)
-    assert all(edit.isEnabled() for edit in widget._applied_field_inputs)
-    x, y, z = widget._applied_field_inputs
+    assert all(edit.isEnabled() for edit in widget._applied_field_input.edits)
+    x, y, z = widget._applied_field_input.edits
     x.setText("")
     y.setText("0.01")
     z.setText("-0.25")
@@ -1075,7 +1081,7 @@ def test_magnetic_field_widget_applied_field_reaches_the_calculation_and_round_t
     assert _breakdown_rows(restored)[4][:4] == ["Applied", "0", "0.01", "-0.25"]
 
     # Changing the field invalidates the shown results.
-    restored._applied_field_inputs[2].setText("0.5")
+    restored._applied_field_input.edits[2].setText("0.5")
     assert restored.collect_state()["magnetic_field_results"] is None
     assert not restored._polarisation_button.isEnabled()
 
@@ -1126,7 +1132,7 @@ def test_magnetic_field_widget_reports_an_unfinished_measured_magnetisation(
     widget.set_model(MagneticStructureModel(components=(z_moment_component("one", "One", 0),)))
     widget._selected_muon_site = custom_muon_site((0.25, 0.5, 0.75))
     widget._measured_magnetization_check.setChecked(True)
-    widget._measured_magnetization_inputs[0].setText("-")
+    widget._measured_magnetization_input.edits[0].setText("-")
 
     widget.calculate_fields()
 

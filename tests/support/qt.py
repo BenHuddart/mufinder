@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import time
+from typing import TypeVar
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QTreeWidget, QTreeWidgetItem
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QLabel,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QWidget,
+)
+
+W = TypeVar("W", bound=QWidget)
 
 
 def pump_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
@@ -24,6 +34,29 @@ def pump_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
         QApplication.processEvents()
         time.sleep(0.005)
     return predicate()
+
+
+def find_control(parent: QWidget, name: str, kind: type[W]) -> W:
+    """The one ``kind`` control in ``parent`` that a user would know as ``name``.
+
+    A control matches by its accessible name, by its text (a button or check
+    box, ignoring ``&`` mnemonics), or by the text of the label it is the buddy
+    of (a form-layout row label). Fails unless exactly one control matches, so a
+    test reaches a page's controls the way a user or a screen reader does,
+    without the page's private attributes.
+    """
+
+    matches: list[W] = []
+    for widget in parent.findChildren(kind):
+        text = widget.text().replace("&", "") if isinstance(widget, QAbstractButton) else None
+        if widget.accessibleName() == name or text == name:
+            matches.append(widget)
+    for label in parent.findChildren(QLabel):
+        buddy = label.buddy()
+        if label.text() == name and isinstance(buddy, kind) and buddy not in matches:
+            matches.append(buddy)
+    assert len(matches) == 1, f"{len(matches)} {kind.__name__} controls are named {name!r}"
+    return matches[0]
 
 
 def find_item_by_route(item: QTreeWidgetItem, route: str) -> QTreeWidgetItem | None:
