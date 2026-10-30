@@ -7,10 +7,12 @@ import sys
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout
 import pytest
 import shiboken6
 
+from mufinder.app import theme as theme_module
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -294,3 +296,22 @@ def test_pinned_convergence_placeholder_brings_a_popped_out_plot_back(qapp) -> N
     assert plot._canvas_frame.isHidden()
     assert plot._canvas.isHidden()
     plot.close()
+
+
+def test_pop_out_button_backing_follows_a_theme_switch(qapp, host) -> None:
+    # The backing comes from the theme stylesheet, like the button's icon from
+    # the palette, so both change together and the icon keeps its contrast.
+    def backing_colour() -> QColor:
+        image = host.frame.pop_out_button.grab().toImage()
+        return image.pixelColor(image.width() // 2, 3)
+
+    try:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        _settle(qapp)
+        assert backing_colour().name() == theme_module.light_palette().bg_surface.lower()
+
+        theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+        _settle(qapp)
+        assert backing_colour().name() == theme_module.dark_palette().bg_surface.lower()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)

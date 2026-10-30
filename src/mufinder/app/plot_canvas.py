@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.icons import icon
 from mufinder.app.screen_utils import clamped_size
-from mufinder.app.theme import current_palette, style_hint_text
+from mufinder.app.theme import style_hint_text
 
 DEFAULT_MINIMUM_CANVAS_SIZE: tuple[int, int] = (220, 160)
 """Smallest canvas (logical pixels) that still fits ticks, labels and a plot area."""
@@ -237,21 +237,8 @@ class PlotFrame(QWidget):
         self._pop_out_button.setObjectName("plotPopOutButton")
         self._pop_out_button.setIcon(icon("pop_out"))
         self._pop_out_button.setAutoRaise(True)
-        palette = current_palette()
-        # A soft backing so the corner button stays visible over plot content.
-        self._pop_out_button.setStyleSheet(
-            f"""
-            QToolButton#plotPopOutButton {{
-                background: {palette.bg_surface};
-                border: 1px solid {palette.border};
-                border-radius: 6px;
-                padding: 2px;
-            }}
-            QToolButton#plotPopOutButton:hover {{
-                border-color: {palette.accent};
-            }}
-            """
-        )
+        # Its soft backing, which keeps it visible over plot content, is in the
+        # theme stylesheet, so it follows a theme switch with the icon.
         self._pop_out_button.setToolTip("Open in a separate window (zoom, pan, save)")
         self._pop_out_button.setAccessibleName(f"Open {title} in a separate window")
         self._pop_out_button.clicked.connect(self.pop_out)

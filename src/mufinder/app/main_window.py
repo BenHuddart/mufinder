@@ -1643,7 +1643,6 @@ class MainWindow(QMainWindow):
         # to the new theme's metrics.
         self._fit_jobs_table_columns(self._JOB_CONTENT_SIZED_COLUMNS)
         self._refresh_cluster_connection_label_colour()
-        self._refresh_workflow_stage_icons()
         self._sync_project_home()
 
     def _new_project(self) -> None:
