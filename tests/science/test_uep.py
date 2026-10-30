@@ -62,6 +62,7 @@ from mufinder.science.uep_clustering import (
     UepPreparedClusteringDataset,
     cluster_optimized_positions,
     cluster_prepared_uep_dataset,
+    dendrogram_node_clusters,
     cluster_uep_optimizations,
     prepare_uep_clustering_dataset,
     relaxed_site_number_map,
@@ -1879,3 +1880,18 @@ def test_asymmetric_images_centre_jitters_the_lowest_energy_site() -> None:
     assert centre.shape == (3,)
     assert np.all(centre != np.array([0.5, 0.5, 0.5]))
     assert np.all(np.abs(centre - 0.5) < 1e-3)
+
+
+def test_dendrogram_node_clusters_keep_a_cluster_only_while_all_leaves_share_it() -> None:
+    linkage = ((0.0, 1.0, 0.1, 2.0), (2.0, 3.0, 0.2, 2.0), (4.0, 5.0, 0.9, 4.0))
+
+    assert dendrogram_node_clusters((1, 1, 2, 2), linkage) == {
+        0: 1,
+        1: 1,
+        2: 2,
+        3: 2,
+        4: 1,
+        5: 2,
+        6: None,
+    }
+    assert dendrogram_node_clusters((1,), ()) == {0: 1}
