@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Iterable
 from uuid import UUID
 
-from mufinder.domain.charge_states import canonical_charge_state, muon_charge_state_label
+from mufinder.domain.charge_states import (
+    MUON_RELAXATION_CALC_TYPES,
+    canonical_charge_state,
+    muon_charge_state_label,
+)
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import (
     GENERATION_METHOD_LABELS,
@@ -721,36 +725,35 @@ def _promote_uep_candidate_entry(record: ProvenanceRecord) -> JournalEntry:
 def _charge_state_text(value: object) -> str | None:
     """Return a recorded muon charge state as text names it, or ``None`` when there is none."""
 
-    if not isinstance(value, str) or not value.strip():
+    charge_state = canonical_charge_state(value) if isinstance(value, str) else None
+    if charge_state not in MUON_RELAXATION_CALC_TYPES:
         return None
-    return muon_charge_state_label(canonical_charge_state(value) or value)
+    return muon_charge_state_label(charge_state)
 
 
-def _job_description(
-    record: ProvenanceRecord,
-    parameters: dict | None = None,
-    *,
-    sentence_start: bool = False,
-) -> str:
+def _job_description(record: ProvenanceRecord, *, sentence_start: bool = False) -> str:
     """Name a job by its workflow and row label (``pristine relaxation relax_1``).
 
-    ``parameters`` are the job's recorded fields (the record's own by default).
     A muon relaxation is named by its charge state. Records without a row label
-    (older records, and workflows whose rows are not named) give the job's label.
+    (older records, and workflows whose rows are not named) give the job's
+    label, which keeps its own spelling at the start of a sentence.
     """
 
-    fields = record.parameters if parameters is None else parameters
-    row_label = str(fields.get("row_label") or "").strip()
-    if not row_label:
-        return str(fields.get("job_label") or fields.get("label") or "").strip() or "a calculation"
-    charge = _charge_state_text(fields.get("charge_state"))
-    if charge is not None:
-        noun = f"{charge} relaxation"
-    elif record.workflow_stage is not None:
-        noun = _JOB_NOUNS.get(record.workflow_stage, "calculation")
+    row_label = _text_param(record, "row_label")
+    if row_label is None:
+        job_label = _text_param(record, "job_label")
+        if job_label is not None:
+            return job_label
+        description = "a calculation"
     else:
-        noun = "calculation"
-    description = f"{noun} {row_label}"
+        charge = _charge_state_text(record.parameters.get("charge_state"))
+        if charge is not None:
+            noun = f"{charge} relaxation"
+        elif record.workflow_stage is not None:
+            noun = _JOB_NOUNS.get(record.workflow_stage, "calculation")
+        else:
+            noun = "calculation"
+        description = f"{noun} {row_label}"
     return description[:1].upper() + description[1:] if sentence_start else description
 
 
@@ -763,12 +766,6 @@ def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
     jobs = [job for job in raw_jobs if isinstance(job, dict)] if isinstance(raw_jobs, list) else []
     labels = record.parameters.get("job_labels")
     count = len(labels) if isinstance(labels, list) else _int_param(record, "job_count") or 0
-    if jobs:
-        labels = [job.get("row_label") or job.get("label") or "" for job in jobs]
-    label_text = _label_summary(labels)
-    body = f"Submitted {plural(count, 'job')} to run on {_target_text(record)}"
-    body += f": {label_text}." if label_text else "."
-
     charges: list[str] = []
     for value in [
         record.parameters.get("charge_state"),
@@ -777,9 +774,24 @@ def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
         charge = _charge_state_text(value)
         if charge is not None and charge not in charges:
             charges.append(charge)
+    if jobs:
+        labels = [str(job.get("row_label") or job.get("label") or "") for job in jobs]
+        if len(charges) > 1:
+            # One site can be relaxed in both charge states in one batch.
+            labels = [
+                f"{label} ({charge})"
+                if (charge := _charge_state_text(job.get("charge_state")))
+                else label
+                for label, job in zip(labels, jobs, strict=True)
+            ]
+    label_text = _label_summary(labels)
+    body = f"Submitted {plural(count, 'job')} to run on {_target_text(record)}"
+    body += f": {label_text}." if label_text else "."
+
+    # A batch from several workflows (no workflow stage) keeps the general title.
     title = (
         f"Muon relaxations launched: {' and '.join(charges)}"
-        if charges
+        if charges and record.workflow_stage == WorkflowStage.MUON_RELAXATION
         else "Calculations launched"
     )
     return _entry(record, stamp_kind="milestone", title=title, body=body)

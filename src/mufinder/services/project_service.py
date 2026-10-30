@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import copy
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
@@ -1281,7 +1282,9 @@ class ProjectService:
                 description=description,
                 parameters={
                     "calculation_definition_id": str(definition.id),
-                    "configuration": configuration,
+                    # A copy: workflows edit the definition's configuration
+                    # in place, and the record keeps what was configured.
+                    "configuration": copy.deepcopy(configuration),
                     "output_directory": relative_output,
                     **{
                         key: dict(value) if isinstance(value, dict) else value

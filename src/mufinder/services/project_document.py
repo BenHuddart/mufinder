@@ -165,7 +165,8 @@ def job_row_label(document: ProjectDocument, job: Job) -> str | None:
 
     Read from the ``job_ids_by_label`` mapping of the job's workflow
     definitions: a muon-relaxation key's charge-state prefix is dropped, and a
-    Quantum Corrections key names the relaxed site, whose label is returned.
+    Quantum Corrections key names the relaxed site, whose label is returned
+    (with ``_<prefix>`` for a source in the site's second charge state).
     ``None`` when no definition binds the job, or for a workflow whose rows are
     not named (the convergence sweeps, Energy Barriers).
     """
@@ -183,16 +184,21 @@ def job_row_label(document: ProjectDocument, job: Job) -> str | None:
     return None
 
 
+_CHARGE_STATE_PREFIXES = frozenset(MUON_RELAXATION_JOB_PREFIXES.values())
+
+
 def _row_label_from_key(document: ProjectDocument, key: str) -> str | None:
-    prefixes = set(MUON_RELAXATION_JOB_PREFIXES.values())
     head, separator, tail = key.partition(":")
-    if separator and head in prefixes:
+    suffix = ""
+    if separator and head in _CHARGE_STATE_PREFIXES:
         key = tail
-    elif separator and tail in prefixes:
-        key = head
+    elif separator and tail in _CHARGE_STATE_PREFIXES:
+        # A Quantum Corrections source relaxed in the site's second charge
+        # state; its table names it ``"{site label}_{prefix}"``.
+        key, suffix = head, f"_{tail}"
     try:
         site_id = UUID(key)
     except ValueError:
         return key.strip() or None
     site = document.sites.get(site_id)
-    return site.label if site is not None and site.label else None
+    return f"{site.label}{suffix}" if site is not None and site.label else None

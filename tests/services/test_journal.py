@@ -568,7 +568,42 @@ def test_a_batch_of_both_charge_states_names_both() -> None:
     entry = build_journal("Mu", [record]).days[0].entries[0]
 
     assert entry.title == "Muon relaxations launched: positive muon and muonium"
-    assert entry.body == "Submitted 2 jobs to run on SCARF: Site 1, Site 1."
+    assert (
+        entry.body == "Submitted 2 jobs to run on SCARF: Site 1 (positive muon), Site 1 (muonium)."
+    )
+
+
+def test_a_batch_from_several_workflows_keeps_the_general_title() -> None:
+    record = _job_record(
+        "submit_jobs",
+        None,
+        execution_target="local",
+        job_count=2,
+        job_labels=["pristine_relax_relax_1", "Site 1"],
+        jobs=[
+            {"label": "pristine_relax_relax_1", "row_label": "relax_1"},
+            {"label": "Site 1", "row_label": "Site 1", "charge_state": "positive_muon"},
+        ],
+    )
+
+    entry = build_journal("Mixed", [record]).days[0].entries[0]
+
+    assert entry.title == "Calculations launched"
+    assert entry.body == "Submitted 2 jobs to run on this computer: relax_1, Site 1."
+
+
+def test_an_unknown_charge_state_is_not_named_and_a_nameless_job_starts_a_sentence() -> None:
+    record = _job_record(
+        "job_completed",
+        WorkflowStage.MUON_RELAXATION,
+        charge_state="negative",
+        execution_target="local",
+    )
+
+    entry = build_journal("Odd", [record]).days[0].entries[0]
+
+    assert entry.title == "Calculation completed"
+    assert entry.body == "A calculation finished on this computer."
 
 
 @pytest.mark.parametrize(

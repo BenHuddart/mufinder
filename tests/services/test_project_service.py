@@ -1053,6 +1053,24 @@ def test_job_records_carry_the_charge_state_and_row_label_of_a_muon_relaxation(
     assert dismissed["charge_state"] == "positive_muon"
 
 
+def test_a_configure_record_keeps_the_configuration_a_later_edit_changes(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={"rows": [{"label": "Site 1", "charge_state": "muonium"}]},
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+
+    definition.parameters["configuration"]["rows"].append({"label": "Site 2"})
+
+    record = doc.provenance[-1]
+    assert record.action == "configure_muon_relaxation"
+    assert record.parameters["configuration"]["rows"] == [
+        {"label": "Site 1", "charge_state": "muonium"}
+    ]
+
+
 def test_job_records_name_the_row_of_other_workflows_and_leave_out_a_charge_state(
     tmp_path: Path,
 ) -> None:
@@ -1087,7 +1105,7 @@ def test_job_records_name_the_row_of_other_workflows_and_leave_out_a_charge_stat
     )
 
     assert relax_record["row_label"] == "relax_1"
-    assert phonon_record["row_label"] == "Attached-F Site 1"
+    assert phonon_record["row_label"] == "Attached-F Site 1_muonium"
     assert "row_label" not in unbound_record
     assert not {"charge_state"} & {*relax_record, *phonon_record, *unbound_record}
 
