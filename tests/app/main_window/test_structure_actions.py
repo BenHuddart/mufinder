@@ -277,3 +277,115 @@ def test_supercell_editor_route_uses_project_page(main_window, tmp_path: Path) -
 
     assert window._main_stack.currentWidget() == window._supercell_editor_page
     window.close()
+
+
+@pytest.mark.parametrize(
+    ("view_name", "handler_name", "missing_title", "status"),
+    [
+        (
+            "_pristine_relaxation_view",
+            "_on_pristine_relaxation_supercell_edit_requested",
+            "No host structure",
+            "Selected pristine-relaxation simulation cell",
+        ),
+        (
+            "_muon_relaxation_view",
+            "_on_muon_relaxation_supercell_edit_requested",
+            "No host structure",
+            "Selected muon-relaxation simulation cell",
+        ),
+        (
+            "_uep_view",
+            "_on_uep_supercell_edit_requested",
+            "No source structure",
+            "Selected UEP simulation cell",
+        ),
+    ],
+)
+def test_row_supercell_editor_guards_the_source_and_sets_the_chosen_matrix(
+    main_window,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    view_name: str,
+    handler_name: str,
+    missing_title: str,
+    status: str,
+) -> None:
+    window = main_window
+    view = getattr(window, view_name)
+    handler = getattr(window, handler_name)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _message: warnings.append(title),
+    )
+    opened: list[dict[str, object]] = []
+    chosen: list[list[list[int]] | None] = [[[2, 0, 0], [0, 2, 0], [0, 0, 1]]]
+    cancelled = False
+
+    class _FakeDialog:
+        def selected_matrix(self):
+            return chosen[0]
+
+    def fake_open(**kwargs):
+        opened.append(kwargs)
+        return None if cancelled else _FakeDialog()
+
+    monkeypatch.setattr(window, "_open_supercell_editor", fake_open)
+
+    handler(0)
+    assert warnings == [] and opened == []
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "row_supercell.mufinder", "RowSupercell")
+    window._document = doc
+    row_id = 7
+
+    handler(row_id)
+    assert warnings == [missing_title]
+    assert opened == []
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    expected_source = host
+    if view_name == "_uep_view":
+        expected_source = Structure(
+            label="Relaxed host",
+            lattice_vectors=[[5.1, 0.0, 0.0], [0.0, 5.1, 0.0], [0.0, 0.0, 5.1]],
+            species=["Si"],
+            fractional_positions=[[0.0, 0.0, 0.0]],
+        )
+        service.add_structure(doc, expected_source)
+        doc.ui_state["uep_form"] = {"selected_source_structure_id": str(expected_source.id)}
+
+    handler("not a row")
+    assert opened == []
+
+    cancelled = True
+    handler(row_id)
+    cancelled = False
+    chosen[0] = None
+    handler(row_id)
+    assert view.row_supercell_matrix(row_id) is None
+    assert window.statusBar().currentMessage() != status
+
+    chosen[0] = [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+    handler(row_id)
+
+    assert len(opened) == 3
+    assert opened[-1]["source_structure"].id == expected_source.id
+    assert opened[-1]["initial_matrix"] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    assert opened[-1]["select_mode"] is True
+    assert view.row_supercell_matrix(row_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert window.statusBar().currentMessage() == status
+
+    handler(row_id)
+    assert opened[-1]["initial_matrix"] == [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+    window.close()
