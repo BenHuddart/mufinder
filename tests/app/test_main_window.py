@@ -3768,17 +3768,11 @@ def test_main_window_configures_neb_paths_through_the_dialog(
         def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
             opened[-1]["title"] = title
 
-        def set_values(self, values, *, preferred_exclusive=None) -> None:
-            opened[-1]["values"] = dict(values)
-
-        def set_advanced_names(self, names) -> None:
-            return None
-
-        def set_mixed_names(self, names) -> None:
-            return None
-
         def exec(self):
             return QDialog.DialogCode.Accepted
+
+        def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+            opened[-1]["deleted"] = True
 
         def collect_values(self) -> dict[str, object]:
             return {"tssearch_max_path_points": 13}
@@ -3805,4 +3799,5 @@ def test_main_window_configures_neb_paths_through_the_dialog(
     params, _advanced, extras = workflow_row_configuration(definition, "path-1")
     assert params == {"tssearch_max_path_points": 13}
     assert extras == {"num_farms": 4}
+    assert opened[0]["deleted"] is True
     window.close()

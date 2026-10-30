@@ -148,19 +148,13 @@ class _FakeConfigDialog:
     def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
         self._opened[-1]["title"] = title
 
-    def set_values(self, values, *, preferred_exclusive=None) -> None:
-        self._opened[-1]["values"] = dict(values)
-
-    def set_advanced_names(self, names) -> None:
-        return None
-
-    def set_mixed_names(self, names) -> None:
-        return None
-
     def exec(self):
         from PySide6.QtWidgets import QDialog
 
         return QDialog.DialogCode.Accepted
+
+    def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+        self._opened[-1]["deleted"] = True
 
     def collect_values(self) -> dict[str, object]:
         return {}
@@ -202,6 +196,9 @@ def test_configuring_a_ready_row_edits_every_parameter(
     )
     assert workflow_row_configuration(definition, candidate.key)[2] == {"num_farms": 4}
     assert "pseudopotential_family" not in opened[0]
+    # Seeded through the constructor and deleted once it closes.
+    assert {"values", "advanced_names", "mixed_names"} <= set(opened[0])
+    assert opened[0]["deleted"] is True
 
 
 def test_configuring_a_failed_row_is_read_only_until_it_is_reset(

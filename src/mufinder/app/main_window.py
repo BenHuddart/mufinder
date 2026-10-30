@@ -5502,9 +5502,9 @@ class MainWindow(QMainWindow):
         ``render_param_text`` would omit it from "old" while the dialog's own
         ``collect_values()`` includes it in "new"). This builds a throwaway
         ``ParameterDialog`` with the identical specs/workflow_stage/locked_values
-        and the identical seed → ``set_values``/``set_advanced_names`` →
-        ``collect_values()`` sequence ``ContinueRelaxationDialog.__init__`` runs
-        internally, so the two agree keyword-for-keyword on an unedited row.
+        and the identical constructor seed (values, k-point choice, advanced
+        names) → ``collect_values()`` sequence ``ContinueRelaxationDialog.__init__``
+        runs internally, so the two agree keyword-for-keyword on an unedited row.
         """
 
         specs = reorder_workflow_parameter_specs(list(seed.get("specs", ())))
@@ -5515,13 +5515,11 @@ class MainWindow(QMainWindow):
             workflow_stage=str(seed.get("workflow_stage", "")),
             locked_values=seed.get("locked_values"),
             species_options=seed.get("species_options", ()),
+            values=dict(parameter_values),
+            preferred_exclusive=kpoint_exclusive_hint([parameter_values]),
+            advanced_names=added_advanced,
         )
         try:
-            reference.set_values(
-                dict(parameter_values),
-                preferred_exclusive=kpoint_exclusive_hint([parameter_values]),
-            )
-            reference.set_advanced_names(added_advanced)
             values = dict(reference.collect_values())
             values.pop("task", None)
             return values, reference.advanced_names()
@@ -5600,10 +5598,14 @@ class MainWindow(QMainWindow):
             reused_directory=reused_directory,
             parent=self,
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        parameter_values, added_advanced = dialog.edited_parameters()
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            parameter_values, added_advanced = dialog.edited_parameters()
+        finally:
+            # The dialog is a child of the window; without this every open
+            # would stay alive under it, editors and all.
+            dialog.deleteLater()
         continued_job = controller.continue_job(key, parameter_values, added_advanced)
         if continued_job is None:
             # The row's parameters may already be mutated (update_row_parameters
@@ -9492,21 +9494,21 @@ class MainWindow(QMainWindow):
         request = controller.configure_request(_ordered_string_list(payload))
         if request is None:
             return
-        dialog = QuantumCorrectionsConfigDialog(
-            specs=controller.parameter_specs(),
-            num_farms=request.num_farms,
-            intro_text=request.intro_text,
-            read_only=request.read_only,
-            species_options=request.species_options,
-            parent=self,
+        result = run_source_configure_dialog(
+            partial(
+                QuantumCorrectionsConfigDialog,
+                specs=controller.parameter_specs(),
+                num_farms=request.num_farms,
+                intro_text=request.intro_text,
+                read_only=request.read_only,
+                species_options=request.species_options,
+                parent=self,
+            ),
+            request,
+            extras=lambda dialog: {"num_farms": dialog.num_farms()},
         )
-        result = run_source_configure_dialog(dialog, request)
         if result is not None:
-            controller.apply_configuration(
-                request.keys,
-                result,
-                {"num_farms": dialog.num_farms()},
-            )
+            controller.apply_configuration(request.keys, result, result.extras)
 
     def _on_quantum_corrections_source_label_renamed(self, key: str, label: str) -> None:
         if self._document is None or self._shutting_down:
@@ -9524,14 +9526,17 @@ class MainWindow(QMainWindow):
         request = controller.configure_request(_ordered_string_list(payload))
         if request is None:
             return
-        dialog = HyperfineCouplingConfigDialog(
-            specs=controller.parameter_specs(),
-            intro_text=request.intro_text,
-            read_only=request.read_only,
-            species_options=request.species_options,
-            parent=self,
+        result = run_source_configure_dialog(
+            partial(
+                HyperfineCouplingConfigDialog,
+                specs=controller.parameter_specs(),
+                intro_text=request.intro_text,
+                read_only=request.read_only,
+                species_options=request.species_options,
+                parent=self,
+            ),
+            request,
         )
-        result = run_source_configure_dialog(dialog, request)
         if result is not None:
             controller.apply_configuration(request.keys, result)
 
@@ -9634,17 +9639,21 @@ class MainWindow(QMainWindow):
         request = controller.configure_request(_ordered_string_list(payload))
         if request is None:
             return
-        dialog = NudgedElasticBandConfigDialog(
-            specs=controller.parameter_specs(),
-            num_farms=request.num_farms,
-            intro_text=request.intro_text,
-            read_only=request.read_only,
-            species_options=request.species_options,
-            parent=self,
+        result = run_source_configure_dialog(
+            partial(
+                NudgedElasticBandConfigDialog,
+                specs=controller.parameter_specs(),
+                num_farms=request.num_farms,
+                intro_text=request.intro_text,
+                read_only=request.read_only,
+                species_options=request.species_options,
+                parent=self,
+            ),
+            request,
+            extras=lambda dialog: {"num_farms": dialog.num_farms()},
         )
-        result = run_source_configure_dialog(dialog, request)
         if result is not None:
-            controller.apply_configuration(request.keys, result, {"num_farms": dialog.num_farms()})
+            controller.apply_configuration(request.keys, result, result.extras)
 
     def _on_view_energy_barrier_source(self, key: str) -> None:
         try:

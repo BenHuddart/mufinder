@@ -35,6 +35,9 @@ from mufinder.science.site_generation import lattice_frac_to_cart
 #: Row key of a workflow table: a row id, a cutoff energy or a k-point grid.
 RowKeyT = TypeVar("RowKeyT", bound=Hashable)
 
+#: A source table's Configure dialog.
+DialogT = TypeVar("DialogT", bound=ParameterDialog)
+
 
 @dataclass(frozen=True)
 class RowParameterRequest(Generic[RowKeyT]):
@@ -158,38 +161,53 @@ class SourceConfigureResult:
     """An accepted source Configure dialog: what to store for every targeted row.
 
     ``untouched_mixed`` names the mixed parameters the user left alone, which
-    each row keeps from its own stored configuration.
+    each row keeps from its own stored configuration. ``extras`` holds the
+    workflow's own controls (the farm count), read before the dialog is deleted.
     """
 
     values: dict[str, object]
     advanced_names: frozenset[str]
     untouched_mixed: frozenset[str]
+    extras: dict[str, object] = field(default_factory=dict)
 
 
 def run_source_configure_dialog(
-    dialog: ParameterDialog,
+    build: Callable[..., DialogT],
     request: SourceConfigureRequest,
+    *,
+    extras: Callable[[DialogT], Mapping[str, object]] | None = None,
 ) -> SourceConfigureResult | None:
-    """Seed ``dialog`` from ``request``, run it, and return what it produced.
+    """Build a source Configure dialog seeded from ``request``, run it, and delete it.
+
+    ``build`` makes the workflow's dialog; it receives the seed as the
+    ``values``, ``preferred_exclusive``, ``advanced_names`` and ``mixed_names``
+    keyword arguments, so the rows are built once. ``extras`` reads the
+    workflow's own controls from an accepted dialog into the result.
 
     Returns ``None`` when the dialog is cancelled, and when it opened read-only
     to inspect rows that can no longer change.
     """
 
-    dialog.setWindowTitle(request.title)
-    dialog.set_values(
-        shared_parameter_values(request.row_values),
+    dialog = build(
+        values=shared_parameter_values(request.row_values),
         preferred_exclusive=kpoint_exclusive_hint(request.row_values),
+        advanced_names=tuple(sorted(request.advanced_names)),
+        mixed_names=mixed_parameter_names(request.row_values),
     )
-    dialog.set_advanced_names(tuple(sorted(request.advanced_names)))
-    dialog.set_mixed_names(mixed_parameter_names(request.row_values))
-    if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
-        return None
-    return SourceConfigureResult(
-        values=dict(dialog.collect_values()),
-        advanced_names=frozenset(dialog.advanced_names()),
-        untouched_mixed=frozenset(dialog.untouched_mixed_names()),
-    )
+    try:
+        dialog.setWindowTitle(request.title)
+        if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
+            return None
+        return SourceConfigureResult(
+            values=dict(dialog.collect_values()),
+            advanced_names=frozenset(dialog.advanced_names()),
+            untouched_mixed=frozenset(dialog.untouched_mixed_names()),
+            extras={} if extras is None else dict(extras(dialog)),
+        )
+    finally:
+        # The dialog is a child of the window; without this every open would
+        # stay alive under it, editors and all.
+        dialog.deleteLater()
 
 
 class QuantumCorrectionsConfigDialog(ParameterDialog):
@@ -203,6 +221,10 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         intro_text: str | None = None,
         read_only: bool = False,
         species_options: Sequence[str] = (),
+        values: dict[str, object] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(
@@ -212,6 +234,10 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
             intro_text=intro_text,
             read_only=read_only,
             species_options=species_options,
+            values=values,
+            preferred_exclusive=preferred_exclusive,
+            advanced_names=advanced_names,
+            mixed_names=mixed_names,
             parent=parent,
         )
         self._num_farms_spin = QSpinBox(self)
@@ -242,6 +268,10 @@ class HyperfineCouplingConfigDialog(ParameterDialog):
         intro_text: str | None = None,
         read_only: bool = False,
         species_options: Sequence[str] = (),
+        values: dict[str, object] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(
@@ -251,6 +281,10 @@ class HyperfineCouplingConfigDialog(ParameterDialog):
             intro_text=intro_text,
             read_only=read_only,
             species_options=species_options,
+            values=values,
+            preferred_exclusive=preferred_exclusive,
+            advanced_names=advanced_names,
+            mixed_names=mixed_names,
             parent=parent,
         )
 
@@ -278,6 +312,10 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
         read_only: bool = False,
         num_farms_editable: bool = True,
         species_options: Sequence[str] = (),
+        values: dict[str, object] | None = None,
+        preferred_exclusive: str | None = None,
+        advanced_names: Iterable[str] | None = None,
+        mixed_names: Iterable[str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(
@@ -291,6 +329,10 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
             intro_text=intro_text,
             read_only=read_only,
             species_options=species_options,
+            values=values,
+            preferred_exclusive=preferred_exclusive,
+            advanced_names=advanced_names,
+            mixed_names=mixed_names,
             parent=parent,
         )
         self._num_farms_spin = QSpinBox(self)
@@ -339,9 +381,9 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
         self._refresh_farm_hint()
 
     def set_values(self, values, *, preferred_exclusive=None) -> None:
-        # Callers apply the row's stored configuration right after construction.
-        # That path rebuilds rows rather than firing editor signals, so the hint
-        # would otherwise keep describing the default image count.
+        # Seeding values rebuilds rows rather than firing editor signals, so the
+        # hint would otherwise keep describing the previous image count. The
+        # constructor seed runs before the hint exists; __init__ refreshes it.
         super().set_values(values, preferred_exclusive=preferred_exclusive)
         self._refresh_farm_hint()
 
