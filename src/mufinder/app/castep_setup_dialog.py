@@ -7,16 +7,15 @@ from pathlib import Path
 import re
 import shutil
 import sys
-import os
 import tempfile
 
-from PySide6.QtCore import QProcess, QSettings, QThread
+from PySide6.QtCore import QProcess, QSettings, Qt, QThread, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -36,23 +35,23 @@ from mufinder.app.cluster_ui_utils import (
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
-from mufinder.app.keyword_catalog_notice import catalog_source_description
+from mufinder.app.export_dialogs import open_containing_folder
+from mufinder.app.keyword_catalog_notice import catalog_status_line
+from mufinder.app.theme import style_warning_text
 from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_setup import (
-    CastepSetup,
-    apply_castep_environment,
     discover_mpirun,
     install_keyword_catalog,
+    is_executable_file,
     load_castep_setup,
-    save_castep_setup,
+    save_local_castep_path,
 )
 from mufinder.castep_io.keyword_catalog_file import KeywordCatalogValidationError
 from mufinder.castep_io.schema import (
     OVERRIDE_CATALOG_ORIGIN,
     OVERRIDE_KEYWORDS_JSON_ENV_VAR,
     keyword_catalog_status,
-    refresh_keyword_catalog,
 )
 from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationWorker,
@@ -87,7 +86,12 @@ def _cluster_is_set_up(config: ClusterConfig) -> bool:
 
 
 class CastepSetupDialog(QDialog):
-    """Configure CASTEP executable and keyword metadata locations."""
+    """Configure the local CASTEP paths and install the keyword catalog.
+
+    Everything applies at once: each local path is saved when the user finishes
+    editing it, and a generated or imported catalog is installed straight away,
+    so the dialog only has ``Close``.
+    """
 
     def __init__(
         self,
@@ -109,38 +113,104 @@ class CastepSetupDialog(QDialog):
         self._generation_scratch_dir: Path | None = None
         self._generation_log = ""
         self._text_field_min_height = 34
-        self._path_field_min_width = 740
+        self._changes_saved = False
 
         self.setWindowTitle("CASTEP Setup")
-        self.resize(720, 420)
 
         root = QVBoxLayout(self)
 
-        # The keyword catalog comes first: it is the part every user needs,
-        # whereas a CASTEP installation on this computer is optional.
+        # The local paths come first: generating from 'This computer' uses
+        # them, so they sit above the catalog section that needs them.
+        local_group = QGroupBox("CASTEP on this computer (optional)", self)
+        local_layout = QVBoxLayout(local_group)
+        local_note = QLabel(
+            "Only needed to run calculations on this computer, or to generate the keyword catalog from "
+            "'This computer'. Cluster jobs and cluster keyword generation never use these paths: each "
+            "cluster's own CASTEP executable is set in Setup > HPC Clusters."
+        )
+        local_note.setWordWrap(True)
+        local_note.setObjectName("localCastepNote")
+        local_layout.addWidget(local_note)
+
+        # One grid, so both path fields end at the same column whatever buttons
+        # follow them.
+        paths = QGridLayout()
+        paths.setColumnStretch(1, 1)
+
+        executable_label = QLabel("CASTEP executable", local_group)
+        self._executable_edit = QLineEdit(self._setup.executable_path, local_group)
+        self._executable_edit.setMinimumHeight(self._text_field_min_height)
+        self._executable_edit.setAccessibleName("CASTEP executable")
+        executable_label.setBuddy(self._executable_edit)
+        self._executable_edit.editingFinished.connect(self._save_executable)
+        self._browse_executable_button = QPushButton("Browse…", local_group)
+        self._browse_executable_button.setAccessibleName("Browse for the CASTEP executable")
+        self._browse_executable_button.clicked.connect(self._browse_executable)
+        paths.addWidget(executable_label, 0, 0)
+        paths.addWidget(self._executable_edit, 0, 1)
+        paths.addWidget(self._browse_executable_button, 0, 2)
+
+        mpirun_label = QLabel("MPI launcher", local_group)
+        self._mpirun_edit = QLineEdit(self._setup.mpirun_path, local_group)
+        self._mpirun_edit.setMinimumHeight(self._text_field_min_height)
+        self._mpirun_edit.setAccessibleName("MPI launcher")
+        self._mpirun_edit.setToolTip("The mpirun executable that starts CASTEP on this computer.")
+        mpirun_label.setBuddy(self._mpirun_edit)
+        self._mpirun_edit.editingFinished.connect(self._save_mpirun)
+        self._browse_mpirun_button = QPushButton("Browse…", local_group)
+        self._browse_mpirun_button.setAccessibleName("Browse for the MPI launcher")
+        self._browse_mpirun_button.clicked.connect(self._browse_mpirun)
+        self._detect_mpirun_button = QPushButton("Auto-detect", local_group)
+        self._detect_mpirun_button.setAccessibleName("Auto-detect the MPI launcher")
+        self._detect_mpirun_button.clicked.connect(self._auto_detect_mpirun)
+        paths.addWidget(mpirun_label, 1, 0)
+        paths.addWidget(self._mpirun_edit, 1, 1)
+        paths.addWidget(self._browse_mpirun_button, 1, 2)
+        paths.addWidget(self._detect_mpirun_button, 1, 3)
+
+        self._mpirun_warning_label = QLabel(local_group)
+        self._mpirun_warning_label.setWordWrap(True)
+        style_warning_text(self._mpirun_warning_label)
+        self._mpirun_warning_label.setVisible(False)
+        paths.addWidget(self._mpirun_warning_label, 2, 1, 1, 3)
+
+        local_layout.addLayout(paths)
+        root.addWidget(local_group)
+
         catalog_group = QGroupBox("Keyword catalog", self)
         catalog_layout = QVBoxLayout(catalog_group)
 
         intro = QLabel(
-            "MuFinder needs a keyword catalog (castep_keywords.json) listing the keywords your CASTEP "
-            "version understands. Without one, fewer parameters are offered and some results cannot be "
-            "loaded. Generate it from a cluster or from CASTEP on this computer, or import a file you "
-            "already have; MuFinder keeps its own copy, so there is no location to choose."
+            "The keyword catalog (castep_keywords.json) lists the keywords your CASTEP version "
+            "understands; without one, fewer parameters are offered and some results cannot be "
+            "loaded. MuFinder keeps its own copy of whatever you generate or import."
         )
         intro.setWordWrap(True)
+        intro.setObjectName("catalogIntro")
         catalog_layout.addWidget(intro)
 
+        status_row = QHBoxLayout()
+        status_text = QVBoxLayout()
         self._catalog_status_label = QLabel(catalog_group)
         self._catalog_status_label.setWordWrap(True)
         self._catalog_status_label.setObjectName("catalogStatusLabel")
-        status_font = self._catalog_status_label.font()
-        status_font.setBold(True)
-        self._catalog_status_label.setFont(status_font)
-        catalog_layout.addWidget(self._catalog_status_label)
+        status_text.addWidget(self._catalog_status_label)
+        # The starter state and a skipped catalog's reason, in the warning style.
+        self._catalog_warning_label = QLabel(catalog_group)
+        self._catalog_warning_label.setWordWrap(True)
+        style_warning_text(self._catalog_warning_label)
+        status_text.addWidget(self._catalog_warning_label)
+        status_row.addLayout(status_text, 1)
+        self._show_catalog_file_button = QPushButton("Show file", catalog_group)
+        self._show_catalog_file_button.setAccessibleName("Show the keyword catalog file")
+        self._show_catalog_file_button.clicked.connect(self._show_catalog_file)
+        status_row.addWidget(self._show_catalog_file_button, 0, Qt.AlignmentFlag.AlignTop)
+        catalog_layout.addLayout(status_row)
 
         generate_row = QHBoxLayout()
         generate_row.addWidget(QLabel("Generate from", catalog_group))
         self._generate_target_combo = QComboBox(catalog_group)
+        self._generate_target_combo.setAccessibleName("Generate from")
         self._generate_target_combo.addItem("This computer", "local")
         for cluster_name in self._cluster_configs:
             self._generate_target_combo.addItem(cluster_name, cluster_name)
@@ -161,6 +231,7 @@ class CastepSetupDialog(QDialog):
         self._generate_method_label = QLabel("using", catalog_group)
         generate_row.addWidget(self._generate_method_label)
         self._generate_method_combo = QComboBox(catalog_group)
+        self._generate_method_combo.setAccessibleName("Generation method")
         self._generate_method_combo.addItem("Scheduler job (recommended)", "scheduler")
         self._generate_method_combo.addItem("Login node", "direct")
         self._generate_method_combo.setToolTip(
@@ -169,16 +240,18 @@ class CastepSetupDialog(QDialog):
             "Your choice is remembered for this cluster."
         )
         generate_row.addWidget(self._generate_method_combo)
-        self._generate_button = QPushButton("Generate Keyword Catalog", catalog_group)
+        self._generate_button = QPushButton("Generate", catalog_group)
+        self._generate_button.setAccessibleName("Generate the keyword catalog")
         self._generate_button.clicked.connect(self._generate_keywords)
         generate_row.addWidget(self._generate_button)
-        self._import_button = QPushButton("Use Existing File…", catalog_group)
+        self._import_button = QPushButton("Use existing file…", catalog_group)
         self._import_button.setToolTip(
             "Import a castep_keywords.json you already have. MuFinder checks it and keeps its own copy."
         )
         self._import_button.clicked.connect(self._import_keywords_json)
         generate_row.addWidget(self._import_button)
         self._cancel_generation_button = QPushButton("Cancel", catalog_group)
+        self._cancel_generation_button.setAccessibleName("Cancel keyword catalog generation")
         self._cancel_generation_button.clicked.connect(self._cancel_generation)
         self._cancel_generation_button.setVisible(False)
         generate_row.addWidget(self._cancel_generation_button)
@@ -190,59 +263,22 @@ class CastepSetupDialog(QDialog):
         self._generate_target_hint.setObjectName("generateTargetHint")
         catalog_layout.addWidget(self._generate_target_hint)
 
-        self._progress_label = QLabel("Idle", catalog_group)
+        # Hidden until a run starts; the last result then stays visible.
+        self._progress_label = QLabel(catalog_group)
+        self._progress_label.setObjectName("generationProgressLabel")
+        self._progress_label.setWordWrap(True)
+        self._progress_label.setVisible(False)
         catalog_layout.addWidget(self._progress_label)
 
         self._progress_bar = QProgressBar(catalog_group)
+        self._progress_bar.setAccessibleName("Keyword catalog generation progress")
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(False)
         catalog_layout.addWidget(self._progress_bar)
 
         root.addWidget(catalog_group)
-
-        local_group = QGroupBox("CASTEP on this computer (optional)", self)
-        local_layout = QVBoxLayout(local_group)
-        local_note = QLabel(
-            "Only needed to run calculations on this computer, or to generate the keyword catalog from "
-            "'This computer'. Cluster jobs and cluster keyword generation never use these paths: each "
-            "cluster's own CASTEP executable is set in Setup > HPC Clusters."
-        )
-        local_note.setWordWrap(True)
-        local_note.setObjectName("localCastepNote")
-        local_layout.addWidget(local_note)
-
-        form = QFormLayout()
-
-        executable_row = QWidget(local_group)
-        executable_layout = QHBoxLayout(executable_row)
-        executable_layout.setContentsMargins(0, 0, 0, 0)
-        self._executable_edit = QLineEdit(self._setup.executable_path, executable_row)
-        self._executable_edit.setMinimumHeight(self._text_field_min_height)
-        self._executable_edit.setMinimumWidth(self._path_field_min_width)
-        self._browse_executable_button = QPushButton("Browse…", executable_row)
-        self._browse_executable_button.clicked.connect(self._browse_executable)
-        executable_layout.addWidget(self._executable_edit, 1)
-        executable_layout.addWidget(self._browse_executable_button)
-        form.addRow("CASTEP executable", executable_row)
-
-        mpirun_row = QWidget(local_group)
-        mpirun_layout = QHBoxLayout(mpirun_row)
-        mpirun_layout.setContentsMargins(0, 0, 0, 0)
-        self._mpirun_edit = QLineEdit(self._setup.mpirun_path, mpirun_row)
-        self._mpirun_edit.setMinimumHeight(self._text_field_min_height)
-        self._mpirun_edit.setMinimumWidth(self._path_field_min_width)
-        self._browse_mpirun_button = QPushButton("Browse…", mpirun_row)
-        self._browse_mpirun_button.clicked.connect(self._browse_mpirun)
-        self._detect_mpirun_button = QPushButton("Auto-detect", mpirun_row)
-        self._detect_mpirun_button.clicked.connect(self._auto_detect_mpirun)
-        mpirun_layout.addWidget(self._mpirun_edit, 1)
-        mpirun_layout.addWidget(self._browse_mpirun_button)
-        mpirun_layout.addWidget(self._detect_mpirun_button)
-        form.addRow("MPI launcher (mpirun)", mpirun_row)
-
-        local_layout.addLayout(form)
-        root.addWidget(local_group)
+        root.addStretch(1)
 
         self._generate_target_combo.currentIndexChanged.connect(
             lambda *_: self._on_generate_target_changed()
@@ -252,16 +288,28 @@ class CastepSetupDialog(QDialog):
         )
         self._on_generate_target_changed()
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            parent=self,
-        )
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
         self._button_box = buttons
-        buttons.accepted.connect(self._accept_and_save)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+        # With no OK there is no default button: Return in a path field only
+        # finishes the edit, rather than pressing the first button in the
+        # focus chain (Browse…).
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+
         self._refresh_catalog_status()
+        self.resize(820, self.sizeHint().height())
+        self._fitted_height = self.height()
+        self._apply_fitted_height()
+
+    @property
+    def changes_saved(self) -> bool:
+        """Whether a local path was saved or a catalog installed while the dialog was open."""
+
+        return self._changes_saved
 
     def _selected_cluster_config(self) -> ClusterConfig | None:
         target_key = str(self._generate_target_combo.currentData() or "local")
@@ -305,7 +353,7 @@ class CastepSetupDialog(QDialog):
         config = self._selected_cluster_config()
         if config is None:
             self._generate_target_hint.setText(
-                "Runs the CASTEP executable set below on this computer, through the MPI launcher if one "
+                "Runs the CASTEP executable set above on this computer, through the MPI launcher if one "
                 "is set. Takes a minute or two."
             )
             return
@@ -317,24 +365,62 @@ class CastepSetupDialog(QDialog):
             timing = "Takes a few minutes, plus any time in the queue."
         self._generate_target_hint.setText(
             f"Runs CASTEP on {config.name} {how}, using that cluster's settings from Setup > HPC Clusters. "
-            f"The paths below are not used. {timing}"
+            f"The paths above are not used. {timing}"
         )
 
     def _refresh_catalog_status(self) -> None:
         status = keyword_catalog_status()
-        parts = [catalog_source_description(status)]
+        line = catalog_status_line(status)
+        warnings = [line] if status.is_starter else []
         if status.issue:
-            parts.append(status.issue)
-        self._catalog_status_label.setText("\n".join(parts))
-
-    def setup(self) -> CastepSetup:
-        """Return the currently edited setup values."""
-
-        return CastepSetup(
-            executable_path=self._executable_edit.text().strip(),
-            keywords_json_path=load_castep_setup(self._settings).keywords_json_path,
-            mpirun_path=self._mpirun_edit.text().strip(),
+            warnings.append(status.issue)
+        self._catalog_status_label.setText("" if status.is_starter else line)
+        self._catalog_status_label.setVisible(not status.is_starter)
+        self._catalog_status_label.setToolTip(
+            "" if status.path is None or status.is_starter else str(status.path)
         )
+        self._catalog_warning_label.setText("\n".join(warnings))
+        self._catalog_warning_label.setVisible(bool(warnings))
+        has_file = status.path is not None and not status.is_starter
+        self._show_catalog_file_button.setEnabled(has_file)
+        self._show_catalog_file_button.setToolTip(
+            f"Open the folder holding {status.path} in the file manager."
+            if has_file
+            else "No keyword catalog is installed yet."
+        )
+
+    def _show_catalog_file(self) -> None:
+        """Reveal the catalog in use in the desktop's file manager."""
+
+        status = keyword_catalog_status()
+        if status.path is not None and not status.is_starter:
+            open_containing_folder(status.path.parent)
+
+    def _save_executable(self) -> None:
+        if save_local_castep_path(self._settings, executable_path=self._executable_edit.text()):
+            self._changes_saved = True
+
+    def _save_mpirun(self) -> bool:
+        """Save the MPI launcher if it is empty or an executable file; warn inline otherwise.
+
+        Returns whether the launcher in the field is valid (and so saved).
+        """
+
+        text = self._mpirun_edit.text().strip()
+        if text and not is_executable_file(text):
+            self._show_mpirun_warning("Not saved: this path does not point to an executable file.")
+            return False
+        if not self._mpirun_warning_label.isHidden():
+            self._mpirun_warning_label.setVisible(False)
+            self._fit_height()
+        if save_local_castep_path(self._settings, mpirun_path=text):
+            self._changes_saved = True
+        return True
+
+    def _show_mpirun_warning(self, text: str) -> None:
+        self._mpirun_warning_label.setText(text)
+        self._mpirun_warning_label.setVisible(True)
+        self._fit_height()
 
     def _browse_executable(self) -> None:
         start_dir = self._start_dir(self._executable_edit.text())
@@ -346,6 +432,7 @@ class CastepSetupDialog(QDialog):
         )
         if path:
             self._executable_edit.setText(path)
+            self._save_executable()
 
     def _import_keywords_json(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -377,6 +464,7 @@ class CastepSetupDialog(QDialog):
             )
             return False
 
+        self._changes_saved = True
         self._refresh_catalog_status()
         message = f"Keyword catalog {action}: {summary.describe()}."
         status = keyword_catalog_status()
@@ -398,6 +486,7 @@ class CastepSetupDialog(QDialog):
         )
         if path:
             self._mpirun_edit.setText(path)
+            self._save_mpirun()
 
     def _auto_detect_mpirun(self) -> None:
         discovered = discover_mpirun()
@@ -409,10 +498,19 @@ class CastepSetupDialog(QDialog):
             )
             return
         self._mpirun_edit.setText(discovered)
+        self._save_mpirun()
 
     def _generate_keywords(self) -> None:
         target_key = str(self._generate_target_combo.currentData() or "local")
         if target_key == "local":
+            self._save_executable()
+            if not self._save_mpirun():
+                self._show_mpirun_warning(
+                    "Not saved: this path does not point to an executable file. "
+                    "Fix or clear it to generate from this computer."
+                )
+                self._mpirun_edit.setFocus()
+                return
             executable = self._executable_edit.text().strip()
             if not executable:
                 QMessageBox.warning(
@@ -482,34 +580,16 @@ class CastepSetupDialog(QDialog):
         check.cancelled.connect(check.deleteLater)
         check.start()
 
-    def _accept_and_save(self) -> None:
-        if self._generation_in_progress:
-            QMessageBox.information(
-                self,
-                "Generation in progress",
-                "Wait for keyword generation to finish or cancel it before closing this dialog.",
-            )
-            return
-        setup = self.setup()
-        if setup.mpirun_path:
-            mpirun_path = Path(setup.mpirun_path).expanduser()
-            if (
-                not mpirun_path.exists()
-                or not mpirun_path.is_file()
-                or not os.access(mpirun_path, os.X_OK)
-            ):
-                QMessageBox.warning(
-                    self,
-                    "Invalid MPI launcher",
-                    "The configured mpirun path does not point to an executable file.",
-                )
-                return
-        save_castep_setup(self._settings, setup)
-        apply_castep_environment(setup)
-        refresh_keyword_catalog(allow_fallback=True)
-        self.accept()
-
     def reject(self) -> None:
+        # Escape and the window's close button skip editingFinished, so save
+        # whatever was typed last before closing.
+        warned_already = not self._mpirun_warning_label.isHidden()
+        self._save_executable()
+        if not self._save_mpirun() and not warned_already:
+            # The launcher just failed its check: stay open once so the
+            # warning is seen. Closing again leaves the saved launcher as it is.
+            self._mpirun_edit.setFocus()
+            return
         if self._generation_in_progress:
             self._cancel_generation()
             QMessageBox.information(
@@ -519,6 +599,33 @@ class CastepSetupDialog(QDialog):
             )
             return
         super().reject()
+
+    def _show_progress_text(self, text: str) -> None:
+        self._progress_label.setText(text)
+        self._progress_label.setVisible(True)
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        """Fit the height to lines that appear or hide (warnings, progress).
+
+        The layouts take in a shown or hidden line only once its layout
+        request has been processed, so the fit runs from the event loop.
+        """
+
+        QTimer.singleShot(0, self, self._apply_fitted_height)
+
+    def _apply_fitted_height(self) -> None:
+        """Resize to the content's height; a dialog the user made taller keeps
+        its height unless the content needs more."""
+
+        layout = self.layout()
+        layout.activate()
+        needed = layout.totalHeightForWidth(self.width())
+        if needed < 0:
+            needed = self.sizeHint().height()
+        if self.height() == self._fitted_height or self.height() < needed:
+            self._fitted_height = needed
+            self.resize(self.width(), needed)
 
     @property
     def _generation_in_progress(self) -> bool:
@@ -561,7 +668,7 @@ class CastepSetupDialog(QDialog):
         self._generation_output_path = output_path.expanduser()
         self._generation_log = ""
         self._set_generation_running(True)
-        self._progress_label.setText("Starting CASTEP keyword extraction…")
+        self._show_progress_text("Starting CASTEP keyword extraction…")
         self._progress_bar.setValue(0)
 
         # The subprocess runs ``generate_castep_keywords_json`` with the
@@ -599,7 +706,7 @@ class CastepSetupDialog(QDialog):
         self._generation_output_path = output_path.expanduser()
         self._generation_log = ""
         self._set_generation_running(True)
-        self._progress_label.setText(f"Starting CASTEP keyword extraction on {config.name}…")
+        self._show_progress_text(f"Starting CASTEP keyword extraction on {config.name}…")
         self._progress_bar.setValue(0)
 
         worker = ClusterKeywordGenerationWorker(
@@ -641,8 +748,8 @@ class CastepSetupDialog(QDialog):
         self._executable_edit.setEnabled(not running)
         self._mpirun_edit.setEnabled(not running)
         self._cancel_generation_button.setVisible(running)
-        self._button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(not running)
         self._progress_bar.setVisible(running)
+        self._fit_height()
 
     def _cancel_generation(self) -> None:
         if self._generation_process is None and self._generation_worker is None:
