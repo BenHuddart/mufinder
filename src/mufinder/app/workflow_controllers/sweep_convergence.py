@@ -57,6 +57,7 @@ from mufinder.app.convergence_types import (
     SweepPointRunState,
     convergence_config_xc_functional,
 )
+from mufinder.app.adapter_common import IDENTITY_SUPERCELL
 from mufinder.app.workflow_parameters import structure_species_options
 from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
@@ -721,7 +722,7 @@ class SweepConvergenceController(WorkflowJobController):
 
         document = self._context.document()
         if document is None:
-            return [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+            return [list(row) for row in IDENTITY_SUPERCELL]
 
         resolution = self._context.project_service.resolve_workflow_structure(
             document,
@@ -750,6 +751,9 @@ class SweepConvergenceController(WorkflowJobController):
             workflow_stage=self.stage,
             asset_structure_id=structure_id,
         )
+        self._show_selected_simulation_cell(selected)
+
+    def _show_selected_simulation_cell(self, selected: Structure) -> None:
         self.refresh_simulation_cell()
         self._context.status_message(
             f"Selected {self.simulation_cell_name} simulation cell '{selected.label}'"
@@ -785,19 +789,12 @@ class SweepConvergenceController(WorkflowJobController):
             self.refresh_simulation_cell()
             return
 
-        self.refresh_simulation_cell()
-        self._context.status_message(
-            f"Selected {self.simulation_cell_name} simulation cell '{selected.label}'"
-        )
+        self._show_selected_simulation_cell(selected)
 
     def use_unit_cell(self) -> None:
         """Run the sweep on the unit cell again."""
 
-        document = self._context.document()
-        if document is None:
-            return
-        self._context.project_service.clear_workflow_supercell_selection(document, self.stage)
-        self.refresh_simulation_cell()
+        self.select_simulation_cell(None)
 
 
 __all__ = ["SweepConvergenceController"]
