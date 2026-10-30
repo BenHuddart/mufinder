@@ -440,13 +440,14 @@ no two workflow widgets may define the same private method.
        because no application-wide event filter discovers views.
        Matplotlib axes and legends take the palette through
        ``style_plot_axes`` and ``style_plot_legend``.
-       Feature stylesheets a widget sets on itself come from here too
-       (``feature_dialog_stylesheet``, ``magnetic_fields_stylesheet``,
-       ``magnetic_structure_builder_stylesheet``) and carry no colours that
-       would go stale when the theme changes; coloured feature rules are
-       sections of the application stylesheet. Painted widgets take their
-       colours from here (``texture_preview_colors`` for the magnetic texture
-       preview).
+       Feature stylesheets a widget sets on itself come from here too.
+       ``feature_dialog_stylesheet`` takes the palette current when a dialog
+       opens, so it suits dialogs built each time they are opened; the
+       stylesheets of long-lived widgets (``magnetic_fields_stylesheet``,
+       ``magnetic_structure_builder_stylesheet``) carry no colours that would
+       go stale when the theme changes, and their coloured rules are sections
+       of the application stylesheet. Painted widgets take their colours from
+       here (``texture_preview_colors`` for the magnetic texture preview).
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
