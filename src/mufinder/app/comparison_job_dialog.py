@@ -170,3 +170,17 @@ class ComparisonJobDialog(QDialog):
             except ValueError:
                 continue
         return selected
+
+
+def run_comparison_job_dialog(
+    jobs: list[CompletedPristineJob], default_label: str, *, parent=None
+) -> tuple[list[UUID], str] | None:
+    """Open the dialog; the chosen job ids and table label, or ``None`` when cancelled."""
+
+    dialog = ComparisonJobDialog(jobs=jobs, default_label=default_label, parent=parent)
+    try:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.selected_job_ids(), dialog.table_label()
+    finally:
+        dialog.deleteLater()

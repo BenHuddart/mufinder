@@ -427,7 +427,9 @@ defined by two of these modules, and a pinned count may only fall.
        ``CalculationDefinition.parameters["configuration"]``
        (``serialize_*_config`` and ``deserialize_*_config`` for UEP, pristine
        relaxation, muon relaxation and convergence),
-       ``normalized_supercell_matrix``, and the per-row
+       ``normalized_supercell_matrix``, the pristine row signature
+       (``pristine_relaxation_row_signature``,
+       ``normalized_parameter_values``), and the per-row
        ``configuration["row_settings"]`` entries of the source-keyed workflows
        (``workflow_row_configuration``, ``workflow_row_configuration_exists``,
        ``num_farms_from_extras``, ``row_settings_payload``,
@@ -620,6 +622,12 @@ defined by two of these modules, and a pinned count may only fall.
        energies comparable (``relaxation_calculation_key``,
        ``mixes_calculations``) and the newest completed pristine relaxation
        (``newest_completed_structure_id``).
+   * - ``mufinder.services.structure_comparison``
+     - Building a saved comparison table from completed pristine relaxations
+       (``build_comparison_table``, ``comparison_inputs``): the values-only
+       ``ComparisonTable.result_data`` (``comparison_result_data``) and the
+       rows of the parameters that differ between the jobs
+       (``parameter_difference_rows``).
    * - ``mufinder.services.site_relaxations``
      - Recording a completed muon relaxation on its source site
        (``record_site_relaxation``): the charge state a site is first relaxed in
@@ -1471,7 +1479,17 @@ Controller summary
      - Keyed by row label; rows sync by row signature under the relaxation
        priority order. ``build_result`` reads the carrier's relaxed cell,
        contributes ``lattice_a`` / ``lattice_b`` / ``lattice_c``, and creates
-       or refreshes the derived relaxed structure.
+       or refreshes the derived relaxed structure. It has no deps dataclass,
+       and lists the completed relaxations a comparison can use
+       (``completed_jobs``).
+   * - ``ComparisonTablesController``
+     - Not a ``WorkflowJobController``: a comparison table has no job. In
+       ``mufinder.app.workflow_controllers.comparison_tables``, it generates,
+       renames and deletes saved tables and rebuilds their page
+       (``ComparisonTablesPage``). The job dialog, the message boxes and the
+       navigator arrive through ``ComparisonTablesDeps``. The module owns the
+       tables' navigator routes (``comparison_route``,
+       ``comparison_table_id_from_route``).
    * - ``MuonRelaxationController``
      - Keyed by ``"{charge prefix}:{label}"``. ``sync_mappings`` reads a
        bare-label key as its row's qualified key, carries only jobs that fit
@@ -1892,10 +1910,16 @@ rendered by ``app``. The implementation is intentionally layered:
 - space-group detection in ``mufinder.science.symmetry_analysis``,
 - metric registry and evaluation in ``mufinder.science.structure_metrics``,
 - orchestration in ``mufinder.science.structure_comparison``,
-- rendering in ``mufinder.app.comparison_table_widget``.
+- the saved table in ``mufinder.services.structure_comparison``,
+- generating, renaming and deleting tables in
+  ``mufinder.app.workflow_controllers.comparison_tables``,
+- rendering in ``mufinder.app.comparison_table_widget``, whose
+  ``ComparisonTablesPage`` is one main-stack page holding a widget per table.
 
-The widget takes each row's label, unit, group and tooltip from that metric
-registry, looked up by the metric keys a saved table holds; the method behind
+A saved table holds values only: metric keys with their raw values, display
+text and warnings, the column labels and structure ids, the warnings and the
+parameter differences. The widget takes each row's label, unit, group and
+tooltip from the metric registry, looked up by those keys; the method behind
 the metrics is described in the user guide, which the table links to.
 
 Cross-platform appearance

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mufinder.app import workflow_table_utils
+from mufinder.app.workflow_controllers.comparison_tables import comparison_route
 from mufinder.domain.models import ComparisonTable, Structure
 from mufinder.services.project_service import ProjectService
 from tests.support.qt import find_tree_item_by_route
@@ -42,14 +43,16 @@ def test_main_window_adds_and_deletes_comparison_subtab(main_window, tmp_path: P
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    route = window._comparison_route(table.id)
+    route = comparison_route(table.id)
     item = find_tree_item_by_route(window._project_tree, route)
     assert item is not None
 
     window._set_active_route(route)
-    assert window._main_stack.currentWidget() is window._comparison_widgets[table.id]
+    assert window._main_stack.currentWidget() is window._comparison_tables_view
+    table_widget = window._comparison_tables_view.table_widget(table.id)
+    assert window._comparison_tables_view.currentWidget() is table_widget
 
-    window._delete_comparison_table(table.id)
+    window._comparison_tables_controller.delete_table(table.id)
     assert table.id not in doc.comparison_tables
 
 
@@ -102,7 +105,7 @@ def test_widget_delete_request_removes_only_requested_table_without_extra_prompt
     window._refresh_ui_after_project_change()
 
     # The widget asked before emitting; MainWindow must not ask a second time.
-    window._on_delete_comparison_table_requested(table_a.id)
+    window._comparison_tables_controller.delete_table(table_a.id)
 
     assert table_a.id not in doc.comparison_tables
     assert table_b.id in doc.comparison_tables
@@ -148,10 +151,10 @@ def test_comparison_delete_button_confirms_once_through_the_shared_helper(
         return answers.pop(0)
 
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _confirm)
-    window._comparison_widgets[table.id]._delete_button.click()
+    window._comparison_tables_view.table_widget(table.id)._delete_button.click()
     assert table.id in doc.comparison_tables
 
-    window._comparison_widgets[table.id]._delete_button.click()
+    window._comparison_tables_view.table_widget(table.id)._delete_button.click()
 
     assert table.id not in doc.comparison_tables
     # One prompt per click: the window does not ask again after the widget.

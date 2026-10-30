@@ -681,9 +681,8 @@ the call site or binds them once with ``functools.partial``.
   workflow controller is built from; ``FakeRowState``, ``no_artifacts``,
   ``completed_castep_result``, ``muon_host_document`` and ``job_with_status``
   build the row states, parsed outputs, host project and jobs the controller
-  tests share; ``FakeRelaxationView``, ``stub_pristine_deps`` and
-  ``pristine_sync_definition`` stand in for the Pristine Relaxation widget,
-  dependencies and definition.
+  tests share; ``FakeRelaxationView`` and ``pristine_sync_definition`` stand in
+  for the Pristine Relaxation widget and definition.
 - ``tests/conftest.py`` fixtures: ``main_window`` gives a fresh ``MainWindow``
   that the per-test Qt cleanup closes, and ``project_with_host`` gives
   ``(window, service, document)`` with the default host structure loaded.

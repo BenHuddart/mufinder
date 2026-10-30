@@ -14,7 +14,7 @@ import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Job
+from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -31,7 +31,6 @@ from tests.support.controllers import (
     make_context,
     muon_host_document,
     pristine_sync_definition,
-    stub_pristine_deps,
 )
 
 
@@ -71,9 +70,7 @@ def _pristine_job(service: ProjectService, document: ProjectDocument, label: str
 def test_pristine_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    controller = PristineRelaxationController(
-        make_context(document=document), stub_pristine_deps(), FakeRelaxationView()
-    )
+    controller = PristineRelaxationController(make_context(document=document), FakeRelaxationView())
     handled = _pristine_job(service, document, "pristine_relax_row1")
     muon = service.add_job(
         document,
@@ -88,9 +85,7 @@ def test_pristine_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
 
 
 def test_pristine_controller_uses_workflow_row_ready_predicate() -> None:
-    controller = PristineRelaxationController(
-        make_context(), stub_pristine_deps(), FakeRelaxationView()
-    )
+    controller = PristineRelaxationController(make_context(), FakeRelaxationView())
     # Pristine relaxation uses the base-default (wider) workflow-row predicate:
     # "not generated" / "defined" rows are ready, only "failed" is excluded.
     assert controller.is_ready({"r": FakeRowState("not generated")}, "r") is True
@@ -100,9 +95,7 @@ def test_pristine_controller_uses_workflow_row_ready_predicate() -> None:
 
 def test_pristine_controller_refresh_view_without_document_clears_rows() -> None:
     view = FakeRelaxationView()
-    controller = PristineRelaxationController(
-        make_context(document=None), stub_pristine_deps(), view
-    )
+    controller = PristineRelaxationController(make_context(document=None), view)
     controller.refresh_view()
     assert view.runtime_states == [{}]
 
@@ -139,13 +132,12 @@ def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
     output_dir.mkdir()
     (output_dir / f"{job.label}-out.cell").write_text(_OUT_CELL_TEXT, encoding="utf-8")
 
-    deps = stub_pristine_deps()
     context = make_context(
         document=document,
         project_service=service,
         job_output_directory=lambda _job: output_dir,
     )
-    controller = PristineRelaxationController(context, deps, FakeRelaxationView())
+    controller = PristineRelaxationController(context, FakeRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
     artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
@@ -188,13 +180,12 @@ def test_pristine_controller_build_result_missing_out_cell_is_empty(tmp_path: Pa
 
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
-    deps = stub_pristine_deps()
     context = make_context(
         document=document,
         project_service=service,
         job_output_directory=lambda _job: empty_dir,
     )
-    controller = PristineRelaxationController(context, deps, FakeRelaxationView())
+    controller = PristineRelaxationController(context, FakeRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
     result = controller.build_result(job, parsed, run, ParsedJobArtifacts())
@@ -258,7 +249,6 @@ def test_pristine_controller_recompletion_updates_derived_structure_in_place(
     )
     controller = PristineRelaxationController(
         context,
-        stub_pristine_deps(),
         FakeRelaxationView(),
     )
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
@@ -357,7 +347,7 @@ def _fe_completion_fixture(tmp_path: Path):
         project_service=service,
         job_output_directory=lambda _job: output_dir,
     )
-    controller = PristineRelaxationController(context, stub_pristine_deps(), FakeRelaxationView())
+    controller = PristineRelaxationController(context, FakeRelaxationView())
 
     def complete(run_index: int, cell_text: str):
         run = CalculationRun(job_id=job.id, run_index=run_index)
@@ -437,7 +427,7 @@ def test_pristine_controller_recompletion_refreshes_result_payload(
         project_service=service,
         job_output_directory=lambda _job: output_dir,
     )
-    controller = PristineRelaxationController(context, stub_pristine_deps(), FakeRelaxationView())
+    controller = PristineRelaxationController(context, FakeRelaxationView())
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
 
     out_cell.write_text(_OUT_CELL_TEXT, encoding="utf-8")
@@ -531,8 +521,6 @@ def test_find_job_derived_structure_prefers_the_first_of_a_duplicate_pair(
 
 
 def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path) -> None:
-    from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
-    from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
     from mufinder.domain.models import Structure
 
     service = ProjectService()
@@ -547,10 +535,6 @@ def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path)
     service.add_structure(document, host)
     document.project.host_structure_id = host.id
 
-    config = PristineRelaxationConfig(
-        name_prefix="pristine_relax",
-        rows=(PristineRelaxationRow(label="row1"),),
-    )
     output_root = document.project_root / "files" / "pristine_relaxation"
     definition = service.register_pristine_relaxation_definition(
         document,
@@ -562,25 +546,12 @@ def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path)
         output_directory=output_root,
     )
 
-    def expand(defn, cfg):
-        return expand_pristine_relaxation_jobs(
-            host_structure=host,
-            config=cfg,
-            project_cutoff_energy=None,
-            project_kpoint_grid=None,
-            project_kpoint_reference_lattice=None,
-        )
-
-    deps = stub_pristine_deps(
-        deserialize_pristine_relaxation_config=lambda _payload: config,
-        expand_pristine_relaxation_jobs=expand,
-    )
     context = make_context(
         document=document,
         project_service=service,
         definition_output_directory=lambda _defn: output_root,
     )
-    controller = PristineRelaxationController(context, deps, FakeRelaxationView())
+    controller = PristineRelaxationController(context, FakeRelaxationView())
 
     jobs = controller.materialize(["row1"])
 
@@ -596,8 +567,6 @@ def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path)
 
 
 def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
-    from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
-    from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
     from mufinder.domain.models import Structure
 
     service = ProjectService()
@@ -611,32 +580,12 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
     service.add_structure(document, host)
     document.project.host_structure_id = host.id
 
-    config = PristineRelaxationConfig(
-        name_prefix="pristine_relax",
-        rows=(PristineRelaxationRow(label="row1"),),
-    )
     output_root = document.project_root / "files" / "pristine_relaxation"
     service.register_pristine_relaxation_definition(
         document,
         host_structure_id=host.id,
         parameters={"name_prefix": "pristine_relax", "rows": [{"label": "row1"}]},
         output_directory=output_root,
-    )
-
-    def expand(defn, cfg):
-        return expand_pristine_relaxation_jobs(
-            host_structure=host,
-            config=cfg,
-            project_cutoff_energy=None,
-            project_kpoint_grid=None,
-            project_kpoint_reference_lattice=None,
-        )
-
-    deps = stub_pristine_deps(
-        deserialize_pristine_relaxation_config=lambda _payload: config,
-        pristine_relaxation_form_config=lambda: config,
-        pristine_relaxation_row_signature=lambda row: (row.label,),
-        expand_pristine_relaxation_jobs=expand,
     )
 
     local = RecordingBackend()
@@ -648,7 +597,7 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
         cluster_backend=cluster,
         definition_output_directory=lambda _defn: output_root,
     )
-    controller = PristineRelaxationController(context, deps, FakeRelaxationView())
+    controller = PristineRelaxationController(context, FakeRelaxationView())
 
     controller.submit(["row1"], target="local")
 
@@ -667,7 +616,6 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
     ``job_ids_by_label`` entry must survive a parameter edit.
     """
 
-    from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
     from mufinder.app.relaxation_types import (
         PristineRelaxationConfig,
         PristineRelaxationRow,
@@ -723,30 +671,10 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
         }
     )
 
-    def expand(_defn, cfg):
-        return expand_pristine_relaxation_jobs(
-            host_structure=host,
-            config=cfg,
-            project_cutoff_energy=None,
-            project_kpoint_grid=None,
-            project_kpoint_reference_lattice=None,
-        )
-
-    deps = stub_pristine_deps(
-        deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config,
-        pristine_relaxation_form_config=lambda: deserialize_pristine_relaxation_config(
-            view.collect_state()
-        ),
-        pristine_relaxation_row_signature=lambda row: (
-            tuple(sorted(row.parameter_values.items())),
-            tuple(row.added_advanced),
-        ),
-        expand_pristine_relaxation_jobs=expand,
-    )
-    return document, definition, job, deps, view, output_root
+    return document, definition, job, view, output_root
 
 
-def _pristine_edit_controller(service, document, deps, view, output_root, persists):
+def _pristine_edit_controller(service, document, view, output_root, persists):
     import dataclasses
 
     context = dataclasses.replace(
@@ -757,19 +685,19 @@ def _pristine_edit_controller(service, document, deps, view, output_root, persis
         ),
         persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
     )
-    return PristineRelaxationController(context, deps, view)
+    return PristineRelaxationController(context, view)
 
 
 def test_pristine_controller_update_row_parameters_preserves_row_job_binding(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     definitions_before = set(document.calculations)
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
 
@@ -798,12 +726,12 @@ def test_pristine_controller_update_row_parameters_rejects_unknown_row(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, _job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, _job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     before = copy.deepcopy(definition.parameters["configuration"])
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     assert controller.update_row_parameters("row9", {"geom_max_iter": 500}) is False
 
@@ -818,11 +746,11 @@ def test_pristine_controller_update_row_parameters_edits_a_later_unbound_row(
     binding — alone in both the definition and the form."""
 
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     assert controller.update_row_parameters("row2", {"geom_max_iter": 700}) is True
 
@@ -840,23 +768,19 @@ def test_pristine_controller_update_row_parameters_without_definition_or_config(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, _job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, _job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
 
-    no_definition = stub_pristine_deps()
-    controller = _pristine_edit_controller(
-        service, document, no_definition, view, output_root, persists
-    )
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
+
+    configuration = definition.parameters["configuration"]
+    definition.parameters["configuration"] = "unreadable"
     assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is False
 
-    unparseable = stub_pristine_deps(
-        deserialize_pristine_relaxation_config=lambda _payload: None,
-    )
-    controller = _pristine_edit_controller(
-        service, document, unparseable, view, output_root, persists
-    )
+    definition.parameters["configuration"] = configuration
+    del document.calculations[definition.id]
     assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is False
     assert persists == []
 
@@ -868,12 +792,12 @@ def test_pristine_controller_update_row_parameters_without_the_row_in_the_form(
     row is not projected from the form either, so no signature can desync."""
 
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     view.form_state = {"name_prefix": "pristine_relax", "rows": []}
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
 
@@ -893,11 +817,11 @@ def test_pristine_controller_materialize_after_edit_rewrites_same_directory(
     ``.param`` changes."""
 
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     assert controller.materialize(["row1"]) == [job]
     param_path = output_root / job.label / f"{job.label}.param"
@@ -925,12 +849,12 @@ def test_pristine_controller_build_states_keeps_job_after_parameter_edit(
     form/definition signature mismatch would drop the row to a jobless "ready"."""
 
     service = ProjectService()
-    document, _definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, _definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     job.status = JobStatus.RUNNING
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
     before = controller.build_states()
     assert before["row1"].job_id == job.id
 
@@ -950,11 +874,11 @@ def test_pristine_controller_row_is_continuable_reflects_raw_job_status(
     from mufinder.domain.models import utc_now
 
     service = ProjectService()
-    document, _definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, _definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     job.status = JobStatus.RUNNING
     assert controller.row_is_continuable("row1") is False
@@ -986,10 +910,10 @@ def test_pristine_controller_relaxed_structure_export_follows_the_rows_job(
     from mufinder.services.structure_export import NO_STRUCTURE_REASON, NOT_COMPLETED_REASON
 
     service = ProjectService()
-    document, _definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, _definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, [])
+    controller = _pristine_edit_controller(service, document, view, output_root, [])
 
     job.status = JobStatus.RUNNING
     assert controller.relaxed_structure_export("row1").unavailable_reason == NOT_COMPLETED_REASON
@@ -1021,11 +945,11 @@ def test_pristine_controller_job_files_exports_lists_the_rows_job_files(tmp_path
     from mufinder.services.job_file_export import NO_FOLDER_REASON
 
     service = ProjectService()
-    document, _definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, _definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     job_dir = tmp_path / "jobs" / job.label
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, [])
+    controller = _pristine_edit_controller(service, document, view, output_root, [])
     controller._context = dataclasses.replace(
         controller._context, job_output_directory=lambda _job: job_dir
     )
@@ -1049,11 +973,11 @@ def test_pristine_controller_render_row_param_text_previews_without_persisting(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, _job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, _job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
     text = controller.render_row_param_text("row1", {"geom_max_iter": 777}, ())
@@ -1071,11 +995,11 @@ def test_pristine_controller_continue_job_returns_to_defined_and_rewrites_direct
     from mufinder.domain.models import utc_now
 
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
     controller.materialize(["row1"])
     param_path = output_root / job.label / f"{job.label}.param"
     assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
@@ -1117,11 +1041,11 @@ def test_pristine_controller_continue_job_rejects_non_continuable_job_without_mu
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
     before = copy.deepcopy(definition.parameters["configuration"])
 
     job.status = JobStatus.RUNNING
@@ -1138,11 +1062,11 @@ def test_pristine_controller_continue_job_unknown_row_returns_none(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, _definition, _job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, _definition, _job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
 
     assert controller.continue_job("unknown", {"geom_max_iter": 500}) is None
 
@@ -1158,11 +1082,11 @@ def test_pristine_controller_continue_job_returns_none_when_materialize_fails(
     new parameters had been written."""
 
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     persists: list[dict] = []
-    controller = _pristine_edit_controller(service, document, deps, view, output_root, persists)
+    controller = _pristine_edit_controller(service, document, view, output_root, persists)
     controller.materialize(["row1"])  # write the real initial directory contents
     param_path = output_root / job.label / f"{job.label}.param"
     original_rendered = param_path.read_text(encoding="utf-8")
@@ -1210,7 +1134,7 @@ def test_pristine_controller_continue_job_leaves_row_untouched_when_document_dis
     import dataclasses
 
     service = ProjectService()
-    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+    document, definition, job, view, output_root = _pristine_parameter_edit_fixture(
         service, tmp_path
     )
     job.status = JobStatus.FAILED
@@ -1232,7 +1156,7 @@ def test_pristine_controller_continue_job_leaves_row_untouched_when_document_dis
         document=flaky_document,
         persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
     )
-    controller = PristineRelaxationController(context, deps, view)
+    controller = PristineRelaxationController(context, view)
 
     result = controller.continue_job("row1", {"geom_max_iter": 500})
 
@@ -1258,9 +1182,7 @@ def test_pristine_controller_validate_artifacts_messages(tmp_path: Path) -> None
     document = service.create_project(tmp_path / "p.mufinder", "P")
     job = _pristine_job(service, document, "pristine_relax_row1")
     run = CalculationRun(job_id=job.id)
-    controller = PristineRelaxationController(
-        make_context(document=document), stub_pristine_deps(), FakeRelaxationView()
-    )
+    controller = PristineRelaxationController(make_context(document=document), FakeRelaxationView())
     converged = CastepResult(completed=True, total_energy=-1.0, geom_converged=True)
     output_dir = tmp_path / "job_out"
     output_dir.mkdir()
@@ -1316,9 +1238,6 @@ def test_pristine_controller_remove_rows_reports_deleted_definitions(tmp_path: P
     )
     controller = PristineRelaxationController(
         make_context(document=document),
-        stub_pristine_deps(
-            deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config
-        ),
         FakeRelaxationView(),
     )
     document.ui_state[controller.active_key] = str(emptied.id)
@@ -1332,8 +1251,92 @@ def test_pristine_controller_remove_rows_reports_deleted_definitions(tmp_path: P
 
 
 def test_remove_rows_without_a_document_removes_nothing() -> None:
-    controller = PristineRelaxationController(
-        make_context(), stub_pristine_deps(), FakeRelaxationView()
-    )
+    controller = PristineRelaxationController(make_context(), FakeRelaxationView())
 
     assert controller.remove_rows(["row_1"]) == ()
+
+
+def test_pristine_controller_form_config_prefers_the_page_over_the_saved_form(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    document.ui_state["pristine_relaxation_form"] = {"rows": [{"label": "saved"}]}
+    view = FakeRelaxationView({"rows": [{"label": "on_page"}]})
+    controller = PristineRelaxationController(make_context(document=document), view)
+
+    assert [row.label for row in controller.form_config().rows] == ["on_page"]
+
+    view.form_state = {"rows": []}
+    assert [row.label for row in controller.form_config().rows] == ["saved"]
+
+    document.ui_state["pristine_relaxation_form"] = {"rows": []}
+    assert controller.form_config() is None
+
+
+def test_pristine_controller_form_config_without_a_project_is_none() -> None:
+    controller = PristineRelaxationController(
+        make_context(document=None), FakeRelaxationView({"rows": [{"label": "on_page"}]})
+    )
+
+    assert controller.form_config() is None
+
+
+def test_pristine_controller_completed_jobs_lists_rows_with_a_relaxed_structure(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, host = muon_host_document(service, tmp_path)
+    job = _pristine_job(service, document, "pristine_relax_row_1")
+    job.status = JobStatus.COMPLETED
+    definition = pristine_sync_definition(
+        service, document, host, job_ids_by_label={"row_1": str(job.id)}
+    )
+    relaxed = Structure(
+        label="Relaxed",
+        lattice_vectors=host.lattice_vectors,
+        species=host.species,
+        fractional_positions=host.fractional_positions,
+    )
+    service.add_structure(document, relaxed)
+    result = Result(derived_structure_ids=[relaxed.id])
+    document.results[result.id] = result
+    run = CalculationRun(job_id=job.id, run_index=1, result_id=result.id)
+    context = make_context(
+        document=document, project_service=service, run_for_job={job.id: run}.get
+    )
+    controller = PristineRelaxationController(context, FakeRelaxationView())
+
+    completed = controller.completed_jobs()
+
+    assert [(item.job_id, item.structure_id) for item in completed] == [(job.id, relaxed.id)]
+
+    definition.parameters["configuration"] = "unreadable"
+    assert controller.completed_jobs() == []
+
+
+def test_pristine_controller_completed_jobs_without_a_definition_is_empty(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    controller = PristineRelaxationController(make_context(document=document), FakeRelaxationView())
+
+    assert controller.completed_jobs() == []
+
+
+def test_pristine_controller_materialize_with_a_missing_host_creates_no_job(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, host = muon_host_document(service, tmp_path)
+    output_root = document.project_root / "files" / "pristine_relaxation"
+    pristine_sync_definition(service, document, host)
+    del document.structures[host.id]
+    context = make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _defn: output_root,
+    )
+    controller = PristineRelaxationController(context, FakeRelaxationView())
+
+    assert controller.materialize(["row_1"]) == []
+    assert document.jobs == {}

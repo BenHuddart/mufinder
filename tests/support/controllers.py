@@ -21,9 +21,9 @@ live here:
   carriers a completion hands ``build_result`` and ``validate_artifacts``.
 - ``muon_host_document`` creates a project with a one-atom Si host structure.
 - ``job_with_status`` registers a job with a given status and returns its id.
-- ``FakeRelaxationView``, ``stub_pristine_deps`` and ``pristine_sync_definition``
-  stand in for the Pristine Relaxation widget, its dependency bundle and a
-  registered definition; the UEP tests compare their sync ranking with it.
+- ``FakeRelaxationView`` and ``pristine_sync_definition`` stand in for the
+  Pristine Relaxation widget and a registered definition; the UEP tests compare
+  their sync ranking with it.
 """
 
 from __future__ import annotations
@@ -41,7 +41,6 @@ from mufinder.services.job_file_cleanup import JobFileCleanup
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
-from mufinder.app.workflow_controllers.pristine_relaxation import PristineRelaxationDeps
 from mufinder.app.workflow_config_codecs import serialize_pristine_relaxation_config
 from mufinder.app.workflow_dialogs import SourceConfigureResult
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
@@ -231,18 +230,6 @@ class FakeRelaxationView:
 
     def set_form_state(self, state: dict) -> None:
         self.form_state = copy.deepcopy(state)
-
-
-def stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
-    base = dict(
-        deserialize_pristine_relaxation_config=lambda _payload: None,
-        serialize_pristine_relaxation_config=serialize_pristine_relaxation_config,
-        pristine_relaxation_form_config=lambda: None,
-        pristine_relaxation_row_signature=lambda _row: (),
-        expand_pristine_relaxation_jobs=lambda _definition, _config: None,
-    )
-    base.update(overrides)
-    return PristineRelaxationDeps(**base)
 
 
 def muon_host_document(service: ProjectService, tmp_path: Path):

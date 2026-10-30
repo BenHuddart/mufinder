@@ -8,6 +8,7 @@ the JSON persistence codec unchanged.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -28,6 +29,8 @@ from mufinder.app.workflow_config_codecs import (
     deserialize_convergence_config,
     deserialize_muon_relaxation_config,
     deserialize_pristine_relaxation_config,
+    normalized_parameter_values,
+    pristine_relaxation_row_signature,
     deserialize_uep_config,
     normalized_supercell_matrix,
     num_farms_from_extras,
@@ -528,3 +531,22 @@ def test_source_row_parameter_values_layers_the_row_over_its_source() -> None:
     }
     assert inherited["task"] == "GEOMETRYOPTIMIZATION"
     assert source_row_parameter_values(None, "site", {}) == {}
+
+
+def test_pristine_row_signature_tells_rows_apart_by_their_stored_settings() -> None:
+    row = PristineRelaxationRow(label="a", parameter_values={"geom_max_iter": 100})
+
+    assert pristine_relaxation_row_signature(row) == pristine_relaxation_row_signature(
+        replace(row, label="b")
+    )
+    for changed in (
+        replace(row, fix_all_cell=not row.fix_all_cell),
+        replace(row, supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 2))),
+        replace(row, parameter_values={"geom_max_iter": 200}),
+        replace(row, added_advanced=("fix_com",)),
+    ):
+        assert pristine_relaxation_row_signature(changed) != pristine_relaxation_row_signature(row)
+    # Values compare in their stored form, so a tuple equals the list it reloads as.
+    assert normalized_parameter_values({"grid": (1, 2, 3)}) == normalized_parameter_values(
+        {"grid": [1, 2, 3]}
+    )

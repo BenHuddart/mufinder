@@ -35,14 +35,15 @@ from mufinder.app.workflow_controllers.hyperfine_coupling import (
     HyperfineCouplingController,
     HyperfineCouplingDeps,
 )
+from mufinder.app.workflow_controllers.comparison_tables import (
+    ComparisonTablesController,
+    ComparisonTablesDeps,
+)
 from mufinder.app.workflow_controllers.muon_relaxation import (
     MuonRelaxationController,
     MuonRelaxationDeps,
 )
-from mufinder.app.workflow_controllers.pristine_relaxation import (
-    PristineRelaxationController,
-    PristineRelaxationDeps,
-)
+from mufinder.app.workflow_controllers.pristine_relaxation import PristineRelaxationController
 from mufinder.app.workflow_controllers.quantum_corrections import (
     QuantumCorrectionsController,
     QuantumCorrectionsDeps,
@@ -54,6 +55,8 @@ from mufinder.app.workflow_controllers.uep import (
 )
 
 __all__ = [
+    "ComparisonTablesController",
+    "ComparisonTablesDeps",
     "ControllerResult",
     "ConvergenceCutoffController",
     "ConvergenceCutoffDeps",
@@ -66,7 +69,6 @@ __all__ = [
     "MuonRelaxationController",
     "MuonRelaxationDeps",
     "PristineRelaxationController",
-    "PristineRelaxationDeps",
     "QuantumCorrectionsController",
     "QuantumCorrectionsDeps",
     "SweepConvergenceController",

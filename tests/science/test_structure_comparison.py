@@ -39,14 +39,9 @@ def test_compare_structures_builds_metric_payload() -> None:
         [DftComparisonInput(label="DFT-1", structure=dft, structure_id=dft.id)],
     )
 
-    assert result.definitions
     assert result.experimental_values["a"].display
     assert len(result.dft_columns) == 1
     assert result.dft_columns[0].values["a"].display == "5.2 (+4.00 %)"
-    assert [definition.key for definition in result.definitions][-2:] == [
-        "space_group",
-        "space_group_match",
-    ]
 
 
 def _rutile_unit() -> Structure:

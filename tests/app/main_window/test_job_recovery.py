@@ -17,6 +17,7 @@ from mufinder.app.failed_job_dialog import FailedJobAction
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+from mufinder.app.relaxation_types import PristineRelaxationRow
 from mufinder.app.main_window import MainWindow
 from mufinder.app.workflow_config_codecs import (
     deserialize_muon_relaxation_config,
@@ -545,7 +546,7 @@ def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row = PristineRelaxationRow(label="row_1", parameter_values={})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -817,7 +818,7 @@ def test_dismissed_row_submit_regenerates_job_inputs(
     window._on_pristine_relaxation_configured(
         main_window_module.PristineRelaxationConfig(
             name_prefix="pristine_relax",
-            rows=(main_window_module.PristineRelaxationRow(label="row_1", parameter_values={}),),
+            rows=(PristineRelaxationRow(label="row_1", parameter_values={}),),
         )
     )
     job = window._pristine_relaxation_controller.materialize(["row_1"])[0]
@@ -968,7 +969,7 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row = PristineRelaxationRow(label="row_1", parameter_values={})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -1136,9 +1137,7 @@ def _pristine_continue_fixture(tmp_path: Path):
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(
-        label="row_1", parameter_values={"geom_max_iter": 120}
-    )
+    row = PristineRelaxationRow(label="row_1", parameter_values={"geom_max_iter": 120})
     output_root = doc.project_root / "files" / "pristine_relaxation"
     definition = service.register_pristine_relaxation_definition(
         doc,

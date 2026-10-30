@@ -1,35 +1,26 @@
 """Pristine-relaxation workflow controller.
 
-Owns the submit → materialize → result → refresh cycle for the CASTEP pristine
-structural relaxation. This is the first migration onto
-:class:`~mufinder.app.workflow_controllers.base.WorkflowJobController` that gives
-:meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.build_result`
-its first genuine implementation: a completed ``castep_pristine_relaxation`` job
-contributes the relaxed lattice parameters to the result payload and creates the
-derived relaxed :class:`~mufinder.domain.models.Structure` on the document.
-
-The logic here is a behavior-preserving move of the former ``MainWindow`` methods
-``_materialize_pristine_relaxation_jobs``, ``_build_pristine_relaxation_states``,
-``_jobs_for_pristine_relaxation_labels``, ``_refresh_pristine_relaxation_rows``,
-and the ``castep_pristine_relaxation`` portion of ``_on_local_job_finished``'s
-result block. :meth:`PristineRelaxationController.validate_artifacts` fails a job
-whose geometry did not converge or whose ``-out.cell`` is missing, unparseable or
-older than the current run, through the
+Owns the submit, materialize, result and refresh cycle of the CASTEP pristine
+structural relaxation. A completed ``castep_pristine_relaxation`` job contributes
+the relaxed lattice parameters to the result payload and creates the derived
+relaxed :class:`~mufinder.domain.models.Structure` on the document.
+:meth:`PristineRelaxationController.validate_artifacts` fails a job whose geometry
+did not converge or whose ``-out.cell`` is missing, unparseable or older than the
+current run, through the
 :func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure` checks
 it shares with the muon-relaxation controller.
 
 Definition and job lookups come from the base class (:attr:`stage` and
-:attr:`active_key` drive them). Shared helpers that non-migrating code still
-calls remain on ``MainWindow`` and are reached via
-:class:`PristineRelaxationDeps` — the per-controller deps dataclass this module
-defines, following the shared-context + per-controller-deps + view pattern
-documented in :mod:`mufinder.app.workflow_controllers.base`.
+:attr:`active_key` drive them). The controller has no deps dataclass: everything
+it reads is on the shared
+:class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`, on its
+view or in the modules it imports.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import replace
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
@@ -46,9 +37,14 @@ from mufinder.services.definition_mappings import (
     sync_equivalent_mappings,
 )
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES
+from mufinder.services.source_candidates import (
+    CompletedPristineJob,
+    completed_pristine_relaxation_jobs,
+)
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 
 from mufinder.app.adapter_common import AdapterExpansion
+from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
 from mufinder.app.relaxation_types import PristineRelaxationConfig, RelaxationRunState
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_controllers.base import (
@@ -60,32 +56,12 @@ from mufinder.app.workflow_controllers.base import (
     relaxation_artifact_failure,
     upsert_job_derived_structure,
 )
+from mufinder.app.workflow_config_codecs import (
+    deserialize_pristine_relaxation_config,
+    pristine_relaxation_row_signature,
+    serialize_pristine_relaxation_config,
+)
 from mufinder.app.workflow_submission import effective_row_status
-
-
-@dataclass(frozen=True)
-class PristineRelaxationDeps:
-    """Pristine-relaxation-specific handles, late-bound to ``MainWindow`` helpers.
-
-    These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them there. The controller reaches them only through these required
-    callables. Workflow-specific dependencies like these never go in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
-    cross-workflow job/definition readers (``job_output_directory``,
-    ``job_seed_name``, ``run_for_job``, ``definition_output_directory``, the
-    energy/force readers) live there instead. The relaxed ``-out.cell`` is parsed
-    once on the runner worker thread and delivered to ``build_result`` via
-    :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts`, so no parse dep
-    is needed here.
-    """
-
-    deserialize_pristine_relaxation_config: Callable[[object], PristineRelaxationConfig | None]
-    serialize_pristine_relaxation_config: Callable[[PristineRelaxationConfig], dict[str, object]]
-    pristine_relaxation_form_config: Callable[[], PristineRelaxationConfig | None]
-    pristine_relaxation_row_signature: Callable[[object], tuple[object, ...]]
-    expand_pristine_relaxation_jobs: Callable[
-        [CalculationDefinition, PristineRelaxationConfig], AdapterExpansion | None
-    ]
 
 
 class PristineRelaxationController(WorkflowJobController):
@@ -99,12 +75,68 @@ class PristineRelaxationController(WorkflowJobController):
     def __init__(
         self,
         context: WorkflowControllerContext,
-        deps: PristineRelaxationDeps,
         view: PristineRelaxationWidget,
     ) -> None:
         super().__init__(context)
-        self._deps = deps
         self._view = view
+
+    # --- configuration and completed jobs ---
+
+    def form_config(self) -> PristineRelaxationConfig | None:
+        """The rows on the page, else the rows of the saved form, else ``None``."""
+
+        document = self._context.document()
+        if document is None:
+            return None
+        for form_state in (
+            self._view.collect_state(),
+            document.ui_state.get("pristine_relaxation_form", {}),
+        ):
+            if isinstance(form_state, dict):
+                config = deserialize_pristine_relaxation_config(form_state)
+                if config is not None and config.rows:
+                    return config
+        return None
+
+    def completed_jobs(self) -> list[CompletedPristineJob]:
+        """The completed relaxations of the active definition that produced a structure."""
+
+        document = self._context.document()
+        definition = self.active_definition()
+        if document is None or definition is None:
+            return []
+        config = deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return []
+        return completed_pristine_relaxation_jobs(
+            document, config.rows, self.build_states(), run_for_job=self._context.run_for_job
+        )
+
+    def _expand_jobs(
+        self, definition: CalculationDefinition, config: PristineRelaxationConfig
+    ) -> AdapterExpansion | None:
+        """Expand ``config`` on the definition's host; ``None`` when the host is gone.
+
+        A ``ValueError`` or ``StructureBridgeError`` from the expansion reaches
+        the caller.
+        """
+
+        document = self._context.document()
+        if document is None or not definition.input_structure_ids:
+            return None
+        host = document.structures.get(definition.input_structure_ids[0])
+        if host is None:
+            return None
+        return expand_pristine_relaxation_jobs(
+            host_structure=host,
+            config=config,
+            project_cutoff_energy=document.project.recommended_cutoff_energy,
+            project_kpoint_grid=document.project.recommended_kpoint_grid,
+            project_kpoint_reference_lattice=document.project.recommended_kpoint_lattice,
+            project_xc_functional=document.project.recommended_xc_functional,
+        )
 
     # --- definition maintenance ---
 
@@ -122,9 +154,9 @@ class PristineRelaxationController(WorkflowJobController):
             document,
             self.definitions(),
             definition,
-            deserialize=self._deps.deserialize_pristine_relaxation_config,
+            deserialize=deserialize_pristine_relaxation_config,
             signatures=lambda config: {
-                row.label: self._deps.pristine_relaxation_row_signature(row) for row in config.rows
+                row.label: pristine_relaxation_row_signature(row) for row in config.rows
             },
             priority=relaxation_mapping_job_priority,
         )
@@ -139,16 +171,16 @@ class PristineRelaxationController(WorkflowJobController):
             document,
             definition,
             labels,
-            deserialize=self._deps.deserialize_pristine_relaxation_config,
-            serialize=self._deps.serialize_pristine_relaxation_config,
+            deserialize=deserialize_pristine_relaxation_config,
+            serialize=serialize_pristine_relaxation_config,
             active_key=self.active_key,
         )
 
     # --- submission contract ---
     #
-    # normalize=str and the base-default ``is_ready`` (workflow_row_state_is_ready)
-    # exactly mirror the former ``_on_submit_*_from_pristine_relaxation`` handlers.
-    # There is no pre_submit_check and submission is a single group.
+    # Keys are row labels, readiness is the base default
+    # (workflow_row_state_is_ready), there is no pre_submit_check and submission
+    # is a single group.
 
     def normalize(self, value: object) -> str:
         return str(value)
@@ -159,7 +191,7 @@ class PristineRelaxationController(WorkflowJobController):
         if document is None:
             return states
 
-        form_config = self._deps.pristine_relaxation_form_config()
+        form_config = self.form_config()
         if form_config is not None:
             for row in form_config.rows:
                 states[row.label] = RelaxationRunState(status="ready")
@@ -168,7 +200,7 @@ class PristineRelaxationController(WorkflowJobController):
         if definition is None:
             return states
         self.sync_mappings(definition)
-        config = self._deps.deserialize_pristine_relaxation_config(
+        config = deserialize_pristine_relaxation_config(
             definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -180,8 +212,8 @@ class PristineRelaxationController(WorkflowJobController):
                 definition_row
                 for row in form_config.rows
                 if (definition_row := definition_rows_by_label.get(row.label)) is not None
-                and self._deps.pristine_relaxation_row_signature(row)
-                == self._deps.pristine_relaxation_row_signature(definition_row)
+                and pristine_relaxation_row_signature(row)
+                == pristine_relaxation_row_signature(definition_row)
             ]
         else:
             rows_for_status = list(config.rows)
@@ -255,7 +287,7 @@ class PristineRelaxationController(WorkflowJobController):
             return []
         self.sync_mappings(definition)
 
-        config = self._deps.deserialize_pristine_relaxation_config(
+        config = deserialize_pristine_relaxation_config(
             definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -268,7 +300,7 @@ class PristineRelaxationController(WorkflowJobController):
             return []
 
         try:
-            expansion = self._deps.expand_pristine_relaxation_jobs(definition, config)
+            expansion = self._expand_jobs(definition, config)
         except (ValueError, StructureBridgeError):
             return []
         if expansion is None:
@@ -338,7 +370,7 @@ class PristineRelaxationController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None:
             return False
-        config = self._deps.deserialize_pristine_relaxation_config(
+        config = deserialize_pristine_relaxation_config(
             definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -365,7 +397,7 @@ class PristineRelaxationController(WorkflowJobController):
             else row
             for row in config.rows
         )
-        definition.parameters["configuration"] = self._deps.serialize_pristine_relaxation_config(
+        definition.parameters["configuration"] = serialize_pristine_relaxation_config(
             replace(config, rows=rows)
         )
 
@@ -444,17 +476,16 @@ class PristineRelaxationController(WorkflowJobController):
         A pure preview: expands the row's ``JobSpec`` with ``parameter_values``/
         ``added_advanced`` substituted for its currently-stored values and
         renders it, without persisting anything or touching the filesystem.
-        Powers the Continue-relaxation dialog's live keyword diff — there is no
+        Powers the Continue-relaxation dialog's live keyword diff: there is no
         ``.param`` reader in ``castep_io``, so the diff is computed by
-        expanding and re-rendering rather than parsing (see the warm-start
-        plan's diff-by-re-render note). Returns ``""`` when there is no active
-        definition, no matching row, or expansion fails.
+        expanding and re-rendering rather than parsing. Returns ``""`` when
+        there is no active definition, no matching row, or expansion fails.
         """
 
         definition = self.active_definition()
         if definition is None:
             return ""
-        config = self._deps.deserialize_pristine_relaxation_config(
+        config = deserialize_pristine_relaxation_config(
             definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -474,9 +505,7 @@ class PristineRelaxationController(WorkflowJobController):
             for row in config.rows
         )
         try:
-            expansion = self._deps.expand_pristine_relaxation_jobs(
-                definition, replace(config, rows=rows)
-            )
+            expansion = self._expand_jobs(definition, replace(config, rows=rows))
         except (ValueError, StructureBridgeError):
             return ""
         if expansion is None:
@@ -499,10 +528,9 @@ class PristineRelaxationController(WorkflowJobController):
         the edit into the widget form; ``ProjectService.prepare_job_continuation``
         returns the row's job to ``DEFINED`` while preserving
         ``remote_directory``; :meth:`materialize` rewrites the job's directory
-        in place from the new parameters (the existing DEFINED path — no new
-        ``Job`` is minted, ``job_ids_by_label`` is untouched, matching finding 1
-        of the warm-start plan); ``record_job_continuation`` then appends the
-        provenance milestone. Submission and view refresh are the caller's
+        in place from the new parameters (the existing DEFINED path: no new
+        ``Job`` is minted and ``job_ids_by_label`` is untouched);
+        ``record_job_continuation`` then appends the provenance milestone. Submission and view refresh are the caller's
         responsibility: they need the job's original execution target and
         cluster-connection/dialog state this controller does not have.
 
@@ -580,10 +608,9 @@ class PristineRelaxationController(WorkflowJobController):
         worker thread; this controller consumes the carried cell rather than
         re-reading disk.
 
-        Output files are **not** contributed here: the ``_on_local_job_finished``
-        call site already passes ``_output_files_for_job(job)`` for every job, and
-        that list already includes ``{seed_name}-out.cell``. Adding them again
-        would duplicate entries.
+        Output files are **not** contributed here: the shared completion path
+        records every job's output files, ``{seed_name}-out.cell`` included.
+        Adding them again would duplicate entries.
 
         The derived structure is created on first completion and **refreshed in
         place** on every later one, so a continued job keeps a single, stable
@@ -632,4 +659,4 @@ class PristineRelaxationController(WorkflowJobController):
         self._view.set_runtime_states(self.build_states())
 
 
-__all__ = ["PristineRelaxationController", "PristineRelaxationDeps"]
+__all__ = ["PristineRelaxationController"]

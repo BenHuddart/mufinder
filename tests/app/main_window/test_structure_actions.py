@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from ase import Atoms
@@ -12,6 +11,7 @@ from ase.io import write as ase_write
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
+from mufinder.app.workflow_controllers.comparison_tables import comparison_route
 from mufinder.domain.models import ComparisonTable, Structure
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
@@ -105,38 +105,16 @@ def test_generate_comparison_uses_selected_job_labels_for_dft_columns(
         parameter_values={},
     )
 
-    class FakeDialog:
-        DialogCode = SimpleNamespace(Accepted=1)
-
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def exec(self) -> int:
-            return self.DialogCode.Accepted
-
-        def selected_job_ids(self) -> list[UUID]:
-            return [completed.job_id]
-
-        def table_label(self) -> str:
-            return "Comparison 1"
-
-    monkeypatch.setattr(window, "_completed_pristine_relaxation_jobs", lambda: [completed])
-    monkeypatch.setattr(main_window_module, "ComparisonJobDialog", FakeDialog)
-    monkeypatch.setattr(window, "_sync_comparison_table_views", lambda: None)
-    monkeypatch.setattr(window, "_populate_project_tree", lambda: None)
-    monkeypatch.setattr(window, "_set_active_route", lambda route: None)
+    monkeypatch.setattr(
+        window._pristine_relaxation_controller, "completed_jobs", lambda: [completed]
+    )
     monkeypatch.setattr(
         main_window_module,
-        "compare_structures",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            definitions=(),
-            experimental_values={},
-            dft_columns=(),
-            warnings=(),
-        ),
+        "run_comparison_job_dialog",
+        lambda jobs, default_label, parent: ([completed.job_id], default_label),
     )
 
-    window._on_generate_comparison_table_requested()
+    window._pristine_relaxation_view.generate_comparison_requested.emit()
 
     tables = list(window._document.comparison_tables.values())
     assert len(tables) == 1
@@ -173,16 +151,16 @@ def test_comparison_table_title_edit_updates_project_tree_and_persists(
     service.add_comparison_table(doc, table)
     service.save_project(doc)
     window._document = doc
-    window._sync_comparison_table_views()
+    window._comparison_tables_controller.sync_view()
     window._populate_project_tree()
-    window._set_active_route(window._comparison_route(table.id))
+    window._set_active_route(comparison_route(table.id))
 
-    widget = window._comparison_widgets[table.id]
+    widget = window._comparison_tables_view.table_widget(table.id)
     widget._title_edit.setText("  Renamed title  ")
     widget._title_edit.editingFinished.emit()
 
     assert doc.comparison_tables[table.id].label == "Renamed title"
-    tree_item = window._find_tree_item_by_route(window._comparison_route(table.id))
+    tree_item = window._find_tree_item_by_route(comparison_route(table.id))
     assert tree_item is not None
     assert tree_item.text(0) == "Renamed title"
     reloaded = service.load_project(doc.project_root)

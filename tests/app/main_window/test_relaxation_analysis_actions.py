@@ -227,7 +227,9 @@ def test_the_displacement_reference_defaults_to_the_newest_pristine_relaxation(
     newer = pristine("newer", datetime(2026, 3, 1, tzinfo=UTC))
     free_cell = pristine("free", datetime(2026, 5, 1, tzinfo=UTC))
     monkeypatch.setattr(
-        window, "_completed_pristine_relaxation_jobs", lambda: [older, newer, free_cell]
+        window._pristine_relaxation_controller,
+        "completed_jobs",
+        lambda: [older, newer, free_cell],
     )
     options = [
         (host_id, "Host structure", False),

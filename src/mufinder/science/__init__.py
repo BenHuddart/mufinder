@@ -145,7 +145,6 @@ from mufinder.science.structure_metrics import (
     MetricDefinition,
     MetricValue,
     metric_definitions,
-    metric_info_text,
 )
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.supercell_suggestion import (
@@ -290,7 +289,6 @@ __all__ = [
     "MetricDefinition",
     "MetricValue",
     "metric_definitions",
-    "metric_info_text",
     "build_supercell_structure",
     "DISPLAY_DISTANCE_ANGSTROM",
     "SupercellCandidate",

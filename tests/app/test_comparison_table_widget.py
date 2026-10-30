@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 from mufinder.app.comparison_export import export_comparison_csv
-from mufinder.app.comparison_table_widget import COMPARISON_METRICS_URL, ComparisonTableWidget
+from mufinder.app.comparison_table_widget import (
+    COMPARISON_METRICS_URL,
+    ComparisonTablesPage,
+    ComparisonTableWidget,
+)
 from mufinder.branding import DOCUMENTATION_URL
 from mufinder.domain.models import ComparisonTable
 from mufinder.science.structure_comparison import (
@@ -214,7 +219,7 @@ def test_metric_rows_are_labelled_items_with_a_tooltip_and_no_info_button(qapp) 
         "Space group",
         "Same space group",
     ]
-    meanings = {definition.label: definition.meaning for definition in metric_definitions()}
+    meanings = {definition.label: definition.tooltip for definition in metric_definitions()}
     for row in range(grid.rowCount()):
         assert grid.cellWidget(row, 0) is None
         item = grid.item(row, 0)
@@ -326,7 +331,6 @@ def _computed_table(result: ComparisonResult) -> ComparisonTable:
     return ComparisonTable(
         label="Computed",
         result_data={
-            "metric_definitions": [{"key": definition.key} for definition in result.definitions],
             "experimental_values": payload(result.experimental_values),
             "dft_columns": [
                 {"label": column.label, "values": payload(column.values)}
@@ -414,3 +418,96 @@ def test_csv_export_of_supercell_columns_matches_the_table(qapp, tmp_path: Path)
     for definition in metric_definitions():
         label = f"{definition.label} ({definition.unit})" if definition.unit else definition.label
         assert rows[definition.label] == _row_texts(widget, label), definition.key
+
+
+def _old_format_table() -> ComparisonTable:
+    """A table saved with the whole help text of each metric in ``metric_definitions``."""
+
+    return ComparisonTable(
+        label="Old comparison",
+        result_data={
+            "metric_definitions": [
+                {
+                    "key": "a",
+                    "label": "Stale label",
+                    "unit": "Ang",
+                    "group": "Stale group",
+                    "meaning": "Stale meaning.",
+                    "calculation": "Stale calculation.",
+                    "interpretation": "Stale interpretation.",
+                    "caveats": "Stale caveats.",
+                    "physics": "Stale physics.",
+                    "method": "Stale method.",
+                    "equation": "a = b",
+                    "symbols": [{"symbol": "a", "meaning": "Stale."}],
+                }
+            ],
+            "experimental_values": {"a": {"display": "5", "value": 5.0}},
+            "dft_columns": [
+                {"label": "DFT (a)", "values": {"a": {"display": "5.1", "value": 5.1}}}
+            ],
+            "parameter_differences": [],
+            "warnings": [],
+        },
+    )
+
+
+def test_saved_table_with_prose_definitions_shows_the_current_definition(qapp) -> None:
+    current = next(definition for definition in metric_definitions() if definition.key == "a")
+
+    widget = ComparisonTableWidget(_old_format_table())
+    grid = widget._grid
+
+    group_item, metric_item = grid.item(0, 0), grid.item(1, 0)
+    assert group_item.text() == current.group
+    assert metric_item.text() == f"{current.label} ({current.unit})"
+    assert metric_item.toolTip() == current.tooltip
+    assert grid.item(1, 2).text() == "5.1"
+
+
+def test_values_only_table_shows_every_metric_it_holds_in_registry_order(qapp) -> None:
+    table = ComparisonTable(
+        label="Values only",
+        result_data={
+            "experimental_values": {
+                "rmsd": {"display": "0", "value": 0.0},
+                "a": {"display": "5", "value": 5.0},
+                "unknown_key": {"display": "x", "value": "x"},
+            },
+            "dft_columns": [],
+            "parameter_differences": [],
+            "warnings": [],
+        },
+    )
+
+    assert _metric_labels(ComparisonTableWidget(table)) == ["a (Å)", "RMSD (Å)"]
+
+
+def test_page_holds_one_widget_per_table_and_relays_their_requests(qapp) -> None:
+    first, second = ComparisonTable(label="First"), ComparisonTable(label="Second")
+    page = ComparisonTablesPage()
+    deleted: list[object] = []
+    renamed: list[tuple[object, str]] = []
+    page.delete_requested.connect(deleted.append)
+    page.title_changed.connect(lambda table_id, title: renamed.append((table_id, title)))
+
+    page.set_tables([first, second])
+
+    assert page.count() == 2
+    assert page.show_table(second.id) is True
+    assert page.currentWidget() is page.table_widget(second.id)
+    assert page.show_table(uuid4()) is False
+    assert page.currentWidget() is page.table_widget(second.id)
+
+    page.table_widget(first.id).delete_requested.emit(first.id)
+    page.table_widget(second.id).title_changed.emit(second.id, "Renamed")
+    assert deleted == [first.id]
+    assert renamed == [(second.id, "Renamed")]
+
+    page.set_table_label(first.id, "New label")
+    assert page.table_widget(first.id)._title_edit.text() == "New label"
+    page.set_table_label(uuid4(), "Ignored")
+
+    page.set_tables([second])
+    assert page.count() == 1
+    assert page.table_widget(first.id) is None

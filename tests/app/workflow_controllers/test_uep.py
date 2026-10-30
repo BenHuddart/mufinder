@@ -18,7 +18,6 @@ from mufinder.app.workflow_controllers.pristine_relaxation import PristineRelaxa
 from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.app.workflow_controllers.uep import UepController, UepDeps
 from mufinder.app.workflow_config_codecs import (
-    deserialize_pristine_relaxation_config,
     deserialize_uep_config,
     serialize_uep_config,
 )
@@ -32,7 +31,6 @@ from tests.support.controllers import (
     muon_host_document,
     no_artifacts,
     pristine_sync_definition,
-    stub_pristine_deps,
 )
 
 
@@ -376,9 +374,6 @@ def test_uep_and_pristine_sync_rank_a_defined_job_against_a_failed_one(tmp_path:
     )
     pristine = PristineRelaxationController(
         context,
-        stub_pristine_deps(
-            deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config
-        ),
         FakeRelaxationView(),
     )
 

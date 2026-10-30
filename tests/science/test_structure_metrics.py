@@ -1,4 +1,4 @@
-"""Tests for comparison metric definitions, info text and value builders."""
+"""Tests for comparison metric definitions and value builders."""
 
 from __future__ import annotations
 
@@ -10,12 +10,10 @@ from mufinder.science.atom_matching import AtomMatching, match_structures
 from mufinder.science.supercell_matching import tile_to_supercell
 from mufinder.science.symmetry_analysis import SpaceGroupResult
 from mufinder.science.structure_metrics import (
-    MetricDefinition,
     MetricValue,
     dft_metric_values,
     experimental_metric_values,
     metric_definitions,
-    metric_info_text,
 )
 from tests.support.structures import QUARTER_DIAGONAL, host_structure
 
@@ -40,37 +38,7 @@ def _empty_matching() -> AtomMatching:
     return AtomMatching(pairs=(), unmatched_experimental=(0, 1), unmatched_dft=(0, 1))
 
 
-def _full_definition() -> MetricDefinition:
-    return MetricDefinition(
-        key="demo",
-        label="Demo",
-        unit="Ang",
-        group="Demo Group",
-        meaning="A demo meaning.",
-        calculation="calc",
-        interpretation="An interpretation.",
-        caveats="Some caveats.",
-        physics="The physics line.",
-        method="The method line.",
-        equation=r"x = y",
-        symbols=((r"x", "first"), (r"y", "second")),
-    )
-
-
-def _minimal_definition() -> MetricDefinition:
-    return MetricDefinition(
-        key="bare",
-        label="Bare",
-        unit="",
-        group="Bare Group",
-        meaning="Bare meaning.",
-        calculation="calc",
-        interpretation="Bare interpretation.",
-        caveats="Bare caveats.",
-    )
-
-
-# metric_definitions and metric_info_text
+# metric_definitions
 
 
 def test_metric_definitions_are_lattice_displacement_and_symmetry_rows() -> None:
@@ -105,11 +73,11 @@ def test_metric_definitions_are_lattice_displacement_and_symmetry_rows() -> None
     ]
 
 
-def test_metric_meanings_are_one_line_tooltip_sentences() -> None:
+def test_metric_tooltips_are_one_line_sentences() -> None:
     for definition in metric_definitions():
-        assert definition.meaning.endswith("."), definition.key
-        assert "\n" not in definition.meaning
-        assert definition.meaning[0].isupper()
+        assert definition.tooltip.endswith("."), definition.key
+        assert "\n" not in definition.tooltip
+        assert definition.tooltip[0].isupper()
 
 
 def test_dropped_metrics_are_not_computed() -> None:
@@ -127,44 +95,6 @@ def test_dropped_metrics_are_not_computed() -> None:
         "topology_preserved",
     ):
         assert dropped not in keys
-
-
-def test_metric_info_text_lists_every_populated_section_in_order() -> None:
-    text = metric_info_text(_full_definition())
-
-    headers = [
-        "Meaning:",
-        "Physics:",
-        "Method:",
-        "Equation (LaTeX):",
-        "Symbols:",
-        "Interpretation:",
-        "Caveats:",
-    ]
-    positions = [text.index(header) for header in headers]
-    assert positions == sorted(positions)
-    # Symbols are rendered as a bullet list of "- symbol: meaning".
-    assert "- x: first" in text
-    assert "- y: second" in text
-    # Sections are separated by a blank line.
-    assert text.count("\n\n") == len(headers) - 1
-
-
-def test_metric_info_text_omits_absent_optional_sections() -> None:
-    text = metric_info_text(_minimal_definition())
-
-    assert (
-        text
-        == "Meaning:\nBare meaning.\n\nInterpretation:\nBare interpretation.\n\nCaveats:\nBare caveats."
-    )
-
-
-def test_metric_info_text_round_trips_real_definitions() -> None:
-    for definition in metric_definitions():
-        text = metric_info_text(definition)
-        assert text.startswith("Meaning:")
-        assert "Interpretation:" in text
-        assert "Caveats:" in text
 
 
 def test_metric_value_dataclass_defaults() -> None:
