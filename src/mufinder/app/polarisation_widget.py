@@ -123,8 +123,9 @@ class PolarisationWidget(QWidget):
         self._document: ProjectDocument | None = None
         self._sources: list[FieldSource] = []
         self._restoring = False
-        # Decoded simulations by id, each with the id of the stored record it was
-        # decoded from; an entry is dropped once its record changes or goes.
+        # The selected simulation, decoded, by id, with the id of the stored record
+        # it was decoded from; it is dropped once its record changes or goes, or
+        # another simulation is decoded.
         self._record_cache: dict[str, tuple[str, PolarisationSimulationRecord]] = {}
         # The stored record id of each listed simulation.
         self._result_ids: dict[str, str] = {}
@@ -232,6 +233,7 @@ class PolarisationWidget(QWidget):
 
         if document is not self._document:
             self._record_cache.clear()
+            self._drawn = None
         self._document = document
         self._refresh_sources()
         if form_state is None:
@@ -781,7 +783,7 @@ class PolarisationWidget(QWidget):
             return cached[1]
         record = polarisation_simulation(self._document, simulation_id)
         if record is not None:
-            self._record_cache[simulation_id] = (result_id, record)
+            self._record_cache = {simulation_id: (result_id, record)}
         return record
 
     def _on_simulation_selected(self) -> None:

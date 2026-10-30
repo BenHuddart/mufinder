@@ -13,8 +13,8 @@ source's weight is shared equally by the equivalent positions it holds.
 simulation on a worker thread: :func:`prepare_polarisation_simulation` reads
 everything the simulation needs from the project into a
 :class:`PolarisationSimulationRequest`, and
-:func:`run_prepared_polarisation_simulation` simulates the request without
-reading the project, so the project can change, or the run be abandoned,
+:func:`run_prepared_polarisation_simulation` simulates the request, which
+holds its own copy of the fields, without reading the project, so the project can change, or the run be abandoned,
 while it computes.
 
 Each simulation is a ``muon_polarisation`` record whose ``data["owner"]`` is
@@ -194,19 +194,22 @@ class SimulationSummary:
 class PolarisationSimulationRequest:
     """What one simulation reads, taken from the project when it was asked for.
 
-    ``sources`` name the field record each source is simulated from, and
-    ``field_records`` hold those records' data, in the same order. A
-    recalculation replaces a field record rather than editing it, so the
-    request keeps the fields it was made with. ``host`` is a copy of the
-    active host structure.
+    ``sources`` name the field record each source is simulated from;
+    ``field_results`` and ``site_sources`` hold each record's decoded fields
+    and site source, in the same order, so the request shares no data with
+    the project. ``lattice_vectors`` are the host's; ``host`` is a copy of the
+    host structure when the settings sum nuclear widths, and ``None``
+    otherwise.
     """
 
     simulation_id: str
     title: str
     settings: PolarisationSettings
     sources: tuple[SimulationSource, ...]
-    field_records: tuple[Mapping[str, Any], ...]
-    host: Structure
+    field_results: tuple[tuple[FieldResult, ...], ...]
+    site_sources: tuple[str | None, ...]
+    lattice_vectors: tuple[tuple[float, float, float], ...]
+    host: Structure | None
 
 
 def simulation_owner(simulation_id: str) -> str:
@@ -285,7 +288,8 @@ def prepare_polarisation_simulation(
         raise PolarisationError("a field result is selected more than once")
     titles = _source_titles(document)
     used: list[SimulationSource] = []
-    records: list[Mapping[str, Any]] = []
+    field_results: list[tuple[FieldResult, ...]] = []
+    site_sources: list[str | None] = []
     for source in sources:
         record = (
             magnetic_field_result(document, source.owner, MAGNETIC_FIELD_RESULT_TYPE)
@@ -304,14 +308,18 @@ def prepare_polarisation_simulation(
                 weight=float(source.weight),
             )
         )
-        records.append(record.data if isinstance(record.data, Mapping) else {})
+        data = record.data if isinstance(record.data, Mapping) else {}
+        field_results.append(tuple(_field_results(data)))
+        site_sources.append(field_result_site_source(data))
     return PolarisationSimulationRequest(
         simulation_id=simulation_id or uuid4().hex,
         title=title.strip() or "Simulation",
         settings=settings,
         sources=tuple(used),
-        field_records=tuple(records),
-        host=copy.deepcopy(host),
+        field_results=tuple(field_results),
+        site_sources=tuple(site_sources),
+        lattice_vectors=tuple((float(x), float(y), float(z)) for x, y, z in host.lattice_vectors),
+        host=copy.deepcopy(host) if settings.sigma_from_nuclear_widths else None,
     )
 
 
@@ -322,18 +330,16 @@ def run_prepared_polarisation_simulation(
 
     settings = request.settings
     host = request.host
+    site_sources = request.site_sources
     results: list[FieldResult] = []
     weights: list[float] = []
-    site_sources: list[str | None] = []
-    for source, data in zip(request.sources, request.field_records, strict=True):
-        entries = _field_results(data)
+    for source, entries in zip(request.sources, request.field_results, strict=True):
         results.extend(entries)
         weights.extend([float(source.weight) / len(entries)] * len(entries))
-        site_sources.append(field_result_site_source(data))
     if sum(weights) <= 0.0:
         raise PolarisationError("at least one source needs a positive weight")
     tensors = None
-    if settings.sigma_from_nuclear_widths:
+    if settings.sigma_from_nuclear_widths and host is not None:
         # Equivalent translations of one site share a position: sum it once.
         by_position: dict[tuple[float, ...], NuclearWidthTensors] = {}
         tensors = []
@@ -347,7 +353,7 @@ def run_prepared_polarisation_simulation(
     simulation = simulate_polarisation(
         settings,
         results,
-        lattice_vectors=host.lattice_vectors,
+        lattice_vectors=request.lattice_vectors,
         site_weights=weights,
         nuclear_width_tensors=tensors,
     )
