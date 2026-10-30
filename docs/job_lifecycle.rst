@@ -728,9 +728,10 @@ The per-job document mutation happens synchronously, but the **heavy dashboard
 work is coalesced**: refreshing the journal, the jobs table (which recreates
 per-row action buttons), and the workflow views, plus the full-document
 autosave. The journal treats the provenance stream as append-only: a flush that
-added no records leaves it alone, new records append cards rather than
-rebuilding it, and while the Journal page is not shown it is only marked stale
-and catches up when it is shown. Lifecycle handlers *request* a dashboard flush
+added no records leaves it alone, new records touch only the cards they add or
+change (a completion updates its batch's card) rather than rebuilding every
+card, and while the Journal page is not shown it is only marked stale and
+catches up when it is shown. Lifecycle handlers *request* a dashboard flush
 instead of refreshing and saving inline; the pending flush runs on a timer and
 also before save, close and project switch.
 

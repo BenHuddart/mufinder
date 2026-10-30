@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +17,6 @@ from tests.support.journal import generation_record
 from mufinder.services.journal import (
     build_journal,
     export_journal,
-    extend_journal,
     render_journal_markdown,
     render_journal_text,
     stamp_label,
@@ -332,29 +331,6 @@ def test_symmetry_unavailable_entry_warns_with_the_recorded_reason() -> None:
     assert entry.body == record.description
 
 
-def test_extend_journal_matches_a_full_build_of_the_grown_stream() -> None:
-    records = [generation_record(9, day=21), generation_record(10, day=21)]
-    journal = build_journal("Stream", records)
-    added = [
-        generation_record(11, day=21),
-        ProvenanceRecord(
-            timestamp=datetime(2026, 4, 22, 9, 0, tzinfo=UTC), action="not_journalled"
-        ),
-        generation_record(10, day=22),
-    ]
-
-    extended = extend_journal(journal, added)
-
-    assert extended == build_journal("Stream", records + added)
-    assert extend_journal(journal, []) is journal
-
-
-def test_extend_journal_refuses_a_record_older_than_the_last_entry() -> None:
-    journal = build_journal("Stream", [generation_record(9, day=22)])
-
-    assert extend_journal(journal, [generation_record(9, day=21)]) is None
-
-
 def _muon_sites_record(action: str, **fields: object) -> ProvenanceRecord:
     return ProvenanceRecord(
         timestamp=datetime(2026, 10, 30, 9, 0, tzinfo=UTC),
@@ -607,14 +583,16 @@ def test_an_unknown_charge_state_is_not_named_and_a_nameless_job_starts_a_senten
 
 
 @pytest.mark.parametrize(
-    ("action", "title"),
+    ("action", "title", "body"),
     [
-        ("job_failed", "Muonium relaxation failed"),
-        ("job_stopped", "Muonium relaxation stopped"),
-        ("job_cancelled", "Muonium relaxation cancelled"),
+        ("job_failed", "Muonium relaxation failed", "failed on SCARF"),
+        ("job_stopped", "Muonium relaxation stopped", "stopped on SCARF"),
+        ("job_cancelled", "Muonium relaxation cancelled", "was cancelled on SCARF"),
     ],
 )
-def test_every_outcome_of_a_muon_relaxation_names_its_charge_state(action: str, title: str) -> None:
+def test_every_outcome_of_a_muon_relaxation_names_its_charge_state(
+    action: str, title: str, body: str
+) -> None:
     record = _job_record(
         action,
         WorkflowStage.MUON_RELAXATION,
@@ -627,7 +605,7 @@ def test_every_outcome_of_a_muon_relaxation_names_its_charge_state(action: str, 
     entry = build_journal("Mu", [record]).days[0].entries[0]
 
     assert entry.title == title
-    assert entry.body == "Muonium relaxation Random Site 2 finished on SCARF."
+    assert entry.body == f"Muonium relaxation Random Site 2 {body}."
 
 
 def test_a_job_is_described_by_its_workflow_and_row_label() -> None:
@@ -858,3 +836,501 @@ def test_stamp_label_names_each_stamp_kind() -> None:
         "Failed",
         "Entry",
     ]
+
+
+def _at(hour: int, day: int = 21) -> datetime:
+    return datetime(2026, 4, day, hour, 0, tzinfo=UTC)
+
+
+def _submission(job_ids: list, *, hour: int = 9, day: int = 21) -> ProvenanceRecord:
+    """A positive-muon relaxation batch of ``Site n``, as the service records it."""
+
+    return ProvenanceRecord(
+        timestamp=_at(hour, day),
+        action="submit_jobs",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        parameters={
+            "execution_target": "local",
+            "job_count": len(job_ids),
+            "job_labels": [f"Site {n}" for n in range(1, len(job_ids) + 1)],
+            "charge_state": "positive_muon",
+            "jobs": [
+                {
+                    "job_id": str(job_id),
+                    "label": f"Site {n}",
+                    "row_label": f"Site {n}",
+                    "charge_state": "positive_muon",
+                }
+                for n, job_id in enumerate(job_ids, start=1)
+            ],
+        },
+        output_entity_ids=list(job_ids),
+    )
+
+
+def _outcome(
+    action: str, job_id, *, label: str = "Site 1", hour: int = 10, day: int = 21, **parameters
+) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=_at(hour, day),
+        action=action,
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        parameters={
+            "job_label": label,
+            "row_label": label,
+            "charge_state": "positive_muon",
+            "execution_target": "local",
+            **parameters,
+        },
+        job_id=job_id,
+    )
+
+
+def _titles(journal) -> list[str]:
+    return [entry.title for day in journal.days for entry in day.entries]
+
+
+def test_a_batch_of_ten_completions_is_one_entry_with_a_row_per_job() -> None:
+    job_ids = [uuid4() for _ in range(10)]
+    records = [_submission(job_ids)] + [
+        _outcome(
+            "job_completed",
+            job_id,
+            label=f"Site {n}",
+            result_total_energy=-100.0 - n,
+            result_max_force=0.01,
+            warnings_count=0,
+        )
+        for n, job_id in enumerate(job_ids, start=1)
+    ]
+
+    journal = build_journal("Batch", records)
+    entries = journal.days[0].entries
+
+    assert len(journal.days) == 1
+    assert len(entries) == 1
+    assert entries[0].title == "Muon relaxations launched: positive muon"
+    assert entries[0].stamp_kind == "milestone"
+    assert entries[0].body == (
+        "Submitted 10 jobs to run on this computer: Site 1, Site 2, Site 3, and 7 more. "
+        "10 of 10 completed."
+    )
+    assert [row.label for row in entries[0].job_rows] == [f"Site {n}" for n in range(1, 11)]
+    assert {row.status for row in entries[0].job_rows} == {"completed"}
+    assert entries[0].job_rows[1].total_energy == -102.0
+    assert entries[0].job_rows[1].max_force == 0.01
+    assert entries[0].job_rows[1].warnings_count == 0
+    assert entries[0].job_rows[1].failure_reason is None
+
+
+def test_a_mixed_batch_keeps_a_card_for_each_failure_with_its_reason() -> None:
+    job_ids = [uuid4() for _ in range(3)]
+    records = [
+        _submission(job_ids),
+        _outcome("job_completed", job_ids[0], label="Site 1"),
+        _outcome(
+            "job_failed",
+            job_ids[1],
+            label="Site 2",
+            hour=11,
+            failure_reason="walltime",
+            error_message="Slurm reported TIMEOUT",
+        ),
+        _outcome("job_completed", job_ids[2], label="Site 3", hour=12),
+    ]
+
+    entries = build_journal("Mixed", records).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        "Positive muon relaxation failed",
+    ]
+    assert entries[0].body.endswith("Site 1, Site 2, Site 3. 2 completed, 1 failed.")
+    assert entries[1].stamp_kind == "danger"
+    assert entries[1].linked_job_id == job_ids[1]
+    assert entries[1].body == (
+        "Positive muon relaxation Site 2 failed on this computer. "
+        "The scheduler stopped the job when it reached its walltime limit. "
+        "Slurm reported TIMEOUT."
+    )
+    failed_row = entries[0].job_rows[1]
+    assert failed_row.status == "failed"
+    assert failed_row.failure_reason == (
+        "The scheduler stopped the job when it reached its walltime limit. Slurm reported TIMEOUT."
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "title", "stamp"),
+    [
+        ("job_stopped", "Positive muon relaxation stopped", "warning"),
+        ("job_cancelled", "Positive muon relaxation cancelled", "warning"),
+    ],
+)
+def test_stopped_and_cancelled_jobs_keep_their_own_cards(
+    action: str, title: str, stamp: str
+) -> None:
+    job_id = uuid4()
+
+    entries = (
+        build_journal("Own", [_submission([job_id]), _outcome(action, job_id)]).days[0].entries
+    )
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        title,
+    ]
+    assert entries[1].stamp_kind == stamp
+    assert entries[0].body.endswith(f"1 of 1 {title.rsplit(' ', 1)[1]}.")
+
+
+def test_a_batch_still_running_says_how_far_it_has_got() -> None:
+    job_ids = [uuid4() for _ in range(4)]
+    submitted = _submission(job_ids)
+
+    def body(*outcomes: ProvenanceRecord) -> str:
+        return build_journal("Running", [submitted, *outcomes]).days[0].entries[0].body
+
+    assert body().endswith("Site 3, and 1 more.")
+    assert body(_outcome("job_completed", job_ids[0])).endswith(" 1 of 4 completed.")
+    assert body(
+        _outcome("job_completed", job_ids[0]),
+        _outcome("job_failed", job_ids[1], label="Site 2"),
+    ).endswith(" 2 of 4 finished: 1 completed, 1 failed.")
+
+    rows = build_journal("Running", [submitted]).days[0].entries[0].job_rows
+    assert {row.status for row in rows} == {"submitted"}
+
+
+def test_a_batch_finishing_on_a_later_day_adds_a_finished_line_under_that_day() -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [
+        _submission(job_ids),
+        _outcome("job_completed", job_ids[0], hour=22),
+        ProvenanceRecord(
+            timestamp=_at(8, 22),
+            action="set_recommended_xc_functional",
+            parameters={"recommended_xc_functional": "PBE"},
+        ),
+        _outcome("job_completed", job_ids[1], label="Site 2", hour=9, day=22),
+    ]
+
+    journal = build_journal("Later", records)
+
+    assert [day.date_label for day in journal.days] == [
+        "Tuesday 21 April 2026",
+        "Wednesday 22 April 2026",
+    ]
+    assert _titles(journal) == [
+        "Muon relaxations launched: positive muon",
+        "Default XC functional set",
+        "Finished: 2 of 2 completed",
+    ]
+    launch = journal.days[0].entries[0]
+    assert launch.body.endswith("2 of 2 completed.")
+    line = journal.days[1].entries[-1]
+    assert line.stamp_kind == "success"
+    assert line.workflow_label == "Muon Relaxations"
+    assert line.body == "Muon relaxations launched: positive muon on Tuesday 21 April 2026."
+    assert line.job_rows == ()
+
+
+def test_a_finished_line_with_failures_asks_for_attention_after_their_card() -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [
+        _submission(job_ids),
+        _outcome("job_completed", job_ids[0], hour=12),
+        _outcome("job_failed", job_ids[1], label="Site 2", hour=9, day=22),
+    ]
+
+    entries = build_journal("Later", records).days[1].entries
+
+    assert [(entry.title, entry.stamp_kind) for entry in entries] == [
+        ("Positive muon relaxation failed", "danger"),
+        ("Finished: 1 completed, 1 failed", "warning"),
+    ]
+
+
+def test_no_finished_line_while_a_job_is_outstanding_or_on_the_launch_day() -> None:
+    job_ids = [uuid4(), uuid4()]
+
+    unfinished = build_journal(
+        "Open", [_submission(job_ids), _outcome("job_completed", job_ids[0], day=22)]
+    )
+    same_day = build_journal(
+        "Same",
+        [
+            _submission(job_ids),
+            _outcome("job_completed", job_ids[0]),
+            _outcome("job_completed", job_ids[1], label="Site 2", hour=11),
+        ],
+    )
+
+    assert _titles(unfinished) == ["Muon relaxations launched: positive muon"]
+    assert _titles(same_day) == ["Muon relaxations launched: positive muon"]
+
+
+def test_an_orphan_completion_renders_on_its_own() -> None:
+    orphan = _outcome("job_completed", uuid4(), result_total_energy=-1.5)
+
+    entry = build_journal("Orphan", [_submission([uuid4()]), orphan]).days[0].entries[1]
+
+    assert entry.title == "Positive muon relaxation completed"
+    assert entry.stamp_kind == "success"
+    assert "Total energy -1.5000 eV." in entry.body
+
+
+def test_an_old_submission_without_job_ids_folds_nothing() -> None:
+    job_id = uuid4()
+    old_submission = ProvenanceRecord(
+        timestamp=_at(9),
+        action="submit_jobs",
+        workflow_stage=WorkflowStage.UEP,
+        parameters={"execution_target": "local", "job_count": 1, "job_labels": ["uep_a"]},
+        output_entity_ids=[job_id],
+    )
+    old_completion = ProvenanceRecord(
+        timestamp=_at(10),
+        action="job_completed",
+        workflow_stage=WorkflowStage.UEP,
+        parameters={"job_label": "uep_a", "execution_target": "local"},
+        job_id=job_id,
+    )
+
+    entries = build_journal("Old", [old_submission, old_completion]).days[0].entries
+
+    assert [(entry.title, entry.body) for entry in entries] == [
+        ("Calculations launched", "Submitted 1 job to run on this computer: uep_a."),
+        ("Calculation completed", "uep_a finished on this computer."),
+    ]
+    assert entries[0].job_rows == ()
+
+
+def test_a_recorded_failure_reason_the_journal_does_not_know_is_left_out() -> None:
+    record = _outcome("job_failed", uuid4(), failure_reason="gremlins")
+
+    body = build_journal("Odd", [record]).days[0].entries[0].body
+
+    assert body == "Positive muon relaxation Site 1 failed on this computer."
+
+
+def test_a_resubmitted_job_counts_towards_its_latest_batch() -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [
+        _submission(job_ids),
+        _outcome("job_completed", job_ids[0]),
+        _outcome("job_failed", job_ids[1], label="Site 2", hour=11),
+        _outcome("job_reset", job_ids[1], label="Site 2", hour=12),
+        _submission([job_ids[1]], hour=13),
+        _outcome("job_completed", job_ids[1], label="Site 2", hour=14),
+    ]
+
+    entries = build_journal("Retry", records).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        "Positive muon relaxation failed",
+        "Calculation reset",
+        "Muon relaxations launched: positive muon",
+    ]
+    assert entries[0].body.endswith("1 completed, 1 failed.")
+    assert entries[3].body.endswith("1 of 1 completed.")
+
+
+def test_an_outcome_after_a_continuation_with_no_new_submission_stands_alone() -> None:
+    job_id = uuid4()
+    records = [
+        _submission([job_id]),
+        _outcome("job_stopped", job_id),
+        _outcome("job_continuation", job_id, hour=11),
+        _outcome("job_completed", job_id, hour=12),
+    ]
+
+    entries = build_journal("Continued", records).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        "Positive muon relaxation stopped",
+        "Calculation continued",
+        "Positive muon relaxation completed",
+    ]
+    assert entries[0].body.endswith("1 of 1 stopped.")
+
+
+def test_a_stopped_job_that_reappears_and_completes_reads_as_completed() -> None:
+    job_id = uuid4()
+    records = [
+        _submission([job_id]),
+        _outcome("job_stopped", job_id),
+        _outcome("job_completed", job_id, hour=11),
+    ]
+
+    entries = build_journal("Reappeared", records).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        "Positive muon relaxation stopped",
+    ]
+    assert entries[0].body.endswith("1 of 1 completed.")
+    assert entries[0].job_rows[0].status == "completed"
+
+
+def test_a_late_failure_keeps_its_card_but_does_not_reopen_a_completed_job() -> None:
+    job_id = uuid4()
+    records = [
+        _submission([job_id]),
+        _outcome("job_completed", job_id),
+        _outcome("job_failed", job_id, hour=11, error_message="late failure"),
+    ]
+
+    entries = build_journal("Late", records).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        "Positive muon relaxation failed",
+    ]
+    assert entries[0].body.endswith("1 of 1 completed.")
+    assert entries[0].job_rows[0].status == "completed"
+
+
+def test_a_walltime_stop_does_not_say_its_reason_twice() -> None:
+    summary = "The scheduler stopped the job when it reached its walltime limit."
+    record = _outcome("job_stopped", uuid4(), failure_reason="walltime", error_message=summary)
+
+    body = build_journal("Walltime", [record]).days[0].entries[0].body
+
+    assert body == f"Positive muon relaxation Site 1 stopped on this computer. {summary}"
+
+
+def test_a_submission_with_a_job_lacking_an_id_forms_no_batch() -> None:
+    job_id = uuid4()
+    submission = _submission([job_id, uuid4()])
+    del submission.parameters["jobs"][1]["job_id"]
+    records = [submission, _outcome("job_completed", job_id)]
+
+    entries = build_journal("Partial", records).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Muon relaxations launched: positive muon",
+        "Positive muon relaxation completed",
+    ]
+    assert entries[0].job_rows == ()
+
+
+def test_a_batch_of_both_charge_states_labels_its_rows_with_them() -> None:
+    job_ids = [uuid4(), uuid4()]
+    record = _job_record(
+        "submit_jobs",
+        WorkflowStage.MUON_RELAXATION,
+        execution_target="local",
+        job_count=2,
+        job_labels=["Site 1", "Site 1"],
+        jobs=[
+            {"job_id": str(job_ids[0]), "row_label": "Site 1", "charge_state": "positive_muon"},
+            {"job_id": str(job_ids[1]), "row_label": "Site 1", "charge_state": "muonium"},
+        ],
+    )
+
+    entry = build_journal("Mu", [record]).days[0].entries[0]
+
+    assert [row.label for row in entry.job_rows] == ["Site 1 (positive muon)", "Site 1 (muonium)"]
+
+
+def test_exports_match_the_grouped_entries(tmp_path: Path) -> None:
+    job_ids = [uuid4(), uuid4()]
+    journal = build_journal(
+        "Exported",
+        [
+            _submission(job_ids),
+            _outcome("job_completed", job_ids[0], result_total_energy=-12.3456),
+            _outcome(
+                "job_failed", job_ids[1], label="Site 2", error_message="SCF did not converge"
+            ),
+        ],
+    )
+    text_path = tmp_path / "journal.txt"
+    markdown_path = tmp_path / "journal.md"
+
+    export_journal(journal, text_path, format_name="text")
+    export_journal(journal, markdown_path, format_name="markdown")
+
+    text = text_path.read_text(encoding="utf-8")
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert text == render_journal_text(journal)
+    assert markdown == render_journal_markdown(journal)
+    for content in (text, markdown):
+        assert "1 completed, 1 failed." in content
+        assert "Positive muon relaxation failed" in content
+        assert "SCF did not converge." in content
+        assert "Positive muon relaxation completed" not in content
+        assert "-12.3456" not in content
+
+
+def _dismissal(job_id, label: str, when: datetime, **parameters) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=when,
+        action="job_dismissed",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        parameters={"job_label": label, "row_label": label, **parameters},
+        output_entity_ids=[job_id],
+        job_id=job_id,
+    )
+
+
+def test_dismissals_in_a_row_fold_into_one_card() -> None:
+    job_ids = [uuid4() for _ in range(5)]
+    records = [
+        _dismissal(job_id, f"Site {n}", _at(9) + timedelta(milliseconds=n))
+        for n, job_id in enumerate(job_ids, start=1)
+    ]
+
+    entries = build_journal("Dismissed", records).days[0].entries
+
+    assert len(entries) == 1
+    assert entries[0].title == "Calculations dismissed"
+    assert entries[0].stamp_kind == "milestone"
+    assert entries[0].workflow_label == "Muon Relaxations"
+    assert entries[0].body == (
+        "Dismissed 5 calculations from the Job Dashboard: Site 1, Site 2, Site 3, and 2 more."
+    )
+    assert entries[0].linked_entity_ids == tuple(job_ids)
+    assert entries[0].linked_job_id is None
+
+
+def test_dismissals_split_at_another_entry_and_at_a_new_day() -> None:
+    other = ProvenanceRecord(
+        timestamp=_at(10),
+        action="set_recommended_xc_functional",
+        parameters={"recommended_xc_functional": "PBE"},
+    )
+    records = [
+        _dismissal(uuid4(), "Site 1", _at(9)),
+        other,
+        _dismissal(uuid4(), "Site 2", _at(11)),
+        _dismissal(uuid4(), "Site 3", _at(9, day=22)),
+    ]
+
+    journal = build_journal("Split", records)
+
+    assert _titles(journal) == [
+        "Calculation dismissed",
+        "Default XC functional set",
+        "Calculation dismissed",
+        "Calculation dismissed",
+    ]
+    assert len(journal.days) == 2
+
+
+def test_dismissals_from_several_workflows_name_no_single_workflow() -> None:
+    first = _dismissal(uuid4(), "Site 1", _at(9), charge_state="positive_muon")
+    second = _dismissal(uuid4(), "Site 1", _at(9), charge_state="muonium")
+    third = _dismissal(uuid4(), "relax_1", _at(9))
+    third.workflow_stage = WorkflowStage.PRISTINE_RELAXATION
+
+    entry = build_journal("Mixed", [first, second, third]).days[0].entries[0]
+
+    assert entry.workflow_label is None
+    assert entry.body == (
+        "Dismissed 3 calculations from the Job Dashboard: Site 1 (positive muon), "
+        "Site 1 (muonium), relax_1."
+    )

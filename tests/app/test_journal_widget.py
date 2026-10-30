@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
@@ -310,4 +311,110 @@ def test_journal_widget_rebuilds_when_the_last_record_was_replaced(qapp) -> None
 
     bodies = [label.text() for label in widget.findChildren(QLabel, "journalEntryBody")]
     assert bodies[-1] == "Generated 0 muon sites with 'Attach muon to element'."
+    widget.close()
+
+
+def _job_submission(job_ids: list) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action="submit_jobs",
+        workflow_stage=WorkflowStage.UEP,
+        parameters={
+            "execution_target": "local",
+            "job_count": len(job_ids),
+            "jobs": [
+                {"job_id": str(job_id), "label": f"uep_{n}"} for n, job_id in enumerate(job_ids)
+            ],
+        },
+    )
+
+
+def _job_outcome(action: str, job_id, *, hour: int, day: int = 21) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 4, day, hour, 0, tzinfo=UTC),
+        action=action,
+        workflow_stage=WorkflowStage.UEP,
+        parameters={"job_label": "uep", "execution_target": "local"},
+        job_id=job_id,
+    )
+
+
+def test_a_completion_updates_only_its_batch_card(qapp) -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [_record(8), _job_submission(job_ids), _record(10)]
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Stream", records)
+    first, batch_card, last = _cards(widget)
+
+    records.append(_job_outcome("job_completed", job_ids[0], hour=11))
+    widget.set_records("Stream", records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    after = _cards(widget)
+    assert len(after) == 3
+    assert first in after
+    assert last in after
+    assert batch_card not in after
+    assert _layout_order(widget)[2].endswith(" 1 of 2 completed.")
+
+    fresh = JournalWidget()
+    fresh.show()
+    fresh.set_records("Stream", list(records))
+    assert _layout_order(widget) == _layout_order(fresh)
+    fresh.close()
+    widget.close()
+
+
+def test_a_failure_and_a_finished_line_append_after_updating_the_batch_card(qapp) -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [_job_submission(job_ids)]
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Stream", records)
+
+    records.append(_job_outcome("job_failed", job_ids[0], hour=10))
+    records.append(_job_outcome("job_completed", job_ids[1], hour=9, day=22))
+    widget.set_records("Stream", records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert _day_headers(widget) == ["Tuesday 21 April 2026", "Wednesday 22 April 2026"]
+    titles = [label.text() for label in widget.findChildren(QLabel, "journalEntryTitle")]
+    assert sorted(titles) == [
+        "Calculation failed",
+        "Calculations launched",
+        "Finished: 1 completed, 1 failed",
+    ]
+
+    fresh = JournalWidget()
+    fresh.show()
+    fresh.set_records("Stream", list(records))
+    assert _layout_order(widget) == _layout_order(fresh)
+    assert _layout_order(widget)[-1] == "stretch"
+    fresh.close()
+    widget.close()
+
+
+def test_a_second_dismissal_folds_into_the_card_of_the_first(qapp) -> None:
+    def dismissal(minute: int) -> ProvenanceRecord:
+        return ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 9, minute, tzinfo=UTC),
+            action="job_dismissed",
+            workflow_stage=WorkflowStage.UEP,
+            parameters={"job_label": f"uep_{minute}"},
+            job_id=uuid4(),
+        )
+
+    records = [dismissal(1)]
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Stream", records)
+
+    records.append(dismissal(2))
+    widget.set_records("Stream", records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    cards = _cards(widget)
+    assert len(cards) == 1
+    assert cards[0].findChild(QLabel, "journalEntryTitle").text() == "Calculations dismissed"
     widget.close()

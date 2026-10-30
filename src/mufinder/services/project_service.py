@@ -534,7 +534,9 @@ class ProjectService:
         """Append one provenance milestone for a user submission action."""
 
         submitted_jobs = [
-            job for job in jobs if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}
+            job
+            for job in jobs
+            if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING}
         ]
         if not submitted_jobs:
             return

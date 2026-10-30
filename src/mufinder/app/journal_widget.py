@@ -26,7 +26,6 @@ from mufinder.services.journal import (
     JournalEntry,
     build_journal,
     export_journal,
-    extend_journal,
     stamp_label,
 )
 from mufinder.domain.models import ProvenanceRecord
@@ -37,9 +36,10 @@ class JournalWidget(QWidget):
 
     The provenance stream is append-only, so the widget keeps the stream it last
     built from and its length: a refresh with the same, unchanged stream does
-    nothing, and a grown stream appends cards for the new records only. While the
-    widget is hidden (another page of the main stack is shown), ``set_records``
-    only marks the view stale; it is brought up to date when it is shown.
+    nothing, and a grown stream touches only the cards it changes (a new record
+    can add a card or update its batch's card). While the widget is hidden
+    (another page of the main stack is shown), ``set_records`` only marks the view
+    stale; it is brought up to date when it is shown.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -113,9 +113,9 @@ class JournalWidget(QWidget):
     def set_records(self, project_name: str, records: Sequence[ProvenanceRecord]) -> None:
         """Show the journal for ``records``, the project's append-only provenance stream.
 
-        Passing the same sequence again after records were appended to it adds
-        cards for the new records only; a different sequence (another project)
-        rebuilds the view. A hidden widget defers the work until it is shown.
+        Passing the same sequence again after records were appended to it updates
+        only the cards that changed; a different sequence (another project) rebuilds
+        the view. A hidden widget defers the work until it is shown.
         """
 
         self._project_name = project_name
@@ -150,24 +150,11 @@ class JournalWidget(QWidget):
             if self._journal.project_name != self._project_name:
                 self._journal = replace(self._journal, project_name=self._project_name)
             return
-        if same_stream:
-            current = replace(self._journal, project_name=self._project_name)
-            extended = extend_journal(current, records[self._built_count :])
-            if extended is current:
-                # Only records the journal does not show were added.
-                self._journal = current
-                self._mark_built(records)
-                return
-            if (
-                extended is not None
-                and current.days
-                and self._append_cards(self._journal, extended)
-            ):
-                self._journal = extended
-                self._mark_built(records)
-                return
-        self._journal = build_journal(self._project_name, records)
-        self._rebuild_view()
+        journal = build_journal(self._project_name, records)
+        updated = same_stream and self._update_cards(journal)
+        self._journal = journal
+        if not updated:
+            self._rebuild_view()
         self._mark_built(records)
 
     def _mark_built(self, records: Sequence[ProvenanceRecord]) -> None:
@@ -175,32 +162,49 @@ class JournalWidget(QWidget):
         self._built_count = len(records)
         self._built_last = records[-1] if records else None
 
-    def _append_cards(self, current: JournalDocument, extended: JournalDocument) -> bool:
-        """Add the cards ``extended`` has beyond ``current``; ``False`` if it cannot append.
+    def _update_cards(self, journal: JournalDocument) -> bool:
+        """Bring the cards up to ``journal``; ``False`` if that needs a rebuild.
 
-        Appending works when only the last day gained entries or new days follow
-        it; anything else needs a rebuild.
+        Updating works when the days and entries shown so far keep their places
+        and anything new comes after them. A changed entry replaces its card.
         """
 
-        days = current.days
-        if any(
-            len(extended.days[index].entries) != len(day.entries)
-            for index, day in enumerate(days[:-1])
-        ):
+        days = self._journal.days
+        if not days:
+            return not journal.days
+        if len(journal.days) < len(days):
             return False
+        for index, day in enumerate(days):
+            new_day = journal.days[index]
+            if new_day.date_label != day.date_label or len(new_day.entries) < len(day.entries):
+                return False
+            if index < len(days) - 1 and len(new_day.entries) != len(day.entries):
+                return False
+
+        position = 0
+        for day, new_day in zip(days, journal.days):
+            position += 1  # The day header.
+            for entry, new_entry in zip(day.entries, new_day.entries):
+                if new_entry != entry:
+                    self._replace_card(position, new_entry)
+                position += 1
         # The trailing stretch stays last; new widgets go in front of it.
-        position = self._content_layout.count() - 1
-        last = len(days) - 1
-        for entry in extended.days[last].entries[len(days[last].entries) :]:
+        for entry in journal.days[len(days) - 1].entries[len(days[-1].entries) :]:
             self._content_layout.insertWidget(position, self._build_entry_card(entry))
             position += 1
-        for day in extended.days[len(days) :]:
+        for day in journal.days[len(days) :]:
             self._content_layout.insertWidget(position, self._build_day_header(day.date_label))
             position += 1
             for entry in day.entries:
                 self._content_layout.insertWidget(position, self._build_entry_card(entry))
                 position += 1
         return True
+
+    def _replace_card(self, position: int, entry: JournalEntry) -> None:
+        old_card = self._content_layout.takeAt(position).widget()
+        old_card.hide()
+        old_card.deleteLater()
+        self._content_layout.insertWidget(position, self._build_entry_card(entry))
 
     def _rebuild_view(self) -> None:
         while self._content_layout.count():

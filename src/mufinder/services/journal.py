@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -13,14 +15,31 @@ from mufinder.domain.charge_states import (
     canonical_charge_state,
     muon_charge_state_label,
 )
-from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.enums import FailureReason, WorkflowStage
 from mufinder.domain.models import (
     GENERATION_METHOD_LABELS,
     MANUAL_DEFAULT_METHOD,
     ProvenanceRecord,
 )
 from mufinder.domain.text import execution_target_text, plural
+from mufinder.services.failure_diagnosis import FAILURE_REASON_SUMMARIES
 from mufinder.services.generation_runs import generation_run_from_provenance, run_journal_line
+
+
+@dataclass(frozen=True, slots=True)
+class JournalJobRow:
+    """What the Journal knows about one job of a submitted batch.
+
+    ``status`` is ``submitted`` until a terminal record arrives, then that
+    record's outcome: ``completed``, ``failed``, ``stopped`` or ``cancelled``.
+    """
+
+    label: str
+    status: str
+    total_energy: float | None = None
+    max_force: float | None = None
+    warnings_count: int | None = None
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +53,7 @@ class JournalEntry:
     workflow_label: str | None
     linked_entity_ids: tuple[UUID, ...] = ()
     linked_job_id: UUID | None = None
+    job_rows: tuple[JournalJobRow, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +104,27 @@ _JOB_NOUNS: dict[WorkflowStage, str] = {
 }
 
 
+#: The terminal job records and the outcome each one reports, in the order a
+#: batch's outcome lists them.
+_TERMINAL_OUTCOMES: dict[str, str] = {
+    "job_completed": "completed",
+    "job_failed": "failed",
+    "job_stopped": "stopped",
+    "job_cancelled": "cancelled",
+}
+
+#: How a card about one job says how it ended.
+_OUTCOME_VERBS: dict[str, str] = {
+    "completed": "finished",
+    "failed": "failed",
+    "stopped": "stopped",
+    "cancelled": "was cancelled",
+}
+
+#: Records after which a job's next outcome no longer belongs to its submission.
+_FOLD_BREAKING_ACTIONS = frozenset({"job_reset", "job_continuation"})
+
+
 def stamp_label(stamp_kind: str) -> str:
     """Return the word a journal entry's stamp shows for ``stamp_kind``."""
 
@@ -93,61 +134,69 @@ def stamp_label(stamp_kind: str) -> str:
 def build_journal(project_name: str, records: Iterable[ProvenanceRecord]) -> JournalDocument:
     """Convert structured provenance into a curated journal view model."""
 
-    entries = _entries(records)
-    return JournalDocument(project_name=project_name, days=_append_days((), entries))
-
-
-def extend_journal(
-    journal: JournalDocument, records: Iterable[ProvenanceRecord]
-) -> JournalDocument | None:
-    """Return ``journal`` with the entries for ``records`` appended after its last entry.
-
-    The provenance stream is append-only, so a refresh only needs entries for the
-    records added since the journal was built. Returns ``None`` when a new entry
-    would sort before the journal's last entry (a record with an older timestamp),
-    because :func:`build_journal` would then place it earlier than the end; the
-    caller rebuilds the whole journal instead.
-    """
-
-    entries = _entries(records)
-    if not entries:
-        return journal
-    if journal.days and entries[0].timestamp < journal.days[-1].entries[-1].timestamp:
-        return None
-    return JournalDocument(
-        project_name=journal.project_name, days=_append_days(journal.days, entries)
-    )
+    return JournalDocument(project_name=project_name, days=_group_days(_entries(records)))
 
 
 def _entries(records: Iterable[ProvenanceRecord]) -> list[JournalEntry]:
-    """Journal entries for ``records`` in time order; records without one are skipped."""
+    """Journal entries for ``records`` in time order; records without one are skipped.
 
-    return [
-        entry
-        for record in sorted(records, key=lambda item: item.timestamp)
-        if (entry := _entry_from_record(record))
-    ]
+    Completions fold into the card of the submission that launched them, and a
+    run of dismissals on one day folds into one card.
+    """
+
+    ordered = sorted(records, key=lambda item: item.timestamp)
+    batches = _submitted_batches(ordered)
+    by_submission = {id(batch.record): batch for batch in batches}
+    by_last_outcome = {id(batch.last_outcome): batch for batch in batches if batch.last_outcome}
+    folded = {id(record) for batch in batches for record in batch.completions}
+
+    entries: list[JournalEntry] = []
+    dismissals: list[ProvenanceRecord] = []
+
+    def flush_dismissals() -> None:
+        if dismissals:
+            entries.append(_dismissals_entry(dismissals))
+            dismissals.clear()
+
+    for record in ordered:
+        if record.action == "job_dismissed":
+            if dismissals and _record_day(dismissals[-1]) != _record_day(record):
+                flush_dismissals()
+            dismissals.append(record)
+            continue
+        new: list[JournalEntry] = []
+        batch = by_submission.get(id(record))
+        if batch is not None:
+            new.append(_batch_entry(batch))
+        elif id(record) not in folded and (entry := _entry_from_record(record)):
+            new.append(entry)
+        finished = by_last_outcome.get(id(record))
+        if finished is not None and (line := _finished_entry(finished)):
+            new.append(line)
+        if new:
+            flush_dismissals()
+            entries.extend(new)
+    flush_dismissals()
+    return entries
 
 
-def _day_label(entry: JournalEntry) -> str:
-    return entry.timestamp.astimezone().strftime("%A %d %B %Y")
+def _day_label(timestamp: datetime) -> str:
+    return timestamp.astimezone().strftime("%A %d %B %Y")
 
 
-def _append_days(
-    days: tuple[JournalDay, ...], entries: Iterable[JournalEntry]
-) -> tuple[JournalDay, ...]:
-    """Group time-ordered ``entries`` under day headings, continuing ``days``."""
+def _record_day(record: ProvenanceRecord) -> str:
+    return _day_label(record.timestamp)
 
-    grouped: dict[str, list[JournalEntry]] = {day.date_label: list(day.entries) for day in days}
-    day_order = [day.date_label for day in days]
+
+def _group_days(entries: Iterable[JournalEntry]) -> tuple[JournalDay, ...]:
+    """Group time-ordered ``entries`` under day headings."""
+
+    grouped: dict[str, list[JournalEntry]] = {}
     for entry in entries:
-        day_key = _day_label(entry)
-        if day_key not in grouped:
-            grouped[day_key] = []
-            day_order.append(day_key)
-        grouped[day_key].append(entry)
+        grouped.setdefault(_day_label(entry.timestamp), []).append(entry)
     return tuple(
-        JournalDay(date_label=day_key, entries=tuple(grouped[day_key])) for day_key in day_order
+        JournalDay(date_label=day_key, entries=tuple(day_entries))
+        for day_key, day_entries in grouped.items()
     )
 
 
@@ -761,29 +810,53 @@ def _target_text(record: ProvenanceRecord) -> str:
     return execution_target_text(_text_param(record, "execution_target"))
 
 
-def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
+def _submitted_jobs(record: ProvenanceRecord) -> list[Mapping[str, object]]:
     raw_jobs = record.parameters.get("jobs")
-    jobs = [job for job in raw_jobs if isinstance(job, dict)] if isinstance(raw_jobs, list) else []
-    labels = record.parameters.get("job_labels")
-    count = len(labels) if isinstance(labels, list) else _int_param(record, "job_count") or 0
+    return [job for job in raw_jobs if isinstance(job, dict)] if isinstance(raw_jobs, list) else []
+
+
+def _job_list_labels(jobs: Sequence[Mapping[str, object]], charges: Sequence[str]) -> list[str]:
+    """Name each job by its row. When ``charges`` holds both, each label says its own."""
+
+    labels = [
+        str(job.get("row_label") or job.get("label") or job.get("job_label") or "") for job in jobs
+    ]
+    if len(charges) <= 1:
+        return labels
+    # One site can be relaxed in both charge states in one batch.
+    return [
+        f"{label} ({charge})" if (charge := _charge_state_text(job.get("charge_state"))) else label
+        for label, job in zip(labels, jobs, strict=True)
+    ]
+
+
+def _charge_states(values: Iterable[object]) -> list[str]:
+    """The distinct muon charge states named by ``values``, in first-seen order."""
+
     charges: list[str] = []
-    for value in [
-        record.parameters.get("charge_state"),
-        *(job.get("charge_state") for job in jobs),
-    ]:
+    for value in values:
         charge = _charge_state_text(value)
         if charge is not None and charge not in charges:
             charges.append(charge)
+    return charges
+
+
+def _submission_charges(record: ProvenanceRecord) -> list[str]:
+    return _charge_states(
+        [
+            record.parameters.get("charge_state"),
+            *(job.get("charge_state") for job in _submitted_jobs(record)),
+        ]
+    )
+
+
+def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
+    jobs = _submitted_jobs(record)
+    labels = record.parameters.get("job_labels")
+    count = len(labels) if isinstance(labels, list) else _int_param(record, "job_count") or 0
+    charges = _submission_charges(record)
     if jobs:
-        labels = [str(job.get("row_label") or job.get("label") or "") for job in jobs]
-        if len(charges) > 1:
-            # One site can be relaxed in both charge states in one batch.
-            labels = [
-                f"{label} ({charge})"
-                if (charge := _charge_state_text(job.get("charge_state")))
-                else label
-                for label, job in zip(labels, jobs, strict=True)
-            ]
+        labels = _job_list_labels(jobs, charges)
     label_text = _label_summary(labels)
     body = f"Submitted {plural(count, 'job')} to run on {_target_text(record)}"
     body += f": {label_text}." if label_text else "."
@@ -795,6 +868,122 @@ def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
         else "Calculations launched"
     )
     return _entry(record, stamp_kind="milestone", title=title, body=body)
+
+
+@dataclass(slots=True)
+class _SubmittedBatch:
+    """One ``submit_jobs`` record and the latest outcome recorded for each of its jobs."""
+
+    record: ProvenanceRecord
+    jobs: dict[str, Mapping[str, object]]
+    outcomes: dict[str, ProvenanceRecord] = field(default_factory=dict)
+    completions: list[ProvenanceRecord] = field(default_factory=list)
+    last_outcome: ProvenanceRecord | None = None
+
+
+def _submitted_batches(ordered: Iterable[ProvenanceRecord]) -> list[_SubmittedBatch]:
+    """Assign time-ordered terminal records to the submission that launched each job.
+
+    A job belongs to its latest submission. A reset or continuation ends that
+    until the job is submitted again, so an outcome with no submission behind it
+    stands alone. A later outcome replaces an earlier one, as when a stopped
+    cluster job reappears and completes, except that a completed job stays
+    completed: a late failure keeps its own card and does not reopen the job.
+    Records without job ids (older projects, imports) form no batch.
+    """
+
+    batches: list[_SubmittedBatch] = []
+    current: dict[str, _SubmittedBatch] = {}
+    for record in ordered:
+        if record.action == "submit_jobs":
+            listed = _submitted_jobs(record)
+            if listed and all(job.get("job_id") for job in listed):
+                jobs = {str(job["job_id"]): job for job in listed}
+                batch = _SubmittedBatch(record=record, jobs=jobs)
+                batches.append(batch)
+                current.update(dict.fromkeys(jobs, batch))
+        elif record.job_id is None:
+            continue
+        elif record.action in _FOLD_BREAKING_ACTIONS:
+            current.pop(str(record.job_id), None)
+        elif record.action in _TERMINAL_OUTCOMES:
+            batch = current.get(str(record.job_id))
+            if batch is None:
+                continue
+            if record.action == "job_completed":
+                batch.completions.append(record)
+            else:
+                earlier = batch.outcomes.get(str(record.job_id))
+                if earlier is not None and earlier.action == "job_completed":
+                    continue
+            batch.outcomes[str(record.job_id)] = record
+            batch.last_outcome = record
+    return batches
+
+
+def _batch_outcome_text(batch: _SubmittedBatch) -> str:
+    """Say how a batch stands: ``10 of 10 completed``, ``8 completed, 2 failed``."""
+
+    counts = Counter(_TERMINAL_OUTCOMES[record.action] for record in batch.outcomes.values())
+    if not counts:
+        return ""
+    total = len(batch.jobs)
+    finished = sum(counts.values())
+    if len(counts) == 1:
+        outcome, count = counts.popitem()
+        return f"{count} of {total} {outcome}"
+    text = ", ".join(
+        f"{counts[outcome]} {outcome}" for outcome in _TERMINAL_OUTCOMES.values() if counts[outcome]
+    )
+    return text if finished == total else f"{finished} of {total} finished: {text}"
+
+
+def _batch_entry(batch: _SubmittedBatch) -> JournalEntry:
+    """The submission's card, with the batch's outcome and one row per job."""
+
+    entry = _submit_jobs_entry(batch.record)
+    outcome = _batch_outcome_text(batch)
+    labels = _job_list_labels(list(batch.jobs.values()), _submission_charges(batch.record))
+    rows = tuple(
+        _job_row(label, batch.outcomes.get(job_id))
+        for label, job_id in zip(labels, batch.jobs, strict=True)
+    )
+    body = f"{entry.body} {outcome}." if outcome else entry.body
+    return replace(entry, body=body, job_rows=rows)
+
+
+def _job_row(label: str, outcome: ProvenanceRecord | None) -> JournalJobRow:
+    if outcome is None:
+        return JournalJobRow(label=label, status="submitted")
+    return JournalJobRow(
+        label=label,
+        status=_TERMINAL_OUTCOMES[outcome.action],
+        total_energy=_float_param(outcome, "result_total_energy"),
+        max_force=_float_param(outcome, "result_max_force"),
+        warnings_count=_int_param(outcome, "warnings_count"),
+        failure_reason=_failure_text(outcome) or None,
+    )
+
+
+def _finished_entry(batch: _SubmittedBatch) -> JournalEntry | None:
+    """The line under a later day saying a batch finished; ``None`` if it has not."""
+
+    last = batch.last_outcome
+    if (
+        last is None
+        or len(batch.outcomes) < len(batch.jobs)
+        or _record_day(last) == _record_day(batch.record)
+    ):
+        return None
+    launch = _submit_jobs_entry(batch.record)
+    all_completed = all(record.action == "job_completed" for record in batch.outcomes.values())
+    return replace(
+        launch,
+        timestamp=last.timestamp,
+        stamp_kind="success" if all_completed else "warning",
+        title=f"Finished: {_batch_outcome_text(batch)}",
+        body=f"{launch.title} on {_record_day(batch.record)}.",
+    )
 
 
 def _job_completed_entry(record: ProvenanceRecord) -> JournalEntry:
@@ -848,6 +1037,36 @@ def _job_dismissed_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
+def _dismissals_entry(records: Sequence[ProvenanceRecord]) -> JournalEntry:
+    """One card for a run of dismissals; a single dismissal keeps its own wording."""
+
+    if len(records) == 1:
+        return _job_dismissed_entry(records[0])
+    parameters = [record.parameters for record in records]
+    charges = _charge_states(job.get("charge_state") for job in parameters)
+    labels = _label_summary(_job_list_labels(parameters, charges))
+    stages = {record.workflow_stage for record in records}
+    entry = _entry(
+        records[0],
+        stamp_kind="milestone",
+        title="Calculations dismissed",
+        body=(
+            f"Dismissed {plural(len(records), 'calculation')} from the Job Dashboard"
+            f"{f': {labels}' if labels else ''}."
+        ),
+    )
+    return replace(
+        entry,
+        workflow_label=_workflow_label(records[0].workflow_stage) if len(stages) == 1 else None,
+        linked_entity_ids=tuple(
+            entity
+            for record in records
+            for entity in (*record.input_entity_ids, *record.output_entity_ids)
+        ),
+        linked_job_id=None,
+    )
+
+
 def _create_comparison_table_entry(record: ProvenanceRecord) -> JournalEntry:
     table_label = _text_param(record, "table_label") or "comparison table"
     count = _int_param(record, "dft_structure_count") or 0
@@ -863,7 +1082,8 @@ def _terminal_job_entry(record: ProvenanceRecord, *, stamp_kind: str, outcome: s
     charge = _charge_state_text(record.parameters.get("charge_state"))
     title = f"{charge.capitalize()} relaxation {outcome}" if charge else f"Calculation {outcome}"
     summary = _job_summary_text(record)
-    body = f"{_job_description(record, sentence_start=True)} finished on {_target_text(record)}."
+    verb = _OUTCOME_VERBS[outcome]
+    body = f"{_job_description(record, sentence_start=True)} {verb} on {_target_text(record)}."
     if summary:
         body += f" {summary}"
     return _entry(record, stamp_kind=stamp_kind, title=title, body=body)
@@ -885,9 +1105,26 @@ def _job_summary_text(record: ProvenanceRecord) -> str:
     warnings_count = _int_param(record, "warnings_count")
     if warnings_count:
         parts.append(f"Recorded {plural(warnings_count, 'warning')}.")
+    failure = _failure_text(record)
+    if failure:
+        parts.append(failure)
+    return " ".join(parts)
+
+
+def _failure_text(record: ProvenanceRecord) -> str:
+    """Why a job did not complete: its diagnosed reason and the recorded message."""
+
+    parts: list[str] = []
+    try:
+        parts.append(FAILURE_REASON_SUMMARIES[FailureReason(_text_param(record, "failure_reason"))])
+    except (KeyError, ValueError):
+        pass
     error_message = _text_param(record, "error_message")
     if error_message:
-        parts.append(error_message.rstrip(".") + ".")
+        sentence = error_message.rstrip(".") + "."
+        # A walltime stop records the reason's own summary as its message.
+        if sentence not in parts:
+            parts.append(sentence)
     return " ".join(parts)
 
 
