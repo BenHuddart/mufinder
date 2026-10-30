@@ -9,6 +9,7 @@ marker format are only proven by an actual ``bash``.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -458,7 +459,7 @@ def test_jump_host_connection_uses_full_credentials(
     monkeypatch.setattr(_DirectSSH, "failing", frozenset())
 
     generate_cluster_castep_keywords_json(
-        config=_direct_config(jump_host_enabled=True),
+        config=_direct_config(jump_host_enabled=True, jump_username="gw"),
         output_path=tmp_path / "castep_keywords.json",
         password="secret",
     )
@@ -2013,3 +2014,21 @@ def test_worker_run_failure_emits_failed(tmp_path: Path, monkeypatch: pytest.Mon
     worker.run()
 
     assert events["failed"] == ["ssh exploded"]
+
+
+def test_validate_cluster_keyword_config_fills_the_username_in_the_directory() -> None:
+    config = ClusterConfig(
+        name="SCARF",
+        hostname="ui1.scarf.rl.ac.uk",
+        username="alice",
+        default_working_directory="/work4/isis/{username}",
+    )
+    assert validate_cluster_keyword_config(config) == []
+
+    # The directory is set; only the username it needs is missing.
+    assert validate_cluster_keyword_config(replace(config, username="")) == [
+        "Cluster username is required."
+    ]
+    assert validate_cluster_keyword_config(replace(config, jump_host_enabled=True)) == [
+        "Jump host username is required."
+    ]

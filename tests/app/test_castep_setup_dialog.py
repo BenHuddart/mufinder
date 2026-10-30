@@ -1138,8 +1138,8 @@ def test_castep_setup_dialog_prefers_a_set_up_cluster_without_a_local_executable
 ) -> None:
     """Cluster-only users should not have to discover the target selector."""
 
-    # The built-in presets still carry their placeholder username, so they are
-    # templates rather than clusters the user has set up.
+    # The built-in presets ship without usernames, so they are templates rather
+    # than clusters the user has set up.
     dialog = CastepSetupDialog(settings=_FakeSettings())
     assert dialog._generate_target_combo.currentData() == "local"
     dialog.close()
@@ -1149,7 +1149,9 @@ def test_castep_setup_dialog_prefers_a_set_up_cluster_without_a_local_executable
         dialog_module,
         "load_cluster_configs",
         lambda _settings: [
-            replace(config, username="alice") if config.name == "Redwood" else config
+            replace(config, username="alice", jump_username="alice-gw")
+            if config.name == "Redwood"
+            else config
             for config in presets
         ],
     )

@@ -76,12 +76,10 @@ generate_castep_keywords_json(
 def _cluster_is_set_up(config: ClusterConfig) -> bool:
     """Return whether ``config`` looks ready to generate keywords from.
 
-    The built-in cluster presets ship with the placeholder username
-    ``username``; until the user replaces it the preset is only a template.
+    The built-in cluster presets ship without a username; until the user sets
+    one the preset is only a template.
     """
 
-    if config.username.strip().lower() in {"", "username"}:
-        return False
     return not validate_cluster_keyword_config(config)
 
 

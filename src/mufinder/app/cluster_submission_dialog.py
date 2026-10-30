@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 import re
 
 from PySide6.QtWidgets import (
@@ -24,11 +24,12 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt
 
+from mufinder.app import workflow_table_utils
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.farm_validation import check_farm_counts
 from mufinder.app.theme import style_hint_text
-from mufinder.domain.cluster import ClusterConfig
+from mufinder.domain.cluster import PLACEHOLDER_USERNAME, ClusterConfig
 from mufinder.domain.text import plural
 from mufinder.services.cluster_queues import is_valid_queue_name, walltime_issue
 from mufinder.services.keychain import credential_store_for_display, is_glamdring_keychain_supported
@@ -72,6 +73,7 @@ class ClusterSubmissionDialog(QDialog):
         connected_cluster_name: str | None = None,
         connected_username: str | None = None,
         farm_counts: Mapping[str, int] | None = None,
+        edit_cluster: Callable[[QWidget, str], list[ClusterConfig]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -87,6 +89,10 @@ class ClusterSubmissionDialog(QDialog):
         self._connected_cluster_name = (connected_cluster_name or "").strip().casefold()
         self._connected_username = (connected_username or "").strip()
         self._resolved_credentials: SSHCredentials | None = None
+        # Opens a cluster's profile and returns the clusters as saved afterwards.
+        self._edit_cluster = edit_cluster
+        # The directory the profile gave, so a username typed later can follow it.
+        self._automatic_working_directory = ""
 
         self.setWindowTitle("Run Calculations on a Remote Cluster")
         self.resize(620, 480)
@@ -201,7 +207,7 @@ class ClusterSubmissionDialog(QDialog):
         self._cluster_combo.currentTextChanged.connect(lambda *_: self._apply_cluster_defaults())
         self._queue_combo.activated.connect(lambda *_: self._on_queue_activated())
         self._queue_combo.editTextChanged.connect(lambda *_: self._refresh_queue_hint())
-        self._username_edit.textChanged.connect(lambda *_: self._refresh_connection_state())
+        self._username_edit.textChanged.connect(lambda *_: self._on_username_changed())
         self._mem_per_cpu_check.toggled.connect(self._mem_per_cpu_edit.setEnabled)
         self._mem_per_cpu_edit.setEnabled(self._mem_per_cpu_check.isChecked())
         self._num_processes_spin.valueChanged.connect(lambda *_: self._refresh_farm_validation())
@@ -283,7 +289,10 @@ class ClusterSubmissionDialog(QDialog):
             self._refresh_scheduler_controls()
             return
 
-        self._working_directory_edit.setText(self._default_submission_working_directory(config))
+        self._automatic_working_directory = self._default_submission_working_directory(
+            config, config.username
+        )
+        self._working_directory_edit.setText(self._automatic_working_directory)
         self._username_edit.setText(config.username)
         self._queue_combo.blockSignals(True)
         self._queue_combo.clear()
@@ -400,10 +409,13 @@ class ClusterSubmissionDialog(QDialog):
         if config.queue_name.strip():
             self._queue_combo.setEditText(config.queue_name.strip())
             self._apply_queue_defaults()
-        if config.working_directory.strip():
-            self._working_directory_edit.setText(config.working_directory.strip())
-        if config.username.strip():
-            self._username_edit.setText(config.username.strip())
+        # A submission recorded with the name an earlier preset shipped holds a
+        # directory built from it too, so neither is offered again.
+        if config.username.strip() != PLACEHOLDER_USERNAME:
+            if config.working_directory.strip():
+                self._working_directory_edit.setText(config.working_directory.strip())
+            if config.username.strip():
+                self._username_edit.setText(config.username.strip())
         if int(config.num_processes) > 0:
             self._num_processes_spin.setValue(int(config.num_processes))
         self._walltime_edit.setText(config.walltime.strip())
@@ -552,8 +564,22 @@ class ClusterSubmissionDialog(QDialog):
         else:
             self._walltime_edit.setPlaceholderText("HH:MM:SS")
 
-    def _default_submission_working_directory(self, config: ClusterConfig) -> str:
-        base = config.default_working_directory.strip().rstrip("/")
+    def _on_username_changed(self) -> None:
+        """Follow the username in a directory built from it, unless it was edited."""
+
+        config = self.selected_cluster_config()
+        if (
+            config is not None
+            and self._working_directory_edit.text().strip() == self._automatic_working_directory
+        ):
+            self._automatic_working_directory = self._default_submission_working_directory(
+                config, self._username_edit.text()
+            )
+            self._working_directory_edit.setText(self._automatic_working_directory)
+        self._refresh_connection_state()
+
+    def _default_submission_working_directory(self, config: ClusterConfig, username: str) -> str:
+        base = config.working_directory_for(username).rstrip("/")
         if not base:
             return ""
         result = base
@@ -575,10 +601,64 @@ class ClusterSubmissionDialog(QDialog):
         ]
         return "/".join(part for part in parts if part)
 
+    def _refuse_missing_username(self, username: str) -> bool:
+        """Say which username is missing and offer its profile; return whether one is."""
+
+        cluster = self.selected_cluster_config()
+        if cluster is None:
+            return False
+        issue = replace(cluster, username=username).missing_username_issue()
+        if not issue:
+            return False
+        text = f"{issue} Set it in Setup > HPC Clusters before submitting."
+        if self._edit_cluster is None:
+            QMessageBox.warning(self, "Missing username", text)
+            return True
+        choice = workflow_table_utils.confirm_choice(
+            self,
+            "Missing username",
+            text,
+            [("setup", "Open Setup > HPC Clusters…"), ("cancel", "Cancel")],
+            default="cancel",
+            escape="cancel",
+            icon=QMessageBox.Icon.Warning,
+        )
+        if choice == "setup":
+            self._reload_clusters(self._edit_cluster(self, cluster.name))
+        return True
+
+    def _reload_clusters(self, configs: list[ClusterConfig]) -> None:
+        """Show the clusters as saved, keeping what was typed for the selected one."""
+
+        typed = self.config()
+        automatic_directory = typed.working_directory == self._automatic_working_directory
+        target_secret = self._target_secret_edit.text()
+        jump_secret = self._jump_secret_edit.text()
+        self._cluster_configs = {config.name: config for config in configs}
+        self._cluster_combo.blockSignals(True)
+        self._cluster_combo.clear()
+        self._cluster_combo.addItems(list(self._cluster_configs))
+        # A renamed or removed cluster leaves nothing selected, so the next OK
+        # asks for a choice instead of submitting to whichever cluster is first.
+        self._cluster_combo.setCurrentIndex(self._cluster_combo.findText(typed.cluster_name))
+        self._cluster_combo.blockSignals(False)
+        self._apply_cluster_defaults()
+        self._initial_config = replace(
+            typed,
+            working_directory="" if automatic_directory else typed.working_directory,
+        )
+        self._apply_initial_config(default_cluster_name=None)
+        if self.selected_cluster_name() == typed.cluster_name:
+            self._target_secret_edit.setText(target_secret)
+            self._jump_secret_edit.setText(jump_secret)
+        self._refresh_farm_validation()
+
     def _accept_if_valid(self) -> None:
         config = self.config()
         if not config.cluster_name:
             QMessageBox.warning(self, "Missing cluster", "Choose which configured cluster to use.")
+            return
+        if self._refuse_missing_username(config.username):
             return
         if not config.working_directory:
             QMessageBox.warning(
@@ -620,7 +700,7 @@ class ClusterSubmissionDialog(QDialog):
             if self._uses_keychain_credentials(selected):
                 resolved = resolve_cluster_credentials(
                     self,
-                    selected,
+                    replace(selected, username=config.username),
                     manual_credentials=manual_credentials,
                     prompt_optional_key=False,
                 )

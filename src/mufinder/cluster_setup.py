@@ -12,6 +12,9 @@ from PySide6.QtCore import QSettings
 from mufinder.domain.cluster import (
     DEFAULT_CASTEP_EXECUTABLE as _DEFAULT_CASTEP_EXECUTABLE,
     DEFAULT_KEYWORD_EXECUTION_MODE as _DEFAULT_KEYWORD_EXECUTION_MODE,
+    PLACEHOLDER_JUMP_USERNAME,
+    PLACEHOLDER_USERNAME,
+    USERNAME_TOKEN,
     ClusterConfig,
     ClusterQueue,
 )
@@ -43,10 +46,10 @@ def _default_clusters() -> list[ClusterConfig]:
             name="SCARF",
             hostname="ui1.scarf.rl.ac.uk",
             port=22,
-            username="username",
+            username="",
             auth_method="key",
             key_path="",
-            default_working_directory="/work4/isis/username",
+            default_working_directory=f"/work4/isis/{USERNAME_TOKEN}",
             queue_system="SLURM",
             cores_per_node=24,
             default_walltime="12:00:00",
@@ -64,17 +67,17 @@ def _default_clusters() -> list[ClusterConfig]:
             name=_REDWOOD_PRESET_NAME,
             hostname=_REDWOOD_HOSTNAME,
             port=22,
-            username="username",
+            username="",
             auth_method="password",
             key_path="",
             jump_host_enabled=True,
             jump_hostname=_REDWOOD_JUMP_HOSTNAME,
             jump_port=22,
-            jump_username="physics_username",
+            jump_username="",
             jump_auth_method="password",
             jump_key_path="",
             use_macos_keychain_passwords=False,
-            default_working_directory="/mnt/redwoodfs/username",
+            default_working_directory=f"/mnt/redwoodfs/{USERNAME_TOKEN}",
             queue_system="ADDQUEUE",
             cores_per_node=32,
             default_walltime="",
@@ -108,6 +111,14 @@ def _ensure_redwood_preset(configs: list[ClusterConfig]) -> list[ClusterConfig]:
     if redwood is None:
         return configs
     return [*configs, redwood]
+
+
+def _working_directory_without_placeholder(directory: str) -> str:
+    """Turn the shipped ``username`` path component back into ``{username}``."""
+
+    return "/".join(
+        USERNAME_TOKEN if part == PLACEHOLDER_USERNAME else part for part in directory.split("/")
+    )
 
 
 def _cluster_prefix(name: str) -> str:
@@ -317,7 +328,17 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
     if not hostname:
         return None
 
+    # A profile saved with the name an earlier preset shipped never had a real
+    # username, so its directory held the placeholder too.
     username = _settings_text(settings, f"{prefix}/username")
+    default_working_directory = str(
+        settings.value(f"{prefix}/default_working_directory", "", str) or ""
+    ).strip()
+    if username == PLACEHOLDER_USERNAME:
+        username = ""
+        default_working_directory = _working_directory_without_placeholder(
+            default_working_directory
+        )
     auth_default = builtin.auth_method if builtin is not None else "key"
     auth_method = _normalise_auth_method(
         str(_settings_value(settings, f"{prefix}/auth_method", auth_default) or auth_default),
@@ -368,6 +389,8 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         f"{prefix}/jump_username",
         jump_defaults.jump_username if jump_defaults is not None else "",
     )
+    if jump_username == PLACEHOLDER_JUMP_USERNAME:
+        jump_username = ""
     jump_key_path = _settings_text(
         settings,
         f"{prefix}/jump_key_path",
@@ -464,9 +487,7 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         jump_auth_method=jump_auth_method,
         jump_key_path=jump_key_path,
         use_macos_keychain_passwords=use_macos_keychain_passwords,
-        default_working_directory=str(
-            settings.value(f"{prefix}/default_working_directory", "", str) or ""
-        ).strip(),
+        default_working_directory=default_working_directory,
         queue_system=queue_system,
         cores_per_node=max(1, cores_per_node),
         default_walltime=default_walltime,
