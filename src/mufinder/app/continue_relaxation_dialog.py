@@ -189,6 +189,12 @@ class ContinueRelaxationDialog(ParameterDialog):
                 "on acceptance; atomic positions are not changed by this dialog."
             ),
             species_options=species_options,
+            # Seeded through the constructor, as every row parameter dialog is
+            # (see workflow_dialogs.run_row_parameter_dialog), so the rows are
+            # built once and show exactly what the row was continuing from.
+            values=dict(initial_values),
+            preferred_exclusive=kpoint_exclusive_hint([initial_values]),
+            advanced_names=initial_advanced,
             parent=parent,
         )
         self.setWindowTitle("Continue Relaxation")
@@ -196,15 +202,6 @@ class ContinueRelaxationDialog(ParameterDialog):
         self._render_param_text = render_param_text
         self._old_param_text = old_param_text
         self._new_param_text = old_param_text
-
-        # Mirrors the call sequence of every row parameter dialog (see
-        # workflow_dialogs.run_row_parameter_dialog): seed values first, then the advanced
-        # set, so the shown editors reflect exactly what the row was
-        # continuing from before any edits are made.
-        self.set_values(
-            dict(initial_values), preferred_exclusive=kpoint_exclusive_hint([initial_values])
-        )
-        self.set_advanced_names(initial_advanced)
 
         self._checkpoint_label = QLabel(_checkpoint_status_text(checkpoint_probe), self)
         self._checkpoint_label.setWordWrap(True)
@@ -276,8 +273,7 @@ class ContinueRelaxationDialog(ParameterDialog):
         self._maybe_refresh_diff()
 
     def _maybe_refresh_diff(self) -> None:
-        # The overrides above fire during ParameterDialog.__init__ (and again
-        # from set_values/set_advanced_names in our own __init__), before the
+        # The overrides above fire during ParameterDialog.__init__, before the
         # diff widgets exist yet -- skip until they've been built.
         if getattr(self, "_diff_table", None) is None:
             return

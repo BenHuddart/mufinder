@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import partial
 
 import numpy as np
 import pytest
@@ -11,8 +12,13 @@ from mufinder.app import param_dialog as param_dialog_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.param_widgets import create_param_editor
+from mufinder.app.workflow_controllers.energy_barriers import EnergyBarriersController
+from mufinder.app.workflow_controllers.hyperfine_coupling import HyperfineCouplingController
+from mufinder.app.workflow_controllers.quantum_corrections import QuantumCorrectionsController
 from mufinder.app.workflow_dialogs import (
     EnergyBarrierPathViewerDialog,
+    HyperfineCouplingConfigDialog,
+    NudgedElasticBandConfigDialog,
     QuantumCorrectionsConfigDialog,
     RowParameterRequest,
     SourceConfigureRequest,
@@ -297,7 +303,9 @@ def test_run_row_parameter_dialog_deletes_the_dialog_after_it_closes(
     parent.deleteLater()
 
 
-def test_run_row_parameter_dialog_builds_each_editor_once(qapp, monkeypatch) -> None:
+def _count_editor_parents(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record the parent of every parameter editor the dialogs create."""
+
     editor_parents: list[object] = []
 
     def counting_create_param_editor(spec, parent=None, **kwargs):
@@ -305,6 +313,11 @@ def test_run_row_parameter_dialog_builds_each_editor_once(qapp, monkeypatch) -> 
         return create_param_editor(spec, parent, **kwargs)
 
     monkeypatch.setattr(param_dialog_module, "create_param_editor", counting_create_param_editor)
+    return editor_parents
+
+
+def test_run_row_parameter_dialog_builds_each_editor_once(qapp, monkeypatch) -> None:
+    editor_parents = _count_editor_parents(monkeypatch)
     opened = _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
 
     run_row_parameter_dialog(
@@ -338,33 +351,144 @@ def _source_request(*, read_only: bool = False) -> SourceConfigureRequest:
     )
 
 
+def _plain_dialog(**kwargs: object) -> ParameterDialog:
+    return ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections", **kwargs)
+
+
 def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(
     qapp, monkeypatch
 ) -> None:
     opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
-    dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections")
+    collected: list[dict[str, object]] = []
 
-    result = run_source_configure_dialog(dialog, _source_request())
+    result = run_source_configure_dialog(
+        _plain_dialog,
+        _source_request(),
+        extras=lambda dialog: collected.append(dialog.collect_values()) or {"num_farms": 3},
+    )
 
-    assert opened == [dialog]
+    (dialog,) = opened
     assert dialog.windowTitle() == "Configure Things"
     assert result is not None
     # The rows disagree on the metals method, so the dialog marks it mixed and,
     # left untouched, reports it so each row keeps its own.
     assert result.untouched_mixed == frozenset({"metals_method"})
     assert "metals_method" not in result.values
-    assert result.values == dialog.collect_values()
+    assert result.values == collected[0]
+    assert result.extras == {"num_farms": 3}
 
 
 def test_run_source_configure_dialog_returns_nothing_when_cancelled_or_read_only(
     qapp, monkeypatch
 ) -> None:
+    extras_read: list[object] = []
     _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
-    dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections")
-    assert run_source_configure_dialog(dialog, _source_request()) is None
+    assert (
+        run_source_configure_dialog(_plain_dialog, _source_request(), extras=extras_read.append)
+        is None
+    )
 
     _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
-    dialog = ParameterDialog(
-        specs=_quantum_specs(), workflow_stage="quantum_corrections", read_only=True
+    assert (
+        run_source_configure_dialog(
+            partial(_plain_dialog, read_only=True),
+            _source_request(read_only=True),
+            extras=extras_read.append,
+        )
+        is None
     )
-    assert run_source_configure_dialog(dialog, _source_request(read_only=True)) is None
+    assert extras_read == []
+
+
+def _source_dialog_builders() -> list[object]:
+    return [
+        pytest.param(
+            partial(
+                QuantumCorrectionsConfigDialog,
+                specs=QuantumCorrectionsController.parameter_specs(),
+                num_farms=2,
+            ),
+            id="quantum-corrections",
+        ),
+        pytest.param(
+            partial(
+                HyperfineCouplingConfigDialog,
+                specs=HyperfineCouplingController.parameter_specs(),
+            ),
+            id="hyperfine-coupling",
+        ),
+        pytest.param(
+            partial(
+                NudgedElasticBandConfigDialog,
+                specs=EnergyBarriersController.parameter_specs(),
+                num_farms=2,
+            ),
+            id="nudged-elastic-band",
+        ),
+    ]
+
+
+def _batch_source_request(*, read_only: bool = False) -> SourceConfigureRequest:
+    return SourceConfigureRequest(
+        keys=("a", "b"),
+        row_values=(
+            {"cut_off_energy": 600.0, "max_scf_cycles": 80},
+            {"cut_off_energy": 700.0, "max_scf_cycles": 80},
+        ),
+        advanced_names=frozenset({"max_scf_cycles"}),
+        title="Configure Sources",
+        intro_text="Selected sources: 2",
+        read_only=read_only,
+        num_farms=2,
+        species_options=("Si", "H:mu"),
+    )
+
+
+@pytest.mark.parametrize("build", _source_dialog_builders())
+@pytest.mark.parametrize(
+    ("exec_result", "read_only"),
+    [
+        (QDialog.DialogCode.Accepted, False),
+        (QDialog.DialogCode.Rejected, False),
+        (QDialog.DialogCode.Accepted, True),
+    ],
+)
+def test_run_source_configure_dialog_deletes_the_dialog_after_it_closes(
+    qapp, monkeypatch, build, exec_result, read_only
+) -> None:
+    _capture_exec(monkeypatch, exec_result)
+    parent = QWidget()
+
+    for _ in range(5):
+        run_source_configure_dialog(
+            partial(build, read_only=read_only, parent=parent),
+            _batch_source_request(read_only=read_only),
+            extras=lambda dialog: {"num_farms": 1},
+        )
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert parent.findChildren(ParameterDialog) == []
+    parent.deleteLater()
+
+
+@pytest.mark.parametrize("build", _source_dialog_builders())
+def test_run_source_configure_dialog_builds_each_editor_once(qapp, monkeypatch, build) -> None:
+    editor_parents = _count_editor_parents(monkeypatch)
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+
+    result = run_source_configure_dialog(build, _batch_source_request())
+
+    (dialog,) = opened
+    table_editors = [parent for parent in editor_parents if parent is dialog._table_widget]
+    row_editors = [row.editor for row in dialog._rows.values() if row.editor is not None]
+    assert row_editors
+    assert len(table_editors) == len(row_editors)
+    # The seed still reaches the single build: shared values, advanced and mixed names.
+    assert dialog.windowTitle() == "Configure Sources"
+    assert dialog.collect_values()["max_scf_cycles"] == 80
+    assert "max_scf_cycles" in dialog.advanced_names()
+    assert "cut_off_energy" in dialog.untouched_mixed_names()
+    assert result is not None
+    assert "cut_off_energy" in result.untouched_mixed
+    # The shared parameter order still leads the dialog.
+    assert list(dialog._rows)[:4] == list(workflow_basic_parameter_names())[:4]

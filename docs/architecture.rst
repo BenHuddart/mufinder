@@ -1484,8 +1484,12 @@ hooks above:
 - ``configure_request(keys)`` returns the Configure dialog's seed, a
   ``SourceConfigureRequest`` (each row's effective parameters, the dialog's
   title and intro text, whether it opens read-only, the agreed farm count and
-  the species options); the window builds the workflow's dialog, runs it
-  through ``run_source_configure_dialog`` and passes the result to
+  the species options); the window hands ``run_source_configure_dialog`` a
+  builder for the workflow's dialog and a reader for its own controls (the
+  farm count). The runner passes the shared values, advanced names and mixed
+  names to the dialog's constructor, so the rows are built once per open,
+  reads the controls into ``SourceConfigureResult.extras`` and deletes the
+  dialog once it closes. The window passes the result to
   ``apply_configuration(keys, result, extras)``, which stores each row's
   ``row_settings`` entry (a mixed parameter left untouched keeps each row's
   own value), refreshes the view and persists.

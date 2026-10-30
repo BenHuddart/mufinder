@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
@@ -1194,6 +1194,9 @@ class _FakeContinueRelaxationDialog:
     def edited_parameters(self) -> tuple[dict[str, object], tuple[str, ...]]:
         return type(self).result_to_return
 
+    def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+        return None
+
 
 @pytest.fixture()
 def fake_continue_dialog(monkeypatch: pytest.MonkeyPatch):
@@ -1564,6 +1567,38 @@ def test_continue_relaxation_cancel_leaves_everything_unchanged(
     assert job.status == JobStatus.FAILED
     assert job.error_message == "boom"
     assert not any(record.action == "job_continuation" for record in doc.provenance)
+    window.close()
+
+
+@pytest.mark.parametrize("accept", [True, False], ids=["continued", "cancelled"])
+def test_continue_relaxation_deletes_its_dialogs_after_closing(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accept: bool
+) -> None:
+    """The real Continue dialog and its reference dialog do not outlive the open."""
+
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    code = main_window_module.QDialog.DialogCode
+    opened: list[object] = []
+
+    def fake_exec(dialog: object) -> object:
+        opened.append(dialog)
+        return code.Accepted if accept else code.Rejected
+
+    monkeypatch.setattr(main_window_module.ContinueRelaxationDialog, "exec", fake_exec)
+    monkeypatch.setattr(window, "_submit_jobs_locally", lambda *_a, **_k: None)
+    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda *_a, **_k: None)
+
+    for _ in range(3):
+        if accept:
+            job.status = JobStatus.FAILED
+        window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+    assert len(opened) == 3
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert window.findChildren(main_window_module.ParameterDialog) == []
     window.close()
 
 

@@ -115,7 +115,7 @@ def _effective_param_text(
     """Render the row's *fully resolved* text (defaults + overrides).
 
     Mirrors exactly what ``ContinueRelaxationDialog`` does internally for its
-    live "new" render (same reorder + seed sequence, same
+    live "new" render (same reorder + constructor seed, same
     ``collect_values()``/``advanced_names()`` read-back), so a caller-computed
     ``old_param_text`` build this way is guaranteed to agree with the dialog's
     own unedited state -- the contract documented on
@@ -126,13 +126,11 @@ def _effective_param_text(
         specs=reorder_workflow_parameter_specs(_continue_specs()),
         workflow_stage="pristine_relaxation",
         locked_values=_LOCKED_VALUES,
+        values=dict(parameter_values),
+        preferred_exclusive=kpoint_exclusive_hint([parameter_values]),
+        advanced_names=tuple(added_advanced),
     )
     try:
-        reference.set_values(
-            dict(parameter_values),
-            preferred_exclusive=kpoint_exclusive_hint([parameter_values]),
-        )
-        reference.set_advanced_names(tuple(added_advanced))
         values = dict(reference.collect_values())
         values.pop("task", None)
         return render(values, reference.advanced_names())
@@ -370,3 +368,26 @@ def test_ok_button_is_labelled_continue(qapp) -> None:
     ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
     assert ok_button is not None
     assert ok_button.text() == "Continue"
+
+
+def test_builds_each_editor_once(qapp, monkeypatch) -> None:
+    from mufinder.app import param_dialog as param_dialog_module
+    from mufinder.app.param_widgets import create_param_editor
+
+    editor_parents: list[object] = []
+
+    def counting_create_param_editor(spec, parent=None, **kwargs):
+        editor_parents.append(parent)
+        return create_param_editor(spec, parent, **kwargs)
+
+    monkeypatch.setattr(param_dialog_module, "create_param_editor", counting_create_param_editor)
+
+    dialog = _make_dialog(added_advanced=("num_dump_cycles",))
+
+    table_editors = [parent for parent in editor_parents if parent is dialog._table_widget]
+    row_editors = [row.editor for row in dialog._rows.values() if row.editor is not None]
+    assert row_editors
+    assert len(table_editors) == len(row_editors)
+    # The seed still reaches the single build.
+    assert "num_dump_cycles" in dialog.advanced_names()
+    assert dialog._diff_table.rowCount() == 0
