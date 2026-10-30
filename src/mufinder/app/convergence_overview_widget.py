@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +58,9 @@ class _PinnedPlotWidget(QWidget):
         self._canvas_frame = PlotFrame(
             self._canvas, title=_PINNED_PLOT_TITLES.get(sweep_kind, "Convergence"), parent=self
         )
+        # A canvas's size hint is its current size, which would hold the page at
+        # the largest size it has had; the plot takes the room the card has left.
+        self._canvas_frame.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         layout.addWidget(self._canvas_frame, stretch=1)
 
         self.show_placeholder(
@@ -177,7 +181,6 @@ class _OverviewCard(QFrame):
 
         self._pinned_zone = QFrame(self)
         self._pinned_zone.setObjectName("overviewPinnedZone")
-        self._pinned_zone.setMinimumHeight(300)
         pinned_layout = QVBoxLayout(self._pinned_zone)
         pinned_layout.setContentsMargins(12, 12, 12, 12)
         self._plot = _PinnedPlotWidget(sweep_kind=sweep_kind, parent=self._pinned_zone)
@@ -231,19 +234,11 @@ class ConvergenceOverviewWidget(QWidget):
         style_section_title(self._title)
 
         self._subtitle = QLabel(
-            "Production DFT settings should be converged with respect to both plane-wave cutoff energy "
-            "and reciprocal-space sampling before the later muon workflows are trusted.",
+            "Converge the plane-wave cutoff and the k-point grid before the muon workflows.",
             self._content,
         )
         self._subtitle.setWordWrap(True)
         style_section_subtitle(self._subtitle)
-
-        self._hint = QLabel(
-            "Each pinned plot is created when you adopt a project default from the corresponding analysis dialog.",
-            self._content,
-        )
-        self._hint.setWordWrap(True)
-        style_hint_text(self._hint)
 
         self._cutoff_card = _OverviewCard(
             title="Cutoff Convergence",
@@ -264,7 +259,6 @@ class ConvergenceOverviewWidget(QWidget):
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(18)
-        cards_row.setAlignment(Qt.AlignmentFlag.AlignTop)
         cards_row.addWidget(self._cutoff_card, stretch=1)
         cards_row.addWidget(self._kpoint_card, stretch=1)
 
@@ -273,9 +267,7 @@ class ConvergenceOverviewWidget(QWidget):
         content_layout.setSpacing(12)
         content_layout.addWidget(self._title)
         content_layout.addWidget(self._subtitle)
-        content_layout.addWidget(self._hint)
-        content_layout.addLayout(cards_row)
-        content_layout.addStretch(1)
+        content_layout.addLayout(cards_row, stretch=1)
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)

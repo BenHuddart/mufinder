@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from matplotlib.colors import to_hex
-from PySide6.QtWidgets import QScrollArea
-from pytest import approx as pytest_approx
+from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QLabel, QScrollArea
+import pytest
 
 from mufinder.app import theme as theme_module
-from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
+from mufinder.app.convergence_display import format_default_criteria
+from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget, _PinnedPlotWidget
+from mufinder.app.main_window import MainWindow
+
+# The size of the page inside the main window at its default size on a 1280 x 864 desktop.
+_DEFAULT_PAGE_SIZE = QSize(964, 677)
 
 
 def test_convergence_overview_widget_shows_placeholder_and_emits_navigation(qapp) -> None:
@@ -45,7 +51,6 @@ def test_convergence_overview_widget_shows_placeholder_and_emits_navigation(qapp
     assert "Project default:" in widget._cutoff_card._summary_labels["Project default"].text()
     assert "Not set" in widget._cutoff_card._summary_labels["Project default"].text()
     assert "Cutoff default:" in widget._kpoint_card._summary_labels["Cutoff default"].text()
-    assert widget._cutoff_card._pinned_zone.minimumHeight() >= 300
 
     widget._cutoff_card._action_button.click()
     widget._kpoint_card._action_button.click()
@@ -235,17 +240,6 @@ def test_convergence_overview_widget_skips_stress_when_data_absent(qapp) -> None
     # Two axes only (energy + force) — no twinx for stress.
     assert len(widget._cutoff_card._plot._figure.axes) == 2
 
-    # The dF badge should sit in the historical top-right corner (x≈0.99, ha="right").
-    energy_ax, force_ax = widget._cutoff_card._plot._figure.axes
-    badges = [t for t in force_ax.texts if "dF" in t.get_text()]
-    assert badges, "expected a dF badge on the force subplot"
-    assert badges[0].get_position()[0] == pytest_approx(0.99)
-    assert badges[0].get_ha() == "right"
-    # Badge colours match their respective series for visual association.
-    assert badges[0].get_color().lower() == "#b91c1c"
-    dE_badges = [t for t in energy_ax.texts if "dE" in t.get_text()]
-    assert dE_badges and dE_badges[0].get_color().lower() == "#1d4ed8"
-    assert not any("dS" in t.get_text() for t in force_ax.texts)
     widget.close()
 
 
@@ -280,16 +274,11 @@ def test_convergence_overview_widget_renders_stress_overlay_when_present(qapp) -
     assert "Max stress" in stress_ax.get_ylabel()
     assert stress_ax.yaxis.label.get_color() == theme_module.plot_series_colours().stress
 
-    # Force subplot now has both dF and dS badges, both right-anchored.
-    force_ax = axes[1]
-    dF_badges = [t for t in force_ax.texts if "dF" in t.get_text()]
-    dS_badges = [t for t in force_ax.texts if "dS" in t.get_text()]
-    assert dF_badges and dS_badges
-    assert dS_badges[0].get_position()[0] == pytest_approx(0.99)
-    assert dS_badges[0].get_ha() == "right"
-    assert dF_badges[0].get_ha() == "right"
-    # dF should sit strictly to the left of dS once stress is enabled.
-    assert dF_badges[0].get_position()[0] < dS_badges[0].get_position()[0]
+    # The stress threshold is drawn on the stress axis, and the Criteria row names it.
+    assert 0.1 in [line.get_ydata()[0] for line in stress_ax.lines]
+    assert "dS <= 0.1 GPa" in format_default_criteria(
+        method=None, energy_threshold=0.001, force_threshold=0.05, stress_threshold=0.1
+    )
     widget.close()
 
 
@@ -374,12 +363,182 @@ def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> No
         assert to_hex(energy_ax.get_facecolor()).lower() == palette.bg_surface.lower()
         assert energy_ax.yaxis.label.get_color().lower() == palette.text_primary.lower()
         assert force_ax.xaxis.label.get_color().lower() == palette.text_primary.lower()
-        assert energy_ax.texts
-        # The dE badge takes the energy series colour of the active theme.
-        assert (
-            energy_ax.texts[-1].get_color().lower()
-            == theme_module.plot_series_colours().energy.lower()
-        )
+        assert energy_ax.lines[0].get_color() == theme_module.plot_series_colours().energy
         widget.close()
     finally:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def _cutoff_snapshot(*, with_stress: bool = False) -> dict[str, object]:
+    plot_data: dict[str, object] = {
+        "cutoffs": [300.0, 400.0, 500.0, 600.0, 700.0, 800.0],
+        "energies": [-5620.0, -5621.5, -5621.8, -5621.85, -5621.86, -5621.86],
+        "forces": [0.61, 0.21, 0.08, 0.03, 0.01, 0.01],
+        "energy_threshold": 0.001,
+        "force_threshold": 0.05,
+    }
+    if with_stress:
+        plot_data["stresses"] = [1.5, 0.4, 0.2, 0.08, 0.05, 0.04]
+        plot_data["stress_threshold"] = 0.1
+    return {"default_value": 600.0, "plot_data": plot_data}
+
+
+_FULL_SUMMARY_ROWS = [
+    ("Project default", "4 x 4 x 6"),
+    ("Cutoff default", "600 eV"),
+    ("Functional", "PBE"),
+    ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"),
+]
+
+
+def _pin_both_plots(widget: ConvergenceOverviewWidget) -> None:
+    widget.set_cutoff_panel(
+        summary_rows=_FULL_SUMMARY_ROWS[:1] + _FULL_SUMMARY_ROWS[2:],
+        snapshot=_cutoff_snapshot(),
+        placeholder_message="unused",
+    )
+    widget.set_kpoint_panel(
+        summary_rows=_FULL_SUMMARY_ROWS,
+        snapshot=_kpoint_snapshot(lattice_vectors=_CUBIC_LATTICE),
+        placeholder_message="unused",
+    )
+
+
+def _pinned_page(qapp, *, size: QSize = _DEFAULT_PAGE_SIZE) -> ConvergenceOverviewWidget:
+    widget = ConvergenceOverviewWidget()
+    _pin_both_plots(widget)
+    widget.resize(size)
+    widget.show()
+    qapp.processEvents()
+    return widget
+
+
+def _assert_fits_without_scrolling(widget: ConvergenceOverviewWidget) -> None:
+    bar = widget._scroll.verticalScrollBar()
+    assert not bar.isVisible()
+    assert bar.maximum() == 0
+    assert widget._content.height() <= widget._scroll.viewport().height()
+    for card in (widget._cutoff_card, widget._kpoint_card):
+        canvas = card._plot._canvas
+        assert card.geometry().bottom() < widget._content.height()
+        assert canvas.height() >= card._plot.minimumHeight()
+        # The x axis label of the force panel is inside the visible canvas.
+        canvas.draw()
+        force_ax = card._plot._figure.axes[1]
+        assert force_ax.xaxis.label.get_window_extent(canvas.get_renderer()).y0 >= 0
+
+
+def test_convergence_overview_keeps_one_line_subtitle_and_no_page_hint(qapp) -> None:
+    widget = _pinned_page(qapp)
+
+    subtitle = widget._subtitle
+    assert subtitle.height() <= subtitle.fontMetrics().lineSpacing() + 2
+    page_text = " ".join(label.text() for label in widget._content.findChildren(QLabel))
+    assert "Each pinned plot" not in page_text
+    widget.close()
+
+
+def test_convergence_overview_fits_the_default_window_with_both_plots_pinned(qapp) -> None:
+    widget = _pinned_page(qapp)
+
+    _assert_fits_without_scrolling(widget)
+    widget.close()
+
+
+def test_convergence_overview_fits_the_main_window_at_its_default_size(qapp) -> None:
+    window = MainWindow()
+    window.show()
+    page = window._convergence_overview_view
+    window._main_stack.setCurrentWidget(page)
+    _pin_both_plots(page)
+    qapp.processEvents()
+
+    assert page.isVisible()
+    _assert_fits_without_scrolling(page)
+    window.close()
+
+
+def test_convergence_overview_plots_shrink_back_after_a_larger_window(qapp) -> None:
+    # A canvas's size hint follows its current size; that must not hold the page tall.
+    widget = _pinned_page(qapp, size=QSize(1600, 1400))
+    assert widget._cutoff_card._plot._canvas.height() > 500
+
+    widget.resize(_DEFAULT_PAGE_SIZE)
+    qapp.processEvents()
+
+    _assert_fits_without_scrolling(widget)
+    assert not widget._scroll.horizontalScrollBar().isVisible()
+    widget.close()
+
+
+def test_convergence_overview_scrolls_only_when_the_window_is_too_short(qapp) -> None:
+    widget = _pinned_page(qapp, size=QSize(964, 400))
+
+    assert widget._scroll.verticalScrollBar().maximum() > 0
+    assert widget._cutoff_card._plot._canvas.height() >= widget._cutoff_card._plot.minimumHeight()
+    widget.close()
+
+
+def test_convergence_overview_empty_cards_fit_the_default_window(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+    for setter in (widget.set_cutoff_panel, widget.set_kpoint_panel):
+        setter(summary_rows=_FULL_SUMMARY_ROWS, snapshot=None, placeholder_message="Adopt one.")
+    widget.resize(_DEFAULT_PAGE_SIZE)
+    widget.show()
+    qapp.processEvents()
+
+    assert not widget._scroll.verticalScrollBar().isVisible()
+    assert widget._cutoff_card._plot._placeholder.isVisible()
+    widget.close()
+
+
+def _plot_texts_under_pop_out_button(plot: _PinnedPlotWidget) -> list[str]:
+    canvas, figure = plot._canvas, plot._figure
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    button = plot._canvas_frame.pop_out_button
+    top_left = canvas.mapFromGlobal(button.mapToGlobal(button.rect().topLeft()))
+    scale = canvas.devicePixelRatioF()
+    left, right = top_left.x() * scale, (top_left.x() + button.width()) * scale
+    top = figure.bbox.height - top_left.y() * scale
+    bottom = top - button.height() * scale
+
+    hidden = []
+    for axes in figure.axes:
+        ticks = [
+            tick.label1 if tick.label1.get_visible() else tick.label2
+            for axis in (axes.xaxis, axes.yaxis)
+            for tick in axis.get_major_ticks()
+        ]
+        for text in [*axes.texts, axes.xaxis.label, axes.yaxis.label, *ticks]:
+            if not text.get_text() or not text.get_visible():
+                continue
+            box = text.get_window_extent(renderer)
+            if box.x0 < right and box.x1 > left and box.y0 < top and box.y1 > bottom:
+                hidden.append(text.get_text())
+    return hidden
+
+
+@pytest.mark.parametrize(
+    "kind, snapshot",
+    [
+        ("cutoff", _cutoff_snapshot()),
+        ("cutoff", _cutoff_snapshot(with_stress=True)),
+        # The 0.05 1/Ang spacing tick falls on the densest grid, at the right of the axis.
+        ("kpoint", _kpoint_snapshot(lattice_vectors=_CUBIC_LATTICE)),
+        ("kpoint", _kpoint_snapshot()),
+    ],
+)
+def test_convergence_overview_keeps_plot_text_clear_of_the_pop_out_button(
+    qapp, kind: str, snapshot: dict[str, object]
+) -> None:
+    widget = ConvergenceOverviewWidget()
+    card = widget._cutoff_card if kind == "cutoff" else widget._kpoint_card
+    setter = widget.set_cutoff_panel if kind == "cutoff" else widget.set_kpoint_panel
+    setter(summary_rows=_FULL_SUMMARY_ROWS, snapshot=snapshot, placeholder_message="unused")
+    widget.resize(_DEFAULT_PAGE_SIZE)
+    widget.show()
+    qapp.processEvents()
+
+    assert _plot_texts_under_pop_out_button(card._plot) == []
+    widget.close()

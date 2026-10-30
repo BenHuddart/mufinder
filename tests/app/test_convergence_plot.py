@@ -102,7 +102,7 @@ def test_full_plot_titles_legends_and_stress_axis(qapp) -> None:
     assert not axes.energy.texts
 
 
-def test_compact_plot_shows_thresholds_as_badges(qapp) -> None:
+def test_compact_plot_leaves_thresholds_to_the_cards_criteria_row(qapp) -> None:
     figure = Figure()
     data = ConvergencePlotData.from_mapping(_PLOT_DATA)
 
@@ -110,9 +110,8 @@ def test_compact_plot_shows_thresholds_as_badges(qapp) -> None:
 
     assert axes.energy.get_legend() is None
     assert axes.energy.get_title() == ""
-    badges = {text.get_text().split(" ")[0] for text in axes.force.texts}
-    assert badges == {"dF", "dS"}
-    assert [text.get_text() for text in axes.energy.texts] == ["dE <= 0.001 eV/atom"]
+    assert not axes.energy.texts
+    assert not axes.force.texts
 
 
 def test_kpoint_plot_uses_a_log_count_axis_and_names_only_the_recommended_grid(qapp) -> None:
