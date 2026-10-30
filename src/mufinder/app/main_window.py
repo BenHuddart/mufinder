@@ -10,7 +10,6 @@ import html
 import logging
 from pathlib import Path
 import posixpath
-import re
 import time
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
@@ -121,6 +120,8 @@ from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
 )
+from mufinder.app.export_dialogs import open_containing_folder
+from mufinder.app.failed_job_dialog import FailedJobAction, FailedJobDialog
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
 from mufinder.domain.text import natural_sort_key, plural
@@ -303,10 +304,9 @@ from mufinder.services.definition_mappings import (
 )
 from mufinder.services.failure_diagnosis import (
     FailureDiagnosis,
+    failed_job_report,
     failure_reason_label,
     failure_reason_summary,
-    find_failure_log_files,
-    read_log_tail,
 )
 from mufinder.services.job_artifacts import (
     ParsedJobArtifacts,
@@ -3585,6 +3585,19 @@ class MainWindow(QMainWindow):
             if not selected:
                 return
 
+        # Check what the submission needs before asking how to resubmit, so a
+        # missing executable or cluster is never reported after the question.
+        if any(job.execution_target == "local" for job in selected) and (
+            not self._castep_executable_ready()
+        ):
+            selected = [job for job in selected if job.execution_target != "local"]
+        if any(job.execution_target != "local" for job in selected) and (
+            not self._clusters_configured()
+        ):
+            selected = [job for job in selected if job.execution_target == "local"]
+        if not selected or not self._keyword_catalog_guard.confirm_submission():
+            return
+
         fresh_start_job_ids = self._choose_relaxation_resubmit_mode(selected)
         if fresh_start_job_ids is None:
             return
@@ -4471,17 +4484,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        setup = load_castep_setup(self._settings)
-        if not setup.executable_path:
-            QMessageBox.warning(
-                self,
-                "CASTEP executable missing",
-                "Configure a CASTEP executable in Setup > CASTEP before submitting jobs.",
-            )
+        if not self._castep_executable_ready():
             return
         if not self._keyword_catalog_guard.confirm_submission():
             return
 
+        setup = load_castep_setup(self._settings)
         dialog = LocalSubmissionDialog(
             job_labels=[job.label for job in eligible_jobs],
             mpirun_configured=bool(setup.mpirun_path),
@@ -4641,6 +4649,59 @@ class MainWindow(QMainWindow):
             success_message=success_message,
         )
 
+    def _castep_executable_ready(self) -> bool:
+        """Return whether a local CASTEP executable is configured, offering Setup > CASTEP."""
+
+        return self._ready_or_offer_setup(
+            lambda: bool(load_castep_setup(self._settings).executable_path),
+            title="CASTEP executable missing",
+            text="Configure a CASTEP executable in Setup > CASTEP before submitting jobs.",
+            setup_label="Open Setup > CASTEP…",
+            open_setup=self._open_castep_setup_dialog,
+        )
+
+    def _clusters_configured(self) -> bool:
+        """Return whether at least one cluster is configured, offering Setup > HPC Clusters."""
+
+        return self._ready_or_offer_setup(
+            lambda: bool(load_cluster_configs(self._settings)),
+            title="No configured clusters",
+            text="Configure at least one cluster in Setup > HPC Clusters before submitting.",
+            setup_label="Open Setup > HPC Clusters…",
+            open_setup=self._open_cluster_setup_dialog,
+        )
+
+    def _ready_or_offer_setup(
+        self,
+        is_ready: Callable[[], bool],
+        *,
+        title: str,
+        text: str,
+        setup_label: str,
+        open_setup: Callable[[], None],
+    ) -> bool:
+        """Return ``is_ready()``; when false, say why and offer the setup dialog.
+
+        The answer is true when the user opens the setup dialog and fixes it
+        there. Cancel is the default.
+        """
+
+        if is_ready():
+            return True
+        choice = workflow_table_utils.confirm_choice(
+            self,
+            title,
+            text,
+            [("setup", setup_label), ("cancel", "Cancel")],
+            default="cancel",
+            escape="cancel",
+            icon=QMessageBox.Icon.Warning,
+        )
+        if choice != "setup":
+            return False
+        open_setup()
+        return is_ready()
+
     def _choose_cluster_submission(
         self, eligible_jobs: list[Job], default_cluster_name: str | None
     ) -> tuple[ClusterSubmissionConfig, ClusterConfig, SSHCredentials | None] | None:
@@ -4653,16 +4714,11 @@ class MainWindow(QMainWindow):
         has since been removed.
         """
 
-        cluster_configs = load_cluster_configs(self._settings)
-        if not cluster_configs:
-            QMessageBox.warning(
-                self,
-                "No configured clusters",
-                "Configure at least one cluster in Setup > HPC Clusters before submitting.",
-            )
+        if not self._clusters_configured():
             return None
         if not self._keyword_catalog_guard.confirm_submission():
             return None
+        cluster_configs = load_cluster_configs(self._settings)
 
         workflow_type = cluster_workflow_directory_fragment(eligible_jobs)
         last_submission = self._load_last_cluster_submission_config(workflow_type=workflow_type)
@@ -5175,25 +5231,98 @@ class MainWindow(QMainWindow):
             )
             return
 
-        diagnoses = [self._job_failure_diagnosis(job) for job in failed_jobs]
-        sections = [
-            self._failure_diagnostics_for_job(job, diagnosis)
-            for job, diagnosis in zip(failed_jobs, diagnoses, strict=True)
-        ]
-        details = "\n\n".join(
-            (
-                "=" * 80,
-                *sections,
+        reports = [
+            failed_job_report(
+                job,
+                self._job_failure_diagnosis(job),
+                self._job_output_directory(job),
+                self._job_seed_name(job),
             )
+            for job in failed_jobs
+        ]
+        continue_relaxation = (
+            self._continue_relaxation_for_job(failed_jobs[0]) if len(failed_jobs) == 1 else None
         )
+        dialog = FailedJobDialog(
+            reports,
+            # Failed and stopped jobs can always be resubmitted.
+            can_resubmit=True,
+            can_continue=continue_relaxation is not None,
+            open_folder=open_containing_folder,
+            parent=self,
+        )
+        dialog.exec()
+        action = dialog.action()
+        if action == FailedJobAction.RESUBMIT:
+            self._on_resubmit_from_dashboard([job.id for job in failed_jobs])
+        elif action == FailedJobAction.CONTINUE_RELAXATION and continue_relaxation is not None:
+            continue_relaxation()
 
-        message = make_message_box_resizable(QMessageBox(self))
-        message.setIcon(QMessageBox.Icon.Information)
-        message.setWindowTitle("Failed job diagnostics")
-        message.setText(self._failure_headline(failed_jobs, diagnoses))
-        message.setInformativeText("Open details to inspect available error/log file content.")
-        message.setDetailedText(details)
-        message.exec()
+    def _continue_relaxation_for_job(self, job: Job) -> Callable[[], None] | None:
+        """Return the row menu's ``Continue relaxation…`` for ``job``'s row.
+
+        ``None`` when ``job`` is not a relaxation, no row of its page's active
+        run holds it, or that row cannot be continued (the row menu's check).
+        The row is found through the active run's job bindings, as the row
+        menu resolves its row's job.
+        """
+
+        if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION:
+            controller = self._pristine_relaxation_controller
+            view = self._pristine_relaxation_view
+            handler = self._on_continue_relaxation_requested_from_pristine_relaxation
+        elif job.workflow_stage == WorkflowStage.MUON_RELAXATION:
+            controller = self._muon_relaxation_controller
+            view = self._muon_relaxation_view
+            handler = self._on_continue_relaxation_requested_from_muon_relaxation
+        else:
+            return None
+        key = self._relaxation_row_key_for_job(job)
+        if key is None or not controller.row_is_continuable(key):
+            return None
+        if view.continue_relaxation_dialog_seed(key) is None:
+            return None
+        return partial(handler, key)
+
+    def _relaxation_row_key_for_job(self, job: Job) -> str | None:
+        """Return the key of the active relaxation run's row bound to ``job``."""
+
+        if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION:
+            controller = self._pristine_relaxation_controller
+            definition = controller.active_definition()
+            if definition is None:
+                return None
+            controller.sync_mappings(definition)
+            config = deserialize_pristine_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
+            rows = config.rows if config is not None else ()
+            return next(
+                (
+                    row.label
+                    for row in rows
+                    if (bound := controller.job_for_key(definition, row.label)) is not None
+                    and bound.id == job.id
+                ),
+                None,
+            )
+        controller = self._muon_relaxation_controller
+        definition = controller.active_definition()
+        if definition is None:
+            return None
+        controller.sync_mappings(definition)
+        config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        rows = config.rows if config is not None else ()
+        return next(
+            (
+                self._muon_relaxation_row_key(row)
+                for row in rows
+                if (bound := controller.job_for_label(definition, row.label, row.charge_state))
+                is not None
+                and bound.id == job.id
+            ),
+            None,
+        )
 
     def _reset_failed_jobs(self, jobs: list[Job], *, cleanup_choice: bool | None = None) -> None:
         """Reset terminal jobs back to ``defined``.
@@ -5919,8 +6048,6 @@ class MainWindow(QMainWindow):
             return
         submit(list(plan.jobs))
 
-    _FAILURE_HEADLINE_LIMIT = 8
-
     def _job_failure_diagnosis(self, job: Job) -> FailureDiagnosis:
         """Diagnose ``job`` from its logs, keeping the cause recorded at failure time.
 
@@ -5933,123 +6060,6 @@ class MainWindow(QMainWindow):
         if job.failure_reason is None or fresh.reason == job.failure_reason:
             return fresh
         return FailureDiagnosis(reason=job.failure_reason)
-
-    @classmethod
-    def _failure_headline(cls, jobs: list[Job], diagnoses: list[FailureDiagnosis]) -> str:
-        lines = [
-            f"{job.label}: {diagnosis.summary}"
-            for job, diagnosis in zip(jobs[: cls._FAILURE_HEADLINE_LIMIT], diagnoses, strict=False)
-        ]
-        hidden = len(jobs) - len(lines)
-        if hidden > 0:
-            lines.append(f"…and {plural(hidden, 'more job')}.")
-        return "\n".join(lines)
-
-    def _failure_diagnostics_for_job(
-        self, job: Job, diagnosis: FailureDiagnosis | None = None
-    ) -> str:
-        if diagnosis is None:
-            diagnosis = self._job_failure_diagnosis(job)
-        lines = [
-            f"Job: {job.label}",
-            f"Workflow: {job.workflow_stage.value}",
-            f"Status: {job.status.value}",
-            f"Cause: {diagnosis.summary}",
-        ]
-        if diagnosis.evidence:
-            lines.append(f"Evidence ({diagnosis.evidence_source}): {diagnosis.evidence}")
-
-        if job.error_message:
-            lines.append(f"Recorded failure message: {job.error_message}")
-
-        output_dir = self._job_output_directory(job)
-        if output_dir is None:
-            lines.append("Output directory: not found")
-            return "\n".join(lines)
-
-        lines.append(f"Output directory: {output_dir}")
-
-        candidates = self._error_file_candidates(job, output_dir)
-        if not candidates:
-            lines.append("No .err or SLURM output files were found in the output directory.")
-            return "\n".join(lines)
-
-        for path in candidates:
-            lines.append("")
-            lines.append(f"[{path.name}]")
-            lines.append(self._read_error_contexts(path))
-
-        return "\n".join(lines)
-
-    def _error_file_candidates(self, job: Job, output_dir: Path) -> list[Path]:
-        return find_failure_log_files(
-            output_dir, [job.label, self._job_seed_name(job)], job.remote_job_id
-        )
-
-    _TAIL_READ_LIMIT_BYTES = 256 * 1024
-
-    @classmethod
-    def _read_bounded_tail(cls, path: Path, *, max_bytes: int | None = None) -> str:
-        """Read at most the trailing ``max_bytes`` of ``path`` as text.
-
-        Files at or under the limit are read in full, byte-for-byte identical
-        to a plain ``read_text()`` call. Larger files are read from a tail
-        offset only, so an inspect on a runaway multi-hundred-MB job output
-        never loads the whole file into memory; a partial leading line (cut
-        mid-line by the seek) is dropped and a truncation marker is prefixed,
-        matching the "… [truncated]" convention used elsewhere in this file.
-        """
-
-        limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
-        return read_log_tail(path, limit)
-
-    @classmethod
-    def _read_error_contexts(
-        cls, path: Path, *, context_lines: int = 2, max_matches: int = 8
-    ) -> str:
-        try:
-            lines = cls._read_bounded_tail(path).splitlines()
-        except OSError as exc:
-            return f"Could not read file: {exc}"
-
-        if not lines:
-            return "[File is empty]"
-
-        marker_re = re.compile(r"error|failed|exception|traceback|warning", re.IGNORECASE)
-        matched_indexes = [index for index, line in enumerate(lines) if marker_re.search(line)]
-        if not matched_indexes:
-            tail = lines[-min(len(lines), 20) :]
-            start_line = len(lines) - len(tail) + 1
-            return "\n".join(
-                f"{index}: {line}" for index, line in enumerate(tail, start=start_line)
-            )
-
-        excerpts: list[str] = []
-        covered: set[int] = set()
-        for match_index in matched_indexes[:max_matches]:
-            start = max(0, match_index - context_lines)
-            stop = min(len(lines), match_index + context_lines + 1)
-            if any(index in covered for index in range(start, stop)):
-                continue
-            covered.update(range(start, stop))
-            excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, stop))
-            excerpts.append(excerpt)
-
-        return "\n\n…\n\n".join(excerpts)
-
-    @classmethod
-    def _read_text_excerpt(cls, path: Path, *, max_chars: int = 12000) -> str:
-        try:
-            text = cls._read_bounded_tail(path)
-        except OSError as exc:
-            return f"Could not read file: {exc}"
-
-        stripped = text.strip()
-        if not stripped:
-            return "[File is empty]"
-        if len(stripped) <= max_chars:
-            return stripped
-        return stripped[:max_chars] + "\n… [truncated]"
 
     def _prompt_failed_job_cleanup(self, job_count: int) -> bool | None:
         answer = workflow_table_utils.confirm_choice(

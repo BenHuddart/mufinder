@@ -13,6 +13,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
+from mufinder.app.failed_job_dialog import FailedJobAction
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
@@ -32,6 +33,7 @@ from mufinder.services.project_service import ProjectService
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from tests.support.main_window import (
     add_cluster_input_job,
+    capture_failed_job_dialogs,
     patch_continuation_cluster_dialog,
     patch_continuation_cluster_runner,
 )
@@ -216,228 +218,86 @@ def test_main_window_inspect_failed_jobs_no_failed_shows_info(
     window.close()
 
 
-def test_main_window_failure_diagnostics_and_inspect_dialog(
+def _failed_job(
+    service: ProjectService, doc, label: str, *, stage=WorkflowStage.CONVERGENCE_CUTOFF
+):
+    job = service.add_job(
+        doc,
+        label=label,
+        workflow_stage=stage,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = JobStatus.FAILED
+    return job
+
+
+def test_inspect_shows_the_failed_job_dialog_with_the_log_excerpt(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "inspect_failed.mufinder", "InspectFailed")
-    job = service.add_job(
-        doc,
-        label="job_failed",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    job.status = JobStatus.FAILED
+    job = _failed_job(service, doc, "job_failed")
     job.error_message = "process failed"
     window._document = doc
-
     output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
     output_dir.mkdir(parents=True, exist_ok=True)
-    err_path = output_dir / f"{job.label}.err"
-    err_path.write_text("line 1\nfatal error\nline 3\n", encoding="utf-8")
-
-    diagnostics = window._failure_diagnostics_for_job(job)
-    assert "Recorded failure message" in diagnostics
-    assert "2: fatal error" in diagnostics
-
-    captured_details: list[str] = []
-
-    class _FakeMessageBox:
-        class Icon:
-            Information = 1
-
-        def __init__(self, *_args, **_kwargs) -> None:
-            self._details = ""
-
-        def setIcon(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setWindowTitle(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setText(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setInformativeText(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setDetailedText(self, details: str) -> None:
-            self._details = details
-
-        def setSizeGripEnabled(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setWindowFlag(self, *_args, **_kwargs) -> None:
-            return None
-
-        def exec(self) -> int:
-            captured_details.append(self._details)
-            return 0
-
-    monkeypatch.setattr(main_window_module, "QMessageBox", _FakeMessageBox)
+    (output_dir / f"{job.label}.err").write_text("line 1\nfatal error\nline 3\n", encoding="utf-8")
+    dialogs = capture_failed_job_dialogs(monkeypatch)
 
     window._inspect_failed_jobs([job])
 
-    assert len(captured_details) == 1
-    assert "job_failed.err" in captured_details[0]
-    assert "2: fatal error" in captured_details[0]
+    (dialog,) = dialogs
+    (report,) = dialog._reports
+    assert report.headline == "CASTEP stopped with an error."
+    assert "Recorded message: process failed" in report.notes
+    assert "[job_failed.err]" in report.log_excerpt
+    assert "2: fatal error" in dialog.log_view.toPlainText()
+    assert dialog.resubmit_button is not None
+    assert dialog.continue_button is None
+    assert dialog.open_folder_button is not None
     window.close()
 
 
-def test_main_window_failure_diagnostics_prefers_numbered_error_files(
-    main_window, tmp_path: Path
+def test_inspect_resubmit_runs_the_dashboard_resubmit_path(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "inspect_numbered_err.mufinder", "InspectNumberedErr")
-    job = service.add_job(
-        doc,
-        label="job_failed",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    job.status = JobStatus.FAILED
+    doc = service.create_project(tmp_path / "inspect_resubmit.mufinder", "InspectResubmit")
+    jobs = [_failed_job(service, doc, f"job_{index}") for index in range(3)]
     window._document = doc
+    capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.RESUBMIT)
+    resubmitted: list[list[object]] = []
+    monkeypatch.setattr(
+        window, "_on_resubmit_from_dashboard", lambda job_ids: resubmitted.append(job_ids)
+    )
 
-    output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "job_failed.0001.err").write_text("rank 1 error\n", encoding="utf-8")
-    (output_dir / "job_failed.0002.err").write_text("rank 2 error\n", encoding="utf-8")
-    (output_dir / "unrelated.err").write_text("other error\n", encoding="utf-8")
+    window._inspect_failed_jobs(jobs)
 
-    candidates = window._error_file_candidates(job, output_dir)
-    diagnostics = window._failure_diagnostics_for_job(job)
-
-    assert [path.name for path in candidates] == ["job_failed.0001.err", "job_failed.0002.err"]
-    assert "[job_failed.0001.err]" in diagnostics
-    assert "[job_failed.0002.err]" in diagnostics
-    assert "unrelated.err" not in diagnostics
+    assert resubmitted == [[job.id for job in jobs]]
     window.close()
 
 
-def test_main_window_failure_diagnostics_includes_slurm_output(
-    main_window,
-    tmp_path: Path,
+def test_inspect_close_does_nothing_further(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(tmp_path / "inspect_slurm_out.mufinder", "InspectSlurmOut")
-    job = service.add_job(
-        doc,
-        label="job_failed",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    job.status = JobStatus.FAILED
-    job.remote_job_id = "771300"
+    doc = service.create_project(tmp_path / "inspect_close.mufinder", "InspectClose")
+    job = _failed_job(service, doc, "job_failed")
     window._document = doc
-
-    output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "slurm-771300.out").write_text(
-        "running job\nslurm error: out of memory\n",
-        encoding="utf-8",
+    capture_failed_job_dialogs(monkeypatch, action=None)
+    monkeypatch.setattr(
+        window,
+        "_on_resubmit_from_dashboard",
+        lambda _ids: pytest.fail("Close must not resubmit"),
     )
 
-    candidates = window._error_file_candidates(job, output_dir)
-    diagnostics = window._failure_diagnostics_for_job(job)
+    window._inspect_failed_jobs([job])
 
-    assert [path.name for path in candidates] == ["slurm-771300.out"]
-    assert "[slurm-771300.out]" in diagnostics
-    assert "2: slurm error: out of memory" in diagnostics
+    assert job.status == JobStatus.FAILED
     window.close()
-
-
-def test_main_window_failure_diagnostics_without_output_directory(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "inspect_no_output.mufinder", "InspectNoOutput")
-    job = service.add_job(
-        doc,
-        label="job_failed",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    job.status = JobStatus.FAILED
-    window._document = doc
-
-    diagnostics = window._failure_diagnostics_for_job(job)
-
-    assert "Output directory: not found" in diagnostics
-    window.close()
-
-
-def test_main_window_error_file_candidates_fallback_and_excerpt_helpers(
-    main_window, tmp_path: Path
-) -> None:
-    output_dir = tmp_path / "errors"
-    output_dir.mkdir()
-    (output_dir / "job_x.err").write_text("line 1\nerror here\nline 3\n", encoding="utf-8")
-    (output_dir / "empty.err").write_text("", encoding="utf-8")
-
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "helpers_doc.mufinder", "HelpersDoc")
-    job = service.add_job(
-        doc,
-        label="job_x",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-
-    window = main_window
-    candidates = window._error_file_candidates(job, output_dir)
-    assert [path.name for path in candidates] == ["job_x.err"]
-
-    assert MainWindow._read_error_contexts(output_dir / "empty.err") == "[File is empty]"
-    assert MainWindow._read_error_contexts(output_dir / "missing.err").startswith(
-        "Could not read file"
-    )
-    assert "2: error here" in MainWindow._read_error_contexts(output_dir / "job_x.err")
-    window.close()
-
-
-def test_read_bounded_tail_small_file_matches_read_text(tmp_path: Path) -> None:
-    path = tmp_path / "small.out"
-    content = "first line\nsecond line\nthird line\n"
-    path.write_text(content, encoding="utf-8")
-
-    assert MainWindow._read_bounded_tail(path) == content
-    assert MainWindow._read_error_contexts(path) != "[File is empty]"
-    assert MainWindow._read_text_excerpt(path) == content.strip()
-
-
-def test_read_bounded_tail_large_file_returns_only_tail(tmp_path: Path) -> None:
-    path = tmp_path / "huge.out"
-    limit = MainWindow._TAIL_READ_LIMIT_BYTES
-
-    first_line = "FIRST-LINE-SENTINEL " + ("x" * 200) + "\n"
-    filler_line = "y" * 500 + "\n"
-    filler_count = (limit // len(filler_line)) + 10
-    last_line = "LAST-LINE-SENTINEL\n"
-
-    with path.open("w", encoding="utf-8") as handle:
-        handle.write(first_line)
-        for _ in range(filler_count):
-            handle.write(filler_line)
-        handle.write(last_line)
-
-    assert path.stat().st_size > limit
-
-    tail_text = MainWindow._read_bounded_tail(path)
-    assert len(tail_text.encode("utf-8")) <= limit + len("[… truncated] …\n")
-    assert "FIRST-LINE-SENTINEL" not in tail_text
-    assert "LAST-LINE-SENTINEL" in tail_text
-    assert tail_text.startswith("[… truncated] …\n")
-
-    excerpt = MainWindow._read_text_excerpt(path, max_chars=10**9)
-    assert "FIRST-LINE-SENTINEL" not in excerpt
-    assert "LAST-LINE-SENTINEL" in excerpt
-
-    error_contexts = MainWindow._read_error_contexts(path)
-    assert "FIRST-LINE-SENTINEL" not in error_contexts
 
 
 def test_main_window_prompt_failed_job_cleanup_choices(
@@ -460,23 +320,6 @@ def test_main_window_prompt_failed_job_cleanup_choices(
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel")
     assert window._prompt_failed_job_cleanup(2) is None
-    window.close()
-
-
-def test_main_window_error_file_candidates_handles_missing_directory(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "missing_errors.mufinder", "MissingErrors")
-    job = service.add_job(
-        doc,
-        label="conv_ecut_300",
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-
-    assert window._error_file_candidates(job, tmp_path / "does_not_exist") == []
     window.close()
 
 
@@ -1511,6 +1354,71 @@ def test_continue_relaxation_local_job_round_trip(
     assert [[j.id for j in jobs] for jobs in local_submitted] == [[job.id]]
     rendered = param_path.read_text(encoding="utf-8")
     assert "GEOM_MAX_ITER : 42" in rendered
+    window.close()
+
+
+def test_continue_relaxation_from_the_failed_job_dialog_continues_the_row(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    window, _service, _doc, _definition, job, _output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    job.error_message = "CASTEP exited with status 1: SCF cycles did not converge"
+    dialogs = capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.CONTINUE_RELAXATION)
+    fake_continue_dialog.result_to_return = ({"geom_max_iter": 300}, ())
+    local_submitted: list[list[Job]] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: local_submitted.append(list(jobs))
+    )
+
+    window._inspect_failed_jobs([job])
+
+    (dialog,) = dialogs
+    assert dialog.continue_button is not None
+    assert dialog.resubmit_button is not None
+    assert dialog.open_folder_button is not None
+    assert [[j.id for j in jobs] for jobs in local_submitted] == [[job.id]]
+    assert "GEOM_MAX_ITER : 300" in param_path.read_text(encoding="utf-8")
+    window.close()
+
+
+def test_failed_job_dialog_continues_a_muon_relaxation_by_its_charge_qualified_row(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _doc, _definition, job, _output_root, _param_path = _muon_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    window._refresh_ui_after_project_change()
+    continued: list[object] = []
+    monkeypatch.setattr(
+        window, "_on_continue_relaxation_requested_from_muon_relaxation", continued.append
+    )
+    dialogs = capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.CONTINUE_RELAXATION)
+
+    window._inspect_failed_jobs([job])
+
+    assert dialogs[0].continue_button is not None
+    assert continued == ["positivemuon:Site 1"]
+    window.close()
+
+
+def test_failed_job_dialog_offers_no_continue_when_the_row_cannot_be_continued(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _doc, _definition, job, _output_root, _param_path = (
+        _pristine_continue_fixture(tmp_path)
+    )
+    job.status = JobStatus.STOPPED
+    monkeypatch.setattr(
+        window._pristine_relaxation_controller, "row_is_continuable", lambda _key: False
+    )
+    dialogs = capture_failed_job_dialogs(monkeypatch)
+
+    window._inspect_failed_jobs([job])
+
+    assert dialogs[0].continue_button is None
     window.close()
 
 
