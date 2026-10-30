@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
@@ -46,7 +47,9 @@ class ConvergenceCutoffDeps:
     state; ``show_warning`` and ``confirm_choice`` show message boxes; and
     ``refresh_after_default_adopted`` refreshes the window views an adopted
     default changes; ``select_simulation_cell_in_editor`` opens the Supercell
-    Editor for the sweep's stage and calls back with the cell picked there.
+    Editor for the sweep's stage and calls back with the cell picked there;
+    ``refresh_jobs_table`` and ``refresh_journal_view`` refresh the job
+    dashboard and the journal after a configuration is stored.
     """
 
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
@@ -57,6 +60,8 @@ class ConvergenceCutoffDeps:
     confirm_choice: Callable[..., str]
     refresh_after_default_adopted: Callable[[], None]
     select_simulation_cell_in_editor: Callable[..., None]
+    refresh_jobs_table: Callable[[], None]
+    refresh_journal_view: Callable[[], None]
 
 
 class ConvergenceCutoffController(SweepConvergenceController):
@@ -77,9 +82,42 @@ class ConvergenceCutoffController(SweepConvergenceController):
     examiner_state_key = CUTOFF_EXAMINER_STATE_KEY
     snapshot_persist_failure_message = "Could not persist convergence overview snapshot to disk"
     simulation_cell_name = "convergence"
+    output_folder = "convergence_cutoff"
+    job_noun = "cutoff"
+    generated_jobs_name = "convergence"
+    reuse_matching_definition = True
 
     _deps: ConvergenceCutoffDeps
     _view: CutoffConvergenceWidget
+
+    def register_configured_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID,
+        parameters: dict[str, object],
+        output_directory: Path,
+        simulation_cell_mode: str,
+        supercell_source_workflow: str | None,
+    ) -> CalculationDefinition:
+        """Register a new cutoff sweep definition; return the newest cutoff definition."""
+
+        self._context.project_service.register_convergence_cutoff_definition(
+            document,
+            input_structure_id=input_structure_id,
+            parameters=parameters,
+            output_directory=output_directory,
+            simulation_cell_mode=simulation_cell_mode,
+            supercell_source_workflow=supercell_source_workflow,
+        )
+        return max(
+            (
+                definition
+                for definition in document.calculations.values()
+                if definition.workflow_stage == self.stage
+            ),
+            key=lambda definition: definition.created_at,
+        )
 
     def mapping_key(self, key: float) -> str:
         return self._deps.cutoff_key(key)

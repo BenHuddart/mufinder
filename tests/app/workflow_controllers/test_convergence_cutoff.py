@@ -22,8 +22,9 @@ from mufinder.services.convergence_defaults import (
 )
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
-from mufinder.app.convergence_types import SweepPointRunState
+from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.workflow_config_codecs import deserialize_convergence_config
+from mufinder.app.workflow_controllers import sweep_convergence as sweep_convergence_module
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
@@ -822,3 +823,156 @@ def test_simulation_cell_requests_without_a_project_change_nothing() -> None:
     assert view.simulation_cell_options == []
     assert window.warnings == []
     assert statuses == []
+
+
+# --------------------------------------------------------------------------- #
+# Configure (SweepConvergenceController, through the cutoff sweep)
+# --------------------------------------------------------------------------- #
+
+
+def _cutoff_config(*cutoffs: float) -> ConvergenceConfig:
+    return ConvergenceConfig(
+        sweep_values=cutoffs,
+        shared_params={"task": "SINGLEPOINT"},
+        overrides={},
+        name_prefix="conv",
+    )
+
+
+def _host_document(service: ProjectService, tmp_path: Path) -> ProjectDocument:
+    document = service.create_project(tmp_path / "configure.mufinder", "Configure")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    return document
+
+
+def test_configure_without_a_project_asks_for_one() -> None:
+    window = RecordingSweepWindow()
+    infos: list[tuple[str, str]] = []
+    controller = _examine_controller(None, window, infos=infos)
+
+    controller.configure(_cutoff_config(300.0))
+
+    assert infos == [("No project", "Create or open a project first.")]
+    assert window.window_refreshes == []
+
+
+def test_configure_without_a_host_structure_warns(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "no_host.mufinder", "NoHost")
+    window = RecordingSweepWindow()
+    controller = _examine_controller(document, window, service=service)
+
+    controller.configure(_cutoff_config(300.0))
+
+    assert window.warnings == [
+        ("No host structure", "Load a host structure before generating convergence jobs.")
+    ]
+    assert document.calculations == {}
+
+
+def test_configure_warns_when_the_configuration_does_not_expand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ProjectService()
+    document = _host_document(service, tmp_path)
+    window = RecordingSweepWindow()
+    controller = _examine_controller(document, window, service=service)
+
+    def fail(**_kwargs: object) -> None:
+        raise ValueError("invalid")
+
+    monkeypatch.setattr(sweep_convergence_module, "expand_convergence_jobs", fail)
+
+    controller.configure(_cutoff_config(300.0))
+
+    assert window.warnings == [("Convergence setup invalid", "invalid")]
+    assert document.calculations == {}
+
+
+def test_configure_registers_an_active_definition_without_creating_jobs(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _host_document(service, tmp_path)
+    window = RecordingSweepWindow()
+    statuses: list[str] = []
+    controller = _examine_controller(document, window, service=service, statuses=statuses)
+
+    controller.configure(_cutoff_config(300.0, 360.0))
+
+    (definition,) = document.calculations.values()
+    assert definition.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
+    assert definition.input_structure_ids == [document.project.host_structure_id]
+    assert definition.parameters["configuration"]["sweep_values"] == [300.0, 360.0]
+    assert definition.parameters["job_ids_by_cutoff"] == {}
+    assert definition.parameters["simulation_cell_mode"] == "unit_cell"
+    assert definition.parameters["supercell_source_workflow"] is None
+    assert document.ui_state[controller.active_key] == str(definition.id)
+    assert document.jobs == {}
+    assert not (document.project_root / "files" / "convergence_cutoff").exists()
+    assert window.window_refreshes == ["jobs_table", "journal_view"]
+    assert statuses == ["Configured 2 cutoff jobs; input files will be generated on submission"]
+
+
+def test_configure_runs_on_the_selected_saved_supercell(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, asset = _cell_document(service, tmp_path)
+    _use_saved_cell(service, document, asset)
+    controller = _examine_controller(document, RecordingSweepWindow(), service=service)
+
+    controller.configure(_cutoff_config(300.0))
+
+    (definition,) = document.calculations.values()
+    assert definition.input_structure_ids == [asset.id]
+    assert definition.parameters["simulation_cell_mode"] == "saved_supercell"
+    assert definition.parameters["supercell_source_workflow"] == "convergence_cutoff"
+
+
+def test_configure_reuses_the_definition_with_the_same_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = _host_document(service, tmp_path)
+    statuses: list[str] = []
+    window = RecordingSweepWindow()
+    controller = _examine_controller(document, window, service=service, statuses=statuses)
+    config = _cutoff_config(300.0, 400.0)
+    controller.configure(config)
+    (definition,) = document.calculations.values()
+    job = service.add_job(
+        document,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    definition.parameters["job_ids_by_cutoff"]["300"] = str(job.id)
+    document.ui_state.pop(controller.active_key)
+
+    controller.configure(config)
+
+    assert list(document.calculations.values()) == [definition]
+    assert document.ui_state[controller.active_key] == str(definition.id)
+    assert definition.parameters["job_ids_by_cutoff"] == {"300": str(job.id)}
+    assert statuses[-1] == "Using existing cutoff setup with 2 cutoff jobs"
+    assert window.window_refreshes == ["jobs_table", "journal_view"] * 2
+
+
+def test_configure_registers_a_new_definition_for_a_changed_configuration(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = _host_document(service, tmp_path)
+    controller = _examine_controller(document, RecordingSweepWindow(), service=service)
+    controller.configure(_cutoff_config(300.0))
+    (first,) = document.calculations.values()
+
+    controller.configure(_cutoff_config(300.0, 400.0))
+
+    (second,) = [
+        definition for definition in document.calculations.values() if definition is not first
+    ]
+    assert document.ui_state[controller.active_key] == str(second.id)
+    assert second.parameters["configuration"]["sweep_values"] == [300.0, 400.0]

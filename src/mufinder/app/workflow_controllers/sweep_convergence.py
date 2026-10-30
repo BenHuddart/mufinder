@@ -21,6 +21,15 @@ value names) and ``record_adopted_default`` (the project-default setter and the
 pinned overview snapshot). The examiner dialog, the confirmation and the window
 refreshes come in through the deps.
 
+It stores the configuration the widget's Configure dialog accepts
+(:meth:`~SweepConvergenceController.configure`): the configuration is checked
+by expanding it on the sweep's cell, then registered as a new definition, or,
+for a sweep that reuses one (``reuse_matching_definition``), matched to an
+existing definition with the same configuration and context
+(:func:`~mufinder.services.definition_mappings.matching_sweep_definition`).
+The ``register_configured_definition`` hook calls the sweep's project-service
+registration.
+
 It also keeps the sweep's ``Simulation Cell`` selector in step with the
 project (:meth:`~SweepConvergenceController.refresh_simulation_cell`) and
 handles its three requests: pick a saved supercell
@@ -36,15 +45,18 @@ that needs more of it than the selector does.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition, Job, Structure
+from mufinder.domain.text import plural
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.definition_mappings import (
     convergence_mapping_job_priority,
+    matching_sweep_definition,
     sweep_definition_context_matches,
     sync_equivalent_mappings,
 )
@@ -58,6 +70,7 @@ from mufinder.app.convergence_types import (
     convergence_config_xc_functional,
 )
 from mufinder.app.adapter_common import IDENTITY_SUPERCELL
+from mufinder.app.workflow_config_codecs import serialize_convergence_config
 from mufinder.app.workflow_parameters import structure_species_options
 from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
@@ -110,6 +123,12 @@ class SweepConvergenceDeps(Protocol):
     @property
     def select_simulation_cell_in_editor(self) -> Callable[..., None]: ...
 
+    @property
+    def refresh_jobs_table(self) -> Callable[[], None]: ...
+
+    @property
+    def refresh_journal_view(self) -> Callable[[], None]: ...
+
 
 class SweepConvergenceController(WorkflowJobController):
     """Submit, materialize and refresh cycle for one convergence sweep.
@@ -128,7 +147,15 @@ class SweepConvergenceController(WorkflowJobController):
     - ``snapshot_persist_failure_message``: the status shown when saving an
       adopted default's overview snapshot fails;
     - ``simulation_cell_name``: the sweep's name in the status shown when a
-      simulation cell is selected.
+      simulation cell is selected;
+    - ``output_folder``: the folder under the project's ``files`` its
+      definitions write to;
+    - ``job_noun`` / ``generated_jobs_name``: the sweep's name in the status
+      shown when a configuration is stored, and in the warning shown when
+      there is no host structure to generate its jobs on;
+    - ``reuse_matching_definition``: whether :meth:`configure` reuses an
+      existing definition with the same configuration and context instead of
+      registering a new one.
     """
 
     key_codec: SweepKeyCodec[Any]
@@ -141,6 +168,10 @@ class SweepConvergenceController(WorkflowJobController):
     examiner_state_key = ""
     snapshot_persist_failure_message = ""
     simulation_cell_name = ""
+    output_folder = ""
+    job_noun = ""
+    generated_jobs_name = ""
+    reuse_matching_definition = False
 
     def __init__(
         self,
@@ -661,6 +692,106 @@ class SweepConvergenceController(WorkflowJobController):
             escape="cancel",
         )
         return answer == "change"
+
+    # --- configure ---
+
+    def register_configured_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID,
+        parameters: dict[str, object],
+        output_directory: Path,
+        simulation_cell_mode: str,
+        supercell_source_workflow: str | None,
+    ) -> CalculationDefinition:
+        """Register a new definition for a configuration :meth:`configure` accepted.
+
+        Returns the definition :meth:`configure` makes active.
+        """
+
+        raise NotImplementedError
+
+    def configure(self, config: ConvergenceConfig) -> None:
+        """Store ``config``, accepted in the widget's Configure dialog, as the active sweep.
+
+        It is checked by expanding it on the sweep's resolved cell; no job is
+        created and no input is written until the sweep is submitted.
+        """
+
+        document = self._context.document()
+        if document is None:
+            self._context.show_info("No project", "Create or open a project first.")
+            return
+
+        resolution = self._context.project_service.resolve_workflow_structure(
+            document,
+            self.stage,
+            normalize_state=True,
+        )
+        structure = resolution.structure
+        if structure is None:
+            self._deps.show_warning(
+                "No host structure",
+                f"Load a host structure before generating {self.generated_jobs_name} jobs.",
+            )
+            return
+
+        try:
+            structure_spec = structure_to_spec(structure)
+            expand_convergence_jobs(structure=structure_spec, config=config)
+        except (ValueError, StructureBridgeError) as exc:
+            self._deps.show_warning("Convergence setup invalid", str(exc))
+            return
+
+        input_structure_id = structure.id
+        parameters = serialize_convergence_config(config)
+        output_directory = document.project_root / "files" / self.output_folder
+        simulation_cell_mode = resolution.normalized_selection.mode
+        supercell_source_workflow = (
+            resolution.source_workflow_stage.value
+            if resolution.source_workflow_stage is not None
+            else None
+        )
+        count = len(config.sweep_values)
+
+        definition = (
+            matching_sweep_definition(
+                document,
+                (self.active_definition(), *self.definitions()),
+                parameters=parameters,
+                input_structure_id=input_structure_id,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            )
+            if self.reuse_matching_definition
+            else None
+        )
+        if definition is not None:
+            self.sync_mappings(definition)
+            status = (
+                f"Using existing {self.job_noun} setup with {plural(count, f'{self.job_noun} job')}"
+            )
+        else:
+            definition = self.register_configured_definition(
+                document,
+                input_structure_id=input_structure_id,
+                parameters=parameters,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            )
+            status = (
+                f"Configured {count} {self.job_noun} jobs; "
+                "input files will be generated on submission"
+            )
+        document.ui_state[self.active_key] = str(definition.id)
+
+        self._deps.refresh_jobs_table()
+        self.refresh_view()
+        self._deps.refresh_journal_view()
+        self._context.status_message(status)
 
     # --- simulation cell ---
 
