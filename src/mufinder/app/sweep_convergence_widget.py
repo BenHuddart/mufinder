@@ -220,6 +220,11 @@ class SweepConvergenceWidget(QWidget):
         )
         self._simulation_cell_combo.setMinimumContentsLength(self._SIMULATION_CELL_COMBO_CHARS)
         self._simulation_cell_create_button = QPushButton("Manage Supercells…")
+        # Under the row, only while a saved supercell has fallen back to the unit cell.
+        self._simulation_cell_warning = QLabel("")
+        self._simulation_cell_warning.setWordWrap(True)
+        style_warning_text(self._simulation_cell_warning)
+        self._simulation_cell_warning.hide()
 
         specs = get_gui_keyword_specs_for_files(
             files=("param", "cell"),
@@ -366,6 +371,7 @@ class SweepConvergenceWidget(QWidget):
         simulation_row.addWidget(self._simulation_cell_create_button)
         simulation_row.addStretch(1)
         layout.addLayout(simulation_row)
+        layout.addWidget(self._simulation_cell_warning)
 
         sweep_group = QGroupBox(self._SWEEP_GROUP_TITLE)
         sweep_layout = QVBoxLayout(sweep_group)
@@ -449,6 +455,7 @@ class SweepConvergenceWidget(QWidget):
         self._simulation_cell_combo.currentIndexChanged.connect(
             self._on_simulation_cell_combo_changed
         )
+        self._simulation_cell_combo.activated.connect(self._on_simulation_cell_combo_activated)
         self._simulation_cell_create_button.clicked.connect(
             self.simulation_cell_create_requested.emit
         )
@@ -471,11 +478,14 @@ class SweepConvergenceWidget(QWidget):
         assets: list[dict[str, str]],
         selected_structure_id: str | None,
         enabled: bool,
+        fallback_warning: str = "",
     ) -> None:
+        self._simulation_cell_warning.setText(fallback_warning)
+        self._simulation_cell_warning.setVisible(bool(fallback_warning))
         self._updating_simulation_cell = True
         try:
             # The combo shows the cell; the tooltip keeps what the choice cannot
-            # say: why it fell back to the unit cell, or why it is disabled.
+            # say: a long cell's full name, or why it is disabled.
             self._simulation_cell_combo.setToolTip(summary)
             self._simulation_cell_combo.clear()
             self._simulation_cell_combo.addItem("Single unit cell", None)
@@ -520,6 +530,14 @@ class SweepConvergenceWidget(QWidget):
             self.simulation_cell_use_unit_cell_requested.emit()
             return
         self.simulation_cell_selection_requested.emit(str(data))
+
+    def _on_simulation_cell_combo_activated(self, index: int) -> None:
+        # After a fallback the combo already reads "Single unit cell", so choosing
+        # it changes no index; it still accepts the unit cell and clears the warning.
+        if self._simulation_cell_warning.isHidden():
+            return
+        if not self._simulation_cell_combo.itemData(index):
+            self.simulation_cell_use_unit_cell_requested.emit()
 
     def _shared_locked_values(self) -> dict[str, str]:
         locked: dict[str, str] = {}

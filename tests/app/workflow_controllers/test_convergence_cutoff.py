@@ -8,6 +8,7 @@ and writes the ``job_ids_by_cutoff`` mapping. The shared sweep behaviour of
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -677,9 +678,104 @@ def test_refresh_simulation_cell_without_a_project_disables_the_selector() -> No
             "assets": [],
             "selected_structure_id": None,
             "enabled": False,
+            "fallback_warning": "",
         }
     ]
     assert view.species_options == [()]
+
+
+_FALLBACK_MESSAGE = "Saved supercell unavailable for the active host; using single unit cell."
+
+
+def _fallen_back_controller(service: ProjectService, tmp_path: Path):
+    """Return a controller whose selected saved cell belongs to a host no longer active."""
+
+    document, asset = _cell_document(service, tmp_path)
+    _use_saved_cell(service, document, asset)
+    other_host = Structure(
+        label="OtherHost",
+        origin="imported",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, other_host)
+    document.project.host_structure_id = other_host.id
+    controller, view = _cell_controller(document, RecordingSweepWindow(), service=service)
+    return controller, view, document
+
+
+def test_simulation_cell_fallback_warning_survives_refreshes_until_a_cell_is_chosen(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    controller, view, document = _fallen_back_controller(service, tmp_path)
+
+    controller.refresh_simulation_cell()
+    assert view.simulation_cell_options[-1]["fallback_warning"] == _FALLBACK_MESSAGE
+    # Resolving rewrote the selection, so this refresh resolves a plain unit cell.
+    assert document.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "unit_cell"
+    controller.refresh_simulation_cell()
+    assert view.simulation_cell_options[-1]["fallback_warning"] == _FALLBACK_MESSAGE
+
+    controller.use_unit_cell()
+    assert view.simulation_cell_options[-1]["fallback_warning"] == ""
+    controller.refresh_simulation_cell()
+    assert view.simulation_cell_options[-1]["fallback_warning"] == ""
+
+
+def test_simulation_cell_fallback_seen_by_another_resolve_still_reaches_the_page(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    controller, view, _document = _fallen_back_controller(service, tmp_path)
+
+    controller.supercell_initial_matrix()
+    controller.refresh_simulation_cell()
+
+    assert view.simulation_cell_options[-1]["fallback_warning"] == _FALLBACK_MESSAGE
+
+
+def test_selecting_a_saved_cell_clears_the_fallback_warning(tmp_path: Path) -> None:
+    service = ProjectService()
+    controller, view, document = _fallen_back_controller(service, tmp_path)
+    controller.refresh_simulation_cell()
+    replacement = service.create_workflow_supercell_asset(
+        document,
+        workflow_stage=_CUTOFF,
+        host_structure_id=document.project.host_structure_id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        reuse_existing=False,
+    )
+
+    controller.select_simulation_cell(str(replacement.id))
+
+    assert view.simulation_cell_options[-1]["selected_structure_id"] == str(replacement.id)
+    assert view.simulation_cell_options[-1]["fallback_warning"] == ""
+
+
+def test_fallback_warning_does_not_follow_into_another_project(tmp_path: Path) -> None:
+    service = ProjectService()
+    controller, view, document = _fallen_back_controller(service, tmp_path)
+    controller.refresh_simulation_cell()
+    assert view.simulation_cell_options[-1]["fallback_warning"] == _FALLBACK_MESSAGE
+
+    (tmp_path / "other").mkdir()
+    other_document, _asset = _cell_document(service, tmp_path / "other")
+    controller._context = replace(controller._context, document=lambda: other_document)
+    controller.refresh_simulation_cell()
+
+    assert view.simulation_cell_options[-1]["fallback_warning"] == ""
+
+
+def test_normal_unit_cell_has_no_fallback_warning(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _asset = _cell_document(service, tmp_path)
+    controller, view = _cell_controller(document, RecordingSweepWindow(), service=service)
+
+    controller.refresh_simulation_cell()
+
+    assert view.simulation_cell_options[-1]["fallback_warning"] == ""
 
 
 def test_refresh_simulation_cell_lists_saved_cells_and_the_cell_species(tmp_path: Path) -> None:

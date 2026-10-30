@@ -90,6 +90,67 @@ def test_simulation_cell_combo_keeps_the_summary_as_its_tooltip(
     assert not widget._simulation_cell_create_button.isEnabled()
 
 
+_FALLBACK = "Saved supercell unavailable for the active host; using single unit cell."
+
+
+def _set_fallback(widget: SweepConvergenceWidget, warning: str) -> None:
+    widget.set_simulation_cell_options(
+        summary="Using single unit cell.",
+        assets=[],
+        selected_structure_id=None,
+        enabled=True,
+        fallback_warning=warning,
+    )
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_fallback_warning_shows_one_line_under_the_row_and_clearing_it_hides_it(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    _show_at_default_page_size(widget, qapp)
+    normal_table_height = widget._table.height()
+    normal_minimum = widget.minimumSizeHint().height()
+    assert widget._simulation_cell_warning.isHidden()
+
+    _set_fallback(widget, _FALLBACK)
+    qapp.processEvents()
+
+    warning = widget._simulation_cell_warning
+    assert warning.isVisible()
+    assert warning.text() == _FALLBACK
+    assert warning.y() > widget._simulation_cell_combo.geometry().bottom()
+    assert (
+        warning.geometry().bottom()
+        < widget._table.mapTo(widget, widget._table.rect().topLeft()).y()
+    )
+    assert widget.minimumSizeHint().height() <= _DEFAULT_PAGE_SIZE.height()
+
+    _set_fallback(widget, "")
+    qapp.processEvents()
+
+    assert warning.isHidden()
+    assert widget._table.height() == normal_table_height
+    assert widget.minimumSizeHint().height() == normal_minimum
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_choosing_single_unit_cell_again_accepts_the_fallback(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    accepted: list[bool] = []
+    widget.simulation_cell_use_unit_cell_requested.connect(lambda: accepted.append(True))
+
+    _set_fallback(widget, "")
+    widget._simulation_cell_combo.activated.emit(0)
+    assert accepted == []
+
+    _set_fallback(widget, _FALLBACK)
+    widget._simulation_cell_combo.activated.emit(0)
+    assert accepted == [True]
+
+
 @pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
 def test_long_supercell_name_does_not_widen_the_page(
     qapp, widget_type: type[SweepConvergenceWidget]

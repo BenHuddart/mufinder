@@ -147,7 +147,10 @@ The sweep pages
    A drop-down of the cell the sweep will run on (``Single unit cell`` plus
    every supercell saved for the active host) and ``Manage Supercells…`` to
    open the :doc:`/user_guide/supercells`. Hover the drop-down for the full
-   name of the selected cell. The cell is fixed for a job when the job is
+   name of the selected cell. If the selected supercell stops being available,
+   for example after the host changes, the sweep uses the unit cell and a
+   warning line under the row says so until you choose a cell, including
+   ``Single unit cell`` itself. The cell is fixed for a job when the job is
    defined; changing the selection later does not change jobs already defined.
 Sweep table (``Cutoff Sweep`` / ``K-Point Grid Sweep``)
    One row per sweep point:

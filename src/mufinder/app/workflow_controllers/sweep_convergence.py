@@ -54,6 +54,7 @@ from mufinder.domain.models import CalculationDefinition, Job, Structure
 from mufinder.domain.text import plural
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.project_document import ProjectDocument
+from mufinder.services.supercell_assets import WorkflowStructureResolution
 from mufinder.services.definition_mappings import (
     convergence_mapping_job_priority,
     matching_sweep_definition,
@@ -95,6 +96,7 @@ class SweepConvergenceView(Protocol):
         assets: list[dict[str, str]],
         selected_structure_id: str | None,
         enabled: bool,
+        fallback_warning: str = "",
     ) -> None: ...
 
     def set_parameter_species_options(self, species_options: Sequence[str]) -> None: ...
@@ -183,6 +185,10 @@ class SweepConvergenceController(WorkflowJobController):
         super().__init__(context)
         self._deps = deps
         self._view = view
+        # The document and message of a saved cell that stopped resolving. Resolving
+        # rewrites the selection to the unit cell, so only the first resolution can
+        # see the fallback; this keeps it until the user chooses a cell.
+        self._simulation_cell_fallback: tuple[ProjectDocument, str] | None = None
 
     # --- hooks ---
 
@@ -711,11 +717,7 @@ class SweepConvergenceController(WorkflowJobController):
             self._context.show_info("No project", "Create or open a project first.")
             return
 
-        resolution = self._context.project_service.resolve_workflow_structure(
-            document,
-            self.stage,
-            normalize_state=True,
-        )
+        resolution = self._resolve_simulation_cell(document)
         structure = resolution.structure
         if structure is None:
             self._deps.show_warning(
@@ -790,26 +792,48 @@ class SweepConvergenceController(WorkflowJobController):
         sweep's widget needs the cell too.
         """
 
-    def refresh_simulation_cell(self) -> None:
-        """Show the sweep's simulation-cell choices and the species its cell holds."""
-
-        document = self._context.document()
-        if document is None:
-            self._view.set_simulation_cell_options(
-                summary="Load a host structure to choose a simulation cell.",
-                assets=[],
-                selected_structure_id=None,
-                enabled=False,
-            )
-            self._view.set_parameter_species_options(())
-            self.show_simulation_cell_structure(None)
-            return
+    def _resolve_simulation_cell(self, document: ProjectDocument) -> WorkflowStructureResolution:
+        """Resolve the sweep's cell, remembering a saved cell that fell back."""
 
         resolution = self._context.project_service.resolve_workflow_structure(
             document,
             self.stage,
             normalize_state=True,
         )
+        if resolution.fell_back_to_unit_cell:
+            self._simulation_cell_fallback = (document, resolution.status_message)
+        return resolution
+
+    def _simulation_cell_fallback_warning(
+        self, document: ProjectDocument, resolution: WorkflowStructureResolution
+    ) -> str:
+        """Return the fallback message while the sweep still runs on the unit cell."""
+
+        if resolution.selected_asset is not None:
+            self._simulation_cell_fallback = None
+        fallback = self._simulation_cell_fallback
+        if fallback is None or fallback[0] is not document or resolution.structure is None:
+            return ""
+        return fallback[1]
+
+    def refresh_simulation_cell(self) -> None:
+        """Show the sweep's simulation-cell choices and the species its cell holds."""
+
+        document = self._context.document()
+        if document is None:
+            self._simulation_cell_fallback = None
+            self._view.set_simulation_cell_options(
+                summary="Load a host structure to choose a simulation cell.",
+                assets=[],
+                selected_structure_id=None,
+                enabled=False,
+                fallback_warning="",
+            )
+            self._view.set_parameter_species_options(())
+            self.show_simulation_cell_structure(None)
+            return
+
+        resolution = self._resolve_simulation_cell(document)
         assets = [
             {
                 "structure_id": str(asset.structure_id),
@@ -827,6 +851,7 @@ class SweepConvergenceController(WorkflowJobController):
             assets=assets,
             selected_structure_id=selected_structure_id,
             enabled=resolution.structure is not None,
+            fallback_warning=self._simulation_cell_fallback_warning(document, resolution),
         )
         self._view.set_parameter_species_options(structure_species_options(resolution.structure))
         self.show_simulation_cell_structure(resolution.structure)
@@ -842,11 +867,7 @@ class SweepConvergenceController(WorkflowJobController):
         if document is None:
             return [list(row) for row in IDENTITY_SUPERCELL]
 
-        resolution = self._context.project_service.resolve_workflow_structure(
-            document,
-            self.stage,
-            normalize_state=True,
-        )
+        resolution = self._resolve_simulation_cell(document)
         if resolution.selected_asset is not None:
             return [list(row) for row in resolution.selected_asset.matrix]
         return [list(row) for row in document.project.supercell_matrix]
@@ -893,6 +914,7 @@ class SweepConvergenceController(WorkflowJobController):
 
         if structure_id is None:
             self._context.project_service.clear_workflow_supercell_selection(document, self.stage)
+            self._simulation_cell_fallback = None
             self.refresh_simulation_cell()
             return
 

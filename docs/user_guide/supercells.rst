@@ -109,7 +109,9 @@ selection that calculation inputs read.
 - The cutoff and k-point convergence pages have a ``Simulation cell`` row: a
   drop-down with ``Single unit cell`` and the saved supercells of the active
   host, and ``Manage Supercells…`` to open the editor. Choosing ``Single unit
-  cell`` returns to the host unit cell without deleting any saved supercell.
+  cell`` returns to the host unit cell without deleting any saved supercell. A
+  selected supercell that stops being available falls back to the unit cell,
+  with a warning line under the row until you choose a cell.
 - The pristine-relaxation, muon-relaxation and UEP tables have a per-row
   ``Supercell`` drop-down with ``Unit cell``, the saved supercells and
   ``Manage Supercells…``.

@@ -68,6 +68,12 @@ class WorkflowStructureResolution:
     status_message: str = ""
     source_workflow_stage: WorkflowStage | None = None
 
+    @property
+    def fell_back_to_unit_cell(self) -> bool:
+        """Whether a saved selection no longer resolves, so the host unit cell is used."""
+
+        return self.structure is not None and self.normalized_selection != self.selection
+
 
 def _coerce_supercell_matrix(matrix: Any) -> list[list[int]] | None:
     if not isinstance(matrix, list) or len(matrix) != 3:
