@@ -48,7 +48,7 @@ Application shell
   installed version with links to the documentation and source code
   (``About MuFinder``).
 - The project navigator lists the workflow stages: ``Host Structure``,
-  ``Supercell Editor``, ``Convergence Testing`` (``Cutoff Energy`` and
+  ``Convergence Testing`` (``Cutoff Energy`` and
   ``K-Point Grid``), ``Pristine Relaxation``, ``UEP``, ``Muon Sites``
   (``Generation``, ``Relaxations`` and ``Analysis``), ``Hyperfine Coupling``,
   ``Magnetic Fields``, ``Polarisation``, ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button

@@ -43,7 +43,7 @@ Workflow chart
    :alt: The project home of a CoF2 project: the workflow chart, the
          field notes and the cell survey.
 
-   The project home of the CoF₂ example (:doc:`/user_guide/examples/cof2`) with five stages
+   The project home of the CoF₂ example (:doc:`/user_guide/examples/cof2`) with four stages
    complete.
 
 The chart draws every workflow stage as a waypoint, laid out in the order the
@@ -69,8 +69,6 @@ The dependencies drawn are:
 
 - Host Structure before the two convergence tests; every other stage also works
   on the active host.
-- The Supercell Editor is an optional outpost: any calculation can run in a
-  saved supercell.
 - Pristine Relaxation is an optional detour after convergence. A relaxed
   structure feeds later stages by being made the active host on the Host
   Structure page; UEP can also use it as a source.
@@ -106,8 +104,8 @@ Field notes
 -----------
 
 The field notes describe the selected stage: its status, a few facts about the
-project (the host's formula and atom count, the default cutoff and k-point
-grid, saved supercells, relaxations relaxed per charge state, analysis
+project (the host's formula and atom count and its saved supercells, the
+default cutoff and k-point grid, relaxations relaxed per charge state, analysis
 workspaces and pinned distinct sites, barrier heights and so on), what the
 stage is for, and an ``Open <stage>`` button that goes to its page. A stage that has
 not started lists, under ``Needs``, the required earlier stages that have not
@@ -153,8 +151,8 @@ The survey follows the selected waypoint and shows that stage's results:
        estimate, labelled ``≈`` before the magnitude.
 
 When a stage has more than one result set, the arrows under the drawing step
-through them. A stage with no positions of its own (Host Structure, Supercell
-Editor, the convergence tests, Pristine Relaxation, or any stage not yet
+through them. A stage with no positions of its own (Host Structure, the
+convergence tests, Pristine Relaxation, or any stage not yet
 started) shows the sites found so far, faded: the pinned distinct sites if
 there are any, otherwise the most refined positions available.
 

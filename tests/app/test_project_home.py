@@ -111,7 +111,7 @@ def test_home_widget_follows_the_selected_stage_in_the_survey(qapp, tmp_path: Pa
     home.set_document(project.document)
     home.refresh()
 
-    assert home._progress.text() == "2 of 14 stages complete · 1 job active"
+    assert home._progress.text() == "2 of 13 stages complete · 1 job active"
     assert home.survey.current_layer().title == "Positive muon · 1 of 2 relaxed"
 
     home.chart.select_stage("convergence_cutoff")

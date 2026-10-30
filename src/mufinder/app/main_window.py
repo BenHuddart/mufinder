@@ -170,7 +170,6 @@ from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
-from mufinder.app.active_host_badge import ActiveHostBadge
 from mufinder.app.geometry_progress_dialog import (
     PROGRESS_COLUMN_TOOLTIP,
     GeometryProgressDialog,
@@ -212,8 +211,6 @@ from mufinder.app.theme import (
     current_palette,
     load_theme_mode,
     save_theme_mode,
-    style_section_subtitle,
-    style_section_title,
     status_brush,
     use_square_top_table_corners,
     track_item_view_corners,
@@ -696,7 +693,6 @@ class MainWindow(QMainWindow):
         self._host_structure_view.active_host_change_requested.connect(
             self._on_active_host_change_requested
         )
-        self._supercell_editor_page = self._build_supercell_editor_page()
         self._convergence_overview_view = ConvergenceOverviewWidget()
         self._convergence_overview_view.open_cutoff_requested.connect(
             lambda: self._set_active_route("convergence_cutoff")
@@ -1082,7 +1078,6 @@ class MainWindow(QMainWindow):
         self._journal_view = JournalWidget()
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
-        self._main_stack.addWidget(self._supercell_editor_page)
         self._main_stack.addWidget(self._convergence_overview_view)
         self._main_stack.addWidget(self._convergence_view)
         self._main_stack.addWidget(self._kpoint_convergence_view)
@@ -1528,30 +1523,6 @@ class MainWindow(QMainWindow):
         self._project_home = ProjectHomeWidget(page)
         self._project_home.route_requested.connect(self._set_active_route)
         layout.addWidget(self._project_home, 1)
-        return page
-
-    def _build_supercell_editor_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-
-        title = QLabel("Supercell Editor")
-        style_section_title(title)
-        layout.addWidget(title)
-
-        subtitle = QLabel("Manage reusable saved supercells for the active host structure.")
-        subtitle.setWordWrap(True)
-        style_section_subtitle(subtitle)
-        layout.addWidget(subtitle)
-
-        self._supercell_editor_host_badge = ActiveHostBadge()
-        layout.addWidget(self._supercell_editor_host_badge)
-
-        open_button = QPushButton("Open Supercell Editor")
-        open_button.clicked.connect(self._on_host_supercell_editor_requested)
-        layout.addWidget(open_button)
-        layout.addStretch(1)
         return page
 
     def _refresh_home_recent_projects(self) -> None:
@@ -2350,7 +2321,6 @@ class MainWindow(QMainWindow):
 
         return (
             stage("host_structure", "Load and inspect crystal"),
-            stage("supercell_editor", "Reusable cells"),
             group(
                 "convergence",
                 "Find stable settings",
@@ -3200,8 +3170,6 @@ class MainWindow(QMainWindow):
         target = self._home_page
         if route == "host_structure":
             target = self._host_structure_view
-        elif route == "supercell_editor":
-            target = self._supercell_editor_page
         elif route == "convergence":
             target = self._convergence_overview_view
         elif route == "convergence_cutoff":
@@ -9857,7 +9825,6 @@ class MainWindow(QMainWindow):
             host = self._document.structures.get(host_id) if host_id else None
         self._muon_generation_view.set_active_host(host)
         self._muon_relaxation_view.set_active_host(host)
-        self._supercell_editor_host_badge.set_active_host(host)
 
     def _on_active_host_change_requested(self, structure_id_str: str) -> None:
         if self._document is None:

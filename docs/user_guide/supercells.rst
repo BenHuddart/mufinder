@@ -19,10 +19,9 @@ builds supercells from the active host.
 Running the workflow
 --------------------
 
-1. **Open the editor.** Select ``Supercell Editor`` in the project navigator and
-   click ``Open Supercell Editor``, or click ``Supercell Editor…`` in the
-   ``Host Structure`` panel, or choose ``Manage Supercells…`` from a
-   workflow's simulation-cell selector or row ``Supercell`` drop-down.
+1. **Open the editor.** Click ``Supercell Editor…`` on the ``Host Structure``
+   page, or choose ``Manage Supercells…`` from a workflow's simulation-cell
+   selector or row ``Supercell`` drop-down.
 2. **Start a new cell.** Click ``New`` to start from the unit-cell matrix.
 3. **Choose the scaling.** Set ``Nx``, ``Ny`` and ``Nz`` (1 to 64 each), or tick
    ``Advanced 3x3 matrix`` and enter a full 3×3 integer matrix. Alternatively,

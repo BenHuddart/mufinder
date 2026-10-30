@@ -974,7 +974,7 @@ def _legacy_folder(root: Path) -> Path:
 
 
 def open_supercell_editor(window: MainWindow) -> None:
-    """Click ``Open Supercell Editor`` on the Supercell Editor page."""
+    """Click ``Supercell Editor…`` on the Host Structure page."""
 
     window._on_host_supercell_editor_requested()
 
@@ -1257,12 +1257,12 @@ SCENES: dict[str, Scene] = {
     ),
     "supercell_editor": Scene(
         fixture_project,
-        "supercell_editor",
+        "host_structure",
         Dialog(open_supercell_editor, size=(1180, 760), prepare=show_saved_supercell_along_a),
     ),
     "supercell_suggestions": Scene(
         fixture_project,
-        "supercell_editor",
+        "host_structure",
         Dialog(open_supercell_suggestions, kind="SupercellSuggestionDialog"),
     ),
     "convergence_overview": Scene(
