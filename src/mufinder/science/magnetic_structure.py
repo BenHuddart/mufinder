@@ -741,7 +741,7 @@ def magnetic_builder_checklist(
                 "components",
                 components_title,
                 CHECKLIST_TODO,
-                "Use Add Component, Add Preset… or Build From Host Spins.",
+                "Use 'Add Component', 'Add Preset…' or 'Build From Host Spins'.",
             )
         )
     elif not enabled:

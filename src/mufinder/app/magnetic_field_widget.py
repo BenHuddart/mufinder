@@ -3278,7 +3278,7 @@ class MagneticStructureBuilderDialog(QDialog):
         self._q_basis_table.itemChanged.connect(self._on_q_basis_item_changed)
         self._q_basis_hint = QLabel(
             "Each component stores its q as a combination of these rows. Double-click a q vector to edit it; "
-            "every component that uses the row follows it. Rows used by a texture change through Edit…."
+            "every component that uses the row follows it. Rows used by a texture change through 'Edit…'."
         )
         self._q_basis_hint.setWordWrap(True)
         style_hint_text(self._q_basis_hint)
@@ -5176,7 +5176,7 @@ def demag_sample_summary(sample: DemagnetizingSample) -> str:
         return f"Rectangular prism {a:g} x {b:g} x {c:g}"
     if shape == "image_plate":
         if sample.plate_mask is None:
-            return "No outline yet. Click From photo… to outline the sample in a photo."
+            return "No outline yet. Click 'From photo…' to outline the sample in a photo."
         width, height = sample.plate_size
         text = f"Plate from photo {width:g} x {height:g} x {sample.plate_thickness:g}"
         if sample.photo is not None and sample.photo.path:
