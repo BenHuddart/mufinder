@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.block_dialog import BlockParameterDialog, summarize_block_value
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.hubbard_u_editor import HubbardUDialog, summarize_hubbard_u
+from mufinder.castep_io.gui_metadata import keyword_unit_in_label
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 
@@ -150,7 +151,8 @@ class PhysicalParamEditor(FloatParamEditor):
     def __init__(self, spec: KeywordSpec, parent: QWidget | None = None) -> None:
         super().__init__(spec, parent)
         if spec.unit:
-            self.layout().addWidget(QLabel(spec.unit))
+            if not keyword_unit_in_label(spec):
+                self.layout().addWidget(QLabel(spec.unit))
             self._unit_edit: QLineEdit | None = None
         else:
             self._unit_edit = QLineEdit()

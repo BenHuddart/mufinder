@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
-from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.param_dialog import ParameterDialog, WorkflowTableRow
 from mufinder.app.theme import STRUCTURE_OVERLAY_COLOURS
 from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_parameters import (
@@ -336,27 +336,49 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
             mixed_names=mixed_names,
             parent=parent,
         )
-        self._num_farms_spin = QSpinBox(self)
-        # CASTEP rejects NUM_FARMS outside 1..999 (parameters_validate).
-        self._num_farms_spin.setRange(1, 999)
         self._num_farms_spin.setValue(max(1, int(num_farms)))
         self._num_farms_spin.setEnabled(bool(num_farms_editable and not read_only))
         self._num_farms_spin.valueChanged.connect(lambda *_: self._refresh_farm_hint())
-
-        self._farm_hint = QLabel("", self)
-        self._farm_hint.setWordWrap(True)
-
-        farms_row = QHBoxLayout()
-        farms_row.addWidget(QLabel("Task farms", self))
-        farms_row.addWidget(self._num_farms_spin)
-        farms_row.addWidget(self._farm_hint, 1)
-
-        root = self.layout()
-        assert root is not None
-        # Sit directly above the button box. An absolute index would drift with
-        # the optional catalog-notice and intro labels the base dialog inserts.
-        root.insertLayout(root.count() - 1, farms_row)
         self._refresh_farm_hint()
+
+    def _build_workflow_rows(self) -> tuple[WorkflowTableRow, ...]:
+        images_note = QLabel(
+            "Intermediate images only: the finished band holds two more, the reactant and "
+            "the product. An even count is rounded up to the next odd one, because climbing "
+            "image is locked on.",
+            self._table_widget,
+        )
+        images_note.setWordWrap(True)
+        images_note.setObjectName("hintText")
+
+        farms_label = QLabel("Task farms", self._table_widget)
+        farms_value = QWidget(self._table_widget)
+        self._num_farms_spin = QSpinBox(farms_value)
+        # CASTEP rejects NUM_FARMS outside 1..999 (parameters_validate).
+        self._num_farms_spin.setRange(1, 999)
+        self._num_farms_spin.setAccessibleName("Task farms")
+        farms_label.setBuddy(self._num_farms_spin)
+        self._farm_hint = QLabel("", farms_value)
+        self._farm_hint.setWordWrap(True)
+        farms_layout = QHBoxLayout(farms_value)
+        farms_layout.setContentsMargins(0, 0, 0, 0)
+        farms_layout.addWidget(self._num_farms_spin)
+        farms_layout.addWidget(self._farm_hint, 1)
+
+        return (
+            WorkflowTableRow(
+                after="tssearch_max_path_points",
+                label=QLabel("", self._table_widget),
+                value=images_note,
+            ),
+            WorkflowTableRow(
+                after="tssearch_force_tol",
+                label=farms_label,
+                value=farms_value,
+                search_text="task farms num_farms",
+                focus=self._num_farms_spin,
+            ),
+        )
 
     def num_farms(self) -> int:
         """Return the selected farm count (1 when farming is disabled)."""
@@ -376,15 +398,12 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
         return blocked
 
     def _on_editor_changed(self) -> None:
-        # The base class rebuilds rows during __init__, before this subclass has
-        # built its widgets, so the hint may not exist on the first call.
         super()._on_editor_changed()
         self._refresh_farm_hint()
 
     def set_values(self, values, *, preferred_exclusive=None) -> None:
         # Seeding values rebuilds rows rather than firing editor signals, so the
-        # hint would otherwise keep describing the previous image count. The
-        # constructor seed runs before the hint exists; __init__ refreshes it.
+        # hint would otherwise keep describing the previous image count.
         super().set_values(values, preferred_exclusive=preferred_exclusive)
         self._refresh_farm_hint()
 
@@ -396,9 +415,7 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
             return None
 
     def _refresh_farm_hint(self) -> None:
-        hint = getattr(self, "_farm_hint", None)
-        if hint is None:
-            return
+        hint = self._farm_hint
         farms = self.num_farms()
         if farms <= 1:
             hint.setText("Task farming disabled: every image runs on the full set of MPI ranks.")

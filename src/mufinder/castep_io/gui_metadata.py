@@ -120,6 +120,20 @@ def exclusive_partner_labels(spec: KeywordSpec) -> tuple[str, ...]:
     return tuple(labels)
 
 
+#: How a label writes a CASTEP unit, by the unit in lower case.
+_UNIT_LABEL_TEXT: dict[str, str] = {
+    "ev/ang": "eV/Å",
+    "ev/ang**2": "eV/Å²",
+}
+
+
+def keyword_unit_in_label(spec: KeywordSpec) -> bool:
+    """Return whether the keyword's label names its unit, so its editor need not."""
+
+    unit_text = _UNIT_LABEL_TEXT.get((spec.unit or "").strip().lower())
+    return unit_text is not None and (spec.label or "").endswith(f"({unit_text})")
+
+
 def keyword_visible_for_task(spec: KeywordSpec, *, task: str) -> bool:
     """Return whether a keyword should be shown for the effective CASTEP task."""
 

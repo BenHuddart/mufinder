@@ -71,6 +71,24 @@ class _DialogRow:
     cells: tuple[QWidget, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowTableRow:
+    """A table row of a parameter dialog that holds no keyword.
+
+    It sits directly below the row of the keyword ``after``, or last when that
+    keyword has no row, and keeps its widgets when the rows are rebuilt. The
+    search shows it while the query occurs in ``search_text``; without one it
+    follows the row of ``after``. ``focus`` is the control the Tab key reaches
+    in it, if any.
+    """
+
+    after: str
+    label: QWidget
+    value: QWidget
+    search_text: str | None = None
+    focus: QWidget | None = None
+
+
 class _AdvancedSelectionDialog(QDialog):
     """Dialog that allows selecting one or more advanced parameters to add.
 
@@ -392,6 +410,7 @@ class ParameterDialog(QDialog):
         self._table_layout.setColumnStretch(4, 0)
         self._scroll_area.setWidget(self._table_widget)
         root.addWidget(self._scroll_area, 1)
+        self._workflow_rows = self._build_workflow_rows()
 
         controls_row = QHBoxLayout()
         self._add_advanced_button = QPushButton("+ Add Parameter", self)
@@ -420,6 +439,14 @@ class ParameterDialog(QDialog):
             self.set_mixed_names(mixed_names)
         self._rows_deferred = False
         self._rebuild_rows(preserve_current=False)
+
+    def _build_workflow_rows(self) -> tuple[WorkflowTableRow, ...]:
+        """Return this dialog's rows that hold no keyword, parented to the table widget.
+
+        Called once from the constructor, before any row is built.
+        """
+
+        return ()
 
     def set_values(
         self,
@@ -710,6 +737,16 @@ class ParameterDialog(QDialog):
             shown = self._row_matches_search(name)
             for widget in row.cells:
                 widget.setVisible(shown)
+        query = self._search_input.text().strip().lower()
+        for workflow_row in self._workflow_rows:
+            if workflow_row.search_text is not None:
+                shown = not query or query in workflow_row.search_text.lower()
+            else:
+                shown = workflow_row.after not in self._rows or self._row_matches_search(
+                    workflow_row.after
+                )
+            workflow_row.label.setVisible(shown)
+            workflow_row.value.setVisible(shown)
 
     def _group_key_for_name(self, name: str) -> tuple[str, ...] | None:
         for group_key, names in self._exclusive_groups.items():
@@ -727,6 +764,8 @@ class ParameterDialog(QDialog):
     def _detach_layout_item(self, item) -> None:
         widget = item.widget()
         if widget is not None:
+            if any(widget in (row.label, row.value) for row in self._workflow_rows):
+                return
             widget.hide()
             widget.setParent(None)
             widget.deleteLater()
@@ -781,7 +820,9 @@ class ParameterDialog(QDialog):
         self._table_layout.addWidget(info_header, 0, 3)
         self._table_layout.addWidget(QLabel(""), 0, 4)
 
-        for row_index, name in enumerate(visible_names, start=1):
+        row_indexes, workflow_row_indexes, row_count = self._table_row_indexes(visible_names)
+        for name in visible_names:
+            row_index = row_indexes[name]
             spec = self._specs_by_name[name]
             group_key = self._group_key_for_name(name)
 
@@ -917,9 +958,45 @@ class ParameterDialog(QDialog):
                 ),
             )
 
-        self._table_layout.setRowStretch(len(visible_names) + 1, 1)
+        self._place_workflow_rows(workflow_row_indexes)
+        self._table_layout.setRowStretch(row_count, 1)
         self._apply_search_filter()
         self._refresh_add_button_state()
+
+    def _table_row_indexes(self, visible_names: list[str]) -> tuple[dict[str, int], list[int], int]:
+        """Return the grid rows of the keywords and workflow rows, and the first free row."""
+
+        below: dict[str, list[int]] = {}
+        last: list[int] = []
+        for position, workflow_row in enumerate(self._workflow_rows):
+            if workflow_row.after in visible_names:
+                below.setdefault(workflow_row.after, []).append(position)
+            else:
+                last.append(position)
+
+        row_indexes: dict[str, int] = {}
+        workflow_row_indexes = [0] * len(self._workflow_rows)
+        next_index = 1
+        for name in visible_names:
+            row_indexes[name] = next_index
+            next_index += 1
+            for position in below.get(name, ()):
+                workflow_row_indexes[position] = next_index
+                next_index += 1
+        for position in last:
+            workflow_row_indexes[position] = next_index
+            next_index += 1
+        return row_indexes, workflow_row_indexes, next_index
+
+    def _place_workflow_rows(self, row_indexes: list[int]) -> None:
+        for workflow_row, row_index in zip(self._workflow_rows, row_indexes, strict=True):
+            self._table_layout.addWidget(workflow_row.label, row_index, 0)
+            self._table_layout.addWidget(workflow_row.value, row_index, 1, 1, 4)
+            # The widgets outlive the rebuilt rows, so they would otherwise keep
+            # their place at the start of the tab order.
+            row = self._rows.get(workflow_row.after) or next(reversed(self._rows.values()), None)
+            if row is not None and workflow_row.focus is not None:
+                QWidget.setTabOrder(row.cells[-1], workflow_row.focus)
 
     def _show_help(self, spec: KeywordSpec) -> None:
         dialog = ParameterHelpDialog(spec, self)
