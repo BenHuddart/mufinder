@@ -169,7 +169,8 @@ name (``tests/app``, ``tests/domain``, ``tests/services``, ``tests/workflow``
 and so on), and ``tests/setup`` holds the tests of the top-level modules
 (``main``, ``cluster_setup``, ``branding`` and the version metadata). The
 structural tests in ``tests/test_agent_harness.py``, the golden-input rendering
-test and ``tests/conftest.py`` stay at the top level. The test packages have no
+test, the settings-isolation guard and ``tests/conftest.py`` stay at the top
+level. The test packages have no
 ``__init__.py``, so pytest imports every test module by its file name: a test
 file name must be unique across the whole ``tests`` tree. The one exception is
 ``tests/app/workflow_controllers``, which has an ``__init__.py`` so that its
@@ -686,6 +687,17 @@ the call site or binds them once with ``functools.partial``.
 - ``tests/conftest.py`` fixtures: ``main_window`` gives a fresh ``MainWindow``
   that the per-test Qt cleanup closes, and ``project_with_host`` gives
   ``(window, service, document)`` with the default host structure loaded.
+
+Every test gets its own settings store. Autouse fixtures in
+``tests/conftest.py`` point ``QSettings`` at a session directory and then at
+each test's ``tmp_path``, for both the native and INI formats in user and system
+scope. On Linux, where the native format is an INI file, a
+``QSettings("MuFinder", "MuFinder")`` built anywhere in the app during a test
+never reads or writes the developer's real settings file, and parallel workers
+never share settings. On macOS and Windows the native store lives in the
+preferences system or the registry, which this redirect does not reach.
+``tests/test_settings_isolation.py`` checks that each redirected store resolves
+under ``tmp_path``.
 
 GUI-responsiveness trace logging
 ---------------------------------
