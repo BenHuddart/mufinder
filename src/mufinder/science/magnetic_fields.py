@@ -20,7 +20,12 @@ from mufinder.domain.constants import (
 )
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.ase_bridge import reduced_formula
-from mufinder.science.lattice import nearest_image_distance, reduced_lattice
+from mufinder.science.lattice import (
+    MUON_FRACTIONAL_SNAP_TOLERANCE,
+    nearest_image_distance,
+    reduced_lattice,
+    wrap_fractional,
+)
 from mufinder.science.spglib_compat import (
     SYMMETRY_TOLERANCE_ANG,
     spglib_cell,
@@ -659,7 +664,7 @@ def find_equivalent_muon_sites(
 ) -> tuple[tuple[float, float, float], ...]:
     """Return unique symmetry-equivalent fractional muon positions."""
 
-    mu = _canonical_fractional(muon_position)
+    mu = _muon_home_cell_position(muon_position)
     cell = spglib_cell(structure)
     if cell is None:
         raise MagneticFieldError(
@@ -670,7 +675,7 @@ def find_equivalent_muon_sites(
         raise MagneticFieldError("spglib could not determine symmetry operations")
     # ``tolerance`` is a fractional-coordinate distance, so the orbit is deduplicated without a lattice.
     unique = symmetry_orbit(mu, operations, lattice_vectors=None, tolerance=tolerance)
-    return tuple(_tuple3(_canonical_fractional(value)) for value in unique)
+    return tuple(_tuple3(_muon_home_cell_position(value)) for value in unique)
 
 
 def calculate_finite_dipolar_field(
@@ -1942,7 +1947,7 @@ def calculate_incommensurate_field_distributions(
         terms = {name: _sampled_term_statistics(values) for name, values in term_fields.items()}
         terms["demag"] = _constant_term_statistics(demag)
         terms["applied"] = _constant_term_statistics(applied)
-        centres, counts = _field_magnitude_histogram(magnitudes, bins=int(opts.histogram_bins))
+        centres, counts = field_magnitude_histogram(magnitudes, bins=int(opts.histogram_bins))
         convergence = _distribution_convergence_checks(
             magnitudes,
             counts,
@@ -2349,10 +2354,16 @@ def _sum_component_lookups(
     return combined
 
 
-def _field_magnitude_histogram(
+def field_magnitude_histogram(
     magnitudes: np.ndarray, *, bins: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return a robust histogram for field magnitudes, including delta-like ranges."""
+    """Return the bin centres and counts of ``bins`` bins over the field magnitudes.
+
+    The bins span the samples; when they all lie within about 1e-6 of their
+    centre (a single field value), the bins span a window that wide around it,
+    so the histogram is a narrow spike. Raises :class:`MagneticFieldError` for
+    a non-positive bin count, no samples or a non-finite magnitude.
+    """
 
     bins = int(bins)
     if bins < 1:
@@ -2490,7 +2501,7 @@ def _build_muesr_sample(structure: Structure, muon_positions_frac: Sequence[Sequ
     sample = MuesrSample()
     sample.cell = atoms
     for position in muon_positions_frac:
-        sample.add_muon(_canonical_fractional(position))
+        sample.add_muon(_muon_home_cell_position(position))
     return sample
 
 
@@ -2503,10 +2514,10 @@ def _expanded_muon_positions(
     for index, site in enumerate(muon_sites, start=1):
         if isinstance(site, MuonSite):
             label = site.label or f"site {index}"
-            position = _canonical_fractional(site.current_fractional_position())
+            position = _muon_home_cell_position(site.current_fractional_position())
         else:
             label = f"site {index}"
-            position = _canonical_fractional(site)
+            position = _muon_home_cell_position(site)
         clearance_error = muon_site_clearance_error(structure, position, label=label)
         if clearance_error is not None:
             raise MagneticFieldError(clearance_error)
@@ -2736,11 +2747,14 @@ def _fraction_text(value: float, denominator: int) -> str:
     return f"{numerator}/{int(denominator)}"
 
 
-def _canonical_fractional(position: Sequence[float]) -> np.ndarray:
-    arr = _as_vector(position, "muon position")
-    out = np.mod(arr, 1.0)
-    out[np.isclose(out, 1.0, atol=1e-10)] = 0.0
-    return out
+def _muon_home_cell_position(position: Sequence[float]) -> np.ndarray:
+    """Return a muon's fractional position folded into the home cell, faces snapped to 0."""
+
+    return np.asarray(
+        wrap_fractional(
+            _as_vector(position, "muon position"), snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE
+        )
+    )
 
 
 def _as_vector(values: Sequence[float], name: str) -> np.ndarray:

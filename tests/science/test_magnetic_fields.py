@@ -429,6 +429,16 @@ def test_find_equivalent_muon_sites_deduplicates_across_the_cell_boundary() -> N
     assert len(equivalents) == 1
 
 
+def test_find_equivalent_muon_sites_seeds_a_site_just_below_a_face_at_zero() -> None:
+    # Within 1e-6 below 1 a coordinate is taken as 0; further below it is kept.
+    snapped = find_equivalent_muon_sites(_structure(label="P1"), [-1e-7, 0.25, 0.25])
+    kept = find_equivalent_muon_sites(_structure(label="P1"), [-5e-6, 0.25, 0.25])
+
+    assert snapped[0] == pytest.approx((0.0, 0.25, 0.25), abs=1e-15)
+    assert kept[0] == pytest.approx((1.0 - 5e-6, 0.25, 0.25), abs=1e-15)
+    assert len(snapped) == len(kept)
+
+
 # Finite dipolar field
 
 
@@ -2385,7 +2395,7 @@ def test_field_magnitude_histogram_handles_near_delta_distribution() -> None:
         dtype=float,
     )
 
-    centres, counts = module._field_magnitude_histogram(magnitudes, bins=512)
+    centres, counts = module.field_magnitude_histogram(magnitudes, bins=512)
 
     assert centres.shape == (512,)
     assert counts.shape == (512,)
@@ -2396,9 +2406,9 @@ def test_field_magnitude_histogram_handles_near_delta_distribution() -> None:
 def test_field_magnitude_histogram_guards_bin_count_and_empty_input() -> None:
     # Private helper: the public entry point validates histogram_bins and always samples at least one phase.
     with pytest.raises(MagneticFieldError, match="histogram_bins must be positive"):
-        module._field_magnitude_histogram(np.array([1.0, 2.0]), bins=0)
+        module.field_magnitude_histogram(np.array([1.0, 2.0]), bins=0)
     with pytest.raises(MagneticFieldError, match="no samples"):
-        module._field_magnitude_histogram(np.array([], dtype=float), bins=4)
+        module.field_magnitude_histogram(np.array([], dtype=float), bins=4)
 
 
 def test_phase_sampling_guards_angle_and_sample_counts() -> None:

@@ -26,6 +26,7 @@ from mufinder.science.field_histograms import (
     summed_probability_intervals,
     summed_probability_steps,
 )
+from mufinder.science.magnetic_fields import MagneticFieldError
 from mufinder.services.magnetic_field_results import UNRELAXED_SITE_NOTE
 
 
@@ -42,6 +43,7 @@ class MagneticFieldDistributionDialog(QDialog):
         super().__init__(parent)
         self._results = self._coerce_results(results)
         self._estimate = estimate
+        self._series_error: str | None = None
         label = self._title_label()
         self.setWindowTitle(f"Field Distribution - {label}")
         self.resize(760, 520)
@@ -65,6 +67,7 @@ class MagneticFieldDistributionDialog(QDialog):
         layout.addWidget(buttons)
 
         self._draw_plot()
+        self._export_button.setEnabled(self._series_error is None)
 
     def _draw_plot(self) -> None:
         palette = current_palette()
@@ -78,7 +81,12 @@ class MagneticFieldDistributionDialog(QDialog):
         x_formatter.set_scientific(False)
         axis.xaxis.set_major_formatter(x_formatter)
 
-        series = self._distribution_series()
+        try:
+            series = self._distribution_series()
+        except MagneticFieldError as exc:
+            # Samples binned here (no stored histogram) may hold a non-finite field.
+            series = []
+            self._series_error = str(exc)
         common_edges: np.ndarray | None = None
         if len(series) > 1:
             common = common_binned_series(series)
@@ -130,7 +138,9 @@ class MagneticFieldDistributionDialog(QDialog):
             axis.text(
                 0.5,
                 0.5,
-                "No distribution samples available.",
+                "No distribution samples available."
+                if self._series_error is None
+                else f"Distribution unavailable: {self._series_error}.",
                 ha="center",
                 va="center",
                 color=palette.text_muted,

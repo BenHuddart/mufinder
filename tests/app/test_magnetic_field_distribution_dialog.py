@@ -202,3 +202,37 @@ def test_magnetic_field_distribution_dialog_expands_near_delta_axis(qapp) -> Non
     assert x_high - x_low > 0.001
     assert axis.xaxis.get_major_formatter().get_useOffset() is False
     dialog.close()
+
+
+def test_magnetic_field_distribution_dialog_reports_a_non_finite_sample(qapp) -> None:
+    class _Distribution:
+        site_label = "site 1"
+        fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, np.inf]], dtype=float)
+        histogram_centres_T = np.asarray([], dtype=float)
+        histogram_counts = np.asarray([], dtype=float)
+
+    dialog = MagneticFieldDistributionDialog(_Distribution())
+
+    axis = dialog._figure.axes[0]
+    assert [text.get_text() for text in axis.texts] == [
+        "Distribution unavailable: field distribution contains non-finite magnitudes."
+    ]
+    assert len(axis.lines) == 0
+    assert not dialog._export_button.isEnabled()
+    dialog.close()
+
+
+def test_magnetic_field_distribution_dialog_plots_a_single_field_as_a_narrow_spike(qapp) -> None:
+    class _Distribution:
+        site_label = "site 1"
+        fields_T = np.asarray([[0.0, 0.0, 0.2]] * 50, dtype=float)
+        histogram_centres_T = np.asarray([], dtype=float)
+        histogram_counts = np.asarray([], dtype=float)
+
+    dialog = MagneticFieldDistributionDialog(_Distribution())
+
+    (line,) = dialog._figure.axes[0].lines
+    raised = np.asarray(line.get_xdata())[np.asarray(line.get_ydata()) > 0.0]
+    assert raised.max() - raised.min() < 1e-6
+    assert dialog._export_button.isEnabled()
+    dialog.close()

@@ -914,3 +914,14 @@ before. Code that passed one passes the grids instead.
   (``mufinder.services.convergence_defaults``): pass ``point_grids``, which
   maps each k-point count to its grid in place of its ``Grid: a x b x c``
   label.
+
+The Magnetic Fields page no longer offers a stored muon site whose
+``generation_method`` is ``uep_batch_cluster``, a value that only an early
+version of the UEP workflow wrote and that nothing writes now. Such a site
+stays in the project: it loads unchanged, the duplicate-site check of site
+generation still reads it, and the project survey and the muon generation
+table still label it as a UEP site. It is left off the ``UEP clustering`` source of
+``Select Muon Site`` (``UEP_CLUSTER_SITE_METHODS`` in
+``mufinder.services.magnetic_field_sites``), so no shim or schema migration is
+needed; a field calculation for that position uses a custom site, or a site
+generated again with the ``UEP clusters`` method.

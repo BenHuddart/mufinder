@@ -45,6 +45,10 @@ import numpy as np
 #: Relative slack within which a broadcast distance is re-measured with the scalar helper.
 NEAR_TIE_RTOL = 1e-9
 
+#: Absolute distance below 1 within which :func:`wrap_fractional` snaps a muon
+#: coordinate to 0 (``snap_tolerance``), so a site on a cell face has one home-cell value.
+MUON_FRACTIONAL_SNAP_TOLERANCE = 1e-6
+
 _IDENTITY = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 
@@ -206,10 +210,23 @@ def _frac_to_cart(fractional: Sequence[float], lattice: Sequence[Sequence[float]
     ]
 
 
-def wrap_fractional(position: Sequence[float]) -> list[float]:
-    """Wrap each fractional component into ``[0, 1)`` with Python's ``%``."""
+def wrap_fractional(
+    position: Sequence[float], *, snap_tolerance: float | None = None
+) -> list[float]:
+    """Wrap each fractional component into ``[0, 1)`` with Python's ``%``.
 
-    return [float(value) % 1.0 for value in position]
+    With ``snap_tolerance``, a wrapped component within that absolute distance
+    below 1 becomes 0, so ``-1e-7`` wraps to ``0.0`` rather than ``0.9999999``.
+    Raises :class:`LatticeError` for a tolerance outside ``[0, 1)``.
+    """
+
+    wrapped = [float(value) % 1.0 for value in position]
+    if snap_tolerance is None:
+        return wrapped
+    if not 0.0 <= float(snap_tolerance) < 1.0:
+        raise LatticeError("The snap tolerance must lie in [0, 1).")
+    limit = 1.0 - float(snap_tolerance)
+    return [0.0 if value >= limit else value for value in wrapped]
 
 
 def minimum_image_delta(a: Sequence[float], b: Sequence[float]) -> list[float]:
@@ -642,6 +659,7 @@ def deduplicate_periodic_positions(
 
 __all__ = [
     "LatticeError",
+    "MUON_FRACTIONAL_SNAP_TOLERANCE",
     "NEAR_TIE_RTOL",
     "cartesian_to_fractional",
     "cell_volume",

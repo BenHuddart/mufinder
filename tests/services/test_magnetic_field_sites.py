@@ -89,7 +89,7 @@ def test_malformed_uep_clusters_are_skipped(tmp_path, summary) -> None:
     assert uep_cluster_muon_site_options(document, feo_host_structure()) == []
 
 
-@pytest.mark.parametrize("method", ["uep_cluster", "uep_cluster_member", "uep_batch_cluster"])
+@pytest.mark.parametrize("method", ["uep_cluster", "uep_cluster_member"])
 def test_generated_uep_sites_are_offered_for_every_uep_cluster_method(tmp_path, method) -> None:
     document = uep_cluster_document(tmp_path)
     document.ui_state.pop(UEP_ANALYSIS_STATES_KEY)
@@ -112,6 +112,31 @@ def test_generated_uep_sites_are_offered_for_every_uep_cluster_method(tmp_path, 
     assert option.source_label == "Generated UEP site"
     assert option.cluster_label == "Cluster 3"
     assert option.fractional_position == (0.25, 0.25, 0.25)
+
+
+def test_stored_uep_batch_cluster_site_is_not_offered(tmp_path) -> None:
+    """A ``uep_batch_cluster`` site that an older project stored is left off the site list."""
+
+    document = uep_cluster_document(tmp_path)
+    document.ui_state.pop(UEP_ANALYSIS_STATES_KEY)
+    site = MuonSite(
+        label="Legacy batch site",
+        generation_method="uep_batch_cluster",
+        initial_fractional_position=[0.25, 0.25, 0.25],
+        initial_cartesian_position=[0.75, 0.75, 0.75],
+    )
+    document.sites[site.id] = site
+    current = MuonSite(
+        label="UEP site",
+        generation_method="uep_cluster",
+        initial_fractional_position=[0.5, 0.5, 0.5],
+        initial_cartesian_position=[1.5, 1.5, 1.5],
+    )
+    document.sites[current.id] = current
+
+    options = muon_site_options(document, feo_host_structure(), UEP_SITE_SOURCE)
+
+    assert [option.label for option in options] == ["UEP site"]
 
 
 def test_relaxation_cluster_carries_its_relaxed_structure(tmp_path) -> None:

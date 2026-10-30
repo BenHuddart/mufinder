@@ -13,6 +13,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from mufinder.science.magnetic_fields import field_magnitude_histogram
+
 #: One distribution: bin centres (T), scaled probabilities, sampled magnitudes (T), label.
 DistributionSeries = tuple[np.ndarray, np.ndarray, np.ndarray, str]
 
@@ -24,21 +26,6 @@ def field_magnitudes(result: object) -> np.ndarray:
     if fields.ndim != 2 or fields.shape[1] != 3:
         return np.asarray([], dtype=float)
     return np.linalg.norm(fields, axis=1)
-
-
-def magnitude_histogram(magnitudes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Bin ``magnitudes`` into 10 to 80 bins (twice the square root of the count) for display.
-
-    Returns the bin centres and the counts as floats; both are empty when there
-    are no magnitudes.
-    """
-
-    if magnitudes.size == 0:
-        return np.asarray([], dtype=float), np.asarray([], dtype=float)
-    bins = min(80, max(10, int(np.sqrt(int(magnitudes.size))) * 2))
-    counts, edges = np.histogram(magnitudes, bins=bins)
-    centres = edges[:-1] + 0.5 * np.diff(edges)
-    return centres, counts.astype(float)
 
 
 def normalized_probabilities(counts: np.ndarray) -> np.ndarray:
@@ -55,7 +42,11 @@ def distribution_series(results: Sequence[object]) -> list[DistributionSeries]:
 
     A result's stored ``histogram_centres_T`` and ``histogram_counts`` are used
     when they match in length; otherwise its sampled fields are binned with
-    :func:`magnitude_histogram`. A result with neither is left out.
+    :func:`~mufinder.science.magnetic_fields.field_magnitude_histogram` into
+    10 to 80 bins (twice the square root of the sample count), so a single
+    field value gives a narrow spike. A result with neither is left out. Raises
+    :class:`~mufinder.science.magnetic_fields.MagneticFieldError` when the
+    samples it bins include a non-finite magnitude.
     """
 
     series: list[DistributionSeries] = []
@@ -64,7 +55,10 @@ def distribution_series(results: Sequence[object]) -> list[DistributionSeries]:
         counts = np.asarray(getattr(result, "histogram_counts", []), dtype=float)
         magnitudes = field_magnitudes(result)
         if centres.size == 0 or counts.size != centres.size:
-            centres, counts = magnitude_histogram(magnitudes)
+            if magnitudes.size == 0:
+                continue
+            bins = min(80, max(10, int(np.sqrt(magnitudes.size)) * 2))
+            centres, counts = field_magnitude_histogram(magnitudes, bins=bins)
         if not centres.size or not counts.size:
             continue
         probabilities = normalized_probabilities(counts)

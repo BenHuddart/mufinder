@@ -61,6 +61,14 @@ A typical pass through the page is:
      saves it as a ``.dat`` or ``.txt`` file; a name typed without one of
      those extensions gets the extension of the chosen file type.
 
+     The plot shows the histogram saved with the result. A result without
+     one has its sampled fields binned into 10 to 80 bins (twice the square
+     root of the sample count) over the range of the samples, so a
+     distribution of a single field value shows as a narrow spike. When
+     those samples include a field that is not finite, the plot says
+     ``Distribution unavailable`` with the reason, and ``Export Data…`` is
+     unavailable.
+
    .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
       :alt: The Magnetic Fields page with the MnSi helix distribution at site
             II selected: a mean |B| of 0.154144 T, every term mean 0, RMS
@@ -575,7 +583,10 @@ source, fractional coordinate, optional Cartesian coordinate, and optional
 distorted-structure reference. The available sources are:
 
 - ``UEP clustering (unrelaxed estimate)``, using representative clustered UEP
-  minima;
+  minima and the sites generated from them with the ``UEP clusters`` method.
+  A stored site whose generation method is ``uep_batch_cluster`` is not
+  listed; it stays in the project and in the other workflows (see
+  :doc:`/compatibility_policy`);
 - ``Structural relaxation clustering``, using representative relaxed muon
   endpoints. By default this lists the clusters pinned to the ``Muon Sites``
   summary (:doc:`/user_guide/structural_relaxation_analysis`), in the summary's charge-state

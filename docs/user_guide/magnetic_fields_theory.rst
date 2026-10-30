@@ -60,7 +60,12 @@ where the atom-resolved coefficient :math:`\mathbf{F}_j` already contains the
 phase :math:`e^{-2\pi i\, \mathbf{q} \cdot \mathbf{x}_j}` of the atom's
 fractional position. ``R`` is measured from the home cell, the cell whose
 fractional coordinates lie in ``[0, 1)`` and hold the muon site, so the field
-reported for a site at ``r`` is the field at ``r``. ``muesr`` places each muon
+reported for a site at ``r`` is the field at ``r``. Each muon coordinate is
+folded into ``[0, 1)``, and one that lands within :math:`10^{-6}` below 1 is
+taken as 0, so a site on a cell face (``-1e-7`` or ``0.9999999``) has the home
+cell and the reported position of a site at 0. The same rule places the seed of
+the equivalent-site orbit and the site that the distortion correction matches
+to a relaxed muon. ``muesr`` places each muon
 in cell :math:`\lfloor N/2 \rfloor` of its :math:`N_a \times N_b \times N_c`
 summation supercell and measures phases from the supercell origin, so MuFinder
 multiplies every coefficient by
