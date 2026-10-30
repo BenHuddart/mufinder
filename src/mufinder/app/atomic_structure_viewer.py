@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.eliding_label import ElidingLabel
 from mufinder.app.theme import (
     STRUCTURE_OVERLAY_COLOURS,
     body_font_family,
@@ -237,32 +238,6 @@ class _WrappingHintLabel(QLabel):
         }:
             self._sync_minimum_height()
             self.updateGeometry()
-
-
-class _ElidingLabel(QLabel):
-    """Single-line label that elides with an ellipsis instead of widening its parent.
-
-    A plain ``QLabel`` reports its whole text as its minimum width, so a long
-    selection summary would stop every dialog holding the viewer from shrinking.
-    ``text()`` still returns the full text; callers put it in the tooltip too.
-    """
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
-        return QSize(0, super().minimumSizeHint().height())
-
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        rect = self.contentsRect()
-        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
-        painter = QPainter(self)
-        self.style().drawItemText(
-            painter,
-            rect,
-            int(self.alignment()),
-            self.palette(),
-            self.isEnabled(),
-            text,
-            self.foregroundRole(),
-        )
 
 
 class _WrappingRowLayout(QLayout):
@@ -2238,7 +2213,7 @@ class AtomicStructureViewer(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         style_hint_text(self._interaction_hint)
-        self._selection_label = _ElidingLabel("Selected atom: -")
+        self._selection_label = ElidingLabel("Selected atom: -")
         self._selection_label.setWordWrap(False)
         self._selection_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         selection_height = self._selection_label.sizeHint().height()

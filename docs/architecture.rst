@@ -286,6 +286,9 @@ defined by two of these modules, and a pinned count may only fall.
 
    * - Module
      - Owns
+   * - ``mufinder.app.eliding_label``
+     - The single-line label that elides instead of widening its parent
+       (``ElidingLabel``)
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``, ``fill_workflow_table`` for a table of
@@ -502,6 +505,9 @@ defined by two of these modules, and a pinned count may only fall.
        both draw (``draw_convergence_plot``) from a sweep's saved ``plot_data``
        (``ConvergencePlotData``), including the k-point count and spacing axes
        (``spacing_axis_ticks``).
+   * - ``mufinder.domain.routes``
+     - The navigator route of a comparison table, which the Journal's link and
+       the comparison controller both name (``comparison_route``)
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
        and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`), and

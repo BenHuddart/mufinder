@@ -270,15 +270,17 @@ which inputs and options, can be reconstructed.
 The ``provenance_log`` route surfaces as a user-facing ``Journal`` page derived
 from the persisted ``provenance.jsonl`` records rather than inferred job
 history. Entries are grouped by local calendar day with human-readable date
-headers and no precise times. The default presentation is curated and
-narrative-focused: it includes major workflow actions, submission milestones,
-comparison-table creation and terminal calculation outcomes, and omits
-intermediate runtime states such as queued, running and retrieving. The
-Journal follows MuFinder branding as a notebook-style expedition record using
-the existing palette and typography tokens; completion and warning or failure
-milestones may use stamp-style affordances. Export supports plain text by
-default and Markdown as a secondary format, mirroring the curated Journal
-rather than dumping raw provenance rows.
+headers, one compact card each with the local time. The default presentation is
+curated and narrative-focused: it includes major workflow actions, submission
+milestones, comparison-table creation and terminal calculation outcomes, and
+omits intermediate runtime states such as queued, running and retrieving. A card
+expands to the details logged for it and the exact time, and links to its
+workflow page. The Journal follows MuFinder branding as a notebook-style
+expedition record using the existing palette and typography tokens; a stamp
+marks milestones, completions, entries needing attention and failures, and red
+marks failures only. Export supports plain text by default and Markdown as a
+secondary format, giving the curated summary of each entry rather than its
+details or raw provenance rows.
 
 UI architecture
 ---------------

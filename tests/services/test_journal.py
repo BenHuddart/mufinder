@@ -16,6 +16,8 @@ from tests.support.symmetry_hosts import cof2_host
 from tests.support.journal import generation_record
 from mufinder.services.journal import (
     build_journal,
+    entry_details,
+    entry_meta_text,
     export_journal,
     render_journal_markdown,
     render_journal_text,
@@ -1334,3 +1336,389 @@ def test_dismissals_from_several_workflows_name_no_single_workflow() -> None:
         "Dismissed 3 calculations from the Job Dashboard: Site 1 (positive muon), "
         "Site 1 (muonium), relax_1."
     )
+
+
+def _only_entry(*records: ProvenanceRecord):
+    return build_journal("Details", records).days[0].entries[0]
+
+
+def _details_record(action: str, stage: WorkflowStage | None = None, **parameters: object):
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 30, 15, tzinfo=UTC),
+        action=action,
+        workflow_stage=stage,
+        parameters=parameters,
+    )
+
+
+def test_every_entry_details_give_the_exact_local_time() -> None:
+    entry = _only_entry(_details_record("import_structure", WorkflowStage.MUON_GENERATION))
+    local = entry.timestamp.astimezone()
+
+    assert local.strftime("%A %d %B %Y at %H:%M:%S") in entry_details(entry).exact_time
+    assert entry_meta_text(entry) == f"Muon Sites · {local.strftime('%H:%M')}"
+
+
+def test_an_entry_without_a_workflow_has_only_its_time_in_the_header() -> None:
+    entry = _only_entry(_details_record("set_recommended_xc_functional"))
+
+    assert entry_meta_text(entry) == entry.timestamp.astimezone().strftime("%H:%M")
+    assert entry.route is None
+    assert entry.open_label is None
+
+
+def test_convergence_details_give_shared_parameters_and_the_sweep() -> None:
+    entry = _only_entry(
+        _details_record(
+            "configure_convergence_cutoff",
+            WorkflowStage.CONVERGENCE_CUTOFF,
+            configuration={
+                "shared_params": {"spin_polarized": False, "xc_functional": "PBE"},
+                "sweep_values": [300.0, 400.0, 800.0],
+            },
+            simulation_cell_mode="unit_cell",
+        )
+    )
+
+    assert entry_details(entry).lines == (
+        "Unit cell · not spin polarized · PBE",
+        "3 cutoff values: 300 eV to 800 eV",
+    )
+    assert entry.route == "convergence_cutoff"
+    assert entry.open_label == "Open in Cutoff Convergence"
+
+
+def test_kpoint_sweep_details_name_the_grids_and_legacy_cutoff_records_still_read() -> None:
+    kpoint = _only_entry(
+        _details_record(
+            "configure_convergence_kpoint",
+            WorkflowStage.CONVERGENCE_KPOINT,
+            configuration={"sweep_values": [[1, 1, 1], [4, 4, 6]]},
+        )
+    )
+    legacy = _only_entry(
+        _details_record(
+            "configure_convergence_cutoff",
+            WorkflowStage.CONVERGENCE_CUTOFF,
+            configuration={"cutoff_energies": [500.0]},
+        )
+    )
+
+    assert entry_details(kpoint).lines == ("2 grid values: 1×1×1 to 4×4×6",)
+    assert entry_details(legacy).lines == ("1 cutoff value: 500 eV",)
+
+
+def test_configuration_details_collapse_a_long_row_list_and_keep_only_shared_values() -> None:
+    rows = [
+        {
+            "label": f"Site {n}",
+            "charge_state": "positive_muon",
+            "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+            "parameter_values": {
+                "spin_polarized": True,
+                "xc_functional": "PBE",
+                "cut_off_energy": {"unit": "eV", "value": 600.0},
+                "kpoint_mp_grid": [4, 4, 6],
+                "task": "GEOMETRYOPTIMIZATION" if n else "SINGLEPOINT",
+            },
+        }
+        for n in range(5)
+    ]
+    entry = _only_entry(
+        _details_record(
+            "configure_muon_relaxation",
+            WorkflowStage.MUON_RELAXATION,
+            configuration={"rows": rows},
+        )
+    )
+
+    assert entry_details(entry).lines == (
+        "Supercell 2×2×2 · spin polarized · PBE · 600 eV · 4×4×6",
+        "5 rows: Site 0, Site 1, Site 2, and 2 more",
+    )
+
+
+def test_configuration_details_omit_a_value_the_rows_disagree_on_and_show_a_skewed_cell() -> None:
+    entry = _only_entry(
+        _details_record(
+            "configure_pristine_relaxation",
+            WorkflowStage.PRISTINE_RELAXATION,
+            configuration={
+                "rows": [
+                    {
+                        "label": "a",
+                        "supercell_matrix": [[1, 1, 0], [0, 1, 0], [0, 0, 1]],
+                        "parameter_values": {"xc_functional": "PBE"},
+                    },
+                    {
+                        "label": "b",
+                        "supercell_matrix": [[1, 1, 0], [0, 1, 0], [0, 0, 1]],
+                        "parameter_values": {"xc_functional": "LDA"},
+                    },
+                ]
+            },
+        )
+    )
+
+    assert entry_details(entry).lines == ("Supercell [1 1 0; 0 1 0; 0 0 1]", "2 rows: a, b")
+
+
+def test_quantum_and_barrier_details_count_their_sources() -> None:
+    entry = _only_entry(
+        _details_record(
+            "configure_quantum_corrections",
+            WorkflowStage.QUANTUM_CORRECTIONS,
+            configuration={"sources": [{"label": "Site 1"}]},
+        )
+    )
+
+    assert entry_details(entry).lines == ("1 source: Site 1",)
+    assert entry.route == "quantum_corrections"
+
+
+def test_adopted_default_details_give_thresholds_and_functional() -> None:
+    entry = _only_entry(
+        _details_record(
+            "set_recommended_cutoff",
+            WorkflowStage.CONVERGENCE_CUTOFF,
+            recommended_cutoff_energy=600.0,
+            recommended_cutoff_method="converged",
+            recommended_cutoff_energy_threshold=0.001,
+            recommended_cutoff_force_threshold=0.05,
+            recommended_cutoff_xc_functional="PBE",
+        )
+    )
+
+    assert entry_details(entry).lines == (
+        "Energy within 0.001 eV/atom · Max force within 0.05 eV/Å · Functional PBE",
+    )
+
+
+def test_generation_details_give_inputs_and_seed() -> None:
+    entry = _only_entry(
+        _details_record(
+            "generate_candidates",
+            WorkflowStage.MUON_GENERATION,
+            generation_run={
+                "id": str(uuid4()),
+                "method": "random",
+                "parameters": {"min_muon_muon": 1.5, "min_muon_atom": 1.0},
+                "seed": 418273,
+                "site_ids": [str(uuid4())],
+            },
+        )
+    )
+
+    (line,) = entry_details(entry).lines
+    assert "at least 1.5 Å from the other starts" in line
+    assert "The random seed was 418273." in line
+    assert entry.route == "muon_candidates"
+
+
+def test_generation_details_of_an_older_record_are_only_the_time() -> None:
+    entry = _only_entry(generation_record(9))
+
+    assert entry_details(entry).lines == ()
+
+
+def test_legacy_import_details_list_skipped_runs_and_conflicts() -> None:
+    entry = _only_entry(
+        _details_record(
+            "import_legacy_relaxations",
+            WorkflowStage.MUON_RELAXATION,
+            source_folder="/data/old",
+            imported_sites=[{"label": "Site 1", "conflicts": ["CUT_OFF_ENERGY: two values."]}],
+            skipped=[{"site_index": 3, "reason": "No output file."}],
+        )
+    )
+
+    assert entry_details(entry).lines == (
+        "Source folder /data/old",
+        "Skipped run 3: No output file.",
+        "Site 1: CUT_OFF_ENERGY: two values.",
+    )
+
+
+def _muon_batch(job_ids: list, *, num_processes: list[int]) -> list[ProvenanceRecord]:
+    timestamp = datetime(2026, 4, 21, 9, 0, tzinfo=UTC)
+    return [
+        ProvenanceRecord(
+            timestamp=timestamp,
+            action="configure_muon_relaxation",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            parameters={
+                "configuration": {
+                    "rows": [
+                        {
+                            "label": "Site 1",
+                            "charge_state": "positive_muon",
+                            "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+                            "parameter_values": {"spin_polarized": True},
+                        },
+                        {
+                            "label": "Site 2",
+                            "charge_state": "positive_muon",
+                            "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+                            "parameter_values": {"spin_polarized": True},
+                        },
+                        {
+                            "label": "Site 1",
+                            "charge_state": "muonium",
+                            "supercell_matrix": [[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+                            "parameter_values": {"spin_polarized": False},
+                        },
+                    ]
+                }
+            },
+        ),
+        ProvenanceRecord(
+            timestamp=timestamp + timedelta(minutes=1),
+            action="submit_jobs",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            parameters={
+                "execution_target": "local",
+                "job_count": len(job_ids),
+                "charge_state": "positive_muon",
+                "jobs": [
+                    {
+                        "job_id": str(job_id),
+                        "label": f"Site {n + 1}",
+                        "row_label": f"Site {n + 1}",
+                        "charge_state": "positive_muon",
+                        "num_processes": processes,
+                    }
+                    for n, (job_id, processes) in enumerate(zip(job_ids, num_processes))
+                ],
+            },
+        ),
+    ]
+
+
+def _batch_outcome(action: str, job_id, minute: int, **parameters: object) -> ProvenanceRecord:
+    return ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, minute, tzinfo=UTC),
+        action=action,
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        parameters=parameters,
+        job_id=job_id,
+    )
+
+
+def test_batch_details_give_shared_parameters_and_energies_relative_to_the_minimum() -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [
+        *_muon_batch(job_ids, num_processes=[8, 8]),
+        _batch_outcome(
+            "job_completed",
+            job_ids[0],
+            5,
+            result_total_energy=-100.0,
+            result_max_force=0.01234,
+            warnings_count=2,
+        ),
+        _batch_outcome("job_completed", job_ids[1], 6, result_total_energy=-100.25),
+    ]
+    entry = build_journal("Batch", records).days[0].entries[1]
+
+    assert entry.card_summary == "2 sites on this computer, 8 processes each · 2 of 2 completed"
+    details = entry_details(entry)
+    # The muonium row of Site 1 is not in this positive-muon batch.
+    assert details.lines == ("Supercell 2×2×2 · spin polarized",)
+    assert details.job_table.headers[0] == "Site"
+    assert details.job_table.rows == (
+        ("Site 1", "Completed", "250.0", "0.0123", "2"),
+        ("Site 2", "Completed", "0.0", "—", "—"),
+    )
+    assert entry.open_label == "Open in Muon Relaxations"
+
+
+def test_batch_details_of_a_failure_and_an_unfinished_job() -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [
+        *_muon_batch(job_ids, num_processes=[8, 16]),
+        _batch_outcome("job_failed", job_ids[0], 5, error_message="SCF did not converge"),
+    ]
+    entry = build_journal("Batch", records).days[0].entries[1]
+
+    assert entry.card_summary == "2 sites on this computer, 8 to 16 processes · 1 of 2 failed"
+    details = entry_details(entry)
+    assert "Site 1: SCF did not converge." in details.lines
+    assert details.job_table.rows == (
+        ("Site 1", "Failed", "—", "—", "—"),
+        ("Site 2", "Submitted", "—", "—", "—"),
+    )
+
+
+def test_a_batch_says_nothing_about_configuration_rows_it_did_not_run() -> None:
+    job_id = uuid4()
+    records = _muon_batch([job_id], num_processes=[8])
+    records[1].parameters["jobs"][0]["row_label"] = "Another site"
+
+    entry = build_journal("Batch", records).days[0].entries[1]
+
+    assert entry_details(entry).lines == ()
+
+
+def test_a_batch_without_a_configuration_has_only_its_table() -> None:
+    job_id = uuid4()
+    entry = _only_entry(
+        _details_record(
+            "submit_jobs",
+            WorkflowStage.UEP,
+            execution_target="local",
+            jobs=[{"job_id": str(job_id), "label": "uep_1", "num_processes": 1}],
+        )
+    )
+
+    assert entry.card_summary == "1 job on this computer, 1 process"
+    assert entry_details(entry).lines == ()
+    assert entry_details(entry).job_table.headers[0] == "Calculation"
+
+
+def test_comparison_table_entry_opens_the_table_and_older_records_have_no_link() -> None:
+    table_id = uuid4()
+    linked = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action="create_comparison_table",
+        parameters={"table_label": "Comparison 1", "dft_structure_count": 1},
+        output_entity_ids=[table_id, uuid4()],
+    )
+    entry = _only_entry(linked)
+
+    assert entry.route == f"pristine_relaxation/comparison/{table_id}"
+    assert entry.open_label == "Open in 'Comparison 1'"
+    assert _only_entry(_details_record("create_comparison_table")).route is None
+
+
+def test_an_imported_structure_opens_the_host_structure_page() -> None:
+    entry = _only_entry(_details_record("import_structure", WorkflowStage.MUON_GENERATION))
+
+    assert entry.route == "host_structure"
+    assert entry.open_label == "Open in Host Structure"
+
+
+def test_dismissals_from_several_workflows_have_no_link() -> None:
+    records = [
+        _details_record("job_dismissed", WorkflowStage.UEP, job_label="a"),
+        _details_record("job_dismissed", WorkflowStage.PRISTINE_RELAXATION, job_label="b"),
+    ]
+
+    assert _only_entry(*records).route is None
+    assert _only_entry(records[0]).route == "uep"
+
+
+def test_exports_stay_the_short_summary(tmp_path: Path) -> None:
+    job_id = uuid4()
+    journal = build_journal(
+        "Export",
+        [
+            *_muon_batch([job_id], num_processes=[8]),
+            _batch_outcome("job_completed", job_id, 5, result_total_energy=-100.0),
+        ],
+    )
+
+    for text in (render_journal_text(journal), render_journal_markdown(journal)):
+        assert "Submitted 1 job to run on this computer: Site 1. 1 of 1 completed." in text
+        assert "Supercell" not in text
+        assert "meV" not in text
+        assert "processes" not in text

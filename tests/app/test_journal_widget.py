@@ -8,8 +8,18 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent
-from PySide6.QtWidgets import QFrame, QLabel, QStackedWidget, QWidget
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QStackedWidget,
+    QTableWidget,
+    QWidget,
+)
 
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.domain.enums import WorkflowStage
@@ -99,7 +109,8 @@ def test_journal_widget_renders_day_headers_and_entries(qapp) -> None:
     texts = [label.text() for label in widget.findChildren(type(widget._empty_label))]
     assert "Tuesday 21 April 2026" in texts
     assert "Muon sites generated" in texts
-    assert "Muon Sites" in texts
+    time_text = datetime(2026, 4, 21, 9, 0, tzinfo=UTC).astimezone().strftime("%H:%M")
+    assert f"Muon Sites · {time_text}" in texts
     widget.close()
 
 
@@ -356,7 +367,7 @@ def test_a_completion_updates_only_its_batch_card(qapp) -> None:
     assert first in after
     assert last in after
     assert batch_card not in after
-    assert _layout_order(widget)[2].endswith(" 1 of 2 completed.")
+    assert _layout_order(widget)[2].endswith(" · 1 of 2 completed")
 
     fresh = JournalWidget()
     fresh.show()
@@ -417,4 +428,392 @@ def test_a_second_dismissal_folds_into_the_card_of_the_first(qapp) -> None:
     cards = _cards(widget)
     assert len(cards) == 1
     assert cards[0].findChild(QLabel, "journalEntryTitle").text() == "Calculations dismissed"
+    widget.close()
+
+
+def _batch_records() -> tuple[list[ProvenanceRecord], list]:
+    job_ids = [uuid4(), uuid4()]
+    completed = [
+        dataclasses.replace(
+            _job_outcome("job_completed", job_id, hour=10 + n),
+            parameters={"job_label": f"uep_{n}", "result_total_energy": -100.0 - n},
+        )
+        for n, job_id in enumerate(job_ids)
+    ]
+    return [_job_submission(job_ids), *completed], job_ids
+
+
+def _details(card: QFrame) -> QWidget | None:
+    return card.findChild(QWidget, "journalEntryDetails")
+
+
+@pytest.mark.parametrize(
+    ("action", "kind"),
+    [
+        ("generate_candidates", "milestone"),
+        ("job_completed", "success"),
+        ("job_stopped", "warning"),
+        ("job_failed", "danger"),
+    ],
+)
+def test_a_card_and_its_stamp_carry_the_stamp_kind(qapp, action: str, kind: str) -> None:
+    record = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action=action,
+        parameters={"job_label": "uep"},
+    )
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Stamps", [record])
+
+    card = _cards(widget)[0]
+    assert card.property("stampKind") == kind
+    assert card.findChild(QLabel, "journalStamp").property("stampKind") == kind
+    widget.close()
+
+
+def test_the_theme_keeps_red_for_failed_entries_only(qapp) -> None:
+    from mufinder.app.theme import _build_stylesheet, dark_palette, light_palette
+
+    for palette in (light_palette(), dark_palette()):
+        stylesheet = _build_stylesheet(palette)
+        for selector, color in (
+            ('QLabel#journalStamp[stampKind="milestone"]', palette.text_muted),
+            ('QLabel#journalStamp[stampKind="success"]', palette.seal_gold),
+            ('QLabel#journalStamp[stampKind="warning"]', palette.warning),
+            ('QLabel#journalStamp[stampKind="danger"]', palette.danger),
+            ('QFrame#journalEntryCard[stampKind="milestone"]', palette.border),
+            ("QFrame#journalEntryCard:focus", palette.text_primary),
+        ):
+            rule = stylesheet.split(selector, 1)[1].split("}", 1)[0]
+            assert color in rule, selector
+
+
+def test_a_collapsed_card_is_compact_even_with_a_long_summary(qapp) -> None:
+    from mufinder.app.theme import apply_theme
+
+    apply_theme(qapp, "light")
+    long_text = "A symmetry failure with a very long explanation. " * 20
+    record = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action="symmetry_unavailable",
+        workflow_stage=WorkflowStage.MUON_GENERATION,
+        description=long_text,
+    )
+    widget = JournalWidget()
+    widget.resize(700, 600)
+    widget.show()
+    widget.set_records("Compact", [record])
+    QCoreApplication.processEvents()
+
+    card = _cards(widget)[0]
+    assert card.height() < 60
+    assert widget._content.minimumSizeHint().width() < 700
+    # The label keeps the whole text, so expanding shows it.
+    body = card.findChild(QLabel, "journalEntryBody")
+    assert body.text() == long_text
+
+    card.set_expanded(True)
+    QCoreApplication.processEvents()
+    assert card.height() > 60
+    assert body.wordWrap()
+    widget.close()
+
+
+def test_details_are_built_on_first_expansion_only(qapp) -> None:
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Lazy", [_record(9)])
+    card = _cards(widget)[0]
+    assert _details(card) is None
+
+    card.set_expanded(True)
+    details = _details(card)
+    assert details is not None and not details.isHidden()
+
+    card.set_expanded(False)
+    assert details.isHidden()
+    card.set_expanded(True)
+    assert _details(card) is details
+    widget.close()
+
+
+def test_clicking_the_header_toggles_a_card_and_clicking_details_does_not(qapp) -> None:
+    widget = JournalWidget()
+    widget.resize(800, 600)
+    widget.show()
+    widget.set_records("Click", [_record(9)])
+    QCoreApplication.processEvents()
+    card = _cards(widget)[0]
+    header = card.findChild(QWidget, "journalCardHeader")
+
+    QTest.mouseClick(header, Qt.MouseButton.LeftButton, pos=QPoint(40, 5))
+    assert card.is_expanded()
+
+    QCoreApplication.processEvents()
+    QTest.mouseClick(_details(card), Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+    assert card.is_expanded()
+
+    QTest.mouseClick(header, Qt.MouseButton.LeftButton, pos=QPoint(40, 5))
+    assert not card.is_expanded()
+    widget.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space])
+def test_enter_and_space_toggle_a_focused_card(qapp, key: Qt.Key) -> None:
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Keys", [_record(9)])
+    card = _cards(widget)[0]
+    assert card.focusPolicy() == Qt.FocusPolicy.StrongFocus
+
+    QTest.keyClick(card, key)
+    assert card.is_expanded()
+    QTest.keyClick(card, key)
+    assert not card.is_expanded()
+    widget.close()
+
+
+def test_keys_do_not_toggle_with_a_modifier_on_repeat_or_from_a_child(qapp) -> None:
+    widget = JournalWidget()
+    widget.set_route_checker(lambda route: True)
+    widget.show()
+    widget.set_records("Keys", [_record(9)])
+    QCoreApplication.processEvents()
+    card = _cards(widget)[0]
+    card.setFocus()
+
+    QTest.keyClick(card, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert not card.is_expanded()
+    # A held key arrives as repeats after the first press.
+    repeat = QKeyEvent(
+        QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier, "", True
+    )
+    QCoreApplication.sendEvent(card, repeat)
+    assert not card.is_expanded()
+    QTest.keyClick(card, Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier)
+    assert card.is_expanded()
+    QCoreApplication.processEvents()
+
+    table_records, _job_ids = _batch_records()
+    widget.set_records("Keys", table_records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    batch_card = _cards(widget)[0]
+    batch_card.set_expanded(True)
+    QCoreApplication.processEvents()
+    table = batch_card.findChild(QTableWidget)
+    table.setFocus()
+    QCoreApplication.sendEvent(
+        table, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+    )
+    assert batch_card.is_expanded()
+    widget.close()
+
+
+def test_return_on_open_in_opens_the_page_and_leaves_the_card_open(qapp) -> None:
+    widget = JournalWidget()
+    widget.set_route_checker(lambda route: True)
+    widget.show()
+    widget.set_records("Keys", [_record(9)])
+    QCoreApplication.processEvents()
+    card = _cards(widget)[0]
+    card.set_expanded(True)
+    QCoreApplication.processEvents()
+    opened: list[str] = []
+    widget.open_route_requested.connect(opened.append)
+
+    QTest.keyClick(card.findChild(QPushButton), Qt.Key.Key_Return)
+
+    assert opened == ["muon_candidates"]
+    assert card.is_expanded()
+    widget.close()
+
+
+def test_the_title_stays_plain_text_when_a_card_expands(qapp) -> None:
+    record = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action="create_comparison_table",
+        parameters={"table_label": "<b>x</b>", "dft_structure_count": 1},
+    )
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Plain", [record])
+    card = _cards(widget)[0]
+
+    card.set_expanded(True)
+
+    assert card.findChild(QLabel, "journalEntryBody").textFormat() == Qt.TextFormat.PlainText
+    assert card.findChild(QLabel, "journalEntryTitle").textFormat() == Qt.TextFormat.PlainText
+    widget.close()
+
+
+def test_a_narrow_page_scrolls_rather_than_clipping_the_job_table(qapp) -> None:
+    records, _job_ids = _batch_records()
+    widget = JournalWidget()
+    widget.resize(800, 500)
+    widget.show()
+    widget.set_records("Narrow", records)
+    card = _cards(widget)[0]
+    card.set_expanded(True)
+    QCoreApplication.processEvents()
+
+    table = card.findChild(QTableWidget)
+    columns = sum(table.columnWidth(column) for column in range(1, table.columnCount()))
+    assert table.minimumWidth() > columns
+    assert widget._content.minimumSizeHint().width() >= table.minimumWidth()
+    widget.close()
+
+
+def test_an_expanded_batch_card_shows_its_job_table(qapp) -> None:
+    records, _job_ids = _batch_records()
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Batch", records)
+
+    card = _cards(widget)[0]
+    card.set_expanded(True)
+
+    table = card.findChild(QTableWidget)
+    assert table.accessibleName()
+    assert [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())] == [
+        "Calculation",
+        "Status",
+        "ΔE (meV)",
+        "Max force (eV/Å)",
+        "Warnings",
+    ]
+    assert [table.item(row, 2).text() for row in range(2)] == ["1000.0", "0.0"]
+    assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    widget.close()
+
+
+def test_a_card_stays_expanded_when_a_completion_replaces_it(qapp) -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [_job_submission(job_ids)]
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Stream", records)
+    _cards(widget)[0].set_expanded(True)
+
+    records.append(_job_outcome("job_completed", job_ids[0], hour=11))
+    widget.set_records("Stream", records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    card = _cards(widget)[0]
+    assert card.is_expanded()
+    assert card.findChild(QTableWidget).item(0, 1).text() == "Completed"
+    # Coming back open does not pull the page back to the card.
+    assert not widget._reveal_timer.isActive() or widget._card_to_reveal is None
+    widget.close()
+
+
+def test_expansion_follows_the_entry_through_a_rebuild_and_not_to_another_project(qapp) -> None:
+    records = [_record(9, day=22), _record(10, day=22)]
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Stream", records)
+    _cards(widget)[1].set_expanded(True)
+
+    # An older record moves every card down and rebuilds the view.
+    records.append(_record(8, day=21))
+    widget.set_records("Stream", records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert [card.is_expanded() for card in _cards(widget)] == [False, False, True]
+
+    widget.set_records("Other", [_record(10, day=22)])
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert [card.is_expanded() for card in _cards(widget)] == [False]
+    widget.close()
+
+
+def test_focus_inside_a_replaced_card_stays_on_the_card(qapp) -> None:
+    job_ids = [uuid4(), uuid4()]
+    records = [_job_submission(job_ids)]
+    widget = JournalWidget()
+    widget.show()
+    widget.activateWindow()
+    widget.set_records("Stream", records)
+    QCoreApplication.processEvents()
+    card = _cards(widget)[0]
+    card.set_expanded(True)
+    QCoreApplication.processEvents()
+    table = card.findChild(QTableWidget)
+    table.setFocus()
+    QCoreApplication.processEvents()
+    if QApplication.focusWidget() is not table:
+        widget.close()
+        pytest.skip("this platform gives the window no keyboard focus")
+
+    records.append(_job_outcome("job_completed", job_ids[0], hour=11))
+    widget.set_records("Stream", records)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+
+    assert QApplication.focusWidget() is _cards(widget)[0]
+    widget.close()
+
+
+def test_expanding_the_last_card_scrolls_it_into_view(qapp) -> None:
+    records = [_record(9), *(_record(hour, count=hour) for hour in range(10, 22))]
+    records.extend(_batch_records()[0])
+    widget = JournalWidget()
+    widget.resize(800, 300)
+    widget.show()
+    widget.set_records("Reveal", sorted(records, key=lambda record: record.timestamp))
+    QCoreApplication.processEvents()
+    bar = widget._scroll.verticalScrollBar()
+    bar.setValue(bar.maximum())
+    last = _cards(widget)[-1]
+    before = bar.value()
+
+    last.set_expanded(True)
+    for _ in range(5):
+        QCoreApplication.processEvents()
+
+    assert bar.value() > before
+    widget.close()
+
+
+def test_open_in_emits_the_route_and_hides_for_a_missing_page(qapp) -> None:
+    pages = {"muon_candidates"}
+    widget = JournalWidget()
+    widget.set_route_checker(lambda route: route in pages)
+    widget.show()
+    widget.set_records("Open", [_record(9)])
+    card = _cards(widget)[0]
+    card.set_expanded(True)
+    button = card.findChild(QPushButton)
+    assert button.text() == "Open in Muon Sites"
+    assert not button.isHidden()
+    opened: list[str] = []
+    widget.open_route_requested.connect(opened.append)
+
+    button.click()
+    assert opened == ["muon_candidates"]
+
+    # The page goes while the Journal is hidden; the link is gone when it comes back.
+    widget.hide()
+    pages.clear()
+    widget.show()
+    assert button.isHidden()
+    widget.close()
+
+
+def test_open_in_is_hidden_without_a_route_checker_or_a_workflow(qapp) -> None:
+    no_workflow = ProvenanceRecord(
+        timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+        action="set_recommended_xc_functional",
+        parameters={"recommended_xc_functional": "PBE"},
+    )
+    widget = JournalWidget()
+    widget.show()
+    widget.set_records("Open", [_record(8), no_workflow])
+    with_workflow, without = _cards(widget)
+
+    with_workflow.set_expanded(True)
+    without.set_expanded(True)
+
+    assert with_workflow.findChild(QPushButton).isHidden()
+    assert without.findChild(QPushButton) is None
     widget.close()

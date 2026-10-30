@@ -1085,6 +1085,10 @@ class MainWindow(QMainWindow):
         )
         self._workflow_controllers.append(self._energy_barriers_controller)
         self._journal_view = JournalWidget()
+        self._journal_view.set_route_checker(
+            lambda route: self._find_tree_item_by_route(route) is not None
+        )
+        self._journal_view.open_route_requested.connect(self.show_page)
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
         self._main_stack.addWidget(self._convergence_overview_view)
