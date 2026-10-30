@@ -76,10 +76,11 @@ file. The source file is copied into the project, and MCIF magnetic metadata
 (propagation vectors and atom-site moments) becomes the project magnetic
 structure and the host's per-atom spins. The ``Host Structure`` panel switches
 between imported hosts, edits per-atom spins in units of ``hbar/2`` and the
-propagation vector in reciprocal-lattice units, and shows the structure in an
-orthographic 3D viewer with optional spin arrows, bonds and unit cell.
+propagation vector in reciprocal-lattice units, and shows the structure in the
+:doc:`/user_guide/structure_viewer` that every workflow uses.
 
-See :doc:`/user_guide/host_structure`. :doc:`/user_guide/examples/cof2` starts
+See :doc:`/user_guide/host_structure`, and :doc:`/user_guide/structure_files` for
+what each format reads. :doc:`/user_guide/examples/cof2` starts
 from a CoF₂ host with antiparallel Co spins.
 
 Supercell Editor

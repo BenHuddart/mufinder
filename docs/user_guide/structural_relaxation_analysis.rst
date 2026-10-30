@@ -230,9 +230,9 @@ every anchored cluster member to the Wyckoff orbit assigned to its cluster (see
 The clustered-sites table in the dialog reports each cluster's Wyckoff
 assignment. Tooltips include the detected space group, the site-symmetry
 symbol, and the maximum and mean fitted distances used to justify the
-assignment. The structure viewer gets half the width of the dialog, or more
-when its cluster summary table needs it to show the Wyckoff assignments in
-full; the plot takes the rest. The split follows window resizes until you drag
+assignment. The structure viewer (see :doc:`/user_guide/structure_viewer`)
+gets half the width of the dialog, or more when its cluster summary table needs
+it to show the Wyckoff assignments in full; the plot takes the rest. The split follows window resizes until you drag
 the handle.
 
 The connected-components graph scales with its canvas: every node stays inside

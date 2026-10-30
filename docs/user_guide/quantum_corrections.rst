@@ -430,8 +430,8 @@ the first time it is shown. Each muon mode's width ``Δx`` is in the
 ``Phonon Modes``
    Lists every Gamma-point mode with its frequency, muon participation, and the
    muon's displacement direction (the participation of the three selected
-   muon-dominated modes is highlighted), next to a 3D structure viewer. Selecting a mode updates the
-   viewer. ``Amplitude (Å)`` (default ``1.00``) sets the largest displayed atomic
+   muon-dominated modes is highlighted), next to a 3D structure viewer (see
+   :doc:`/user_guide/structure_viewer`). Selecting a mode updates the viewer. ``Amplitude (Å)`` (default ``1.00``) sets the largest displayed atomic
    displacement. ``Play animation`` oscillates the structure about equilibrium
    with the period set by ``Cycle time (s)``; ``Reset`` returns to the
    equilibrium phase; ``Show vectors`` (off by default) overlays the

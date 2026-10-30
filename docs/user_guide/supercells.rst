@@ -27,10 +27,10 @@ Running the workflow
 3. **Choose the scaling.** Set ``Nx``, ``Ny`` and ``Nz`` (1 to 64 each), or tick
    ``Advanced 3x3 matrix`` and enter a full 3×3 integer matrix. Alternatively,
    click ``Suggest…`` (see `Suggesting a supercell`_).
-4. **Check the preview.** The preview shows the generated structure and the
-   propagated spin arrows, and the status line reports the resulting atom
-   count. It updates on each edit of a ``Nx``, ``Ny``, ``Nz`` or matrix box.
-   Opening the editor, selecting a saved cell, clicking ``New`` and applying a
+4. **Check the preview.** The preview, a :doc:`/user_guide/structure_viewer`,
+   shows the generated structure and the propagated spin arrows, and the status
+   line reports the resulting atom count. It updates on each edit of a ``Nx``,
+   ``Ny``, ``Nz`` or matrix box. Opening the editor, selecting a saved cell, clicking ``New`` and applying a
    suggestion set the whole matrix at once and build the preview once.
 5. **Name and save.** Give the supercell a clear name and click ``Save``. Click
    ``Save As`` to create another saved copy from the current matrix and name.

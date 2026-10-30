@@ -448,7 +448,7 @@ accepted texture on the actual host structure and selected supercell. The
 preview canvas can be switched between light and dark modes without changing
 the rest of the MuFinder interface; each canvas keeps its own colours in either
 theme, and the structure-viewer backgrounds and axis triads follow the active
-application palette.
+application palette (see :doc:`/user_guide/structure_viewer`).
 
 Tick ``Show |m| map`` in the preview header to replace the arrows with a colour
 map of the moment magnitude over one magnetic cell, with a colour bar in μB.

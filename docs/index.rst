@@ -41,6 +41,8 @@ and quality standards.
    user_guide/overview
    user_guide/project_home
    user_guide/host_structure
+   user_guide/structure_viewer
+   user_guide/structure_files
    user_guide/supercells
    user_guide/convergence_testing
    user_guide/comparison_table
