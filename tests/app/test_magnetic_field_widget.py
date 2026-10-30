@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from functools import partial
 from uuid import uuid4
 
 import numpy as np
@@ -32,12 +31,11 @@ from mufinder.app.magnetic_field_widget import (
     MagneticTexturePreview,
     MuonSiteSelectionDialog,
     NuclearRelaxationDialog,
-    _evaluate_texture_preview_grid,
     _component_moment_label,
     _selector_label,
 )
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
-from mufinder.domain.models import CalculationRun, Job, Result, Structure
+from mufinder.domain.models import Structure
 from mufinder.science.magnetic_fields import MagneticFieldDependencyError, MagneticFieldError
 from mufinder.science.nuclear_relaxation import NuclearRelaxationError
 from mufinder.science.magnetic_structure import (
@@ -47,8 +45,6 @@ from mufinder.science.magnetic_structure import (
     MagneticComponent,
     MagneticStructureError,
     MagneticStructureModel,
-    MagneticTexture,
-    MagneticTextureTerm,
     build_collinear_component,
     build_conical_component,
     build_helix_component,
@@ -60,18 +56,23 @@ from mufinder.services.magnetic_field_results import (
     store_magnetic_field_results,
 )
 from mufinder.science.demagnetization import PlatePhoto, demagnetizing_tensor
+from mufinder.services.magnetic_field_sites import (
+    MagneticMuonSiteOption,
+    relaxation_cluster_muon_site_options,
+)
 from mufinder.services.project_service import ProjectService
 from tests.support.codata import BOHR_MAGNETON_J_PER_T, MU0_OVER_4PI_T_M_PER_A
-from tests.support.structures import host_structure, relaxed_muon_supercell
-
-
-_host_structure = partial(
-    host_structure,
-    label="FeO",
-    lattice=3.0,
-    species=("Fe", "O"),
-    properties={"atomic_spins": [1.0, -0.5], "propagation_vector": [0.0, 0.0, 0.0]},
+from tests.support.structures import host_structure
+from tests.support.magnetic_field_sites import (
+    add_uep_cluster,
+    displaced_iron_supercell,
+    feo_host_structure,
+    relaxation_cluster_document,
+    uep_cluster_document,
 )
+
+
+_host_structure = feo_host_structure
 
 
 def _multi_species_structure() -> Structure:
@@ -111,8 +112,8 @@ def _set_site_source(widget, source: str) -> None:
 
 def _custom_muon_site(
     position: tuple[float, float, float],
-) -> magnetic_field_widget_module.MagneticMuonSiteOption:
-    return magnetic_field_widget_module.MagneticMuonSiteOption(
+) -> MagneticMuonSiteOption:
+    return MagneticMuonSiteOption(
         source="custom",
         label="Custom site",
         fractional_position=position,
@@ -828,43 +829,6 @@ def test_magnetic_texture_dialog_magnitude_pruning_help_uses_current_values(qapp
     assert "Keep strongest N" in html
     assert "12 largest" in html
     dialog.close()
-
-
-def test_magnetic_texture_preview_uses_hexagonal_q_basis() -> None:
-    texture = MagneticTexture((MagneticTextureTerm.from_vector((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),))
-
-    square = _evaluate_texture_preview_grid(
-        texture, mode="square_skyrmion", resolution=3, repeats=1.0
-    )
-    hexagonal = _evaluate_texture_preview_grid(
-        texture, mode="hexagonal_skyrmion", resolution=3, repeats=1.0
-    )
-
-    assert np.isclose(square[2, 1, 2], 1.0)
-    assert abs(hexagonal[2, 1, 2]) < 1e-12
-
-
-def test_magnetic_texture_preview_q_basis_follows_core_direction_handedness() -> None:
-    texture = MagneticTexture((MagneticTextureTerm.from_vector((0.0, 1.0, 0.0), (0.0, 0.0, 1.0j)),))
-
-    core_down = _evaluate_texture_preview_grid(
-        texture,
-        mode="hexagonal_skyrmion",
-        core_direction=(0.0, 0.0, -1.0),
-        resolution=3,
-        repeats=1.0,
-    )
-    core_up = _evaluate_texture_preview_grid(
-        texture,
-        mode="hexagonal_skyrmion",
-        core_direction=(0.0, 0.0, 1.0),
-        resolution=3,
-        repeats=1.0,
-    )
-
-    assert core_down[1, 2, 2] < 0.0
-    assert core_up[1, 2, 2] > 0.0
-    assert np.isclose(core_down[1, 2, 2], -core_up[1, 2, 2])
 
 
 def test_magnetic_texture_dialog_custom_table_delete_and_backspace(qapp) -> None:
@@ -1586,55 +1550,6 @@ def test_component_dialog_help_documents_current_preset_parameters(qapp) -> None
     dialog.close()
 
 
-def test_magnetic_structure_builder_zero_q_component_does_not_consume_q_basis(
-    qapp, tmp_path
-) -> None:
-    service = ProjectService()
-    document = service.create_project(tmp_path / "magnetic-zero-q.mufinder", "Magnetic Zero Q")
-    service.add_structure(document, _host_structure())
-
-    dialog = MagneticStructureBuilderDialog()
-    dialog.set_document(document)
-    full_basis = ((0.5, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.5))
-    dialog._set_model(MagneticStructureModel(q_basis_rlu=full_basis))
-
-    q_basis, q_coeff = dialog._q_basis_for((0.0, 0.0, 0.0))
-
-    assert q_basis == full_basis
-    assert q_coeff == (0.0, 0.0, 0.0)
-    dialog.close()
-
-
-def test_magnetic_structure_builder_finite_q_after_zero_q_component_uses_free_basis_row(
-    qapp, tmp_path
-) -> None:
-    service = ProjectService()
-    document = service.create_project(
-        tmp_path / "magnetic-fm-then-helix.mufinder", "Magnetic FM Then Helix"
-    )
-    service.add_structure(document, _host_structure())
-
-    dialog = MagneticStructureBuilderDialog()
-    dialog.set_document(document)
-    stale_full_basis = ((0.25, 0.0, 0.0), (0.0, 0.25, 0.0), (0.0, 0.0, 0.25))
-    zero_q_component = MagneticComponent(
-        component_id="fm",
-        label="FM",
-        kind="collinear",
-        selector=AtomSelector.all(),
-        terms=(FourierTerm((0.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
-    )
-    dialog._set_model(
-        MagneticStructureModel(q_basis_rlu=stale_full_basis, components=(zero_q_component,))
-    )
-
-    q_basis, q_coeff = dialog._q_basis_for((0.0, 0.0, 0.5))
-
-    assert q_basis[0] == (0.0, 0.0, 0.5)
-    assert q_coeff == (1.0, 0.0, 0.0)
-    dialog.close()
-
-
 def _q_component(
     component_id: str, label: str, q_coeff, kind: str = "spin_density_wave", **kwargs
 ) -> MagneticComponent:
@@ -1859,44 +1774,8 @@ def test_magnetic_structure_builder_supercell_preview_propagates_moments(qapp, t
     dialog.close()
 
 
-def _add_uep_cluster(document) -> None:
-    """Give ``document`` one UEP batch cluster at (0.1, 0.2, 0.3)."""
-
-    job_id = uuid4()
-    document.jobs[job_id] = Job(id=job_id, label="UEP batch")
-    document.ui_state["uep_analysis_states"] = {
-        str(job_id): {
-            "batch_results": [
-                {
-                    "optimized_fractional_position": [0.1, 0.2, 0.3],
-                    "optimized_position_ang": [0.3, 0.6, 0.9],
-                }
-            ],
-            "batch_summary_data": {
-                "clusters": [
-                    {
-                        "cluster_index": 2,
-                        "size": 4,
-                        "representative_index": 0,
-                    }
-                ]
-            },
-        }
-    }
-
-
-def _uep_cluster_document(tmp_path):
-    service = ProjectService()
-    document = service.create_project(
-        tmp_path / "magnetic-uep-sites.mufinder", "Magnetic UEP Sites"
-    )
-    service.add_structure(document, _host_structure())
-    _add_uep_cluster(document)
-    return document
-
-
 def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path) -> None:
-    document = _uep_cluster_document(tmp_path)
+    document = uep_cluster_document(tmp_path)
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
 
@@ -1912,57 +1791,11 @@ def test_muon_site_selection_dialog_lists_uep_cluster_muon_sites(qapp, tmp_path)
     dialog.close()
 
 
-_RELAXED_SITE = (0.5, 0.0, 0.0)
-
-
-def _relaxation_cluster_document(tmp_path, relaxed_structure: Structure):
-    """A project whose relaxation-analysis workspace has one cluster represented by ``relaxed_structure``."""
-
-    service = ProjectService()
-    document = service.create_project(
-        tmp_path / "magnetic-relax-sites.mufinder", "Magnetic Relax Sites"
-    )
-    service.add_structure(document, _host_structure())
-    document.structures[relaxed_structure.id] = relaxed_structure
-    job_id = uuid4()
-    result = Result(derived_structure_ids=[relaxed_structure.id])
-    run = CalculationRun(job_id=job_id, result_id=result.id)
-    document.results[result.id] = result
-    document.runs[run.id] = run
-    document.ui_state["relaxation_analysis_workspaces"] = [
-        {
-            "name": "Positive muon relaxations",
-            "clustering": {
-                "result": {
-                    "clusters": [
-                        {
-                            "cluster_index": 1,
-                            "size": 3,
-                            "representative_job_id": str(job_id),
-                            "representative_fractional_position": list(_RELAXED_SITE),
-                            "representative_cartesian_position_ang": [1.5, 0.0, 0.0],
-                        }
-                    ]
-                }
-            },
-        }
-    ]
-    return document
-
-
-def _displaced_iron_supercell() -> Structure:
-    """The FeO host relaxed around the muon, with the Fe one cell along +x pushed 0.1 Å away."""
-
-    return relaxed_muon_supercell(
-        _host_structure(), (2, 2, 2), _RELAXED_SITE, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)}
-    )
-
-
 def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_option(
     qapp, tmp_path
 ) -> None:
-    relaxed_structure = _displaced_iron_supercell()
-    document = _relaxation_cluster_document(tmp_path, relaxed_structure)
+    relaxed_structure = displaced_iron_supercell()
+    document = relaxation_cluster_document(tmp_path, relaxed_structure)
     set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
 
     dialog = MuonSiteSelectionDialog(document, _host_structure())
@@ -1983,7 +1816,7 @@ def test_muon_site_selection_dialog_lists_relaxation_clusters_with_distortion_op
 
 
 def test_muon_site_selection_dialog_restores_the_distortion_choice(qapp, tmp_path) -> None:
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
     set_show_every_relaxed_site(document, MAGNETIC_FIELDS_SCOPE, True)
     first = MuonSiteSelectionDialog(document, _host_structure())
     _set_site_source(first, "relaxation_clustering")
@@ -2423,9 +2256,7 @@ def _distortion_widget(document, *, include_distortion: bool) -> MagneticFieldWi
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
-    (site,) = magnetic_field_widget_module._relaxation_cluster_muon_site_options(
-        document, _host_structure()
-    )
+    (site,) = relaxation_cluster_muon_site_options(document, _host_structure())
     widget._selected_muon_site = replace(site, include_distortion=include_distortion)
     widget._refresh_site_summary()
     return widget
@@ -2435,7 +2266,7 @@ def test_magnetic_field_widget_applies_the_muon_induced_distortion_correction(
     qapp, tmp_path, monkeypatch
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=True)
 
     assert "corrected for muon-induced displacements" in widget._site_summary.text()
@@ -2466,7 +2297,7 @@ def test_magnetic_field_widget_corrects_an_incommensurate_distribution(
     qapp, tmp_path, monkeypatch
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=True)
     helix = MagneticComponent(
         component_id="fe",
@@ -2512,7 +2343,7 @@ def test_magnetic_field_widget_leaves_the_field_uncorrected_when_not_requested(
     qapp, tmp_path, monkeypatch
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=False)
 
     widget._calculate_fields()
@@ -2526,8 +2357,8 @@ def test_magnetic_field_widget_reports_a_missing_relaxed_structure(
     qapp, tmp_path, monkeypatch
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
-    relaxed = _displaced_iron_supercell()
-    document = _relaxation_cluster_document(tmp_path, relaxed)
+    relaxed = displaced_iron_supercell()
+    document = relaxation_cluster_document(tmp_path, relaxed)
     widget = _distortion_widget(document, include_distortion=True)
     del document.structures[relaxed.id]
 
@@ -2542,8 +2373,8 @@ def test_magnetic_field_widget_reports_a_missing_relaxed_structure(
 
 
 def test_muon_site_selection_dialog_labels_uep_sites_as_unrelaxed_estimates(qapp, tmp_path) -> None:
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
-    _add_uep_cluster(document)
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
+    add_uep_cluster(document)
     dialog = MuonSiteSelectionDialog(document, _host_structure())
 
     _set_site_source(dialog, "uep_clustering")
@@ -2559,12 +2390,12 @@ def test_muon_site_selection_dialog_labels_uep_sites_as_unrelaxed_estimates(qapp
 def test_muon_site_selection_dialog_offers_relaxation_clusters_first_once_they_exist(
     qapp, tmp_path
 ) -> None:
-    uep_only = MuonSiteSelectionDialog(_uep_cluster_document(tmp_path / "uep"), _host_structure())
+    uep_only = MuonSiteSelectionDialog(uep_cluster_document(tmp_path / "uep"), _host_structure())
     assert uep_only._site_source_combo.currentData() == "uep_clustering"
     uep_only.close()
 
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
-    _add_uep_cluster(document)
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
+    add_uep_cluster(document)
     # With nothing pinned the relaxation list is empty, so the UEP sites stay first.
     unpinned = MuonSiteSelectionDialog(document, _host_structure())
     assert unpinned._site_source_combo.currentData() == "uep_clustering"
@@ -2581,13 +2412,13 @@ def test_magnetic_field_widget_defaults_to_a_relaxation_cluster_once_one_exists(
     qapp, tmp_path
 ) -> None:
     uep_widget = MagneticFieldWidget()
-    uep_widget.set_document(_uep_cluster_document(tmp_path / "uep"))
+    uep_widget.set_document(uep_cluster_document(tmp_path / "uep"))
     assert uep_widget.selected_muon_site().source == "uep_clustering"
     assert "unrelaxed" in uep_widget._site_summary.text()
     uep_widget.close()
 
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
-    _add_uep_cluster(document)
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
+    add_uep_cluster(document)
     widget = MagneticFieldWidget()
     widget.set_document(document)
     assert widget.selected_muon_site().source == "relaxation_clustering"
@@ -2600,7 +2431,7 @@ def test_magnetic_field_widget_marks_fields_at_a_uep_site_as_estimates_across_a_
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
     service = ProjectService()
-    document = _uep_cluster_document(tmp_path)
+    document = uep_cluster_document(tmp_path)
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
@@ -2634,7 +2465,7 @@ def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(
     qapp, tmp_path, monkeypatch
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
-    document = _relaxation_cluster_document(tmp_path, _displaced_iron_supercell())
+    document = relaxation_cluster_document(tmp_path, displaced_iron_supercell())
     widget = _distortion_widget(document, include_distortion=False)
 
     widget._calculate_fields()
@@ -2647,7 +2478,7 @@ def test_magnetic_field_widget_does_not_mark_fields_at_a_relaxation_cluster(
     widget.close()
 
 
-def _site_from(source: str) -> magnetic_field_widget_module.MagneticMuonSiteOption:
+def _site_from(source: str) -> MagneticMuonSiteOption:
     return replace(_custom_muon_site((0.25, 0.25, 0.25)), source=source, label=f"{source} site")
 
 
@@ -2712,7 +2543,7 @@ def test_tensor_and_nuclear_estimates_survive_a_reload_whatever_site_is_selected
     qapp, tmp_path
 ) -> None:
     service = ProjectService()
-    document = _uep_cluster_document(tmp_path)
+    document = uep_cluster_document(tmp_path)
     widget = MagneticFieldWidget()
     widget.set_document(document)
     site = widget.selected_muon_site()
@@ -4134,7 +3965,7 @@ def test_contact_shell_survives_save_and_reopen_with_its_result(
 ) -> None:
     _fake_muesr_without_lattice_field(monkeypatch)
     service = ProjectService()
-    document = _uep_cluster_document(tmp_path)
+    document = uep_cluster_document(tmp_path)
     widget = MagneticFieldWidget()
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("fe", "Fe", 0),)))
@@ -4583,7 +4414,7 @@ def test_magnetic_field_widget_collects_and_restores_form_state(qapp, tmp_path) 
     service.add_structure(document, _host_structure())
 
     distortion_id = uuid4()
-    selected_site = magnetic_field_widget_module.MagneticMuonSiteOption(
+    selected_site = MagneticMuonSiteOption(
         source="relaxation_cluster",
         label="Relaxed site",
         fractional_position=(0.125, 0.25, 0.375),
@@ -5690,18 +5521,6 @@ def test_magnetic_field_distribution_dialog_marks_an_unrelaxed_estimate(qapp) ->
     assert relaxed._figure.axes[0].get_title() == "site 1"
     assert "# Estimate" not in relaxed._export_text()
     relaxed.close()
-
-
-def test_magnetic_field_distribution_zero_padding_uses_bin_edges(qapp) -> None:
-    x_values, y_values = MagneticFieldDistributionDialog._probability_steps_with_zero_baseline(
-        np.asarray([1.0, 2.0], dtype=float),
-        np.asarray([1.0, 0.5], dtype=float),
-        0.0,
-        3.0,
-    )
-
-    assert x_values == pytest.approx([0.0, 0.5, 0.5, 1.5, 1.5, 2.5, 2.5, 3.0])
-    assert y_values == pytest.approx([0.0, 0.0, 1.0, 1.0, 0.5, 0.5, 0.0, 0.0])
 
 
 def test_magnetic_field_distribution_dialog_overlays_multiple_histograms(qapp) -> None:

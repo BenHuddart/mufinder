@@ -68,3 +68,49 @@ def parse_uuid(value: str | None) -> UUID | None:
     if value is None:
         return None
     return UUID(value)
+
+
+def uuid_or_none(value: object) -> UUID | None:
+    """Return ``value`` read as a UUID, or ``None`` when it is missing or not one.
+
+    For lenient reads of loosely typed saved state such as ``ui_state`` entries;
+    :func:`parse_uuid` is the strict reader for record fields.
+    """
+
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def int_or_none(value: object) -> int | None:
+    """Return ``int(value)``, or ``None`` when ``value`` does not convert."""
+
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+
+
+def float_triplet(value: object) -> tuple[float, float, float]:
+    """Return ``value`` as three floats.
+
+    Raises ``TypeError`` when ``value`` is not iterable and ``ValueError`` when it
+    does not hold exactly three numbers.
+    """
+
+    values = list(value)  # type: ignore[call-overload]
+    if len(values) != 3:
+        raise ValueError("expected a three-vector")
+    return (float(values[0]), float(values[1]), float(values[2]))
+
+
+def float_triplet_or_none(value: object) -> tuple[float, float, float] | None:
+    """Return a list or tuple of three numbers as three floats, or ``None`` for anything else."""
+
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return None
+    try:
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except (TypeError, ValueError):
+        return None

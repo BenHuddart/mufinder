@@ -32,6 +32,7 @@ from mufinder.domain.charge_states import (
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result, Structure
 from mufinder.domain.text import plural
+from mufinder.persistence.codec import uuid_or_none
 from mufinder.science.ase_bridge import is_muon_label, reduced_formula
 from mufinder.services import supercell_assets
 from mufinder.services.magnetic_field_results import (
@@ -519,7 +520,7 @@ def muon_relaxation_row_jobs(
             str(entry.get("charge_state") or POSITIVE_MUON_CHARGE_STATE)
         )
         charge_state = charge_state or POSITIVE_MUON_CHARGE_STATE
-        site_id = _uuid_or_none(entry.get("site_id"))
+        site_id = uuid_or_none(entry.get("site_id"))
         row_jobs.append(
             (
                 label,
@@ -883,15 +884,6 @@ def _dict_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
-
-
-def _uuid_or_none(value: object) -> UUID | None:
-    if not value:
-        return None
-    try:
-        return UUID(str(value))
-    except ValueError:
-        return None
 
 
 __all__: Iterable[str] = (
