@@ -69,16 +69,52 @@ Suggesting a supercell
    ``Suggest…`` for CoF₂, where no cell under 200 atoms reaches 10 Å.
 
 ``Suggest…`` proposes diagonal supercells ``(n₁, n₂, n₃)`` for the active
-host. It lists cells whose minimum periodic-image distance is at least 8 Å,
-each one improving on the cheaper options above it, in the columns
-``Scaling``, ``Atoms``, ``Min image (Å)`` and ``≥ 10 Å``. The minimum image
-distance is the shortest non-zero lattice translation of the supercell over all
-``(m₁, m₂, m₃) ∈ {-1, 0, 1}³``, not simply the shortest edge. The dialog marks
-as ``(Recommended)`` the cheapest cell that reaches the 10 Å rule of thumb
-while staying under 200 atoms; when no such cell exists it highlights the best
-cell under 200 atoms and warns. When the primitive cell already has 200 or
-more atoms no search is run. ``Use This Supercell`` loads the highlighted
-matrix into the editor; it is not saved until you choose ``Save``.
+host. It lists cells whose minimum image distance is at least 8 Å, each one
+improving on the cheaper options above it, in the columns ``Scaling``, ``Atoms``
+and ``Min image (Å)``. A tick after the distance marks a cell that reaches 10 Å.
+The dialog marks as ``(Recommended)``, and highlights, the cheapest cell that
+reaches 10 Å while staying under 200 atoms. ``Use This Supercell`` loads the
+highlighted matrix into the editor; it is not saved until you choose ``Save``.
+
+A warning under the table says when that recommendation is not possible:
+
+- When no cell under 200 atoms reaches 10 Å, the recommended cell is the best one
+  under 200 atoms.
+- When every listed cell has 200 or more atoms, the recommended cell is the
+  smallest that reaches 10 Å, and the warning gives its atom count.
+- When the primitive cell already has 200 or more atoms, no search is run and
+  the table holds the primitive cell alone; the warning says if it misses 10 Å.
+
+**Why the images must be far apart.** A muon is implanted in the ultradilute
+limit, so it never meets another muon, but a periodic calculation places a copy
+of it in every neighbouring supercell (Huddart *et al.* 2022). In a small cell the
+muon interacts with those images, which biases the energies of its stopping
+sites. There are two couplings. A charged muon has a long-range Coulomb
+interaction with its images, so it needs a larger cell than a neutral one
+(Onuorah *et al.* 2025). The muon also displaces its neighbouring atoms, and in a
+small cell the strain around one image reaches the next.
+
+**Why the shortest translation, not the shortest edge.** The images sit at every
+lattice translation of the supercell, and in a skewed cell a combination such as
+``A₁ - A₂`` can be shorter than any edge. The minimum image distance is therefore
+the shortest non-zero translation ``m₁A₁ + m₂A₂ + m₃A₃`` over all
+``(m₁, m₂, m₃) ∈ {-1, 0, 1}³``. A cell with long edges can still fail the test.
+
+**Where the numbers come from.** 10 Å is a rule of thumb, not a convergence test:
+the direct test is whether the forces the muon exerts on the host atoms converge
+as the cell grows (Onuorah *et al.* 2025). The limit of 200 atoms is MuFinder's own
+estimate of what is affordable, because a relaxation runs once per candidate site
+and each one costs more as the cell grows. A larger cell is still available
+through the editor's matrix.
+
+References:
+
+- B. M. Huddart *et al.*, MuFinder: a program to determine and analyse muon
+  stopping sites, Comput. Phys. Commun. **280**, 108488 (2022),
+  https://doi.org/10.1016/j.cpc.2022.108488.
+- I. J. Onuorah *et al.*, Automated computational workflows for muon spin
+  spectroscopy, Digital Discovery **4**, 523 (2025),
+  https://doi.org/10.1039/D4DD00314D.
 
 Editing saved supercells
 ~~~~~~~~~~~~~~~~~~~~~~~~

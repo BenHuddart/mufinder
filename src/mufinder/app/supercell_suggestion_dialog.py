@@ -12,7 +12,12 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import style_warning_text
-from mufinder.app.workflow_table_utils import create_workflow_table, set_workflow_table_item
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    set_header_tooltips,
+    set_workflow_table_item,
+)
+from mufinder.domain.text import plural
 from mufinder.science.supercell_suggestion import SupercellSuggestion
 
 
@@ -20,27 +25,56 @@ def _scaling_label(scaling: tuple[int, int, int]) -> str:
     return f"{scaling[0]} × {scaling[1]} × {scaling[2]}"
 
 
-def _distance_label(distance: float) -> str:
-    return f"{distance:.2f} Å"
+def _distance_label(distance: float, reaches_target: bool) -> str:
+    tick = " ✓" if reaches_target else ""
+    return f"{distance:.2f} Å{tick}"
 
 
-def _criterion_label(satisfies: bool) -> str:
-    return "Yes" if satisfies else "No"
+def _intro_text(suggestion: SupercellSuggestion) -> str:
+    return (
+        "Diagonal supercells whose periodic muon images are at least "
+        f"{suggestion.display_threshold:.4g} Å apart. The recommended cell is the cheapest one "
+        f"that reaches {suggestion.distance_target:.4g} Å (✓) with fewer than "
+        f"{plural(suggestion.max_atoms, 'atom')}."
+    )
+
+
+def _status_text(suggestion: SupercellSuggestion) -> str:
+    """Return the warning to show under the table, or an empty string when there is none."""
+    target = f"{suggestion.distance_target:.4g} Å"
+    budget = plural(suggestion.max_atoms, "atom")
+    recommended = suggestion.candidates[suggestion.recommended_index]
+    if suggestion.primitive_exceeds_budget:
+        misses_target = "" if recommended.satisfies_criterion else f" It does not reach {target}."
+        return (
+            f"The primitive cell already has {plural(suggestion.primitive_atom_count, 'atom')}, "
+            f"so no search under {budget} was possible. This calculation will be expensive."
+            f"{misses_target}"
+        )
+    if not recommended.satisfies_criterion:
+        return (
+            f"No cell under {budget} reaches {target}. "
+            "The recommended cell is the best one under that limit."
+        )
+    if recommended.atom_count >= suggestion.max_atoms:
+        return (
+            f"No cell under {budget} reaches {target}. The recommended cell is the smallest "
+            f"that does, and its {plural(recommended.atom_count, 'atom')} may be expensive."
+        )
+    return ""
 
 
 class SupercellSuggestionDialog(QDialog):
     """Present Pareto-optimal candidate supercells and let the user confirm a choice."""
 
-    _TAG_COLUMN = 0
-    _SCALING_COLUMN = 1
-    _ATOMS_COLUMN = 2
-    _DISTANCE_COLUMN = 3
-    _CRITERION_COLUMN = 4
+    _SCALING_COLUMN = 0
+    _ATOMS_COLUMN = 1
+    _DISTANCE_COLUMN = 2
 
     def __init__(self, *, suggestion: SupercellSuggestion, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Suggest Supercell")
-        self.resize(660, 420)
+        self.resize(520, 300)
 
         self._suggestion = suggestion
         self._chosen_scaling: tuple[int, int, int] | None = None
@@ -52,51 +86,21 @@ class SupercellSuggestionDialog(QDialog):
         s = self._suggestion
         layout = QVBoxLayout(self)
 
-        intro = QLabel(
-            "The muon is modelled as a charged interstitial defect in a periodic supercell. "
-            "If the cell is too small the muon spuriously interacts with its own periodic "
-            "images — through both Coulomb and lattice-strain coupling — biasing stopping-site "
-            "energetics. "
-            f"The standard rule of thumb is a minimum image distance of at least "
-            f"{s.distance_target:.4g} Å, "
-            "where the distance is the shortest lattice translation over all "
-            "(n₁, n₂, n₃) ∈ {-1, 0, 1}³ "
-            "excluding the origin — not simply the shortest cell edge. "
-            f"All cells with minimum image distance ≥ {s.display_threshold:.4g} Å are shown "
-            "below; each row strictly improves on cheaper options."
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+        # With the primitive cell over budget nothing was searched, so the intro would not
+        # describe the single row; the status line says what happened instead.
+        if not s.primitive_exceeds_budget:
+            intro = QLabel(_intro_text(s))
+            intro.setWordWrap(True)
+            layout.addWidget(intro)
 
         self._build_candidate_table(layout)
 
-        if s.primitive_exceeds_budget:
-            warning = QLabel(
-                f"The primitive cell already contains {s.primitive_atom_count} "
-                f"atoms (≥ {s.max_atoms}); this calculation will be expensive. "
-                "No scaling search was performed."
-            )
-            warning.setWordWrap(True)
-            style_warning_text(warning)
-            layout.addWidget(warning)
-        elif not s.candidates[s.recommended_index].satisfies_criterion:
-            warning = QLabel(
-                f"No cell under {s.max_atoms} atoms meets the "
-                f"≥ {s.distance_target:.4g} Å criterion. "
-                "The highlighted option is the best available within budget."
-            )
-            warning.setWordWrap(True)
-            style_warning_text(warning)
-            layout.addWidget(warning)
-        elif s.candidates[s.recommended_index].atom_count >= s.max_atoms:
-            warning = QLabel(
-                f"The ≥ {s.distance_target:.4g} Å criterion cell has "
-                f"{s.candidates[s.recommended_index].atom_count} atoms "
-                f"(≥ {s.max_atoms}) and may be expensive to compute."
-            )
-            warning.setWordWrap(True)
-            style_warning_text(warning)
-            layout.addWidget(warning)
+        status = _status_text(s)
+        if status:
+            status_label = QLabel(status)
+            status_label.setWordWrap(True)
+            style_warning_text(status_label)
+            layout.addWidget(status_label)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -112,25 +116,33 @@ class SupercellSuggestionDialog(QDialog):
     def _build_candidate_table(self, layout: QVBoxLayout) -> None:
         s = self._suggestion
         self._table = create_workflow_table(
-            ("", "Scaling", "Atoms", "Min image (Å)", f"≥ {s.distance_target:.4g} Å"),
-            resize_to_contents_columns=(0, 2, 4),
+            ("Scaling", "Atoms", "Min image (Å)"),
+            resize_to_contents_columns=(self._ATOMS_COLUMN,),
             accessible_name="Supercell Candidates",
         )
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setRowCount(len(s.candidates))
+        set_header_tooltips(
+            self._table,
+            {
+                "Min image (Å)": (
+                    "The shortest distance from the muon to one of its periodic images. "
+                    f"A tick marks a cell that reaches {s.distance_target:.4g} Å."
+                )
+            },
+        )
 
         for row, cand in enumerate(s.candidates):
-            tag = "(Recommended)" if row == s.recommended_index else ""
-            set_workflow_table_item(self._table, row, self._TAG_COLUMN, tag)
-            set_workflow_table_item(
-                self._table, row, self._SCALING_COLUMN, _scaling_label(cand.scaling)
-            )
+            scaling = _scaling_label(cand.scaling)
+            if row == s.recommended_index:
+                scaling = f"{scaling} (Recommended)"
+            set_workflow_table_item(self._table, row, self._SCALING_COLUMN, scaling)
             set_workflow_table_item(self._table, row, self._ATOMS_COLUMN, str(cand.atom_count))
             set_workflow_table_item(
-                self._table, row, self._DISTANCE_COLUMN, _distance_label(cand.min_image_distance)
-            )
-            set_workflow_table_item(
-                self._table, row, self._CRITERION_COLUMN, _criterion_label(cand.satisfies_criterion)
+                self._table,
+                row,
+                self._DISTANCE_COLUMN,
+                _distance_label(cand.min_image_distance, cand.satisfies_criterion),
             )
 
         self._table.selectRow(s.recommended_index)
