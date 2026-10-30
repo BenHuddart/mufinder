@@ -54,6 +54,7 @@ from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
+from mufinder.domain.text import natural_sort_key
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_results import parse_numeric
 from mufinder.services.quantum_results import (
@@ -209,6 +210,24 @@ def _muon_mode_texts(data: Mapping[str, object]) -> tuple[str, str]:
     return (
         ", ".join(f"{frequency:.1f}" for frequency, _width in pairs),
         ", ".join(f"{width:.2f}" for _frequency, width in pairs),
+    )
+
+
+def _result_order(job: Job | None, result: Result) -> tuple[object, ...]:
+    """Return the sort key of a phonon result's row in the Completed Results table.
+
+    Rows are ordered by job label with numbers compared as numbers, then by when
+    the result was stored, then by result id; a result whose job is gone comes
+    last. The order never depends on the order the jobs finished in.
+    ``created_at`` is compared as a POSIX timestamp, so a naive stamp from an
+    older project sorts beside aware ones instead of raising.
+    """
+
+    return (
+        job is None,
+        natural_sort_key(job.label if job is not None else ""),
+        result.created_at.timestamp(),
+        str(result.id),
     )
 
 
@@ -1063,7 +1082,8 @@ class QuantumCorrectionsController(WorkflowJobController):
         ``set_runtime_states``, the quantum widget takes pre-built
         :class:`~mufinder.app.quantum_corrections_widget.QuantumSourceRow` /
         :class:`~mufinder.app.quantum_corrections_widget.QuantumResultRow` lists, so
-        the row building lives here.
+        the row building lives here. Source rows follow
+        :meth:`candidates`; result rows follow :func:`_result_order`.
         """
 
         document = self._context.document()
@@ -1107,11 +1127,11 @@ class QuantumCorrectionsController(WorkflowJobController):
                 )
             )
 
-        result_rows: list[QuantumResultRow] = []
+        ordered_rows: list[tuple[tuple[object, ...], QuantumResultRow]] = []
         for result in document.results.values():
             if result.result_type != QUANTUM_PHONON_CALC_TYPE:
                 continue
-            job_label = ""
+            job: Job | None = None
             job_status = "completed"
             run = (
                 document.runs.get(result.calculation_run_id)
@@ -1121,25 +1141,26 @@ class QuantumCorrectionsController(WorkflowJobController):
             if run is not None and run.job_id is not None:
                 job = document.jobs.get(run.job_id)
                 if job is not None:
-                    job_label = job.label
                     job_status = job.status.value
             data = result.data if isinstance(result.data, dict) else {}
             muon_modes, widths = _muon_mode_texts(data)
             # A payload stored before ``w1_definition`` holds the witness in an
             # earlier form; ``w1_from_result_data`` recomputes it as ``P - 3``.
             witness = w1_from_result_data(data)
-            result_rows.append(
-                QuantumResultRow(
-                    key=str(result.id),
-                    label=job_label or "Quantum phonon",
-                    zpe=_format_zpe_ev(data.get("muon_zpe_total_eV")),
-                    muon_modes=muon_modes,
-                    widths=widths,
-                    witness="" if witness is None else f"{witness:.4g}",
-                    status=job_status,
-                )
+            row = QuantumResultRow(
+                key=str(result.id),
+                label=(job.label if job is not None else "") or "Quantum phonon",
+                zpe=_format_zpe_ev(data.get("muon_zpe_total_eV")),
+                muon_modes=muon_modes,
+                widths=widths,
+                witness="" if witness is None else f"{witness:.4g}",
+                status=job_status,
             )
+            ordered_rows.append((_result_order(job, result), row))
 
+        # Results are stored in the order their jobs finished, so give the table
+        # an order of its own (see ``_result_order``).
+        result_rows = [row for _order, row in sorted(ordered_rows, key=lambda pair: pair[0])]
         self._view.set_sources(source_rows)
         self._view.set_results(result_rows)
 

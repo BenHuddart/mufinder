@@ -9,7 +9,7 @@ project that ran the legacy singlepoint job first are read.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -193,6 +193,83 @@ def test_quantum_controller_refresh_view_populates_result_row_status(tmp_path: P
     result_row = view.results[-1][0]
     assert result_row.label == "quantum_phonon_s"
     assert result_row.status == "completed"
+
+
+@pytest.mark.parametrize("completion_order", [(0, 1, 2, 3, 4), (4, 3, 2, 1, 0), (2, 4, 0, 3, 1)])
+def test_quantum_controller_result_rows_keep_one_order_whatever_the_completion_order(
+    tmp_path: Path, completion_order: tuple[int, ...]
+) -> None:
+    """Results are stored in the order their jobs finish; the table lists them by job
+    label with numbers compared as numbers, a rerun job's results oldest first,
+    and results whose job is gone last, so the same results always show in the
+    same order."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    jobs = {
+        label: _quantum_job(service, document, label, QUANTUM_PHONON_CALC_TYPE)
+        for label in ("quantum_phonon_site_10", "Quantum_phonon_site_2")
+    }
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    stored = [
+        # (job label or None for a job that is gone, minutes after start)
+        ("quantum_phonon_site_10", 0),
+        (None, 1),
+        ("Quantum_phonon_site_2", 3),
+        ("Quantum_phonon_site_2", 2),
+        (None, 4),
+    ]
+    results: list[Result] = []
+    for label, minutes in stored:
+        run = CalculationRun(status=JobStatus.COMPLETED)
+        if label is not None:
+            run.job_id = jobs[label].id
+        document.runs[run.id] = run
+        results.append(
+            Result(
+                result_type=QUANTUM_PHONON_CALC_TYPE,
+                calculation_run_id=run.id,
+                created_at=start + timedelta(minutes=minutes),
+            )
+        )
+    for index in completion_order:
+        document.results[results[index].id] = results[index]
+
+    view = _FakeQuantumView()
+    controller = QuantumCorrectionsController(
+        make_context(document=document, project_service=service), _stub_quantum_deps(), view
+    )
+    controller.refresh_view()
+
+    assert [row.key for row in view.results[-1]] == [
+        str(results[index].id) for index in (3, 2, 0, 1, 4)
+    ]
+
+
+def test_quantum_controller_result_rows_sort_naive_and_aware_stamps_together(
+    tmp_path: Path,
+) -> None:
+    """Two results of one job, one stamped without a time zone as an older project may
+    hold, still give a table rather than failing to compare."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    for stamp in (datetime(2026, 1, 1), datetime(2026, 1, 2, tzinfo=timezone.utc)):
+        run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+        document.runs[run.id] = run
+        result = Result(
+            result_type=QUANTUM_PHONON_CALC_TYPE, calculation_run_id=run.id, created_at=stamp
+        )
+        document.results[result.id] = result
+
+    view = _FakeQuantumView()
+    controller = QuantumCorrectionsController(
+        make_context(document=document, project_service=service), _stub_quantum_deps(), view
+    )
+    controller.refresh_view()
+
+    assert len(view.results[-1]) == 2
 
 
 def _displayed_witness(tmp_path: Path, data: dict) -> str:

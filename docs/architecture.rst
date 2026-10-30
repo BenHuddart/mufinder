@@ -828,7 +828,9 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.domain.text``
      - Helpers for text shown to the user, for every layer that builds it:
        ``plural`` writes a count that agrees with its number (``1 job``,
-       ``3 jobs``); see :doc:`/ui_text`.
+       ``3 jobs``; see :doc:`/ui_text`), and ``natural_sort_key`` orders
+       labels with their numbers compared as numbers (``site_2`` before
+       ``site_10``).
 
 Widget contract
 ~~~~~~~~~~~~~~~

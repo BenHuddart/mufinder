@@ -193,6 +193,11 @@ coloured like the jobs table); and an ``Analysis`` column with the
 ``Launch Analysis`` button. Hover a column header for its definition. Every
 Gamma-point mode is listed in the analysis window's ``Phonon Modes`` tab.
 
+Rows are ordered by job name, ignoring case and with numbers in the name
+compared as numbers (``site_2`` before ``site_10``); results of the same job
+are listed oldest first, and a result whose job has been deleted comes last.
+The order does not depend on which job finished first.
+
 Configuration dialog
 --------------------
 
