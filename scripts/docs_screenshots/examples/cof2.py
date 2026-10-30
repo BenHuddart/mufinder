@@ -794,10 +794,10 @@ def _choose_relaxed_4c_site(dialog: QWidget) -> None:
 def _positive_cluster_row(dialog: QWidget) -> int:
     """The row of the lowest-energy pinned positive-muon site, which the dialog lists first."""
 
-    from mufinder.app import magnetic_field_widget
+    from mufinder.app import magnetic_site_dialog
 
     for row in range(dialog._site_table.rowCount()):
-        option = dialog._site_table.item(row, 0).data(magnetic_field_widget._SITE_OPTION_ROLE)
+        option = dialog._site_table.item(row, 0).data(magnetic_site_dialog._SITE_OPTION_ROLE)
         if (
             option.distortion_structure_id is not None
             and "muonium" not in (option.source_label or "").lower()

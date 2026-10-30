@@ -719,7 +719,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         # reparent, so the scene renders in the wrong place (top-left) and leaves
         # black placeholders where Qt actually positioned the widget. macOS
         # composites correctly regardless. See host_structure_widget /
-        # magnetic_field_widget for the same parentless pattern.
+        # magnetic_structure_builder for the same parentless pattern.
         self._viewer = self.hold_viewer(AtomicStructureViewer())
         # Columns are sized to content (with the Wyckoff column stretched), so
         # this opts out of the shared stretch-to-fill default.

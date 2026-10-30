@@ -272,8 +272,13 @@ change that creates a home. ``tests/test_agent_harness.py`` checks that every
 ``mufinder.*`` path in this section names a module or package under
 ``src/mufinder``.
 ``tests/test_agent_harness.py`` pins, for every private method that two or more
-workflow widget modules define, how many define it; the pin table is empty, so
-no two workflow widgets may define the same private method.
+workflow widget modules define, how many define it. The modules are the job
+workflow pages and the Magnetic Fields page and dialog modules. A module counts
+once per name, however many of its classes define it. The only pinned names are
+five that the Magnetic Fields page and dialogs share in name alone
+(``_build_layout``, ``_load_component``, ``_refresh_preview``,
+``_set_selector``, ``_sync_enabled_state``), so no other private method may be
+defined by two of these modules, and a pinned count may only fall.
 
 .. list-table::
    :header-rows: 1
@@ -327,6 +332,29 @@ no two workflow widgets may define the same private method.
      - Notes shown beside magnetic results on more than one page: the hidden
        note on results calculated at an unrelaxed UEP site
        (``unrelaxed_results_note``).
+   * - ``mufinder.app.magnetic_field_widget``
+     - The Magnetic Fields page (``MagneticFieldWidget``) and its Calculation
+       Settings dialog. The page opens its dialogs from their own modules:
+       the Magnetic Structure Builder (``mufinder.app.magnetic_structure_builder``),
+       with its texture dialog (``mufinder.app.magnetic_texture_dialog``); the
+       muon-site dialog (``mufinder.app.magnetic_site_dialog``); the
+       field-distribution plot (``mufinder.app.magnetic_field_distribution_dialog``);
+       the demagnetizing-sample dialog (``mufinder.app.demagnetizing_dialogs``,
+       beside ``mufinder.app.sample_photo_dialog``); and the dipolar-tensor and
+       nuclear-width dialogs (``mufinder.app.magnetic_analysis_dialogs``). The
+       dialogs never import the page. Its site options come from
+       ``mufinder.services.magnetic_field_sites``.
+   * - ``mufinder.app.magnetic_component_dialogs``
+     - The component, atom-phase and preset dialogs, and what the Magnetic
+       Fields dialogs share: the atom-target cards and their selector
+       (``AtomTargetCardsMixin``), the component table
+       (``MagneticComponentTable``), the q-basis table
+       (``create_q_basis_table``, ``fill_q_basis_table``, ``q_vector_text``),
+       the direction and decimal inputs (``direction_inputs``,
+       ``direction_group``, ``decimal_value``, ``unit_direction``,
+       ``set_direction_inputs``) and the labels of atom selectors, components
+       and moments (``selector_label``, ``component_q_label``,
+       ``component_moment_label``).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an

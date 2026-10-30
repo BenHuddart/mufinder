@@ -42,6 +42,7 @@ from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.theme import body_font_family, current_palette
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import ProjectService
+from tests.support.magnetic_field_sites import feo_host_structure
 from tests.support.pyvista_fakes import (
     FakePlotter,
     FakeRenderTimer,
@@ -1439,3 +1440,14 @@ def test_wrapping_hint_label_reports_height_for_width(qapp) -> None:
     assert label.heightForWidth(220) > label.fontMetrics().lineSpacing()
     assert label.minimumHeight() >= label.heightForWidth(220)
     label.close()
+
+
+def test_atomic_structure_viewer_accepts_vector_moments(qapp) -> None:
+    viewer = AtomicStructureViewer()
+    viewer.set_structure(feo_host_structure())
+
+    viewer.set_moment_vectors(np.asarray([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]))
+
+    assert viewer._spins is not None
+    assert viewer._spins.shape == (2, 3)
+    viewer.close()

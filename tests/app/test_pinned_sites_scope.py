@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QCheckBox, QDialog, QPushButton
 
-from mufinder.app.magnetic_field_widget import MuonSiteSelectionDialog
+from mufinder.app.magnetic_site_dialog import MuonSiteSelectionDialog
 from mufinder.app.pinned_sites_scope import (
     GO_TO_MUON_SITES_TEXT,
     SHOW_EVERY_RELAXED_SITE_TEXT,

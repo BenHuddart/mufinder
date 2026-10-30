@@ -147,9 +147,9 @@ def install_offscreen_viewers() -> None:
     from mufinder.app import atomic_structure_viewer
 
     atomic_structure_viewer._pyvista_modules = lambda: (pv, OffscreenInteractor)
-    from mufinder.app import magnetic_field_widget
+    from mufinder.app import demagnetizing_dialogs
 
-    magnetic_field_widget._pyvista_modules = atomic_structure_viewer._pyvista_modules
+    demagnetizing_dialogs._pyvista_modules = atomic_structure_viewer._pyvista_modules
 
 
 def settle(app: QApplication) -> None:

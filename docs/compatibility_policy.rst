@@ -865,8 +865,8 @@ not in the API reference, no project data depends on it, and only MuFinder's
 tests constructed it.
 
 - ``DipolarTensorResultsDialog`` (``mufinder.app.magnetic_field_widget``):
-  ``DipolarTensorDialog`` from the same module shows the calculated tensors
-  in the same units.
+  ``DipolarTensorDialog`` from ``mufinder.app.magnetic_analysis_dialogs``
+  shows the calculated tensors in the same units.
 
 The module-level names below live in another module and keep no import alias
 at their former path. That module is not in the API reference and no MuFinder
@@ -876,6 +876,29 @@ named.
 - ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``
   (``mufinder.services.cluster_runner``): import it from
   ``mufinder.services.cluster_retrieval``.
+
+The Magnetic Fields names below live in the module named and keep no import
+alias in ``mufinder.app.magnetic_field_widget``, which holds the page and its
+Calculation Settings dialog. ``mufinder.app`` is not in the API reference, no
+project data depends on where a class is defined, and only MuFinder's own code,
+tests and documentation scripts imported them from there.
+
+- ``MagneticComponentDialog``, ``AtomPhaseDialog``, ``MagneticPresetDialog``
+  and ``MagneticComponentTable``: ``mufinder.app.magnetic_component_dialogs``.
+- ``MagneticTextureDialog``, ``MagneticTexturePreview`` and
+  ``CornerHelpGroupBox``: ``mufinder.app.magnetic_texture_dialog``.
+- ``MagneticStructureBuilderDialog``:
+  ``mufinder.app.magnetic_structure_builder``.
+- ``MuonSiteSelectionDialog``: ``mufinder.app.magnetic_site_dialog``.
+- ``MagneticFieldDistributionDialog``:
+  ``mufinder.app.magnetic_field_distribution_dialog``.
+- ``DemagnetizingFieldAdvancedDialog``, ``demag_sample_summary`` and the
+  ``ADVANCED_DEMAG_SHAPE_OPTIONS``, ``ADVANCED_DEMAG_SHAPES``,
+  ``DEMAG_VOXEL_GRID_OPTION``, ``DEMAG_ORIENTATION_OPTIONS`` and
+  ``DEMAG_SAVED_ROTATION_OPTION`` constants:
+  ``mufinder.app.demagnetizing_dialogs``.
+- ``NuclearRelaxationDialog`` and ``DipolarTensorDialog``:
+  ``mufinder.app.magnetic_analysis_dialogs``.
 
 The keywords below were replaced without a deprecation period, last accepted
 in 0.8.0. They are in the API reference, but only MuFinder's own code passed

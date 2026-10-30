@@ -90,9 +90,9 @@ PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
 # Modules whose job-staging widgets are expected to share one implementation of
 # each cross-workflow concern (docs/architecture.rst, Shared workflow
 # infrastructure). The ratchet below pins, for every private method name that
-# appears in two or more of them, how many of them define it. The table is
-# empty: no new shared name may appear, and the fix for a missing capability is
-# to extend the helper in the shared home, not to copy a sibling's method.
+# appears in two or more of them, how many of them define it. No new shared name
+# may appear, and the fix for a missing capability is to extend the helper in
+# the shared home, not to copy a sibling's method.
 WORKFLOW_WIDGET_MODULES = (
     "convergence_widget.py",
     "kpoint_convergence_widget.py",
@@ -102,9 +102,28 @@ WORKFLOW_WIDGET_MODULES = (
     "hyperfine_coupling_widget.py",
     "quantum_corrections_widget.py",
     "energy_barriers_widget.py",
+    "magnetic_field_widget.py",
+    "magnetic_component_dialogs.py",
+    "magnetic_texture_dialog.py",
+    "magnetic_structure_builder.py",
+    "magnetic_site_dialog.py",
+    "magnetic_field_distribution_dialog.py",
+    "demagnetizing_dialogs.py",
+    "magnetic_analysis_dialogs.py",
 )
 
-PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {}
+# The Magnetic Fields page and dialog modules share these names only: each
+# definition builds, loads or refreshes its own page or dialog, so there is no
+# common behaviour to move.
+# The dipolar-tensor dialog's ``_set_selector`` also fills its atom-index field
+# and reports whether the selector matched, unlike the component dialogs' one.
+PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {
+    "_build_layout": 6,
+    "_load_component": 2,
+    "_refresh_preview": 2,
+    "_set_selector": 2,
+    "_sync_enabled_state": 2,
+}
 
 
 # Qt widget and GUI imports are confined to ``mufinder.app``. The layer packages
