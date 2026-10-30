@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import re
 from typing import Any
@@ -12,6 +13,7 @@ from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import AtomMatching
 from mufinder.science.kpoint_grids import lattice_parameters
 from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG
+from mufinder.science.supercell_matching import host_cell_lattice
 from mufinder.science.symmetry_analysis import (
     SpaceGroupResult,
     compare_space_group,
@@ -47,8 +49,9 @@ class MetricValue:
 
 
 _LATTICE_METHOD = (
-    "Computed on the normalized comparison structures after optional experimental tiling to a "
-    "detected integer supercell. These quantities are read directly from the comparison-cell "
+    "Read per host cell. When the DFT cell is a detected integer supercell M of the experimental "
+    "cell, its lattice is reduced to the host cell as M^-1 L_DFT before the parameters are read, "
+    "so every column compares like with like. These quantities are read directly from the "
     "lattice rather than from a fitted strain tensor."
 )
 
@@ -102,13 +105,13 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         meaning="Length of the first lattice vector, with the change against experiment for each DFT column.",
         calculation="Computed from |a_vector|.",
         interpretation="Closer values imply less lattice distortion.",
-        caveats="Sensitive to supercell scaling.",
+        caveats="A supercell column is shown per host cell.",
         physics="Tracks axial expansion or contraction along the first direct-lattice basis vector.",
         method=_LATTICE_METHOD,
         equation=r"a = \lVert \mathbf{a} \rVert_2",
         symbols=(
             (r"a", "Length of the first direct-lattice basis vector."),
-            (r"\mathbf{a}", "First direct-lattice basis vector of the normalized comparison cell."),
+            (r"\mathbf{a}", "First direct-lattice basis vector of the host cell."),
         ),
     ),
     MetricDefinition(
@@ -119,7 +122,7 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         meaning="Length of the second lattice vector, with the change against experiment for each DFT column.",
         calculation="Computed from |b_vector|.",
         interpretation="Closer values imply less lattice distortion.",
-        caveats="Sensitive to supercell scaling.",
+        caveats="A supercell column is shown per host cell.",
         physics="Tracks axial expansion or contraction along the second direct-lattice basis vector.",
         method=_LATTICE_METHOD,
         equation=r"b = \lVert \mathbf{b} \rVert_2",
@@ -127,7 +130,7 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
             (r"b", "Length of the second direct-lattice basis vector."),
             (
                 r"\mathbf{b}",
-                "Second direct-lattice basis vector of the normalized comparison cell.",
+                "Second direct-lattice basis vector of the host cell.",
             ),
         ),
     ),
@@ -139,13 +142,13 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         meaning="Length of the third lattice vector, with the change against experiment for each DFT column.",
         calculation="Computed from |c_vector|.",
         interpretation="Closer values imply less lattice distortion.",
-        caveats="Sensitive to supercell scaling.",
+        caveats="A supercell column is shown per host cell.",
         physics="Tracks axial expansion or contraction along the third direct-lattice basis vector.",
         method=_LATTICE_METHOD,
         equation=r"c = \lVert \mathbf{c} \rVert_2",
         symbols=(
             (r"c", "Length of the third direct-lattice basis vector."),
-            (r"\mathbf{c}", "Third direct-lattice basis vector of the normalized comparison cell."),
+            (r"\mathbf{c}", "Third direct-lattice basis vector of the host cell."),
         ),
     ),
     MetricDefinition(
@@ -216,15 +219,15 @@ _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         label="V",
         unit="Å³",
         group="Lattice parameters",
-        meaning="Volume of the comparison cell, with the change against experiment for each DFT column.",
+        meaning="Volume of the host cell, with the change against experiment for each DFT column.",
         calculation="Absolute determinant of lattice matrix.",
         interpretation="Large changes often indicate over/under relaxation.",
-        caveats="Volume scales with supercell size.",
-        physics="Captures isotropic expansion or contraction of the comparison cell and any coupled shear contributions.",
+        caveats="A supercell column is shown per host cell: its volume divided by det M.",
+        physics="Captures isotropic expansion or contraction of the host cell and any coupled shear contributions.",
         method=_LATTICE_METHOD,
         equation=r"V = |\det L|",
         symbols=(
-            (r"V", "Cell volume of the normalized comparison structure."),
+            (r"V", "Volume of the host cell."),
             (r"L", "3x3 lattice matrix whose rows are the direct-lattice basis vectors."),
         ),
     ),
@@ -365,9 +368,9 @@ def _format_space_group(group: SpaceGroupResult) -> str:
     return f"{symbol} ({group.number})" if symbol else str(group.number)
 
 
-def _structure_lattice_metrics(structure: Structure) -> dict[str, float]:
-    a, b, c, alpha, beta, gamma = lattice_parameters(structure.lattice_vectors)
-    matrix = np.asarray(structure.lattice_vectors, dtype=float)
+def _lattice_metrics(lattice_vectors: Sequence[Sequence[float]] | np.ndarray) -> dict[str, float]:
+    matrix = np.asarray(lattice_vectors, dtype=float)
+    a, b, c, alpha, beta, gamma = lattice_parameters(matrix.tolist())
     volume = abs(float(np.linalg.det(matrix)))
     return {
         "a": float(a),
@@ -386,7 +389,7 @@ _LATTICE_KEYS = ("a", "b", "c", "alpha", "beta", "gamma", "cell_volume")
 def experimental_metric_values(experimental: Structure) -> dict[str, MetricValue]:
     """Compute metric values for the experimental reference column."""
 
-    lattice_values = _structure_lattice_metrics(experimental)
+    lattice_values = _lattice_metrics(experimental.lattice_vectors)
     space_group = detect_space_group(experimental)
     values: dict[str, MetricValue] = {
         key: MetricValue(lattice_values[key], _format_number(lattice_values[key]))
@@ -404,14 +407,28 @@ def dft_metric_values(
     experimental: Structure,
     dft: Structure,
     matching: AtomMatching,
+    *,
+    host: Structure | None = None,
+    supercell_matrix: Sequence[Sequence[int]] | None = None,
 ) -> dict[str, MetricValue]:
     """Compute DFT-column metric values against the experimental structure.
 
-    Each lattice value's display carries its percent change against experiment.
+    ``experimental`` and ``dft`` are the comparison pair, with the host tiled to
+    the DFT cell when that is a supercell; the displacement and symmetry rows
+    use them. The lattice rows are read per host cell: ``supercell_matrix`` is
+    the detected ``M`` with ``L_DFT ≈ M L_host``, the DFT lattice is reduced to
+    the host cell as ``M⁻¹ L_DFT`` (:func:`host_cell_lattice`) and compared with
+    ``host``, the untiled experimental structure. Without them the lattice rows
+    compare ``dft`` with ``experimental`` as given. Each lattice value's display
+    carries its percent change against experiment.
     """
 
-    experimental_lattice = _structure_lattice_metrics(experimental)
-    dft_lattice = _structure_lattice_metrics(dft)
+    reference = experimental if host is None else host
+    experimental_lattice = _lattice_metrics(reference.lattice_vectors)
+    dft_lattice_vectors: Sequence[Sequence[float]] | np.ndarray = dft.lattice_vectors
+    if supercell_matrix is not None:
+        dft_lattice_vectors = host_cell_lattice(dft_lattice_vectors, supercell_matrix)
+    dft_lattice = _lattice_metrics(dft_lattice_vectors)
 
     displacements = [pair.displacement for pair in matching.pairs]
     rmsd = float(np.sqrt(np.mean(np.square(displacements)))) if displacements else None
