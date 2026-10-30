@@ -68,6 +68,19 @@ def test_submission_dialog_clamps_a_remembered_count_above_this_computer(qapp, m
     dialog.close()
 
 
+def test_submission_dialog_caps_a_remembered_count_at_physical_cores(qapp, monkeypatch) -> None:
+    # Remembered on a 16-core computer, reopened on 8 cores with two threads
+    # each: mpirun -np 16 would be refused, so 8 is offered.
+    monkeypatch.setattr(submission_dialog_module.QThread, "idealThreadCount", lambda: 16)
+    monkeypatch.setattr(submission_dialog_module, "physical_core_count", lambda: 8)
+
+    dialog = LocalSubmissionDialog(job_labels=["a"], mpirun_configured=True, initial_cores=16)
+
+    assert dialog.config().num_cores == 8
+    assert dialog._core_spin.maximum() == 16
+    dialog.close()
+
+
 def test_submission_dialog_requires_single_core_when_mpirun_missing(qapp, monkeypatch) -> None:
     monkeypatch.setattr(submission_dialog_module.QThread, "idealThreadCount", lambda: 16)
 

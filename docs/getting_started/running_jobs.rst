@@ -96,8 +96,9 @@ Cutoff Energy jobs``); hold the pointer over it to list the jobs.
    physical core of this computer (every logical core where the physical count
    cannot be read): OpenMPI's ``mpirun`` refuses more processes than physical
    cores, so on a computer with two threads per core the logical count would
-   not start. Later runs offer the count used last in that project. Without
-   ``mpirun`` the count is 1 and is not remembered.
+   not start. Later runs offer the count used last in that project, capped at
+   this computer's physical cores the same way. Without ``mpirun`` the count is
+   1 and is not remembered.
 2. With more than one job, set ``Jobs at once``: 1 runs them one after
    another, a larger number runs that many side by side.
 3. Read the line beneath: ``Uses 16 of 20 cores`` multiplies the two numbers

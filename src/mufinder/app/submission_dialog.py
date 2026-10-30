@@ -64,7 +64,7 @@ class LocalSubmissionDialog(QDialog):
         ``initial_cores`` is the core count last used in this project; without
         one, every physical core is offered (every logical core where the
         physical count cannot be read), since OpenMPI refuses more ranks than
-        physical cores.
+        physical cores. A remembered count is capped the same way.
         """
 
         super().__init__(parent)
@@ -97,11 +97,14 @@ class LocalSubmissionDialog(QDialog):
         self._core_spin = QSpinBox(form_group)
         if mpirun_configured:
             self._core_spin.setRange(1, self._available_cores)
-            if initial_cores is None:
-                cores = physical_core_count() or self._available_cores
-            else:
-                cores = int(initial_cores)
-            self._core_spin.setValue(min(max(1, cores), self._available_cores))
+            # A remembered count from a bigger computer is capped at this one's
+            # physical cores too, so reopening a project never offers a launch
+            # mpirun refuses.
+            usable_cores = min(
+                physical_core_count() or self._available_cores, self._available_cores
+            )
+            cores = usable_cores if initial_cores is None else int(initial_cores)
+            self._core_spin.setValue(min(max(1, cores), usable_cores))
         else:
             self._core_spin.setRange(1, 1)
             self._core_spin.setValue(1)
