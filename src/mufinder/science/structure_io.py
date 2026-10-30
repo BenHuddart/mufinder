@@ -1130,7 +1130,7 @@ def _attach_moment_atom_indices(
 
 
 def _find_atom_label_index(atom_labels: list[str], label: str) -> int | None:
-    """Return the atom index for an MCIF label using mag2spectra-style matching."""
+    """Return the atom index for an MCIF label: an exact match, else the one atom labelled ``<label>_*``."""
     if not label:
         return None
     if label in atom_labels:

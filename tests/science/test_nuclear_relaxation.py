@@ -10,9 +10,13 @@ import pytest
 
 from mufinder.domain.models import Structure
 from mufinder.science import nuclear_relaxation as nr
-from mufinder.domain.constants import HBAR_J_S, METRES_PER_ANGSTROM, MU0_OVER_4PI_T_M_PER_A
+from mufinder.domain.constants import (
+    HBAR_J_S,
+    METRES_PER_ANGSTROM,
+    MU0_OVER_4PI_T_M_PER_A,
+    MUON_GAMMA_RAD_S_T,
+)
 from mufinder.science.nuclear_relaxation import (
-    GAMMA_MU_RAD_S_T,
     DistortionCorrectionResult,
     Isotope,
     NuclearRelaxationError,
@@ -301,7 +305,7 @@ def test_tf_single_crystal_matches_manual_single_nucleus_formula() -> None:
     r_m = 1.0 * METRES_PER_ANGSTROM
     weight = (h_iso.gamma_rad_s_t**2) * h_iso.spin * (h_iso.spin + 1.0)
     sigma2_s = (
-        ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2) / 3.0)
+        ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (MUON_GAMMA_RAD_S_T**2) / 3.0)
         * weight
         * (4.0 / (r_m**6))
     )
@@ -369,7 +373,7 @@ def test_zf_single_crystal_matches_manual_single_nucleus_formula() -> None:
     r_m = np.sqrt(2.0) * METRES_PER_ANGSTROM
     cos2 = 0.5
     weight = (h_iso.gamma_rad_s_t**2) * h_iso.spin * (h_iso.spin + 1.0)
-    base = (MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2) * weight / (r_m**6)
+    base = (MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (MUON_GAMMA_RAD_S_T**2) * weight / (r_m**6)
     # KT per-component transverse width: sigma_perp^2 = (1/6)(5 - 3cos^2) base.
     expected_perp = base * (5.0 - 3.0 * cos2) / 6.0
     # Longitudinal per-component width: sigma_par^2 = (1/3)(3cos^2 + 1) base.
@@ -686,7 +690,7 @@ def test_with_distortion_zf_polycrystal_m2_is_double_sigma_squared() -> None:
     assert result.distortion_correction is not None
     assert result.sigma_perp_squared is None
     # delta_field_t derives from sigma_corrected.
-    expected_delta = (result.sigma * 1e6) / GAMMA_MU_RAD_S_T
+    expected_delta = (result.sigma * 1e6) / MUON_GAMMA_RAD_S_T
     assert result.delta_field_t == pytest.approx(expected_delta)
 
 

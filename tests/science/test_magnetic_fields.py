@@ -20,6 +20,7 @@ from types import ModuleType
 import numpy as np
 import pytest
 
+from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science import magnetic_fields as module
 from mufinder.science._muesr_compat import muesr_imports, patch_numpy_aliases_for_muesr
@@ -29,7 +30,6 @@ from mufinder.science.magnetic_fields import (
     DIPOLAR_TENSOR_T_PER_MUB_PER_ANGSTROM_MINUS3,
     MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3,
     MIN_MUON_ATOM_DISTANCE_ANG,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     DipolarTensorResult,
     MagneticFieldDependencyError,
     MagneticFieldDistributionResult,
@@ -39,7 +39,6 @@ from mufinder.science.magnetic_fields import (
     assigned_magnetic_atom_indices,
     calculate_commensurate_approximant_fields,
     calculate_commensurate_fields,
-    calculate_dipolar_tensors,
     calculate_distortion_field_correction,
     calculate_dipolar_tensors_for_atoms,
     calculate_finite_dipolar_field,
@@ -482,7 +481,7 @@ def test_contact_coupling_unit_conversion_to_muesr_acont() -> None:
         1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
     )
     assert contact_coupling_to_angstrom_minus3(
-        MUON_GYROMAGNETIC_RATIO_MHZ_PER_T, "MHz_per_muB"
+        MUON_GAMMA_OVER_2PI_MHZ_T, "MHz_per_muB"
     ) == pytest.approx(contact_coupling_to_angstrom_minus3(1.0, "T_per_muB"))
 
 
@@ -1260,7 +1259,17 @@ def test_demag_field_for_a_sphere_is_a_third_of_the_bulk_magnetisation(monkeypat
 
 @pytest.mark.parametrize(
     ("axis", "index"),
-    [("a", 0), ("x", 0), ("b", 1), ("y", 1), ("c", 2), ("z", 2), ("unknown", 2)],
+    [
+        ("a", 0),
+        ("x", 0),
+        ("A", 0),
+        ("b", 1),
+        ("y", 1),
+        ("c", 2),
+        ("z", 2),
+        ("unknown", 2),
+        (" a", 2),
+    ],
 )
 def test_demag_field_for_infinite_plate_acts_along_the_normal(
     monkeypatch, axis: str, index: int
@@ -1271,6 +1280,29 @@ def test_demag_field_for_infinite_plate_acts_along_the_normal(
     demag = _commensurate_demag(monkeypatch, demag_shape="infinite_plate", plate_normal_axis=axis)
 
     assert demag == pytest.approx(tuple(expected))
+
+
+@pytest.mark.parametrize(
+    ("demag_shape", "plate_normal_axis", "sample"),
+    [
+        ("sphere", "c", DemagnetizingSample(shape="sphere")),
+        ("Sphere ", "c", DemagnetizingSample(shape="sphere")),
+        *(
+            (shape, axis, DemagnetizingSample(shape="infinite_plate", plate_normal_axis=axis))
+            for shape in ("infinite_plate", "plate", "infinite plate")
+            for axis in ("a", "b", "c", "x", "y", "z")
+        ),
+        ("plate", "unknown", DemagnetizingSample(shape="infinite_plate", plate_normal_axis="c")),
+    ],
+)
+def test_demag_shape_gives_the_same_field_as_the_equivalent_sample(
+    monkeypatch, demag_shape: str, plate_normal_axis: str, sample: DemagnetizingSample
+) -> None:
+    by_shape = _commensurate_demag(
+        monkeypatch, demag_shape=demag_shape, plate_normal_axis=plate_normal_axis
+    )
+
+    assert by_shape == _commensurate_demag(monkeypatch, demag_sample=sample)
 
 
 def test_demag_sample_takes_precedence_over_demag_shape(monkeypatch) -> None:
@@ -1520,30 +1552,6 @@ def test_calculate_dipolar_tensors_for_atoms_rejects_malformed_muesr_output(
             magnetic_ion_indices=[0],
             options=MagneticFieldOptions(supercell=(1, 1, 1)),
         )
-
-
-def test_calculate_dipolar_tensors_compatibility_uses_assigned_atoms(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    class _Result:
-        def to_json(self):
-            return {"site_label": "site 1", "dipolar_tensor_T_per_muB": [[1.0, 0.0, 0.0]] * 3}
-
-    def _calculate(structure, muon_sites, *, magnetic_ion_indices, options):
-        captured["indices"] = tuple(magnetic_ion_indices)
-        captured["muons"] = tuple(tuple(site) for site in muon_sites)
-        return (_Result(),)
-
-    monkeypatch.setattr(module, "calculate_dipolar_tensors_for_atoms", _calculate)
-
-    payload = calculate_dipolar_tensors(
-        _two_atom_structure(),
-        MagneticStructureModel(components=(_component(AtomSelector.species("Fe")),)),
-        [[0.25, 0.25, 0.25]],
-    )
-
-    assert captured["indices"] == (0,)
-    assert payload[0]["site_label"] == "site 1"
 
 
 # calculate_incommensurate_field_distributions: options and validation

@@ -190,20 +190,6 @@ class FourierDemagnetizingResult:
 
 
 @dataclass(frozen=True, slots=True)
-class DemagnetizingTensorField:
-    """The local demagnetizing tensor ``N_ij(r)`` over the padded FFT box.
-
-    ``values`` has shape ``(3, 3, nx, ny, nz)``; ``mask`` marks the sample in
-    the box, which starts at the box origin; ``spacing`` is the voxel edge.
-    The field from a uniform magnetisation ``M`` is ``-N(r) M``.
-    """
-
-    values: np.ndarray
-    mask: np.ndarray
-    spacing: Triplet
-
-
-@dataclass(frozen=True, slots=True)
 class DemagnetizingSample:
     """Description of a sample shape used to calculate a demagnetizing tensor.
 
@@ -671,186 +657,6 @@ def magnetometric_rectangular_prism_tensor(
     return np.diag(demagnetizing_factors_rectangular_prism(lengths))
 
 
-def rectangular_prism_tensor(
-    x: float | np.ndarray,
-    y: float | np.ndarray,
-    z: float | np.ndarray,
-    half_lengths: Sequence[float],
-) -> np.ndarray:
-    """Return the local demagnetizing tensor for an axis-aligned rectangular prism."""
-
-    a, b, c = _positive_triplet(half_lengths, "half_lengths")
-    xb, yb, zb = np.broadcast_arrays(
-        np.asarray(x, dtype=float), np.asarray(y, dtype=float), np.asarray(z, dtype=float)
-    )
-
-    nzz = _rectangular_diagonal_component(xb, yb, zb, a, b, c)
-    nxx = _rectangular_diagonal_component(zb, yb, xb, c, b, a)
-    nyy = _rectangular_diagonal_component(xb, zb, yb, a, c, b)
-    nxy = _rectangular_offdiag_component(xb, yb, zb, a, b, c)
-    nxz = _rectangular_offdiag_component(xb, zb, yb, a, c, b)
-    nyz = _rectangular_offdiag_component(zb, yb, xb, c, b, a)
-
-    tensor = np.empty((3, 3) + xb.shape, dtype=float)
-    tensor[0, 0] = nxx
-    tensor[1, 1] = nyy
-    tensor[2, 2] = nzz
-    tensor[0, 1] = tensor[1, 0] = nxy
-    tensor[0, 2] = tensor[2, 0] = nxz
-    tensor[1, 2] = tensor[2, 1] = nyz
-
-    tol = 1e-12
-    outside_x = np.abs(xb) > (a + tol)
-    outside_y = np.abs(yb) > (b + tol)
-    outside_z = np.abs(zb) > (c + tol)
-    tensor[0, 0] = tensor[0, 0] - (outside_x & (~outside_y) & (~outside_z)).astype(float)
-    tensor[1, 1] = tensor[1, 1] - (outside_y & (~outside_x) & (~outside_z)).astype(float)
-    tensor[2, 2] = tensor[2, 2] - (outside_z & (~outside_x) & (~outside_y)).astype(float)
-    return tensor
-
-
-def _rectangular_diagonal_component(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    a: float,
-    b: float,
-    c: float,
-) -> np.ndarray:
-    def _atan_term(tx: np.ndarray, ty: np.ndarray, tz: np.ndarray) -> np.ndarray:
-        dx = a - tx
-        dy = b - ty
-        dz = c - tz
-        rr = np.sqrt(dx * dx + dy * dy + dz * dz)
-        return np.arctan2(dx * dy, dz * rr)
-
-    return (
-        _atan_term(x, y, z)
-        + _atan_term(-x, y, z)
-        + _atan_term(x, -y, z)
-        + _atan_term(x, y, -z)
-        + _atan_term(-x, -y, z)
-        + _atan_term(x, -y, -z)
-        + _atan_term(-x, y, -z)
-        + _atan_term(-x, -y, -z)
-    ) / (4.0 * np.pi)
-
-
-def _rectangular_g_function(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    a: float,
-    b: float,
-    c: float,
-) -> np.ndarray:
-    return c - z + np.sqrt((a - x) ** 2 + (b - y) ** 2 + (c - z) ** 2)
-
-
-def _rectangular_offdiag_component(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    a: float,
-    b: float,
-    c: float,
-) -> np.ndarray:
-    p = (
-        _rectangular_g_function(x, y, z, a, b, c)
-        * _rectangular_g_function(x, y, z, -a, -b, c)
-        * _rectangular_g_function(x, y, z, -a, b, -c)
-        * _rectangular_g_function(x, y, z, a, -b, -c)
-    )
-    q = (
-        _rectangular_g_function(x, y, z, -a, b, c)
-        * _rectangular_g_function(x, y, z, a, -b, c)
-        * _rectangular_g_function(x, y, z, a, b, -c)
-        * _rectangular_g_function(x, y, z, -a, -b, -c)
-    )
-    return -(_safe_log(p) - _safe_log(q)) / (4.0 * np.pi)
-
-
-def _safe_log(values: np.ndarray) -> np.ndarray:
-    out = np.zeros_like(values, dtype=float)
-    mask = values > 0.0
-    out[mask] = np.log(values[mask])
-    return out
-
-
-def rectangular_prism_shape(
-    grid_shape: tuple[int, int, int],
-    half_lengths: Sequence[float],
-    spacing: float | Sequence[float],
-) -> np.ndarray:
-    """Return a centered binary shape grid for an axis-aligned rectangular prism."""
-
-    a, b, c = _positive_triplet(half_lengths, "half_lengths")
-    sx, sy, sz = _spacing3(spacing)
-    nx, ny, nz = (int(value) for value in grid_shape)
-    if nx < 1 or ny < 1 or nz < 1:
-        raise DemagnetizationError("grid_shape values must be positive")
-    x = np.abs(_coords_1d(nx, sx))[:, None, None]
-    y = np.abs(_coords_1d(ny, sy))[None, :, None]
-    z = np.abs(_coords_1d(nz, sz))[None, None, :]
-    return (x <= a) & (y <= b) & (z <= c)
-
-
-def fourier_k_grid(
-    shape: tuple[int, int, int],
-    spacing: float | Sequence[float],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return an ``ij``-ordered Cartesian reciprocal-space grid."""
-
-    sx, sy, sz = _spacing3(spacing)
-    kx = 2.0 * np.pi * np.fft.fftfreq(int(shape[0]), d=sx)
-    ky = 2.0 * np.pi * np.fft.fftfreq(int(shape[1]), d=sy)
-    kz = 2.0 * np.pi * np.fft.fftfreq(int(shape[2]), d=sz)
-    return np.meshgrid(kx, ky, kz, indexing="ij")
-
-
-def magnetometric_demagnetizing_tensor(
-    shape_amplitude_k: np.ndarray,
-    kx: np.ndarray,
-    ky: np.ndarray,
-    kz: np.ndarray,
-    *,
-    sample_volume: float,
-    domain_lengths: Sequence[float],
-) -> np.ndarray:
-    """Return the volume-averaged tensor from a shape amplitude on a periodic box.
-
-    This is Eq. 11 of Beleggia and De Graef as a sum over the box's reciprocal
-    lattice, ``<N_ij> = sum_k |D(k)|^2 k_i k_j / k^2 / (V V_box)``, with the
-    ``k = 0`` term ``|D(0)|^2 / 3`` on the diagonal. The tensor is not
-    normalised, so its trace measures how much of the shape's spectrum the
-    grid holds. :func:`voxel_demagnetizing_tensor` is the same sum for a voxel
-    shape, computed without full-size ``k`` arrays.
-    """
-
-    if float(sample_volume) <= 0.0:
-        raise DemagnetizationError("sample_volume must be positive")
-    lx, ly, lz = _positive_triplet(domain_lengths, "domain_lengths")
-    d_k = np.asarray(shape_amplitude_k, dtype=complex)
-    if d_k.shape != kx.shape or kx.shape != ky.shape or ky.shape != kz.shape:
-        raise DemagnetizationError("shape_amplitude_k and k-grid arrays must have identical shapes")
-
-    k2 = kx * kx + ky * ky + kz * kz
-    valid = k2 > 1e-24
-    prefactor = 1.0 / (float(sample_volume) * lx * ly * lz)
-    d2 = np.abs(d_k) ** 2
-
-    tensor = np.zeros((3, 3), dtype=float)
-    k_vec = (kx, ky, kz)
-    for i in range(3):
-        for j in range(i, 3):
-            values = np.zeros_like(k2, dtype=float)
-            values[valid] = d2[valid] * (k_vec[i][valid] * k_vec[j][valid]) / k2[valid]
-            tensor[i, j] = prefactor * float(np.sum(values))
-            tensor[j, i] = tensor[i, j]
-    tensor += np.eye(3) * prefactor * float(np.sum(d2[~valid])) / 3.0
-    return tensor
-
-
 def voxel_demagnetizing_tensor(
     mask: Sequence[object] | np.ndarray,
     spacing: float | Sequence[float],
@@ -924,50 +730,6 @@ def voxel_demagnetizing_tensor(
         box_shape=box,
         voxel_count=count,
     )
-
-
-def demagnetizing_tensor_field(
-    mask: Sequence[object] | np.ndarray,
-    spacing: float | Sequence[float],
-    *,
-    padding: float = _DEFAULT_PADDING,
-    smoothing: float = 0.0,
-) -> DemagnetizingTensorField:
-    """Return the local tensor ``N_ij(r)`` of a voxel shape over the padded FFT box.
-
-    It is the inverse FFT of ``N_ij(k) = D(k) k_i k_j / k^2`` (Eq. 6 of
-    Beleggia and De Graef), with ``D(0) / 3`` on the diagonal at ``k = 0``, so
-    without smoothing its trace is the shape itself: 1 inside and 0 outside.
-    Its average over the sample is :func:`voxel_demagnetizing_tensor`. The
-    arguments are those of that function.
-    """
-
-    voxels, step, box = _fourier_box(mask, spacing, padding, smoothing)
-    embedded = _embedded(voxels, box)
-    spectrum = scipy_fft.rfftn(embedded, workers=-1)
-    k_axes = _k_axes(box, step)
-    if smoothing > 0.0:
-        spectrum *= _gaussian_filter(k_axes, step, smoothing, squared=False)
-    grids = np.meshgrid(*k_axes, indexing="ij", sparse=True)
-    # As in voxel_demagnetizing_tensor, the unpaired Nyquist planes are left
-    # out of the off-diagonal elements.
-    paired = np.meshgrid(
-        *(_without_nyquist(k, n) for k, n in zip(k_axes, box, strict=True)),
-        indexing="ij",
-        sparse=True,
-    )
-    k2 = grids[0] ** 2 + grids[1] ** 2 + grids[2] ** 2
-    k2[0, 0, 0] = 1.0
-    values = np.empty((3, 3, *box), dtype=float)
-    for i in range(3):
-        for j in range(i, 3):
-            factors = grids if i == j else paired
-            component = spectrum * (factors[i] * factors[j] / k2)
-            if i == j:
-                component[0, 0, 0] = spectrum[0, 0, 0] / 3.0
-            values[i, j] = scipy_fft.irfftn(component, s=box, workers=-1)
-            values[j, i] = values[i, j]
-    return DemagnetizingTensorField(values=values, mask=embedded.astype(bool), spacing=step)
 
 
 def fourier_demagnetizing_result(sample: DemagnetizingSample) -> FourierDemagnetizingResult:
@@ -1234,10 +996,6 @@ def _finite_triplet(values: Iterable[float] | Sequence[float], name: str) -> Tri
     if not all(math.isfinite(value) for value in (a, b, c)):
         raise DemagnetizationError(f"{name} must be finite")
     return (a, b, c)
-
-
-def _coords_1d(n: int, spacing: float) -> np.ndarray:
-    return (np.arange(int(n), dtype=float) - 0.5 * (int(n) - 1)) * float(spacing)
 
 
 def _spacing3(value: float | Sequence[float]) -> tuple[float, float, float]:

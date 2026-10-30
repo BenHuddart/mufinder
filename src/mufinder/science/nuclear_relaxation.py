@@ -17,7 +17,6 @@ from mufinder.domain.constants import (
     HBAR_J_S,
     METRES_PER_ANGSTROM,
     MU0_OVER_4PI_T_M_PER_A,
-    MUON_GAMMA_OVER_2PI_MHZ_T,
     MUON_GAMMA_RAD_S_T,
     NUCLEAR_MAGNETON_J_PER_T,
 )
@@ -25,8 +24,6 @@ from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, structure_to_ase_atoms
 from mufinder.science.muon_distortion import MuonDistortion, map_muon_distortion
 
-GAMMA_MU_OVER_2PI_MHZ_T = MUON_GAMMA_OVER_2PI_MHZ_T
-GAMMA_MU_RAD_S_T = MUON_GAMMA_RAD_S_T
 SEC2_TO_US2 = 1e-12
 
 NuclearRelaxationMode = Literal[
@@ -500,7 +497,7 @@ def calculate_nuclear_relaxation_with_distortion(
         m2=correction.sigma_squared_corrected
         if opts.mode.startswith("tf")
         else 2.0 * correction.sigma_squared_corrected,
-        delta_field_t=float((correction.sigma_corrected * 1e6) / GAMMA_MU_RAD_S_T),
+        delta_field_t=float((correction.sigma_corrected * 1e6) / MUON_GAMMA_RAD_S_T),
         mode=opts.mode,
         convergence_radius_a=base.convergence_radius_a,
         n_nuclei_summed=base.n_nuclei_summed,
@@ -803,7 +800,7 @@ def _compute_tf_single(
 def _compute_tf_poly(
     distances_m: np.ndarray, symbols: np.ndarray
 ) -> tuple[float, dict[str, float]]:
-    pref = ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2)) * (4.0 / 15.0)
+    pref = ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (MUON_GAMMA_RAD_S_T**2)) * (4.0 / 15.0)
     return _sum_elements(symbols, pref / (distances_m**6), include_quadrupolar=False)
 
 
@@ -839,7 +836,7 @@ def _compute_zf_poly(
     symbols: np.ndarray,
     include_quadrupolar: bool,
 ) -> tuple[float, dict[str, float]]:
-    pref = ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2)) * (2.0 / 3.0)
+    pref = ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (MUON_GAMMA_RAD_S_T**2)) * (2.0 / 3.0)
     return _sum_elements(symbols, pref / (distances_m**6), include_quadrupolar=include_quadrupolar)
 
 
@@ -881,7 +878,7 @@ def _result_from_sigma(
         sigma=sigma,
         sigma_squared=float(sigma_squared),
         m2=float(sigma_squared if mode.startswith("tf") else 2.0 * sigma_squared),
-        delta_field_t=float((sigma * 1e6) / GAMMA_MU_RAD_S_T),
+        delta_field_t=float((sigma * 1e6) / MUON_GAMMA_RAD_S_T),
         mode=mode,
         convergence_radius_a=float(convergence_radius_a),
         n_nuclei_summed=int(n_nuclei_summed),
@@ -894,7 +891,7 @@ def _result_from_sigma(
 
 
 def _prefactor_sigma_squared() -> float:
-    return ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (GAMMA_MU_RAD_S_T**2)) / 3.0
+    return ((MU0_OVER_4PI_T_M_PER_A**2) * (HBAR_J_S**2) * (MUON_GAMMA_RAD_S_T**2)) / 3.0
 
 
 def _iter_nuclear_vectors(

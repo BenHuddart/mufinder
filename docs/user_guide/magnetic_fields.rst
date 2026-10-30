@@ -1318,8 +1318,10 @@ Calculate nuclear relaxation
 The ``Nuclear Relaxation…`` action estimates static nuclear dipolar
 linewidths for the selected muon site. It is available whenever a host
 structure and muon site are selected, and does not require an electronic
-magnetic model. MuFinder uses a native implementation of the mag2spectra
-second-moment workflow with bundled natural-abundance isotope data.
+magnetic model. MuFinder sums the second moment of the nuclear dipolar field
+at the muon (J. H. Van Vleck, Phys. Rev. **74**, 1168 (1948), DOI:
+``10.1103/PhysRev.74.1168``) over the natural-abundance isotopes of each
+element, from bundled isotope data.
 
 1. Select a muon site on the page, then click ``Nuclear Relaxation…``.
 2. In the ``Mode`` group choose the ``Field regime`` (``Zero field`` or

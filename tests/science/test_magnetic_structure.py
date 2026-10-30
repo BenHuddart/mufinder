@@ -1512,7 +1512,7 @@ def test_hexagonal_skyrmion_default_directions_generate_three_terms() -> None:
     assert len(texture.terms) == 3
 
 
-def test_hexagonal_skyrmion_helicity_matches_mag2spectra_convention() -> None:
+def test_hexagonal_skyrmion_helicity_reverses_the_in_plane_moment() -> None:
     q_basis_sky = (
         (0.05, 0.0, 0.0),
         (-0.5 * 0.05, -0.5 * np.sqrt(3.0) * 0.05, 0.0),

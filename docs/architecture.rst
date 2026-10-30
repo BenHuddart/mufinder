@@ -659,8 +659,8 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.science.demagnetization``
      - Demagnetizing tensors of a sample: the shapes (``DemagnetizingSample``),
        the closed forms for ellipsoids and rectangular prisms, the Fourier
-       method for voxel shapes (``voxel_demagnetizing_tensor``,
-       ``demagnetizing_tensor_field``) and the sample orientation from crystal
+       method for voxel shapes (``voxel_demagnetizing_tensor``) and the sample
+       orientation from crystal
        directions. Segmenting a photographed plate into an outline is
        ``mufinder.science.sample_image``; loading the image file is the app's.
    * - ``mufinder.science.cell_projection``

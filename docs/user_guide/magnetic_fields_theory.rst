@@ -90,11 +90,10 @@ original magnetic structure.
 Multi-q Incommensurate Sampling
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-MuFinder follows the same phase-space strategy used by the corresponding
-``mag2spectra`` field workflow, adapted to MuFinder's result objects and UI. The
-important point is that a multi-q texture has independent phase coordinates, so
-different propagation-vector basis rows must not be advanced with one locked
-phase angle.
+MuFinder samples an incommensurate distribution over the phases of the
+propagation-vector basis rows. The important point is that a multi-q texture
+has independent phase coordinates, so different propagation-vector basis rows
+must not be advanced with one locked phase angle.
 
 Each magnetic component stores a coefficient tuple ``q_coeff = (l, m, n)`` in
 the magnetic model's propagation basis:

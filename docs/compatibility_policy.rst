@@ -530,6 +530,21 @@ Compatibility ledger
      - The job-file half of the 5 to 6 step (see the table below), which a
        payload migration cannot do because it never sees the job folders.
      - Keep while schema 5 projects may still be opened, or indefinitely.
+   * - ``no_demag`` / ``off`` / ``plate`` demagnetizing-shape values
+     - Magnetic Fields form state (``demag_shape`` in ``ui_state``), read by
+       ``MagneticFieldWidget.set_form_state``;
+       ``MagneticFieldOptions.demag_shape``
+       (``mufinder.science.magnetic_fields``); ``DemagnetizingSample.shape``
+       (``mufinder.science.demagnetization``)
+     - The page writes ``none``, ``sphere``, ``infinite_plate`` or an advanced
+       sample shape. A saved form and a saved sample read ``no_demag`` and
+       ``off`` as ``none`` and ``plate`` as ``infinite_plate``; calculation
+       options read ``plate`` as ``infinite_plate`` and refuse ``no_demag``
+       and ``off`` as unknown shapes, as they always have. A form or sample
+       saved under those names loads with the same demagnetizing correction.
+     - Read-side alias. Keep until a saved-project schema version bump
+       includes a migration that rewrites the three values in stored form
+       states and samples.
 
 Saved-project schema migrations
 -------------------------------
@@ -821,6 +836,37 @@ zero-point energy and width are in the Quantum Corrections results, from
 - ``mufinder.science.quantum_adiabatic``, with ``DirectionalPotential``,
   ``SingleParticleResult``, ``solve_single_particle_ground_state`` and
   ``effective_mass_from_relaxed_scan``.
+
+The names below were removed without a deprecation period. They were in the
+API reference (last in 0.8.0), but no MuFinder code called them and nothing
+they returned was persisted, so projects need no migration and load
+unchanged. Code that used one switches to the replacement named.
+
+- ``calculate_dipolar_tensors`` (``mufinder.science.magnetic_fields``,
+  re-exported from ``mufinder.science``): call
+  ``calculate_dipolar_tensors_for_atoms`` with
+  ``magnetic_ion_indices=assigned_magnetic_atom_indices(structure, model)``,
+  and ``to_json()`` on each result for the dictionaries it returned.
+- ``rectangular_prism_tensor``, ``rectangular_prism_shape``,
+  ``fourier_k_grid``, ``magnetometric_demagnetizing_tensor``,
+  ``demagnetizing_tensor_field`` and ``DemagnetizingTensorField``
+  (``mufinder.science.demagnetization``): the magnetometric tensor of a voxel
+  shape is ``voxel_demagnetizing_tensor``, and of a rectangular prism
+  ``demagnetizing_factors_rectangular_prism``. The local tensor at a point
+  has no replacement.
+- ``MUON_GYROMAGNETIC_RATIO_MHZ_PER_T`` (``mufinder.science.magnetic_fields``)
+  and ``GAMMA_MU_OVER_2PI_MHZ_T`` / ``GAMMA_MU_RAD_S_T``
+  (``mufinder.science.nuclear_relaxation``): import
+  ``MUON_GAMMA_OVER_2PI_MHZ_T`` / ``MUON_GAMMA_RAD_S_T`` from
+  ``mufinder.domain.constants``, which hold the same values.
+
+The dialog below was removed without a deprecation period. ``mufinder.app`` is
+not in the API reference, no project data depends on it, and only MuFinder's
+tests constructed it.
+
+- ``DipolarTensorResultsDialog`` (``mufinder.app.magnetic_field_widget``):
+  ``DipolarTensorDialog`` from the same module shows the calculated tensors
+  in the same units.
 
 The module-level names below live in another module and keep no import alias
 at their former path. That module is not in the API reference and no MuFinder

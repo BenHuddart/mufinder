@@ -14,7 +14,7 @@ from mufinder.domain.constants import (
     MUON_GAMMA_RAD_S_T,
     MUON_GAMMA_RAD_US_T,
 )
-from mufinder.science import magnetic_fields, nuclear_relaxation
+from mufinder.science import magnetic_fields
 from tests.support import codata
 
 
@@ -30,12 +30,6 @@ def test_muon_gamma_is_derived_from_scipy_magnetic_moment() -> None:
         MUON_GAMMA_RAD_S_T / (2.0 * math.pi) / 1e6, rel=1e-15
     )
     assert MUON_GAMMA_RAD_US_T == pytest.approx(MUON_GAMMA_RAD_S_T * 1e-6, rel=1e-15)
-
-
-def test_science_modules_use_the_domain_muon_gamma() -> None:
-    assert nuclear_relaxation.GAMMA_MU_RAD_S_T == MUON_GAMMA_RAD_S_T
-    assert nuclear_relaxation.GAMMA_MU_OVER_2PI_MHZ_T == MUON_GAMMA_OVER_2PI_MHZ_T
-    assert magnetic_fields.MUON_GYROMAGNETIC_RATIO_MHZ_PER_T == MUON_GAMMA_OVER_2PI_MHZ_T
 
 
 @pytest.mark.parametrize(
