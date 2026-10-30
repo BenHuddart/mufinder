@@ -81,8 +81,9 @@ Local submission
 ``Run All Locally`` and ``Run Selected Locally`` open ``Run Calculations
 Locally``. Before the first local run, choose the CASTEP executable and the
 ``mpirun`` launcher in ``Setup > CASTEP``: ``CASTEP executable`` and ``MPI
-launcher (mpirun)``, each with ``Browse…``, the latter also with
-``Auto-detect``. ``mpirun`` is also discovered on ``PATH`` and in common
+launcher``, each with ``Browse…``, the latter also with ``Auto-detect``. Each
+path is saved as soon as you finish editing it (see
+:doc:`/getting_started/castep_setup`). ``mpirun`` is also discovered on ``PATH`` and in common
 install prefixes. Multi-core local runs need a configured or discovered
 ``mpirun``; without one, cores per job are limited to 1. Installing the CASTEP
 keyword catalog from the same dialog is described in

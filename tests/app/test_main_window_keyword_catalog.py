@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import QSettings
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
@@ -38,32 +39,67 @@ def test_status_bar_shows_the_catalog_indicator(qapp) -> None:
     window.close()
 
 
-def test_closing_castep_setup_refreshes_the_indicator_even_when_cancelled(
+@pytest.mark.parametrize("changed", [False, True])
+def test_closing_castep_setup_refreshes_the_indicator_and_reports_a_save(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
+    changed: bool,
 ) -> None:
-    """A catalog installed in the dialog is live even if the dialog is cancelled."""
+    """The dialog only closes; it saves as it goes, and the status bar says so."""
 
     window = MainWindow()
     refreshed: list[bool] = []
     monkeypatch.setattr(window._keyword_catalog_guard, "refresh", lambda: refreshed.append(True))
 
-    class _CancelledDialog:
-        DialogCode = SimpleNamespace(Accepted=1)
+    deleted: list[bool] = []
 
+    class _ClosedDialog:
         def __init__(self, *args, **kwargs) -> None:
-            pass
+            self.changes_saved = changed
 
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr(main_window_module, "CastepSetupDialog", _CancelledDialog)
+        def deleteLater(self) -> None:  # noqa: N802 - Qt API naming.
+            deleted.append(True)
+
+    monkeypatch.setattr(main_window_module, "CastepSetupDialog", _ClosedDialog)
     window.statusBar().showMessage("before")
 
     window._keyword_catalog_guard.status_button.click()
 
     assert refreshed == [True]
-    assert window.statusBar().currentMessage() == "before"
+    assert deleted == [True]
+    assert window.statusBar().currentMessage() == ("CASTEP setup saved" if changed else "before")
+    window.close()
+
+
+def test_castep_setup_saves_without_ok_and_reports_it(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A path typed into the real dialog is saved on close, and nothing says 'keywords JSON'."""
+
+    window = MainWindow()
+    # QSettings("MuFinder", "MuFinder") is the user's own settings file, so the
+    # dialog writes to a private one here.
+    window._settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    seen: list[object] = []
+
+    def close_after_typing(dialog) -> int:
+        seen.append(dialog)
+        dialog._executable_edit.setText("/opt/castep/bin/castep")
+        dialog.reject()
+        return 0
+
+    monkeypatch.setattr(main_window_module.CastepSetupDialog, "exec", close_after_typing)
+
+    window._open_castep_setup_dialog()
+
+    assert len(seen) == 1
+    assert window._settings.value("castep/executable_path", "", str) == "/opt/castep/bin/castep"
+    assert window.statusBar().currentMessage() == "CASTEP setup saved"
     window.close()
 
 

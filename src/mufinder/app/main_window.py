@@ -1888,22 +1888,14 @@ class MainWindow(QMainWindow):
 
     def _open_castep_setup_dialog(self) -> None:
         dialog = CastepSetupDialog(settings=self._settings, parent=self)
-        accepted = dialog.exec() == dialog.DialogCode.Accepted
-        # A keyword catalog generated or imported in the dialog is installed
-        # immediately, whether or not the dialog is then accepted.
+        # The dialog saves paths and installs catalogs as they change, and
+        # only has Close.
+        dialog.exec()
+        changes_saved = dialog.changes_saved
+        dialog.deleteLater()
         self._keyword_catalog_guard.refresh()
-        if not accepted:
-            return
-        setup = dialog.setup()
-        status_bits: list[str] = []
-        if setup.executable_path:
-            status_bits.append("executable configured")
-        if setup.keywords_json_path:
-            status_bits.append("keywords JSON configured")
-        if setup.mpirun_path:
-            status_bits.append("mpirun configured")
-        detail = ", ".join(status_bits) if status_bits else "paths cleared"
-        self.statusBar().showMessage(f"CASTEP setup updated ({detail})")
+        if changes_saved:
+            self.statusBar().showMessage("CASTEP setup saved")
 
     def prompt_for_keyword_catalog_if_needed(self) -> None:
         """Explain a missing CASTEP keyword catalog once the window is up."""

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 import os
 from pathlib import Path
@@ -56,6 +56,35 @@ def save_castep_setup(settings: QSettings, setup: CastepSetup) -> None:
     settings.setValue(CASTEP_EXECUTABLE_KEY, setup.executable_path.strip())
     settings.setValue(CASTEP_KEYWORDS_JSON_KEY, setup.keywords_json_path.strip())
     settings.setValue(CASTEP_MPIRUN_KEY, setup.mpirun_path.strip())
+
+
+def is_executable_file(path: str) -> bool:
+    """Return whether ``path`` names an existing file the user may execute."""
+
+    candidate = Path(path.strip()).expanduser()
+    return candidate.is_file() and os.access(candidate, os.X_OK)
+
+
+def save_local_castep_path(
+    settings: QSettings, *, executable_path: str | None = None, mpirun_path: str | None = None
+) -> bool:
+    """Save one or both local CASTEP paths, leaving the rest of the setup as it is.
+
+    The CASTEP setup dialog saves each path as soon as the user finishes editing
+    it. Returns whether anything changed, so an unchanged field does not count as
+    a saved change.
+    """
+
+    current = load_castep_setup(settings)
+    updated = current
+    if executable_path is not None:
+        updated = replace(updated, executable_path=executable_path.strip())
+    if mpirun_path is not None:
+        updated = replace(updated, mpirun_path=mpirun_path.strip())
+    if updated == current:
+        return False
+    save_castep_setup(settings, updated)
+    return True
 
 
 def discover_mpirun() -> str | None:
