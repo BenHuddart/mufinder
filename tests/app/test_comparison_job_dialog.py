@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
 
 from mufinder.app.comparison_job_dialog import ComparisonJobDialog, CompletedPristineJob
 
@@ -43,3 +44,14 @@ def test_comparison_job_dialog_trims_table_label(qapp) -> None:
     dialog = ComparisonJobDialog(jobs=jobs, default_label="  Demo  ")
 
     assert dialog.table_label() == "Demo"
+
+
+def test_comparison_job_dialog_label_field_has_its_visible_label_as_buddy(qapp) -> None:
+    dialog = ComparisonJobDialog(jobs=[_job("job-a")], default_label="Comparison 1")
+
+    buddies = {
+        label.buddy(): label.text() for label in dialog.findChildren(QLabel) if label.buddy()
+    }
+
+    assert buddies[dialog._label_input] == "Comparison table label"
+    assert dialog._table.accessibleName() == "Comparison Jobs"

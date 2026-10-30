@@ -82,7 +82,9 @@ class ComparisonJobDialog(QDialog):
         layout.addWidget(intro)
 
         label_row = QHBoxLayout()
-        label_row.addWidget(QLabel("Comparison table label"))
+        label_caption = QLabel("Comparison table label")
+        label_caption.setBuddy(self._label_input)
+        label_row.addWidget(label_caption)
         label_row.addWidget(self._label_input, 1)
         layout.addLayout(label_row)
 
