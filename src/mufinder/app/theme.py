@@ -865,10 +865,29 @@ def _base_widget_styles(p: MuFinderPalette) -> str:
     """
 
 
-def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str = "") -> str:
-    """Return reusable feature-dialog stylesheet fragments for local dialog styles."""
+def feature_dialog_stylesheet(
+    *, include_scroll_area: bool = False, emphasised_radio_buttons: bool = False
+) -> str:
+    """Return the stylesheet a feature dialog sets on itself.
+
+    ``include_scroll_area`` makes scroll areas transparent and borderless;
+    ``emphasised_radio_buttons`` draws radio buttons semibold with room around
+    them, for dialogs whose choices are radio-button option cards.
+    """
 
     palette = current_palette()
+    radio_buttons = (
+        """
+        QRadioButton {
+            font-weight: 600;
+            spacing: 10px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+        }
+        """
+        if emphasised_radio_buttons
+        else ""
+    )
     scroll_area = (
         """
         QScrollArea {
@@ -939,8 +958,116 @@ def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str =
             border: 1px solid {palette.accent_hover};
         }}
         {scroll_area}
-        {extra}
+        {radio_buttons}
         """
+
+
+def magnetic_fields_stylesheet() -> str:
+    """Return the stylesheet the Magnetic Fields page and its muon-site dialog set on themselves.
+
+    Option rows, labels and stacked pages draw on their parent's background, and
+    radio buttons and checkboxes get more room. It holds no colours, so it
+    stays right when the theme changes.
+    """
+
+    return """
+        QRadioButton, QCheckBox {
+            background: transparent;
+            spacing: 10px;
+            padding-top: 3px;
+            padding-bottom: 3px;
+        }
+        QWidget#magneticMuonSiteInlinePanel {
+            background: transparent;
+        }
+        QStackedWidget, QStackedWidget > QWidget, QLabel {
+            background: transparent;
+        }
+        """
+
+
+def magnetic_structure_builder_stylesheet() -> str:
+    """Return the stylesheet the Magnetic Structure Builder sets on itself.
+
+    The viewer's Cell, Bonds and Spins checkboxes get larger indicators and
+    tighter spacing than the page's checkboxes.
+    """
+
+    return """
+        QWidget#atomicViewerDisplayControls QCheckBox {
+            background: transparent;
+            spacing: 9px;
+            padding-left: 2px;
+            padding-right: 6px;
+        }
+        QWidget#atomicViewerDisplayControls QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+        }
+        """
+
+
+@dataclass(frozen=True, slots=True)
+class TexturePreviewColors:
+    """Colours of the magnetic texture preview for one canvas (light or dark).
+
+    The preview colours each moment arrow by its out-of-plane component, from
+    ``negative`` (pointing down, at full length) through ``negative_zero`` and
+    ``positive_zero`` to ``positive``, or, for a flat texture, by its length
+    from ``magnitude_low`` to ``magnitude_high``.
+    """
+
+    surround: str
+    plot_background: str
+    frame: str
+    placeholder_text: str
+    zoom_box: str
+    negative_zero: str
+    negative: str
+    positive_zero: str
+    positive: str
+    magnitude_low: str
+    magnitude_high: str
+
+
+def texture_preview_colors(canvas_mode: str) -> TexturePreviewColors:
+    """Return the texture preview colours for ``canvas_mode`` (``"light"`` or ``"dark"``).
+
+    The canvas follows the mode the user picked in the preview, whatever the
+    theme: its frame, text and highlight colours come from the matching theme
+    palette. The area around the canvas follows the current theme.
+    """
+
+    surround = current_palette().bg_surface
+    if canvas_mode == THEME_DARK:
+        dark = dark_palette()
+        return TexturePreviewColors(
+            surround=surround,
+            plot_background="#111827",
+            frame=dark.border,
+            placeholder_text=dark.text_muted,
+            zoom_box="#FFFFFF",
+            negative_zero="#22D3EE",
+            negative="#8B5CF6",
+            positive_zero="#34D399",
+            positive="#FACC15",
+            magnitude_low="#22D3EE",
+            magnitude_high="#FACC15",
+        )
+    light = light_palette()
+    return TexturePreviewColors(
+        surround=surround,
+        plot_background="#FFFDF8",
+        frame=light.border,
+        placeholder_text=light.text_muted,
+        zoom_box=light.accent,
+        negative_zero="#1F6F78",
+        negative="#3F2D5C",
+        positive_zero="#5D9A57",
+        positive=light.seal_gold,
+        magnitude_low="#1F6F78",
+        magnitude_high=light.accent,
+    )
 
 
 def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) -> str:
@@ -1254,6 +1381,22 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     }}
     QProgressBar#muonGenerationProgress[generationState="complete"]::chunk {{
         background: {p.success};
+    }}
+    """
+
+
+def _magnetic_field_styles(p: MuFinderPalette) -> str:
+    return f"""
+    QLineEdit#nuclearDirectionInput {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        color: {p.text_primary};
+        border-radius: 5px;
+        padding: 5px 8px;
+    }}
+    QLineEdit#nuclearDirectionInput:disabled {{
+        background: {p.bg_surface};
+        color: {p.text_muted};
     }}
     """
 
@@ -2026,6 +2169,7 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
         _panel_container_styles(p),
         _muon_generation_styles(p),
         _muon_relaxation_styles(p),
+        _magnetic_field_styles(p),
         _workflow_tree_styles(
             p,
             branch_right=arrow_right,

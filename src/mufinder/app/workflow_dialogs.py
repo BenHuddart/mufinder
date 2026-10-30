@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_parameters import (
     kpoint_exclusive_hint,
     merge_batch_advanced,
@@ -375,7 +376,7 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
         hint.setText(text)
 
 
-class EnergyBarrierPathViewerDialog(QDialog):
+class EnergyBarrierPathViewerDialog(StructureViewerDialog):
     """Preview an Energy Barriers path in the undistorted supercell."""
 
     def __init__(
@@ -394,8 +395,7 @@ class EnergyBarrierPathViewerDialog(QDialog):
         self._structure = structure
         self._start_fractional = tuple(float(value) for value in start_fractional[:3])
         self._end_fractional = tuple(float(value) for value in end_fractional[:3])
-        self._viewer = AtomicStructureViewer(self)
-        self._viewer_shutdown = False
+        self._viewer = self.hold_viewer(AtomicStructureViewer(self))
 
         layout = QVBoxLayout(self)
 
@@ -420,25 +420,6 @@ class EnergyBarrierPathViewerDialog(QDialog):
         with self._viewer.batch_update():
             self._viewer.set_structure(structure)
             self._refresh_overlays()
-
-    def _shutdown_viewer(self) -> None:
-        if self._viewer_shutdown:
-            return
-        self._viewer_shutdown = True
-        try:
-            self._viewer.shutdown()
-        except RuntimeError:
-            pass
-
-    def done(self, result: int) -> None:  # noqa: D401 - Qt API override.
-        """Finish the dialog after releasing viewer resources."""
-
-        self._shutdown_viewer()
-        super().done(result)
-
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        self._shutdown_viewer()
-        super().closeEvent(event)
 
     def _overlay_positions(self) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
         start = lattice_frac_to_cart(self._start_fractional, self._structure.lattice_vectors)

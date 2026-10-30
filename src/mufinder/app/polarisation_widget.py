@@ -32,12 +32,12 @@ from PySide6.QtWidgets import (
 from mufinder.app import workflow_table_utils
 from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
 from mufinder.app.export_dialogs import (
-    ExportFormat,
+    DATA_TEXT_FORMATS,
     ask_save_path,
     report_export_failed,
     report_export_saved,
 )
-from mufinder.app.magnetic_field_widget import unrelaxed_results_note
+from mufinder.app.result_notes import unrelaxed_results_note
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.theme import (
     current_palette,
@@ -92,10 +92,6 @@ SAMPLE_OPTIONS: tuple[tuple[bool, str], ...] = (
 DYNAMICS_OPTIONS: tuple[tuple[str, str], ...] = (
     ("exact", "Exact recursion"),
     ("fft", "FFT (long grids)"),
-)
-EXPORT_FORMATS = (
-    ExportFormat("DAT", "DAT files", ".dat"),
-    ExportFormat("Text", "Text files", ".txt"),
 )
 # Above this many sites the per-site traces are drawn without a legend entry each.
 _MAX_LEGEND_SITES = 8
@@ -1126,7 +1122,7 @@ class PolarisationWidget(QWidget):
             self,
             "Export Polarisation",
             f"{_safe_name(record.title)}.dat",
-            EXPORT_FORMATS,
+            DATA_TEXT_FORMATS,
         )
         if path is None:
             return

@@ -72,6 +72,7 @@ from mufinder.app.theme import (
     use_tabbed_table_corners,
 )
 from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
+from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import (
@@ -668,7 +669,7 @@ def _wyckoff_assignment_tooltip(match: Mapping[str, object] | None) -> str:
     return "\n".join(rows)
 
 
-class RelaxationClusteringDialog(QDialog):
+class RelaxationClusteringDialog(StructureViewerDialog):
     """Dialog for clustering one structural-relaxation analysis workspace."""
 
     clustering_applied = Signal(dict)
@@ -688,7 +689,6 @@ class RelaxationClusteringDialog(QDialog):
         self._workspace = dict(workspace)
         self._host_structure = host_structure
         self._sites = normalize_site_energies(sites)
-        self._viewer_shutdown = False
         self._current_labels: tuple[int, ...] = ()
         self._current_clusters: tuple[RelaxationClusterSummary, ...] = ()
         self._current_wyckoff_assignments: tuple[ClusterWyckoffAssignment, ...] = ()
@@ -720,7 +720,7 @@ class RelaxationClusteringDialog(QDialog):
         # black placeholders where Qt actually positioned the widget. macOS
         # composites correctly regardless. See host_structure_widget /
         # magnetic_field_widget for the same parentless pattern.
-        self._viewer = AtomicStructureViewer()
+        self._viewer = self.hold_viewer(AtomicStructureViewer())
         # Columns are sized to content (with the Wyckoff column stretched), so
         # this opts out of the shared stretch-to-fill default.
         self._summary_table = create_workflow_table(
@@ -1416,27 +1416,8 @@ class RelaxationClusteringDialog(QDialog):
         self.clustering_applied.emit(clustering)
         self.accept()
 
-    def _shutdown_viewer(self) -> None:
-        if self._viewer_shutdown:
-            return
-        self._viewer_shutdown = True
-        try:
-            self._viewer.shutdown()
-        except RuntimeError:
-            pass
 
-    def done(self, result: int) -> None:  # noqa: D401 - Qt API override.
-        """Finish the dialog after releasing viewer resources."""
-
-        self._shutdown_viewer()
-        super().done(result)
-
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        self._shutdown_viewer()
-        super().closeEvent(event)
-
-
-class DisplacementAnalysisDialog(QDialog):
+class DisplacementAnalysisDialog(StructureViewerDialog):
     """Inspect host-ion displacements around a relaxed muon site."""
 
     def __init__(
@@ -1456,7 +1437,6 @@ class DisplacementAnalysisDialog(QDialog):
         self._structures = dict(structures_by_id)
         self._comparison_options = list(comparison_options)
         self._result: DisplacementAnalysisResult | None = None
-        self._viewer_shutdown = False
         self._site_combo = QComboBox(self)
         self._comparison_combo = QComboBox(self)
         self._message = QLabel("", self)
@@ -1465,7 +1445,7 @@ class DisplacementAnalysisDialog(QDialog):
         # Parentless so the native VTK render windows realize at their final
         # laid-out position on first show, not under the dialog at the origin.
         # See RelaxationClusteringDialog for the Windows reparent-desync rationale.
-        self._viewer = AtomicStructureViewer()
+        self._viewer = self.hold_viewer(AtomicStructureViewer())
         self._figure, self._canvas = create_plot_canvas(figsize=(5.6, 4.0), transparent=True)
         self._build_ui()
         self._populate()
@@ -1636,25 +1616,6 @@ class DisplacementAnalysisDialog(QDialog):
         axis.spines["bottom"].set_color(current_palette().border)
         axis.tick_params(colors=current_palette().text_primary)
         self._canvas.draw_idle()
-
-    def _shutdown_viewer(self) -> None:
-        if self._viewer_shutdown:
-            return
-        self._viewer_shutdown = True
-        try:
-            self._viewer.shutdown()
-        except RuntimeError:
-            pass
-
-    def done(self, result: int) -> None:  # noqa: D401 - Qt API override.
-        """Finish the dialog after releasing viewer resources."""
-
-        self._shutdown_viewer()
-        super().done(result)
-
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        self._shutdown_viewer()
-        super().closeEvent(event)
 
 
 class RelaxationAnalysisWidget(QWidget):

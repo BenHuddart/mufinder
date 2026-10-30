@@ -695,3 +695,68 @@ def test_apply_theme_keeps_dialog_standard_buttons_plain(qapp, mode) -> None:
         qapp.setStyle("Fusion")  # the base style apply_theme installs
         theme_module.apply_theme(qapp, previous_mode)
         qapp.setStyleSheet(previous_sheet)
+
+
+def test_feature_dialog_stylesheet_emphasises_radio_buttons_on_request(qapp) -> None:
+    plain = theme_module.feature_dialog_stylesheet()
+    emphasised = theme_module.feature_dialog_stylesheet(emphasised_radio_buttons=True)
+
+    assert "font-weight: 600;" not in plain.split("QRadioButton {")[1].split("}")[0]
+    assert "font-weight: 600;" in emphasised.split("QRadioButton {")[-1].split("}")[0]
+
+
+def test_magnetic_field_stylesheets_hold_no_colours() -> None:
+    """Set on a widget, a colour would stay behind when the theme changes."""
+
+    for stylesheet in (
+        theme_module.magnetic_fields_stylesheet(),
+        theme_module.magnetic_structure_builder_stylesheet(),
+    ):
+        assert "#" not in stylesheet.replace("QWidget#", "")
+        assert "color" not in stylesheet
+
+
+def test_nuclear_direction_inputs_follow_the_theme(qapp) -> None:
+    previous_sheet = qapp.styleSheet()
+    try:
+        for mode, palette in (
+            (theme_module.THEME_LIGHT, theme_module.light_palette()),
+            (theme_module.THEME_DARK, theme_module.dark_palette()),
+        ):
+            theme_module.apply_theme(qapp, mode)
+            rule = qapp.styleSheet().split("QLineEdit#nuclearDirectionInput {")[1].split("}")[0]
+            assert f"background: {palette.bg_surface};" in rule
+            assert f"color: {palette.text_primary};" in rule
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        qapp.setStyleSheet(previous_sheet)
+
+
+def test_texture_preview_canvas_colours_follow_the_canvas_not_the_theme(qapp) -> None:
+    light, dark = theme_module.light_palette(), theme_module.dark_palette()
+    previous_sheet = qapp.styleSheet()
+    try:
+        for mode, palette in (
+            (theme_module.THEME_LIGHT, light),
+            (theme_module.THEME_DARK, dark),
+        ):
+            theme_module.apply_theme(qapp, mode)
+            light_canvas = theme_module.texture_preview_colors("light")
+            dark_canvas = theme_module.texture_preview_colors("dark")
+
+            assert light_canvas.surround == dark_canvas.surround == palette.bg_surface
+            assert light_canvas.plot_background == "#FFFDF8"
+            assert (light_canvas.frame, light_canvas.placeholder_text) == (
+                light.border,
+                light.text_muted,
+            )
+            assert light_canvas.zoom_box == light_canvas.magnitude_high == light.accent
+            assert light_canvas.positive == light.seal_gold
+            assert dark_canvas.plot_background == "#111827"
+            assert (dark_canvas.frame, dark_canvas.placeholder_text) == (
+                dark.border,
+                dark.text_muted,
+            )
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        qapp.setStyleSheet(previous_sheet)
