@@ -176,7 +176,6 @@ class MagneticStructureBuilderDialog(StructureViewerDialog):
             label = QLabel("")
             label.setTextFormat(Qt.TextFormat.RichText)
             label.setWordWrap(True)
-            label.setStyleSheet("background: transparent;")
             self._checklist_labels[key] = label
             checklist_layout.addWidget(label)
 

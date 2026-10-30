@@ -123,7 +123,6 @@ class AtomTargetCardsMixin:
         button.setParent(card)
         hint = QLabel(hint_text, card)
         hint.setWordWrap(True)
-        hint.setStyleSheet("background: transparent;")
         style_hint_text(hint)
         card_layout.addWidget(button)
         card_layout.addWidget(hint)
@@ -404,7 +403,6 @@ class MagneticComponentDialog(AtomTargetCardsMixin, QDialog):
         amplitude_layout.addWidget(self._amplitude)
         bohr_label = QLabel("μ<sub>B</sub>")
         bohr_label.setTextFormat(Qt.TextFormat.RichText)
-        bohr_label.setStyleSheet("background: transparent;")
         amplitude_layout.addWidget(bohr_label)
         form.addRow("Amplitude", amplitude_group)
         self._primary_direction_row_label = QLabel("Direction (x, y, z)")
@@ -433,7 +431,6 @@ class MagneticComponentDialog(AtomTargetCardsMixin, QDialog):
         for index, edit in enumerate(self._q_coeff_inputs):
             coeff_layout.addWidget(edit)
             row_label = QLabel(f"q{index + 1}" + (" +" if index < 2 else ""))
-            row_label.setStyleSheet("background: transparent;")
             coeff_layout.addWidget(row_label)
         self._q_coeff_row_label = QLabel("Basis coefficients")
         self._q_coeff_group = coeff_group
@@ -1256,7 +1253,6 @@ class MagneticPresetDialog(QDialog):
         moment_layout.addWidget(self._moment)
         bohr_label = QLabel("μ<sub>B</sub>")
         bohr_label.setTextFormat(Qt.TextFormat.RichText)
-        bohr_label.setStyleSheet("background: transparent;")
         moment_layout.addWidget(bohr_label)
         form.addRow("Moment", moment_group)
         form.addRow("Apply to", self._selector_combo)

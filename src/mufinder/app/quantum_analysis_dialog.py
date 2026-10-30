@@ -38,6 +38,7 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.math_label import MathLabel
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
+    STRUCTURE_OVERLAY_COLOURS,
     current_palette,
     style_hint_text,
     style_section_title,
@@ -586,7 +587,7 @@ class QuantumPhononAnalysisDialog(StructureViewerDialog):
                 {
                     "start": [float(value) for value in start.tolist()],
                     "end": [float(value) for value in end.tolist()],
-                    "color": "#e11d48" if is_muon else palette.accent,
+                    "color": STRUCTURE_OVERLAY_COLOURS.muon if is_muon else palette.accent,
                     "width": 6.0 if is_muon else 3.5,
                     "alpha": 0.95 if is_muon else 0.72,
                     "arrow": True,

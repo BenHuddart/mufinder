@@ -278,7 +278,7 @@ def test_convergence_overview_widget_renders_stress_overlay_when_present(qapp) -
     assert len(axes) == 3
     stress_ax = axes[-1]
     assert "Max stress" in stress_ax.get_ylabel()
-    assert stress_ax.yaxis.label.get_color().lower() == "#d97706"
+    assert stress_ax.yaxis.label.get_color() == theme_module.plot_series_colours().stress
 
     # Force subplot now has both dF and dS badges, both right-anchored.
     force_ax = axes[1]
@@ -378,7 +378,7 @@ def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> No
         # The dE badge takes the energy series colour of the active theme.
         assert (
             energy_ax.texts[-1].get_color().lower()
-            == theme_module.convergence_plot_colors().energy.lower()
+            == theme_module.plot_series_colours().energy.lower()
         )
         widget.close()
     finally:

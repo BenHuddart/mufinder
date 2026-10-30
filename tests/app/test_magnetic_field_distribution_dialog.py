@@ -10,6 +10,7 @@ import pytest
 import mufinder.app.magnetic_field_distribution_dialog as magnetic_field_distribution_dialog_module
 from mufinder.app import export_dialogs
 from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
+from mufinder.app.theme import plot_series_colours
 
 
 def test_magnetic_field_distribution_dialog_plots_histogram(qapp) -> None:
@@ -73,6 +74,12 @@ def test_magnetic_field_distribution_dialog_overlays_multiple_histograms(qapp) -
     ]
     assert len(distribution_lines) == 3
     assert axis.get_ylim()[1] > 1.0
+    series = plot_series_colours()
+    assert [line.get_color() for line in distribution_lines] == [
+        series.categorical[0],
+        series.categorical[1],
+        series.total,
+    ]
     dialog.close()
 
 

@@ -23,7 +23,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter, LogLocator, NullLocator
 
 from mufinder.app.theme import (
-    convergence_plot_colors,
+    plot_series_colours,
     current_palette,
     plot_badge_box,
     style_plot_axes,
@@ -253,7 +253,7 @@ def draw_convergence_plot(
     if kind not in _SWEEP_KINDS:
         raise ValueError(f"kind must be one of {_SWEEP_KINDS}, not {kind!r}.")
     palette = current_palette()
-    colors = convergence_plot_colors()
+    colors = plot_series_colours()
     label_size = 9 if compact else None
     tick_size = 8 if compact else None
     axes_face = palette.bg_surface if compact else palette.bg_surface_alt
@@ -296,7 +296,7 @@ def draw_convergence_plot(
     if recommended is not None:
         energy_ax.axvline(
             recommended,
-            color=colors.recommended,
+            color=colors.reference,
             linestyle="-",
             alpha=0.55,
             label=f"Recommended {recommended_label}" if name_grid and not compact else None,
@@ -361,7 +361,7 @@ def draw_convergence_plot(
             )
         )
     if recommended is not None:
-        force_ax.axvline(recommended, color=colors.recommended, linestyle="-", alpha=0.55)
+        force_ax.axvline(recommended, color=colors.reference, linestyle="-", alpha=0.55)
     force_ax.set_xlabel(
         "Cutoff energy (eV)" if kind == "cutoff" else "Number of k-points",
         labelpad=6 if compact else 8,
@@ -477,7 +477,7 @@ def _draw_threshold_badges(
     that axis's label, clear of its tick labels.
     """
 
-    colors = convergence_plot_colors()
+    colors = plot_series_colours()
     badge = {"fontsize": 8, "va": "bottom", "bbox": plot_badge_box()}
     if data.energy_threshold is not None:
         energy_text = f"dE <= {data.energy_threshold:.3g} eV/atom"
