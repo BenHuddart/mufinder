@@ -557,6 +557,54 @@ def test_status_bar_refresh_reconnects_when_connected_to_another_cluster(
     assert polls == ["poll"]
 
 
+def test_status_bar_names_clusters_a_refresh_could_not_reach_before_the_warning(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    _project_with_job(window, tmp_path)
+    second = ProjectService().add_job(
+        window._document,
+        label="psi_job",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        execution_target="PSI",
+    )
+    second.status = JobStatus.RUNNING
+    second.remote_job_id = "678"
+
+    # SCARF is configured but refuses the connection; PSI is not configured.
+    scarf = ClusterConfig(
+        name="SCARF",
+        hostname="ui1.scarf.rl.ac.uk",
+        username="alice",
+        auth_method="key",
+        key_path="",
+        default_working_directory="/work4/isis/alice",
+        queue_system="SLURM",
+        cores_per_node=24,
+        default_walltime="12:00:00",
+        template_script_path="builtin:scarf-slurm",
+    )
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [scarf])
+
+    def _refuse(config, password=None):
+        raise ConnectionError(f"{config.name} refused the connection")
+
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _refuse)
+
+    shown_during_warning: list[str] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "show_detailed_warning",
+        lambda *_a, **_k: shown_during_warning.append(window.statusBar().currentMessage()),
+    )
+
+    window._on_refresh_cluster_queue()
+
+    assert shown_during_warning == ["Failed to check queue on SCARF, PSI"]
+    assert window.statusBar().currentMessage() == "Failed to check queue on SCARF, PSI"
+
+
 def test_status_bar_reports_a_failed_queue_refresh(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

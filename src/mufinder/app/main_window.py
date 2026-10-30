@@ -6449,9 +6449,11 @@ class MainWindow(QMainWindow):
 
         refreshed: list[str] = []
         failures: list[str] = []
+        failed_names: list[str] = []
         for target in target_clusters:
             config = by_name.get(target.casefold())
             if config is None:
+                failed_names.append(target)
                 failures.append(
                     f"- {target}: cluster is not configured. Set it in Setup > HPC Clusters."
                 )
@@ -6468,6 +6470,7 @@ class MainWindow(QMainWindow):
                 if needs_credentials:
                     credentials = prompt_for_cluster_credentials(self, config)
                     if credentials is None:
+                        failed_names.append(config.name)
                         failures.append(
                             f"- {config.name}: credentials required for reconnect. Enter them when prompted."
                         )
@@ -6478,24 +6481,24 @@ class MainWindow(QMainWindow):
                         refreshed.append(config.name)
                         continue
                     except Exception as retry_exc:  # noqa: BLE001
+                        failed_names.append(config.name)
                         failures.append(
                             f"- {config.name}: {format_cluster_connection_error(config, retry_exc)}"
                         )
                         continue
+                failed_names.append(config.name)
                 failures.append(f"- {config.name}: {format_cluster_connection_error(config, exc)}")
 
         if refreshed:
             self.statusBar().showMessage("Reconnected to " + ", ".join(sorted(set(refreshed))))
 
         if failures:
+            self.statusBar().showMessage("Failed to check queue on " + ", ".join(failed_names))
             show_detailed_warning(
                 self,
                 "Queue refresh failed",
                 "Some clusters could not be refreshed:\n" + "\n".join(failures),
                 informative_text="Open Details to inspect the full queue refresh failures.",
-            )
-            self.statusBar().showMessage(
-                f"Failed to refresh queue on {plural(len(failures), 'cluster')}"
             )
 
     def _active_dashboard_cluster_targets(self) -> list[str]:
