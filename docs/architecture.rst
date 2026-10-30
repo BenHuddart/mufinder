@@ -409,8 +409,9 @@ no two workflow widgets may define the same private method.
        row-parameter mirroring.
    * - ``mufinder.app.workflow_controllers.sweep_convergence``
      - The cycle the two convergence sweeps share
-       (``SweepConvergenceController``), including examining a sweep and
-       adopting its result as the project default.
+       (``SweepConvergenceController``), including examining a sweep,
+       adopting its result as the project default and choosing its
+       simulation cell.
    * - ``mufinder.app.project_defaults_widget``
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
@@ -1277,6 +1278,19 @@ Controller summary
        refreshes come in through the deps (``run_examiner``,
        ``show_warning``, ``confirm_choice``,
        ``refresh_after_default_adopted``).
+
+       It also owns the ``Simulation Cell`` selector.
+       ``refresh_simulation_cell`` shows the stage's saved supercells, the
+       selection and the species of the resolved cell; the
+       ``show_simulation_cell_structure`` hook hands that cell to a widget that
+       needs more of it (the k-point sweep passes its id and lattice to the
+       widget's generation warning). ``select_simulation_cell`` and
+       ``use_unit_cell`` change the stage's selection through
+       ``mufinder.services.supercell_assets``, and ``create_simulation_cell``
+       opens the Supercell Editor on ``supercell_initial_matrix`` (the selected
+       saved supercell, else the project matrix) through the
+       ``select_simulation_cell_in_editor`` dep, the window's one editor entry,
+       and uses the cell the editor returns with.
    * - ``PristineRelaxationController``
      - Keyed by row label; rows sync by row signature under the relaxation
        priority order. ``build_result`` reads the carrier's relaxed cell,

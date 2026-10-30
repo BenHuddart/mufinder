@@ -707,13 +707,13 @@ class MainWindow(QMainWindow):
         )
         self._convergence_view.form_state_changed.connect(self._on_convergence_form_state_changed)
         self._convergence_view.simulation_cell_create_requested.connect(
-            self._on_convergence_simulation_cell_create_requested
+            lambda: self._convergence_controller.create_simulation_cell()
         )
         self._convergence_view.simulation_cell_selection_requested.connect(
-            self._on_convergence_simulation_cell_selection_requested
+            lambda payload: self._convergence_controller.select_simulation_cell(payload)
         )
         self._convergence_view.simulation_cell_use_unit_cell_requested.connect(
-            self._on_convergence_simulation_cell_use_unit_cell_requested
+            lambda: self._convergence_controller.use_unit_cell()
         )
         # Per-workflow controllers own their submit → materialize → result →
         # refresh cycle. Built before signal wiring and before any job-completion
@@ -747,13 +747,13 @@ class MainWindow(QMainWindow):
         )
         self._kpoint_convergence_view.form_state_changed.connect(self._on_kpoint_form_state_changed)
         self._kpoint_convergence_view.simulation_cell_create_requested.connect(
-            self._on_kpoint_simulation_cell_create_requested
+            lambda: self._kpoint_convergence_controller.create_simulation_cell()
         )
         self._kpoint_convergence_view.simulation_cell_selection_requested.connect(
-            self._on_kpoint_simulation_cell_selection_requested
+            lambda payload: self._kpoint_convergence_controller.select_simulation_cell(payload)
         )
         self._kpoint_convergence_view.simulation_cell_use_unit_cell_requested.connect(
-            self._on_kpoint_simulation_cell_use_unit_cell_requested
+            lambda: self._kpoint_convergence_controller.use_unit_cell()
         )
         # K-point convergence controller: sibling of the cutoff controller. Built
         # here (after its view exists) and appended to the registry so completed
@@ -2013,12 +2013,12 @@ class MainWindow(QMainWindow):
                 self._refresh_muon_generation_table()
             with trace.stage("convergence views"):
                 self._convergence_view.set_form_state(self._convergence_form_restore_state())
-                self._refresh_convergence_simulation_cell()
+                self._convergence_controller.refresh_simulation_cell()
                 self._convergence_controller.refresh_view()
                 self._kpoint_convergence_view.set_form_state(
                     self._document.ui_state.get("kpoint_convergence_form", {})
                 )
-                self._refresh_kpoint_convergence_simulation_cell()
+                self._kpoint_convergence_controller.refresh_simulation_cell()
                 self._kpoint_convergence_controller.refresh_view()
             with trace.stage("workflow forms"):
                 self._pristine_relaxation_view.set_form_state(
@@ -5787,6 +5787,9 @@ class MainWindow(QMainWindow):
                 self, *args, **kwargs
             ),
             "refresh_after_default_adopted": lambda: self._refresh_after_convergence_default(),
+            "select_simulation_cell_in_editor": lambda *args, **kwargs: (
+                self._select_simulation_cell_in_editor(*args, **kwargs)
+            ),
         }
 
     def _run_convergence_examiner(
@@ -6897,8 +6900,8 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_host_structure_view()
-        self._refresh_convergence_simulation_cell()
-        self._refresh_kpoint_convergence_simulation_cell()
+        self._convergence_controller.refresh_simulation_cell()
+        self._kpoint_convergence_controller.refresh_simulation_cell()
         self._refresh_workflow_defaults(self._pristine_relaxation_view)
         self._pristine_relaxation_controller.refresh_view()
         self._refresh_convergence_overview()
@@ -7612,60 +7615,9 @@ class MainWindow(QMainWindow):
         self._document.ui_state["convergence_form"] = state
         self._convergence_controller.refresh_view()
 
-    def _refresh_convergence_simulation_cell(self) -> None:
-        if self._document is None:
-            self._convergence_view.set_simulation_cell_options(
-                summary="Load a host structure to choose a simulation cell.",
-                assets=[],
-                selected_structure_id=None,
-                enabled=False,
-            )
-            self._convergence_view.set_parameter_species_options(())
-            return
-
-        resolution = self._project_service.resolve_workflow_structure(
-            self._document,
-            WorkflowStage.CONVERGENCE_CUTOFF,
-            normalize_state=True,
-        )
-        assets = [
-            {
-                "structure_id": str(asset.structure_id),
-                "label": asset.label,
-            }
-            for asset in resolution.available_assets
-        ]
-        selected_structure_id = (
-            str(resolution.normalized_selection.structure_id)
-            if resolution.normalized_selection.structure_id is not None
-            else None
-        )
-        self._convergence_view.set_simulation_cell_options(
-            summary=resolution.status_message,
-            assets=assets,
-            selected_structure_id=selected_structure_id,
-            enabled=resolution.structure is not None,
-        )
-        self._convergence_view.set_parameter_species_options(
-            structure_species_options(resolution.structure)
-        )
-
-    def _convergence_supercell_initial_matrix(self) -> list[list[int]]:
-        if self._document is None:
-            return [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-
-        resolution = self._project_service.resolve_workflow_structure(
-            self._document,
-            WorkflowStage.CONVERGENCE_CUTOFF,
-            normalize_state=True,
-        )
-        if resolution.selected_asset is not None:
-            return [list(row) for row in resolution.selected_asset.matrix]
-        return [list(row) for row in self._document.project.supercell_matrix]
-
     def _refresh_all_supercell_options(self) -> None:
-        self._refresh_convergence_simulation_cell()
-        self._refresh_kpoint_convergence_simulation_cell()
+        self._convergence_controller.refresh_simulation_cell()
+        self._kpoint_convergence_controller.refresh_simulation_cell()
         self._refresh_workflow_supercell_options(self._pristine_relaxation_view)
         self._refresh_workflow_supercell_options(self._muon_relaxation_view)
         self._refresh_workflow_supercell_options(self._uep_view)
@@ -7757,24 +7709,17 @@ class MainWindow(QMainWindow):
         workflow_stage: WorkflowStage,
         *,
         initial_matrix: Callable[[], list[list[int]]],
-        refresh: Callable[[], None],
-        sweep_name: str,
+        on_selected: Callable[[UUID], None],
     ) -> None:
-        """Pick or create a convergence sweep's simulation cell in the editor."""
+        """Pick or create a convergence sweep's simulation cell in the editor.
+
+        ``on_selected`` receives the id of the cell the editor returns with.
+        """
 
         def apply(dialog: SupercellEditorDialog) -> None:
             structure_id = dialog.selected_structure_id()
-            if self._document is None or structure_id is None:
-                return
-            selected = self._project_service.use_workflow_supercell_asset(
-                self._document,
-                workflow_stage=workflow_stage,
-                asset_structure_id=structure_id,
-            )
-            refresh()
-            self.statusBar().showMessage(
-                f"Selected {sweep_name} simulation cell '{selected.label}'"
-            )
+            if structure_id is not None:
+                on_selected(structure_id)
 
         self._edit_supercell(
             workflow_stage,
@@ -7822,56 +7767,6 @@ class MainWindow(QMainWindow):
             missing_source_title=missing_source_title,
             source_structure=source_structure,
         )
-
-    def _on_convergence_simulation_cell_create_requested(self) -> None:
-        self._select_simulation_cell_in_editor(
-            WorkflowStage.CONVERGENCE_CUTOFF,
-            initial_matrix=self._convergence_supercell_initial_matrix,
-            refresh=self._refresh_convergence_simulation_cell,
-            sweep_name="convergence",
-        )
-
-    def _on_convergence_simulation_cell_selection_requested(self, payload: object) -> None:
-        if self._document is None:
-            return
-
-        structure_id = None
-        if payload is not None:
-            try:
-                structure_id = UUID(str(payload))
-            except ValueError:
-                structure_id = None
-
-        if structure_id is None:
-            self._project_service.clear_workflow_supercell_selection(
-                self._document,
-                WorkflowStage.CONVERGENCE_CUTOFF,
-            )
-            self._refresh_convergence_simulation_cell()
-            return
-
-        try:
-            selected = self._project_service.use_workflow_supercell_asset(
-                self._document,
-                workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-                asset_structure_id=structure_id,
-            )
-        except ValueError as exc:
-            QMessageBox.warning(self, "Simulation cell unavailable", str(exc))
-            self._refresh_convergence_simulation_cell()
-            return
-
-        self._refresh_convergence_simulation_cell()
-        self.statusBar().showMessage(f"Selected convergence simulation cell '{selected.label}'")
-
-    def _on_convergence_simulation_cell_use_unit_cell_requested(self) -> None:
-        if self._document is None:
-            return
-        self._project_service.clear_workflow_supercell_selection(
-            self._document,
-            WorkflowStage.CONVERGENCE_CUTOFF,
-        )
-        self._refresh_convergence_simulation_cell()
 
     @staticmethod
     def _grid_key(grid: tuple[int, int, int]) -> str:
@@ -7932,118 +7827,6 @@ class MainWindow(QMainWindow):
             return
         self._document.ui_state["kpoint_convergence_form"] = state
         self._kpoint_convergence_controller.refresh_view()
-
-    def _refresh_kpoint_convergence_simulation_cell(self) -> None:
-        if self._document is None:
-            self._kpoint_convergence_view.set_simulation_cell_options(
-                summary="Load a host structure to choose a simulation cell.",
-                assets=[],
-                selected_structure_id=None,
-                enabled=False,
-            )
-            self._kpoint_convergence_view.set_parameter_species_options(())
-            self._kpoint_convergence_view.set_generation_context(
-                structure_id=None, lattice_vectors=None
-            )
-            return
-
-        resolution = self._project_service.resolve_workflow_structure(
-            self._document,
-            WorkflowStage.CONVERGENCE_KPOINT,
-            normalize_state=True,
-        )
-        assets = [
-            {
-                "structure_id": str(asset.structure_id),
-                "label": asset.label,
-            }
-            for asset in resolution.available_assets
-        ]
-        selected_structure_id = (
-            str(resolution.normalized_selection.structure_id)
-            if resolution.normalized_selection.structure_id is not None
-            else None
-        )
-        self._kpoint_convergence_view.set_simulation_cell_options(
-            summary=resolution.status_message,
-            assets=assets,
-            selected_structure_id=selected_structure_id,
-            enabled=resolution.structure is not None,
-        )
-        self._kpoint_convergence_view.set_parameter_species_options(
-            structure_species_options(resolution.structure)
-        )
-        self._kpoint_convergence_view.set_generation_context(
-            structure_id=(
-                str(resolution.structure.id) if resolution.structure is not None else None
-            ),
-            lattice_vectors=(
-                resolution.structure.lattice_vectors if resolution.structure is not None else None
-            ),
-        )
-
-    def _kpoint_supercell_initial_matrix(self) -> list[list[int]]:
-        if self._document is None:
-            return [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-
-        resolution = self._project_service.resolve_workflow_structure(
-            self._document,
-            WorkflowStage.CONVERGENCE_KPOINT,
-            normalize_state=True,
-        )
-        if resolution.selected_asset is not None:
-            return [list(row) for row in resolution.selected_asset.matrix]
-        return [list(row) for row in self._document.project.supercell_matrix]
-
-    def _on_kpoint_simulation_cell_create_requested(self) -> None:
-        self._select_simulation_cell_in_editor(
-            WorkflowStage.CONVERGENCE_KPOINT,
-            initial_matrix=self._kpoint_supercell_initial_matrix,
-            refresh=self._refresh_kpoint_convergence_simulation_cell,
-            sweep_name="k-point",
-        )
-
-    def _on_kpoint_simulation_cell_selection_requested(self, payload: object) -> None:
-        if self._document is None:
-            return
-
-        structure_id = None
-        if payload is not None:
-            try:
-                structure_id = UUID(str(payload))
-            except ValueError:
-                structure_id = None
-
-        if structure_id is None:
-            self._project_service.clear_workflow_supercell_selection(
-                self._document,
-                WorkflowStage.CONVERGENCE_KPOINT,
-            )
-            self._refresh_kpoint_convergence_simulation_cell()
-            return
-
-        try:
-            selected = self._project_service.use_workflow_supercell_asset(
-                self._document,
-                workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
-                asset_structure_id=structure_id,
-            )
-        except ValueError as exc:
-            QMessageBox.warning(self, "Simulation cell unavailable", str(exc))
-            self._refresh_kpoint_convergence_simulation_cell()
-            return
-
-        self._refresh_kpoint_convergence_simulation_cell()
-        self.statusBar().showMessage(f"Selected k-point simulation cell '{selected.label}'")
-
-    def _on_kpoint_simulation_cell_use_unit_cell_requested(self) -> None:
-        if self._document is None:
-            return
-        self._project_service.clear_workflow_supercell_selection(
-            self._document,
-            WorkflowStage.CONVERGENCE_KPOINT,
-        )
-        self._refresh_kpoint_convergence_simulation_cell()
 
     def _on_remove_grids_from_kpoint_convergence(self, grids: list[tuple[int, int, int]]) -> None:
         if self._document is None:

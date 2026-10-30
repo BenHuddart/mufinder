@@ -49,12 +49,24 @@ class _FakeKpointView:
     def __init__(self, form_state: dict | None = None) -> None:
         self._form_state = form_state or {}
         self.runtime_states: list[dict] = []
+        self.simulation_cell_options: list[dict] = []
+        self.species_options: list[tuple[str, ...]] = []
+        self.generation_contexts: list[dict] = []
 
     def collect_state(self) -> dict:
         return self._form_state
 
     def set_runtime_states(self, states) -> None:
         self.runtime_states.append(dict(states))
+
+    def set_simulation_cell_options(self, **options) -> None:
+        self.simulation_cell_options.append(options)
+
+    def set_parameter_species_options(self, species_options) -> None:
+        self.species_options.append(tuple(species_options))
+
+    def set_generation_context(self, **context) -> None:
+        self.generation_contexts.append(context)
 
 
 def _grid_key(grid: tuple[int, int, int]) -> str:
@@ -702,3 +714,107 @@ def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -
         )
         for note in notes
     )
+
+
+# --------------------------------------------------------------------------- #
+# Simulation cell
+# --------------------------------------------------------------------------- #
+
+
+def _kpoint_cell_controller(
+    document: ProjectDocument | None,
+    window: RecordingSweepWindow,
+    *,
+    service: ProjectService | None = None,
+    statuses: list[str] | None = None,
+) -> tuple[ConvergenceKpointController, _FakeKpointView]:
+    view = _FakeKpointView()
+    deps = ConvergenceKpointDeps(
+        deserialize_convergence_config=deserialize_convergence_config,
+        grid_key=_grid_key,
+        max_stress_for_job=lambda _job_id: None,
+        **window.deps(),
+    )
+    context = make_context(document=document, project_service=service, statuses=statuses)
+    return ConvergenceKpointController(context, deps, view), view
+
+
+def test_kpoint_refresh_simulation_cell_without_a_project_clears_the_generation_context() -> None:
+    controller, view = _kpoint_cell_controller(None, RecordingSweepWindow())
+
+    controller.refresh_simulation_cell()
+
+    (options,) = view.simulation_cell_options
+    assert options["enabled"] is False
+    assert options["summary"] == "Load a host structure to choose a simulation cell."
+    assert view.species_options == [()]
+    assert view.generation_contexts == [{"structure_id": None, "lattice_vectors": None}]
+
+
+def test_kpoint_refresh_simulation_cell_gives_the_widget_the_sweep_cell(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, cell = _kpoint_adopt_document(service, tmp_path)
+    controller, view = _kpoint_cell_controller(document, RecordingSweepWindow(), service=service)
+
+    controller.refresh_simulation_cell()
+
+    assert view.simulation_cell_options[-1]["enabled"] is True
+    assert view.species_options == [("Si",)]
+    assert view.generation_contexts == [
+        {"structure_id": str(cell.id), "lattice_vectors": cell.lattice_vectors}
+    ]
+
+
+def test_kpoint_create_simulation_cell_selects_for_the_kpoint_stage(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _kpoint_adopt_document(service, tmp_path)
+    asset = service.create_workflow_supercell_asset(
+        document,
+        workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+        label="Shared 2x2x1",
+        reuse_existing=False,
+    )
+    window = RecordingSweepWindow(editor_selection=asset.id)
+    statuses: list[str] = []
+    controller, view = _kpoint_cell_controller(document, window, service=service, statuses=statuses)
+
+    controller.create_simulation_cell()
+
+    ((stage, _matrix),) = window.editor_calls
+    assert stage is WorkflowStage.CONVERGENCE_KPOINT
+    selection = document.ui_state["workflow_supercells"]["convergence_kpoint"]
+    assert selection["structure_id"] == str(asset.id)
+    assert view.generation_contexts[-1]["structure_id"] == str(asset.id)
+    assert statuses == ["Selected k-point simulation cell 'Shared 2x2x1'"]
+
+
+def test_kpoint_simulation_cell_selection_and_unit_cell_use_the_kpoint_stage(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, host = _kpoint_adopt_document(service, tmp_path)
+    asset = service.create_workflow_supercell_asset(
+        document,
+        workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        label="Saved 2x1x1",
+        reuse_existing=False,
+    )
+    statuses: list[str] = []
+    controller, _view = _kpoint_cell_controller(
+        document, RecordingSweepWindow(), service=service, statuses=statuses
+    )
+
+    controller.select_simulation_cell(str(asset.id))
+
+    selection = document.ui_state["workflow_supercells"]["convergence_kpoint"]
+    assert selection["mode"] == "saved_supercell"
+    assert statuses == ["Selected k-point simulation cell 'Saved 2x1x1'"]
+    assert "convergence_cutoff" not in document.ui_state["workflow_supercells"]
+
+    controller.use_unit_cell()
+
+    assert document.ui_state["workflow_supercells"]["convergence_kpoint"]["mode"] == "unit_cell"

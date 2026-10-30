@@ -45,7 +45,8 @@ class ConvergenceCutoffDeps:
     ``run_examiner`` opens the examiner dialog modally and returns its final
     state; ``show_warning`` and ``confirm_choice`` show message boxes; and
     ``refresh_after_default_adopted`` refreshes the window views an adopted
-    default changes.
+    default changes; ``select_simulation_cell_in_editor`` opens the Supercell
+    Editor for the sweep's stage and calls back with the cell picked there.
     """
 
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
@@ -55,6 +56,7 @@ class ConvergenceCutoffDeps:
     show_warning: Callable[[str, str], None]
     confirm_choice: Callable[..., str]
     refresh_after_default_adopted: Callable[[], None]
+    select_simulation_cell_in_editor: Callable[..., None]
 
 
 class ConvergenceCutoffController(SweepConvergenceController):
@@ -74,6 +76,7 @@ class ConvergenceCutoffController(SweepConvergenceController):
     default_name_prefix = "cutoff_convergence"
     examiner_state_key = CUTOFF_EXAMINER_STATE_KEY
     snapshot_persist_failure_message = "Could not persist convergence overview snapshot to disk"
+    simulation_cell_name = "convergence"
 
     _deps: ConvergenceCutoffDeps
     _view: CutoffConvergenceWidget

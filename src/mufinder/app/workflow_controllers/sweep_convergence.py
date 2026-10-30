@@ -20,11 +20,22 @@ sweep-specific options), ``resolve_adopted_key`` (the sweep key an adopted
 value names) and ``record_adopted_default`` (the project-default setter and the
 pinned overview snapshot). The examiner dialog, the confirmation and the window
 refreshes come in through the deps.
+
+It also keeps the sweep's ``Simulation Cell`` selector in step with the
+project (:meth:`~SweepConvergenceController.refresh_simulation_cell`) and
+handles its three requests: pick a saved supercell
+(:meth:`~SweepConvergenceController.select_simulation_cell`), go back to the
+unit cell (:meth:`~SweepConvergenceController.use_unit_cell`), and pick or
+create one in the Supercell Editor
+(:meth:`~SweepConvergenceController.create_simulation_cell`), which the window
+opens through the ``select_simulation_cell_in_editor`` dep. The
+``show_simulation_cell_structure`` hook passes the resolved cell to a widget
+that needs more of it than the selector does.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -46,6 +57,7 @@ from mufinder.app.convergence_types import (
     SweepPointRunState,
     convergence_config_xc_functional,
 )
+from mufinder.app.workflow_parameters import structure_species_options
 from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
@@ -60,6 +72,17 @@ class SweepConvergenceView(Protocol):
     def collect_state(self) -> dict[str, Any]: ...
 
     def set_runtime_states(self, states: dict[Any, SweepPointRunState]) -> None: ...
+
+    def set_simulation_cell_options(
+        self,
+        *,
+        summary: str,
+        assets: list[dict[str, str]],
+        selected_structure_id: str | None,
+        enabled: bool,
+    ) -> None: ...
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None: ...
 
 
 class SweepConvergenceDeps(Protocol):
@@ -83,6 +106,9 @@ class SweepConvergenceDeps(Protocol):
     @property
     def refresh_after_default_adopted(self) -> Callable[[], None]: ...
 
+    @property
+    def select_simulation_cell_in_editor(self) -> Callable[..., None]: ...
+
 
 class SweepConvergenceController(WorkflowJobController):
     """Submit, materialize and refresh cycle for one convergence sweep.
@@ -99,7 +125,9 @@ class SweepConvergenceController(WorkflowJobController):
       default job-name prefix;
     - ``examiner_state_key``: where the examiner's state lives in ``ui_state``;
     - ``snapshot_persist_failure_message``: the status shown when saving an
-      adopted default's overview snapshot fails.
+      adopted default's overview snapshot fails;
+    - ``simulation_cell_name``: the sweep's name in the status shown when a
+      simulation cell is selected.
     """
 
     key_codec: SweepKeyCodec[Any]
@@ -111,6 +139,7 @@ class SweepConvergenceController(WorkflowJobController):
     default_name_prefix = ""
     examiner_state_key = ""
     snapshot_persist_failure_message = ""
+    simulation_cell_name = ""
 
     def __init__(
         self,
@@ -631,6 +660,144 @@ class SweepConvergenceController(WorkflowJobController):
             escape="cancel",
         )
         return answer == "change"
+
+    # --- simulation cell ---
+
+    def show_simulation_cell_structure(self, structure: Structure | None) -> None:
+        """Pass the sweep's resolved cell to the widget; ``None`` when there is none.
+
+        The selector itself needs only the options
+        :meth:`refresh_simulation_cell` sets, so this does nothing unless a
+        sweep's widget needs the cell too.
+        """
+
+    def refresh_simulation_cell(self) -> None:
+        """Show the sweep's simulation-cell choices and the species its cell holds."""
+
+        document = self._context.document()
+        if document is None:
+            self._view.set_simulation_cell_options(
+                summary="Load a host structure to choose a simulation cell.",
+                assets=[],
+                selected_structure_id=None,
+                enabled=False,
+            )
+            self._view.set_parameter_species_options(())
+            self.show_simulation_cell_structure(None)
+            return
+
+        resolution = self._context.project_service.resolve_workflow_structure(
+            document,
+            self.stage,
+            normalize_state=True,
+        )
+        assets = [
+            {
+                "structure_id": str(asset.structure_id),
+                "label": asset.label,
+            }
+            for asset in resolution.available_assets
+        ]
+        selected_structure_id = (
+            str(resolution.normalized_selection.structure_id)
+            if resolution.normalized_selection.structure_id is not None
+            else None
+        )
+        self._view.set_simulation_cell_options(
+            summary=resolution.status_message,
+            assets=assets,
+            selected_structure_id=selected_structure_id,
+            enabled=resolution.structure is not None,
+        )
+        self._view.set_parameter_species_options(structure_species_options(resolution.structure))
+        self.show_simulation_cell_structure(resolution.structure)
+
+    def supercell_initial_matrix(self) -> list[list[int]]:
+        """Return the matrix the Supercell Editor opens on for this sweep.
+
+        That is the selected saved supercell's matrix, else the project's
+        supercell matrix, else the identity when no project is open.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+        resolution = self._context.project_service.resolve_workflow_structure(
+            document,
+            self.stage,
+            normalize_state=True,
+        )
+        if resolution.selected_asset is not None:
+            return [list(row) for row in resolution.selected_asset.matrix]
+        return [list(row) for row in document.project.supercell_matrix]
+
+    def create_simulation_cell(self) -> None:
+        """Pick or create the sweep's simulation cell in the Supercell Editor."""
+
+        self._deps.select_simulation_cell_in_editor(
+            self.stage,
+            initial_matrix=self.supercell_initial_matrix,
+            on_selected=self._use_simulation_cell_from_editor,
+        )
+
+    def _use_simulation_cell_from_editor(self, structure_id: UUID) -> None:
+        document = self._context.document()
+        if document is None:
+            return
+        selected = self._context.project_service.use_workflow_supercell_asset(
+            document,
+            workflow_stage=self.stage,
+            asset_structure_id=structure_id,
+        )
+        self.refresh_simulation_cell()
+        self._context.status_message(
+            f"Selected {self.simulation_cell_name} simulation cell '{selected.label}'"
+        )
+
+    def select_simulation_cell(self, payload: object) -> None:
+        """Use the saved supercell ``payload`` names, or the unit cell when it names none."""
+
+        document = self._context.document()
+        if document is None:
+            return
+
+        structure_id = None
+        if payload is not None:
+            try:
+                structure_id = UUID(str(payload))
+            except ValueError:
+                structure_id = None
+
+        if structure_id is None:
+            self._context.project_service.clear_workflow_supercell_selection(document, self.stage)
+            self.refresh_simulation_cell()
+            return
+
+        try:
+            selected = self._context.project_service.use_workflow_supercell_asset(
+                document,
+                workflow_stage=self.stage,
+                asset_structure_id=structure_id,
+            )
+        except ValueError as exc:
+            self._deps.show_warning("Simulation cell unavailable", str(exc))
+            self.refresh_simulation_cell()
+            return
+
+        self.refresh_simulation_cell()
+        self._context.status_message(
+            f"Selected {self.simulation_cell_name} simulation cell '{selected.label}'"
+        )
+
+    def use_unit_cell(self) -> None:
+        """Run the sweep on the unit cell again."""
+
+        document = self._context.document()
+        if document is None:
+            return
+        self._context.project_service.clear_workflow_supercell_selection(document, self.stage)
+        self.refresh_simulation_cell()
 
 
 __all__ = ["SweepConvergenceController"]

@@ -57,7 +57,8 @@ class ConvergenceKpointDeps:
     ``run_examiner`` opens the examiner dialog modally and returns its final
     state; ``show_warning`` and ``confirm_choice`` show message boxes; and
     ``refresh_after_default_adopted`` refreshes the window views an adopted
-    default changes.
+    default changes; ``select_simulation_cell_in_editor`` opens the Supercell
+    Editor for the sweep's stage and calls back with the cell picked there.
     """
 
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
@@ -67,6 +68,7 @@ class ConvergenceKpointDeps:
     show_warning: Callable[[str, str], None]
     confirm_choice: Callable[..., str]
     refresh_after_default_adopted: Callable[[], None]
+    select_simulation_cell_in_editor: Callable[..., None]
 
 
 class ConvergenceKpointController(SweepConvergenceController):
@@ -90,9 +92,18 @@ class ConvergenceKpointController(SweepConvergenceController):
     snapshot_persist_failure_message = (
         "Could not persist k-point convergence overview snapshot to disk"
     )
+    simulation_cell_name = "k-point"
 
     _deps: ConvergenceKpointDeps
     _view: KPointConvergenceWidget
+
+    def show_simulation_cell_structure(self, structure: Structure | None) -> None:
+        """Give the widget the sweep cell's id and lattice for its generation warning."""
+
+        self._view.set_generation_context(
+            structure_id=str(structure.id) if structure is not None else None,
+            lattice_vectors=structure.lattice_vectors if structure is not None else None,
+        )
 
     def mapping_key(self, key: KPointGrid) -> str:
         return self._deps.grid_key(key)

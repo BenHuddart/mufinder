@@ -9,10 +9,11 @@ and writes the ``job_ids_by_cutoff`` mapping. The shared sweep behaviour of
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
 from mufinder.services.convergence_defaults import (
@@ -45,12 +46,20 @@ class _FakeConvergenceView:
     def __init__(self, form_state: dict | None = None) -> None:
         self._form_state = form_state or {}
         self.runtime_states: list[dict] = []
+        self.simulation_cell_options: list[dict] = []
+        self.species_options: list[tuple[str, ...]] = []
 
     def collect_state(self) -> dict:
         return self._form_state
 
     def set_runtime_states(self, states) -> None:
         self.runtime_states.append(dict(states))
+
+    def set_simulation_cell_options(self, **options) -> None:
+        self.simulation_cell_options.append(options)
+
+    def set_parameter_species_options(self, species_options) -> None:
+        self.species_options.append(tuple(species_options))
 
 
 def _stub_deps() -> ConvergenceCutoffDeps:
@@ -594,3 +603,222 @@ def test_adopting_without_a_project_does_nothing() -> None:
     assert window.refreshes == 0
     assert controller.definition_xc_functional(None) is None
     assert controller.confirm_adopted_xc_functional("PBE") is True
+
+
+# --------------------------------------------------------------------------- #
+# Simulation cell (SweepConvergenceController, through the cutoff sweep)
+# --------------------------------------------------------------------------- #
+
+_CUTOFF = WorkflowStage.CONVERGENCE_CUTOFF
+
+
+def _cell_controller(
+    document: ProjectDocument | None,
+    window: RecordingSweepWindow,
+    *,
+    service: ProjectService | None = None,
+    statuses: list[str] | None = None,
+) -> tuple[ConvergenceCutoffController, _FakeConvergenceView]:
+    view = _FakeConvergenceView()
+    deps = ConvergenceCutoffDeps(
+        deserialize_convergence_config=deserialize_convergence_config,
+        cutoff_key=lambda value: f"{float(value):.12g}",
+        max_stress_for_job=lambda _job_id: None,
+        **window.deps(),
+    )
+    context = make_context(document=document, project_service=service, statuses=statuses)
+    return ConvergenceCutoffController(context, deps, view), view
+
+
+def _cell_document(
+    service: ProjectService,
+    tmp_path: Path,
+    *,
+    stage: WorkflowStage = _CUTOFF,
+    matrix: list[list[int]] | None = None,
+) -> tuple[ProjectDocument, Structure]:
+    """A one-atom Si host and one saved supercell of it owned by ``stage``."""
+
+    document = service.create_project(tmp_path / "cell.mufinder", "Cell")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    asset = service.create_workflow_supercell_asset(
+        document,
+        workflow_stage=stage,
+        host_structure_id=host.id,
+        matrix=matrix or [[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        label="Saved cell",
+        reuse_existing=False,
+    )
+    return document, asset
+
+
+def _use_saved_cell(service: ProjectService, document: ProjectDocument, asset: Structure) -> None:
+    service.use_workflow_supercell_asset(
+        document, workflow_stage=_CUTOFF, asset_structure_id=asset.id
+    )
+
+
+def test_refresh_simulation_cell_without_a_project_disables_the_selector() -> None:
+    controller, view = _cell_controller(None, RecordingSweepWindow())
+
+    controller.refresh_simulation_cell()
+
+    assert view.simulation_cell_options == [
+        {
+            "summary": "Load a host structure to choose a simulation cell.",
+            "assets": [],
+            "selected_structure_id": None,
+            "enabled": False,
+        }
+    ]
+    assert view.species_options == [()]
+
+
+def test_refresh_simulation_cell_lists_saved_cells_and_the_cell_species(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, asset = _cell_document(service, tmp_path)
+    _use_saved_cell(service, document, asset)
+    controller, view = _cell_controller(document, RecordingSweepWindow(), service=service)
+
+    controller.refresh_simulation_cell()
+
+    (options,) = view.simulation_cell_options
+    assert options["enabled"] is True
+    assert options["selected_structure_id"] == str(asset.id)
+    assert {"structure_id": str(asset.id), "label": "Saved cell"} in options["assets"]
+    assert view.species_options == [("Si",)]
+
+
+def test_supercell_initial_matrix_prefers_the_selected_saved_cell(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, asset = _cell_document(service, tmp_path, matrix=[[3, 0, 0], [0, 1, 0], [0, 0, 1]])
+    document.project.supercell_matrix = [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
+    controller, _view = _cell_controller(document, RecordingSweepWindow(), service=service)
+
+    assert controller.supercell_initial_matrix() == [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
+
+    _use_saved_cell(service, document, asset)
+
+    assert controller.supercell_initial_matrix() == [[3, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+
+def test_supercell_initial_matrix_without_a_project_is_the_identity() -> None:
+    controller, _view = _cell_controller(None, RecordingSweepWindow())
+
+    assert controller.supercell_initial_matrix() == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+
+def test_create_simulation_cell_uses_the_cell_picked_in_the_editor(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, asset = _cell_document(service, tmp_path)
+    window = RecordingSweepWindow(editor_selection=asset.id)
+    statuses: list[str] = []
+    controller, view = _cell_controller(document, window, service=service, statuses=statuses)
+
+    controller.create_simulation_cell()
+
+    assert window.editor_calls == [(_CUTOFF, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])]
+    selection = document.ui_state["workflow_supercells"]["convergence_cutoff"]
+    assert selection["structure_id"] == str(asset.id)
+    assert view.simulation_cell_options[-1]["selected_structure_id"] == str(asset.id)
+    assert statuses == ["Selected convergence simulation cell 'Saved cell'"]
+
+
+def test_create_simulation_cell_changes_nothing_when_the_editor_picks_nothing(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _asset = _cell_document(service, tmp_path)
+    window = RecordingSweepWindow()
+    statuses: list[str] = []
+    controller, view = _cell_controller(document, window, service=service, statuses=statuses)
+
+    controller.create_simulation_cell()
+
+    assert len(window.editor_calls) == 1
+    assert view.simulation_cell_options == []
+    assert statuses == []
+
+
+def test_select_simulation_cell_clones_another_workflows_saved_cell(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, source = _cell_document(service, tmp_path, stage=WorkflowStage.MUON_RELAXATION)
+    statuses: list[str] = []
+    controller, view = _cell_controller(
+        document, RecordingSweepWindow(), service=service, statuses=statuses
+    )
+
+    controller.select_simulation_cell(str(source.id))
+
+    selection = document.ui_state["workflow_supercells"]["convergence_cutoff"]
+    cloned = document.structures[UUID(selection["structure_id"])]
+    assert selection["mode"] == "saved_supercell"
+    assert cloned.id != source.id
+    assert cloned.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
+    assert cloned.properties["supercell_asset"]["source_asset_structure_id"] == str(source.id)
+    assert view.simulation_cell_options[-1]["selected_structure_id"] == str(cloned.id)
+    assert statuses == [f"Selected convergence simulation cell '{cloned.label}'"]
+
+
+@pytest.mark.parametrize("payload", [None, "not-a-uuid"])
+def test_select_simulation_cell_without_an_id_goes_back_to_the_unit_cell(
+    tmp_path: Path, payload: object
+) -> None:
+    service = ProjectService()
+    document, asset = _cell_document(service, tmp_path)
+    _use_saved_cell(service, document, asset)
+    controller, view = _cell_controller(document, RecordingSweepWindow(), service=service)
+
+    controller.select_simulation_cell(payload)
+
+    assert document.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "unit_cell"
+    assert view.simulation_cell_options[-1]["selected_structure_id"] is None
+
+
+def test_select_simulation_cell_warns_when_the_cell_is_unavailable(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _asset = _cell_document(service, tmp_path)
+    window = RecordingSweepWindow()
+    statuses: list[str] = []
+    controller, view = _cell_controller(document, window, service=service, statuses=statuses)
+
+    controller.select_simulation_cell(str(UUID(int=0)))
+
+    assert window.warnings == [
+        ("Simulation cell unavailable", "Selected supercell does not exist in this project.")
+    ]
+    assert len(view.simulation_cell_options) == 1
+    assert statuses == []
+
+
+def test_use_unit_cell_clears_the_saved_cell_selection(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, asset = _cell_document(service, tmp_path)
+    _use_saved_cell(service, document, asset)
+    controller, view = _cell_controller(document, RecordingSweepWindow(), service=service)
+
+    controller.use_unit_cell()
+
+    assert document.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "unit_cell"
+    assert view.simulation_cell_options[-1]["selected_structure_id"] is None
+
+
+def test_simulation_cell_requests_without_a_project_change_nothing() -> None:
+    window = RecordingSweepWindow(editor_selection=UUID(int=1))
+    statuses: list[str] = []
+    controller, view = _cell_controller(None, window, statuses=statuses)
+
+    controller.select_simulation_cell(str(UUID(int=1)))
+    controller.use_unit_cell()
+    controller.create_simulation_cell()
+
+    assert view.simulation_cell_options == []
+    assert window.warnings == []
+    assert statuses == []

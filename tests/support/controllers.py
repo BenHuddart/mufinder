@@ -13,7 +13,8 @@ live here:
   the information boxes, status messages and ``persist_ui_state`` failure
   messages; every other callable is a no-op.
 - ``RecordingSweepWindow`` stands in for the window side of a convergence
-  sweep's deps (the examiner dialog, warnings, confirmations, refreshes).
+  sweep's deps (the examiner dialog, warnings, confirmations, refreshes and
+  the Supercell Editor).
 - ``FakeRowState`` stands in for a workflow's per-row run state (a ``status``
   and an optional ``job_id``).
 - ``no_artifacts`` and ``completed_castep_result`` are the parsed-output
@@ -30,6 +31,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from pathlib import Path
+from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
@@ -115,6 +117,8 @@ class RecordingSweepWindow:
     ``run_examiner`` records the points and dialog options, keeps the adopt and
     state callbacks for the test to fire, and returns ``examiner_state`` as the
     dialog's final state. ``confirm_choice`` answers ``confirm_answer``.
+    ``select_simulation_cell_in_editor`` records the stage and the editor's
+    initial matrix, then picks ``editor_selection`` when it is set.
     """
 
     def __init__(
@@ -122,6 +126,7 @@ class RecordingSweepWindow:
         *,
         examiner_state: dict[str, object] | None = None,
         confirm_answer: str = "change",
+        editor_selection: UUID | None = None,
     ) -> None:
         self.examiner_state = examiner_state if examiner_state is not None else {}
         self.confirm_answer = confirm_answer
@@ -131,6 +136,8 @@ class RecordingSweepWindow:
         self.warnings: list[tuple[str, str]] = []
         self.confirmations: list[tuple[str, str, list[tuple[str, str]], dict[str, object]]] = []
         self.refreshes = 0
+        self.editor_selection = editor_selection
+        self.editor_calls: list[tuple[WorkflowStage, list[list[int]]]] = []
 
     def run_examiner(
         self,
@@ -157,6 +164,17 @@ class RecordingSweepWindow:
     def refresh_after_default_adopted(self) -> None:
         self.refreshes += 1
 
+    def select_simulation_cell_in_editor(
+        self,
+        workflow_stage: WorkflowStage,
+        *,
+        initial_matrix: Callable[[], list[list[int]]],
+        on_selected: Callable[[UUID], None],
+    ) -> None:
+        self.editor_calls.append((workflow_stage, initial_matrix()))
+        if self.editor_selection is not None:
+            on_selected(self.editor_selection)
+
     def deps(self) -> dict[str, Callable[..., object]]:
         """Return the deps fields both sweeps' deps dataclasses take."""
 
@@ -165,6 +183,7 @@ class RecordingSweepWindow:
             "show_warning": self.show_warning,
             "confirm_choice": self.confirm_choice,
             "refresh_after_default_adopted": self.refresh_after_default_adopted,
+            "select_simulation_cell_in_editor": self.select_simulation_cell_in_editor,
         }
 
 
