@@ -89,6 +89,7 @@ CITED_DOIS: dict[str, tuple[str, ...]] = {
         "10.1107/S0567740874004067",
     ),
     "user_guide/site_generation.rst": ("10.1016/j.cpc.2022.108488",),
+    "user_guide/supercells.rst": ("10.1016/j.cpc.2022.108488", "10.1039/d4dd00314d"),
     "user_guide/structural_relaxation_analysis.rst": (
         "10.1016/j.cpc.2022.108488",
         "10.1063/1.5024450",

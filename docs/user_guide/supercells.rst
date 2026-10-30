@@ -114,7 +114,7 @@ References:
   https://doi.org/10.1016/j.cpc.2022.108488.
 - I. J. Onuorah *et al.*, Automated computational workflows for muon spin
   spectroscopy, Digital Discovery **4**, 523 (2025),
-  https://doi.org/10.1039/D4DD00314D.
+  https://doi.org/10.1039/d4dd00314d.
 
 Editing saved supercells
 ~~~~~~~~~~~~~~~~~~~~~~~~
