@@ -304,10 +304,10 @@ def test_journal_widget_rebuilds_when_the_last_record_was_replaced(qapp) -> None
     widget.show()
     widget.set_records("Stream", records)
 
-    records[-1] = dataclasses.replace(records[-1], parameters={"method": "grid"})
+    records[-1] = dataclasses.replace(records[-1], parameters={"method": "near_element"})
     widget.set_records("Stream", records)
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     bodies = [label.text() for label in widget.findChildren(QLabel, "journalEntryBody")]
-    assert bodies[-1] == "Generated 0 muon sites using grid."
+    assert bodies[-1] == "Generated 0 muon sites with 'Attach muon to element'."
     widget.close()

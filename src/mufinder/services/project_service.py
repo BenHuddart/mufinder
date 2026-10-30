@@ -12,6 +12,7 @@ import shutil
 from typing import Any
 from uuid import UUID
 
+from mufinder.domain.charge_states import muon_relaxation_charge_state
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import (
@@ -54,6 +55,7 @@ from mufinder.services.project_document import (
     active_host_structure,
     definitions_for_stage as definitions_for_stage,
     job_for_mapping_key as job_for_mapping_key,
+    job_row_label,
 )
 from mufinder.services.supercell_assets import (
     WORKFLOW_SUPERCELL_UNIT_CELL,
@@ -65,6 +67,26 @@ from mufinder.science.structure_io import load_structure_file
 from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 
 _LOG = logging.getLogger(__name__)
+
+
+def _job_row_parameters(document: ProjectDocument, job: Job) -> dict[str, str]:
+    """Return the ``row_label`` and ``charge_state`` a job record carries, where they apply.
+
+    ``row_label`` names the workflow row that owns the job (see
+    :func:`~mufinder.services.project_document.job_row_label`);
+    ``charge_state`` is the muon charge state of a muon-relaxation job, set from
+    its row's charge state when the job was built. The Journal uses both to
+    tell runs apart.
+    """
+
+    parameters: dict[str, str] = {}
+    row_label = job_row_label(document, job)
+    if row_label:
+        parameters["row_label"] = row_label
+    charge_state = muon_relaxation_charge_state(job.calc_type)
+    if charge_state is not None:
+        parameters["charge_state"] = charge_state
+    return parameters
 
 
 def _project_relative_path(path: Path, project_root: Path) -> str:
@@ -521,6 +543,11 @@ class ProjectService:
             if len({job.workflow_stage for job in submitted_jobs}) == 1
             else None
         )
+        job_rows = {job.id: _job_row_parameters(document, job) for job in submitted_jobs}
+        charge_states = {job_rows[job.id].get("charge_state") for job in submitted_jobs}
+        batch_parameters: dict[str, Any] = {}
+        if len(charge_states) == 1 and None not in charge_states:
+            batch_parameters["charge_state"] = charge_states.pop()
         self.append_provenance(
             document,
             ProvenanceRecord(
@@ -532,10 +559,12 @@ class ProjectService:
                     "execution_target": execution_target,
                     "job_count": len(submitted_jobs),
                     "job_labels": [job.label for job in submitted_jobs],
+                    **batch_parameters,
                     "jobs": [
                         {
                             "job_id": str(job.id),
                             "label": job.label,
+                            **job_rows[job.id],
                             "status": job.status.value,
                             "execution_target": job.execution_target,
                             "remote_job_id": job.remote_job_id,
@@ -567,6 +596,7 @@ class ProjectService:
             "job_label": job.label,
             "calc_type": job.calc_type,
             "execution_target": job.execution_target,
+            **_job_row_parameters(document, job),
         }
         if result is not None:
             data = result.data if isinstance(result.data, dict) else {}
@@ -630,6 +660,7 @@ class ProjectService:
                     "job_label": job.label,
                     "calc_type": job.calc_type,
                     "execution_target": job.execution_target,
+                    **_job_row_parameters(document, job),
                     "cleaned_output_directory": cleaned_output_directory,
                 },
                 output_entity_ids=[job.id],
@@ -662,6 +693,7 @@ class ProjectService:
                     "job_label": job.label,
                     "calc_type": job.calc_type,
                     "execution_target": job.execution_target,
+                    **_job_row_parameters(document, job),
                     "preserved_remote_directory": remote_directory is not None,
                     "remote_directory": remote_directory,
                 },
@@ -695,6 +727,7 @@ class ProjectService:
                     "job_label": job.label,
                     "calc_type": job.calc_type,
                     "execution_target": job.execution_target,
+                    **_job_row_parameters(document, job),
                 },
                 output_entity_ids=[job.id],
                 job_id=job.id,
@@ -1925,6 +1958,8 @@ class ProjectService:
                 parameters={
                     "previous_host_structure_id": str(previous_id) if previous_id else None,
                     "new_host_structure_id": str(structure_id),
+                    "previous_host_structure_label": previous.label if previous else None,
+                    "new_host_structure_label": structure.label,
                 },
                 input_entity_ids=[previous_id] if previous_id else [],
                 output_entity_ids=[structure_id],

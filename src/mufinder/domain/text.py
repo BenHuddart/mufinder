@@ -24,6 +24,20 @@ def plural(n: int, singular: str, plural: str | None = None) -> str:
     return f"{n} {word}"
 
 
+#: ``Job.execution_target`` of a job run on the user's own computer; any other
+#: target is the name of a cluster from ``Setup > HPC Clusters``.
+LOCAL_EXECUTION_TARGET = "local"
+
+
+def execution_target_text(target: str | None) -> str:
+    """Return where a job runs, as text names it: ``"this computer"``, or the cluster's name."""
+
+    name = str(target or "").strip()
+    if not name or name.casefold() == LOCAL_EXECUTION_TARGET:
+        return "this computer"
+    return name
+
+
 _SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 
 

@@ -132,6 +132,15 @@ def muon_relaxation_calc_type(charge_state: str) -> str:
     )
 
 
+def muon_relaxation_charge_state(calc_type: str | None) -> str | None:
+    """Return the charge state a muon-relaxation ``calc_type`` runs in, or ``None`` for any other."""
+
+    for charge_state, relaxation_calc_type in MUON_RELAXATION_CALC_TYPES.items():
+        if calc_type == relaxation_calc_type:
+            return charge_state
+    return None
+
+
 def is_muon_relaxation_calc_type(calc_type: str) -> bool:
     """Return true for any CASTEP muon structural-relaxation calc type."""
 

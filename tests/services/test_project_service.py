@@ -1002,6 +1002,96 @@ def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) 
     assert reset.job_id == job.id
 
 
+def _bind_jobs(doc, stage: WorkflowStage, mapping: dict[str, Job]) -> None:
+    """Add a ``stage`` definition whose ``job_ids_by_label`` binds each key to its job."""
+
+    definition = CalculationDefinition(
+        workflow_stage=stage,
+        calc_type="definition",
+        parameters={"job_ids_by_label": {key: str(job.id) for key, job in mapping.items()}},
+    )
+    doc.calculations[definition.id] = definition
+
+
+def test_job_records_carry_the_charge_state_and_row_label_of_a_muon_relaxation(
+    tmp_path: Path,
+) -> None:
+    service, doc = _make_doc(tmp_path)
+    positive, muonium = (
+        service.add_job(
+            doc,
+            label=f"{prefix}_site_1",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type=f"castep_{prefix}_relaxation",
+        )
+        for prefix in ("positivemuon", "muonium")
+    )
+    _bind_jobs(
+        doc,
+        WorkflowStage.MUON_RELAXATION,
+        {"positivemuon:Site 1": positive, "muonium:Site 1": muonium},
+    )
+    for job in (positive, muonium):
+        service.submit_job(job)
+
+    service.record_job_submission(doc, jobs=[muonium], execution_target="local")
+    submitted = doc.provenance[-1].parameters
+    service.record_job_submission(doc, jobs=[positive, muonium], execution_target="local")
+    mixed = doc.provenance[-1].parameters
+    service.record_job_terminal_event(doc, action="job_completed", job=muonium)
+    completed = doc.provenance[-1].parameters
+    service.record_job_dismissed(doc, job=positive)
+    dismissed = doc.provenance[-1].parameters
+
+    assert submitted["charge_state"] == "muonium"
+    assert submitted["jobs"][0]["charge_state"] == "muonium"
+    assert submitted["jobs"][0]["row_label"] == "Site 1"
+    assert "charge_state" not in mixed
+    assert [job["charge_state"] for job in mixed["jobs"]] == ["positive_muon", "muonium"]
+    assert completed["charge_state"] == "muonium"
+    assert completed["row_label"] == "Site 1"
+    assert dismissed["charge_state"] == "positive_muon"
+
+
+def test_job_records_name_the_row_of_other_workflows_and_leave_out_a_charge_state(
+    tmp_path: Path,
+) -> None:
+    service, doc = _make_doc(tmp_path)
+    relax = service.add_job(
+        doc,
+        label="pristine_relax_relax_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    site = MuonSite(label="Attached-F Site 1")
+    doc.sites[site.id] = site
+    phonon = service.add_job(
+        doc,
+        label="quantum_phonon_Attached-F_Site_1",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type="castep_quantum_phonon",
+    )
+    unbound = service.add_job(
+        doc,
+        label="cutoff_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    _bind_jobs(doc, WorkflowStage.PRISTINE_RELAXATION, {"relax_1": relax})
+    _bind_jobs(doc, WorkflowStage.QUANTUM_CORRECTIONS, {f"{site.id}:muonium": phonon})
+
+    for job in (relax, phonon, unbound):
+        service.record_job_terminal_event(doc, action="job_completed", job=job)
+    relax_record, phonon_record, unbound_record = (
+        record.parameters for record in doc.provenance[-3:]
+    )
+
+    assert relax_record["row_label"] == "relax_1"
+    assert phonon_record["row_label"] == "Attached-F Site 1"
+    assert "row_label" not in unbound_record
+    assert not {"charge_state"} & {*relax_record, *phonon_record, *unbound_record}
+
+
 def test_lifecycle_transitions_do_not_append_intermediate_provenance(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "job_transition_no_log.mufinder", "JobTransitionNoLog")
@@ -2968,6 +3058,8 @@ def test_set_active_host_appends_provenance(tmp_path: Path) -> None:
     record = doc.provenance[-1]
     assert record.action == "set_active_host_structure"
     assert str(relaxed.id) in record.parameters.get("new_host_structure_id", "")
+    assert record.parameters["new_host_structure_label"] == "Relaxed"
+    assert record.parameters["previous_host_structure_label"] == original.label
 
 
 def test_set_active_host_rebinds_magnetic_structure(tmp_path: Path) -> None:

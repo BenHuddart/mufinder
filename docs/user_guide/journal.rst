@@ -45,17 +45,31 @@ Each entry carries a stamp: ``Milestone``, ``Completed``, ``Attention``, or
 ``Failed``. Entries tied to a workflow also name it (for example
 ``Cutoff Convergence`` or ``Muon Relaxations``).
 
+Entries use the names the rest of MuFinder shows. A calculation is named by
+its workflow and its row in that workflow's table (``pristine relaxation
+relax_1``, ``muonium relaxation Random Site 1``, ``phonon calculation for
+Attached-F Site 1``); a calculation whose record names no row, such as a
+convergence point, is named by its job name. Where it ran is ``this
+computer`` or the cluster's name, and a generation method is named as the
+``Generate Sites`` method picker names it.
+
 What the Journal includes
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The Journal highlights the major workflow milestones that are most useful for
 reconstructing what happened during a project, including:
 
-- structure import
-- workflow configuration for convergence, pristine relaxation, and UEP
-- adopted project defaults, including the functional a cutoff or k-point
-  default was converged with, any change to the project default XC
-  functional, and defaults entered or cleared by hand
+- structure import, and a change of the active host structure (naming the
+  structure)
+- workflow configuration for convergence, pristine relaxation, UEP, muon
+  relaxations (the number of relaxations in each charge state, for example
+  ``Prepared 14 muon relaxations for later submission (7 positive muon,
+  7 muonium).``), Quantum Corrections and Energy Barriers
+- adopted project defaults, including the convergence criterion they met
+  (for example ``energy within 0.001 eV/atom and max force within 0.05 eV/Å
+  of the finest cutoff``), the functional a cutoff or k-point default was
+  converged with, any change to the project default XC functional, and
+  defaults entered or cleared by hand
 - muon candidate generation, with the run's parameters in one line and its
   random seed (for example ``Random, 6 starts, ≥ 1.79 Å apart, ≥ 1.0 Å from
   atoms, P4₂/mnm (16 ops), seed 418273.``), an ``Attention`` entry when fewer
@@ -65,9 +79,14 @@ reconstructing what happened during a project, including:
   sites for relaxation, and removing generated sites
 - creating a relaxation analysis workspace, and applying a grouping to it (the
   number of distinct sites, the method, its tolerances and the space group)
-- calculation submission milestones and continuation runs
+- calculation submission milestones and continuation runs. A muon-relaxation
+  batch names its charge state (``Muon relaxations launched: muonium``), so a
+  positive-muon run and a muonium run of the same sites read differently
 - terminal calculation outcomes such as completed, failed, stopped, cancelled,
-  and reset
+  and reset, and calculations dismissed from the Job Dashboard. A muon
+  relaxation's outcome names its charge state (``Positive muon relaxation
+  completed``); a single calculation's total energy is given to 0.1 meV and
+  its largest force to three significant figures
 - comparison-table creation
 - import of legacy relaxations run outside MuFinder, and removal of imported
   relaxations

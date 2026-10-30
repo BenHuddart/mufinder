@@ -8,9 +8,14 @@ from pathlib import Path
 from typing import Iterable
 from uuid import UUID
 
+from mufinder.domain.charge_states import canonical_charge_state, muon_charge_state_label
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import MANUAL_DEFAULT_METHOD, ProvenanceRecord
-from mufinder.domain.text import plural
+from mufinder.domain.models import (
+    GENERATION_METHOD_LABELS,
+    MANUAL_DEFAULT_METHOD,
+    ProvenanceRecord,
+)
+from mufinder.domain.text import execution_target_text, plural
 from mufinder.services.generation_runs import generation_run_from_provenance, run_journal_line
 
 
@@ -63,6 +68,22 @@ _STAMP_LABELS = {
     "warning": "Attention",
     "danger": "Failed",
 }
+
+#: How a job of each workflow is named before its row label (``pristine
+#: relaxation relax_1``). A muon relaxation is named by its charge state when
+#: the record has one (``muonium relaxation Random Site 1``).
+_JOB_NOUNS: dict[WorkflowStage, str] = {
+    WorkflowStage.PRISTINE_RELAXATION: "pristine relaxation",
+    WorkflowStage.UEP: "UEP calculation",
+    WorkflowStage.MUON_RELAXATION: "muon relaxation",
+    WorkflowStage.QUANTUM_CORRECTIONS: "phonon calculation for",
+}
+
+
+def stamp_label(stamp_kind: str) -> str:
+    """Return the word a journal entry's stamp shows for ``stamp_kind``."""
+
+    return _STAMP_LABELS.get(stamp_kind, "Entry")
 
 
 def build_journal(project_name: str, records: Iterable[ProvenanceRecord]) -> JournalDocument:
@@ -195,6 +216,10 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "configure_convergence_kpoint": _configure_kpoint_entry,
         "configure_pristine_relaxation": _configure_pristine_relaxation_entry,
         "configure_uep": _configure_uep_entry,
+        "configure_muon_relaxation": _configure_muon_relaxation_entry,
+        "configure_quantum_corrections": _configure_quantum_corrections_entry,
+        "configure_energy_barriers": _configure_energy_barriers_entry,
+        "set_active_host_structure": _set_active_host_entry,
         "set_recommended_cutoff": _recommended_cutoff_entry,
         "set_recommended_kpoint_grid": _recommended_kpoint_entry,
         "set_recommended_xc_functional": _recommended_xc_functional_entry,
@@ -216,6 +241,7 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "job_cancelled": _job_cancelled_entry,
         "job_reset": _job_reset_entry,
         "job_continuation": _job_continuation_entry,
+        "job_dismissed": _job_dismissed_entry,
         "create_comparison_table": _create_comparison_table_entry,
     }
     builder = mapping.get(record.action)
@@ -392,6 +418,54 @@ def _configure_uep_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
+def _configure_muon_relaxation_entry(record: ProvenanceRecord) -> JournalEntry:
+    configuration = record.parameters.get("configuration")
+    rows = configuration.get("rows") if isinstance(configuration, dict) else None
+    rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    charge_counts: dict[str, int] = {}
+    for row in rows:
+        label = muon_charge_state_label(str(row.get("charge_state") or ""))
+        charge_counts[label] = charge_counts.get(label, 0) + 1
+    body = f"Prepared {plural(len(rows), 'muon relaxation')} for later submission"
+    if charge_counts:
+        body += " (" + ", ".join(f"{count} {label}" for label, count in charge_counts.items()) + ")"
+    return _entry(
+        record, stamp_kind="milestone", title="Muon relaxations configured", body=f"{body}."
+    )
+
+
+def _configure_quantum_corrections_entry(record: ProvenanceRecord) -> JournalEntry:
+    count = _count_sequence(record, "configuration", "sources")
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Quantum Corrections configured",
+        body=f"Prepared phonon calculations for {plural(count, 'relaxed muon site')}.",
+    )
+
+
+def _configure_energy_barriers_entry(record: ProvenanceRecord) -> JournalEntry:
+    count = _count_sequence(record, "configuration", "sources")
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Energy Barriers configured",
+        body=f"Prepared NEB calculations for {plural(count, 'path')}.",
+    )
+
+
+def _set_active_host_entry(record: ProvenanceRecord) -> JournalEntry:
+    label = _text_param(record, "new_host_structure_label")
+    if label is None:
+        # Records written before the labels were recorded keep them in the description.
+        body = record.description.rstrip(".") + "."
+    else:
+        previous = _text_param(record, "previous_host_structure_label")
+        body = f"Made '{label}' the active host structure"
+        body += f" in place of '{previous}'." if previous else "."
+    return _entry(record, stamp_kind="milestone", title="Active host changed", body=body)
+
+
 def _recommended_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
     value = record.parameters.get("recommended_cutoff_energy")
     method = _text_param(record, "recommended_cutoff_method")
@@ -408,7 +482,8 @@ def _recommended_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
         title="Recommended cutoff adopted",
         body=(
             f"Set the project default cutoff to {float(value):.8g} eV"
-            f"{_converged_with_text(record, 'recommended_cutoff_xc_functional')}."
+            f"{_converged_with_text(record, 'recommended_cutoff_xc_functional')}"
+            f"{_criterion_text(record, 'recommended_cutoff', 'the finest cutoff')}."
         ),
     )
 
@@ -434,9 +509,41 @@ def _recommended_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
         title="Recommended k-point grid adopted",
         body=(
             f"Set the project default k-point grid to {grid_text}"
-            f"{_converged_with_text(record, 'recommended_kpoint_xc_functional')}."
+            f"{_converged_with_text(record, 'recommended_kpoint_xc_functional')}"
+            f"{_criterion_text(record, 'recommended_kpoint', 'the densest grid')}."
         ),
     )
+
+
+def _criterion_text(record: ProvenanceRecord, prefix: str, reference: str) -> str:
+    """Name the convergence criterion a default was adopted under, from its tolerances.
+
+    Each quantity in use is converged within its tolerance of the sweep's
+    reference point (the finest cutoff, or the densest k-point grid). Empty when
+    the record holds no tolerance.
+    """
+
+    parts: list[str] = []
+    for key, quantity, unit in (
+        ("energy_threshold", "energy", "eV/atom"),
+        ("force_threshold", "max force", "eV/Å"),
+        ("stress_threshold", "max stress", "GPa"),
+    ):
+        value = _float_param(record, f"{prefix}_{key}")
+        if value is not None:
+            parts.append(f"{quantity} within {value:g} {unit}")
+    if not parts:
+        return ""
+    joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return f": {joined} of {reference}"
+
+
+def _float_param(record: ProvenanceRecord, key: str) -> float | None:
+    value = record.parameters.get(key)
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _cleared_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
@@ -486,8 +593,9 @@ def _generate_candidates_entry(record: ProvenanceRecord) -> JournalEntry:
     else:
         # Records written before generation runs were recorded keep only the request.
         count = len(record.output_entity_ids)
-        method = _text_param(record, "method") or "configured method"
-        body = f"Generated {plural(count, 'muon site')} using {method}."
+        method = GENERATION_METHOD_LABELS.get(_text_param(record, "method") or "")
+        method_text = f" with '{method}'" if method else ""
+        body = f"Generated {plural(count, 'muon site')}{method_text}."
     return _entry(record, stamp_kind="milestone", title="Muon sites generated", body=body)
 
 
@@ -610,40 +718,90 @@ def _promote_uep_candidate_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
+def _charge_state_text(value: object) -> str | None:
+    """Return a recorded muon charge state as text names it, or ``None`` when there is none."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return muon_charge_state_label(canonical_charge_state(value) or value)
+
+
+def _job_description(
+    record: ProvenanceRecord,
+    parameters: dict | None = None,
+    *,
+    sentence_start: bool = False,
+) -> str:
+    """Name a job by its workflow and row label (``pristine relaxation relax_1``).
+
+    ``parameters`` are the job's recorded fields (the record's own by default).
+    A muon relaxation is named by its charge state. Records without a row label
+    (older records, and workflows whose rows are not named) give the job's label.
+    """
+
+    fields = record.parameters if parameters is None else parameters
+    row_label = str(fields.get("row_label") or "").strip()
+    if not row_label:
+        return str(fields.get("job_label") or fields.get("label") or "").strip() or "a calculation"
+    charge = _charge_state_text(fields.get("charge_state"))
+    if charge is not None:
+        noun = f"{charge} relaxation"
+    elif record.workflow_stage is not None:
+        noun = _JOB_NOUNS.get(record.workflow_stage, "calculation")
+    else:
+        noun = "calculation"
+    description = f"{noun} {row_label}"
+    return description[:1].upper() + description[1:] if sentence_start else description
+
+
+def _target_text(record: ProvenanceRecord) -> str:
+    return execution_target_text(_text_param(record, "execution_target"))
+
+
 def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
+    raw_jobs = record.parameters.get("jobs")
+    jobs = [job for job in raw_jobs if isinstance(job, dict)] if isinstance(raw_jobs, list) else []
     labels = record.parameters.get("job_labels")
     count = len(labels) if isinstance(labels, list) else _int_param(record, "job_count") or 0
-    target = _text_param(record, "execution_target") or "local"
+    if jobs:
+        labels = [job.get("row_label") or job.get("label") or "" for job in jobs]
     label_text = _label_summary(labels)
-    body = f"Submitted {plural(count, 'job')} to {target}."
-    if label_text:
-        body += f" Jobs: {label_text}."
-    return _entry(
-        record,
-        stamp_kind="milestone",
-        title="Calculations launched",
-        body=body,
+    body = f"Submitted {plural(count, 'job')} to run on {_target_text(record)}"
+    body += f": {label_text}." if label_text else "."
+
+    charges: list[str] = []
+    for value in [
+        record.parameters.get("charge_state"),
+        *(job.get("charge_state") for job in jobs),
+    ]:
+        charge = _charge_state_text(value)
+        if charge is not None and charge not in charges:
+            charges.append(charge)
+    title = (
+        f"Muon relaxations launched: {' and '.join(charges)}"
+        if charges
+        else "Calculations launched"
     )
+    return _entry(record, stamp_kind="milestone", title=title, body=body)
 
 
 def _job_completed_entry(record: ProvenanceRecord) -> JournalEntry:
-    return _terminal_job_entry(record, stamp_kind="success", title="Calculation completed")
+    return _terminal_job_entry(record, stamp_kind="success", outcome="completed")
 
 
 def _job_failed_entry(record: ProvenanceRecord) -> JournalEntry:
-    return _terminal_job_entry(record, stamp_kind="danger", title="Calculation failed")
+    return _terminal_job_entry(record, stamp_kind="danger", outcome="failed")
 
 
 def _job_stopped_entry(record: ProvenanceRecord) -> JournalEntry:
-    return _terminal_job_entry(record, stamp_kind="warning", title="Calculation stopped")
+    return _terminal_job_entry(record, stamp_kind="warning", outcome="stopped")
 
 
 def _job_cancelled_entry(record: ProvenanceRecord) -> JournalEntry:
-    return _terminal_job_entry(record, stamp_kind="warning", title="Calculation cancelled")
+    return _terminal_job_entry(record, stamp_kind="warning", outcome="cancelled")
 
 
 def _job_reset_entry(record: ProvenanceRecord) -> JournalEntry:
-    job_label = _text_param(record, "job_label") or "job"
     clean_text = (
         " and cleaned its directory"
         if bool(record.parameters.get("cleaned_output_directory"))
@@ -653,12 +811,11 @@ def _job_reset_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="milestone",
         title="Calculation reset",
-        body=f"Reset {job_label} back to the ready-to-submit state{clean_text}.",
+        body=f"Reset {_job_description(record)} back to the ready-to-submit state{clean_text}.",
     )
 
 
 def _job_continuation_entry(record: ProvenanceRecord) -> JournalEntry:
-    job_label = _text_param(record, "job_label") or "job"
     directory = _text_param(record, "remote_directory")
     preserved = bool(record.parameters.get("preserved_remote_directory")) and bool(directory)
     reuse_text = f" reusing {directory}" if preserved else ""
@@ -666,7 +823,16 @@ def _job_continuation_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="milestone",
         title="Calculation continued",
-        body=f"Queued {job_label} for a continuation run{reuse_text}.",
+        body=f"Queued {_job_description(record)} for a continuation run{reuse_text}.",
+    )
+
+
+def _job_dismissed_entry(record: ProvenanceRecord) -> JournalEntry:
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Calculation dismissed",
+        body=f"Dismissed {_job_description(record)} from the Job Dashboard.",
     )
 
 
@@ -681,30 +847,26 @@ def _create_comparison_table_entry(record: ProvenanceRecord) -> JournalEntry:
     )
 
 
-def _terminal_job_entry(record: ProvenanceRecord, *, stamp_kind: str, title: str) -> JournalEntry:
-    job_label = _text_param(record, "job_label") or "job"
-    target = _text_param(record, "execution_target") or "local"
+def _terminal_job_entry(record: ProvenanceRecord, *, stamp_kind: str, outcome: str) -> JournalEntry:
+    charge = _charge_state_text(record.parameters.get("charge_state"))
+    title = f"{charge.capitalize()} relaxation {outcome}" if charge else f"Calculation {outcome}"
     summary = _job_summary_text(record)
-    body = f"{job_label} finished on {target}."
+    body = f"{_job_description(record, sentence_start=True)} finished on {_target_text(record)}."
     if summary:
         body += f" {summary}"
     return _entry(record, stamp_kind=stamp_kind, title=title, body=body)
 
 
 def _job_summary_text(record: ProvenanceRecord) -> str:
+    """The job's results: its total energy to 0.1 meV and its max force to 3 significant figures."""
+
     parts: list[str] = []
-    total_energy = record.parameters.get("result_total_energy")
+    total_energy = _float_param(record, "result_total_energy")
     if total_energy is not None:
-        try:
-            parts.append(f"Total energy {float(total_energy):.8g} eV.")
-        except (TypeError, ValueError):
-            pass
-    max_force = record.parameters.get("result_max_force")
+        parts.append(f"Total energy {total_energy:.4f} eV.")
+    max_force = _float_param(record, "result_max_force")
     if max_force is not None:
-        try:
-            parts.append(f"Max force {float(max_force):.8g} eV/Ang.")
-        except (TypeError, ValueError):
-            pass
+        parts.append(f"Max force {max_force:.3g} eV/Å.")
     derived_count = _int_param(record, "derived_structure_count")
     if derived_count:
         parts.append(f"Produced {plural(derived_count, 'derived structure')}.")
@@ -737,4 +899,4 @@ def _label_summary(value: object) -> str:
 
 
 def _stamp_prefix(stamp_kind: str) -> str:
-    return f"[{_STAMP_LABELS.get(stamp_kind, 'Entry')}]"
+    return f"[{stamp_label(stamp_kind)}]"

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from mufinder.domain.charge_states import MUON_RELAXATION_JOB_PREFIXES
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -144,3 +145,54 @@ def job_for_mapping_key(
     if job is None or (calc_type is not None and job.calc_type != calc_type):
         return None
     return job
+
+
+#: Workflows whose definitions bind jobs to named rows through ``job_ids_by_label``.
+#: Quantum Corrections keys its rows by the relaxed site's id (and, for a second
+#: charge state, ``"{site id}:{prefix}"``), so its row is named by the site.
+_LABELLED_ROW_STAGES = frozenset(
+    {
+        WorkflowStage.PRISTINE_RELAXATION,
+        WorkflowStage.UEP,
+        WorkflowStage.MUON_RELAXATION,
+        WorkflowStage.QUANTUM_CORRECTIONS,
+    }
+)
+
+
+def job_row_label(document: ProjectDocument, job: Job) -> str | None:
+    """Return the label of the workflow row that owns ``job``, as the workflow's table shows it.
+
+    Read from the ``job_ids_by_label`` mapping of the job's workflow
+    definitions: a muon-relaxation key's charge-state prefix is dropped, and a
+    Quantum Corrections key names the relaxed site, whose label is returned.
+    ``None`` when no definition binds the job, or for a workflow whose rows are
+    not named (the convergence sweeps, Energy Barriers).
+    """
+
+    if job.workflow_stage not in _LABELLED_ROW_STAGES:
+        return None
+    job_key = str(job.id)
+    for definition in definitions_for_stage(document, job.workflow_stage):
+        mapping = definition.parameters.get("job_ids_by_label")
+        if not isinstance(mapping, dict):
+            continue
+        for key, raw_job_id in mapping.items():
+            if str(raw_job_id) == job_key:
+                return _row_label_from_key(document, str(key))
+    return None
+
+
+def _row_label_from_key(document: ProjectDocument, key: str) -> str | None:
+    prefixes = set(MUON_RELAXATION_JOB_PREFIXES.values())
+    head, separator, tail = key.partition(":")
+    if separator and head in prefixes:
+        key = tail
+    elif separator and tail in prefixes:
+        key = head
+    try:
+        site_id = UUID(key)
+    except ValueError:
+        return key.strip() or None
+    site = document.sites.get(site_id)
+    return site.label if site is not None and site.label else None

@@ -29,11 +29,10 @@ from mufinder.castep_io.cell_parser import CellParseError, ParsedCell, parse_cel
 from mufinder.castep_io.param_parser import parse_param_assignments, run_is_spin_polarized
 from mufinder.domain.charge_states import (
     MUONIUM_CHARGE_STATE,
-    POSITIVE_MUON_CHARGE_STATE,
     canonical_charge_state,
     muon_charge_state_label,
     muon_charge_state_prefix,
-    muon_relaxation_calc_type,
+    muon_relaxation_charge_state,
 )
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
@@ -250,13 +249,7 @@ def float_from_source(source: Mapping[str, object], key: str) -> float | None:
 def charge_state_for_job(job: Job | None) -> str | None:
     """Return the muon charge state a muon-relaxation job ran in, if any."""
 
-    if job is None:
-        return None
-    if job.calc_type == muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE):
-        return POSITIVE_MUON_CHARGE_STATE
-    if job.calc_type == muon_relaxation_calc_type(MUONIUM_CHARGE_STATE):
-        return MUONIUM_CHARGE_STATE
-    return None
+    return None if job is None else muon_relaxation_charge_state(job.calc_type)
 
 
 def charge_state_label_for_job(job: Job | None) -> str:
