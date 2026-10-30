@@ -10,8 +10,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -19,7 +17,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QTableWidgetItem,
     QToolButton,
     QVBoxLayout,
@@ -27,215 +24,19 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app import workflow_table_utils
-from mufinder.app.comparison_export import export_comparison_csv
-from mufinder.app.math_label import MathLabel
-from mufinder.app.theme import adjust_font_size, style_section_title
+from mufinder.app.comparison_export import export_comparison_csv, table_metric_definitions
+from mufinder.app.theme import adjust_font_size
 from mufinder.app.workflow_table_utils import create_workflow_table
+from mufinder.branding import DOCUMENTATION_URL
 from mufinder.domain.models import ComparisonTable
-from mufinder.science.structure_metrics import metric_definitions
+from mufinder.science.structure_metrics import MetricDefinition
 
-
-_METRIC_REGISTRY = {definition.key: definition for definition in metric_definitions()}
-
-
-def _definition_text(definition: dict, key: str) -> str:
-    value = definition.get(key, "")
-    return str(value).strip() if value is not None else ""
-
-
-def _definition_symbols(definition: dict) -> list[tuple[str, str]]:
-    raw_symbols = definition.get("symbols", [])
-    if not isinstance(raw_symbols, list):
-        return []
-
-    symbols: list[tuple[str, str]] = []
-    for entry in raw_symbols:
-        if isinstance(entry, dict):
-            symbol = str(entry.get("symbol", "")).strip()
-            meaning = str(entry.get("meaning", "")).strip()
-        elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
-            symbol = str(entry[0]).strip()
-            meaning = str(entry[1]).strip()
-        else:
-            continue
-        if symbol and meaning:
-            symbols.append((symbol, meaning))
-    return symbols
-
-
-def _merge_metric_definition(definition: dict) -> dict:
-    key = _definition_text(definition, "key")
-    base = _METRIC_REGISTRY.get(key)
-    if base is None:
-        return dict(definition)
-
-    merged = {
-        "key": base.key,
-        "label": base.label,
-        "unit": base.unit,
-        "group": base.group,
-        "meaning": base.meaning,
-        "calculation": base.calculation,
-        "interpretation": base.interpretation,
-        "caveats": base.caveats,
-        "physics": base.physics,
-        "method": base.method,
-        "equation": base.equation,
-        "symbols": [{"symbol": symbol, "meaning": meaning} for symbol, meaning in base.symbols],
-    }
-    merged.update(definition)
-    return merged
-
-
-def _metric_help_sections(definition: dict) -> list[tuple[str, str]]:
-    definition = _merge_metric_definition(definition)
-    return [
-        ("Meaning", _definition_text(definition, "meaning")),
-        ("Physics", _definition_text(definition, "physics")),
-        ("Implementation Summary", _definition_text(definition, "calculation")),
-        ("Method", _definition_text(definition, "method")),
-        ("Interpretation", _definition_text(definition, "interpretation")),
-        ("Caveats", _definition_text(definition, "caveats")),
-    ]
-
-
-def _metric_help_summary_lines(definition: dict) -> list[str]:
-    definition = _merge_metric_definition(definition)
-    lines: list[str] = []
-    group = _definition_text(definition, "group")
-    unit = _definition_text(definition, "unit")
-    if group:
-        lines.append(f"Group: {group}")
-    if unit:
-        lines.append(f"Unit: {unit}")
-    return lines
-
-
-def _build_metric_help_plain_text(definition: dict) -> str:
-    definition = _merge_metric_definition(definition)
-    lines = _metric_help_summary_lines(definition)
-    equation = _definition_text(definition, "equation")
-    symbols = _definition_symbols(definition)
-
-    for title, body in _metric_help_sections(definition):
-        if body:
-            if lines:
-                lines.append("")
-            lines.append(title)
-            lines.append(body)
-
-    if equation:
-        if lines:
-            lines.append("")
-        lines.append("Equation")
-        lines.append(equation)
-
-    if symbols:
-        if lines:
-            lines.append("")
-        lines.append("Symbols")
-        for symbol, meaning in symbols:
-            lines.append(f"- {symbol}: {meaning}")
-
-    return "\n".join(lines)
-
-
-def _create_help_paragraph(text: str, parent: QWidget) -> QLabel:
-    label = QLabel(text, parent)
-    label.setWordWrap(True)
-    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    return label
-
-
-def _create_symbol_row(symbol: str, meaning: str, parent: QWidget) -> QWidget:
-    row = QWidget(parent)
-    layout = QHBoxLayout(row)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(8)
-
-    bullet = QLabel("•", row)
-    bullet.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-    bullet.setFixedWidth(12)
-    layout.addWidget(bullet, 0, Qt.AlignmentFlag.AlignTop)
-
-    symbol_widget = MathLabel(symbol, display_mode=False, parent=row)
-    symbol_widget.setObjectName("metricSymbolLabel")
-    layout.addWidget(symbol_widget, 0, Qt.AlignmentFlag.AlignTop)
-
-    meaning_label = _create_help_paragraph(meaning, row)
-    layout.addWidget(meaning_label, 1)
-    return row
-
-
-class ComparisonMetricHelpDialog(QDialog):
-    """Read-only dialog describing one comparison metric."""
-
-    def __init__(self, definition: dict, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        definition = _merge_metric_definition(definition)
-        title_text = _definition_text(definition, "label") or "Metric"
-        self.setWindowTitle(title_text)
-        self.resize(680, 560)
-
-        layout = QVBoxLayout(self)
-
-        title = QLabel(title_text)
-        style_section_title(title)
-        layout.addWidget(title)
-
-        scroll = QScrollArea(self)
-        scroll.setObjectName("metricHelpScrollArea")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-
-        content = QWidget(scroll)
-        content.setObjectName("metricHelpContent")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(12)
-
-        for line in _metric_help_summary_lines(definition):
-            summary_label = _create_help_paragraph(line, content)
-            summary_label.setObjectName("metricSummaryLabel")
-            content_layout.addWidget(summary_label)
-
-        for title_text, body_text in _metric_help_sections(definition):
-            if not body_text:
-                continue
-            section_title = QLabel(title_text, content)
-            style_section_title(section_title)
-            content_layout.addWidget(section_title)
-            content_layout.addWidget(_create_help_paragraph(body_text, content))
-
-        equation = _definition_text(definition, "equation")
-        if equation:
-            equation_title = QLabel("Equation", content)
-            style_section_title(equation_title)
-            content_layout.addWidget(equation_title)
-
-            equation_label = MathLabel(equation, display_mode=True, parent=content)
-            equation_label.setObjectName("metricEquationLabel")
-            content_layout.addWidget(equation_label, 0, Qt.AlignmentFlag.AlignLeft)
-
-        symbols = _definition_symbols(definition)
-        if symbols:
-            symbols_title = QLabel("Symbols", content)
-            style_section_title(symbols_title)
-            content_layout.addWidget(symbols_title)
-            for symbol, meaning in symbols:
-                content_layout.addWidget(_create_symbol_row(symbol, meaning, content))
-
-        content_layout.addStretch(1)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+# The user-guide page that explains the comparison metrics.
+COMPARISON_METRICS_URL = f"{DOCUMENTATION_URL}user_guide/comparison_table.html"
 
 
 class ComparisonTableWidget(QWidget):
-    """Display one persisted comparison table with metric help and export/delete actions."""
+    """Display one persisted comparison table with export, rename and delete actions."""
 
     delete_requested = Signal(object)
     title_changed = Signal(object, str)
@@ -331,6 +132,20 @@ class ComparisonTableWidget(QWidget):
             accessible_name="Comparison Table",
         )
 
+        self._about_link = QLabel(
+            f'<a href="{COMPARISON_METRICS_URL}">About these metrics</a>', self
+        )
+        self._about_link.setObjectName("comparisonMetricsAboutLink")
+        self._about_link.setTextFormat(Qt.TextFormat.RichText)
+        self._about_link.setOpenExternalLinks(True)
+        # Reachable with Tab and opened with Enter as well as by a click.
+        self._about_link.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+        )
+        self._about_link.setAccessibleName("About these metrics")
+        self._about_link.setToolTip("Open the user guide's description of the comparison metrics.")
+
         self._export_button = QPushButton("Export CSV…")
         self._delete_button = QPushButton("Delete")
 
@@ -358,6 +173,7 @@ class ComparisonTableWidget(QWidget):
         header = QHBoxLayout()
         header.addWidget(self._title_edit)
         header.addStretch(1)
+        header.addWidget(self._about_link)
         header.addWidget(self._export_button)
         header.addWidget(self._delete_button)
         root.addLayout(header)
@@ -383,7 +199,6 @@ class ComparisonTableWidget(QWidget):
 
     def _populate_table(self) -> None:
         payload = self._table.result_data
-        definitions = payload.get("metric_definitions", [])
         dft_columns = payload.get("dft_columns", [])
         experimental_values = payload.get("experimental_values", {})
 
@@ -396,12 +211,9 @@ class ComparisonTableWidget(QWidget):
         ]
         self._grid.setHorizontalHeaderLabels(headers)
 
-        grouped: "OrderedDict[str, list[dict]]" = OrderedDict()
-        for definition in definitions:
-            if not isinstance(definition, dict):
-                continue
-            group = str(definition.get("group", "Metrics"))
-            grouped.setdefault(group, []).append(definition)
+        grouped: "OrderedDict[str, list[MetricDefinition]]" = OrderedDict()
+        for definition in table_metric_definitions(self._table):
+            grouped.setdefault(definition.group, []).append(definition)
 
         self._grid.setRowCount(0)
         self._parameter_diff_rows = []
@@ -451,9 +263,9 @@ class ComparisonTableWidget(QWidget):
             for definition in metrics:
                 metric_row = self._grid.rowCount()
                 self._grid.insertRow(metric_row)
-                self._set_metric_header_cell(metric_row, definition)
+                self._grid.setItem(metric_row, 0, self._metric_label_item(definition))
 
-                key = str(definition.get("key", ""))
+                key = definition.key
                 experimental = experimental_values.get(key, {})
                 exp_display = ""
                 if isinstance(experimental, dict):
@@ -522,31 +334,14 @@ class ComparisonTableWidget(QWidget):
         )
         self._parameter_diff_toggle.blockSignals(False)
 
-    def _set_metric_header_cell(self, row: int, definition: dict) -> None:
-        container = QWidget(self._grid)
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(4, 1, 4, 1)
-        layout.setSpacing(6)
-
-        label = str(definition.get("label", ""))
-        unit = str(definition.get("unit", "")).strip()
-        text = label if not unit else f"{label} ({unit})"
-        text_label = QLabel(text, container)
-        text_label.setWordWrap(True)
-
-        info_button = QPushButton("Info", container)
-        info_button.setMaximumWidth(52)
-        info_button.clicked.connect(
-            lambda _checked=False, definition=definition: self._show_metric_info(definition)
+    @staticmethod
+    def _metric_label_item(definition: MetricDefinition) -> QTableWidgetItem:
+        text = (
+            definition.label if not definition.unit else f"{definition.label} ({definition.unit})"
         )
-
-        layout.addWidget(text_label, 1)
-        layout.addWidget(info_button)
-        self._grid.setCellWidget(row, 0, container)
-
-    def _show_metric_info(self, definition: dict) -> None:
-        dialog = ComparisonMetricHelpDialog(definition, parent=self)
-        dialog.exec()
+        item = QTableWidgetItem(text)
+        item.setToolTip(definition.meaning)
+        return item
 
     def _set_parameter_diff_visibility(self, visible: bool) -> None:
         self._parameter_diff_expanded = visible

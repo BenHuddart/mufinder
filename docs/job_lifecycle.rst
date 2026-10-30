@@ -774,7 +774,8 @@ staleness reason. Actions are enabled as follows:
   duplicate scheduler job, moving the job back to ``retrieving`` under a
   fresh ``CalculationRun``.
 - ``Cancel``: ``submitting``, ``queued``, ``running``, and ``retrieving``.
-- ``Inspect``: ``failed`` and ``stopped`` (failure diagnostics), and ``running``
+- ``Inspect``: ``failed`` and ``stopped`` (the failed-job dialog, see
+  :ref:`job-failure-reasons`), and ``running``
   pristine and muon relaxations (the geometry-optimisation progress dialog; see
   :ref:`geometry-optimisation-progress`). On a mixed selection each job gets the
   view that fits it.

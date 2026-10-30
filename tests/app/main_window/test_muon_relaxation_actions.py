@@ -22,6 +22,7 @@ from mufinder.domain.models import (
     Structure,
 )
 from mufinder.services.project_service import ProjectService
+from mufinder.services.failure_diagnosis import failure_log_files
 from mufinder.app.workflow_config_codecs import (
     deserialize_muon_relaxation_config,
     serialize_muon_relaxation_config,
@@ -122,7 +123,7 @@ def test_main_window_muon_cluster_job_recovers_seed_from_remote_directory(
     )
     (output_dir / "castep.mpi-703535.out").write_text("scheduler error\n", encoding="utf-8")
 
-    candidates = window._error_file_candidates(job, output_dir)
+    candidates = failure_log_files(job, output_dir, window._job_seed_name(job))
 
     assert window._job_output_directory(job) == output_dir
     assert window._job_seed_name(job) == "positivemuon_Random_Site_20"

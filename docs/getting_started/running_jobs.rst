@@ -455,13 +455,38 @@ with no recognised cause shows ``failed`` and its message, and points to
 ``Inspect``.
 
 To read the diagnosis, select the job and click ``Inspect`` (``Inspect
-Failure`` in a workflow table's right-click menu). ``Failed job diagnostics``
-opens with one line per job stating the cause, and its details start each job
-with ``Cause:`` and, when a log shows it, the ``Evidence`` line and the file it
-came from, before the raw log excerpts. ``Inspect`` discovers the error files
-in the job's output directory (``<seed>.err``, ``<seed>.NNNN.err`` and
-scheduler ``slurm-*.out`` files) and shows context excerpts around the failure
-lines.
+Failure`` in a workflow table's right-click menu). The ``Failed job`` dialog
+opens with a headline saying why the job did not finish:
+
+1. the recognised cause, from the table below, when there is one;
+2. otherwise the message the local runner or the scheduler recorded, for
+   example ``CASTEP exited with status 1: SCF cycles did not converge``;
+3. otherwise ``No cause found in the logs.``
+
+Under the headline are the recorded message (when it is not the headline), the
+log line that shows the cause and the file it came from (``From
+slurm-4242.out: …``), and a note when the job's output folder no longer exists,
+in which case the recorded message is all there is. ``Log excerpt`` expands the
+context around the failure lines of each error file in the output folder
+(``<seed>.err``, ``<seed>.NNNN.err`` and scheduler ``slurm-*.out`` files).
+
+The dialog's buttons act on the job directly:
+
+- ``Resubmit…`` runs the dashboard's ``Resubmit``, including its
+  continue-or-start-again question for relaxations (see
+  :ref:`resubmit-continue-or-start-again`).
+- ``Continue relaxation…`` (a pristine or muon relaxation whose row can be
+  continued) opens the row's ``Continue relaxation…`` dialog, to change its
+  parameters before resuming.
+- ``Open Folder`` (when the output folder exists) shows the folder in the file
+  manager and keeps the dialog open.
+- ``Close`` does nothing further.
+
+With several jobs selected, the dialog is ``Failed jobs``: each headline is
+followed by one line per job that has it, ``Log excerpt`` holds each job's
+notes and excerpts under its name, and ``Resubmit…`` resubmits them all. ``Continue relaxation…`` and
+``Open Folder`` act on one job, so they are offered only when one job is
+selected.
 
 The cause is recorded when the job fails or stops, from the failure message and
 the job's logs in its local output directory: the scheduler's ``*-<id>.out``
@@ -524,7 +549,17 @@ resubmitted into its own run directory resumes from the ``{seed}.check`` file
 the previous run left there, and starts from its initial structure when there
 is none. When ``Resubmit`` includes pristine or muon relaxations, MuFinder
 therefore asks once for the whole selection, in ``Resubmit relaxations``,
-before the submission dialog:
+before the submission dialog.
+
+Before that question, ``Resubmit`` checks what the submission needs. Local jobs
+need a CASTEP executable: without one, ``CASTEP executable missing`` offers
+``Open Setup > CASTEP…``, and the resubmission goes on once an executable is
+set there. Cluster jobs need a configured cluster: without one, ``No configured
+clusters`` offers ``Open Setup > HPC Clusters…`` in the same way. Cancelling
+either leaves those jobs out and resubmits the rest. The keyword-catalog
+warning (see :doc:`/castep_keyword_catalog`) also comes before the question;
+cancelling it resubmits nothing.
+The same prompts guard every local and cluster submission. Then:
 
 1. Read the ``Causes`` line, which summarises the recorded causes.
 2. Choose ``Continue from the checkpoint`` or ``Start again from the initial
