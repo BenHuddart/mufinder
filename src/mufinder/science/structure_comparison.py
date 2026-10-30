@@ -11,11 +11,9 @@ from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.atom_matching import AtomMatching, match_structures
 from mufinder.science.structure_metrics import (
-    MetricDefinition,
     MetricValue,
     dft_metric_values,
     experimental_metric_values,
-    metric_definitions,
 )
 from mufinder.science.supercell_matching import NormalizedStructurePair, normalize_for_comparison
 
@@ -45,7 +43,6 @@ class DftComparisonColumn:
 class ComparisonResult:
     """Complete comparison payload for table rendering."""
 
-    definitions: tuple[MetricDefinition, ...]
     experimental_values: dict[str, MetricValue]
     dft_columns: tuple[DftComparisonColumn, ...]
     warnings: tuple[str, ...] = ()
@@ -73,7 +70,6 @@ def compare_structures(
     if not dft_structures:
         raise ValueError("At least one DFT structure is required for comparison.")
 
-    definitions = metric_definitions()
     reference_values = experimental_metric_values(experimental_structure)
 
     columns: list[DftComparisonColumn] = []
@@ -108,7 +104,6 @@ def compare_structures(
         )
 
     return ComparisonResult(
-        definitions=definitions,
         experimental_values=reference_values,
         dft_columns=tuple(columns),
         warnings=tuple(warnings),

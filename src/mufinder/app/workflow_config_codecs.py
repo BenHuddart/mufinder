@@ -191,6 +191,23 @@ def deserialize_pristine_relaxation_config(payload: object) -> PristineRelaxatio
     )
 
 
+def normalized_parameter_values(values: Mapping[str, object]) -> object:
+    """Parameter values in the JSON form they are stored in, for comparing two rows."""
+
+    return to_jsonable({str(name): value for name, value in values.items()})
+
+
+def pristine_relaxation_row_signature(row: PristineRelaxationRow) -> tuple[object, ...]:
+    """The stored settings of a row: two rows that match run the same job."""
+
+    return (
+        bool(row.fix_all_cell),
+        normalized_supercell_matrix(row.supercell_matrix),
+        normalized_parameter_values(row.parameter_values),
+        tuple(str(name) for name in row.added_advanced),
+    )
+
+
 def serialize_muon_relaxation_config(config: MuonRelaxationConfig) -> dict[str, object]:
     """Return the stored mapping for a muon-relaxation configuration."""
 

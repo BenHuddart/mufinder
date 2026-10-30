@@ -1,4 +1,4 @@
-"""Configuration-driven metric definitions for structure comparison."""
+"""The metrics of the structure comparison table and how their values are computed."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import numpy as np
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import AtomMatching
 from mufinder.science.kpoint_grids import lattice_parameters
-from mufinder.science.spglib_compat import SYMMETRY_TOLERANCE_ANG
 from mufinder.science.supercell_matching import host_cell_lattice
 from mufinder.science.symmetry_analysis import (
     SpaceGroupResult,
@@ -23,20 +22,13 @@ from mufinder.science.symmetry_analysis import (
 
 @dataclass(frozen=True, slots=True)
 class MetricDefinition:
-    """One table metric definition."""
+    """One row of the comparison table; the method behind it is in the user guide."""
 
     key: str
     label: str
     unit: str
     group: str
-    meaning: str
-    calculation: str
-    interpretation: str
-    caveats: str
-    physics: str = ""
-    method: str = ""
-    equation: str = ""
-    symbols: tuple[tuple[str, str], ...] = ()
+    tooltip: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,278 +40,83 @@ class MetricValue:
     warning: str | None = None
 
 
-_LATTICE_METHOD = (
-    "Read per host cell. When the DFT cell is a detected integer supercell M of the experimental "
-    "cell, its lattice is reduced to the host cell as M^-1 L_DFT before the parameters are read, "
-    "so every column compares like with like. These quantities are read directly from the "
-    "lattice rather than from a fitted strain tensor."
-)
-
-_MATCHING_METHOD = (
-    "Atoms are matched after optional supercell normalization. Matching is performed separately "
-    "within each chemical species by minimizing the periodic minimum-image distance matrix with a "
-    "Hungarian assignment. Displacements therefore depend on both periodic wrapping and the matched "
-    "atom correspondence."
-)
-
-_SYMMETRY_METHOD = (
-    "Space groups are identified with spglib on the normalized comparison structures, using "
-    f"symprec = {SYMMETRY_TOLERANCE_ANG:g} Å, and compared by their international numbers."
-)
-
-
-def _build_metric_info_sections(definition: MetricDefinition) -> list[tuple[str, str]]:
-    sections = [("Meaning", definition.meaning)]
-    if definition.physics:
-        sections.append(("Physics", definition.physics))
-    if definition.method:
-        sections.append(("Method", definition.method))
-    if definition.equation:
-        sections.append(("Equation (LaTeX)", definition.equation))
-    if definition.symbols:
-        sections.append(
-            (
-                "Symbols",
-                "\n".join(f"- {symbol}: {meaning}" for symbol, meaning in definition.symbols),
-            )
-        )
-    sections.append(("Interpretation", definition.interpretation))
-    sections.append(("Caveats", definition.caveats))
-    return sections
-
-
-def metric_info_text(definition: MetricDefinition) -> str:
-    """Build the info-dialog content for a metric."""
-
-    return "\n\n".join(
-        f"{title}:\n{body}" for title, body in _build_metric_info_sections(definition)
-    )
-
-
 _METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
     MetricDefinition(
         key="a",
         label="a",
         unit="Å",
         group="Lattice parameters",
-        meaning="Length of the first lattice vector, with the change against experiment for each DFT column.",
-        calculation="Computed from |a_vector|.",
-        interpretation="Closer values imply less lattice distortion.",
-        caveats="A supercell column is shown per host cell.",
-        physics="Tracks axial expansion or contraction along the first direct-lattice basis vector.",
-        method=_LATTICE_METHOD,
-        equation=r"a = \lVert \mathbf{a} \rVert_2",
-        symbols=(
-            (r"a", "Length of the first direct-lattice basis vector."),
-            (r"\mathbf{a}", "First direct-lattice basis vector of the host cell."),
-        ),
+        tooltip="Length of the first lattice vector, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="b",
         label="b",
         unit="Å",
         group="Lattice parameters",
-        meaning="Length of the second lattice vector, with the change against experiment for each DFT column.",
-        calculation="Computed from |b_vector|.",
-        interpretation="Closer values imply less lattice distortion.",
-        caveats="A supercell column is shown per host cell.",
-        physics="Tracks axial expansion or contraction along the second direct-lattice basis vector.",
-        method=_LATTICE_METHOD,
-        equation=r"b = \lVert \mathbf{b} \rVert_2",
-        symbols=(
-            (r"b", "Length of the second direct-lattice basis vector."),
-            (
-                r"\mathbf{b}",
-                "Second direct-lattice basis vector of the host cell.",
-            ),
-        ),
+        tooltip="Length of the second lattice vector, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="c",
         label="c",
         unit="Å",
         group="Lattice parameters",
-        meaning="Length of the third lattice vector, with the change against experiment for each DFT column.",
-        calculation="Computed from |c_vector|.",
-        interpretation="Closer values imply less lattice distortion.",
-        caveats="A supercell column is shown per host cell.",
-        physics="Tracks axial expansion or contraction along the third direct-lattice basis vector.",
-        method=_LATTICE_METHOD,
-        equation=r"c = \lVert \mathbf{c} \rVert_2",
-        symbols=(
-            (r"c", "Length of the third direct-lattice basis vector."),
-            (r"\mathbf{c}", "Third direct-lattice basis vector of the host cell."),
-        ),
+        tooltip="Length of the third lattice vector, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="alpha",
         label="α",
         unit="°",
         group="Lattice parameters",
-        meaning="Angle between the b and c lattice vectors, with the change against experiment for each DFT column.",
-        calculation="Derived from lattice dot products.",
-        interpretation="Stable values indicate low shear distortion.",
-        caveats="Angles can be noisy for low-symmetry cells.",
-        physics="Measures cell-shape shear involving the second and third basis directions.",
-        method=_LATTICE_METHOD,
-        equation=(
-            r"\alpha = \cos^{-1}\left("
-            r"\frac{\mathbf{b}\cdot\mathbf{c}}{\lVert \mathbf{b} \rVert_2 \lVert \mathbf{c} \rVert_2}"
-            r"\right)"
-        ),
-        symbols=(
-            (r"\alpha", "Angle between the second and third lattice vectors."),
-            (r"\mathbf{b}, \mathbf{c}", "Second and third direct-lattice basis vectors."),
-        ),
+        tooltip="Angle between the b and c lattice vectors, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="beta",
         label="β",
         unit="°",
         group="Lattice parameters",
-        meaning="Angle between the a and c lattice vectors, with the change against experiment for each DFT column.",
-        calculation="Derived from lattice dot products.",
-        interpretation="Stable values indicate low shear distortion.",
-        caveats="Angles can be noisy for low-symmetry cells.",
-        physics="Measures cell-shape shear involving the first and third basis directions.",
-        method=_LATTICE_METHOD,
-        equation=(
-            r"\beta = \cos^{-1}\left("
-            r"\frac{\mathbf{a}\cdot\mathbf{c}}{\lVert \mathbf{a} \rVert_2 \lVert \mathbf{c} \rVert_2}"
-            r"\right)"
-        ),
-        symbols=(
-            (r"\beta", "Angle between the first and third lattice vectors."),
-            (r"\mathbf{a}, \mathbf{c}", "First and third direct-lattice basis vectors."),
-        ),
+        tooltip="Angle between the a and c lattice vectors, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="gamma",
         label="γ",
         unit="°",
         group="Lattice parameters",
-        meaning="Angle between the a and b lattice vectors, with the change against experiment for each DFT column.",
-        calculation="Derived from lattice dot products.",
-        interpretation="Stable values indicate low shear distortion.",
-        caveats="Angles can be noisy for low-symmetry cells.",
-        physics="Measures cell-shape shear involving the first and second basis directions.",
-        method=_LATTICE_METHOD,
-        equation=(
-            r"\gamma = \cos^{-1}\left("
-            r"\frac{\mathbf{a}\cdot\mathbf{b}}{\lVert \mathbf{a} \rVert_2 \lVert \mathbf{b} \rVert_2}"
-            r"\right)"
-        ),
-        symbols=(
-            (r"\gamma", "Angle between the first and second lattice vectors."),
-            (r"\mathbf{a}, \mathbf{b}", "First and second direct-lattice basis vectors."),
-        ),
+        tooltip="Angle between the a and b lattice vectors, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="cell_volume",
         label="V",
         unit="Å³",
         group="Lattice parameters",
-        meaning="Volume of the host cell, with the change against experiment for each DFT column.",
-        calculation="Absolute determinant of lattice matrix.",
-        interpretation="Large changes often indicate over/under relaxation.",
-        caveats="A supercell column is shown per host cell: its volume divided by det M.",
-        physics="Captures isotropic expansion or contraction of the host cell and any coupled shear contributions.",
-        method=_LATTICE_METHOD,
-        equation=r"V = |\det L|",
-        symbols=(
-            (r"V", "Volume of the host cell."),
-            (r"L", "3x3 lattice matrix whose rows are the direct-lattice basis vectors."),
-        ),
+        tooltip="Volume of the host cell, with the change against experiment for each DFT column.",
     ),
     MetricDefinition(
         key="rmsd",
         label="RMSD",
         unit="Å",
         group="Atomic displacements",
-        meaning="Root-mean-square displacement of the matched atoms from their experimental positions.",
-        calculation="sqrt(mean(d_i^2)).",
-        interpretation="Lower is better; captures average structural drift.",
-        caveats="Depends on atom matching quality.",
-        physics="Measures the characteristic amplitude of atomic relaxation after periodic wrapping and species-resolved atom correspondence have been accounted for.",
-        method=_MATCHING_METHOD,
-        equation=(
-            r"\Delta \mathbf{f}_i = \mathbf{f}^{\mathrm{DFT}}_{m(i)} - \mathbf{f}^{\mathrm{exp}}_i"
-            "\n"
-            r"d_i = \left\lVert \left(\Delta \mathbf{f}_i - \mathrm{round}(\Delta \mathbf{f}_i)\right) L_{\mathrm{DFT}} \right\rVert_2"
-            "\n"
-            r"\mathrm{RMSD} = \sqrt{\frac{1}{N_{\mathrm{match}}}\sum_{i=1}^{N_{\mathrm{match}}} d_i^2}"
-        ),
-        symbols=(
-            (r"\mathbf{f}^{\mathrm{exp}}_i", "Fractional position of experimental atom i."),
-            (
-                r"\mathbf{f}^{\mathrm{DFT}}_{m(i)}",
-                "Fractional position of the DFT atom matched to experimental atom i.",
-            ),
-            (
-                r"m(i)",
-                "Species-preserving Hungarian assignment map from experimental to DFT atoms.",
-            ),
-            (
-                r"L_{\mathrm{DFT}}",
-                "DFT lattice matrix used to convert minimum-image fractional displacements to Cartesian vectors.",
-            ),
-            (r"d_i", "Minimum-image Cartesian displacement of matched atom pair i."),
-            (r"N_{\mathrm{match}}", "Number of matched atom pairs."),
-        ),
+        tooltip="Root-mean-square displacement of the matched atoms from their experimental positions.",
     ),
     MetricDefinition(
         key="max_displacement",
         label="Max displacement",
         unit="Å",
         group="Atomic displacements",
-        meaning="Largest displacement of any matched atom from its experimental position.",
-        calculation="max(d_i).",
-        interpretation="Highlights worst local relaxation changes.",
-        caveats="Single outlier can dominate.",
-        physics="Isolates the single largest matched-atom relaxation, which is often useful for spotting local defects or unstable coordination environments.",
-        method=_MATCHING_METHOD,
-        equation=r"d_{\max} = \max_{1 \le i \le N_{\mathrm{match}}} d_i",
-        symbols=(
-            (r"d_i", "Minimum-image Cartesian displacement of matched atom pair i."),
-            (r"d_{\max}", "Largest matched-atom displacement."),
-            (r"N_{\mathrm{match}}", "Number of matched atom pairs."),
-        ),
+        tooltip="Largest displacement of any matched atom from its experimental position.",
     ),
     MetricDefinition(
         key="space_group",
         label="Space group",
         unit="",
         group="Symmetry",
-        meaning="Space group that spglib finds for each structure.",
-        calculation="spglib identification of the international symbol and number.",
-        interpretation="The DFT structure should keep the experimental space group.",
-        caveats="Depends on the symmetry tolerance.",
-        physics="Names the crystallographic symmetry of each periodic structure.",
-        method=_SYMMETRY_METHOD,
-        equation=r"n = \mathrm{spglib}(L, \{\mathbf{f}_i\}, \{Z_i\})",
-        symbols=(
-            (r"n", "International space-group number reported by spglib."),
-            (r"L", "Lattice matrix of the structure."),
-            (r"\mathbf{f}_i, Z_i", "Fractional position and species of atom i."),
-        ),
+        tooltip="Space group that spglib finds for each structure.",
     ),
     MetricDefinition(
         key="space_group_match",
         label="Same space group",
         unit="",
         group="Symmetry",
-        meaning="Whether the DFT structure keeps the experimental space group.",
-        calculation="Comparison of the spglib space-group numbers.",
-        interpretation="Yes means the relaxation kept the experimental symmetry.",
-        caveats="Depends on the symmetry tolerance.",
-        physics="Captures whether the relaxed crystal retains the symmetry of the experimental reference.",
-        method=_SYMMETRY_METHOD,
-        equation=r"\mathrm{match}_{\mathrm{SG}} = \mathbf{1}\left[n_{\mathrm{exp}} = n_{\mathrm{DFT}}\right]",
-        symbols=(
-            (r"n_{\mathrm{exp}}", "Experimental space-group number reported by spglib."),
-            (r"n_{\mathrm{DFT}}", "DFT space-group number reported by spglib."),
-            (r"\mathrm{match}_{\mathrm{SG}}", "Boolean indicator of space-group-number equality."),
-        ),
+        tooltip="Whether the DFT structure keeps the experimental space group.",
     ),
 )
 

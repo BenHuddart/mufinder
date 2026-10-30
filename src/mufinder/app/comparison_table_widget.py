@@ -1,8 +1,9 @@
-"""Renderable comparison table view for pristine-relaxation structure comparisons."""
+"""The saved comparison tables: one table's view and the page that holds them all."""
 
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Iterable
 from pathlib import Path
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTableWidgetItem,
     QToolButton,
     QVBoxLayout,
@@ -340,7 +342,7 @@ class ComparisonTableWidget(QWidget):
             definition.label if not definition.unit else f"{definition.label} ({definition.unit})"
         )
         item = QTableWidgetItem(text)
-        item.setToolTip(definition.meaning)
+        item.setToolTip(definition.tooltip)
         return item
 
     def _set_parameter_diff_visibility(self, visible: bool) -> None:
@@ -376,3 +378,45 @@ class ComparisonTableWidget(QWidget):
         ):
             return
         self.delete_requested.emit(self._table.id)
+
+
+class ComparisonTablesPage(QStackedWidget):
+    """The main-stack page holding one :class:`ComparisonTableWidget` per saved table."""
+
+    delete_requested = Signal(object)
+    title_changed = Signal(object, str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._table_widgets: dict[UUID, ComparisonTableWidget] = {}
+
+    def set_tables(self, tables: Iterable[ComparisonTable]) -> None:
+        """Replace the page's widgets with one for each of ``tables``."""
+
+        for widget in self._table_widgets.values():
+            self.removeWidget(widget)
+            widget.deleteLater()
+        self._table_widgets.clear()
+        for table in tables:
+            widget = ComparisonTableWidget(table, parent=self)
+            widget.delete_requested.connect(self.delete_requested)
+            widget.title_changed.connect(self.title_changed)
+            self.addWidget(widget)
+            self._table_widgets[table.id] = widget
+
+    def table_widget(self, table_id: UUID) -> ComparisonTableWidget | None:
+        return self._table_widgets.get(table_id)
+
+    def show_table(self, table_id: UUID) -> bool:
+        """Bring one table to the front; ``False`` when the page does not hold it."""
+
+        widget = self._table_widgets.get(table_id)
+        if widget is None:
+            return False
+        self.setCurrentWidget(widget)
+        return True
+
+    def set_table_label(self, table_id: UUID, label: str) -> None:
+        widget = self._table_widgets.get(table_id)
+        if widget is not None:
+            widget.set_table_label(label)

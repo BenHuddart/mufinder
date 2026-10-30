@@ -580,6 +580,22 @@ Compatibility ledger
      - Read-side skip. Keep while projects holding such tables may be opened,
        or until a saved-project schema version bump includes a migration that
        drops the keys from stored tables.
+   * - ``metric_definitions`` key of a comparison table
+     - ``ComparisonTable.result_data``; read by
+       ``mufinder.app.comparison_export`` (``table_metric_definitions``)
+     - A new table stores values only and names its metrics by the keys of
+       its values. A table saved with a ``metric_definitions`` list, whose
+       entries carry each metric's label, unit, group and help text, still
+       opens: only each entry's ``key`` is read, and everything else comes
+       from ``mufinder.science.structure_metrics``. The stored list is not
+       rewritten, so it stays in the file until the table is generated again.
+       Tables carry no format marker. A table that holds supercell lattice
+       values, saved before those rows were read per host cell, is recognised
+       by a ``supercell_matrix`` that is not the identity in a column and no
+       ``shown per host cell`` note in its ``warnings``.
+     - Read-side shim. Keep while projects holding such tables may be opened,
+       or until a saved-project schema version bump includes a migration that
+       drops the key from stored tables.
 
 Saved-project schema migrations
 -------------------------------

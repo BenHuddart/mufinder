@@ -1090,8 +1090,10 @@ def open_displacement_analysis(window: MainWindow) -> None:
 def open_comparison_table(window: MainWindow) -> None:
     """Open the results project's comparison table in the navigator."""
 
+    from mufinder.app.workflow_controllers.comparison_tables import comparison_route
+
     table_id = next(iter(window._document.comparison_tables))
-    window._set_active_route(window._comparison_route(table_id))
+    window._set_active_route(comparison_route(table_id))
 
 
 def open_comparison_job_dialog(window: MainWindow) -> None:

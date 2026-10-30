@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from mufinder.domain.models import Structure
+from mufinder.science.lattice import minimum_image_distance_matrix
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,21 +36,6 @@ class MatchOptions:
     """Controls for the matching algorithm."""
 
     max_reasonable_displacement: float = 2.5
-
-
-def _minimum_image_displacement(
-    lhs_fractional: Iterable[float],
-    rhs_fractional: Iterable[float],
-    lattice_vectors: list[list[float]],
-) -> float:
-    lhs = np.asarray(list(lhs_fractional), dtype=float)
-    rhs = np.asarray(list(rhs_fractional), dtype=float)
-    lattice = np.asarray(lattice_vectors, dtype=float)
-
-    delta_fractional = rhs - lhs
-    delta_fractional -= np.round(delta_fractional)
-    delta_cartesian = delta_fractional @ lattice
-    return float(np.linalg.norm(delta_cartesian))
 
 
 def _species_index_map(structure: Structure) -> dict[str, list[int]]:
@@ -101,16 +86,11 @@ def match_structures(
             )
             continue
 
-        distances = np.zeros((len(experimental_indices), len(dft_indices)), dtype=float)
-        for row_index, experimental_index in enumerate(experimental_indices):
-            experimental_position = experimental.fractional_positions[experimental_index]
-            for col_index, dft_index in enumerate(dft_indices):
-                dft_position = dft.fractional_positions[dft_index]
-                distances[row_index, col_index] = _minimum_image_displacement(
-                    experimental_position,
-                    dft_position,
-                    dft.lattice_vectors,
-                )
+        distances = minimum_image_distance_matrix(
+            [experimental.fractional_positions[index] for index in experimental_indices],
+            [dft.fractional_positions[index] for index in dft_indices],
+            dft.lattice_vectors,
+        )
 
         selected_rows, selected_cols = linear_sum_assignment(distances)
         matched_rows = set(int(value) for value in selected_rows)

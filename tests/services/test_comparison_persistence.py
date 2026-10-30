@@ -169,3 +169,45 @@ def test_record_comparison_table_created_appends_provenance(tmp_path: Path) -> N
     service.record_comparison_table_created(doc, table=without_experiment)
 
     assert doc.provenance[-1].input_entity_ids == []
+
+
+def test_old_saved_table_with_prose_definitions_loads_unchanged(tmp_path: Path) -> None:
+    """A table saved with ``metric_definitions`` keeps them until it is generated again."""
+
+    service = ProjectService()
+    root = tmp_path / "old_format.mufinder"
+    doc = service.create_project(root, "OldFormat")
+    metric_definitions = [
+        {
+            "key": "a",
+            "label": "a",
+            "unit": "Å",
+            "group": "Lattice parameters",
+            "meaning": "Length of the first lattice vector.",
+            "calculation": "Computed from |a_vector|.",
+            "interpretation": "Closer values imply less lattice distortion.",
+            "caveats": "A supercell column is shown per host cell.",
+            "physics": "Tracks axial expansion.",
+            "method": "Read per host cell.",
+            "equation": r"a = \lVert \mathbf{a} \rVert_2",
+            "symbols": [{"symbol": "a", "meaning": "Length."}],
+        }
+    ]
+    table = ComparisonTable(
+        label="Old table",
+        result_data={
+            "metric_definitions": metric_definitions,
+            "experimental_values": {"a": {"display": "5", "value": 5.0, "warning": None}},
+            "dft_columns": [{"label": "DFT-1", "values": {"a": {"display": "5.1"}}}],
+            "parameter_differences": [],
+            "warnings": [],
+        },
+    )
+    service.add_comparison_table(doc, table)
+    service.save_project(doc)
+
+    loaded = service.load_project(root)
+    service.save_project(loaded)
+
+    restored = service.load_project(root).comparison_tables[table.id]
+    assert restored.result_data["metric_definitions"] == metric_definitions

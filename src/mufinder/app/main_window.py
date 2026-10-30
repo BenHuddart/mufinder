@@ -81,9 +81,7 @@ from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     MANUAL_DEFAULT_METHOD,
-    CalculationDefinition,
     CalculationRun,
-    ComparisonTable,
     Job,
     MuonSite,
     Result,
@@ -93,8 +91,8 @@ from mufinder.domain.models import (
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
-from mufinder.app.comparison_job_dialog import ComparisonJobDialog
-from mufinder.app.comparison_table_widget import ComparisonTableWidget
+from mufinder.app.comparison_job_dialog import run_comparison_job_dialog
+from mufinder.app.comparison_table_widget import ComparisonTablesPage
 from mufinder.app.blocking_call import run_blocking_call
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
@@ -152,7 +150,6 @@ from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
     PristineRelaxationConfig,
-    PristineRelaxationRow,
     SupercellMatrix,
 )
 from mufinder.app.relaxation_analysis_widget import (
@@ -226,6 +223,7 @@ from mufinder.app.workflow_config_codecs import (
     deserialize_muon_relaxation_config,
     deserialize_pristine_relaxation_config,
     deserialize_uep_config,
+    normalized_parameter_values,
     normalized_supercell_matrix,
     num_farms_from_extras,
     serialize_muon_relaxation_config,
@@ -249,6 +247,12 @@ from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
     job_is_resubmittable_after_dismissal,
 )
+from mufinder.app.workflow_controllers.comparison_tables import (
+    ComparisonTablesController,
+    ComparisonTablesDeps,
+    comparison_route,
+    comparison_table_id_from_route,
+)
 from mufinder.app.workflow_controllers import (
     ConvergenceCutoffController,
     ConvergenceCutoffDeps,
@@ -259,7 +263,6 @@ from mufinder.app.workflow_controllers import (
     MuonRelaxationController,
     MuonRelaxationDeps,
     PristineRelaxationController,
-    PristineRelaxationDeps,
     HyperfineCouplingController,
     HyperfineCouplingDeps,
     QuantumCorrectionsController,
@@ -275,7 +278,6 @@ from mufinder.app.workflow_controllers import (
 )
 from mufinder.castep_io.geometry_progress import GeometryProgress
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.cluster_runner import CheckpointProbeResult
@@ -371,12 +373,10 @@ from mufinder.services.project_summary import (
     stage_info,
 )
 from mufinder.services.source_candidates import (
-    CompletedPristineJob,
     CompletedRelaxationAnalysisSource,
     MuonRelaxationRowJob,
     coerce_fractional_triplet,
     completed_muon_relaxation_sources,
-    completed_pristine_relaxation_jobs,
     mixes_calculations,
     newest_completed_structure_id,
     quantum_seed_name_for_key,
@@ -398,7 +398,6 @@ from mufinder.science.uep import (
     deserialize_potential_grid,
     serialize_potential_grid,
 )
-from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError
 from mufinder.workflow.energy_barriers import (
@@ -545,7 +544,6 @@ class MainWindow(QMainWindow):
     _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
     _RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX = "muon_analysis/workspace/"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
-    _COMPARISON_ROUTE_PREFIX = "pristine_relaxation/comparison/"
     _WORKFLOW_COMPLETE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
     _WORKFLOW_GOAL_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
@@ -642,7 +640,6 @@ class MainWindow(QMainWindow):
         self._project_home: ProjectHomeWidget | None = None
         self._project_home_button: QToolButton | None = None
         self._cluster_connected = False
-        self._comparison_widgets: dict[UUID, ComparisonTableWidget] = {}
         self._magnetic_field_workspace_widgets: dict[str, MagneticFieldWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
         self._quantum_analysis_dialogs: dict[UUID, QuantumPhononAnalysisDialog] = {}
@@ -802,7 +799,6 @@ class MainWindow(QMainWindow):
         # and build_result.
         self._pristine_relaxation_controller = PristineRelaxationController(
             self._build_workflow_controller_context(),
-            self._build_pristine_relaxation_deps(),
             self._pristine_relaxation_view,
         )
         self._workflow_controllers.append(self._pristine_relaxation_controller)
@@ -812,8 +808,20 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.submit_cluster_requested.connect(
             lambda values: self._pristine_relaxation_controller.submit(values, target="cluster")
         )
+        self._comparison_tables_view = ComparisonTablesPage()
+        self._comparison_tables_controller = ComparisonTablesController(
+            self._build_workflow_controller_context(),
+            self._build_comparison_tables_deps(),
+            self._comparison_tables_view,
+        )
+        self._comparison_tables_view.delete_requested.connect(
+            self._comparison_tables_controller.delete_table
+        )
+        self._comparison_tables_view.title_changed.connect(
+            self._comparison_tables_controller.rename_table
+        )
         self._pristine_relaxation_view.generate_comparison_requested.connect(
-            self._on_generate_comparison_table_requested
+            self._comparison_tables_controller.generate_table
         )
         self._pristine_relaxation_view.remove_requested.connect(
             self._on_remove_pristine_relaxation_rows
@@ -1083,6 +1091,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._muon_generation_view)
         self._main_stack.addWidget(self._muon_relaxation_view)
         self._main_stack.addWidget(self._relaxation_analysis_view)
+        self._main_stack.addWidget(self._comparison_tables_view)
         self._main_stack.addWidget(self._muon_sites_summary_view)
         self._main_stack.addWidget(self._hyperfine_coupling_view)
         self._main_stack.addWidget(self._magnetic_field_view)
@@ -1999,7 +2008,7 @@ class MainWindow(QMainWindow):
             with trace.stage("project titles"):
                 self._apply_project_change_titles()
             with trace.stage("comparison and magnetic workspace views"):
-                self._sync_comparison_table_views()
+                self._comparison_tables_controller.sync_view()
                 self._sync_magnetic_field_workspace_views()
             with trace.stage("_populate_project_tree"):
                 self._populate_project_tree(preserve_selection=False)
@@ -2441,7 +2450,7 @@ class MainWindow(QMainWindow):
             )
             for table in ordered_tables:
                 child = QTreeWidgetItem([table.label or "Comparison Table"])
-                child.setData(0, Qt.ItemDataRole.UserRole, self._comparison_route(table.id))
+                child.setData(0, Qt.ItemDataRole.UserRole, comparison_route(table.id))
                 pristine_item.addChild(child)
             pristine_item.setExpanded(True)
 
@@ -3232,10 +3241,12 @@ class MainWindow(QMainWindow):
             self._refresh_energy_barriers_view()
         elif route == "provenance_log":
             target = self._journal_view
-        elif isinstance(route, str):
-            table_id = self._comparison_table_id_from_route(route)
-            if table_id is not None:
-                target = self._comparison_widgets.get(table_id, self._pristine_relaxation_view)
+        elif (comparison_table_id := comparison_table_id_from_route(route)) is not None:
+            target = (
+                self._comparison_tables_view
+                if self._comparison_tables_view.show_table(comparison_table_id)
+                else self._pristine_relaxation_view
+            )
         self._main_stack.setCurrentWidget(target)
         self._remember_project_home_stage(route)
         # Navigation does not mutate the document, so workflow completion state
@@ -3258,7 +3269,7 @@ class MainWindow(QMainWindow):
             stage_key = "muon_analysis"
         elif self._magnetic_field_workspace_id_from_route(route) is not None:
             stage_key = "magnetic_fields"
-        elif self._comparison_table_id_from_route(route) is not None:
+        elif comparison_table_id_from_route(route) is not None:
             stage_key = "pristine_relaxation"
         else:
             stage_key = None
@@ -3267,42 +3278,6 @@ class MainWindow(QMainWindow):
             and self._document.ui_state.get(PROJECT_HOME_STAGE_KEY) != stage_key
         ):
             self._document.ui_state[PROJECT_HOME_STAGE_KEY] = stage_key
-
-    def _comparison_route(self, table_id: UUID) -> str:
-        return f"{self._COMPARISON_ROUTE_PREFIX}{table_id}"
-
-    def _comparison_table_id_from_route(self, route: object) -> UUID | None:
-        if not isinstance(route, str):
-            return None
-        if not route.startswith(self._COMPARISON_ROUTE_PREFIX):
-            return None
-        raw_id = route[len(self._COMPARISON_ROUTE_PREFIX) :].strip()
-        if not raw_id:
-            return None
-        try:
-            return UUID(raw_id)
-        except ValueError:
-            return None
-
-    def _sync_comparison_table_views(self) -> None:
-        for widget in self._comparison_widgets.values():
-            self._main_stack.removeWidget(widget)
-            widget.deleteLater()
-        self._comparison_widgets.clear()
-
-        if self._document is None:
-            return
-
-        ordered_tables = sorted(
-            self._document.comparison_tables.values(),
-            key=lambda table: (table.created_at, table.label.casefold()),
-        )
-        for table in ordered_tables:
-            widget = ComparisonTableWidget(table, parent=self)
-            widget.delete_requested.connect(self._on_delete_comparison_table_requested)
-            widget.title_changed.connect(self._on_comparison_table_title_changed)
-            self._main_stack.addWidget(widget)
-            self._comparison_widgets[table.id] = widget
 
     def _sync_magnetic_field_workspace_views(self) -> None:
         for widget in self._magnetic_field_workspace_widgets.values():
@@ -3393,68 +3368,6 @@ class MainWindow(QMainWindow):
             widget.set_form_state(
                 attach_magnetic_field_results(self._document, workspace_id, form_state)
             )
-
-    def _on_delete_comparison_table_requested(self, payload: object) -> None:
-        if isinstance(payload, UUID):
-            table_id = payload
-        elif isinstance(payload, str):
-            try:
-                table_id = UUID(payload)
-            except ValueError:
-                return
-        else:
-            return
-        self._delete_comparison_table(table_id)
-
-    def _on_comparison_table_title_changed(self, payload: object, title: str) -> None:
-        if self._document is None or self._shutting_down:
-            return
-        if isinstance(payload, UUID):
-            table_id = payload
-        elif isinstance(payload, str):
-            try:
-                table_id = UUID(payload)
-            except ValueError:
-                return
-        else:
-            return
-        normalized = str(title).strip() or "Comparison Table"
-        table = self._project_service.rename_comparison_table(self._document, table_id, normalized)
-        if table is None:
-            return
-        widget = self._comparison_widgets.get(table_id)
-        if widget is not None:
-            widget.set_table_label(table.label)
-        self._populate_project_tree()
-        self._set_active_route(self._comparison_route(table_id))
-        try:
-            self._project_service.save_project(self._document)
-        except ValueError:
-            self.statusBar().showMessage("Comparison table title was updated, but autosave failed")
-            return
-        self.statusBar().showMessage(f"Renamed comparison table to '{table.label}'")
-
-    def _delete_comparison_table(self, table_id: UUID) -> None:
-        """Delete a comparison table the user has already confirmed deleting.
-
-        The table's own Delete button is the only entry point, and the widget
-        asks for the confirmation before it emits ``delete_requested``.
-        """
-
-        if self._document is None:
-            return
-        if table_id not in self._document.comparison_tables:
-            return
-
-        self._project_service.remove_comparison_table(self._document, table_id)
-        self._sync_comparison_table_views()
-        self._populate_project_tree()
-
-        route = self._active_route()
-        if route is None or self._comparison_table_id_from_route(route) is not None:
-            self._set_active_route("pristine_relaxation")
-
-        self.statusBar().showMessage("Deleted comparison table")
 
     def _set_active_route(self, route: str) -> None:
         item = self._find_tree_item_by_route(route)
@@ -5894,57 +5807,20 @@ class MainWindow(QMainWindow):
             **self._sweep_convergence_window_deps(),
         )
 
-    def _build_pristine_relaxation_deps(self) -> PristineRelaxationDeps:
-        """Build the pristine-relaxation controller's deps.
+    def _build_comparison_tables_deps(self) -> ComparisonTablesDeps:
+        """Build the comparison-table controller's deps; see the dataclass."""
 
-        These helpers stay on ``MainWindow`` because non-migrating code still
-        calls them. The relaxed ``-out.cell`` is parsed once on the runner worker
-        thread and delivered via ``ParsedJobArtifacts``, so no parse dep is
-        threaded here. Cross-workflow job/definition readers
-        (``job_output_directory``, ``job_seed_name``, ``run_for_job``,
-        ``definition_output_directory``, the energy/force readers) now live on
-        the shared context. The controller reaches them only through late-bound
-        wrappers.
-        """
-
-        return PristineRelaxationDeps(
-            deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config,
-            serialize_pristine_relaxation_config=serialize_pristine_relaxation_config,
-            pristine_relaxation_form_config=lambda: self._pristine_relaxation_form_config(),
-            pristine_relaxation_row_signature=(
-                lambda row: self._pristine_relaxation_row_signature(row)
+        return ComparisonTablesDeps(
+            completed_jobs=lambda: self._pristine_relaxation_controller.completed_jobs(),
+            choose_jobs=lambda jobs, default_label: run_comparison_job_dialog(
+                jobs, default_label, parent=self
             ),
-            expand_pristine_relaxation_jobs=(
-                lambda definition, config: self._expand_pristine_relaxation_jobs_for_controller(
-                    definition, config
-                )
-            ),
-        )
-
-    def _expand_pristine_relaxation_jobs_for_controller(
-        self, definition: CalculationDefinition, config: PristineRelaxationConfig
-    ) -> AdapterExpansion | None:
-        """Look up the definition's host structure and expand its relaxation jobs.
-
-        Returns ``None`` when the host structure is missing, mirroring the guard
-        in the former ``_materialize_pristine_relaxation_jobs``. The
-        ``ValueError`` / ``StructureBridgeError`` raised by
-        :func:`expand_pristine_relaxation_jobs` propagate to the controller, which
-        catches them (as the former handler did).
-        """
-
-        if self._document is None or not definition.input_structure_ids:
-            return None
-        host = self._document.structures.get(definition.input_structure_ids[0])
-        if host is None:
-            return None
-        return expand_pristine_relaxation_jobs(
-            host_structure=host,
-            config=config,
-            project_cutoff_energy=self._document.project.recommended_cutoff_energy,
-            project_kpoint_grid=self._document.project.recommended_kpoint_grid,
-            project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
-            project_xc_functional=self._document.project.recommended_xc_functional,
+            show_warning=lambda title, text: QMessageBox.warning(self, title, text),
+            refresh_project_tree=lambda: self._populate_project_tree(),
+            refresh_journal_view=lambda: self._refresh_journal_view(),
+            active_route=lambda: self._active_route(),
+            open_route=lambda route: self._set_active_route(route),
+            shutting_down=lambda: self._shutting_down,
         )
 
     def _build_muon_relaxation_deps(self) -> MuonRelaxationDeps:
@@ -7983,18 +7859,6 @@ class MainWindow(QMainWindow):
         finally:
             self._handling_uep_form_state = False
 
-    @staticmethod
-    def _normalized_parameter_values(values: Mapping[str, object]) -> object:
-        return to_jsonable({str(name): value for name, value in values.items()})
-
-    def _pristine_relaxation_row_signature(self, row: PristineRelaxationRow) -> tuple[object, ...]:
-        return (
-            bool(row.fix_all_cell),
-            normalized_supercell_matrix(row.supercell_matrix),
-            self._normalized_parameter_values(row.parameter_values),
-            tuple(str(name) for name in row.added_advanced),
-        )
-
     def _muon_relaxation_row_signature(self, row: MuonRelaxationRow) -> tuple[object, ...]:
         return (
             str(row.site_id),
@@ -8002,7 +7866,7 @@ class MainWindow(QMainWindow):
             tuple(float(value) for value in row.initial_fractional_position),
             str(row.charge_state),
             normalized_supercell_matrix(row.supercell_matrix),
-            self._normalized_parameter_values(row.parameter_values),
+            normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
             # Included deliberately. If the imported marker is ever dropped from
             # one side of the form/definition pair, the signatures stop matching
@@ -8015,7 +7879,7 @@ class MainWindow(QMainWindow):
     def _uep_row_signature(self, row: UepSourceRow) -> tuple[object, ...]:
         return (
             normalized_supercell_matrix(row.supercell_matrix),
-            self._normalized_parameter_values(row.parameter_values),
+            normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
         )
 
@@ -9050,25 +8914,6 @@ class MainWindow(QMainWindow):
             return definition, config
         return None, None
 
-    def _pristine_relaxation_form_config(self) -> PristineRelaxationConfig | None:
-        if self._document is None:
-            return None
-
-        form_sources: list[dict] = []
-        widget_state = self._pristine_relaxation_view.collect_state()
-        if isinstance(widget_state, dict):
-            form_sources.append(widget_state)
-
-        persisted = self._document.ui_state.get("pristine_relaxation_form", {})
-        if isinstance(persisted, dict):
-            form_sources.append(persisted)
-
-        for form_state in form_sources:
-            config = deserialize_pristine_relaxation_config(form_state)
-            if config is not None and config.rows:
-                return config
-        return None
-
     def _muon_relaxation_form_config(self) -> MuonRelaxationConfig | None:
         if self._document is None:
             return None
@@ -9178,7 +9023,7 @@ class MainWindow(QMainWindow):
             if config is not None:
                 fix_all_cell_by_label = {row.label: bool(row.fix_all_cell) for row in config.rows}
 
-        for job in self._completed_pristine_relaxation_jobs():
+        for job in self._pristine_relaxation_controller.completed_jobs():
             fixed_cell = fix_all_cell_by_label.get(job.job_label, True)
             label = f"Pristine relaxed - {job.job_label}"
             if not fixed_cell:
@@ -9198,7 +9043,7 @@ class MainWindow(QMainWindow):
             self._document,
             [
                 job
-                for job in self._completed_pristine_relaxation_jobs()
+                for job in self._pristine_relaxation_controller.completed_jobs()
                 if job.structure_id in usable
             ],
         )
@@ -9391,205 +9236,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Configured {len(config.rows)} muon-relaxation jobs; input files will be generated on submission"
         )
-
-    def _completed_pristine_relaxation_jobs(self) -> list[CompletedPristineJob]:
-        if self._document is None:
-            return []
-        controller = self._pristine_relaxation_controller
-        definition = controller.active_definition()
-        if definition is None:
-            return []
-        config = deserialize_pristine_relaxation_config(
-            definition.parameters.get("configuration", {})
-        )
-        if config is None:
-            return []
-        return completed_pristine_relaxation_jobs(
-            self._document,
-            config.rows,
-            controller.build_states(),
-            run_for_job=self._run_for_job,
-        )
-
-    @staticmethod
-    def _format_parameter_value(value: object) -> str:
-        if isinstance(value, ValueWithUnit):
-            return f"{value.value} {value.unit}".strip()
-        if isinstance(value, BlockSection):
-            return f"%BLOCK {value.name} ({plural(len(value.rows), 'row')})"
-        if isinstance(value, (list, tuple)):
-            return ", ".join(str(entry) for entry in value)
-        if isinstance(value, dict):
-            parts = [f"{key}={entry}" for key, entry in value.items()]
-            return ", ".join(parts)
-        if value is None:
-            return ""
-        return str(value)
-
-    def _build_parameter_difference_rows(
-        self,
-        selected_jobs: list[CompletedPristineJob],
-    ) -> list[dict[str, object]]:
-        if len(selected_jobs) < 2:
-            return []
-
-        names = sorted({name for job in selected_jobs for name in job.parameter_values})
-        rows: list[dict[str, object]] = []
-        for name in names:
-            displays = [
-                self._format_parameter_value(job.parameter_values.get(name))
-                for job in selected_jobs
-            ]
-            if len(set(displays)) <= 1:
-                continue
-            rows.append(
-                {
-                    "name": name,
-                    "values": displays,
-                }
-            )
-        return rows
-
-    def _serialize_comparison_result(
-        self,
-        result,
-        *,
-        parameter_differences: list[dict[str, object]],
-    ) -> dict[str, object]:
-        return {
-            "metric_definitions": [
-                {
-                    "key": definition.key,
-                    "label": definition.label,
-                    "unit": definition.unit,
-                    "group": definition.group,
-                    "meaning": definition.meaning,
-                    "calculation": definition.calculation,
-                    "interpretation": definition.interpretation,
-                    "caveats": definition.caveats,
-                    "physics": definition.physics,
-                    "method": definition.method,
-                    "equation": definition.equation,
-                    "symbols": [
-                        {"symbol": symbol, "meaning": meaning}
-                        for symbol, meaning in definition.symbols
-                    ],
-                }
-                for definition in result.definitions
-            ],
-            "experimental_values": {
-                key: {
-                    "value": value.value,
-                    "display": value.display,
-                    "warning": value.warning,
-                }
-                for key, value in result.experimental_values.items()
-            },
-            "dft_columns": [
-                {
-                    "label": column.label,
-                    "structure_id": str(column.structure_id),
-                    "warnings": list(column.warnings),
-                    "supercell_matrix": [
-                        [int(entry) for entry in row]
-                        for row in column.normalization.supercell_matrix
-                    ],
-                    "values": {
-                        key: {
-                            "value": value.value,
-                            "display": value.display,
-                            "warning": value.warning,
-                        }
-                        for key, value in column.values.items()
-                    },
-                }
-                for column in result.dft_columns
-            ],
-            "parameter_differences": parameter_differences,
-            "warnings": list(result.warnings),
-        }
-
-    def _on_generate_comparison_table_requested(self) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        host = self._project_service.active_host_structure(self._document)
-        if host is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before generating a comparison table.",
-            )
-            return
-
-        completed_jobs = self._completed_pristine_relaxation_jobs()
-        if not completed_jobs:
-            QMessageBox.information(
-                self,
-                "No completed pristine relaxations",
-                "Run and complete one or more pristine-relaxation jobs first.",
-            )
-            return
-
-        default_label = f"Comparison {len(self._document.comparison_tables) + 1}"
-        dialog = ComparisonJobDialog(jobs=completed_jobs, default_label=default_label, parent=self)
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-
-        selected_job_ids = set(dialog.selected_job_ids())
-        selected_jobs = [job for job in completed_jobs if job.job_id in selected_job_ids]
-        if not selected_jobs:
-            QMessageBox.warning(self, "No jobs selected", "Select at least one completed job.")
-            return
-
-        dft_inputs: list[DftComparisonInput] = []
-        for selected_job in selected_jobs:
-            structure = self._document.structures.get(selected_job.structure_id)
-            if structure is None:
-                continue
-            dft_inputs.append(
-                DftComparisonInput(
-                    label=f"DFT ({selected_job.job_label})",
-                    structure=structure,
-                    structure_id=structure.id,
-                )
-            )
-
-        if not dft_inputs:
-            QMessageBox.warning(
-                self,
-                "Comparison unavailable",
-                "The selected jobs did not provide relaxed structures for comparison.",
-            )
-            return
-
-        try:
-            comparison_result = compare_structures(host, dft_inputs)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Comparison failed", str(exc))
-            return
-
-        parameter_differences = self._build_parameter_difference_rows(selected_jobs)
-
-        table = ComparisonTable(
-            label=dialog.table_label(),
-            experimental_structure_id=host.id,
-            dft_structure_ids=[item.structure_id for item in dft_inputs],
-            dft_labels=[item.label for item in dft_inputs],
-            result_data=self._serialize_comparison_result(
-                comparison_result,
-                parameter_differences=parameter_differences,
-            ),
-        )
-        self._project_service.add_comparison_table(self._document, table)
-        self._project_service.record_comparison_table_created(self._document, table=table)
-
-        self._sync_comparison_table_views()
-        self._populate_project_tree()
-        self._set_active_route(self._comparison_route(table.id))
-        self._refresh_journal_view()
-        self.statusBar().showMessage(f"Generated comparison table '{table.label}'")
 
     def _cleanup_energy_barrier_source_jobs(self, keys: set[str]) -> bool:
         if self._document is None:

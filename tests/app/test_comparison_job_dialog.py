@@ -5,9 +5,13 @@ from __future__ import annotations
 from uuid import uuid4
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QDialog, QLabel
 
-from mufinder.app.comparison_job_dialog import ComparisonJobDialog, CompletedPristineJob
+from mufinder.app.comparison_job_dialog import (
+    ComparisonJobDialog,
+    CompletedPristineJob,
+    run_comparison_job_dialog,
+)
 
 
 def _job(label: str) -> CompletedPristineJob:
@@ -55,3 +59,21 @@ def test_comparison_job_dialog_label_field_has_its_visible_label_as_buddy(qapp) 
 
     assert buddies[dialog._label_input] == "Comparison table label"
     assert dialog._table.accessibleName() == "Comparison Jobs"
+
+
+def test_run_comparison_job_dialog_returns_the_choice_or_none_when_cancelled(
+    qapp, monkeypatch
+) -> None:
+    jobs = [_job("job-a"), _job("job-b")]
+
+    def accept(dialog) -> int:
+        dialog._table.item(1, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Checked)
+        dialog._table.item(0, dialog._CHECK_COLUMN).setCheckState(Qt.CheckState.Unchecked)
+        dialog._label_input.setText("  Chosen  ")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ComparisonJobDialog, "exec", accept)
+    assert run_comparison_job_dialog(jobs, "Comparison 1") == ([jobs[1].job_id], "Chosen")
+
+    monkeypatch.setattr(ComparisonJobDialog, "exec", lambda _dialog: QDialog.DialogCode.Rejected)
+    assert run_comparison_job_dialog(jobs, "Comparison 1") is None

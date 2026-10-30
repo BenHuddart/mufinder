@@ -12,9 +12,10 @@ from mufinder.science.structure_metrics import MetricDefinition, metric_definiti
 def table_metric_definitions(table: ComparisonTable) -> list[MetricDefinition]:
     """The defined metrics a saved table holds, in the order of ``metric_definitions()``.
 
-    A table names its metrics by key in ``metric_definitions`` and in its
-    experimental values. Keys that are no longer defined are skipped, and the
-    label, unit, group and tooltip always come from the current definitions.
+    A table names its metrics by the keys of its experimental values; a table
+    saved with a ``metric_definitions`` list names them there too. Keys that are
+    no longer defined are skipped, and the label, unit, group and tooltip always
+    come from the current definitions.
     """
 
     payload = table.result_data

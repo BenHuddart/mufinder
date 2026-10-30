@@ -13,8 +13,10 @@ import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.app.workflow_controllers.base import output_predates_run
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.main_window import MainWindow
+from mufinder.app.relaxation_types import PristineRelaxationRow
 from mufinder.app.workflow_config_codecs import (
     deserialize_pristine_relaxation_config,
+    pristine_relaxation_row_signature,
     serialize_pristine_relaxation_config,
 )
 from mufinder.domain.enums import JobStatus, WorkflowStage
@@ -372,7 +374,7 @@ def _capture_message_boxes(monkeypatch: pytest.MonkeyPatch) -> list:
 
 
 def _supercell_row(label: str):
-    return main_window_module.PristineRelaxationRow(
+    return PristineRelaxationRow(
         label=label,
         fix_all_cell=False,
         supercell_matrix=((2, 0, 0), (0, 1, 0), (0, 0, 1)),
@@ -483,7 +485,7 @@ def test_main_window_pristine_form_edit_hides_stale_definition_status(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row = PristineRelaxationRow(label="row_1", parameter_values={})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -537,11 +539,11 @@ def test_main_window_pristine_form_edit_preserves_matching_row_statuses(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    spinpol_row = main_window_module.PristineRelaxationRow(
+    spinpol_row = PristineRelaxationRow(
         label="spinpol",
         parameter_values={"spin_polarized": True},
     )
-    nospin_row = main_window_module.PristineRelaxationRow(label="nospin", parameter_values={})
+    nospin_row = PristineRelaxationRow(label="nospin", parameter_values={})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -623,8 +625,8 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row_1 = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
-    row_2 = main_window_module.PristineRelaxationRow(label="row_2", parameter_values={})
+    row_1 = PristineRelaxationRow(label="row_1", parameter_values={})
+    row_2 = PristineRelaxationRow(label="row_2", parameter_values={})
     old_config = main_window_module.PristineRelaxationConfig(
         name_prefix="pristine_relax", rows=(row_1,)
     )
@@ -694,9 +696,7 @@ def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(
-        label="row_1", parameter_values={"geom_max_iter": 120}
-    )
+    row = PristineRelaxationRow(label="row_1", parameter_values={"geom_max_iter": 120})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -738,10 +738,10 @@ def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
     # The widget is the normalizer of record: it strips the implicit ``task``
     # default, so the definition must not keep it either.
     assert "task" not in config.rows[0].parameter_values
-    form_config = window._pristine_relaxation_form_config()
-    assert window._pristine_relaxation_row_signature(
+    form_config = window._pristine_relaxation_controller.form_config()
+    assert pristine_relaxation_row_signature(
         form_config.rows[0]
-    ) == window._pristine_relaxation_row_signature(config.rows[0])
+    ) == pristine_relaxation_row_signature(config.rows[0])
     assert doc.ui_state["pristine_relaxation_form"]["rows"][0]["params"]["geom_max_iter"] == 500
     window.close()
 
@@ -764,7 +764,7 @@ def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(
     doc.project.host_structure_id = host.id
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row = PristineRelaxationRow(label="row_1", parameter_values={})
     old_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -817,7 +817,7 @@ def test_pristine_relaxation_remove_row_deletes_associated_files_and_job(
     service.add_structure(doc, host)
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row = PristineRelaxationRow(label="row_1", parameter_values={})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
@@ -863,7 +863,7 @@ def test_pristine_relaxation_remove_row_cancel_keeps_files_and_restores_form(
     service.add_structure(doc, host)
     window._document = doc
 
-    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row = PristineRelaxationRow(label="row_1", parameter_values={})
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
