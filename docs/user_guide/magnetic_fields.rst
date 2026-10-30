@@ -58,7 +58,8 @@ A typical pass through the page is:
      field term over the sampled phases, with its convergence checks: select
      the row to see them under the table. Click ``Open Distribution Plot`` to
      view the field-magnitude histogram. ``Export Data…`` in that window
-     saves it to a file.
+     saves it as a ``.dat`` or ``.txt`` file; a name typed without one of
+     those extensions gets the extension of the chosen file type.
 
    .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
       :alt: The Magnetic Fields page with the MnSi helix distribution at site
@@ -437,8 +438,9 @@ atoms. If the texture has no out-of-plane component, the colour scale falls
 back to moment magnitude. The main builder's 3D viewer then previews the
 accepted texture on the actual host structure and selected supercell. The
 preview canvas can be switched between light and dark modes without changing
-the rest of the MuFinder interface, and the structure-viewer backgrounds and
-axis triads follow the active application palette.
+the rest of the MuFinder interface; each canvas keeps its own colours in either
+theme, and the structure-viewer backgrounds and axis triads follow the active
+application palette.
 
 Tick ``Show |m| map`` in the preview header to replace the arrows with a colour
 map of the moment magnitude over one magnetic cell, with a colour bar in μB.

@@ -32,6 +32,7 @@ from mufinder.app.adapter_common import coerce_supercell_matrix, supercell_label
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
 from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
@@ -41,7 +42,7 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.supercell_assets import supercell_asset
 
 
-class SupercellEditorDialog(QDialog):
+class SupercellEditorDialog(StructureViewerDialog):
     """Manage saved project supercells for one source structure."""
 
     _ID_COLUMN = 0
@@ -113,7 +114,7 @@ class SupercellEditorDialog(QDialog):
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
-        self._viewer = AtomicStructureViewer()
+        self._viewer = self.hold_viewer(AtomicStructureViewer())
 
         self._new_button = QPushButton("New")
         self._save_button = QPushButton("Save")
@@ -122,7 +123,6 @@ class SupercellEditorDialog(QDialog):
         self._suggest_button = QPushButton("Suggest…")
         self._use_button = QPushButton("Use Selected")
         self._close_button = QPushButton("Close")
-        self._viewer_shutdown = False
 
         self._new_button.clicked.connect(self._new_asset)
         self._save_button.clicked.connect(self._save_current)
@@ -136,25 +136,6 @@ class SupercellEditorDialog(QDialog):
         self._build_layout()
         self._apply_matrix(initial_matrix or [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         self._refresh_assets()
-
-    def _shutdown_viewer(self) -> None:
-        if self._viewer_shutdown:
-            return
-        self._viewer_shutdown = True
-        try:
-            self._viewer.shutdown()
-        except RuntimeError:
-            pass
-
-    def done(self, result: int) -> None:  # noqa: D401 - Qt API override.
-        """Finish the dialog after releasing viewer resources."""
-
-        self._shutdown_viewer()
-        super().done(result)
-
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        self._shutdown_viewer()
-        super().closeEvent(event)
 
     def selected_structure_id(self) -> UUID | None:
         """Return the supercell selected for caller use."""

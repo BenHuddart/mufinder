@@ -43,6 +43,7 @@ from mufinder.app.theme import (
     style_section_title,
     style_warning_text,
 )
+from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.quantum_phonons import (
@@ -71,7 +72,7 @@ class PhononModeAnalysisRow:
     muon_dominant: bool = False
 
 
-class QuantumPhononAnalysisDialog(QDialog):
+class QuantumPhononAnalysisDialog(StructureViewerDialog):
     """Analyse one completed CASTEP phonon calculation."""
 
     def __init__(
@@ -114,7 +115,6 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._phonon_animation_timer = QTimer(self)
         self._phonon_animation_timer.setInterval(20)
         self._phonon_animation_timer.timeout.connect(self._advance_phonon_animation)
-        self._phonon_viewer_shutdown = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -279,7 +279,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._phonon_mode_table.itemSelectionChanged.connect(self._sync_selected_phonon_mode)
         splitter.addWidget(self._phonon_mode_table)
 
-        self._phonon_viewer = AtomicStructureViewer(splitter)
+        self._phonon_viewer = self.hold_viewer(AtomicStructureViewer(splitter))
         splitter.addWidget(self._phonon_viewer)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([580, 1240])
@@ -594,30 +594,13 @@ class QuantumPhononAnalysisDialog(QDialog):
             )
         return overlays
 
-    def _shutdown_phonon_viewer(self) -> None:
+    def shutdown_viewers(self) -> None:
+        """Stop the mode animation, then shut the phonon viewer down."""
+
         timer = getattr(self, "_phonon_animation_timer", None)
         if timer is not None:
             timer.stop()
-        if self._phonon_viewer_shutdown:
-            return
-        self._phonon_viewer_shutdown = True
-        viewer = getattr(self, "_phonon_viewer", None)
-        if viewer is None:
-            return
-        try:
-            viewer.shutdown()
-        except RuntimeError:
-            pass
-
-    def done(self, result: int) -> None:  # noqa: D401 - Qt API override.
-        """Finish the dialog after releasing viewer resources."""
-
-        self._shutdown_phonon_viewer()
-        super().done(result)
-
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        self._shutdown_phonon_viewer()
-        super().closeEvent(event)
+        super().shutdown_viewers()
 
 
 class QuantumAnalysisHelpDialog(QDialog):

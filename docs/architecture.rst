@@ -305,7 +305,8 @@ no two workflow widgets may define the same private method.
        name and per-format filters that guarantees an offered extension
        (``ask_save_path``), the saved and failed messages
        (``report_export_saved``, ``report_export_failed``), one menu entry
-       per export format (``add_format_actions``), and the relaxed-structure
+       per export format (``add_format_actions``), the DAT and text formats a
+       plotted curve's data exports to (``DATA_TEXT_FORMATS``), and the relaxed-structure
        flows built on them (``export_relaxed_structure`` for one file,
        ``export_relaxed_structures_to_folder`` for one file per structure in a
        chosen folder). The job-folder row-menu entries every workflow table
@@ -313,6 +314,19 @@ no two workflow widgets may define the same private method.
        ``open_containing_folder`` and ``Export Inputs/Outputs…`` through
        ``export_job_files_to_folder``), fed by the controller's
        ``job_files_exports``.
+   * - ``mufinder.app.decimal_input``
+     - Typed decimal fields (``DecimalLineEdit``): a validated range, decimals
+       and notation (``standard_notation`` refuses exponents), set up in one
+       call, with the typed text kept as given for forms that read the text and
+       a ``QDoubleSpinBox``-like value API for those that do not.
+   * - ``mufinder.app.viewer_dialog``
+     - Dialogs that show a 3D structure viewer (``StructureViewerDialog``):
+       each viewer registered with ``hold_viewer`` is shut down once, when the
+       dialog finishes or closes.
+   * - ``mufinder.app.result_notes``
+     - Notes shown beside magnetic results on more than one page: the hidden
+       note on results calculated at an unrelaxed UEP site
+       (``unrelaxed_results_note``).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -426,6 +440,14 @@ no two workflow widgets may define the same private method.
        because no application-wide event filter discovers views.
        Matplotlib axes and legends take the palette through
        ``style_plot_axes`` and ``style_plot_legend``.
+       Feature stylesheets a widget sets on itself come from here too.
+       ``feature_dialog_stylesheet`` takes the palette current when a dialog
+       opens, so it suits dialogs built each time they are opened; the
+       stylesheets of long-lived widgets (``magnetic_fields_stylesheet``,
+       ``magnetic_structure_builder_stylesheet``) carry no colours that would
+       go stale when the theme changes, and their coloured rules are sections
+       of the application stylesheet. Painted widgets take their colours from
+       here (``texture_preview_colors`` for the magnetic texture preview).
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
@@ -602,6 +624,12 @@ no two workflow widgets may define the same private method.
        computed at an unrelaxed UEP site (``UNRELAXED_RESULTS_NOTE``), the
        note beside a list of UEP sites (``UNRELAXED_SITE_NOTE``) and the
        status-line suffix for results there (``UNRELAXED_ESTIMATE_SUFFIX``).
+   * - ``mufinder.services.magnetic_field_settings``
+     - The Magnetic Fields page's calculation settings as one value
+       (``MagneticFieldCalculationSettings``), which the Calculation Settings
+       dialog edits and the page reads: their ranges, their saved form keys
+       (``with_state``, ``state_items``), the page's settings summary and the
+       ``MagneticFieldOptions`` fields they fill (``option_values``).
    * - ``mufinder.services.magnetic_field_sites``
      - The muon sites the Magnetic Fields page offers, by source
        (``muon_site_options``, ``uep_cluster_muon_site_options``,

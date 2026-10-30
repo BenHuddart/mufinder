@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, Qt
-from PySide6.QtGui import QColor, QKeyEvent
+from PySide6.QtGui import QColor, QDoubleValidator, QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QGridLayout, QScrollArea
 from PySide6.QtTest import QTest
 
@@ -16,6 +17,7 @@ import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.science.magnetic_fields as magnetic_fields_module
 from mufinder.services.muon_sites_summary import MAGNETIC_FIELDS_SCOPE, set_show_every_relaxed_site
 from mufinder.app import workflow_table_utils
+from mufinder.app import export_dialogs
 from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.magnetic_field_widget import (
@@ -56,6 +58,7 @@ from mufinder.services.magnetic_field_results import (
     store_magnetic_field_results,
 )
 from mufinder.science.demagnetization import PlatePhoto, demagnetizing_tensor
+from mufinder.services.magnetic_field_settings import MagneticFieldCalculationSettings
 from mufinder.services.magnetic_field_sites import (
     MagneticMuonSiteOption,
     relaxation_cluster_muon_site_options,
@@ -148,8 +151,9 @@ def test_magnetic_structure_builder_imports_legacy_host_spins(qapp, tmp_path) ->
     assert dialog._classification.text() == "Structure type: commensurate"
     assert dialog._viewer._spins is not None
     assert dialog._viewer._spins.shape == (2, 3)
-    assert dialog._viewer._show_cell.objectName() == "magneticBuilderViewerCheckBox"
-    assert "spacing: 9px" in dialog._viewer._show_cell.styleSheet()
+    # The builder styles the viewer's checkboxes from its own stylesheet, not the viewer's.
+    assert dialog.styleSheet() == theme_module.magnetic_structure_builder_stylesheet()
+    assert dialog._viewer._show_cell.styleSheet() == ""
     assert len(dialog.model().components) == 2
     dialog.close()
 
@@ -1320,7 +1324,7 @@ def test_magnetic_structure_builder_shutdowns_viewer_once(qapp) -> None:
     dialog.done(0)
 
     assert calls["shutdown"] == 1
-    assert dialog._viewer_shutdown is True
+    assert dialog.viewers_shut_down() is True
 
 
 def test_component_dialog_adapts_atom_target_options(qapp) -> None:
@@ -1474,6 +1478,40 @@ def test_component_dialog_decimal_inputs_validate_ranges(qapp) -> None:
     else:  # pragma: no cover - assertion guard
         raise AssertionError("expected out-of-range amplitude to fail")
     dialog.close()
+
+
+def _accepted(edit) -> tuple[str, float, float, int, bool]:
+    """An input's text, accepted range, decimals and whether it takes exponents."""
+
+    validator = edit.validator()
+    scientific = validator.notation() == QDoubleValidator.Notation.ScientificNotation
+    return (edit.text(), validator.bottom(), validator.top(), validator.decimals(), scientific)
+
+
+def test_decimal_inputs_accept_the_same_text_as_before(qapp) -> None:
+    structure = _multi_species_structure()
+    component = MagneticComponentDialog(structure, selected_indices=(0,))
+    texture = MagneticTextureDialog(structure)
+    nuclear = NuclearRelaxationDialog(muon_site=None, distortion_available=False)
+    site = MuonSiteSelectionDialog(None, _host_structure())
+    page = MagneticFieldWidget()
+
+    assert _accepted(component._amplitude) == ("1.0", 0.0, 1000.0, 8, False)
+    assert _accepted(component._cone_angle) == ("45.0", 0.0, 180.0, 8, False)
+    assert _accepted(component._q_x) == ("0.0", -4.0, 4.0, 8, False)
+    assert _accepted(component._phase) == ("0.0", -10.0, 10.0, 8, False)
+    assert _accepted(component._primary_direction[2]) == ("1", -100.0, 100.0, 8, False)
+    assert _accepted(texture._q1[0]) == ("0.05", -10.0, 10.0, 8, False)
+    assert _accepted(texture._normalise_threshold) == ("0.001", 1e-8, 1.0, 8, False)
+    assert _accepted(nuclear._direction_z) == ("1.0", -1e6, 1e6, 12, True)
+    assert _accepted(nuclear._radius) == ("", 0.0, 1e6, 12, True)
+    assert _accepted(nuclear._rtol) == ("1e-6", 0.0, 1e6, 12, True)
+    assert _accepted(site._custom_x) == ("0.0", 0.0, 1.0, 8, True)
+    assert _accepted(page._applied_field_inputs[0]) == ("0.0", -1000.0, 1000.0, 6, True)
+    assert _accepted(page._measured_magnetization_inputs[1]) == ("0.0", -1000.0, 1000.0, 6, True)
+    assert _accepted(page._hyperfine_coupling) == ("0.0", -1e6, 1e6, 8, True)
+    for widget in (component, texture, nuclear, site, page):
+        widget.close()
 
 
 def test_component_dialog_constrains_rotating_directions_from_q_and_handedness(qapp) -> None:
@@ -2632,7 +2670,8 @@ def test_nuclear_relaxation_dialog_controls_follow_mode_and_distortion_state(qap
     assert not dialog._distortion.isEnabled()
     assert dialog._quadrupolar.isEnabled()
     assert dialog._direction_x.objectName() == "nuclearDirectionInput"
-    assert "QLineEdit#nuclearDirectionInput:disabled" in dialog.styleSheet()
+    # The app stylesheet styles these inputs (see test_theme), so they follow theme changes.
+    assert dialog.styleSheet() == ""
     dialog._regime_combo.setCurrentIndex(dialog._regime_combo.findData("tf"))
 
     assert not dialog._quadrupolar.isEnabled()
@@ -2829,9 +2868,7 @@ def test_magnetic_field_widget_passes_calculation_cell_counts(qapp, tmp_path, mo
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
     widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
-    widget._calc_cells_a.setValue(24)
-    widget._calc_cells_b.setValue(36)
-    widget._calc_cells_c.setValue(48)
+    widget.set_calculation_settings(replace(widget.calculation_settings(), supercell=(24, 36, 48)))
 
     widget._calculate_fields()
 
@@ -3737,10 +3774,11 @@ def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(
     assert widget._demag_shape() == "none"
     assert widget._field_options().supercell == (100, 100, 100)
     assert widget._include_equivalent_sites.isChecked() is False
-    assert widget._lookup_angles.value() == 32_768
-    assert widget._phase_samples.value() == 200_000
+    assert widget.calculation_settings() == MagneticFieldCalculationSettings()
+    assert widget._field_options().nangles == 32_768
+    assert widget._field_options().phase_sample_count == 200_000
     assert widget._field_options().phase_sampling == "auto"
-    assert widget._histogram_bins.value() == 512
+    assert widget._field_options().histogram_bins == 512
     assert widget._hyperfine_coupling.text() == "0.0"
     assert widget._current_hyperfine_unit() == "angstrom^-3"
     assert widget.selected_muon_site() is None
@@ -3753,13 +3791,11 @@ def test_magnetic_field_widget_empty_form_state_resets_previous_project_values(
 
 def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> None:
     dialog = MagneticFieldCalculationSettingsDialog(
-        supercell=(12, 24, 36),
-        nangles=4096,
-        phase_sample_count=200_000,
-        phase_sampling="auto",
-        histogram_bins=512,
+        MagneticFieldCalculationSettings(supercell=(12, 24, 36), nangles=4096)
     )
 
+    assert dialog._calc_cells_b.value() == 24
+    assert dialog._lookup_angles.value() == 4096
     dialog._calc_cells_a.setValue(18)
     dialog._lookup_angles.setValue(8192)
     dialog._phase_samples.setValue(250_000)
@@ -3771,18 +3807,18 @@ def test_magnetic_field_calculation_settings_dialog_collects_values(qapp) -> Non
     dialog._contact_nnn.setValue(4)
     dialog._contact_rcont.setValue(3.5)
 
-    assert dialog.values() == {
-        "supercell": (18, 24, 36),
-        "nangles": 8192,
-        "phase_sample_count": 250_000,
-        "phase_sampling": "montecarlo",
-        "histogram_bins": 1024,
-        "use_approximants": True,
-        "approximant_tolerance": 0.002,
-        "approximant_max_period": 8,
-        "contact_nnn": 4,
-        "contact_rcont": 3.5,
-    }
+    assert dialog.settings() == MagneticFieldCalculationSettings(
+        supercell=(18, 24, 36),
+        nangles=8192,
+        phase_sample_count=250_000,
+        phase_sampling="montecarlo",
+        histogram_bins=1024,
+        use_approximants=True,
+        approximant_tolerance=0.002,
+        approximant_max_period=8,
+        contact_nnn=4,
+        contact_rcont=3.5,
+    )
     assert (
         dialog._phase_samples.maximum()
         == magnetic_field_widget_module.MAX_INCOMMENSURATE_PHASE_SAMPLES
@@ -3798,53 +3834,31 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
         tmp_path / "magnetic-settings-dialog.mufinder", "Magnetic Settings Dialog"
     )
     service.add_structure(document, _host_structure())
+    chosen = MagneticFieldCalculationSettings(
+        supercell=(24, 36, 48),
+        nangles=8192,
+        phase_sample_count=250_000,
+        phase_sampling="grid",
+        histogram_bins=1024,
+        use_approximants=True,
+        approximant_tolerance=0.002,
+        approximant_max_period=8,
+        contact_nnn=4,
+        contact_rcont=3.5,
+    )
 
     class _Dialog:
-        def __init__(
-            self,
-            *,
-            supercell,
-            nangles,
-            phase_sample_count,
-            histogram_bins,
-            phase_sampling,
-            use_approximants,
-            approximant_tolerance,
-            approximant_max_period,
-            contact_nnn,
-            contact_rcont,
-            contact_tie_check=None,
-            parent=None,
-        ):
-            assert supercell == (100, 100, 100)
+        def __init__(self, settings, *, contact_tie_check=None, parent=None):
+            # A fresh page opens the dialog on the default settings.
+            assert settings == MagneticFieldCalculationSettings()
             # The page's host has no hyperfine coupling, so there is no shell to check.
             assert contact_tie_check is None
-            assert nangles == 32_768
-            assert phase_sample_count == 200_000
-            assert histogram_bins == 512
-            assert phase_sampling == "auto"
-            assert use_approximants is False
-            assert approximant_tolerance == 1e-3
-            assert approximant_max_period == 12
-            assert contact_nnn == 2
-            assert contact_rcont == 10.0
 
         def exec(self):
             return QDialog.DialogCode.Accepted
 
-        def values(self):
-            return {
-                "supercell": (24, 36, 48),
-                "nangles": 8192,
-                "phase_sample_count": 250_000,
-                "phase_sampling": "grid",
-                "histogram_bins": 1024,
-                "use_approximants": True,
-                "approximant_tolerance": 0.002,
-                "approximant_max_period": 8,
-                "contact_nnn": 4,
-                "contact_rcont": 3.5,
-            }
+        def settings(self):
+            return chosen
 
     monkeypatch.setattr(
         magnetic_field_widget_module, "MagneticFieldCalculationSettingsDialog", _Dialog
@@ -3857,6 +3871,7 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
 
     widget._open_calculation_settings_dialog()
 
+    assert widget.calculation_settings() == chosen
     assert widget._field_options().supercell == (24, 36, 48)
     assert widget._field_options().nangles == 8192
     assert widget._field_options().phase_sample_count == 250_000
@@ -3880,26 +3895,22 @@ def test_magnetic_field_widget_opens_calculation_settings_dialog(
 
 
 def test_calculation_settings_dialog_defaults_the_contact_shell_to_muesr(qapp) -> None:
-    dialog = MagneticFieldCalculationSettingsDialog(
-        supercell=(100, 100, 100), nangles=32_768, phase_sample_count=200_000, histogram_bins=512
-    )
+    dialog = MagneticFieldCalculationSettingsDialog()
 
-    assert dialog.values()["contact_nnn"] == 2
-    assert dialog.values()["contact_rcont"] == 10.0
+    assert dialog.settings().contact_nnn == 2
+    assert dialog.settings().contact_rcont == 10.0
     dialog.close()
 
 
 def test_calculation_settings_dialog_refuses_an_empty_contact_shell(qapp) -> None:
-    dialog = MagneticFieldCalculationSettingsDialog(
-        supercell=(100, 100, 100), nangles=32_768, phase_sample_count=200_000, histogram_bins=512
-    )
+    dialog = MagneticFieldCalculationSettingsDialog()
 
     dialog._contact_nnn.setValue(0)
     dialog._contact_rcont.setValue(0.0)
     dialog._contact_rcont.setValue(-2.0)
 
-    assert dialog.values()["contact_nnn"] == 1
-    assert dialog.values()["contact_rcont"] > 0.0
+    assert dialog.settings().contact_nnn == 1
+    assert dialog.settings().contact_rcont > 0.0
     assert dialog._contact_nnn.minimum() == 1
     assert dialog._contact_rcont.minimum() > 0.0
     dialog.close()
@@ -4310,9 +4321,14 @@ def test_magnetic_field_widget_passes_incommensurate_sampling_controls(
     widget.set_document(document)
     widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
     widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
-    widget._phase_samples.setValue(250_000)
-    widget._phase_sampling_method = "montecarlo"
-    widget._histogram_bins.setValue(1024)
+    widget.set_calculation_settings(
+        replace(
+            widget.calculation_settings(),
+            phase_sample_count=250_000,
+            phase_sampling="montecarlo",
+            histogram_bins=1024,
+        )
+    )
 
     widget._calculate_fields()
 
@@ -4429,13 +4445,16 @@ def test_magnetic_field_widget_collects_and_restores_form_state(qapp, tmp_path) 
     widget.set_document(document)
     widget._selected_muon_site = selected_site
     widget._plate_radio.setChecked(True)
-    widget._calc_cells_a.setValue(24)
-    widget._calc_cells_b.setValue(36)
-    widget._calc_cells_c.setValue(48)
+    widget.set_calculation_settings(
+        replace(
+            widget.calculation_settings(),
+            supercell=(24, 36, 48),
+            phase_sample_count=250_000,
+            phase_sampling="grid",
+            histogram_bins=1024,
+        )
+    )
     widget._include_equivalent_sites.setChecked(True)
-    widget._phase_samples.setValue(250_000)
-    widget._phase_sampling_method = "grid"
-    widget._histogram_bins.setValue(1024)
     widget._hyperfine_coupling.setText("2.5")
     widget._hyperfine_units.setCurrentIndex(widget._hyperfine_units.findData("MHz_per_muB"))
     widget._dipolar_tensor_selector_state = {
@@ -4784,7 +4803,7 @@ def test_magnetic_field_widget_emits_form_state_for_setting_changes(qapp, tmp_pa
     widget.form_state_changed.connect(emitted.append)
 
     widget._none_radio.setChecked(True)
-    widget._histogram_bins.setValue(768)
+    widget.set_calculation_settings(replace(widget.calculation_settings(), histogram_bins=768))
     widget._hyperfine_coupling.setText("1.25")
 
     assert emitted
@@ -4810,7 +4829,9 @@ def test_magnetic_field_widget_emits_pin_title_and_delete_signals(qapp, tmp_path
     widget.workspace_title_changed.connect(renamed.append)
     widget.delete_requested.connect(lambda: deleted.append(True))
 
-    widget._phase_samples.setValue(250_000)
+    widget.set_calculation_settings(
+        replace(widget.calculation_settings(), phase_sample_count=250_000)
+    )
     widget._pin_button.click()
     widget._title_edit.setText("Renamed helix")
     widget._on_title_edit_finished()
@@ -5145,9 +5166,14 @@ def test_magnetic_field_widget_lists_commensurate_approximant_fields(
         lambda *_args, **_kwargs: pytest.fail("an approximant should not sample a distribution"),
     )
     widget = _incommensurate_widget(document, monkeypatch, approximant=_APPROXIMANT)
-    widget._use_approximants = True
-    widget._approximant_tolerance = 2e-3
-    widget._approximant_max_period = 8
+    widget.set_calculation_settings(
+        replace(
+            widget.calculation_settings(),
+            use_approximants=True,
+            approximant_tolerance=2e-3,
+            approximant_max_period=8,
+        )
+    )
 
     widget._calculate_fields()
 
@@ -5234,7 +5260,7 @@ def test_magnetic_field_widget_reports_a_converged_distribution_without_advice(
         lambda *_args, **_kwargs: (_Distribution(),),
     )
     widget = _incommensurate_widget(document, monkeypatch, approximant=None)
-    widget._use_approximants = True
+    widget.set_calculation_settings(replace(widget.calculation_settings(), use_approximants=True))
 
     widget._calculate_fields()
 
@@ -5318,7 +5344,7 @@ def test_magnetic_field_widget_saves_and_restores_approximant_settings(qapp, tmp
     )
 
     widget.set_form_state({"approximant_tolerance": "wide", "approximant_max_period": 500})
-    assert widget._use_approximants is False
+    assert widget.calculation_settings().use_approximants is False
     assert widget._field_options().approximant_tolerance == 1e-3
     assert widget._field_options().approximant_max_period == 12
 
@@ -5592,20 +5618,63 @@ def test_magnetic_field_distribution_dialog_exports_dat_file(qapp, tmp_path, mon
         calculation_parameters = {"supercell": [12, 12, 12], "nangles": 4096}
 
     export_path = tmp_path / "distribution.dat"
+    offered: list[str] = []
+
+    def _get_save_file_name(_parent, _title, suggested, filters):
+        offered.append(filters)
+        assert suggested == "field_distribution.dat"
+        # A name without a suffix takes the chosen filter's.
+        return str(tmp_path / "distribution"), "DAT files (*.dat)"
+
+    monkeypatch.setattr(export_dialogs.QFileDialog, "getSaveFileName", _get_save_file_name)
+    saved: list[Path] = []
     monkeypatch.setattr(
-        magnetic_field_widget_module.QFileDialog,
-        "getSaveFileName",
-        lambda *_args, **_kwargs: (str(export_path), "DAT files (*.dat)"),
+        magnetic_field_widget_module,
+        "report_export_saved",
+        lambda _parent, path: saved.append(path),
     )
 
     dialog = MagneticFieldDistributionDialog(_Distribution())
     dialog._export_data()
 
+    assert offered == ["DAT files (*.dat);;Text files (*.txt)"]
+    assert saved == [export_path]
     text = export_path.read_text(encoding="utf-8")
     assert "# MuFinder field distribution export" in text
     assert "#   nangles: 4096" in text
     assert "# Columns: B_T p_site_1" in text
     assert "1" in text
+    dialog.close()
+
+
+def test_magnetic_field_distribution_export_reports_a_failed_write(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    class _Distribution:
+        site_label = "site 1"
+        fields_T = np.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], dtype=float)
+
+    missing_folder = tmp_path / "missing" / "distribution.dat"
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "ask_save_path", lambda *_args, **_kwargs: missing_folder
+    )
+    failures: list[Exception] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "report_export_failed",
+        lambda _parent, error: failures.append(error),
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "report_export_saved",
+        lambda *_args: pytest.fail("a failed export is not reported as saved"),
+    )
+
+    dialog = MagneticFieldDistributionDialog(_Distribution())
+    dialog._export_data()
+
+    assert len(failures) == 1
+    assert isinstance(failures[0], OSError)
     dialog.close()
 
 
@@ -6136,10 +6205,6 @@ def test_calculation_settings_dialog_warns_while_the_contact_shell_splits_a_tie(
         return ("First site splits a tie.", "Second site too.") if nnn < 4 else ()
 
     dialog = MagneticFieldCalculationSettingsDialog(
-        supercell=(100, 100, 100),
-        nangles=32_768,
-        phase_sample_count=200_000,
-        histogram_bins=512,
         contact_tie_check=_check,
     )
     warning = dialog._contact_tie_warning
@@ -6153,14 +6218,12 @@ def test_calculation_settings_dialog_warns_while_the_contact_shell_splits_a_tie(
     assert not warning.isHidden()
     assert calls[-1] == (3, 3.5)
     # Warning only: the values still go through.
-    assert dialog.values()["contact_nnn"] == 3
+    assert dialog.settings().contact_nnn == 3
     dialog.close()
 
 
 def test_calculation_settings_dialog_without_a_tie_check_shows_no_warning(qapp) -> None:
-    dialog = MagneticFieldCalculationSettingsDialog(
-        supercell=(100, 100, 100), nangles=32_768, phase_sample_count=200_000, histogram_bins=512
-    )
+    dialog = MagneticFieldCalculationSettingsDialog()
 
     assert dialog._contact_tie_warning.isHidden()
     dialog.close()
@@ -6255,10 +6318,6 @@ def test_the_breakdown_shows_a_saved_tie_warning_without_its_terms(qapp, tmp_pat
 def test_the_contact_settings_check_ties_when_a_typed_value_is_finished(qapp) -> None:
     calls: list[tuple[int, float]] = []
     dialog = MagneticFieldCalculationSettingsDialog(
-        supercell=(100, 100, 100),
-        nangles=32_768,
-        phase_sample_count=200_000,
-        histogram_bins=512,
         contact_tie_check=lambda nnn, rcont: calls.append((nnn, rcont)) or (),
     )
     calls.clear()
@@ -6270,3 +6329,20 @@ def test_the_contact_settings_check_ties_when_a_typed_value_is_finished(qapp) ->
     QTest.keyClick(dialog._contact_rcont, Qt.Key.Key_Return)
     assert calls == [(2, 25.5)]
     dialog.close()
+
+
+@pytest.mark.parametrize("canvas", ["light", "dark"])
+def test_magnetic_texture_preview_paints_its_canvas_colours(qapp, canvas) -> None:
+    preview = MagneticTexturePreview()
+    preview.resize(300, 260)
+    preview.set_canvas_mode(canvas)
+    colors = theme_module.texture_preview_colors(canvas)
+
+    image = preview.grab().toImage()
+    rect = preview._plot_rect()
+
+    assert image.pixelColor(2, 2) == QColor(colors.surround)
+    assert image.pixelColor(int(rect.left()) + 20, int(rect.top()) + 20) == QColor(
+        colors.plot_background
+    )
+    preview.close()

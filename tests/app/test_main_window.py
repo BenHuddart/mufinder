@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -364,7 +365,7 @@ def test_main_window_restores_magnetic_field_form_state(qapp, tmp_path: Path) ->
     assert view._field_options().histogram_bins == 1024
     assert view.selected_muon_site().fractional_position == (0.25, 0.5, 0.75)
 
-    view._histogram_bins.setValue(768)
+    view.set_calculation_settings(replace(view.calculation_settings(), histogram_bins=768))
 
     assert doc.ui_state["magnetic_field_form"]["histogram_bins"] == 768
 
@@ -462,8 +463,10 @@ def test_main_window_persists_magnetic_field_calculation_results(
     assert "magnetic_field_results" not in reloaded.ui_state["magnetic_field_form"]
 
     # A form change that invalidates the results removes the record.
-    reloaded_window._magnetic_field_view._histogram_bins.setValue(
-        reloaded_window._magnetic_field_view._histogram_bins.value() + 1
+    reloaded_view = reloaded_window._magnetic_field_view
+    settings = reloaded_view.calculation_settings()
+    reloaded_view.set_calculation_settings(
+        replace(settings, histogram_bins=settings.histogram_bins + 1)
     )
 
     assert magnetic_field_results(reloaded) == []
@@ -599,7 +602,9 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     window._set_active_route("magnetic_fields")
     window._magnetic_field_view._set_model(_magnetic_model("Main helix"))
     window._magnetic_field_view._none_radio.setChecked(True)
-    window._magnetic_field_view._phase_samples.setValue(8192)
+    window._magnetic_field_view.set_calculation_settings(
+        replace(window._magnetic_field_view.calculation_settings(), phase_sample_count=8192)
+    )
     main_structure = dict(doc.project.magnetic_structure)
     monkeypatch.setattr(
         main_window_module.QInputDialog,

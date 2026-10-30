@@ -58,6 +58,11 @@ CIF_FORMAT = ExportFormat("CIF", "CIF Files", ".cif")
 CASTEP_CELL_FORMAT = ExportFormat("CASTEP cell", "CASTEP Cell Files", ".cell")
 #: The formats a relaxed structure exports to, in menu order.
 STRUCTURE_FORMATS = (CIF_FORMAT, CASTEP_CELL_FORMAT)
+#: The formats a plotted curve's data exports to as columns of text.
+DATA_TEXT_FORMATS = (
+    ExportFormat("DAT", "DAT files", ".dat"),
+    ExportFormat("Text", "Text files", ".txt"),
+)
 _KNOWN_SUFFIXES = frozenset(fmt.suffix for fmt in STRUCTURE_FORMATS)
 #: Warning title when an exported muon site sits on or very near a host atom.
 MUON_HOST_OVERLAP_TITLE = "Muon sites coincide with host atoms"

@@ -10,30 +10,68 @@ from PySide6.QtWidgets import QLineEdit, QWidget
 
 
 class DecimalLineEdit(QLineEdit):
-    """Line edit with float validation and a QDoubleSpinBox-like API subset."""
+    """Line edit with float validation and a QDoubleSpinBox-like API subset.
+
+    The keyword arguments set it up in one call. ``text`` is shown exactly as
+    given (``"1.0"`` stays ``"1.0"``, ``""`` stays blank) rather than
+    reformatted, for forms that read the typed text. ``standard_notation``
+    refuses exponents such as ``1e-3``; by default they are accepted.
+    """
 
     valueChanged = Signal(float)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        text: str | None = None,
+        minimum: float = -1_000_000_000.0,
+        maximum: float = 1_000_000_000.0,
+        decimals: int = 8,
+        standard_notation: bool = False,
+        placeholder: str = "",
+    ) -> None:
         super().__init__(parent)
-        self._minimum = -1_000_000_000.0
-        self._maximum = 1_000_000_000.0
-        self._decimals = 8
+        self._minimum = float(minimum)
+        self._maximum = float(maximum)
+        self._decimals = max(0, int(decimals))
         self._single_step = 0.1
         self._last_value = 0.0
         self._validator = QDoubleValidator(self._minimum, self._maximum, self._decimals, self)
-        self._validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
+        self._validator.setNotation(
+            QDoubleValidator.Notation.StandardNotation
+            if standard_notation
+            else QDoubleValidator.Notation.ScientificNotation
+        )
         self.setValidator(self._validator)
         self.textChanged.connect(self._on_text_changed)
         self.editingFinished.connect(self._snap_to_range)
-        self.setValue(0.0)
+        if placeholder:
+            self.setPlaceholderText(placeholder)
+        if text is None:
+            self.setValue(0.0)
+        else:
+            self.setText(text)
 
-    def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 - Qt API compatibility.
+    def minimum(self) -> float:
+        return self._minimum
+
+    def maximum(self) -> float:
+        return self._maximum
+
+    def setRange(self, minimum: float, maximum: float, *, keep_text: bool = False) -> None:  # noqa: N802 - Qt API compatibility.
+        """Accept values from ``minimum`` to ``maximum``.
+
+        The shown value is clamped into the new range, as a ``QDoubleSpinBox``
+        does, unless ``keep_text`` leaves the text as typed.
+        """
+
         self._minimum = float(minimum)
         self._maximum = float(maximum)
         self._validator.setBottom(self._minimum)
         self._validator.setTop(self._maximum)
-        self.setValue(self.value())
+        if not keep_text:
+            self.setValue(self.value())
 
     def setDecimals(self, decimals: int) -> None:  # noqa: N802 - Qt API compatibility.
         self._decimals = max(0, int(decimals))
