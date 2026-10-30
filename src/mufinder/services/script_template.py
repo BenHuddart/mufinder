@@ -18,6 +18,10 @@ _SBATCH_PARTITION_LINE_RE = re.compile(r"^\s*#SBATCH\b.*\s(?:-p|--partition\b)")
 
 _BUILTIN_TEMPLATE_TOKEN_SLURM = "builtin:slurm-basic"
 _BUILTIN_TEMPLATE_TOKEN_SCARF = "builtin:scarf-slurm"
+_BUILTIN_TEMPLATE_LABELS = {
+    _BUILTIN_TEMPLATE_TOKEN_SLURM: "Built-in SLURM template",
+    _BUILTIN_TEMPLATE_TOKEN_SCARF: "Built-in SCARF template",
+}
 
 _BUILTIN_TEMPLATES: dict[str, str] = {
     _BUILTIN_TEMPLATE_TOKEN_SLURM: """#!/bin/bash
@@ -165,6 +169,32 @@ def load_template(path: Path | str) -> Template:
         return Template(_BUILTIN_TEMPLATES[token])
     content = Path(path).read_text(encoding="utf-8")
     return Template(content)
+
+
+def is_builtin_template(template_script_path: str) -> bool:
+    """Return whether a configured template names a built-in, not a file."""
+
+    return template_script_path.strip() in _BUILTIN_TEMPLATE_LABELS
+
+
+def template_display_name(template_script_path: str, *, cluster_name: str) -> str:
+    """Name the template a SLURM profile uses, as the user knows it.
+
+    A file is shown by its name. An empty setting names the built-in that
+    ``load_template_for_cluster`` falls back to.
+    """
+
+    configured = template_script_path.strip()
+    if configured in _BUILTIN_TEMPLATE_LABELS:
+        return _BUILTIN_TEMPLATE_LABELS[configured]
+    if configured:
+        return Path(configured).name or configured
+    token = (
+        _BUILTIN_TEMPLATE_TOKEN_SCARF
+        if cluster_name.strip().lower() == "scarf"
+        else _BUILTIN_TEMPLATE_TOKEN_SLURM
+    )
+    return _BUILTIN_TEMPLATE_LABELS[token]
 
 
 def load_template_for_cluster(

@@ -51,6 +51,7 @@ from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
 from mufinder.domain.cluster import ClusterConfig, ClusterQueue
 from mufinder.services.cluster_queues import queue_issues, walltime_issue
+from mufinder.services.script_template import is_builtin_template, template_display_name
 from mufinder.services.keychain import (
     credential_store_for_display,
     is_glamdring_keychain_supported,
@@ -61,6 +62,8 @@ from mufinder.services.ssh_client import SSHConnection
 #: Pre-filled default per-CPU memory request for SLURM cluster profiles. Mirrors
 #: ``cluster_submission_dialog._DEFAULT_MEM_PER_CPU_GB``.
 _DEFAULT_MEM_PER_CPU_GB = 6.0
+
+_AUTH_METHODS = (("SSH key", "key"), ("Password", "password"))
 
 # Columns of the queue table. Every column but the name is an override; a
 # blank cell uses the profile's value from the Scheduler tab.
@@ -99,10 +102,13 @@ class ClusterSetupDialog(QDialog):
 
     Saved clusters are listed on the left; the selected one is edited in the
     tabs on the right. Edits are kept per cluster while switching between
-    them and are saved together on ``OK``.
+    them and are saved together on ``OK``. ``cluster_name`` opens on that
+    cluster, at the first username it is missing.
     """
 
-    def __init__(self, *, settings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, *, settings, parent: QWidget | None = None, cluster_name: str | None = None
+    ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._configs: list[ClusterConfig] = load_cluster_configs(settings)
@@ -111,6 +117,11 @@ class ClusterSetupDialog(QDialog):
         # before another cluster is loaded.
         self._loaded_index = -1
         self._queue_row_names: list[str] = []
+        self._template_path = ""
+        # The built-in a custom file replaced, for 'Use built-in' to go back to:
+        # the shown cluster's, and every cluster's seen with one, by name.
+        self._builtin_template = ""
+        self._builtin_templates: dict[str, str] = {}
 
         self.setWindowTitle("Remote Cluster Connections")
         self.resize(1000, 580)
@@ -127,7 +138,6 @@ class ClusterSetupDialog(QDialog):
         self._tabs.addTab(self._build_connection_tab(), "Connection")
         self._tabs.addTab(self._build_scheduler_tab(), "Scheduler")
         self._tabs.addTab(self._build_queues_tab(), "Queues")
-        self._tabs.addTab(self._build_keywords_tab(), "Keyword generation")
         body.addWidget(self._tabs, 1)
 
         bottom_row = QHBoxLayout()
@@ -145,6 +155,17 @@ class ClusterSetupDialog(QDialog):
         self._connect_signals()
         self._populate_cluster_list()
         self._load_selected_config()
+        if cluster_name:
+            self._open_on_cluster(cluster_name)
+
+    def _open_on_cluster(self, name: str) -> None:
+        if not self._select_cluster(name):
+            return
+        self._tabs.setCurrentIndex(0)
+        if self._jump_enabled_check.isChecked() and self._username_edit.text().strip():
+            self._jump_username_edit.setFocus()
+        else:
+            self._username_edit.setFocus()
 
     # ------------------------------------------------------------------ layout
 
@@ -178,6 +199,17 @@ class ClusterSetupDialog(QDialog):
         form.setVerticalSpacing(8)
         return form
 
+    @staticmethod
+    def _new_auth_combo(parent: QWidget) -> QComboBox:
+        combo = QComboBox(parent)
+        for label, method in _AUTH_METHODS:
+            combo.addItem(label, method)
+        return combo
+
+    @staticmethod
+    def _set_auth_method(combo: QComboBox, method: str) -> None:
+        combo.setCurrentIndex(max(0, combo.findData(method.strip().lower())))
+
     def _path_row(self, parent: QWidget, edit: QLineEdit) -> tuple[QWidget, QPushButton]:
         row = QWidget(parent)
         style_inline_group(row)
@@ -201,8 +233,7 @@ class ClusterSetupDialog(QDialog):
         self._port_spin.setRange(1, 65535)
         self._port_spin.setValue(22)
         self._username_edit = QLineEdit(tab)
-        self._auth_combo = QComboBox(tab)
-        self._auth_combo.addItems(["key", "password"])
+        self._auth_combo = self._new_auth_combo(tab)
         self._key_path_edit = QLineEdit(tab)
         self._key_path_edit.setPlaceholderText("Default SSH keys and agent")
         self._key_path_row, self._key_browse_button = self._path_row(tab, self._key_path_edit)
@@ -233,30 +264,30 @@ class ClusterSetupDialog(QDialog):
         jump_layout = QVBoxLayout(jump_group)
         self._jump_enabled_check = QCheckBox("Connect through an SSH jump host", jump_group)
         jump_layout.addWidget(self._jump_enabled_check)
+        # The fields show only while the box is ticked.
+        self._jump_fields = QWidget(jump_group)
+        style_inline_group(self._jump_fields)
         self._jump_form = self._new_form()
-        self._jump_hostname_edit = QLineEdit(jump_group)
-        self._jump_port_spin = QSpinBox(jump_group)
+        self._jump_form.setContentsMargins(0, 0, 0, 0)
+        self._jump_fields.setLayout(self._jump_form)
+        self._jump_hostname_edit = QLineEdit(self._jump_fields)
+        self._jump_port_spin = QSpinBox(self._jump_fields)
         self._jump_port_spin.setRange(1, 65535)
         self._jump_port_spin.setValue(22)
-        self._jump_username_edit = QLineEdit(jump_group)
-        self._jump_auth_combo = QComboBox(jump_group)
-        self._jump_auth_combo.addItems(["key", "password"])
-        self._jump_key_path_edit = QLineEdit(jump_group)
+        self._jump_username_edit = QLineEdit(self._jump_fields)
+        self._jump_username_edit.setPlaceholderText("your jump host username")
+        self._jump_auth_combo = self._new_auth_combo(self._jump_fields)
+        self._jump_key_path_edit = QLineEdit(self._jump_fields)
         self._jump_key_path_edit.setPlaceholderText("Default SSH keys and agent")
         self._jump_key_path_row, self._jump_key_browse_button = self._path_row(
-            jump_group, self._jump_key_path_edit
+            self._jump_fields, self._jump_key_path_edit
         )
-        self._jump_hostname_label = QLabel("Host name", jump_group)
-        self._jump_form.addRow(self._jump_hostname_label, self._jump_hostname_edit)
-        self._jump_port_label = QLabel("Port", jump_group)
-        self._jump_form.addRow(self._jump_port_label, self._jump_port_spin)
-        self._jump_username_label = QLabel("Username", jump_group)
-        self._jump_form.addRow(self._jump_username_label, self._jump_username_edit)
-        self._jump_auth_label = QLabel("Authentication method", jump_group)
-        self._jump_form.addRow(self._jump_auth_label, self._jump_auth_combo)
-        self._jump_key_label = QLabel("SSH key path", jump_group)
-        self._jump_form.addRow(self._jump_key_label, self._jump_key_path_row)
-        jump_layout.addLayout(self._jump_form)
+        self._jump_form.addRow("Host name", self._jump_hostname_edit)
+        self._jump_form.addRow("Port", self._jump_port_spin)
+        self._jump_form.addRow("Username", self._jump_username_edit)
+        self._jump_form.addRow("Authentication method", self._jump_auth_combo)
+        self._jump_form.addRow("SSH key path", self._jump_key_path_row)
+        jump_layout.addWidget(self._jump_fields)
         tab_layout.addWidget(jump_group)
         tab_layout.addStretch(1)
         return tab
@@ -270,12 +301,21 @@ class ClusterSetupDialog(QDialog):
         self._queue_system_combo = QComboBox(tab)
         self._queue_system_combo.addItems(["SLURM", "ADDQUEUE"])
         self._working_dir_edit = QLineEdit(tab)
-        self._working_dir_edit.setPlaceholderText("e.g. /work/username")
-        self._template_path_edit = QLineEdit(tab)
-        self._template_path_edit.setPlaceholderText("Built-in SLURM template")
-        self._template_path_row, self._template_browse_button = self._path_row(
-            tab, self._template_path_edit
+        self._working_dir_edit.setPlaceholderText("e.g. /work/{username}")
+        self._working_dir_edit.setToolTip(
+            "Where job folders are created. {username} stands for the username on the "
+            "Connection tab."
         )
+        self._template_path_row = QWidget(tab)
+        style_inline_group(self._template_path_row)
+        template_layout = QHBoxLayout(self._template_path_row)
+        template_layout.setContentsMargins(0, 0, 0, 0)
+        self._template_name_label = QLabel(self._template_path_row)
+        template_layout.addWidget(self._template_name_label, 1)
+        self._template_custom_button = QPushButton("Use custom file…", self._template_path_row)
+        template_layout.addWidget(self._template_custom_button)
+        self._template_builtin_button = QPushButton("Use built-in", self._template_path_row)
+        template_layout.addWidget(self._template_builtin_button)
         self._castep_exec_edit = QLineEdit(tab)
         self._castep_exec_edit.setPlaceholderText("castep.mpi")
         self._cores_per_node_spin = QSpinBox(tab)
@@ -310,6 +350,23 @@ class ClusterSetupDialog(QDialog):
         self._default_memory_label = QLabel("Default memory per core (GB)", tab)
         self._cluster_form.addRow(self._default_memory_label, self._default_memory_spin)
         self._cluster_form.addRow(self._default_mem_per_cpu_check, self._default_mem_per_cpu_edit)
+        self._keyword_mode_combo = QComboBox(tab)
+        self._keyword_mode_combo.addItem("Scheduler job (recommended)", "scheduler")
+        self._keyword_mode_combo.addItem("Login node", "direct")
+        self._keyword_mode_combo.setToolTip(
+            "Where MuFinder runs CASTEP to build the keyword catalog. A scheduler job runs on the "
+            "default queue, reuses this cluster's job script and is safe where running CASTEP on "
+            "the login node is forbidden or discouraged. The login node is quicker when it is "
+            "permitted, because nothing waits in a queue."
+        )
+        self._keyword_shell_init_edit = QLineEdit(tab)
+        self._keyword_shell_init_edit.setPlaceholderText("Optional, e.g. module load CASTEP")
+        self._keyword_shell_init_edit.setToolTip(
+            "Extra commands to run before CASTEP when generating keywords. Usually unnecessary: "
+            "the environment setup in this cluster's job script template is reused automatically."
+        )
+        self._cluster_form.addRow("Generate keywords using", self._keyword_mode_combo)
+        self._cluster_form.addRow("Keyword shell init (optional)", self._keyword_shell_init_edit)
         tab_layout.addLayout(self._cluster_form)
 
         scheduler_note = QLabel(
@@ -394,41 +451,6 @@ class ClusterSetupDialog(QDialog):
         tab_layout.addLayout(queue_buttons)
         return tab
 
-    def _build_keywords_tab(self) -> QWidget:
-        tab = QWidget(self)
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(14, 14, 14, 14)
-        form = self._new_form()
-        self._keyword_mode_combo = QComboBox(tab)
-        self._keyword_mode_combo.addItem("Scheduler job (recommended)", "scheduler")
-        self._keyword_mode_combo.addItem("Login node", "direct")
-        self._keyword_mode_combo.setToolTip(
-            "Where MuFinder runs CASTEP to build the keyword catalog. A scheduler job reuses this "
-            "cluster's job script and is safe where running CASTEP on the login node is forbidden or "
-            "discouraged. The login node is quicker when it is permitted, because nothing waits in a queue."
-        )
-        self._keyword_shell_init_edit = QLineEdit(tab)
-        self._keyword_shell_init_edit.setPlaceholderText("Optional, e.g. module load CASTEP")
-        self._keyword_shell_init_edit.setToolTip(
-            "Extra commands to run before CASTEP when generating keywords. Usually unnecessary: "
-            "the environment setup in this cluster's job script template is reused automatically."
-        )
-        self._keyword_mode_label = QLabel("Generate keywords using", tab)
-        form.addRow(self._keyword_mode_label, self._keyword_mode_combo)
-        self._keyword_shell_init_label = QLabel("Keyword shell init (optional)", tab)
-        form.addRow(self._keyword_shell_init_label, self._keyword_shell_init_edit)
-        tab_layout.addLayout(form)
-        note = QLabel(
-            "MuFinder reads CASTEP's keyword descriptions from this cluster when you build the "
-            "keyword catalog. A scheduler job runs on the default queue.",
-            tab,
-        )
-        note.setWordWrap(True)
-        style_hint_text(note)
-        tab_layout.addWidget(note)
-        tab_layout.addStretch(1)
-        return tab
-
     def _connect_signals(self) -> None:
         self._cluster_list.currentRowChanged.connect(
             lambda *_: self._on_cluster_selection_changed()
@@ -442,6 +464,7 @@ class ClusterSetupDialog(QDialog):
             context=Qt.ShortcutContext.WidgetShortcut,
         )
         self._name_edit.textEdited.connect(self._rename_selected_list_item)
+        self._name_edit.textChanged.connect(lambda *_: self._refresh_name_dependent_controls())
         self._auth_combo.currentTextChanged.connect(lambda *_: self._refresh_auth_controls())
         self._jump_enabled_check.toggled.connect(lambda *_: self._refresh_jump_host_controls())
         self._hostname_edit.textChanged.connect(lambda *_: self._refresh_keychain_controls())
@@ -463,7 +486,10 @@ class ClusterSetupDialog(QDialog):
         self._key_browse_button.clicked.connect(self._browse_key_path)
         self._jump_key_browse_button.clicked.connect(self._browse_jump_key_path)
         self._keychain_help_button.clicked.connect(self._show_keychain_help)
-        self._template_browse_button.clicked.connect(self._browse_template_path)
+        self._template_custom_button.clicked.connect(self._browse_template_path)
+        self._template_builtin_button.clicked.connect(
+            lambda: self._set_template_path(self._builtin_template)
+        )
         self._add_queue_button.clicked.connect(self._add_queue)
         self._remove_queue_button.clicked.connect(self._remove_queue)
         self._queue_table_shortcuts = bind_delete_shortcuts(
@@ -548,8 +574,11 @@ class ClusterSetupDialog(QDialog):
         index = self._loaded_index
         if index < 0 or index >= len(self._configs):
             return
+        previous_name = self._configs[index].name
         updated = self._config_from_form(self._configs[index])
         self._configs[index] = updated
+        if updated.name != previous_name and previous_name in self._builtin_templates:
+            self._builtin_templates[updated.name] = self._builtin_templates.pop(previous_name)
         item = self._cluster_list.item(index)
         if item is not None:
             item.setText(updated.name or f"Cluster {index + 1}")
@@ -592,6 +621,8 @@ class ClusterSetupDialog(QDialog):
         if config is None:
             return
         copy = replace(config, name=self._unique_name(f"{config.name} copy"))
+        if config.name in self._builtin_templates:
+            self._builtin_templates[copy.name] = self._builtin_templates[config.name]
         index = self._selected_index() + 1
         self._configs.insert(index, copy)
         self._loaded_index = -1
@@ -626,20 +657,23 @@ class ClusterSetupDialog(QDialog):
         self._hostname_edit.setText(config.hostname)
         self._port_spin.setValue(int(config.port))
         self._username_edit.setText(config.username)
-        self._auth_combo.setCurrentText(config.auth_method)
+        self._set_auth_method(self._auth_combo, config.auth_method)
         self._key_path_edit.setText(config.key_path)
         self._jump_enabled_check.setChecked(config.jump_host_enabled)
         self._jump_hostname_edit.setText(config.jump_hostname)
         self._jump_port_spin.setValue(int(config.jump_port))
         self._jump_username_edit.setText(config.jump_username)
-        self._jump_auth_combo.setCurrentText(config.jump_auth_method)
+        self._set_auth_method(self._jump_auth_combo, config.jump_auth_method)
         self._jump_key_path_edit.setText(config.jump_key_path)
         self._keychain_check.setChecked(config.use_macos_keychain_passwords)
         self._working_dir_edit.setText(config.default_working_directory)
         self._queue_system_combo.setCurrentText(config.queue_system.upper())
         self._cores_per_node_spin.setValue(int(config.cores_per_node))
         self._walltime_edit.setText(config.default_walltime)
-        self._template_path_edit.setText(config.template_script_path)
+        if is_builtin_template(config.template_script_path):
+            self._builtin_templates[config.name] = config.template_script_path
+        self._builtin_template = self._builtin_templates.get(config.name, "")
+        self._set_template_path(config.template_script_path)
         self._castep_exec_edit.setText(config.castep_executable)
         self._default_memory_spin.setValue(
             7.5 if config.default_memory_gb is None else float(config.default_memory_gb)
@@ -656,6 +690,22 @@ class ClusterSetupDialog(QDialog):
         self._refresh_jump_host_controls()
         self._refresh_keychain_controls()
         self._refresh_scheduler_controls()
+
+    def _set_template_path(self, path: str) -> None:
+        self._template_path = path.strip()
+        self._refresh_name_dependent_controls()
+
+    def _refresh_name_dependent_controls(self) -> None:
+        """Keep the username prompt and the built-in template's name with the cluster's."""
+
+        name = self._name_edit.text().strip()
+        self._username_edit.setPlaceholderText(f"your {name} username" if name else "your username")
+        self._template_name_label.setText(
+            template_display_name(self._template_path, cluster_name=name)
+        )
+        custom = bool(self._template_path) and not is_builtin_template(self._template_path)
+        self._template_name_label.setToolTip(self._template_path if custom else "")
+        self._template_builtin_button.setEnabled(custom)
 
     def _set_keyword_mode(self, mode: str) -> None:
         index = self._keyword_mode_combo.findData(mode.strip().lower())
@@ -699,27 +749,13 @@ class ClusterSetupDialog(QDialog):
         self._working_dir_edit.setText(f"/work4/isis/{new_username}{suffix}")
 
     def _refresh_auth_controls(self) -> None:
-        key_enabled = self._auth_combo.currentText().strip().lower() == "key"
+        key_enabled = self._auth_combo.currentData() == "key"
         self._key_path_edit.setEnabled(key_enabled)
         self._key_browse_button.setEnabled(key_enabled)
 
     def _refresh_jump_host_controls(self) -> None:
-        enabled = self._jump_enabled_check.isChecked()
-        key_enabled = enabled and self._jump_auth_combo.currentText().strip().lower() == "key"
-        for widget in (
-            self._jump_hostname_label,
-            self._jump_hostname_edit,
-            self._jump_port_label,
-            self._jump_port_spin,
-            self._jump_username_label,
-            self._jump_username_edit,
-            self._jump_auth_label,
-            self._jump_auth_combo,
-            self._jump_key_label,
-            self._jump_key_path_edit,
-            self._jump_key_browse_button,
-        ):
-            widget.setEnabled(enabled)
+        self._jump_fields.setVisible(self._jump_enabled_check.isChecked())
+        key_enabled = self._jump_auth_combo.currentData() == "key"
         self._jump_key_path_edit.setEnabled(key_enabled)
         self._jump_key_browse_button.setEnabled(key_enabled)
 
@@ -737,11 +773,11 @@ class ClusterSetupDialog(QDialog):
                 name=self._name_edit.text().strip() or "Redwood",
                 hostname=self._hostname_edit.text().strip(),
                 username=self._username_edit.text().strip(),
-                auth_method=self._auth_combo.currentText().strip().lower() or "key",
+                auth_method=str(self._auth_combo.currentData()),
                 jump_host_enabled=self._jump_enabled_check.isChecked(),
                 jump_hostname=self._jump_hostname_edit.text().strip(),
                 jump_username=self._jump_username_edit.text().strip(),
-                jump_auth_method=self._jump_auth_combo.currentText().strip().lower() or "key",
+                jump_auth_method=str(self._jump_auth_combo.currentData()),
             )
         )
 
@@ -940,7 +976,7 @@ class ClusterSetupDialog(QDialog):
             "Shell Scripts (*.sh);;All Files (*)",
         )
         if path:
-            self._template_path_edit.setText(path)
+            self._set_template_path(path)
 
     def _show_keychain_help(self) -> None:
         QMessageBox.information(
@@ -975,13 +1011,13 @@ class ClusterSetupDialog(QDialog):
             hostname=self._hostname_edit.text().strip(),
             port=self._port_spin.value(),
             username=self._username_edit.text().strip(),
-            auth_method=self._auth_combo.currentText().strip().lower() or "key",
+            auth_method=str(self._auth_combo.currentData()),
             key_path=self._key_path_edit.text().strip(),
             jump_host_enabled=self._jump_enabled_check.isChecked(),
             jump_hostname=self._jump_hostname_edit.text().strip(),
             jump_port=self._jump_port_spin.value(),
             jump_username=self._jump_username_edit.text().strip(),
-            jump_auth_method=self._jump_auth_combo.currentText().strip().lower() or "key",
+            jump_auth_method=str(self._jump_auth_combo.currentData()),
             jump_key_path=self._jump_key_path_edit.text().strip(),
             use_macos_keychain_passwords=self._keychain_check.isChecked()
             and self._keychain_is_available_for_form(),
@@ -989,7 +1025,7 @@ class ClusterSetupDialog(QDialog):
             queue_system=queue_system,
             cores_per_node=self._cores_per_node_spin.value(),
             default_walltime=walltime,
-            template_script_path=self._template_path_edit.text().strip(),
+            template_script_path=self._template_path,
             castep_executable=self._castep_exec_edit.text().strip() or "castep.mpi",
             default_queue_name=default_queue_name,
             default_memory_gb=default_memory_gb,
@@ -1025,6 +1061,13 @@ class ClusterSetupDialog(QDialog):
         if not config.username:
             QMessageBox.warning(
                 self, "Missing username", "Enter a username before testing the connection."
+            )
+            return
+        if config.jump_host_enabled and not config.jump_username:
+            QMessageBox.warning(
+                self,
+                "Missing username",
+                "Enter the jump host username before testing the connection.",
             )
             return
 
@@ -1079,13 +1122,8 @@ class ClusterSetupDialog(QDialog):
             seen.add(config.name.casefold())
             if not config.hostname:
                 issues.append(f"Cluster '{config.name}' is missing hostname.")
-            if not config.username:
-                issues.append(f"Cluster '{config.name}' is missing username.")
-            if config.jump_host_enabled:
-                if not config.jump_hostname:
-                    issues.append(f"Cluster '{config.name}' is missing jump host name.")
-                if not config.jump_username:
-                    issues.append(f"Cluster '{config.name}' is missing jump host username.")
+            if config.jump_host_enabled and not config.jump_hostname:
+                issues.append(f"Cluster '{config.name}' is missing jump host name.")
             walltime_problem = walltime_issue(config.default_walltime)
             if walltime_problem:
                 issues.append(f"Cluster '{config.name}': {walltime_problem}")

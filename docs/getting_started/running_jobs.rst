@@ -653,18 +653,34 @@ stored globally, including built-in SCARF and Redwood presets.
    ``Duplicate`` copies the selected cluster and ``Remove`` (or Delete or
    Backspace in the cluster list) deletes it after asking. Cluster names must
    differ by more than letter case.
-2. Fill in the four tabs: ``Connection``, ``Scheduler``, ``Queues`` and
-   ``Keyword generation``. Edits are kept per cluster while you switch between
-   clusters.
+2. Fill in the three tabs: ``Connection``, ``Scheduler`` and ``Queues``. Edits
+   are kept per cluster while you switch between clusters.
 3. Click ``Test Connection`` to check the settings.
 4. Click ``OK`` to save all clusters together.
 
 - A profile sets the ``Host name``, ``Username``, ``Queue system``, ``Default
   remote working directory``, ``Cores per node``, ``Default walltime`` and
-  ``CASTEP executable`` path, plus a ``Template script`` path for SLURM
-  profiles (blank uses the built-in SLURM template) and ``Default memory per
-  core (GB)`` for ``addqueue`` profiles. Walltimes use SLURM's formats
-  (``HH:MM:SS``, ``D-HH:MM:SS`` and the shorter forms) and are checked on save.
+  ``CASTEP executable`` path, plus a ``Template script`` for SLURM profiles and
+  ``Default memory per core (GB)`` for ``addqueue`` profiles. Walltimes use
+  SLURM's formats (``HH:MM:SS``, ``D-HH:MM:SS`` and the shorter forms) and are
+  checked on save.
+- The built-in SCARF and Redwood profiles ship without usernames: the empty
+  ``Username`` field asks for yours (``your SCARF username``). A profile can be
+  saved without one, but submission refuses a cluster that has no username, or
+  no jump host username when it uses a jump host, and its message offers
+  ``Open Setup > HPC Clusters…``, which opens that profile. A username typed in
+  the submission dialog applies to that run.
+- ``{username}`` in ``Default remote working directory`` stands for the
+  username, so the SCARF profile's ``/work4/isis/{username}`` becomes
+  ``/work4/isis/alice`` for the user ``alice``. The submission dialog leaves the
+  directory empty until there is a username.
+- ``Template script`` names the job script a SLURM profile uses: ``Built-in
+  SCARF template``, ``Built-in SLURM template`` or the name of your file. ``Use
+  custom file…`` picks a file and ``Use built-in`` goes back to the built-in
+  template.
+- ``Generate keywords using`` and ``Keyword shell init (optional)`` on the
+  ``Scheduler`` tab set how MuFinder runs CASTEP on this cluster to build the
+  keyword catalog (see :doc:`/getting_started/castep_setup`).
 - A profile lists its queues (SLURM partitions or ``addqueue`` queues); see
   `Cluster queues`_.
 - A SLURM profile may tick ``Request default memory per CPU (GB)``, which
@@ -672,13 +688,13 @@ stored globally, including built-in SCARF and Redwood presets.
   it generates batch scripts with no memory directive (see
   :ref:`slurm-memory-requests`).
 - For clusters behind a gateway, tick ``Connect through an SSH jump host`` in
-  the ``Jump host`` group and give a separate host name, port, username,
-  authentication method and SSH key path.
+  the ``Jump host`` group. Its fields appear when the box is ticked: a separate
+  host name, port, username, authentication method and SSH key path.
 - The ``Scheduler commands`` group sets explicit paths for the submit, queue
   check and cancel commands. A command without a configured path is located by
   probing the non-interactive SSH shell.
 - SSH key authentication is primary, with password fallback
-  (``Authentication method``: ``key`` or ``password``).
+  (``Authentication method``: ``SSH key`` or ``Password``).
 - The Redwood preset targets ``glamdring.physics.ox.ac.uk`` through the Physics
   gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately for the
   Physics/bastion and Glamdring credentials because those accounts can differ.
