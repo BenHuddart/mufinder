@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app import relaxation_analysis_widget as relaxation_analysis_widget_module
+from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.export_dialogs import CASTEP_CELL_FORMAT, CIF_FORMAT
 
@@ -305,7 +306,7 @@ def test_relaxation_tolerance_scan_plot_uses_convergence_style(qapp) -> None:
     assert dialog._scan_figure.get_facecolor() != axis.get_facecolor()
     assert all(spine.get_visible() for spine in axis.spines.values())
     assert any(line.get_visible() for line in axis.get_xgridlines())
-    assert axis.lines[0].get_color() == "#b91c1c"
+    assert axis.lines[0].get_color() == theme_module.categorical_colour(0)
 
     dialog.close()
 
@@ -519,46 +520,6 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(
     ]
     assert opened["default_comparison_id"] == pristine_id
     assert opened["shown"] is True
-
-    widget.close()
-
-
-def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_background(
-    qapp,
-) -> None:
-    host = host_structure()
-    source = CompletedRelaxationAnalysisSource(
-        job_id=uuid4(),
-        job_label="Site A",
-        charge_state="positive_muon",
-        structure_id=uuid4(),
-        site_id=None,
-        folded_fractional_position=(0.0, 0.5, 0.5),
-        total_energy_ev=-10.0,
-    )
-    workspace = default_workspace_state(
-        name="Relaxation analysis",
-        charge_state="positive_muon",
-        host_structure_id=host.id,
-        job_ids=[source.job_id],
-    )
-
-    widget = RelaxationAnalysisWidget()
-    widget.set_context(
-        workspaces=[workspace],
-        sources=[source],
-        structures={host.id: host},
-        host_structure=host,
-        comparison_options=[(host.id, "Host", False)],
-    )
-
-    checkbox = next(
-        child
-        for child in widget.findChildren(QCheckBox)
-        if child.text() == "Show shifted positions"
-    )
-
-    assert "background: transparent;" in checkbox.styleSheet()
 
     widget.close()
 

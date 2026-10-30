@@ -42,6 +42,7 @@ from mufinder.app.pinned_sites_scope import PinnedSitesScopeBar
 from mufinder.app.theme import (
     arrow_icon,
     current_palette,
+    plot_series_colours,
     status_brush,
     style_hint_text,
     style_section_subtitle,
@@ -290,7 +291,7 @@ class _ReactionCoordinateProfile(QWidget):
         metrics = QFontMetricsF(painter.font())
         axis_color = QColor(palette.border)
         grid_color = QColor(palette.bg_surface_alt)
-        series_color = QColor(palette.accent)
+        series_color = QColor(plot_series_colours().energy)
         hover_color = QColor(palette.accent_hover)
         highlight_color = QColor(palette.success)
         annotation_color = QColor(palette.seal_gold)

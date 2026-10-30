@@ -91,7 +91,7 @@ def test_full_plot_titles_legends_and_stress_axis(qapp) -> None:
 
     axes = draw_convergence_plot(figure, data, kind="cutoff", compact=False, recommended=400.0)
 
-    colors = theme_module.convergence_plot_colors()
+    colors = theme_module.plot_series_colours()
     assert axes.stress is not None and axes.spacing is None
     assert axes.force.get_title() == (
         "Force / stress convergence (thresholds 0.05 eV/Ang, 0.1 GPa)"

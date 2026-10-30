@@ -29,6 +29,7 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.blocking_call import BlockingCallCancelled
 from mufinder.app.decimal_input import VectorInput
 from mufinder.app.polarisation_widget import PolarisationWidget, export_text
+from mufinder.app.theme import plot_series_colours
 from mufinder.science.polarisation import PolarisationError
 from mufinder.science.polarisation_simulation import PolarisationSettings
 from mufinder.services.magnetic_field_results import (
@@ -304,6 +305,12 @@ def test_adding_a_simulation_stores_shows_and_plots_it(page, document) -> None:
     np.testing.assert_allclose(
         time_axis.lines[-1].get_ydata(), record.simulation.static.polarisation
     )
+    series = plot_series_colours()
+    assert [line.get_color() for line in time_axis.lines] == [
+        series.categorical[0],
+        series.categorical[1],
+        series.total,
+    ]
     assert spectrum_axis.lines
     assert _button(page, "Recalculate").isEnabled() and _button(page, "Export Data…").isEnabled()
 

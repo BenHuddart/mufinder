@@ -40,7 +40,12 @@ from mufinder.app.structure_render_guard import (
     structure_geometry_fingerprint,
 )
 from mufinder.app.workflow_table_utils import bind_delete_shortcuts
-from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    STRUCTURE_OVERLAY_COLOURS,
+    refresh_widget_style,
+    style_section_subtitle,
+    style_section_title,
+)
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import GENERATION_METHOD_LABELS, Structure
 from mufinder.science.site_generation import (
@@ -1201,7 +1206,7 @@ class MuonGenerationWidget(QWidget):
             [
                 {
                     "positions": positions,
-                    "colors": "#e11d48",
+                    "colors": STRUCTURE_OVERLAY_COLOURS.muon,
                     "radii": [MUON_VIEWER_RADIUS_ANG] * len(positions),
                     "alpha": 0.96,
                 }

@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.comparison_export import export_comparison_csv, table_metric_definitions
-from mufinder.app.theme import adjust_font_size
+from mufinder.app.theme import BEST_AGREEMENT_COLOUR, adjust_font_size
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.branding import DOCUMENTATION_URL
 from mufinder.domain.models import ComparisonTable
@@ -58,7 +58,7 @@ class ComparisonTableWidget(QWidget):
 
     @staticmethod
     def _best_agreement_color() -> QColor:
-        return QColor("#15803D")
+        return QColor(BEST_AGREEMENT_COLOUR)
 
     def _highlight_best_agreement(
         self,
