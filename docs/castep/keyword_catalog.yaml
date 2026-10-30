@@ -363,18 +363,6 @@ keywords:
       advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_relaxation]
       locked_in_workflows: [uep]
 
-  - name: CALCULATE_POLARIZATION
-    canonical_name: calculate_polarization
-    file: param
-    kind: scalar
-    value_type: bool
-    unit:
-    allowed_values: [TRUE, FALSE]
-    mutually_exclusive_with: [CALCULATE_POLARISATION]
-    requires: []
-    example: CALCULATE_POLARIZATION : TRUE
-    notes: American spelling of `CALCULATE_POLARISATION`, which turns CASTEP's polarisation analysis on or off.
-
   - name: CALCULATE_STRESS
     canonical_name: calculate_stress
     file: param
