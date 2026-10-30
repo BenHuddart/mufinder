@@ -13,6 +13,9 @@ import math
 
 from scipy.constants import angstrom, c, e, epsilon_0, h, hbar, k, mu_0, physical_constants
 
+#: Millielectronvolts in one electronvolt. Exact by definition.
+MEV_PER_EV: float = 1000.0
+
 #: Planck constant, in J s. Exact in the SI.
 PLANCK_CONSTANT_J_S: float = h
 

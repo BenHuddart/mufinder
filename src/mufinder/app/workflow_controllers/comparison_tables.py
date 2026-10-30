@@ -15,30 +15,13 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from mufinder.services.source_candidates import CompletedPristineJob
+from mufinder.domain.routes import comparison_route, comparison_table_id_from_route
 from mufinder.services.structure_comparison import build_comparison_table, comparison_inputs
 
 from mufinder.app.comparison_table_widget import ComparisonTablesPage
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 
-_ROUTE_PREFIX = "pristine_relaxation/comparison/"
 _PARENT_ROUTE = "pristine_relaxation"
-
-
-def comparison_route(table_id: UUID) -> str:
-    """The navigator route of one comparison table."""
-
-    return f"{_ROUTE_PREFIX}{table_id}"
-
-
-def comparison_table_id_from_route(route: object) -> UUID | None:
-    """The table a navigator route names, or ``None`` for any other route."""
-
-    if not isinstance(route, str) or not route.startswith(_ROUTE_PREFIX):
-        return None
-    try:
-        return UUID(route[len(_ROUTE_PREFIX) :].strip())
-    except ValueError:
-        return None
 
 
 @dataclass(frozen=True)

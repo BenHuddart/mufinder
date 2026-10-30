@@ -18,14 +18,20 @@ Reading and exporting the Journal
 1. **Open it.** Select ``Journal`` at the bottom of the project navigator, or
    click ``Open Journal`` on the :doc:`/user_guide/project_home`.
 2. **Read the entries.** Entries are grouped by local calendar day under
-   date headers (see `The Journal page`_).
-3. **Choose a format.** Pick ``Plain text (.txt)`` or ``Markdown (.md)`` in the
+   date headers, one compact card each (see `The Journal page`_).
+3. **Expand an entry.** Click a card's top line, or press ``Enter`` or ``Space``
+   while it has focus, to show what was logged (see `Expanded cards`_). Do the
+   same again to close it.
+4. **Go to the work.** On an expanded card, click ``Open in <workflow>`` to open
+   that workflow's page.
+5. **Choose a format.** Pick ``Plain text (.txt)`` or ``Markdown (.md)`` in the
    ``Export format`` selector.
-4. **Export.** Click ``Export…`` and choose where to save the file. The
+6. **Export.** Click ``Export…`` and choose where to save the file. The
    suggested filename is ``<project-name>-journal`` with the extension for the
    selected format; characters other than letters, digits, ``-`` and ``_`` in
-   the project name are replaced by underscores. Both formats mirror the
-   curated Journal content rather than the raw provenance records.
+   the project name are replaced by underscores. Both formats give each
+   entry's curated summary, not the details of an expanded card or the raw
+   provenance records.
 
 The Journal page
 ----------------
@@ -38,12 +44,69 @@ The Journal page
    sweeps and generated sites.
 
 Entries are grouped by local calendar day under human-readable date headers
-such as ``Tuesday 21 April 2026``. The Journal intentionally does not show
-precise clock times.
+such as ``Tuesday 21 April 2026``.
 
-Each entry carries a stamp: ``Milestone``, ``Completed``, ``Attention``, or
-``Failed``. Entries tied to a workflow also name it (for example
-``Cutoff Convergence`` or ``Muon Relaxations``).
+Each entry is a card of two lines. The first has a stamp dot, the title, the
+workflow if the entry is tied to one (for example ``Cutoff Convergence`` or
+``Muon Relaxations``) and the local time. The second is a one-line summary, cut
+short with ``…`` when it does not fit; expanding the card shows all of it.
+
+The dot and the card's edge say what kind of entry it is. Holding the pointer
+over the dot names the kind.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 20 55
+
+   * - Stamp
+     - Colour
+     - Marks
+   * - ``Milestone``
+     - Neutral
+     - Routine steps: imports, configurations, launches
+   * - ``Completed``
+     - Gold
+     - Adopted defaults, grouped sites, new comparison tables, finished
+       calculations
+   * - ``Attention``
+     - Amber
+     - Something to check: a stopped or cancelled calculation, a generation
+       that fell short, an import with skipped runs or conflicts
+   * - ``Failed``
+     - Red
+     - A failed calculation; red is used for nothing else
+
+Expanded cards
+~~~~~~~~~~~~~~
+
+.. figure:: ../_generated/screenshots/journal_expanded_card.webp
+   :alt: An expanded Journal card for a muon relaxation batch, with the supercell,
+         one row per site, the exact time and an Open in Muon Relaxations button.
+
+   An expanded batch card of the CoF₂ project (:doc:`/user_guide/examples/cof2`).
+
+An expanded card shows the entry's whole title and summary, the logged details
+below, and the exact time with its time zone.
+
+- **Configurations** show the supercell and the shared parameters that were
+  recorded: spin, functional, cutoff and k-point grid. A parameter left at the
+  project default is not in the record, and one that differs between rows is not
+  shared, so neither appears. A convergence sweep gives its range, and a row list
+  gives its count and first three names.
+- **Batches** show the parameters their rows share, as above, and one row per
+  calculation with its status, ``ΔE (meV)``, ``Max force (eV/Å)`` and warnings.
+  ``ΔE`` is relative to the lowest total energy in that batch, whatever the
+  calculations in it are. A failed calculation's reason is listed above the table.
+- **Adopted defaults** show the tolerances they met and the functional.
+- **Muon site generation** shows the run's inputs and random seed in a full
+  sentence, ready for a methods section.
+- **Legacy imports** show the source folder, each skipped run with its reason,
+  and each parameter conflict with how it was resolved.
+
+``Open in <workflow>`` opens the entry's workflow page, ``Open in Host Structure``
+an imported structure's page, and ``Open in '<table>'`` a comparison table. The
+button is not shown when the page no longer exists, as for a deleted comparison
+table.
 
 Batch cards
 ~~~~~~~~~~~

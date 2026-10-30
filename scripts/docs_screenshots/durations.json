@@ -10,6 +10,7 @@
   "site_generation_page": 2.2,
   "charge_state_dialog": 1.2,
   "journal_page": 13.0,
+  "journal_expanded_card": 0.9,
   "castep_setup_dialog": 1.2,
   "cluster_setup_dialog": 1.1,
   "local_submission_dialog": 1.0,

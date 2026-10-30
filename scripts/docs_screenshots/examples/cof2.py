@@ -909,6 +909,18 @@ def running_relaxation_project(directory: Path) -> Path:
     return _build_results(directory, running_pristine=True)
 
 
+def expand_journal_batch(page: QWidget) -> None:
+    """Open the positive-muon relaxation batch's Journal card and scroll to it."""
+
+    card = next(
+        card
+        for card in page._cards()
+        if card.accessibleName().endswith("Muon relaxations launched: positive muon")
+    )
+    card.set_expanded(True)
+    settle(QApplication.instance())
+
+
 # --- The legacy folder ----------------------------------------------------------
 
 _LEGACY_RUNS = (  # start in host fractional coordinates, site, converged
@@ -1300,6 +1312,11 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "journal_page": Scene(results_project, "provenance_log", Page("_journal_view", (1100, 800))),
+    "journal_expanded_card": Scene(
+        results_project,
+        "provenance_log",
+        Page("_journal_view", (1100, 800), prepare=expand_journal_batch),
+    ),
     "castep_setup_dialog": Scene(
         fixture_project, None, Dialog(lambda window: window._open_castep_setup_dialog())
     ),
