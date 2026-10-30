@@ -309,6 +309,7 @@ def create_workflow_table(
     corner_style: str = "square",
     stretch_last_section: bool = True,
     default_resize_mode: QHeaderView.ResizeMode = QHeaderView.ResizeMode.Stretch,
+    accessible_name: str = "",
 ) -> QTableWidget:
     """Build a table with MuFinder's shared chrome.
 
@@ -327,9 +328,13 @@ def create_workflow_table(
     treatment and ``"tabbed"`` (used inside tab panes). ``stretch_last_section``
     and ``default_resize_mode`` let sites that want every column sized to its
     contents (rather than stretched to fill) opt out of the stretch default.
+    ``accessible_name`` is what a screen reader announces for the table: the
+    title of the group or dialog that shows it, in Title Case.
     """
 
     table = QTableWidget(0, len(headers))
+    if accessible_name:
+        table.setAccessibleName(accessible_name)
     table.setHorizontalHeaderLabels(list(headers))
     table.setFrameShape(QFrame.Shape.NoFrame)
     # Long values (file paths, labels) must elide instead of wrapping, so
@@ -354,6 +359,18 @@ def create_workflow_table(
     else:
         use_square_top_table_corners(table)
     return table
+
+
+def name_row_control(control: QWidget | None, action: str, row_label: str) -> None:
+    """Name a control in a table row ``"<action> <row label>"`` for screen readers.
+
+    Every row has its own Remove, Configure and similar controls, so the name
+    says which row each one acts on (``Remove mu1``, ``Supercell for mu1``).
+    Call it again when the row's label changes.
+    """
+
+    if control is not None:
+        control.setAccessibleName(" ".join(part for part in (action, row_label.strip()) if part))
 
 
 def set_workflow_table_item(table: QTableWidget, row: int, column: int, text: str) -> None:

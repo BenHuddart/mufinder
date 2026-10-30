@@ -185,6 +185,7 @@ class RelaxationAnalysisJobDialog(QDialog):
             ("Add", "Relaxation", "dE vs workspace min (eV)", "fX", "fY", "fZ"),
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
             stretch_last_section=False,
+            accessible_name=title,
         )
         self._build_layout()
         self._populate()
@@ -726,6 +727,7 @@ class RelaxationClusteringDialog(QDialog):
             ("Cluster", "Wyckoff", "Size", "Representative", "Min dE (eV)", "Std. dev."),
             default_resize_mode=QHeaderView.ResizeMode.ResizeToContents,
             stretch_last_section=False,
+            accessible_name="Clusters",
         )
         header = self._summary_table.horizontalHeader()
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -2089,6 +2091,7 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.setContentsMargins(14, 12, 14, 12)
         header_layout.setHorizontalSpacing(10)
         name_edit = QLineEdit(_workspace_name(workspace), header)
+        name_edit.setAccessibleName("Workspace Name")
         name_edit.editingFinished.connect(
             lambda wid=_workspace_id(workspace), edit=name_edit: self._rename_workspace(
                 wid, edit.text()
@@ -2172,6 +2175,7 @@ class RelaxationAnalysisWidget(QWidget):
         splitter.setObjectName("analysisWorkspaceContentSplitter")
         splitter.setChildrenCollapsible(False)
         table = QTreeWidget(splitter)
+        table.setAccessibleName("Workspace Structures")
         table.setHeaderLabels(["Site", "Cluster", "Relaxation", "dE (eV)", "fX", "fY", "fZ"])
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

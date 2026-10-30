@@ -221,7 +221,9 @@ class MuonGenerationWidget(QWidget):
         self._manual_y_label = QLabel("fY")
         self._manual_z_label = QLabel("fZ")
 
-        self._site_table = create_workflow_table(("Site", "Method", "State", "fX", "fY", "fZ"))
+        self._site_table = create_workflow_table(
+            ("Site", "Method", "State", "fX", "fY", "fZ"), accessible_name="Candidate Sites"
+        )
         self._site_table.horizontalHeaderItem(0).setToolTip("Site label")
         self._site_table.horizontalHeaderItem(1).setToolTip("Generation method")
         self._site_table.horizontalHeaderItem(2).setToolTip("Workflow state")
@@ -242,6 +244,7 @@ class MuonGenerationWidget(QWidget):
             ("Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"),
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
             stretch_last_section=False,
+            accessible_name="UEP Clusters",
         )
         self._uep_cluster_table.setFixedHeight(128)
         self._uep_cluster_table.setSizePolicy(
@@ -423,6 +426,8 @@ class MuonGenerationWidget(QWidget):
         editor.setMinimumWidth(110)
         editor.setMaximumWidth(135)
         editor.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # The radio button is the editor's visible label.
+        editor.setAccessibleName(radio.text())
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(6, 3, 6, 3)
         row_layout.setSpacing(8)

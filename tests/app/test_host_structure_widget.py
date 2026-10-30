@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtWidgets import QLabel
 
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.services.project_service import ProjectService
@@ -436,3 +437,15 @@ def test_set_structure_rerenders_after_in_place_element_mutation(qapp, monkeypat
     widget.set_structure(host)
     assert len(calls) == 2
     assert widget._atom_table.item(1, 0).text() == "N"
+
+
+def test_host_controls_are_named_or_labelled(qapp) -> None:
+    widget = HostStructureWidget()
+    labels = {label.buddy(): label.text() for label in widget.findChildren(QLabel)}
+
+    assert labels[widget._active_host_combo] == "Active host structure:"
+    assert widget._atom_table.accessibleName() == "Atoms"
+    assert [
+        edit.accessibleName()
+        for edit in (widget._propagation_x, widget._propagation_y, widget._propagation_z)
+    ] == ["Propagation Vector a*", "Propagation Vector b*", "Propagation Vector c*"]

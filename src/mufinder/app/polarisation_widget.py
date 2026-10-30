@@ -53,6 +53,7 @@ from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
     create_workflow_table,
     format_vector_components,
+    name_row_control,
 )
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.science.polarisation import PolarisationError
@@ -106,12 +107,16 @@ _SIMULATION_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
 
 class VectorInput(QWidget):
-    """Three decimal boxes for a vector; empty boxes count as zero."""
+    """Three decimal boxes for a vector; empty boxes count as zero.
+
+    ``name`` names each box for screen readers as ``"<name> x"`` and so on.
+    """
 
     def __init__(
         self,
         values: Sequence[float] = (0.0, 0.0, 0.0),
         *,
+        name: str,
         tooltip: str = "",
         parent: QWidget | None = None,
     ) -> None:
@@ -125,6 +130,7 @@ class VectorInput(QWidget):
             edit.setValidator(QDoubleValidator(edit))
             edit.setMaximumWidth(64)
             edit.setToolTip(f"{tooltip} ({axis})" if tooltip else axis)
+            edit.setAccessibleName(f"{name} {axis}")
             layout.addWidget(edit)
             self._edits.append(edit)
         layout.addStretch(1)
@@ -192,6 +198,7 @@ class PolarisationWidget(QWidget):
             ("Use", "Field result", "Applied field (T)", "Weight"),
             resize_to_contents_columns=(_USE_COLUMN, _APPLIED_COLUMN, _WEIGHT_COLUMN),
             stretch_last_section=False,
+            accessible_name="Field Results",
         )
         self._sources_table.horizontalHeader().setSectionResizeMode(
             _SOURCE_COLUMN, QHeaderView.ResizeMode.Stretch
@@ -209,6 +216,7 @@ class PolarisationWidget(QWidget):
             ("Simulation", "Geometry", "Sample", "Sources", "Status"),
             resize_to_contents_columns=(1, 2, 4),
             stretch_last_section=False,
+            accessible_name="Simulations",
         )
         self._simulations_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         for table in (self._sources_table, self._simulations_table):
@@ -411,20 +419,35 @@ class PolarisationWidget(QWidget):
             "Zero field: choose the spin and detector directions. Longitudinal and transverse: "
             "the spin lies along or across the applied field."
         )
-        self._spin = VectorInput((0.0, 0.0, 1.0), tooltip="Initial muon spin, lab frame")
+        self._spin = VectorInput(
+            (0.0, 0.0, 1.0), name="Initial Polarisation", tooltip="Initial muon spin, lab frame"
+        )
         self._detector_along_spin = QCheckBox("Along the spin", self)
         self._detector_along_spin.setChecked(True)
-        self._detector = VectorInput((0.0, 0.0, 1.0), tooltip="Detector axis, lab frame")
-        self._along_z = VectorInput((0.0, 0.0, 1.0), tooltip="Lattice direction [uvw] along lab z")
-        self._along_x = VectorInput((1.0, 0.0, 0.0), tooltip="Lattice direction [uvw] along lab x")
+        self._detector = VectorInput(
+            (0.0, 0.0, 1.0), name="Detector", tooltip="Detector axis, lab frame"
+        )
+        self._along_z = VectorInput(
+            (0.0, 0.0, 1.0),
+            name="Crystal [uvw] Along z",
+            tooltip="Lattice direction [uvw] along lab z",
+        )
+        self._along_x = VectorInput(
+            (1.0, 0.0, 0.0),
+            name="Crystal [uvw] Along x",
+            tooltip="Lattice direction [uvw] along lab x",
+        )
         self._applied_summary = QLabel("", self)
         self._applied_summary.setWordWrap(True)
         style_hint_text(self._applied_summary)
         self._added_field = VectorInput(
-            (0.0, 0.0, 0.0), tooltip="Applied field added to zero-field results, T, crystal frame"
+            (0.0, 0.0, 0.0),
+            name="Add Applied Field (T)",
+            tooltip="Applied field added to zero-field results, T, crystal frame",
         )
 
         self._sample = QComboBox(self)
+        self._sample.setAccessibleName("Sample")
         for polycrystalline, label in SAMPLE_OPTIONS:
             self._sample.addItem(label, polycrystalline)
         self._sphere_points = QSpinBox(self)
@@ -435,7 +458,10 @@ class PolarisationWidget(QWidget):
         )
 
         self._lambda_z = _rate_input("Longitudinal relaxation rate λ_z")
+        # The form label is rich text (λ<sub>z</sub>), which a buddy would read out as markup.
+        self._lambda_z.setAccessibleName("λz")
         self._sigma = _rate_input("Gaussian width σ of the oscillating part")
+        self._sigma.setAccessibleName("σ")
         self._sigma_from_widths = QCheckBox("From nuclear widths", self)
         self._sigma_from_widths.setToolTip(
             "Sum the nuclear dipolar widths of the host at each muon position and damp each "
@@ -447,18 +473,23 @@ class PolarisationWidget(QWidget):
         self._end_time.setDecimals(3)
         self._end_time.setSuffix(" μs")
         self._end_time.setMaximumWidth(130)
+        self._end_time.setAccessibleName("End Time")
         self._time_points = QSpinBox(self)
         self._time_points.setRange(2, MAX_TIME_POINTS)
         self._time_points.setMaximumWidth(100)
 
         self._collision_rate = _rate_input("Strong-collision rate ν; 0 is static")
+        self._collision_rate.setAccessibleName("Collision Rate ν")
         self._dynamics_method = QComboBox(self)
+        self._dynamics_method.setAccessibleName("Dynamics Method")
         for key, label in DYNAMICS_OPTIONS:
             self._dynamics_method.addItem(label, key)
 
         self._subtract_baseline = QCheckBox("Subtract baseline", self)
         self._apodisation_sigma = _optional_time_input("Gaussian apodisation time")
         self._apodisation_lambda = _optional_time_input("Exponential apodisation time")
+        self._apodisation_sigma.setAccessibleName("Apodisation σ")
+        self._apodisation_lambda.setAccessibleName("Apodisation λ")
         self._padding = QSpinBox(self)
         self._padding.setRange(1, MAX_PADDING_FACTOR)
         self._padding.setPrefix("× ")
@@ -520,7 +551,9 @@ class PolarisationWidget(QWidget):
         sample_layout = QHBoxLayout(sample_row)
         sample_layout.setContentsMargins(0, 0, 0, 0)
         sample_layout.addWidget(self._sample)
-        sample_layout.addWidget(QLabel("Sphere points", sample_row))
+        sphere_points_label = QLabel("Sphere points", sample_row)
+        sphere_points_label.setBuddy(self._sphere_points)
+        sample_layout.addWidget(sphere_points_label)
         sample_layout.addWidget(self._sphere_points)
         sample_layout.addStretch(1)
         form.addRow("Sample", sample_row)
@@ -538,7 +571,9 @@ class PolarisationWidget(QWidget):
         time_layout = QHBoxLayout(time_row)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.addWidget(self._end_time)
-        time_layout.addWidget(QLabel("Points", time_row))
+        time_points_label = QLabel("Points", time_row)
+        time_points_label.setBuddy(self._time_points)
+        time_layout.addWidget(time_points_label)
         time_layout.addWidget(self._time_points)
         time_layout.addStretch(1)
         form.addRow("End time", time_row)
@@ -664,6 +699,7 @@ class PolarisationWidget(QWidget):
                 weight.setMaximumWidth(90)
                 weight.setValue(float(weights.get(source.owner, 1.0)))
                 weight.valueChanged.connect(self._on_setting_changed)
+                name_row_control(weight, "Weight for", source.label)
                 table.setCellWidget(row, _WEIGHT_COLUMN, weight)
         finally:
             table.blockSignals(False)

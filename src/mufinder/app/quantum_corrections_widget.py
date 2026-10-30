@@ -29,6 +29,7 @@ from mufinder.app.workflow_table_utils import (
     SelectionFeedback,
     create_workflow_table,
     fill_workflow_table,
+    name_row_control,
     set_header_tooltips,
 )
 
@@ -209,6 +210,7 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
                 "Parameters",
             ),
             resize_to_contents_columns=(7,),
+            accessible_name="Quantum Phonon Jobs",
         )
         set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -275,7 +277,9 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
         self._results_table = create_workflow_table(
-            tuple(title for title, _tip in RESULT_COLUMNS), stretch_last_section=False
+            tuple(title for title, _tip in RESULT_COLUMNS),
+            stretch_last_section=False,
+            accessible_name="Completed Results",
         )
         results_header = self._results_table.horizontalHeader()
         for column, (_title, tooltip) in enumerate(RESULT_COLUMNS):
@@ -321,6 +325,10 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
             button = QPushButton("Launch Analysis")
+            label_item = self._results_table.item(row_index, 0)
+            name_row_control(
+                button, "Launch Analysis for", "" if label_item is None else label_item.text()
+            )
             button.clicked.connect(
                 lambda _checked=False, key=row.key: self.analysis_requested.emit(key)
             )

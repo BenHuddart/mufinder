@@ -212,6 +212,24 @@ page, and the HTML build writes a stub at the old name that forwards the
 browser. ``tests/docs/test_docs_redirects.py`` checks that every target is a
 current page and that no old name is still one. A page that moves adds a row.
 
+Accessible-name census
+----------------------
+
+``tests/app/test_accessible_names.py`` opens every workflow page of a project
+with the shared host structure, after staging one job row on each page that
+stages rows, and counts the visible controls a screen reader could announce
+only by their kind. A control counts when it is a button whose text is empty
+or one character, a line edit, combo box, spin box, item view or slider, and
+it has no accessible name and no ``QLabel`` buddy (a form-layout row label is
+a buddy). Line edits inside a combo or spin box, and table headers, are not
+counted. ``UNNAMED_CONTROL_BUDGET`` is a ratchet: a page may keep at most its
+budget of unnamed controls, a page it does not list has none (so a new page
+arrives with every control named), and a budget above a page's count fails
+until it is lowered. Every page is at zero, so the table is empty. A failure
+lists each unnamed control with its kind, text and tooltip; name it where it
+is built (see :doc:`/architecture`, Widget contract). Dialogs are not part of
+the census.
+
 Documentation screenshots
 -------------------------
 

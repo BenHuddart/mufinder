@@ -78,6 +78,7 @@ class JournalWidget(QWidget):
         self._format_combo = QComboBox(self)
         self._format_combo.addItem("Plain text (.txt)", "text")
         self._format_combo.addItem("Markdown (.md)", "markdown")
+        format_label.setBuddy(self._format_combo)
         controls.addWidget(self._format_combo)
 
         controls.addStretch(1)

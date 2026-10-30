@@ -37,6 +37,21 @@ class ParamEditorBase(QWidget):
     def spec(self) -> KeywordSpec:
         return self._spec
 
+    @property
+    def accessible_label(self) -> str:
+        """The keyword's name as the parameter dialog shows it, for screen readers."""
+
+        return self._spec.label or self._spec.name.upper()
+
+    def _name_controls(self, *controls: QWidget) -> None:
+        """Name one control after the keyword, or several after its numbered components."""
+
+        if len(controls) == 1:
+            controls[0].setAccessibleName(self.accessible_label)
+            return
+        for index, control in enumerate(controls, start=1):
+            control.setAccessibleName(f"{self.accessible_label} {index}")
+
     def value(self) -> object:
         raise NotImplementedError
 
@@ -50,6 +65,7 @@ class EnumParamEditor(ParamEditorBase):
         self._combo = QComboBox()
         self._combo.addItems(spec.allowed_values)
         self._combo.currentIndexChanged.connect(lambda *_: self.value_changed.emit())
+        self._name_controls(self._combo)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -67,6 +83,7 @@ class BoolParamEditor(ParamEditorBase):
         super().__init__(spec, parent)
         self._checkbox = QCheckBox()
         self._checkbox.stateChanged.connect(lambda *_: self.value_changed.emit())
+        self._name_controls(self._checkbox)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -91,6 +108,7 @@ class IntParamEditor(ParamEditorBase):
         if spec.step is not None:
             self._spin.setSingleStep(int(spec.step))
         self._spin.valueChanged.connect(lambda *_: self.value_changed.emit())
+        self._name_controls(self._spin)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -115,6 +133,7 @@ class FloatParamEditor(ParamEditorBase):
         if spec.step is not None:
             self._spin.setSingleStep(float(spec.step))
         self._spin.valueChanged.connect(lambda *_: self.value_changed.emit())
+        self._name_controls(self._spin)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -136,6 +155,7 @@ class PhysicalParamEditor(FloatParamEditor):
         else:
             self._unit_edit = QLineEdit()
             self._unit_edit.setPlaceholderText("unit (optional)")
+            self._unit_edit.setAccessibleName(f"{self.accessible_label} Unit")
             self._unit_edit.textChanged.connect(lambda *_: self.value_changed.emit())
             self.layout().addWidget(self._unit_edit)
 
@@ -169,6 +189,7 @@ class IntTripletParamEditor(ParamEditorBase):
             control.setRange(minimum, maximum)
             control.setSingleStep(step)
             control.valueChanged.connect(lambda *_: self.value_changed.emit())
+        self._name_controls(self._x, self._y, self._z)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -209,6 +230,7 @@ class RealVectorParamEditor(ParamEditorBase):
             layout.addWidget(control)
             if index < length - 1:
                 layout.addWidget(QLabel("x"))
+        self._name_controls(*self._controls)
 
     def value(self) -> object:
         return tuple(control.value() for control in self._controls)
@@ -223,6 +245,7 @@ class TextParamEditor(ParamEditorBase):
         super().__init__(spec, parent)
         self._text = QLineEdit()
         self._text.textChanged.connect(lambda *_: self.value_changed.emit())
+        self._name_controls(self._text)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

@@ -328,6 +328,7 @@ class ComparisonTableWidget(QWidget):
             selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
             stretch_last_section=False,
+            accessible_name="Comparison Table",
         )
 
         self._export_button = QPushButton("Export CSV...")

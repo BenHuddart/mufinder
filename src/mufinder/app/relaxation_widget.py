@@ -25,6 +25,7 @@ from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_t
 from mufinder.app.workflow_row_widget import RelaxationRowTableWidget, RowEntry
 from mufinder.app.workflow_table_utils import (
     multi_row_outcome_text,
+    name_row_control,
     set_workflow_table_item,
     show_status_message,
 )
@@ -106,6 +107,7 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
         fix_combo = table.cellWidget(row, self._FIX_CELL_COLUMN)
         if isinstance(fix_combo, QComboBox):
             fix_combo.setEnabled(not locked)
+            name_row_control(fix_combo, "Fix Cell for", self._row_display_label(row, table=table))
         lattice = (
             (None, None, None)
             if runtime is None

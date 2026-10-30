@@ -218,6 +218,8 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
             # The coordinate columns sit under a grouped "Initial"/"Final" header.
             table = self._create_table(lambda parent: _GroupedCoordinateHeader(groups, parent))
             use_tabbed_table_corners(table)
+            table.setAccessibleName(f"{tab_label} Relaxation Jobs")
+            table.horizontalHeader().setAccessibleName(f"{tab_label} Relaxation Job Columns")
             self._tables_by_charge_state[charge_state] = table
             self._charge_tabs.addTab(table, tab_label)
         self._table = self._tables_by_charge_state[POSITIVE_MUON_CHARGE_STATE]

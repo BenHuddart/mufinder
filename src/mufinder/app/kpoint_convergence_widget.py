@@ -173,6 +173,7 @@ class KPointConvergenceWidget(SweepConvergenceWidget):
         "execution history."
     )
     _REMOVE_ROW_TOOLTIP = "Remove this k-point grid"
+    _ROW_NOUN = "K-Point Grid"
     _CONFIGURE_NOUN = "grid"
     _REMOVAL_NOUN = ("grid", "grids")
     _DIALOG_SUBJECT = "K-Point Parameters"

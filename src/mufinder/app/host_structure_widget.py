@@ -84,6 +84,7 @@ class HostStructureWidget(QWidget):
             editable=True,
             show_vertical_header=True,
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            accessible_name="Atoms",
         )
         self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._atom_table.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
@@ -93,7 +94,11 @@ class HostStructureWidget(QWidget):
         self._propagation_x = DecimalLineEdit()
         self._propagation_y = DecimalLineEdit()
         self._propagation_z = DecimalLineEdit()
-        for widget in (self._propagation_x, self._propagation_y, self._propagation_z):
+        # The components are in reciprocal-lattice units, along a*, b* and c*.
+        for axis, widget in zip(
+            "abc", (self._propagation_x, self._propagation_y, self._propagation_z), strict=True
+        ):
+            widget.setAccessibleName(f"Propagation Vector {axis}*")
             widget.setDecimals(4)
             widget.setRange(-1.0, 1.0)
             widget.setSingleStep(0.01)
@@ -129,6 +134,7 @@ class HostStructureWidget(QWidget):
 
         host_selector_row = QHBoxLayout()
         host_selector_label = QLabel("Active host structure:")
+        host_selector_label.setBuddy(self._active_host_combo)
         host_selector_row.addWidget(host_selector_label)
         host_selector_row.addWidget(self._active_host_combo, 1)
         layout.addLayout(host_selector_row)

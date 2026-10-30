@@ -281,7 +281,9 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``, ``fill_workflow_table`` for a table of
-       display text, ``set_header_tooltips``), the shared right-click menu
+       display text, ``set_header_tooltips``; ``accessible_name`` names a
+       table and ``name_row_control`` names a row's own controls after the
+       row), the shared right-click menu
        (``standard_row_actions``, ``bind_reset_failed_context_menu``; a
        ``RowMenuAction`` may carry a tooltip and a submenu),
        the supercell column and its k-point suggestions (``SupercellColumn``),
@@ -779,6 +781,18 @@ controllers treat every workflow alike:
   a controls row (``Add...``, a count label, ``Remove Selected``,
   ``Configure Selected Parameters...``); and a run row with the job-name prefix
   and the two run buttons.
+- **Accessible names.** Every control a page shows has a name a screen reader
+  can announce: its own text, a ``QLabel`` buddy (``setBuddy`` where a visible
+  label already says it; a form-layout row label is one) or
+  ``setAccessibleName``. A control is named where it is built, in the words
+  the page already shows, in Title Case. A table takes the title of the group
+  that holds it (``create_workflow_table`` takes ``accessible_name``, and
+  ``RowTableWidget`` names its tables after the table group). Every control in
+  a table row says which row it acts on through ``name_row_control``
+  (``Remove <label>``, ``Configure <label>``, ``Supercell for <label>``) and is
+  renamed with its row; a source row is named by its first cell
+  (``source_row_label``). A parameter editor is named after its keyword. The
+  accessible-name census in :doc:`/quality_and_automation` enforces it.
 
 The quantum-corrections and energy-barriers widgets list project sources
 rather than staged rows, so they follow the run, Configure and row-menu parts

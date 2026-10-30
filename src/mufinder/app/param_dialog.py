@@ -675,6 +675,7 @@ class ParameterDialog(QDialog):
                 label_layout = QHBoxLayout(label_widget)
                 label_layout.setContentsMargins(0, 0, 0, 0)
                 radio = QRadioButton(label_widget)
+                radio.setAccessibleName(label_text)
                 radio.setChecked(self._exclusive_selection.get(group_key) == name)
                 radio.setEnabled(self._is_name_editable(name))
                 radio.toggled.connect(
@@ -769,6 +770,7 @@ class ParameterDialog(QDialog):
 
             remove_button = QToolButton(self._table_widget)
             remove_button.setText("x")
+            remove_button.setAccessibleName(f"Remove {label_text}")
             can_remove = (
                 self._is_name_editable(name)
                 and self._is_advanced_name(name)

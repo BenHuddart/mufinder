@@ -465,3 +465,9 @@ def test_a_greyed_out_collision_rate_is_kept_in_the_saved_form(page, document) -
     restored._sample.setCurrentIndex(restored._sample.findData(True))
     assert restored.settings().collision_rate_per_us == 2.0
     restored.close()
+
+
+def test_each_vector_component_is_named_after_its_row(page) -> None:
+    names = [edit.accessibleName() for edit in page._spin.edits]
+
+    assert names == ["Initial Polarisation x", "Initial Polarisation y", "Initial Polarisation z"]
