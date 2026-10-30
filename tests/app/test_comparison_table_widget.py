@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QScrollArea
+from pathlib import Path
 
-from mufinder.app.comparison_table_widget import (
-    ComparisonMetricHelpDialog,
-    ComparisonTableWidget,
-    _build_metric_help_plain_text,
-)
-from mufinder.app.math_label import MathLabel
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QPushButton
+
+from mufinder.app.comparison_table_widget import COMPARISON_METRICS_URL, ComparisonTableWidget
+from mufinder.branding import DOCUMENTATION_URL
 from mufinder.domain.models import ComparisonTable
+from mufinder.science.structure_metrics import metric_definitions
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _table() -> ComparisonTable:
@@ -150,78 +152,154 @@ def test_comparison_table_widget_does_not_highlight_identical_values(qapp) -> No
     assert second_item.font().bold() is False
 
 
-def test_metric_help_plain_text_includes_equation_and_symbols() -> None:
-    text = _build_metric_help_plain_text(
-        {
-            "label": "RMSD (matched atoms)",
-            "group": "Atomic Displacements",
-            "unit": "Ang",
-            "meaning": "Root-mean-square displacement over matched atoms.",
-            "physics": "Measures the characteristic amplitude of atomic relaxation.",
-            "calculation": "sqrt(mean(d_i^2)).",
-            "method": "Atoms are matched by a species-resolved Hungarian assignment.",
-            "equation": r"\mathrm{RMSD} = \sqrt{\frac{1}{N}\sum_i d_i^2}",
-            "symbols": [
-                {"symbol": r"d_i", "meaning": "Matched-atom displacement for pair i."},
-                {"symbol": r"N", "meaning": "Number of matched atoms."},
+def _metric_labels(widget: ComparisonTableWidget) -> list[str]:
+    grid = widget._grid
+    labels: list[str] = []
+    for row in range(grid.rowCount()):
+        item = grid.item(row, 0)
+        if item is not None and grid.columnSpan(row, 0) == 1:
+            labels.append(item.text())
+    return labels
+
+
+def _full_table(column_count: int) -> ComparisonTable:
+    """A table with every defined metric, as a comparison saves it."""
+
+    keys = [definition.key for definition in metric_definitions()]
+    return ComparisonTable(
+        label="Comparison D",
+        result_data={
+            "metric_definitions": [{"key": key} for key in keys],
+            "experimental_values": {key: {"display": "4.695", "value": 4.695} for key in keys},
+            "dft_columns": [
+                {
+                    "label": f"DFT (PBE {index})",
+                    "values": {
+                        key: {"display": "4.7091 (+0.30 %)", "value": 4.7091 + index}
+                        for key in keys
+                    },
+                }
+                for index in range(column_count)
             ],
-            "interpretation": "Lower is better.",
-            "caveats": "Depends on atom matching quality.",
-        }
+            "parameter_differences": [],
+            "warnings": [],
+        },
     )
 
-    assert "Equation" in text
-    assert "Equation (LaTeX)" not in text
-    assert "Matched-atom displacement for pair i." in text
-    assert "Atomic Displacements" in text
+
+def test_metric_rows_are_labelled_items_with_a_tooltip_and_no_info_button(qapp) -> None:
+    widget = ComparisonTableWidget(_full_table(1))
+    grid = widget._grid
+
+    assert _metric_labels(widget) == [
+        "a (Å)",
+        "b (Å)",
+        "c (Å)",
+        "α (°)",
+        "β (°)",
+        "γ (°)",
+        "V (Å³)",
+        "RMSD (Å)",
+        "Max displacement (Å)",
+        "Space group",
+        "Same space group",
+    ]
+    meanings = {definition.label: definition.meaning for definition in metric_definitions()}
+    for row in range(grid.rowCount()):
+        assert grid.cellWidget(row, 0) is None
+        item = grid.item(row, 0)
+        if grid.columnSpan(row, 0) == 1:
+            label = item.text().split(" (")[0]
+            assert item.toolTip() == meanings[label]
+    assert not [button for button in widget.findChildren(QPushButton) if button.text() == "Info"]
 
 
-def test_metric_help_plain_text_merges_registry_details_for_sparse_payloads() -> None:
-    text = _build_metric_help_plain_text(
-        {
-            "key": "rmsd",
-            "label": "RMSD (matched atoms)",
-            "unit": "Ang",
-            "group": "Atomic Displacements",
-            "meaning": "Root-mean-square displacement over matched atoms.",
-            "calculation": "sqrt(mean(d_i^2)).",
-            "interpretation": "Lower is better.",
-            "caveats": "Depends on atom matching quality.",
-        }
-    )
+def test_metric_rows_are_grouped_under_the_three_groups(qapp) -> None:
+    widget = ComparisonTableWidget(_full_table(1))
+    grid = widget._grid
 
-    assert "Equation" in text
-    assert "Equation (LaTeX)" not in text
-    assert "Physics" in text
-    assert "Symbols" in text
+    groups = [
+        grid.item(row, 0).text()
+        for row in range(grid.rowCount())
+        if grid.columnSpan(row, 0) > 1 and grid.item(row, 0) is not None
+    ]
+    assert groups == ["Lattice parameters", "Atomic displacements", "Symmetry"]
 
 
-def test_metric_help_dialog_renders_equation_with_math_label(qapp) -> None:
-    dialog = ComparisonMetricHelpDialog(
-        {
-            "label": "RMSD (matched atoms)",
-            "group": "Atomic Displacements",
-            "unit": "Ang",
-            "meaning": "Root-mean-square displacement over matched atoms.",
-            "physics": "Measures the characteristic amplitude of atomic relaxation.",
-            "calculation": "sqrt(mean(d_i^2)).",
-            "method": "Atoms are matched by a species-resolved Hungarian assignment.",
-            "equation": r"\mathrm{RMSD} = \sqrt{\frac{1}{N}\sum_i d_i^2}",
-            "symbols": [
-                {"symbol": r"d_i", "meaning": "Matched-atom displacement for pair i."},
-                {"symbol": r"N", "meaning": "Number of matched atoms."},
+def test_about_link_opens_the_comparison_page_of_the_user_guide(qapp) -> None:
+    widget = ComparisonTableWidget(_full_table(1))
+    link = widget._about_link
+
+    assert "About these metrics" in link.text()
+    assert COMPARISON_METRICS_URL in link.text()
+    assert link.openExternalLinks() is True
+    assert link.accessibleName() == "About these metrics"
+    assert link.textInteractionFlags() & Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+    assert link.toolTip().endswith(".")
+    # The link names a page the documentation build publishes.
+    page = COMPARISON_METRICS_URL.removeprefix(DOCUMENTATION_URL).removesuffix(".html")
+    assert (REPOSITORY_ROOT / "docs" / f"{page}.rst").is_file()
+
+
+def test_saved_table_with_old_metric_keys_opens_and_skips_undefined_rows(qapp) -> None:
+    table = ComparisonTable(
+        label="Old comparison",
+        result_data={
+            "metric_definitions": [
+                {
+                    "key": "cell_volume",
+                    "label": "Cell Volume",
+                    "unit": "Ang^3",
+                    "group": "Lattice Parameters",
+                },
+                {"key": "delta_a_pct", "label": "Change in a vs experiment", "unit": "%"},
+                {"key": "mean_displacement", "label": "Mean displacement", "unit": "Ang"},
+                {"key": "rmsd", "label": "RMSD (matched atoms)", "unit": "Ang"},
+                {"key": "topology_preserved", "label": "Topology/connectivity preserved"},
+                {"key": "space_group", "label": "Space group comparison", "group": "Symmetry"},
+                {"key": "similarity_score", "label": "Similarity score", "unit": "0-1"},
             ],
-            "interpretation": "Lower is better.",
-            "caveats": "Depends on atom matching quality.",
-        }
+            "experimental_values": {
+                "cell_volume": {"display": "70.0968", "value": 70.0968},
+                "rmsd": {"display": "0", "value": 0.0},
+                "space_group": {"display": "Reference", "value": "reference"},
+                "similarity_score": {"display": "1", "value": 1.0},
+            },
+            "dft_columns": [
+                {
+                    "label": "DFT (PBE)",
+                    "values": {
+                        "cell_volume": {"display": "70.6915", "value": 70.6915},
+                        "rmsd": {"display": "0.00706888", "value": 0.00706888},
+                        "space_group": {"display": "Match (P4_2/mnm)", "value": "Match (P4_2/mnm)"},
+                        "similarity_score": {"display": "1", "value": 1.0},
+                    },
+                }
+            ],
+            "parameter_differences": [],
+            "warnings": [],
+        },
     )
 
-    math_label = dialog.findChild(MathLabel, "metricEquationLabel")
-    scroll = dialog.findChild(QScrollArea, "metricHelpScrollArea")
-    symbol_labels = dialog.findChildren(MathLabel, "metricSymbolLabel")
+    widget = ComparisonTableWidget(table)
 
-    assert math_label is not None
-    assert scroll is not None
-    assert math_label.findChildren(QLabel, "mathRenderedLine")
-    assert len(symbol_labels) == 2
-    assert all(label.findChildren(QLabel, "mathRenderedLine") for label in symbol_labels)
+    # Labels, units and groups come from the current definitions.
+    assert _metric_labels(widget) == ["V (Å³)", "RMSD (Å)", "Space group"]
+    grid = widget._grid
+    rows = {grid.item(row, 0).text(): row for row in range(grid.rowCount())}
+    assert grid.item(rows["V (Å³)"], 2).text() == "70.6915"
+    assert grid.item(rows["Space group"], 2).text() == "Match (P4_2/mnm)"
+
+
+def test_table_fits_the_page_without_scrolling_for_two_dft_columns(qapp) -> None:
+    for column_count in (1, 2):
+        widget = ComparisonTableWidget(_full_table(column_count))
+        widget.resize(900, 660)
+        widget.show()
+        qapp.processEvents()
+        grid = widget._grid
+
+        assert grid.verticalScrollBar().maximum() == 0
+        assert grid.horizontalScrollBar().maximum() == 0
+        assert grid.columnWidth(0) < 200
+        widget.close()

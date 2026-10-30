@@ -22,20 +22,58 @@ Before you start
   ``Setup > HPC Clusters``; MuFinder may ask for your cluster credentials when
   you generate.
 
-Installing a keyword catalog
-----------------------------
+The dialog
+----------
 
 .. figure:: ../_generated/screenshots/castep_setup_dialog.webp
-   :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
-         generate one or use an existing file.
+   :alt: The Setup > CASTEP dialog: the optional local CASTEP paths at the top,
+         then the keyword catalog with a warning that none is loaded and the
+         controls to generate one or use an existing file.
 
    ``Setup > CASTEP`` before a keyword catalog is installed.
 
-The top of the dialog, ``Keyword catalog``, says which catalog is in use (or
-that none is loaded) and why a configured one was skipped. There are two ways
-to install one. Both end the same way: MuFinder checks the file, keeps its own
-copy, and uses it straight away, so there is no location to choose and no
-``OK`` to click for the catalog to take effect.
+Everything in the dialog applies at once: a path is saved as soon as you finish
+editing it, and a catalog is installed as soon as it is generated or imported.
+The dialog has only ``Close``.
+
+Local executable and MPI launcher
+---------------------------------
+
+The top group, ``CASTEP on this computer (optional)``, holds two paths. They
+are used only for calculations run on this computer and for generating the
+catalog from ``This computer``; cluster jobs and cluster generation never use
+them, so skip this group if you only run on clusters.
+
+- ``CASTEP executable``: type the path or click ``Browse…``.
+- ``MPI launcher``: type the path, click ``Browse…``, or click ``Auto-detect``
+  to search for ``mpirun`` on this computer.
+
+Each path is saved when you leave the field, pick a file with ``Browse…``, or
+click ``Auto-detect``. The MPI launcher is checked then: if the path does not
+point to an executable file, a warning under the field says it was not saved,
+and the previous launcher stays in use. Clear the field to save no launcher.
+Closing the dialog also saves what you typed; when that is what brings up the
+warning, the dialog stays open so you see it, and closing it again keeps the
+previous launcher.
+
+The launcher matters for two reasons. MPI-built binaries such as
+``castep.mpi`` hang when asked for their keyword help directly, so local
+catalog generation wraps CASTEP in ``mpirun -np 1`` when a launcher is set;
+without it, progress stalls at 0%. And multi-core local runs need a configured
+or discovered ``mpirun``: without one, cores per job are limited to 1.
+
+Installing a keyword catalog
+----------------------------
+
+The ``Keyword catalog`` group starts with one status line. An installed catalog
+reads like ``CASTEP 26.11 · 118 cell, 449 param keywords``; hover it for the
+file's location, and click ``Show file`` to open its folder in the file
+manager. Without a catalog, a warning says MuFinder is using its limited
+built-in keyword set, and ``Show file`` is unavailable. A configured catalog
+that was skipped is reported the same way, with the reason.
+
+There are two ways to install one. Both end the same way: MuFinder checks the
+file, keeps its own copy, and uses it straight away.
 
 Generating the catalog
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -49,51 +87,34 @@ Generating the catalog
    safe choice where running CASTEP on a login node is forbidden or
    discouraged; the login node is quicker where it is permitted. Your choice is
    remembered for that cluster.
-3. **Start it.** Click ``Generate Keyword Catalog``. A progress bar and status
-   line follow the run, and ``Cancel`` stops it. A local run takes a minute or
-   two; a scheduler job takes a few minutes plus any time in the queue; a
-   login-node run takes a minute or two.
-4. **Check the result.** When generation finishes the ``Keyword catalog``
-   status updates with the CASTEP version and the number of keywords found.
-   A failed run says so and offers ``Details`` with the full log.
+3. **Start it.** Click ``Generate``. A progress line and bar appear and follow
+   the run, and ``Cancel`` stops it. A local run takes a minute or two; a
+   scheduler job takes a few minutes plus any time in the queue; a login-node
+   run takes a minute or two.
+4. **Check the result.** When generation finishes the status line updates with
+   the CASTEP version and the number of keywords found, and the progress line
+   keeps the last result. A failed run says so and offers ``Details`` with the
+   full log.
 
-A local run needs the CASTEP executable set below (see `Local executable and
-MPI launcher`_), and a cluster run uses that cluster's own settings from
-``Setup > HPC Clusters`` rather than the local paths. Generation always works
-in a scratch folder first, so a failed or partial run never replaces a working
-catalog. Close the dialog only after generation finishes or is cancelled.
+A local run uses the CASTEP executable and MPI launcher set above; it does not
+start while the launcher field holds a path that was not saved. A cluster run
+uses that cluster's own settings from ``Setup > HPC Clusters`` rather than the
+local paths. Generation always works in a scratch folder first, so a failed or
+partial run never replaces a working catalog. Closing the dialog during a run
+cancels the run first; close it again once the cancellation has finished.
 
 Importing a file
 ~~~~~~~~~~~~~~~~
 
-Click ``Use Existing File…`` and choose a ``castep_keywords.json`` you already
+Click ``Use existing file…`` and choose a ``castep_keywords.json`` you already
 have, for example one generated on another machine. MuFinder checks that it is
 a usable catalog; if not, it says why and leaves the catalog in use untouched.
 
 The installed copy does not track later changes to the original file. After a
 CASTEP upgrade, generate or import again.
 
-Local executable and MPI launcher
----------------------------------
-
-The ``CASTEP on this computer (optional)`` group holds two paths. They are
-used only for calculations run on this computer and for generating the
-catalog from ``This computer``; cluster jobs and cluster generation never use
-them.
-
-- ``CASTEP executable``: type the path or click ``Browse…``.
-- ``MPI launcher (mpirun)``: type the path, click ``Browse…``, or click
-  ``Auto-detect`` to search for ``mpirun`` on this computer.
-
-The launcher matters for two reasons. MPI-built binaries such as
-``castep.mpi`` hang when asked for their keyword help directly, so local
-catalog generation wraps CASTEP in ``mpirun -np 1`` when a launcher is set;
-without it, progress stalls at 0%. And multi-core local runs need a configured
-or discovered ``mpirun``: without one, cores per job are limited to 1.
-
-Click ``OK`` to save the two paths. They are checked when you generate with
-``Generate Keyword Catalog``: if the ``mpirun`` path does not point to an
-executable file, MuFinder says so.
+When you close the dialog after changing anything, the status bar says
+``CASTEP setup saved``.
 
 What the status bar shows
 -------------------------

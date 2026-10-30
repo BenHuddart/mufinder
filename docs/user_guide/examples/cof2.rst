@@ -104,7 +104,8 @@ experiment (see :doc:`/user_guide/structural_relaxation_analysis` and
 
 .. figure:: ../../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the CoF2 host against its relaxed cell: lattice
-         changes of 0.3 %, sub-0.01 Å displacements, and a matching space group.
+         parameters within 0.3 % of experiment, sub-0.01 Å displacements, and
+         the same space group, P4₂/mnm.
 
    The host against its synthetic relaxed cell.
 

@@ -545,6 +545,25 @@ Compatibility ledger
      - Read-side alias. Keep until a saved-project schema version bump
        includes a migration that rewrites the three values in stored form
        states and samples.
+   * - Comparison-table metric keys without a definition
+       (``similarity_score``, ``mean_displacement``, ``delta_a_pct``,
+       ``delta_b_pct``, ``delta_c_pct``, ``delta_volume_pct``,
+       ``mean_bond_length_diff``, ``max_bond_length_diff``,
+       ``mean_bond_angle_diff``, ``coordination_changes``,
+       ``topology_preserved``)
+     - ``ComparisonTable.result_data``; read by
+       ``mufinder.app.comparison_export`` (``table_metric_definitions``) for
+       the comparison table widget and the CSV export
+     - A saved table names its metrics by key. The widget and the export show
+       the keys that ``mufinder.science.structure_metrics`` still defines, with
+       the current label, unit, group and tooltip, and skip every other key,
+       so a table holding these keys opens with its lattice, displacement and
+       space-group rows. A saved ``space_group`` value shows its stored text
+       (such as ``Match (P4_2/mnm)``) under ``Space group``. The stored payload
+       is never rewritten.
+     - Read-side skip. Keep while projects holding such tables may be opened,
+       or until a saved-project schema version bump includes a migration that
+       drops the keys from stored tables.
 
 Saved-project schema migrations
 -------------------------------

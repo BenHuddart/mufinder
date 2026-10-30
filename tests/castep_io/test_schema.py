@@ -658,3 +658,81 @@ def test_starter_catalog_entries_parse_requirement_strings_and_renamed_keywords(
     )
     assert starter_aliases["calculate_polarisation"] == "calculate_polarization"
     assert starter_aliases["spin_polarised"] == "spin_polarized"
+
+
+# --- Keywords kept out of Add Parameter ----------------------------------------
+
+_HIDDEN_KEYWORDS = (
+    ("cell", "unit_cell"),
+    ("param", "num_farms"),
+    ("param", "magres_task"),
+    ("param", "devel_code"),
+    ("param", "tssearch_lst_max_iter"),
+)
+
+
+@pytest.mark.parametrize(("file_kind", "name"), _HIDDEN_KEYWORDS)
+def test_starter_catalog_marks_internal_keywords_hidden(file_kind: str, name: str) -> None:
+    spec = get_keyword_spec(file_kind, name)
+
+    assert spec is not None
+    assert spec.user_visible is False
+
+
+def test_keywords_are_user_visible_unless_an_override_hides_them() -> None:
+    hidden = set(_HIDDEN_KEYWORDS)
+    for file_kind in ("cell", "param"):
+        for name in SOURCE_KEYWORDS[file_kind]:
+            spec = get_keyword_spec(file_kind, name)
+            assert spec is not None
+            if (file_kind, spec.name) not in hidden:
+                assert spec.user_visible, (file_kind, spec.name)
+
+
+def test_full_catalog_applies_the_hidden_flag_without_adding_keywords(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This catalog lacks MAGRES_TASK and TSSEARCH_LST_MAX_ITER; their
+    # visibility-only overrides must not invent them.
+    _refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={"unit_cell": _entry("String")},
+        param={
+            "num_farms": _entry("Integer"),
+            "devel_code": _entry("Block"),
+            "iprint": _entry("Integer"),
+        },
+    )
+
+    assert _param("num_farms").user_visible is False
+    assert _param("devel_code").user_visible is False
+    assert _param("iprint").user_visible is True
+    unit_cell = get_keyword_spec("cell", "unit_cell")
+    assert unit_cell is not None and unit_cell.user_visible is False
+    assert get_keyword_spec("param", "magres_task") is None
+    assert get_keyword_spec("param", "tssearch_lst_max_iter") is None
+
+
+def test_hidden_keywords_still_parse_and_write() -> None:
+    from mufinder.castep_io.cell_parser import parse_cell_text
+    from mufinder.castep_io.param_parser import parse_param_text
+
+    parsed = parse_param_text(
+        "NUM_FARMS : 2\nTSSEARCH_LST_MAX_ITER : 20\n"
+        "%BLOCK DEVEL_CODE\nfoo=1\n%ENDBLOCK DEVEL_CODE\n"
+    )
+    names = {item.name for item in parsed.param_file.keywords}
+    assert {"num_farms", "tssearch_lst_max_iter"} <= names
+    assert [block.name for block in parsed.param_file.blocks] == ["devel_code"]
+    assert parsed.unmapped == ()
+    rendered = write_param(ParamFile(keywords=parsed.param_file.keywords))
+    assert "NUM_FARMS : 2" in rendered
+
+    cell = parse_cell_text(
+        "%BLOCK LATTICE_CART\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n"
+        "%BLOCK POSITIONS_FRAC\nSi 0 0 0\n%ENDBLOCK POSITIONS_FRAC\n"
+        "UNIT_CELL 0.0 0.0 0.0\n"
+    )
+    assert any(item.name == "unit_cell" for item in cell.cell_file.scalars)

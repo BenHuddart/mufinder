@@ -384,6 +384,9 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
                 "species/orbital target, followed by a U value in eV or Ha."
             ),
         },
+        # Hidden from Add Parameter: kept so cell files carrying it still parse;
+        # MuFinder writes the lattice from the project structure.
+        "unit_cell": {"user_visible": False},
     },
     "param": {
         "task": {
@@ -674,5 +677,15 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "unit": "K",
             "allowed_tasks": ("MOLECULARDYNAMICS",),
         },
+        # Hidden from Add Parameter (``user_visible``); each stays valid in
+        # files, parsers and validators.
+        # Set by MuFinder: Quantum Corrections and Energy Barriers choose the farms.
+        "num_farms": {"user_visible": False},
+        # Set by MuFinder: the Hyperfine Coupling workflow writes HYPERFINE.
+        "magres_task": {"user_visible": False},
+        # Developer control block, passed through verbatim.
+        "devel_code": {"user_visible": False},
+        # Obsolete in CASTEP; kept so older stored configurations still parse.
+        "tssearch_lst_max_iter": {"user_visible": False},
     },
 }

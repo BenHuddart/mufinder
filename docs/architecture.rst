@@ -1828,14 +1828,14 @@ rendered by ``app``. The implementation is intentionally layered:
 
 - normalization in ``mufinder.science.supercell_matching``,
 - atom matching in ``mufinder.science.atom_matching``,
-- bonding and topology analysis in ``mufinder.science.bonding_analysis`` and
-  ``mufinder.science.symmetry_analysis``,
+- space-group detection in ``mufinder.science.symmetry_analysis``,
 - metric registry and evaluation in ``mufinder.science.structure_metrics``,
 - orchestration in ``mufinder.science.structure_comparison``,
 - rendering in ``mufinder.app.comparison_table_widget``.
 
-The per-metric help shown by the GUI ``Info`` buttons is sourced from the same
-metric-definition registry used to populate the comparison table.
+The widget takes each row's label, unit, group and tooltip from that metric
+registry, looked up by the metric keys a saved table holds; the method behind
+the metrics is described in the user guide, which the table links to.
 
 Cross-platform appearance
 -------------------------

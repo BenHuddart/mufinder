@@ -47,17 +47,19 @@ Create a project and set up CASTEP
    parent folder``. MuFinder creates a ``<name>.mufinder`` folder there and
    opens the project home.
 3. Open ``Setup > CASTEP…`` and install a keyword catalog: pick the target in
-   ``Generate from`` and click ``Generate Keyword Catalog``, or click ``Use
-   Existing File…`` if you already have a ``castep_keywords.json``.
+   ``Generate from`` and click ``Generate``, or click ``Use existing file…`` if
+   you already have a ``castep_keywords.json``.
 
    .. figure:: ../_generated/screenshots/castep_setup_dialog.webp
-      :alt: The Setup > CASTEP dialog with no keyword catalog loaded, offering to
-            generate one or use an existing file.
+      :alt: The Setup > CASTEP dialog: the optional local CASTEP paths at the
+            top, then the keyword catalog with a warning that none is loaded
+            and the controls to generate one or use an existing file.
 
       ``Setup > CASTEP`` before a catalog is installed.
 
-4. To run on this computer, fill in ``CASTEP executable`` and ``MPI launcher
-   (mpirun)`` (``Auto-detect`` searches for ``mpirun``), then click ``OK``.
+4. To run on this computer, fill in ``CASTEP executable`` and ``MPI launcher``
+   in the same dialog (``Auto-detect`` searches for ``mpirun``). Each path is
+   saved as you finish editing it; click ``Close`` when done.
 5. To run on a cluster instead, add a profile under ``Setup > HPC
    Clusters…``.
 
@@ -230,7 +232,7 @@ experimental lattice.
 
 .. figure:: ../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the CoF2 host against one relaxed cell,
-         grouped into lattice, displacement, bonding and symmetry metrics.
+         grouped into lattice, displacement and symmetry metrics.
 
    The CoF₂ host compared with that relaxation.
 

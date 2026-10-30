@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import mufinder.app.main_window as main_window_module
+import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.app.main_window import MainWindow
 from mufinder.app.resubmit_choice_dialog import (
     ResubmitCandidate,
@@ -16,6 +17,7 @@ from mufinder.app.resubmit_choice_dialog import (
     checkpoint_summary,
     default_resubmit_mode,
 )
+from mufinder.castep_setup import CastepSetup
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.services.cluster_runner import CheckpointProbeStatus
 from mufinder.services.project_service import ProjectService
@@ -243,6 +245,116 @@ def test_cancelling_the_choice_resubmits_nothing(
 
     assert calls == []
     assert jobs[0].status == JobStatus.STOPPED
+    window.close()
+
+
+def _without_castep_executable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path="", mpirun_path=""),
+    )
+
+
+def test_a_missing_executable_is_reported_before_the_resubmit_question(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answered_choices
+) -> None:
+    window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
+    jobs[0].execution_target = "local"
+    _without_castep_executable(monkeypatch)
+    shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
+    submitted: list[object] = []
+    monkeypatch.setattr(window, "_submit_jobs_locally", lambda *a, **k: submitted.append(a))
+
+    window._on_resubmit_from_dashboard([jobs[0].id])
+
+    (prompt,) = answered_choices
+    assert prompt["title"] == "CASTEP executable missing"
+    assert prompt["choices"] == [("setup", "Open Setup > CASTEP…"), ("cancel", "Cancel")]
+    assert shown == []
+    assert submitted == []
+    window.close()
+
+
+def test_configuring_the_executable_from_the_prompt_goes_on_to_the_question(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
+    jobs[0].execution_target = "local"
+    setup = {"executable_path": ""}
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path=setup["executable_path"], mpirun_path=""),
+    )
+    monkeypatch.setattr(workflow_table_utils, "confirm_choice", lambda *_a, **_k: "setup")
+    monkeypatch.setattr(
+        window, "_open_castep_setup_dialog", lambda: setup.update(executable_path="/opt/castep")
+    )
+    shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
+    submitted: list[list] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_k: submitted.append(list(jobs))
+    )
+
+    window._on_resubmit_from_dashboard([jobs[0].id])
+
+    assert len(shown) == 1
+    assert submitted == [[jobs[0]]]
+    window.close()
+
+
+def test_a_missing_executable_still_resubmits_the_cluster_jobs(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, jobs = _window_with_jobs(
+        tmp_path,
+        [
+            ("relax_local", WorkflowStage.MUON_RELAXATION),
+            ("relax_remote", WorkflowStage.MUON_RELAXATION),
+        ],
+    )
+    jobs[0].execution_target = "local"
+    _without_castep_executable(monkeypatch)
+    shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
+    calls = _record_cluster_submissions(monkeypatch, window)
+
+    window._on_resubmit_from_dashboard([job.id for job in jobs])
+
+    (candidates, _others) = shown[0]
+    assert [candidate.label for candidate in candidates] == ["relax_remote"]
+    assert calls[0]["jobs"] == [jobs[1]]
+    window.close()
+
+
+def test_the_keyword_catalog_guard_runs_before_the_resubmit_question(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
+    shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
+    calls = _record_cluster_submissions(monkeypatch, window)
+    monkeypatch.setattr(window._keyword_catalog_guard, "confirm_submission", lambda: False)
+
+    window._on_resubmit_from_dashboard([jobs[0].id])
+
+    assert shown == []
+    assert calls == []
+    window.close()
+
+
+def test_no_configured_cluster_offers_hpc_cluster_setup(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answered_choices
+) -> None:
+    window, jobs = _window_with_jobs(tmp_path, [("relax_a", WorkflowStage.MUON_RELAXATION)])
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [])
+    shown = _fake_choice_dialog(monkeypatch, accepted=True, mode=ResubmitMode.CONTINUE)
+
+    window._on_resubmit_from_dashboard([jobs[0].id])
+
+    (prompt,) = answered_choices
+    assert prompt["title"] == "No configured clusters"
+    assert prompt["choices"] == [("setup", "Open Setup > HPC Clusters…"), ("cancel", "Cancel")]
+    assert shown == []
     window.close()
 
 

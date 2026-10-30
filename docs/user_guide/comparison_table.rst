@@ -6,8 +6,8 @@ experimental structure you started from. In ``Pristine Relaxation``, click
 ``Generate Comparison Table…`` to compare the project's active
 (experimental) host structure against one or more completed pristine-relaxation
 structures. MuFinder normalizes the cells into a common frame, matches atoms
-under periodic boundary conditions, and reports lattice, displacement, bonding,
-topology and symmetry metrics next to a heuristic overall similarity score. The
+under periodic boundary conditions, and reports the lattice parameters, the
+displacements of the matched atoms and the space groups. The
 comparison is a supercell-aware structural analysis, not a row-by-row text diff
 of imported files.
 
@@ -53,43 +53,47 @@ The comparison table
 
 .. figure:: ../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the CoF2 host against one relaxed cell, grouped into
-         lattice, displacement, bonding and symmetry metrics.
+         lattice, displacement and symmetry metrics.
 
    The CoF₂ host of :doc:`/user_guide/examples/cof2` compared with a synthetic
    pristine relaxation.
 
 The table has a ``Metric`` column, an ``Experimental`` column for the reference
 structure, and one column per selected DFT structure, headed ``DFT (<job
-label>)``. Rows are grouped into scientific categories:
+label>)``. Rows are grouped into three categories:
 
-- ``Lattice Parameters``,
-- ``Lattice Changes``,
-- ``Atomic Displacements``,
-- ``Bonding``,
-- ``Symmetry``,
-- ``Overall`` (the similarity score).
+- ``Lattice parameters``: ``a``, ``b``, ``c`` (Å), ``α``, ``β``, ``γ`` (°) and
+  the cell volume ``V`` (Å³). Each DFT cell shows the value with its change
+  against experiment, such as ``4.7091 (+0.30 %)``.
+- ``Atomic displacements``: the ``RMSD`` and the ``Max displacement`` of the
+  matched atoms (Å).
+- ``Symmetry``: the ``Space group`` of each structure, such as
+  ``P4₂/mnm (136)``, and whether the DFT structure keeps the experimental one
+  (``Same space group``).
 
-Each metric row has an ``Info`` button that opens a condensed version of the
-method note under `Method`_. When two or more DFT columns have a numeric value
-for a metric, the column closest to experiment is shown in bold green. A
-warning banner above the table lists problems found while comparing, such as a
-failed supercell detection or a partial atom matching.
+Hovering over a metric name shows a one-line description, and ``About these
+metrics`` above the table opens this page. When two or more DFT columns have a
+numeric value for a metric, the column closest to experiment is shown in bold
+green. A warning banner above the table lists problems found while comparing,
+such as a failed supercell detection or a partial atom matching.
 
 The collapsible ``DFT Parameter Differences`` section lists only those CASTEP
 input parameters that differ across the selected pristine-relaxation jobs.
 
+A saved table that holds metrics outside this list opens with the rows it
+shares with the list and leaves the others out; generating the table again
+fills in every row.
+
 Interpreting the table
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The most reliable reading strategy is usually:
-
-1. check the warnings for failed supercell detection or partial atom matching,
-2. inspect lattice changes and RMSD to judge global agreement,
-3. inspect coordination and topology rows to detect chemistry-changing events,
-4. use the similarity score only as a compact summary after the raw metrics have been reviewed.
-
-In other words, a high similarity score is useful, but a preserved topology and
-small RMSD are usually more physically interpretable than the score alone.
+1. Check the warnings for failed supercell detection or partial atom matching.
+2. Read the lattice changes: a relaxation with a converged functional usually
+   lands within a percent or two of experiment.
+3. Read the RMSD and maximum displacement for the internal coordinates; a
+   maximum displacement much larger than the RMSD points to one site that moved.
+4. Check that the space group is kept. A change of space group means the
+   relaxation broke the experimental symmetry.
 
 Method
 ------
@@ -98,8 +102,7 @@ The comparison runs these steps:
 
 1. normalizes the experimental and DFT cells into a common comparison frame,
 2. matches atoms under periodic boundary conditions,
-3. evaluates lattice, displacement, bonding, topology, and symmetry metrics,
-4. reports a heuristic overall similarity score alongside the raw metrics.
+3. evaluates the lattice, displacement and space-group metrics.
 
 Notation
 ~~~~~~~~
@@ -114,9 +117,6 @@ The equations below use the following symbols.
   fractional coordinates of atoms in the experimental and DFT structures.
 - :math:`m(i)`: DFT atom matched to experimental atom :math:`i`.
 - :math:`N_{\mathrm{match}}`: number of matched atom pairs.
-- :math:`r_{ij}`: periodic minimum-image Cartesian distance between atoms
-  :math:`i` and :math:`j`.
-- :math:`R_i`: ASE covalent radius for the species on site :math:`i`.
 - :math:`\mathbf{1}[\cdot]`: indicator function, equal to 1 when the condition
   is true and 0 otherwise.
 
@@ -235,25 +235,22 @@ The cell volume is
 Large deviations often indicate over-relaxation, under-relaxation, or a true
 change in the equilibrium cell size.
 
-Percent changes relative to experiment
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Changes relative to experiment
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The signed percent changes shown in the table are
-
-.. math::
-
-  \Delta a_{\%} = 100\,\frac{a_{\mathrm{DFT}} - a_{\mathrm{exp}}}{a_{\mathrm{exp}}},
-  \qquad
-  \Delta b_{\%} = 100\,\frac{b_{\mathrm{DFT}} - b_{\mathrm{exp}}}{b_{\mathrm{exp}}},
+Each DFT lattice value is followed by its signed percent change against the
+experimental value,
 
 .. math::
 
-  \Delta c_{\%} = 100\,\frac{c_{\mathrm{DFT}} - c_{\mathrm{exp}}}{c_{\mathrm{exp}}},
-  \qquad
-  \Delta V_{\%} = 100\,\frac{V_{\mathrm{DFT}} - V_{\mathrm{exp}}}{V_{\mathrm{exp}}}.
+  \Delta x_{\%} = 100\,\frac{x_{\mathrm{DFT}} - x_{\mathrm{exp}}}{x_{\mathrm{exp}}},
+  \qquad x \in \{a, b, c, \alpha, \beta, \gamma, V\}.
 
 Values close to zero indicate good lattice agreement. Positive values indicate
 expansion relative to experiment, while negative values indicate contraction.
+When the DFT structure is a supercell, its lattice values are those of the
+supercell and the change is taken against the experimental cell tiled to that
+supercell.
 
 Atomic-Displacement Metrics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -272,120 +269,27 @@ The root-mean-square displacement is
   \sum_{i=1}^{N_{\mathrm{match}}} d_i^2}.
 
 This is the main summary of average structural drift at the atomic level.
-Because the square is taken before averaging, RMSD weights larger relaxations
-more strongly than the simple mean displacement.
 
-Mean and maximum displacement
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The other two displacement summaries are
+Maximum displacement
+^^^^^^^^^^^^^^^^^^^^
 
 .. math::
 
-  \bar{d} = \frac{1}{N_{\mathrm{match}}}\sum_{i=1}^{N_{\mathrm{match}}} d_i,
-  \qquad
   d_{\max} = \max_i d_i.
 
-The mean displacement is less sensitive to a single outlier than RMSD, while
-the maximum displacement is useful for spotting one strongly reconstructed site
-inside an otherwise well-preserved structure.
+The maximum displacement is useful for spotting one strongly reconstructed
+site inside an otherwise well-preserved structure.
 
-Bonding Metrics
-~~~~~~~~~~~~~~~
-
-Bonding-derived metrics use a simple, explicit neighbour rule. Two atoms are
-treated as bonded when
-
-.. math::
-
-  r_{ij} \le 1.3\,(R_i + R_j).
-
-This is a heuristic coordination criterion based on ASE covalent radii. It is
-transparent and deterministic, but it is still a model choice rather than a
-universal physical law. The same rule is used for coordination numbers,
-topology, and local bond-angle environments.
-
-Nearest-neighbour bond-length changes
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-For each site,
-
-.. math::
-
-  r_i^{\mathrm{NN}} = \min_{j \ne i} r_{ij}.
-
-The mean and maximum nearest-neighbour bond-length changes are then
-
-.. math::
-
-  \Delta r_{\mathrm{mean}} = \frac{1}{N_{\mathrm{match}}}
-  \sum_{i=1}^{N_{\mathrm{match}}}
-  \left| r_{m(i)}^{\mathrm{NN,DFT}} - r_i^{\mathrm{NN,exp}} \right|,
-
-.. math::
-
-  \Delta r_{\max} = \max_i
-  \left| r_{m(i)}^{\mathrm{NN,DFT}} - r_i^{\mathrm{NN,exp}} \right|.
-
-These are local-scale metrics. They are often more chemically intuitive than a
-cell-wide volume change when the main relaxation is confined to one region.
-
-Bond-angle changes
-^^^^^^^^^^^^^^^^^^
-
-For each site with at least two neighbours, MuFinder computes all unique
-neighbour-neighbour angles and averages them to obtain a local mean angle
-
-.. math::
-
-  \bar{\theta}_i = \frac{1}{M_i}
-  \sum_{(j,k) \in \mathcal{P}_i}
-  \cos^{-1}\left(
-  \frac{\mathbf{r}_{ij}\cdot\mathbf{r}_{ik}}{\lVert \mathbf{r}_{ij} \rVert_2 \lVert \mathbf{r}_{ik} \rVert_2}
-  \right),
-
-where :math:`\mathcal{P}_i` is the set of unique neighbour pairs around site
-:math:`i` and :math:`M_i = |\mathcal{P}_i|`. The reported table value is the
-mean absolute change over all matched sites that have valid local means in both
-structures,
-
-.. math::
-
-  \Delta \theta_{\mathrm{mean}} = \frac{1}{N_{\theta}}
-  \sum_i \left| \bar{\theta}_{m(i)}^{\mathrm{DFT}} - \bar{\theta}_i^{\mathrm{exp}} \right|.
-
-This metric is informative for coordination-polyhedron distortions, but it is
-less stable when a site has very low coordination.
-
-Coordination-number changes
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The coordination number of site :math:`i` is
-
-.. math::
-
-  \mathrm{CN}_i = \sum_{j \ne i} \mathbf{1}\left[r_{ij} \le 1.3\,(R_i + R_j)\right].
-
-The table reports the number of matched sites whose coordination numbers differ
-between experiment and DFT,
-
-.. math::
-
-  N_{\Delta \mathrm{CN}} = \sum_{i=1}^{N_{\mathrm{match}}}
-  \mathbf{1}\left[\mathrm{CN}_i^{\mathrm{exp}} \ne \mathrm{CN}_{m(i)}^{\mathrm{DFT}}\right].
-
-This is one of the clearest discrete indicators of bond breaking or bond
-formation.
-
-Symmetry and Topology
-~~~~~~~~~~~~~~~~~~~~~
+Symmetry
+~~~~~~~~
 
 Space-group comparison
 ^^^^^^^^^^^^^^^^^^^^^^
 
 MuFinder uses ``spglib`` to identify the international space-group number and
-symbol for each normalized structure. The comparison-table row is a Boolean
-match on the detected group numbers,
+symbol for each structure; the ``Space group`` row shows both, with screw axes
+written as subscripts (``P4_2/mnm`` as ``P4₂/mnm``). The ``Same space group``
+row compares the detected group numbers of the normalized structures,
 
 .. math::
 
@@ -396,82 +300,6 @@ the usual care: the result depends on the symmetry tolerance, 0.001 Å as for
 every MuFinder symmetry analysis, and on the numerical quality of the input
 structure.
 
-Topology preservation
-^^^^^^^^^^^^^^^^^^^^^
-
-Using the same neighbour rule as above, MuFinder builds an undirected bond-edge
-set
-
-.. math::
-
-  E = \{(i,j) : r_{ij} \le 1.3\,(R_i + R_j)\}.
-
-The experimental bond graph is mapped through the atom matching and compared
-with the DFT bond graph restricted to matched atoms. The table reports whether
-the mapped edge sets are exactly identical,
-
-.. math::
-
-  \mathrm{preserved}_{\mathrm{topo}} =
-  \mathbf{1}\left[E_{\mathrm{exp}}^{\mathrm{mapped}} = E_{\mathrm{DFT}}^{\mathrm{matched}}\right].
-
-This is stricter than a coordination-number comparison. Two structures can have
-the same coordination counts but different bond connectivity.
-
-Similarity Score
-~~~~~~~~~~~~~~~~
-
-The ``Similarity score`` is a heuristic composite, intended as a quick ranking
-aid rather than a replacement for the raw metrics.
-
-First, MuFinder forms a lattice-agreement term from the mean absolute percent
-change of :math:`a`, :math:`b`, and :math:`c`:
-
-.. math::
-
-  \Delta_{\mathrm{lat}} = \frac{1}{3}
-  \sum_{x \in \{a,b,c\}} \left| \Delta x_{\%} \right|,
-  \qquad
-  S_{\mathrm{lat}} = \max\left(0, 1 - \frac{\Delta_{\mathrm{lat}}}{100}\right).
-
-Second, it defines a displacement-agreement term using RMSD and the mean
-experimental nearest-neighbour distance as a characteristic length scale:
-
-.. math::
-
-  \sigma = \left\langle r_i^{\mathrm{NN,exp}} \right\rangle,
-  \qquad
-  S_{\mathrm{disp}} = \exp\left(-\frac{\mathrm{RMSD}}{\max(\sigma, 10^{-8})}\right).
-
-Third, it uses the fraction of matched sites whose coordination numbers are
-preserved,
-
-.. math::
-
-  S_{\mathrm{bond}} = f_{\mathrm{coord}}.
-
-The final score is
-
-.. math::
-
-  S = \min\left(
-  1,
-  \max\left(
-  0,
-  S_{\mathrm{lat}}^{0.35}
-  S_{\mathrm{disp}}^{0.35}
-  S_{\mathrm{bond}}^{0.30}
-  + 0.1\,\mathbf{1}[n_{\mathrm{exp}} = n_{\mathrm{DFT}}]
-  \right)
-  \right).
-
-Important details:
-
-- the score is clipped to the interval :math:`[0, 1]`,
-- the space-group match contributes a fixed bonus of ``0.1``,
-- topology and bond-angle metrics are informative diagnostics but do not enter
-  the score directly in the current implementation.
-
 Export
 ------
 
@@ -481,12 +309,6 @@ external analysis or record-keeping.
 Known limitations
 -----------------
 
-- Space-group comparison depends on ``spglib`` and on the selected symmetry
-  tolerance.
-- Bonding, coordination, and topology metrics depend on the radius-based
-  neighbour rule and can shift when a structure lies close to the cutoff.
-- Bond-angle metrics are less stable for very low coordination numbers.
+- Space-group comparison depends on ``spglib`` and on the symmetry tolerance.
 - Large supercells increase the cost of the species-resolved Hungarian
   assignment.
-- The similarity score is intentionally heuristic and should not be interpreted
-  as a universal or transferable materials descriptor.

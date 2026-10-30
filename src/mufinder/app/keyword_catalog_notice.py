@@ -8,7 +8,11 @@ explanation of what a keyword catalog is, and why it matters, stays consistent.
 
 from __future__ import annotations
 
-from mufinder.castep_io.schema import OVERRIDE_KEYWORDS_JSON_ENV_VAR, KeywordCatalogStatus
+from mufinder.castep_io.schema import (
+    OVERRIDE_CATALOG_ORIGIN,
+    OVERRIDE_KEYWORDS_JSON_ENV_VAR,
+    KeywordCatalogStatus,
+)
 
 
 LIMITED_CATALOG_EXPLANATION = (
@@ -34,17 +38,19 @@ def catalog_short_label(status: KeywordCatalogStatus) -> str:
     return "CASTEP keywords: loaded"
 
 
+def _version_text(status: KeywordCatalogStatus, *, unrecorded: str) -> str:
+    """Return ``CASTEP <version>``, or ``unrecorded`` when the catalog has none."""
+
+    return f"CASTEP {status.castep_version}" if status.castep_version else unrecorded
+
+
 def catalog_source_description(status: KeywordCatalogStatus) -> str:
     """Return a sentence saying where the active catalog came from."""
 
     if status.is_starter:
         return "No keyword catalog is loaded; MuFinder is using its limited built-in keyword set."
 
-    version = (
-        f"CASTEP {status.castep_version}"
-        if status.castep_version
-        else "an unrecorded CASTEP version"
-    )
+    version = _version_text(status, unrecorded="an unrecorded CASTEP version")
     counts = f"{status.cell_count} cell and {status.param_count} param keywords"
     if status.origin == "setup":
         source = "installed through CASTEP setup"
@@ -54,6 +60,23 @@ def catalog_source_description(status: KeywordCatalogStatus) -> str:
             "which overrides CASTEP setup"
         )
     return f"Keyword catalog for {version} ({counts}), {source}:\n{status.path}"
+
+
+def catalog_status_line(status: KeywordCatalogStatus) -> str:
+    """Return the one-line catalog summary shown in ``Setup > CASTEP``.
+
+    An installed catalog reads ``CASTEP 26.11 · 118 cell, 449 param keywords``;
+    when the developer override is in force the line says so. Without a catalog
+    it is the starter-set sentence.
+    """
+
+    if status.is_starter:
+        return catalog_source_description(status)
+    version = _version_text(status, unrecorded="Unrecorded CASTEP version")
+    line = f"{version} · {status.cell_count} cell, {status.param_count} param keywords"
+    if status.origin == OVERRIDE_CATALOG_ORIGIN:
+        line += f" · Overridden by {OVERRIDE_KEYWORDS_JSON_ENV_VAR}"
+    return line
 
 
 def catalog_detail_text(status: KeywordCatalogStatus) -> str:
