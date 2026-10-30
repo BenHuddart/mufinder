@@ -805,6 +805,13 @@ def test_relaxations_in_different_supercells_or_cut_offs_are_different_calculati
             {"label": "b", "parameter_values": {"cut_off_energy": 600}},
             {"label": "c", "parameter_values": {"cut_off_energy": 800.0}},
             {
+                "label": "e",
+                "parameter_values": {
+                    "cut_off_energy": 600.0,
+                    "kpoints_list": [[0.0, 0.0, 0.0, 1.0]],
+                },
+            },
+            {
                 "label": "d",
                 "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
                 "parameter_values": {"cut_off_energy": 600.0},
@@ -816,13 +823,14 @@ def test_relaxations_in_different_supercells_or_cut_offs_are_different_calculati
         source.job_label: source
         for source in _sources_for(
             document,
-            [(label, {"definition": definition, "data": data}) for label in "abcd"],
+            [(label, {"definition": definition, "data": data}) for label in "abcde"],
         )
     }
 
     assert not mixes_calculations([sources["a"], sources["b"]])
     assert mixes_calculations([sources["a"], sources["c"]])
     assert mixes_calculations([sources["a"], sources["d"]])
+    assert mixes_calculations([sources["a"], sources["e"]])
     assert not mixes_calculations([])
     # A relaxation whose row is unknown is compared by its cell alone.
     (orphan,) = _sources_for(document, [("orphan", {"data": data})])

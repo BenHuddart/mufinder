@@ -731,3 +731,41 @@ def test_anchoring_leaves_ungrouped_sites_where_they_are() -> None:
     assert anchored[1].cluster_index == 0
     assert anchored[1].shifted is False
     assert anchored[1].shifted_fractional_position == (0.0, 0.5, 0.25)
+
+
+@_soprano_required
+def test_k_means_is_not_weighted_towards_a_site_relaxed_many_times() -> None:
+    host = _bcc_host_structure()
+    sites = [
+        *_noisy_members((0.5, 0.25, 0.0), 25, noise=1e-4, energy=-10.0, seed=7),
+        _bcc_site("second", (0.25, 0.25, 0.25), -9.5),
+        _bcc_site("third", (0.5, 0.0, 0.0), -9.0),
+    ]
+
+    result = cluster_soprano_style(sites, host, method="kmeans", kmeans_k=3)
+
+    assert _group_count(result.cluster_labels) == 3
+
+
+def test_displacements_from_a_same_size_pristine_supercell_measure_from_the_relaxed_muon() -> None:
+    pristine = Structure(
+        label="Pristine 2x1x1",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+    )
+    # The muon is at x = 3 Å: fractional 0.3 in the supercell, 0.6 in the 5 Å host cell.
+    relaxed = Structure(
+        label="Relaxed",
+        lattice_vectors=pristine.lattice_vectors,
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.3, 0.0, 0.0]],
+    )
+
+    result = analyze_displacements(
+        relaxed_structure=relaxed,
+        comparison_structure=pristine,
+        muon_fractional_position=(0.6, 0.0, 0.0),
+    )
+
+    assert [point.distance_from_muon_ang for point in result.points] == pytest.approx([2.0, 3.0])

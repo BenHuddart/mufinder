@@ -29,6 +29,7 @@ from mufinder.castep_io.cell_parser import CellParseError, ParsedCell, parse_cel
 from mufinder.castep_io.param_parser import parse_param_assignments, run_is_spin_polarized
 from mufinder.domain.charge_states import (
     MUONIUM_CHARGE_STATE,
+    POSITIVE_MUON_CHARGE_STATE,
     canonical_charge_state,
     muon_charge_state_label,
     muon_charge_state_prefix,
@@ -1186,6 +1187,8 @@ RELAXATION_ENERGY_PARAMETERS = (
     "basis_precision",
     "kpoint_mp_grid",
     "kpoint_mp_spacing",
+    "kpoints_list",
+    "hubbard_u",
     "xc_functional",
     "spin_polarized",
 )

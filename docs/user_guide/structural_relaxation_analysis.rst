@@ -130,7 +130,7 @@ An analysis workspace needs:
   ``Muonium`` tabs cannot be mixed; create one workspace for each.
 - **One calculation per workspace, ideally.** Total energies are only
   comparable between relaxations in the same supercell with the same cutoff,
-  k-points, functional and spin treatment. Selecting or adding relaxations
+  k-points, functional, Hubbard U and spin treatment. Selecting or adding relaxations
   that differ in any of these asks first (``Different calculations``), with
   ``Cancel`` the default; ``Use them anyway`` goes on.
 

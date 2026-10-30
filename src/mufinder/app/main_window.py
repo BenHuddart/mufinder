@@ -7390,7 +7390,7 @@ class MainWindow(QMainWindow):
             self,
             "Different calculations",
             "These relaxations ran in different supercells or with different settings "
-            "(cutoff, k-points, functional or spin), so their energies are not comparable "
+            "(cutoff, k-points, functional, Hubbard U or spin), so their energies are not comparable "
             "and the workspace's dE values would be meaningless.",
             (("add", "Use them anyway"), ("cancel", "Cancel")),
             default="cancel",

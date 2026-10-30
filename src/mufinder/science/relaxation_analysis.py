@@ -140,8 +140,10 @@ def _muon_image_nearest_marker(
 ) -> tuple[float, float, float] | None:
     """The image of the muon position nearest the relaxed structure's muon marker, in the supercell frame.
 
-    ``None`` when the comparison was not tiled or the relaxed structure has no
-    single muon marker.
+    When the comparison was not tiled the two cells are the same size, so the
+    marker itself is the position: the given coordinate may be in the host
+    cell, which a pristine supercell is not. ``None`` when the relaxed structure
+    has no single muon marker.
     """
 
     markers = [
@@ -151,8 +153,10 @@ def _muon_image_nearest_marker(
         )
         if str(species).strip().casefold() == "h:mu"
     ]
-    if not normalized.is_supercell or len(markers) != 1:
+    if len(markers) != 1:
         return None
+    if not normalized.is_supercell:
+        return _wrap_fractional(markers[0])
     matrix = np.asarray(normalized.supercell_matrix, dtype=float)
     try:
         inverse = np.linalg.inv(matrix)
@@ -659,6 +663,7 @@ def cluster_soprano_style(
         )
         if active.clustering_method == "kmeans":
             active = replace(active, clustering_kmeans_k=min(int(kmeans_k), max(len(groups), 1)))
+            return cluster_prepared_uep_dataset(prepared, config=active, kmeans_point_groups=groups)
     return cluster_prepared_uep_dataset(prepared, config=active)
 
 
@@ -763,7 +768,8 @@ def analyze_displacements(
     distances are evaluated. A position in the comparison cell names one site
     in each of the supercell's copies of that cell, so when the relaxed
     structure carries a muon marker the copy nearest the marker is used: the
-    distances are measured from the site the muon relaxed to. Nearest means
+    distances are measured from the site the muon relaxed to. A comparison of
+    the relaxed cell's own size uses the marker itself. Nearest means
     with the lattice metric (:func:`~mufinder.science.lattice.nearest_image_delta`),
     as do the ion distances and displacements below, so skewed cells are
     handled.

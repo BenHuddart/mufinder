@@ -12,6 +12,7 @@ classical energy.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import isnan
 
@@ -608,8 +609,14 @@ def cluster_prepared_uep_dataset(
     prepared: UepPreparedClusteringDataset,
     *,
     config: UepClusteringConfig | None = None,
+    kmeans_point_groups: Sequence[Sequence[int]] | None = None,
 ) -> UepClusteringResult:
-    """Replay pymuon-suite-style clustering over a prepared relaxed-site dataset."""
+    """Replay pymuon-suite-style clustering over a prepared relaxed-site dataset.
+
+    ``kmeans_point_groups`` makes k-means cluster one point per group (the
+    group's first member) and give every member its group's label, so repeated
+    points neither weight the clustering nor let it pick one centroid twice.
+    """
 
     active = _validate_clustering_config(config or prepared.config)
     method = active.clustering_method
@@ -665,8 +672,13 @@ def cluster_prepared_uep_dataset(
     if cluster_count > len(prepared.optimizations):
         raise UepError("clustering_kmeans_k must not exceed the number of optimized sites.")
     normalized_vectors = np.asarray(prepared.normalized_genome_vectors, dtype=float)
+    points = (
+        normalized_vectors
+        if kmeans_point_groups is None
+        else normalized_vectors[[int(group[0]) for group in kmeans_point_groups]]
+    )
     centroids, _distortion = vq.kmeans(
-        normalized_vectors,
+        points,
         cluster_count,
         seed=_UEP_KMEANS_SEED,
     )
