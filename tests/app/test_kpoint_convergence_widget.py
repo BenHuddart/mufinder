@@ -120,14 +120,22 @@ def test_kpoint_spacing_dialog_round_trip_state(qapp) -> None:
     assert dialog.defaults_state() == {"spacing": pytest.approx(0.25), "replace_existing": True}
 
 
-def test_kpoint_spacing_default_is_dense_sampling(qapp) -> None:
+def test_kpoint_spacing_default_is_0_04(qapp) -> None:
     dialog = KPointSpacingDialog()
     widget = KPointConvergenceWidget()
 
-    assert dialog.spacing() == pytest.approx(0.02)
-    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.02)
+    assert dialog.spacing() == pytest.approx(0.04)
+    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.04)
 
     widget.set_form_state({})
+
+    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.04)
+
+
+def test_kpoint_spacing_saved_in_a_project_outlives_the_default(qapp) -> None:
+    widget = KPointConvergenceWidget()
+
+    widget.set_form_state({"range": {"spacing": 0.02, "replace_existing": False}})
 
     assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.02)
 
