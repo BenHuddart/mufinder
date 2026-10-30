@@ -119,6 +119,8 @@ class RecordingSweepWindow:
     dialog's final state. ``confirm_choice`` answers ``confirm_answer``.
     ``select_simulation_cell_in_editor`` records the stage and the editor's
     initial matrix, then picks ``editor_selection`` when it is set.
+    ``refresh_jobs_table`` and ``refresh_journal_view`` append their names to
+    ``window_refreshes``.
     """
 
     def __init__(
@@ -138,6 +140,7 @@ class RecordingSweepWindow:
         self.refreshes = 0
         self.editor_selection = editor_selection
         self.editor_calls: list[tuple[WorkflowStage, list[list[int]]]] = []
+        self.window_refreshes: list[str] = []
 
     def run_examiner(
         self,
@@ -175,6 +178,12 @@ class RecordingSweepWindow:
         if self.editor_selection is not None:
             on_selected(self.editor_selection)
 
+    def refresh_jobs_table(self) -> None:
+        self.window_refreshes.append("jobs_table")
+
+    def refresh_journal_view(self) -> None:
+        self.window_refreshes.append("journal_view")
+
     def deps(self) -> dict[str, Callable[..., object]]:
         """Return the deps fields both sweeps' deps dataclasses take."""
 
@@ -184,6 +193,8 @@ class RecordingSweepWindow:
             "confirm_choice": self.confirm_choice,
             "refresh_after_default_adopted": self.refresh_after_default_adopted,
             "select_simulation_cell_in_editor": self.select_simulation_cell_in_editor,
+            "refresh_jobs_table": self.refresh_jobs_table,
+            "refresh_journal_view": self.refresh_journal_view,
         }
 
 

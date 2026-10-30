@@ -19,7 +19,7 @@ from mufinder.services.convergence_defaults import (
 )
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
-from mufinder.app.convergence_types import SweepPointRunState
+from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 from mufinder.app.workflow_controllers.convergence_kpoint import (
     ConvergenceKpointController,
@@ -818,3 +818,116 @@ def test_kpoint_simulation_cell_selection_and_unit_cell_use_the_kpoint_stage(
     controller.use_unit_cell()
 
     assert document.ui_state["workflow_supercells"]["convergence_kpoint"]["mode"] == "unit_cell"
+
+
+# --------------------------------------------------------------------------- #
+# Configure
+# --------------------------------------------------------------------------- #
+
+
+def _kpoint_config(*grids: tuple[int, int, int]) -> ConvergenceConfig:
+    return ConvergenceConfig(
+        sweep_parameter="kpoint_mp_grid",
+        sweep_values=grids,
+        shared_params={"task": "SINGLEPOINT"},
+        overrides={},
+        name_prefix="kconv",
+    )
+
+
+def _kpoint_configure_controller(
+    document: ProjectDocument | None,
+    window: RecordingSweepWindow,
+    *,
+    service: ProjectService | None = None,
+    statuses: list[str] | None = None,
+) -> ConvergenceKpointController:
+    deps = ConvergenceKpointDeps(
+        deserialize_convergence_config=deserialize_convergence_config,
+        grid_key=_grid_key,
+        max_stress_for_job=lambda _job_id: None,
+        **window.deps(),
+    )
+    context = make_context(document=document, project_service=service, statuses=statuses)
+    return ConvergenceKpointController(context, deps, _FakeKpointView())
+
+
+def _kpoint_host_document(service: ProjectService, tmp_path: Path) -> ProjectDocument:
+    document = service.create_project(tmp_path / "kpoint_configure.mufinder", "KPointConfigure")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    return document
+
+
+def test_kpoint_configure_without_a_host_structure_names_the_kpoint_sweep(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "no_host.mufinder", "NoHost")
+    window = RecordingSweepWindow()
+    controller = _kpoint_configure_controller(document, window, service=service)
+
+    controller.configure(_kpoint_config((2, 2, 2)))
+
+    assert window.warnings == [
+        ("No host structure", "Load a host structure before generating k-point convergence jobs.")
+    ]
+    assert document.calculations == {}
+
+
+def test_kpoint_configure_registers_an_active_definition_without_creating_jobs(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = _kpoint_host_document(service, tmp_path)
+    window = RecordingSweepWindow()
+    statuses: list[str] = []
+    controller = _kpoint_configure_controller(document, window, service=service, statuses=statuses)
+
+    controller.configure(_kpoint_config((2, 2, 2), (3, 3, 2)))
+
+    (definition,) = document.calculations.values()
+    assert definition.workflow_stage == WorkflowStage.CONVERGENCE_KPOINT
+    assert definition.parameters["configuration"]["sweep_values"] == [[2, 2, 2], [3, 3, 2]]
+    assert definition.parameters["job_ids_by_grid"] == {}
+    assert definition.parameters["output_directory"] == "files/convergence_kpoint"
+    assert document.ui_state[controller.active_key] == str(definition.id)
+    assert document.jobs == {}
+    assert window.window_refreshes == ["jobs_table", "journal_view"]
+    assert statuses == ["Configured 2 k-point jobs; input files will be generated on submission"]
+
+
+def test_kpoint_configure_registers_a_new_definition_carrying_equivalent_jobs(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = _kpoint_host_document(service, tmp_path)
+    statuses: list[str] = []
+    controller = _kpoint_configure_controller(
+        document, RecordingSweepWindow(), service=service, statuses=statuses
+    )
+    config = _kpoint_config((2, 2, 2), (3, 3, 3))
+    controller.configure(config)
+    (first,) = document.calculations.values()
+    job = service.add_job(
+        document,
+        label="kconv_kpt_2x2x2",
+        workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        calc_type="castep_convergence_kpoint",
+    )
+    first.parameters["job_ids_by_grid"]["2x2x2"] = str(job.id)
+
+    controller.configure(config)
+
+    (second,) = [
+        definition for definition in document.calculations.values() if definition is not first
+    ]
+    assert document.ui_state[controller.active_key] == str(second.id)
+    assert second.parameters["job_ids_by_grid"] == {"2x2x2": str(job.id)}
+    assert statuses[-1] == "Configured 2 k-point jobs; input files will be generated on submission"

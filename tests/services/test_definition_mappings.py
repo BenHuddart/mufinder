@@ -14,6 +14,7 @@ from mufinder.services.definition_mappings import (
     convergence_mapping_job_priority,
     definition_workflow_context_matches,
     ensure_job_mapping,
+    matching_sweep_definition,
     relaxation_mapping_job_priority,
     remove_cutoff_from_definition,
     remove_definition_if_no_rows,
@@ -22,6 +23,7 @@ from mufinder.services.definition_mappings import (
     remove_generated_sources,
     remove_source_keys_from_definition,
     sweep_definition_context_matches,
+    sweep_definition_has_context,
     sync_equivalent_mappings,
 )
 from mufinder.services.project_service import ProjectDocument
@@ -168,6 +170,95 @@ def test_sweep_context_needs_target_structure_output_and_cell(document: ProjectD
     assert sweep_definition_context_matches(document, implicit_cell, target)
     assert not sweep_definition_context_matches(document, supercell, target)
     assert not sweep_definition_context_matches(document, target, no_structure)
+
+
+def _sweep_context(document: ProjectDocument, **overrides: object) -> dict[str, object]:
+    context: dict[str, object] = {
+        "input_structure_id": STRUCTURE_ID,
+        "output_directory": document.project_root / "files" / "relax",
+        "simulation_cell_mode": "unit_cell",
+        "supercell_source_workflow": None,
+    }
+    context.update(overrides)
+    return context
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"input_structure_id": uuid4()},
+        {"output_directory": Path("elsewhere")},
+        {"simulation_cell_mode": "saved_supercell"},
+        {"supercell_source_workflow": "convergence_cutoff"},
+    ],
+)
+def test_sweep_has_context_needs_every_context_field(
+    document: ProjectDocument, overrides: dict[str, object]
+) -> None:
+    definition = _definition(document)
+
+    assert sweep_definition_has_context(document, definition, **_sweep_context(document))
+    assert not sweep_definition_has_context(
+        document, definition, **_sweep_context(document, **overrides)
+    )
+
+
+def test_sweep_has_context_needs_exactly_one_input_structure(document: ProjectDocument) -> None:
+    definition = _definition(document)
+    definition.input_structure_ids = [STRUCTURE_ID, uuid4()]
+
+    assert not sweep_definition_has_context(document, definition, **_sweep_context(document))
+
+
+def test_matching_sweep_definition_needs_the_same_configuration_and_context(
+    document: ProjectDocument,
+) -> None:
+    other_config = _definition(document, (_Row("b"),))
+    elsewhere = _definition(document, (_Row("a"),), output_directory="files/other")
+    match = _definition(document, (_Row("a"),))
+    parameters = _serialize(_Config(rows=(_Row("a"),)))
+
+    found = matching_sweep_definition(
+        document,
+        [other_config, elsewhere, match],
+        parameters=parameters,
+        **_sweep_context(document),  # type: ignore[arg-type]
+    )
+
+    assert found is match
+
+
+def test_matching_sweep_definition_returns_the_first_match_and_skips_gaps(
+    document: ProjectDocument,
+) -> None:
+    first = _definition(document, (_Row("a"),))
+    second = _definition(document, (_Row("a"),))
+    parameters = _serialize(_Config(rows=(_Row("a"),)))
+
+    found = matching_sweep_definition(
+        document,
+        [None, second, first, second],
+        parameters=parameters,
+        **_sweep_context(document),  # type: ignore[arg-type]
+    )
+
+    assert found is second
+
+
+def test_matching_sweep_definition_returns_none_without_a_match(
+    document: ProjectDocument,
+) -> None:
+    _definition(document, (_Row("a"),))
+
+    assert (
+        matching_sweep_definition(
+            document,
+            [None, *document.calculations.values()],
+            parameters=_serialize(_Config(rows=(_Row("z"),))),
+            **_sweep_context(document),  # type: ignore[arg-type]
+        )
+        is None
+    )
 
 
 # --------------------------------------------------------------------------- #

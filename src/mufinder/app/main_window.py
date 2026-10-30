@@ -106,7 +106,7 @@ from mufinder.app.cluster_ui_utils import (
 )
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
 from mufinder.app.keyword_catalog_guard import KeywordCatalogGuard
-from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
+from mufinder.app.convergence_adapter import convergence_job_name
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_display import (
     format_cutoff_energy,
@@ -115,7 +115,6 @@ from mufinder.app.convergence_display import (
 )
 from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
 from mufinder.app.convergence_types import (
-    ConvergenceConfig,
     SweepPointRunState,
 )
 from mufinder.app.convergence_widget import CutoffConvergenceWidget
@@ -228,7 +227,6 @@ from mufinder.app.workflow_config_codecs import (
     deserialize_uep_config,
     normalized_supercell_matrix,
     num_farms_from_extras,
-    serialize_convergence_config,
     serialize_muon_relaxation_config,
     serialize_pristine_relaxation_config,
     serialize_uep_config,
@@ -301,6 +299,7 @@ from mufinder.services.convergence_defaults import (
 from mufinder.services.definition_mappings import (
     ensure_job_mapping,
     relaxation_mapping_job_priority,
+    sweep_definition_context_matches,
 )
 from mufinder.services.failure_diagnosis import (
     FailureDiagnosis,
@@ -393,7 +392,7 @@ from mufinder.science.uep import (
 )
 from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
 from mufinder.science.structure_io import StructureLoadError
-from mufinder.workflow import StructureBridgeError, structure_to_spec
+from mufinder.workflow import StructureBridgeError
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
 )
@@ -701,7 +700,9 @@ class MainWindow(QMainWindow):
             lambda: self._set_active_route("convergence_kpoint")
         )
         self._convergence_view = CutoffConvergenceWidget()
-        self._convergence_view.configure_requested.connect(self._on_convergence_configured)
+        self._convergence_view.configure_requested.connect(
+            lambda config: self._convergence_controller.configure(config)
+        )
         self._convergence_view.examine_requested.connect(
             lambda: self._convergence_controller.examine()
         )
@@ -740,7 +741,7 @@ class MainWindow(QMainWindow):
         )
         self._kpoint_convergence_view = KPointConvergenceWidget()
         self._kpoint_convergence_view.configure_requested.connect(
-            self._on_kpoint_convergence_configured
+            lambda config: self._kpoint_convergence_controller.configure(config)
         )
         self._kpoint_convergence_view.examine_requested.connect(
             lambda: self._kpoint_convergence_controller.examine()
@@ -4244,73 +4245,6 @@ class MainWindow(QMainWindow):
         )
         return energy_barriers_view
 
-    def _convergence_cutoff_definition_matches(
-        self,
-        definition,
-        *,
-        input_structure_id: UUID,
-        parameters: dict[str, object],
-        output_directory: Path,
-        simulation_cell_mode: str,
-        supercell_source_workflow: str | None,
-    ) -> bool:
-        return (
-            definition.input_structure_ids == [input_structure_id]
-            and definition.parameters.get("configuration") == parameters
-            and definition_output_directory(self._document, definition) == output_directory
-            and str(definition.parameters.get("simulation_cell_mode", "unit_cell"))
-            == simulation_cell_mode
-            and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
-        )
-
-    def _convergence_cutoff_definition_context_matches(
-        self,
-        definition,
-        *,
-        input_structure_id: UUID,
-        output_directory: Path,
-        simulation_cell_mode: str,
-        supercell_source_workflow: str | None,
-    ) -> bool:
-        return (
-            definition.input_structure_ids == [input_structure_id]
-            and definition_output_directory(self._document, definition) == output_directory
-            and str(definition.parameters.get("simulation_cell_mode", "unit_cell"))
-            == simulation_cell_mode
-            and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
-        )
-
-    def _matching_convergence_cutoff_definition(
-        self,
-        *,
-        input_structure_id: UUID,
-        parameters: dict[str, object],
-        output_directory: Path,
-        simulation_cell_mode: str,
-        supercell_source_workflow: str | None,
-    ):
-        if self._document is None:
-            return None
-
-        active = self._convergence_controller.active_definition()
-        definitions = self._convergence_controller.definitions()
-        ordered = [definition for definition in (active, *definitions) if definition is not None]
-        seen: set[UUID] = set()
-        for definition in ordered:
-            if definition.id in seen:
-                continue
-            seen.add(definition.id)
-            if self._convergence_cutoff_definition_matches(
-                definition,
-                input_structure_id=input_structure_id,
-                parameters=parameters,
-                output_directory=output_directory,
-                simulation_cell_mode=simulation_cell_mode,
-                supercell_source_workflow=supercell_source_workflow,
-            ):
-                return definition
-        return None
-
     @staticmethod
     def _job_submission_sort_key(job: Job) -> float:
         for stamp in (job.submitted_at, job.started_at, job.completed_at):
@@ -4404,30 +4338,16 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
-        if not source_definition.input_structure_ids:
+        if (
+            not source_definition.input_structure_ids
+            or definition_output_directory(self._document, source_definition) is None
+        ):
             self._convergence_controller.remove_cutoff_from_definition(source_definition, cutoff)
             return
 
-        input_structure_id = source_definition.input_structure_ids[0]
-        output_directory = definition_output_directory(self._document, source_definition)
-        if output_directory is None:
-            self._convergence_controller.remove_cutoff_from_definition(source_definition, cutoff)
-            return
-
-        simulation_cell_mode = str(
-            source_definition.parameters.get("simulation_cell_mode", "unit_cell")
-        )
-        supercell_source_workflow = source_definition.parameters.get("supercell_source_workflow")
         for definition in self._convergence_controller.definitions():
-            if not self._convergence_cutoff_definition_context_matches(
-                definition,
-                input_structure_id=input_structure_id,
-                output_directory=output_directory,
-                simulation_cell_mode=simulation_cell_mode,
-                supercell_source_workflow=supercell_source_workflow,
-            ):
-                continue
-            self._convergence_controller.remove_cutoff_from_definition(definition, cutoff)
+            if sweep_definition_context_matches(self._document, definition, source_definition):
+                self._convergence_controller.remove_cutoff_from_definition(definition, cutoff)
 
     def _run_blocking_file_op(self, op: Callable[[], object], *, description: str) -> object:
         """Run a blocking filesystem operation off the GUI thread.
@@ -5790,6 +5710,8 @@ class MainWindow(QMainWindow):
             "select_simulation_cell_in_editor": lambda *args, **kwargs: (
                 self._select_simulation_cell_in_editor(*args, **kwargs)
             ),
+            "refresh_jobs_table": lambda: self._refresh_jobs_table(),
+            "refresh_journal_view": lambda: self._refresh_journal_view(),
         }
 
     def _run_convergence_examiner(
@@ -6794,86 +6716,6 @@ class MainWindow(QMainWindow):
         except Exception:
             return ""
 
-    def _on_convergence_configured(self, config: ConvergenceConfig) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        resolution = self._project_service.resolve_workflow_structure(
-            self._document,
-            WorkflowStage.CONVERGENCE_CUTOFF,
-            normalize_state=True,
-        )
-        structure = resolution.structure
-        if structure is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before generating convergence jobs.",
-            )
-            return
-
-        try:
-            structure_spec = structure_to_spec(structure)
-            expand_convergence_jobs(structure=structure_spec, config=config)
-        except (ValueError, StructureBridgeError) as exc:
-            QMessageBox.warning(self, "Convergence setup invalid", str(exc))
-            return
-
-        output_root = self._document.project_root / "files" / "convergence_cutoff"
-        serialized_config = serialize_convergence_config(config)
-        simulation_cell_mode = resolution.normalized_selection.mode
-        supercell_source_workflow = (
-            resolution.source_workflow_stage.value
-            if resolution.source_workflow_stage is not None
-            else None
-        )
-
-        matching_definition = self._matching_convergence_cutoff_definition(
-            input_structure_id=structure.id,
-            parameters=serialized_config,
-            output_directory=output_root,
-            simulation_cell_mode=simulation_cell_mode,
-            supercell_source_workflow=supercell_source_workflow,
-        )
-        if matching_definition is not None:
-            self._convergence_controller.sync_mappings(matching_definition)
-            self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(
-                matching_definition.id
-            )
-            self._refresh_jobs_table()
-            self._convergence_controller.refresh_view()
-            self._refresh_journal_view()
-            self.statusBar().showMessage(
-                f"Using existing cutoff setup with {plural(len(config.sweep_values), 'cutoff job')}"
-            )
-            return
-
-        self._project_service.register_convergence_cutoff_definition(
-            self._document,
-            input_structure_id=structure.id,
-            parameters=serialized_config,
-            output_directory=output_root,
-            simulation_cell_mode=simulation_cell_mode,
-            supercell_source_workflow=supercell_source_workflow,
-        )
-        latest_definition = max(
-            (
-                definition
-                for definition in self._document.calculations.values()
-                if definition.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
-            ),
-            key=lambda definition: definition.created_at,
-        )
-        self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(latest_definition.id)
-
-        self._refresh_jobs_table()
-        self._convergence_controller.refresh_view()
-        self._refresh_journal_view()
-        self.statusBar().showMessage(
-            f"Configured {len(config.sweep_values)} cutoff jobs; input files will be generated on submission"
-        )
-
     def _on_load_structure_requested(self) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -7771,56 +7613,6 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _grid_key(grid: tuple[int, int, int]) -> str:
         return f"{int(grid[0])}x{int(grid[1])}x{int(grid[2])}"
-
-    def _on_kpoint_convergence_configured(self, config: ConvergenceConfig) -> None:
-        if self._document is None:
-            QMessageBox.information(self, "No project", "Create or open a project first.")
-            return
-
-        resolution = self._project_service.resolve_workflow_structure(
-            self._document,
-            WorkflowStage.CONVERGENCE_KPOINT,
-            normalize_state=True,
-        )
-        structure = resolution.structure
-        if structure is None:
-            QMessageBox.warning(
-                self,
-                "No host structure",
-                "Load a host structure before generating k-point convergence jobs.",
-            )
-            return
-
-        try:
-            structure_spec = structure_to_spec(structure)
-            expand_convergence_jobs(structure=structure_spec, config=config)
-        except (ValueError, StructureBridgeError) as exc:
-            QMessageBox.warning(self, "Convergence setup invalid", str(exc))
-            return
-
-        output_root = self._document.project_root / "files" / "convergence_kpoint"
-
-        definition = self._project_service.register_convergence_kpoint_definition(
-            self._document,
-            input_structure_id=structure.id,
-            parameters=serialize_convergence_config(config),
-            output_directory=output_root,
-            simulation_cell_mode=resolution.normalized_selection.mode,
-            supercell_source_workflow=(
-                resolution.source_workflow_stage.value
-                if resolution.source_workflow_stage is not None
-                else None
-            ),
-        )
-        self._kpoint_convergence_controller.sync_mappings(definition)
-        self._document.ui_state[self._ACTIVE_KPOINT_DEFINITION_KEY] = str(definition.id)
-
-        self._refresh_jobs_table()
-        self._kpoint_convergence_controller.refresh_view()
-        self._refresh_journal_view()
-        self.statusBar().showMessage(
-            f"Configured {len(config.sweep_values)} k-point jobs; input files will be generated on submission"
-        )
 
     def _on_kpoint_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:

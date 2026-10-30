@@ -19,6 +19,13 @@ definitions consistent, and every workflow runs them through this module:
   come from are dropped from the Energy Barriers form state by
   :func:`remove_generated_sources`.
 
+The convergence sweeps match definitions by context (input structure, output
+directory, simulation cell mode and supercell source) through
+:func:`sweep_definition_has_context` and :func:`sweep_definition_context_matches`;
+:func:`matching_sweep_definition` finds the definition a new cutoff
+configuration would duplicate, so reconfiguring it unchanged reuses that
+definition.
+
 The functions take a workflow's configuration codec and row helpers as
 callables, because the configuration types belong to the application layer.
 """
@@ -27,6 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Hashable, Iterable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
@@ -124,6 +132,32 @@ def definition_workflow_context_matches(
     )
 
 
+def sweep_definition_has_context(
+    document: ProjectDocument,
+    definition: CalculationDefinition,
+    *,
+    input_structure_id: UUID,
+    output_directory: Path,
+    simulation_cell_mode: str,
+    supercell_source_workflow: str | None,
+) -> bool:
+    """Return whether convergence sweep ``definition`` runs in the given context.
+
+    ``definition`` must have exactly the input structure ``input_structure_id``,
+    the output directory ``output_directory``, the simulation cell mode
+    ``simulation_cell_mode`` (``"unit_cell"`` when unset) and the supercell
+    source workflow ``supercell_source_workflow``.
+    """
+
+    return (
+        definition.input_structure_ids == [input_structure_id]
+        and definition_output_directory(document, definition) == output_directory
+        and str(definition.parameters.get("simulation_cell_mode", "unit_cell"))
+        == simulation_cell_mode
+        and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
+    )
+
+
 def sweep_definition_context_matches(
     document: ProjectDocument,
     source: CalculationDefinition,
@@ -132,9 +166,10 @@ def sweep_definition_context_matches(
     """Return whether ``source`` shares a convergence sweep ``target``'s context.
 
     ``target`` needs an input structure and an output directory. ``source``
-    must have exactly that input structure, the same output directory, the
-    same ``simulation_cell_mode`` (``"unit_cell"`` when unset) and the same
-    ``supercell_source_workflow``.
+    must then have ``target``'s context, as
+    :func:`sweep_definition_has_context` checks it: exactly that input
+    structure, the same output directory, the same ``simulation_cell_mode``
+    (``"unit_cell"`` when unset) and the same ``supercell_source_workflow``.
     """
 
     if not target.input_structure_ids:
@@ -142,14 +177,52 @@ def sweep_definition_context_matches(
     output_directory = definition_output_directory(document, target)
     if output_directory is None:
         return False
-    simulation_cell_mode = str(target.parameters.get("simulation_cell_mode", "unit_cell"))
-    return (
-        source.input_structure_ids == [target.input_structure_ids[0]]
-        and definition_output_directory(document, source) == output_directory
-        and str(source.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
-        and source.parameters.get("supercell_source_workflow")
-        == target.parameters.get("supercell_source_workflow")
+    return sweep_definition_has_context(
+        document,
+        source,
+        input_structure_id=target.input_structure_ids[0],
+        output_directory=output_directory,
+        simulation_cell_mode=str(target.parameters.get("simulation_cell_mode", "unit_cell")),
+        supercell_source_workflow=target.parameters.get("supercell_source_workflow"),
     )
+
+
+def matching_sweep_definition(
+    document: ProjectDocument,
+    definitions: Iterable[CalculationDefinition | None],
+    *,
+    parameters: Mapping[str, object],
+    input_structure_id: UUID,
+    output_directory: Path,
+    simulation_cell_mode: str,
+    supercell_source_workflow: str | None,
+) -> CalculationDefinition | None:
+    """Return the first sweep definition a new configuration would duplicate.
+
+    That is the first of ``definitions`` whose stored ``configuration`` equals
+    ``parameters`` and that runs in the given context
+    (:func:`sweep_definition_has_context`). ``None`` entries and repeated
+    definitions are skipped, so a caller can put the active definition first
+    and then list them all. Returns ``None`` when no definition matches.
+    """
+
+    seen: set[UUID] = set()
+    for definition in definitions:
+        if definition is None or definition.id in seen:
+            continue
+        seen.add(definition.id)
+        if definition.parameters.get("configuration") == parameters and (
+            sweep_definition_has_context(
+                document,
+                definition,
+                input_structure_id=input_structure_id,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            )
+        ):
+            return definition
+    return None
 
 
 def ensure_job_mapping(
@@ -548,6 +621,7 @@ __all__ = [
     "convergence_mapping_job_priority",
     "definition_workflow_context_matches",
     "ensure_job_mapping",
+    "matching_sweep_definition",
     "relaxation_mapping_job_priority",
     "remove_cutoff_from_definition",
     "remove_definition_if_no_rows",
@@ -556,5 +630,6 @@ __all__ = [
     "remove_labels_from_definition",
     "remove_source_keys_from_definition",
     "sweep_definition_context_matches",
+    "sweep_definition_has_context",
     "sync_equivalent_mappings",
 ]

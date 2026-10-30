@@ -409,9 +409,9 @@ no two workflow widgets may define the same private method.
        row-parameter mirroring.
    * - ``mufinder.app.workflow_controllers.sweep_convergence``
      - The cycle the two convergence sweeps share
-       (``SweepConvergenceController``), including examining a sweep,
-       adopting its result as the project default and choosing its
-       simulation cell.
+       (``SweepConvergenceController``), including storing a configured
+       sweep, examining a sweep, adopting its result as the project default
+       and choosing its simulation cell.
    * - ``mufinder.app.project_defaults_widget``
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
@@ -495,9 +495,13 @@ no two workflow widgets may define the same private method.
        equivalent definitions (``sync_equivalent_mappings``, with the two
        binding priority orders), dropping rows and their bindings
        (``remove_labels_from_definition``, ``remove_definition_if_no_rows``),
-       the sweep and source-row equivalents, and dropping generated paths
-       from the Energy Barriers form state (``remove_generated_sources``; see
-       Definition mappings and row removal).
+       the sweep and source-row equivalents, the convergence sweep context
+       checks and the existing sweep definition a new configuration would
+       duplicate (``sweep_definition_has_context``,
+       ``sweep_definition_context_matches``, ``matching_sweep_definition``),
+       and dropping generated paths from the Energy Barriers form state
+       (``remove_generated_sources``; see Definition mappings and row
+       removal).
    * - ``mufinder.services.cluster_submission_planner``
      - The decisions of a cluster submission: connection reuse, each job's
        remote target (start again, continuation, resubmission or a fresh
@@ -1291,6 +1295,18 @@ Controller summary
        saved supercell, else the project matrix) through the
        ``select_simulation_cell_in_editor`` dep, the window's one editor entry,
        and uses the cell the editor returns with.
+
+       ``configure`` stores the configuration the Configure dialog accepts.
+       It checks it by expanding it on the stage's resolved cell, then makes
+       a definition active without creating jobs or writing inputs. The
+       cutoff sweep (``reuse_matching_definition``) first looks for an
+       existing definition with the same configuration and context
+       (``matching_sweep_definition``, the active definition first) and
+       reuses it after syncing its mappings; otherwise
+       ``register_configured_definition`` registers a new one through the
+       project service, and the k-point sweep syncs the new definition's
+       mappings. The job dashboard and journal refresh through the
+       ``refresh_jobs_table`` and ``refresh_journal_view`` deps.
    * - ``PristineRelaxationController``
      - Keyed by row label; rows sync by row signature under the relaxation
        priority order. ``build_result`` reads the carrier's relaxed cell,
@@ -1405,7 +1421,9 @@ can hold several definitions, each binding rows to jobs in its own
 ``job_ids_by_<key>`` mapping. :mod:`mufinder.services.definition_mappings`
 keeps them consistent; the controllers pass it their configuration codec and
 row helpers, and ``MainWindow`` never edits a mapping or a definition's rows
-itself.
+itself. The cutoff sweep is the exception to registering: a configuration
+equal to an existing definition's, in the same context, reuses that definition
+(``matching_sweep_definition``).
 
 ``sync_equivalent_mappings`` runs before a controller reads its active
 definition's bindings. A definition is a source when it shares the target's

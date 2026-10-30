@@ -45,14 +45,21 @@ def test_convergence_configured_registers_snapshot(
         overrides={},
         name_prefix="conv",
     )
+    refreshes: list[str] = []
+    monkeypatch.setattr(window, "_refresh_jobs_table", lambda: refreshes.append("jobs_table"))
+    monkeypatch.setattr(window, "_refresh_journal_view", lambda: refreshes.append("journal_view"))
 
-    window._on_convergence_configured(config)
+    window._convergence_view.configure_requested.emit(config)
 
     assert len(window._document.jobs) == 0
     assert len(window._document.calculations) == 1
     definition = next(iter(window._document.calculations.values()))
     assert definition.parameters["configuration"]["sweep_values"] == [300.0, 360.0]
     assert definition.parameters["job_ids_by_cutoff"] == {}
+    assert refreshes == ["jobs_table", "journal_view"]
+    assert window.statusBar().currentMessage() == (
+        "Configured 2 cutoff jobs; input files will be generated on submission"
+    )
     window.close()
 
 
@@ -257,7 +264,7 @@ def test_convergence_configured_uses_selected_saved_supercell(main_window, tmp_p
         name_prefix="conv",
     )
 
-    window._on_convergence_configured(config)
+    window._convergence_view.configure_requested.emit(config)
 
     definition = next(iter(doc.calculations.values()))
     assert definition.input_structure_ids == [asset.id]
@@ -287,7 +294,7 @@ def test_convergence_configured_reuses_matching_definition(main_window, tmp_path
         name_prefix="conv",
     )
 
-    window._on_convergence_configured(config)
+    window._convergence_view.configure_requested.emit(config)
     definition = next(iter(doc.calculations.values()))
     job = service.add_job(
         doc,
@@ -297,7 +304,7 @@ def test_convergence_configured_reuses_matching_definition(main_window, tmp_path
     )
     definition.parameters["job_ids_by_cutoff"]["300"] = str(job.id)
 
-    window._on_convergence_configured(config)
+    window._convergence_view.configure_requested.emit(config)
 
     definitions = [
         candidate
@@ -1047,7 +1054,7 @@ def test_convergence_configured_without_project_shows_info(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._on_convergence_configured(
+    window._convergence_view.configure_requested.emit(
         ConvergenceConfig(sweep_values=(300.0,), shared_params={"task": "SINGLEPOINT"})
     )
 
@@ -1069,78 +1076,11 @@ def test_convergence_configured_without_host_structure_warns(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._on_convergence_configured(
+    window._convergence_view.configure_requested.emit(
         ConvergenceConfig(sweep_values=(300.0,), shared_params={"task": "SINGLEPOINT"})
     )
 
     assert warnings == ["No host structure"]
-    window.close()
-
-
-def test_convergence_configured_handles_expansion_errors(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_expand_err.mufinder", "ConvExpandErr")
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    window._document = doc
-
-    warnings: list[str] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "warning",
-        lambda _parent, title, _message: warnings.append(title),
-    )
-    monkeypatch.setattr(
-        main_window_module,
-        "expand_convergence_jobs",
-        lambda **_kwargs: (_ for _ in ()).throw(ValueError("invalid")),
-    )
-
-    window._on_convergence_configured(
-        ConvergenceConfig(sweep_values=(300.0,), shared_params={"task": "SINGLEPOINT"})
-    )
-
-    assert warnings == ["Convergence setup invalid"]
-    window.close()
-
-
-def test_convergence_configured_saves_ready_configuration_without_materializing_jobs(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_ready_only.mufinder", "ConvReadyOnly")
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    window._document = doc
-
-    config = ConvergenceConfig(
-        sweep_values=(300.0,),
-        shared_params={"task": "SINGLEPOINT"},
-        overrides={},
-        name_prefix="conv",
-    )
-
-    window._on_convergence_configured(config)
-
-    assert len(doc.calculations) == 1
-    assert len(doc.jobs) == 0
-    assert not (doc.project_root / "files" / "convergence_cutoff").exists()
     window.close()
 
 

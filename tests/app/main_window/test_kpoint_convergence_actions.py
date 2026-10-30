@@ -41,7 +41,7 @@ def test_kpoint_convergence_configured_registers_snapshot(main_window, tmp_path:
         name_prefix="kconv",
     )
 
-    window._on_kpoint_convergence_configured(config)
+    window._kpoint_convergence_view.configure_requested.emit(config)
 
     assert len(window._document.jobs) == 0
     assert len(window._document.calculations) == 1
