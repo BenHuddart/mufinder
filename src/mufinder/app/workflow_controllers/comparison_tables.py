@@ -49,9 +49,11 @@ class ComparisonTablesDeps:
     ``choose_jobs`` opens the job dialog with these jobs and a default label and
     returns the chosen job ids and label, or ``None`` when it is cancelled.
     ``show_warning`` shows a message box. ``refresh_project_tree``,
-    ``refresh_journal_view``, ``active_route`` and ``open_route`` keep the
-    navigator and journal in step. ``shutting_down`` is true while the window
-    closes, when a title edit losing focus must not save the project.
+    ``refresh_journal_view``, ``set_tree_label``, ``active_route`` and
+    ``open_route`` keep the navigator and journal in step. ``set_tree_label``
+    relabels one route's item in place, leaving the selection and the page
+    alone. ``shutting_down`` is true while the window closes, when a title edit
+    losing focus must not save the project.
     """
 
     completed_jobs: Callable[[], list[CompletedPristineJob]]
@@ -59,6 +61,7 @@ class ComparisonTablesDeps:
     show_warning: Callable[[str, str], None]
     refresh_project_tree: Callable[[], None]
     refresh_journal_view: Callable[[], None]
+    set_tree_label: Callable[[str, str], None]
     active_route: Callable[[], object]
     open_route: Callable[[str], None]
     shutting_down: Callable[[], bool]
@@ -141,7 +144,11 @@ class ComparisonTablesController:
         self._context.status_message(f"Generated comparison table '{table.label}'")
 
     def rename_table(self, table_id: UUID, title: str) -> None:
-        """Store a new title, keep the table open and save the project."""
+        """Store a new title, relabel the navigator item and save the project.
+
+        This runs when the title box loses focus, which may be because another
+        page is opening, so it must not rebuild the navigator or change the page.
+        """
 
         document = self._context.document()
         if document is None or self._deps.shutting_down():
@@ -151,11 +158,10 @@ class ComparisonTablesController:
         if table is None:
             return
         self._view.set_table_label(table_id, table.label)
-        self._deps.refresh_project_tree()
-        self._deps.open_route(comparison_route(table_id))
+        self._deps.set_tree_label(comparison_route(table_id), table.label)
         try:
             service.save_project(document)
-        except ValueError:
+        except (OSError, ValueError):
             self._context.status_message("Comparison table title was updated, but autosave failed")
             return
         self._context.status_message(f"Renamed comparison table to '{table.label}'")

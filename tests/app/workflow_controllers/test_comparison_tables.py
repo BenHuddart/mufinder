@@ -42,7 +42,9 @@ def _cubic(label: str, a: float) -> Structure:
     )
 
 
-def _completed(structure_id: UUID, label: str = "alpha") -> CompletedPristineJob:
+def _completed(
+    structure_id: UUID, label: str = "alpha", **parameter_values: object
+) -> CompletedPristineJob:
     return CompletedPristineJob(
         job_id=uuid4(),
         job_label=label,
@@ -53,7 +55,7 @@ def _completed(structure_id: UUID, label: str = "alpha") -> CompletedPristineJob
         lattice_a=None,
         lattice_b=None,
         lattice_c=None,
-        parameter_values={},
+        parameter_values=dict(parameter_values),
     )
 
 
@@ -72,6 +74,7 @@ class _Harness:
     warnings: list[tuple[str, str]] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
     routes: list[str] = field(default_factory=list)
+    tree_labels: list[tuple[str, str]] = field(default_factory=list)
     current_route: object = "pristine_relaxation"
     closing: bool = False
     offered: list[tuple[list[CompletedPristineJob], str]] = field(default_factory=list)
@@ -94,6 +97,7 @@ class _Harness:
                 show_warning=lambda title, text: self.warnings.append((title, text)),
                 refresh_project_tree=lambda: self.calls.append("tree"),
                 refresh_journal_view=lambda: self.calls.append("journal"),
+                set_tree_label=lambda route, label: self.tree_labels.append((route, label)),
                 active_route=lambda: self.current_route,
                 open_route=self.routes.append,
                 shutting_down=lambda: self.closing,
@@ -213,6 +217,27 @@ def test_generate_warns_when_the_selected_structures_are_gone(harness: _Harness)
     assert harness.document.comparison_tables == {}
 
 
+def test_generate_keeps_each_parameter_value_under_its_own_job_when_a_structure_is_gone(
+    harness: _Harness,
+) -> None:
+    other = _cubic("Other", 5.2)
+    harness.service.add_structure(harness.document, other)
+    first = _completed(harness.relaxed.id, "first", cut_off_energy=600)
+    gone = _completed(uuid4(), "gone", cut_off_energy=700)
+    third = _completed(other.id, "third", cut_off_energy=800)
+    harness.jobs = [first, gone, third]
+    harness.choice = ([first.job_id, gone.job_id, third.job_id], "Label")
+
+    harness.controller().generate_table()
+
+    table = next(iter(harness.document.comparison_tables.values()))
+    columns = [column["label"] for column in table.result_data["dft_columns"]]
+    assert columns == ["DFT (first)", "DFT (third)"]
+    assert table.result_data["parameter_differences"] == [
+        {"name": "cut_off_energy", "values": ["600", "800"]}
+    ]
+
+
 def test_generate_reports_a_failed_comparison(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -233,7 +258,7 @@ def test_generate_reports_a_failed_comparison(
     assert harness.document.comparison_tables == {}
 
 
-def test_rename_stores_the_title_keeps_the_table_open_and_saves(
+def test_rename_stores_the_title_updates_the_tree_and_saves(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     table = _saved_table(harness)
@@ -244,10 +269,19 @@ def test_rename_stores_the_title_keeps_the_table_open_and_saves(
 
     assert table.label == "Renamed"
     assert harness.page.labels == [(table.id, "Renamed")]
-    assert harness.calls == ["tree"]
-    assert harness.routes == [comparison_route(table.id)]
+    assert harness.tree_labels == [(comparison_route(table.id), "Renamed")]
     assert saves == [harness.document]
     assert harness.statuses == ["Renamed comparison table to 'Renamed'"]
+
+
+def test_rename_does_not_navigate(harness: _Harness) -> None:
+    table = _saved_table(harness)
+    harness.current_route = "provenance_log"
+
+    harness.controller().rename_table(table.id, "Renamed")
+
+    assert harness.routes == []
+    assert harness.calls == []
 
 
 def test_rename_to_nothing_falls_back_to_the_default_title(harness: _Harness) -> None:
@@ -258,19 +292,24 @@ def test_rename_to_nothing_falls_back_to_the_default_title(harness: _Harness) ->
     assert table.label == "Comparison Table"
 
 
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("save blocked"), PermissionError("read-only folder"), OSError("disk full")],
+)
 def test_rename_reports_a_failed_autosave(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
     table = _saved_table(harness)
 
     def fail(_document):
-        raise ValueError("read-only")
+        raise error
 
     monkeypatch.setattr(harness.service, "save_project", fail)
 
     harness.controller().rename_table(table.id, "Renamed")
 
     assert table.label == "Renamed"
+    assert harness.tree_labels == [(comparison_route(table.id), "Renamed")]
     assert harness.statuses == ["Comparison table title was updated, but autosave failed"]
 
 
@@ -329,6 +368,7 @@ def test_sync_view_clears_the_page_without_a_project() -> None:
             show_warning=lambda _title, _text: None,
             refresh_project_tree=lambda: None,
             refresh_journal_view=lambda: None,
+            set_tree_label=lambda _route, _label: None,
             active_route=lambda: None,
             open_route=lambda _route: None,
             shutting_down=lambda: False,
