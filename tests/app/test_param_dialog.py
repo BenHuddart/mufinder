@@ -5,7 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtWidgets import QDialogButtonBox, QLabel, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialogButtonBox, QLabel, QPushButton, QStyle
 
 import mufinder.app.param_dialog as param_dialog_module
 from mufinder.app.param_widgets import HubbardUParamEditor
@@ -987,3 +988,164 @@ def test_parameter_dialog_resetting_the_active_member_of_a_mixed_pair_applies_it
 
     assert dialog.untouched_mixed_names() == set()
     assert active in dialog.collect_values()
+
+
+# --- Add Parameter picker ------------------------------------------------------
+
+
+def _picker_spec(name: str, label: str, category: str, **extra) -> KeywordSpec:
+    return KeywordSpec(
+        name=name,
+        file="param",
+        kind="scalar",
+        value_type="int",
+        widget_hint="spinbox_int",
+        label=label,
+        description=f"{label} description.",
+        category=category,
+        advanced_workflows=("convergence_kpoint",),
+        default_value=1,
+        **extra,
+    )
+
+
+def _picker_rows(picker) -> list[tuple[str, list[str]]]:
+    tree = picker._tree
+    rows: list[tuple[str, list[str]]] = []
+    for group_index in range(tree.topLevelItemCount()):
+        group = tree.topLevelItem(group_index)
+        rows.append((group.text(0), [group.child(i).text(0) for i in range(group.childCount())]))
+    return rows
+
+
+def _picker_dialog() -> ParameterDialog:
+    specs = [
+        *_dialog_specs(),
+        _picker_spec("zeta_count", "Zeta Count", "electronic"),
+        _picker_spec("alpha_count", "Alpha Count", "electronic"),
+        _picker_spec("output_level", "Output Level", "io"),
+        _picker_spec("kpoint_extra", "Extra Grid", "kpoints"),
+        _picker_spec("farm_count", "Farm Count", "general", user_visible=False),
+    ]
+    return ParameterDialog(specs=specs, workflow_stage="convergence_kpoint")
+
+
+def test_add_parameter_groups_by_category_and_sorts_by_name(qapp) -> None:
+    dialog = _picker_dialog()
+    picker = param_dialog_module._AdvancedSelectionDialog(
+        dialog._available_advanced_specs(), dialog
+    )
+
+    # A keyword without a label is listed by its name, and one without a
+    # category under General.
+    assert _picker_rows(picker) == [
+        ("Electronic", ["Alpha Count", "BASIS_PRECISION", "Zeta Count"]),
+        ("General", ["CUT_OFF_ENERGY"]),
+        ("Input and output", ["Output Level"]),
+        ("K-points", ["Extra Grid"]),
+    ]
+    assert picker._tree.columnCount() == 2
+    assert picker._tree.headerItem().text(0) == "Parameter"
+    assert picker._tree.headerItem().text(1) == "Description"
+    first = picker._tree.topLevelItem(0).child(0)
+    assert first.text(1) == "Alpha Count description."
+    assert picker._tree.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert picker._tree.wordWrap()
+
+
+def test_add_parameter_never_offers_hidden_keywords(qapp) -> None:
+    dialog = _picker_dialog()
+
+    names = {spec.name for spec in dialog._available_advanced_specs()}
+
+    assert "farm_count" not in names
+    assert {"zeta_count", "alpha_count", "output_level", "kpoint_extra"} <= names
+
+
+def test_hidden_keyword_with_a_stored_value_still_shows_as_a_row(qapp) -> None:
+    dialog = _picker_dialog()
+    dialog.set_values({"farm_count": 4})
+    dialog.set_advanced_names(())
+
+    assert "farm_count" in dialog._rows
+    assert dialog.collect_values()["farm_count"] == 4
+
+
+def test_add_parameter_search_hides_empty_groups_and_returns_checked_names(qapp) -> None:
+    dialog = _picker_dialog()
+    picker = param_dialog_module._AdvancedSelectionDialog(
+        dialog._available_advanced_specs(), dialog
+    )
+
+    picker._search.setText("output")
+
+    tree = picker._tree
+    visible_groups = [
+        tree.topLevelItem(i).text(0)
+        for i in range(tree.topLevelItemCount())
+        if not tree.topLevelItem(i).isHidden()
+    ]
+    assert visible_groups == ["Input and output"]
+
+    picker._search.setText("")
+    tree.topLevelItem(0).child(2).setCheckState(0, Qt.CheckState.Checked)
+    tree.topLevelItem(2).child(0).setCheckState(0, Qt.CheckState.Checked)
+
+    assert picker.selected_names() == ("zeta_count", "output_level")
+
+
+def test_add_parameter_rows_fit_the_check_box_and_the_wrapped_description(qapp) -> None:
+    long_text = " ".join(["A long description that wraps."] * 8)
+    spec = KeywordSpec(
+        name="wordy",
+        file="param",
+        kind="scalar",
+        value_type="int",
+        label="Wordy",
+        description=long_text,
+        category="general",
+    )
+    picker = param_dialog_module._AdvancedSelectionDialog([spec])
+    picker.resize(480, 400)
+    picker.show()
+    qapp.processEvents()
+
+    tree = picker._tree
+    item = tree.topLevelItem(0).child(0)
+    row_height = tree.visualItemRect(item).height()
+    line_height = tree.fontMetrics().height()
+    indicator = tree.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight, None, tree)
+    assert row_height >= indicator
+    assert row_height >= 2 * line_height
+    picker.close()
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    ["muon_relaxation", "quantum_corrections", "energy_barriers", "hyperfine_coupling"],
+)
+def test_add_parameter_from_the_catalog_offers_no_internal_keywords(qapp, workflow) -> None:
+    from mufinder.castep_io.gui_metadata import get_gui_keyword_specs_for_files
+
+    specs = get_gui_keyword_specs_for_files(
+        files=("param", "cell"), workflow_stage=workflow, include_advanced=True
+    )
+    dialog = ParameterDialog(specs=specs, workflow_stage=workflow)
+
+    offered = {spec.name for spec in dialog._available_advanced_specs()}
+
+    assert offered
+    assert offered.isdisjoint(
+        {"unit_cell", "num_farms", "magres_task", "devel_code", "tssearch_lst_max_iter"}
+    )
+
+
+def test_parameter_dialog_search_matches_the_group_heading(qapp) -> None:
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    assert dialog._task_editor is not None
+    dialog._task_editor.set_value("GEOMETRYOPTIMIZATION")
+    dialog._on_task_changed()
+
+    dialog._search_input.setText("geometry optimisation")
+
+    assert dialog._displayed_names() == ["geom_method"]
