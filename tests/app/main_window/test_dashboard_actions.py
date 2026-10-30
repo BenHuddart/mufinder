@@ -454,6 +454,28 @@ def test_status_bar_opening_a_project_forgets_the_previous_drop_and_check(
     assert window._cluster_queue_checked_label.text() == "Queue last checked: never"
 
 
+def test_status_bar_ignores_a_poll_from_the_previous_project(main_window, tmp_path: Path) -> None:
+    window = main_window
+    job = _project_with_job(window, tmp_path)
+    previous_project_poll = SimpleNamespace(
+        checked_at="12:34:56",
+        elapsed_by_job_id={},
+        observations_by_job_id={uuid4(): "scheduler reports RUNNING"},
+    )
+
+    window._on_cluster_queue_checked(previous_project_poll)
+    assert window._cluster_queue_checked_label.text() == "Queue last checked: never"
+
+    window._on_cluster_queue_checked(
+        SimpleNamespace(
+            checked_at="12:35:56",
+            elapsed_by_job_id={},
+            observations_by_job_id={job.id: "scheduler reports RUNNING"},
+        )
+    )
+    assert window._cluster_queue_checked_label.text() == "Queue last checked: 12:35:56"
+
+
 def test_status_bar_refresh_disabled_with_a_tooltip_when_no_job_can_be_polled(
     main_window, tmp_path: Path
 ) -> None:

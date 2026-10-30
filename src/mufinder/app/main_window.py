@@ -6294,6 +6294,15 @@ class MainWindow(QMainWindow):
             self._cluster_connection_label.setStyleSheet(style)
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
+        # A poll in flight when another project opened reports the jobs of the
+        # project it started in; it says nothing about the one now open.
+        observed = getattr(checked_at, "observations_by_job_id", None)
+        if (
+            self._document is not None
+            and observed
+            and self._document.jobs.keys().isdisjoint(observed)
+        ):
+            return
         # Stamp per-job monitor metadata (last_checked_at/source/message) from
         # the snapshot's observations; these land in the in-memory document
         # either way, so a deferred flush (below) is fine — nothing is lost by
