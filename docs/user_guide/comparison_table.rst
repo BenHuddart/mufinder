@@ -63,8 +63,10 @@ structure, and one column per selected DFT structure, headed ``DFT (<job
 label>)``. Rows are grouped into three categories:
 
 - ``Lattice parameters``: ``a``, ``b``, ``c`` (Å), ``α``, ``β``, ``γ`` (°) and
-  the cell volume ``V`` (Å³). Each DFT cell shows the value with its change
-  against experiment, such as ``4.7091 (+0.30 %)``.
+  the cell volume ``V`` (Å³) of the host cell. Each DFT cell shows the value
+  with its change against experiment, such as ``4.7091 (+0.30 %)``. A DFT
+  column that is a supercell of the host is shown per host cell, so it reads
+  like the ``Experimental`` column (see `Supercell columns`_).
 - ``Atomic displacements``: the ``RMSD`` and the ``Max displacement`` of the
   matched atoms (Å).
 - ``Symmetry``: the ``Space group`` of each structure, such as
@@ -74,15 +76,20 @@ label>)``. Rows are grouped into three categories:
 Hovering over a metric name shows a one-line description, and ``About these
 metrics`` above the table opens this page. When two or more DFT columns have a
 numeric value for a metric, the column closest to experiment is shown in bold
-green. A warning banner above the table lists problems found while comparing,
-such as a failed supercell detection or a partial atom matching.
+green; because every column is read per host cell, a supercell column can be
+the closest. A warning banner above the table lists problems found while
+comparing, such as a failed supercell detection or a partial atom matching,
+and notes each supercell column, for example ``DFT (CoF2 2x2x2): 2 × 2 × 2
+supercell; its lattice parameters are shown per host cell.``
 
 The collapsible ``DFT Parameter Differences`` section lists only those CASTEP
 input parameters that differ across the selected pristine-relaxation jobs.
 
-A saved table that holds metrics outside this list opens with the rows it
-shares with the list and leaves the others out; generating the table again
-fills in every row.
+A saved table shows the values computed when it was generated; opening it
+does not recompute them, so generate the table again to read it with the
+method on this page. A saved table that holds metrics outside this list opens with
+the rows it shares with the list and leaves the others out; generating the
+table again fills in every row.
 
 Interpreting the table
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -112,7 +119,7 @@ The equations below use the following symbols.
 - :math:`L_{\mathrm{exp}}`, :math:`L_{\mathrm{DFT}}`: experimental and DFT
   direct-lattice matrices.
 - :math:`\mathbf{a}`, :math:`\mathbf{b}`, :math:`\mathbf{c}`: direct-lattice
-  basis vectors of the comparison cell.
+  basis vectors of the host cell (see `Supercell columns`_).
 - :math:`\mathbf{f}^{\mathrm{exp}}_i`, :math:`\mathbf{f}^{\mathrm{DFT}}_j`:
   fractional coordinates of atoms in the experimental and DFT structures.
 - :math:`m(i)`: DFT atom matched to experimental atom :math:`i`.
@@ -179,7 +186,38 @@ correspondence and records a warning in the comparison table.
 Lattice Metrics
 ~~~~~~~~~~~~~~~
 
-The lattice metrics quantify cell shape and size after normalization.
+The lattice metrics quantify cell shape and size, read per host cell.
+
+Supercell columns
+^^^^^^^^^^^^^^^^^
+
+When the DFT cell is a supercell of the host, :math:`L_{\mathrm{DFT}} \approx
+M L_{\mathrm{exp}}` with :math:`\det(M) > 1`, its lattice rows are reduced to
+the host cell before the parameters are read,
+
+.. math::
+
+  L_{\mathrm{host}} = M^{-1} L_{\mathrm{DFT}},
+
+with :math:`M` the supercell matrix found by the detection above. Each row of
+:math:`L_{\mathrm{host}}` is a host-cell vector in the experimental setting. For
+a diagonal :math:`M`, such as a 2 × 2 × 2 supercell, this divides
+:math:`a`, :math:`b` and :math:`c` by the tiling and leaves the angles
+unchanged. For any other :math:`M`, such as the
+:math:`\sqrt{2} \times \sqrt{2}` cell with rows (1, 1, 0), (−1, 1, 0) and
+(0, 0, 1), it gives the host cell that the supercell implies, averaged over its
+tiles, so a strain along the host's :math:`\mathbf{a}` shows in :math:`a`
+alone rather than in the supercell's diagonal vectors. The volume is
+:math:`V_{\mathrm{DFT}} / \det(M)`. The experimental column is the host's own
+cell, so every column reads like with like, and the closest column is chosen
+among the per-host-cell values. The displacement and symmetry rows still use
+the supercell, with the host tiled to it.
+
+A DFT cell that is the host cell in another setting (:math:`\det(M) = 1`, such
+as its axes listed in another order) is read the same way, along the host's
+axes, and has no note in the banner. A column whose supercell relation is not
+found keeps its own lattice; the banner says so, and its lattice rows are not
+per host cell.
 
 Lengths
 ^^^^^^^
@@ -248,9 +286,7 @@ experimental value,
 
 Values close to zero indicate good lattice agreement. Positive values indicate
 expansion relative to experiment, while negative values indicate contraction.
-When the DFT structure is a supercell, its lattice values are those of the
-supercell and the change is taken against the experimental cell tiled to that
-supercell.
+For a supercell column both values are per host cell.
 
 Atomic-Displacement Metrics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
