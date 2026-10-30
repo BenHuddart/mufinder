@@ -181,7 +181,7 @@ def test_convergence_overview_widget_pinned_kpoint_plot_omits_spacing_for_gamma_
                 "energy_threshold": 0.001,
                 "force_threshold": 0.05,
                 # point_spacings deliberately omits 1.0 (the 1x1x1 entry is
-                # absent because _compute_spacings now skips (1,1,1)).
+                # absent because distinct_grid_spacings skips (1,1,1)).
                 "point_spacings": {"8.0": 0.2, "27.0": 0.1},
             },
         },

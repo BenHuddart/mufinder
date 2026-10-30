@@ -772,6 +772,15 @@ dialog, and the Supercell Editor was the only caller of the private forwarder.
 - ``ProjectService._supercell_asset``: call ``supercell_asset`` from
   ``mufinder.services.supercell_assets``.
 
+The helper below was removed without a deprecation period. ``mufinder.app`` is
+not in the API reference, no project data depends on it, and only MuFinder's own
+code called it.
+
+- ``ConvergenceExaminerDialog.recompute_spacings_in_snapshot``
+  (``mufinder.app.convergence_examiner``): call ``recompute_snapshot_spacings``
+  from ``mufinder.services.convergence_defaults``, which takes the same
+  arguments and returns the same copy.
+
 The helper below was removed without a deprecation period. It is not in the API
 reference, no project data depends on it, and only MuFinder's own code called it.
 

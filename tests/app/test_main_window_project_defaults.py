@@ -11,6 +11,10 @@ from mufinder.app.adapter_common import project_convergence_parameter_values
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.models import Structure
 from mufinder.persistence.migrations import RETIRED_UI_STATE_KEYS
+from mufinder.services.convergence_defaults import (
+    CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY,
+    validated_cutoff_overview_snapshot,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 
@@ -185,7 +189,7 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     )
     window._on_cutoff_adopted(400.0, "converged", 0.001, 0.05)
     # Pinned overview plots as left behind by earlier adoptions.
-    doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
+    doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
         "cutoff": {
             "host_structure_id": str(doc.project.host_structure_id),
             "default_value": 400.0,
@@ -195,7 +199,7 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
             "default_value": [6, 6, 4],
         },
     }
-    assert window._validated_cutoff_overview_snapshot() is not None
+    assert validated_cutoff_overview_snapshot(doc) is not None
     strip = window._pristine_relaxation_view.project_defaults_strip
 
     strip.cutoff_energy_change_requested.emit(850.0)
@@ -220,15 +224,15 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
         "cut_off_energy"
     ].value == (pytest.approx(850.0))
     # The pinned overview plot belonged to the adopted value, so it no longer applies.
-    assert window._validated_cutoff_overview_snapshot() is None
+    assert validated_cutoff_overview_snapshot(doc) is None
     assert "850" in window.statusBar().currentMessage()
 
     # Typing the adopted number back in is still a manual default: the plot
     # that documented the adopted value must not come back.
     strip.cutoff_energy_change_requested.emit(400.0)
     assert project.recommended_cutoff_method == "manual"
-    assert window._validated_cutoff_overview_snapshot() is None
-    assert "cutoff" not in doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
+    assert validated_cutoff_overview_snapshot(doc) is None
+    assert "cutoff" not in doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
     strip.cutoff_energy_change_requested.emit(850.0)
 
     strip.kpoint_grid_change_requested.emit((6, 6, 4))
@@ -242,7 +246,7 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
         4,
     )
     assert window._uep_view._default_params["kpoint_mp_grid"] == (6, 6, 4)
-    assert "kpoint" not in doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
+    assert "kpoint" not in doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
 
     loaded = ProjectService().load_project(doc.project_root)
     assert loaded.project.recommended_cutoff_method == "manual"
