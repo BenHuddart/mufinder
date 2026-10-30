@@ -118,8 +118,9 @@ sweep page and lists:
   into the ``Project Defaults`` dialog.
 
 Below the summary, each card shows a read-only copy of the examiner plot as it
-was when the value was adopted, drawn more compactly: the thresholds appear as
-``dE``, ``dF``, and (when used) ``dS`` badges instead of titles and legends.
+was when the value was adopted, drawn more compactly: no titles or legends, since
+the ``Criteria`` row above states the thresholds. At the default window size both
+cards fit without scrolling; the plots take the height the window has left.
 The k-point card uses the examiner's axes, with the number of k-points on a
 logarithmic scale and round spacings along the top, and names only the adopted
 grid. The pinned plot is replaced by a placeholder when
