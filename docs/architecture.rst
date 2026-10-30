@@ -479,10 +479,16 @@ defined by two of these modules, and a pinned count may only fall.
        ``magnetic_structure_builder_stylesheet``) carry no colours that would
        go stale when the theme changes, and their coloured rules are sections
        of the application stylesheet. Painted widgets take their colours from
-       here (``texture_preview_colors`` for the magnetic texture preview).
+       here (``texture_preview_colors`` for the magnetic texture preview), and
+       plots their series colours by role (``convergence_plot_colors``).
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
+   * - ``mufinder.app.convergence_plot``
+     - The convergence plot the examiner dialog and the pinned overview cards
+       both draw (``draw_convergence_plot``) from a sweep's saved ``plot_data``
+       (``ConvergencePlotData``), including the k-point count and spacing axes
+       (``spacing_axis_ticks``).
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
        and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`).
@@ -631,9 +637,10 @@ defined by two of these modules, and a pinned count may only fall.
        (``validated_cutoff_overview_snapshot``,
        ``validated_kpoint_overview_snapshot``), with the k-point spacings
        recomputed on the cell the sweep ran on (``kpoint_snapshot_cell``,
-       ``recompute_snapshot_spacings``). A k-point snapshot stores the
-       examined grids as ``Grid: a x b x c`` point labels, which the overview
-       shows and ``kpoint_grids_from_labels`` reads back. The
+       ``recompute_snapshot_spacings``) and that cell's lattice vectors added
+       for the plot's spacing axis. A k-point snapshot stores the
+       examined grids as ``Grid: a x b x c`` point labels, which
+       ``kpoint_grids_from_labels`` reads back. The
        spacing series itself is ``distinct_grid_spacings`` in
        ``mufinder.science.kpoint_grids``, which the examiner also uses.
    * - ``mufinder.services.project_summary``
