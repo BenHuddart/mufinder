@@ -94,8 +94,9 @@ entry's tooltip says where it came from. Choosing another entry makes it the
 active host, and every stage that follows uses it.
 
 The project's magnetic structure follows the new host: it becomes the magnetic
-metadata that host carries, if any. A relaxed pristine structure usually
-carries no spins, so enter them again on the new host when you need them. The
+metadata that host carries, if any. The atom table shows the new host's own
+spins. A relaxed pristine structure keeps the ``SPIN=`` values its relaxation
+ran with, so a spin-polarized relaxation brings its spins along. The
 change is recorded in the project provenance. While muon sites are being
 generated for the current host the change is refused: wait for the generation
 to finish, or cancel it, first.
