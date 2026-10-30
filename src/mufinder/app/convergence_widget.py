@@ -156,6 +156,7 @@ class CutoffConvergenceWidget(SweepConvergenceWidget):
         "execution history."
     )
     _REMOVE_ROW_TOOLTIP = "Remove this cutoff"
+    _ROW_NOUN = "Cutoff"
     _CONFIGURE_NOUN = "cutoff"
     _REMOVAL_NOUN = ("cutoff", "cutoffs")
     _DIALOG_SUBJECT = "Cutoff Parameters"

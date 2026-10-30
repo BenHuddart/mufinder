@@ -1087,3 +1087,15 @@ def test_convergence_batch_configure_accepted_unchanged_changes_nothing(
     widget._open_parameter_dialog((300.0, 360.0))
 
     assert {c: widget._effective_params_for_key(c) for c in (300.0, 360.0)} == before
+
+
+def test_convergence_widget_remove_button_is_named_after_its_cutoff(qapp) -> None:
+    widget = CutoffConvergenceWidget()
+    widget._add_row(300.0)
+    key_item = widget._table.item(0, widget._KEY_COLUMN)
+
+    assert widget._table.accessibleName() == "Cutoff Sweep"
+    assert (
+        widget._table.cellWidget(0, widget._REMOVE_COLUMN).accessibleName()
+        == f"Remove Cutoff {key_item.text()}"
+    )

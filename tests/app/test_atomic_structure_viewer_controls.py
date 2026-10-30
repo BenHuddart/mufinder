@@ -57,6 +57,18 @@ def test_view_direction_buttons_are_compact(qapp) -> None:
     viewer.close()
 
 
+def test_view_direction_buttons_are_named_after_their_axis(qapp) -> None:
+    viewer = AtomicStructureViewer()
+
+    names = [
+        button.accessibleName()
+        for button in (viewer._view_x_button, viewer._view_y_button, viewer._view_z_button)
+    ]
+
+    assert names == ["Look Along a", "Look Along b", "Look Along c"]
+    viewer.close()
+
+
 def test_controls_share_one_line_when_wide(qapp) -> None:
     viewer = _shown_viewer(qapp, 720)
 

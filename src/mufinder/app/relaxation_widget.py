@@ -106,6 +106,7 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
         fix_combo = table.cellWidget(row, self._FIX_CELL_COLUMN)
         if isinstance(fix_combo, QComboBox):
             fix_combo.setEnabled(not locked)
+            fix_combo.setAccessibleName(f"Fix Cell for {self._row_display_label(row, table=table)}")
         lattice = (
             (None, None, None)
             if runtime is None

@@ -114,6 +114,7 @@ class SupercellSuggestionDialog(QDialog):
         self._table = create_workflow_table(
             ("", "Scaling", "Atoms", "Min image (Å)", f"≥ {s.distance_target:.4g} Å"),
             resize_to_contents_columns=(0, 2, 4),
+            accessible_name="Supercell Candidates",
         )
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setRowCount(len(s.candidates))

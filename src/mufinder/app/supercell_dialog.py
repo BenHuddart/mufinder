@@ -86,6 +86,7 @@ class SupercellEditorDialog(QDialog):
             ("Id", "Name", "Matrix", "Atoms", "Usage"),
             selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
             stretch_last_section=False,
+            accessible_name="Saved Supercells",
         )
         self._asset_table.setColumnHidden(self._ID_COLUMN, True)
         self._asset_table.itemSelectionChanged.connect(self._on_asset_selection_changed)

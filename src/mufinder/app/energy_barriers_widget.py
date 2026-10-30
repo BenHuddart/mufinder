@@ -700,6 +700,7 @@ class EnergyBarriersWidget(SourceTableWidget):
                 "View",
             ),
             resize_to_contents_columns=(6, 7),
+            accessible_name="Diffusion Paths",
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
@@ -764,7 +765,17 @@ class EnergyBarriersWidget(SourceTableWidget):
         style_hint_text(neb_results_hint)
         neb_results_layout.addWidget(neb_results_hint)
         self._neb_results_table = create_workflow_table(
-            ("Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images", "Status")
+            (
+                "Path",
+                "Charge",
+                "Length",
+                "Barrier (fwd)",
+                "Barrier (rev)",
+                "ΔE",
+                "Images",
+                "Status",
+            ),
+            accessible_name="Completed NEB Calculations",
         )
         self._neb_results_table.itemSelectionChanged.connect(self._emit_neb_result_selected)
         self._neb_results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

@@ -67,6 +67,7 @@ class ComparisonJobDialog(QDialog):
             editable=True,
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
             stretch_last_section=False,
+            accessible_name="Comparison Jobs",
         )
 
         self._build_layout()

@@ -1299,6 +1299,7 @@ class AtomPhaseDialog(QDialog):
             resize_to_contents_columns=(0, 1),
             editable=True,
             selection_behavior=QAbstractItemView.SelectionBehavior.SelectItems,
+            accessible_name="Per-Atom Phases",
         )
         self._table.setRowCount(len(self._atom_indices))
         for row, index in enumerate(self._atom_indices):
@@ -4196,6 +4197,7 @@ class MuonSiteSelectionDialog(QDialog):
             ("Site", "Source", "Cluster", "fx", "fy", "fz"),
             selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
             stretch_last_section=False,
+            accessible_name="Muon Sites",
         )
         self._site_table.itemSelectionChanged.connect(self._on_site_selection_changed)
         self._configure_site_table_columns()
@@ -5851,11 +5853,13 @@ class NuclearRelaxationDialog(QDialog):
             ("Quantity", "Value"),
             resize_to_contents_columns=(0,),
             stretch_last_section=False,
+            accessible_name="Results",
         )
         self._element_table = create_workflow_table(
             ("Element", "σ² contribution (μs⁻²)"),
             resize_to_contents_columns=(0,),
             stretch_last_section=False,
+            accessible_name="Element Contributions",
         )
         self._estimate_note = unrelaxed_results_note(self)
 
@@ -6704,10 +6708,12 @@ class MagneticFieldWidget(QWidget):
         self._pin_button = QToolButton()
         self._pin_button.setIcon(icon("save_workspace"))
         self._pin_button.setToolTip("Save this magnetic-field workspace")
+        self._pin_button.setAccessibleName("Save Workspace")
         self._pin_button.clicked.connect(self._emit_pin_requested)
         self._delete_workspace_button = QToolButton()
         self._delete_workspace_button.setIcon(icon("delete"))
         self._delete_workspace_button.setToolTip("Delete this saved magnetic-field workspace")
+        self._delete_workspace_button.setAccessibleName("Delete Workspace")
         self._delete_workspace_button.setVisible(False)
         self._delete_workspace_button.clicked.connect(self.delete_requested.emit)
 
@@ -6715,7 +6721,9 @@ class MagneticFieldWidget(QWidget):
         self._structure_summary.setWordWrap(True)
         self._classification = QLabel("Structure type: -")
         self._component_summary_table = self._summary_table(
-            self._COMPONENT_SUMMARY_HEADERS, stretch_column=4
+            self._COMPONENT_SUMMARY_HEADERS,
+            stretch_column=4,
+            accessible_name="Magnetic Structure Components",
         )
         self._component_summary_table.setVisible(False)
         self._edit_structure_button = QPushButton("Edit Magnetic Structure...")
@@ -6786,6 +6794,7 @@ class MagneticFieldWidget(QWidget):
         self._contact_rcont = MagneticFieldOptions().rcont
         self._hyperfine_coupling = self._hyperfine_coupling_input()
         self._hyperfine_units = QComboBox()
+        self._hyperfine_units.setAccessibleName("Hyperfine Coupling Units")
         for unit_key, label in CONTACT_COUPLING_UNIT_OPTIONS:
             self._hyperfine_units.addItem(label, unit_key)
         for spinbox in (
@@ -6826,12 +6835,15 @@ class MagneticFieldWidget(QWidget):
         self._result_table = create_workflow_table(
             ("Site", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)", "Result"),
             stretch_last_section=False,
+            accessible_name="Field Results",
         )
         self._result_table.itemSelectionChanged.connect(self._sync_distribution_plot_button)
         self._result_table.itemSelectionChanged.connect(self._refresh_field_breakdown)
         self._configure_result_table_columns()
         self._breakdown_label = QLabel("Field breakdown")
-        self._breakdown_table = self._summary_table(self._BREAKDOWN_HEADERS, stretch_column=0)
+        self._breakdown_table = self._summary_table(
+            self._BREAKDOWN_HEADERS, stretch_column=0, accessible_name="Field Breakdown"
+        )
         self._breakdown_hint = QLabel("")
         self._breakdown_hint.setWordWrap(True)
         style_hint_text(self._breakdown_hint)
@@ -7447,6 +7459,7 @@ class MagneticFieldWidget(QWidget):
         )
         edit.setMaximumWidth(80)
         edit.setEnabled(False)
+        edit.setAccessibleName(f"Measured Bulk Magnetisation {axis}")
         return edit
 
     @staticmethod
@@ -7455,6 +7468,7 @@ class MagneticFieldWidget(QWidget):
         edit.setValidator(QDoubleValidator(-1_000.0, 1_000.0, 6, edit))
         edit.setToolTip(f"Cartesian {axis} component of the applied field, in T.")
         edit.setMaximumWidth(80)
+        edit.setAccessibleName(f"Applied Field {axis}")
         return edit
 
     @staticmethod
@@ -7463,14 +7477,18 @@ class MagneticFieldWidget(QWidget):
         edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 8, edit))
         edit.setToolTip("Set to zero to omit the contact hyperfine contribution.")
         edit.setMinimumWidth(104)
+        edit.setAccessibleName("Hyperfine Coupling")
         return edit
 
     @staticmethod
-    def _summary_table(headers: tuple[str, ...], *, stretch_column: int) -> QTableWidget:
+    def _summary_table(
+        headers: tuple[str, ...], *, stretch_column: int, accessible_name: str
+    ) -> QTableWidget:
         """Build a read-only table that grows to fit its first rows and scrolls beyond them."""
 
         table = create_workflow_table(
             headers,
+            accessible_name=accessible_name,
             resize_to_contents_columns=tuple(
                 column for column in range(len(headers)) if column != stretch_column
             ),

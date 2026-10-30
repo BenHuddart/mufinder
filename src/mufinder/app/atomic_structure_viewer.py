@@ -2012,6 +2012,10 @@ class AtomicStructureViewer(QWidget):
         self._view_x_button.setToolTip("Look along the a lattice vector.")
         self._view_y_button.setToolTip("Look along the b lattice vector.")
         self._view_z_button.setToolTip("Look along the c lattice vector.")
+        for axis, button in zip(
+            "abc", (self._view_x_button, self._view_y_button, self._view_z_button), strict=True
+        ):
+            button.setAccessibleName(f"Look Along {axis}")
         for button in (self._view_x_button, self._view_y_button, self._view_z_button):
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             button.setFixedWidth(_compact_text_button_width(button))

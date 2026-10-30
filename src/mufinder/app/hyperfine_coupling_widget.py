@@ -174,6 +174,7 @@ class HyperfineCouplingWidget(RelaxedSiteSourceTableWidget):
         self._sources_table = create_workflow_table(
             ("Site", "Charge", "Source Job", "Status", "Parameters"),
             resize_to_contents_columns=(4,),
+            accessible_name="Hyperfine Jobs",
         )
         set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -237,7 +238,9 @@ class HyperfineCouplingWidget(RelaxedSiteSourceTableWidget):
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
         self._results_table = create_workflow_table(
-            tuple(title for title, _tip in RESULT_COLUMNS), stretch_last_section=False
+            tuple(title for title, _tip in RESULT_COLUMNS),
+            stretch_last_section=False,
+            accessible_name="Completed Results",
         )
         self._results_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         results_header = self._results_table.horizontalHeader()

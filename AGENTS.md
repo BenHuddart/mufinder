@@ -87,6 +87,7 @@ duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
 - **Confirmations.** Every remove, cancel, reset, dismiss or delete action is confirmed
   first, from every entry point, with the safe choice as the default.
 - **Startup.** Nothing heavyweight runs before the splash screen is shown.
+- **Accessible names.** Name every control; `tests/app/test_accessible_names.py` checks.
 
 ## CASTEP rules
 

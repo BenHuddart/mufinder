@@ -209,6 +209,7 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
                 "Parameters",
             ),
             resize_to_contents_columns=(7,),
+            accessible_name="Quantum Phonon Jobs",
         )
         set_header_tooltips(self._sources_table, _SOURCE_HEADER_TOOLTIPS)
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -275,7 +276,9 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
         self._results_table = create_workflow_table(
-            tuple(title for title, _tip in RESULT_COLUMNS), stretch_last_section=False
+            tuple(title for title, _tip in RESULT_COLUMNS),
+            stretch_last_section=False,
+            accessible_name="Completed Results",
         )
         results_header = self._results_table.horizontalHeader()
         for column, (_title, tooltip) in enumerate(RESULT_COLUMNS):

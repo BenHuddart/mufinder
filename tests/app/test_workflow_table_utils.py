@@ -55,6 +55,13 @@ def button(qapp) -> QPushButton:
     return QPushButton()
 
 
+def test_create_workflow_table_takes_the_accessible_name(qapp) -> None:
+    assert create_workflow_table(("A",), accessible_name="Cutoff Jobs").accessibleName() == (
+        "Cutoff Jobs"
+    )
+    assert create_workflow_table(("A",)).accessibleName() == ""
+
+
 def test_create_workflow_table_default_chrome(qapp) -> None:
     table = create_workflow_table(("Alpha", "Beta"))
     assert table.frameShape() == QFrame.Shape.NoFrame

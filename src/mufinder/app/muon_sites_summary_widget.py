@@ -181,6 +181,7 @@ class _ChargeStatePanel(QFrame):
             corner_style="tabbed",
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
             stretch_last_section=False,
+            accessible_name="Muon Sites",
         )
         self._table.horizontalHeader().setSectionResizeMode(
             self._POSITION_COLUMN, QHeaderView.ResizeMode.Stretch

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox
+from PySide6.QtWidgets import QComboBox, QSpinBox
 
 from mufinder.app.hubbard_u_editor import (
     HubbardUDialog,
@@ -31,6 +31,23 @@ def test_create_param_editor_for_enum_and_roundtrip(qapp) -> None:
     assert editor.value() == "SINGLEPOINT"
     editor.set_value("GEOMETRYOPTIMIZATION")
     assert editor.value() == "GEOMETRYOPTIMIZATION"
+
+
+def test_create_param_editor_names_its_control_after_the_keyword_label(qapp) -> None:
+    spec = KeywordSpec(
+        name="task",
+        file="param",
+        kind="scalar",
+        value_type="enum",
+        widget_hint="dropdown",
+        label="Task",
+        allowed_values=("SINGLEPOINT", "GEOMETRYOPTIMIZATION"),
+        default_value="SINGLEPOINT",
+    )
+
+    editor = create_param_editor(spec)
+
+    assert editor.findChild(QComboBox).accessibleName() == "Task"
 
 
 def test_create_param_editor_for_unit_float(qapp) -> None:
@@ -68,6 +85,11 @@ def test_create_param_editor_for_int_triplet(qapp) -> None:
     assert editor.value() == (4, 4, 4)
     editor.set_value((6, 8, 10))
     assert editor.value() == (6, 8, 10)
+    assert [spin.accessibleName() for spin in editor.findChildren(QSpinBox)] == [
+        "KPOINT_MP_GRID 1",
+        "KPOINT_MP_GRID 2",
+        "KPOINT_MP_GRID 3",
+    ]
 
 
 def test_create_param_editor_for_block_roundtrip(qapp) -> None:

@@ -1646,3 +1646,26 @@ def test_relaxation_widget_export_action_needs_a_single_row(qapp, monkeypatch) -
 
     assert action.enabled is False
     assert action.tooltip == "Select one completed relaxation to export its relaxed structure."
+
+
+def test_relaxation_widget_row_controls_are_named_after_their_row(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+
+    assert widget._table.accessibleName() == "Relaxation Jobs"
+    assert widget._table.cellWidget(0, widget._REMOVE_COLUMN).accessibleName() == f"Remove {label}"
+    assert (
+        widget._table.cellWidget(0, widget._SUPERCELL_COLUMN).accessibleName()
+        == f"Supercell for {label}"
+    )
+    assert (
+        widget._table.cellWidget(0, widget._FIX_CELL_COLUMN).accessibleName()
+        == f"Fix Cell for {label}"
+    )
+
+    widget._table.item(0, widget._LABEL_COLUMN).setText("Host Relax")
+
+    assert (
+        widget._table.cellWidget(0, widget._REMOVE_COLUMN).accessibleName() == "Remove Host Relax"
+    )

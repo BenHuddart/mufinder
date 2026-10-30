@@ -779,6 +779,16 @@ controllers treat every workflow alike:
   a controls row (``Add...``, a count label, ``Remove Selected``,
   ``Configure Selected Parameters...``); and a run row with the job-name prefix
   and the two run buttons.
+- **Accessible names.** Every control a page shows has a name a screen reader
+  can announce: its own text, a ``QLabel`` buddy (``setBuddy`` where a visible
+  label already says it; a form-layout row label is one) or
+  ``setAccessibleName``. A control is named where it is built, in the words
+  the page already shows, in Title Case. A table takes the title of the group
+  that holds it (``create_workflow_table`` takes ``accessible_name``, and
+  ``RowTableWidget`` names its tables after the table group); a row control
+  names its row (``Remove <label>``, ``Supercell for <label>``) and follows a
+  rename; a parameter editor is named after its keyword. The accessible-name
+  census in :doc:`/quality_and_automation` enforces it.
 
 The quantum-corrections and energy-barriers widgets list project sources
 rather than staged rows, so they follow the run, Configure and row-menu parts

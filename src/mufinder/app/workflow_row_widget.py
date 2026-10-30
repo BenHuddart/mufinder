@@ -425,6 +425,9 @@ class RowTableWidget(QWidget):
             layout.addWidget(widget)
         layout.addWidget(self._kpoint_message)
 
+        for table in self._all_tables():
+            if not table.accessibleName():
+                table.setAccessibleName(table_group_title)
         table_group = QGroupBox(table_group_title)
         table_layout = QVBoxLayout(table_group)
         table_layout.setContentsMargins(10, 8, 10, 8)
@@ -442,7 +445,9 @@ class RowTableWidget(QWidget):
 
         run_row = QHBoxLayout()
         if self._name_prefix is not None:
-            run_row.addWidget(QLabel("Job name prefix"))
+            name_prefix_label = QLabel("Job name prefix")
+            name_prefix_label.setBuddy(self._name_prefix)
+            run_row.addWidget(name_prefix_label)
             run_row.addWidget(self._name_prefix, 1)
         else:
             run_row.addStretch(1)
@@ -773,10 +778,13 @@ class RowTableWidget(QWidget):
             font = label_item.font()
             font.setItalic(read_only)
             label_item.setFont(font)
+        row_label = self._row_display_label(row, table=target)
         if isinstance(supercell_combo, QComboBox):
             supercell_combo.setEnabled(not locked)
+            supercell_combo.setAccessibleName(f"Supercell for {row_label}")
         remove_button = target.cellWidget(row, self._REMOVE_COLUMN)
         if isinstance(remove_button, QToolButton):
+            remove_button.setAccessibleName(f"Remove {row_label}")
             remove_button.setEnabled(not read_only)
             remove_button.setToolTip(self._READ_ONLY_ROW_TOOLTIP if read_only else "")
 
