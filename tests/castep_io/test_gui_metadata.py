@@ -224,7 +224,8 @@ def test_gui_values_report_activity_task_and_conflict_errors_and_defaults() -> N
         specs_by_name,
         task="SINGLEPOINT",
     )
-    assert any("only available for task(s)" in error for error in errors)
+    tasks = "task" if len(requires_spec.allowed_tasks) == 1 else "tasks"
+    assert any(f"only available for {tasks}: " in error for error in errors)
     assert any("conflicts with" in error for error in errors)
 
     default_specs = [

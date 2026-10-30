@@ -34,6 +34,7 @@ from mufinder.castep_io.param_parser import parse_param_file
 from mufinder.castep_io.run_parameters import CastepRunParameters, parse_run_parameters
 from mufinder.castep_io.schema import keyword_catalog_source_info
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
+from mufinder.domain.text import plural
 from mufinder.science.supercell_matching import (
     SupercellDetection,
     detect_supercell_matrix_from_lattices,
@@ -332,7 +333,7 @@ def _host_composition_blockers(
     expected_count = determinant * len(host_species)
     if len(species) != expected_count:
         blockers.append(
-            f"The input cell has {len(species)} host atom(s) but a "
+            f"The input cell has {plural(len(species), 'host atom')} but a "
             f"{determinant}x supercell of the active host needs {expected_count}."
         )
         return blockers

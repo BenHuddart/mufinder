@@ -239,7 +239,8 @@ def validate_gui_values(
             item.upper() for item in spec.allowed_tasks
         }:
             joined = ", ".join(spec.allowed_tasks)
-            errors.append(f"{spec.name} is only available for task(s): {joined}.")
+            tasks = "task" if len(spec.allowed_tasks) == 1 else "tasks"
+            errors.append(f"{spec.name} is only available for {tasks}: {joined}.")
 
     for name in sorted(active_names):
         spec = specs_by_name[name]

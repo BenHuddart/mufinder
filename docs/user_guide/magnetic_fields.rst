@@ -35,17 +35,17 @@ Calculate a field
 
 A typical pass through the page is:
 
-1. In the ``Magnetic Structure`` card, click ``Edit Magnetic Structure...`` to
+1. In the ``Magnetic Structure`` card, click ``Edit Magnetic Structure…`` to
    open the ``Magnetic Structure Builder`` and define the magnetic model (see
    `Define the magnetic structure`_). Optionally enter a ``Hyperfine
    coupling`` in ``Å⁻³``, ``T/μB``, or ``MHz/μB`` for the contact term, or
    compute it on the :doc:`/user_guide/hyperfine_coupling` page and hand it
    over from there.
-2. In the ``Muon Site`` card, click ``Select Muon Site...`` (see `Choose the
+2. In the ``Muon Site`` card, click ``Select Muon Site…`` (see `Choose the
    muon site`_). Tick ``Include equivalent sites`` to calculate all
    symmetry-equivalent positions of that site.
 3. In the ``Calculation`` card, choose a ``Demagnetizing field`` shape (see
-   `Set the demagnetizing field`_) and review ``Calculation Settings...`` (see
+   `Set the demagnetizing field`_) and review ``Calculation Settings…`` (see
    `Set the calculation parameters`_).
 4. Click ``Calculate Dipolar Field``. Results appear in the table below
    (``Site``, ``Bx (T)``, ``By (T)``, ``Bz (T)``, ``|B| (T)``, ``Result``).
@@ -57,7 +57,7 @@ A typical pass through the page is:
    - An incommensurate result row lists the mean and RMS magnitude of each
      field term over the sampled phases, with its convergence checks: select
      the row to see them under the table. Click ``Open Distribution Plot`` to
-     view the field-magnitude histogram. ``Export Data...`` in that window
+     view the field-magnitude histogram. ``Export Data…`` in that window
      saves it to a file.
 
    .. figure:: ../_generated/screenshots/mnsi_distribution_breakdown.webp
@@ -71,7 +71,7 @@ A typical pass through the page is:
       site II. Every term averages to zero over the phase of the helix; the
       RMS column shows that the contact term is the largest.
 
-6. Optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
+6. Optionally run ``Dipolar Tensor…`` or ``Nuclear Relaxation…`` from the
    same ``Calculation`` card (see `Calculate a dipolar tensor`_ and `Calculate
    nuclear relaxation`_).
 7. To see the signal these fields give, click ``Polarisation →``. It opens the
@@ -167,7 +167,7 @@ q = 0 term shows the vector alone.
 
 To build a structure:
 
-1. Click ``Edit Magnetic Structure...`` on the page. If the host carries scalar
+1. Click ``Edit Magnetic Structure…`` on the page. If the host carries scalar
    spin metadata, click ``Build From Host Spins`` to convert it into the
    propagation-vector model. When the builder already holds components it first
    asks for confirmation, because the conversion replaces them.
@@ -177,10 +177,10 @@ To build a structure:
      preset for collinear, spin-density-wave, helix, cycloid, or conical
      textures; its q comes from a typed vector or from the stored basis rows
      (see `Set the propagation vectors`_).
-   - ``Add Preset...`` builds a helix, conical, cycloid or spin-density-wave
+   - ``Add Preset…`` builds a helix, conical, cycloid or spin-density-wave
      component from a propagation direction and the crystal axes (see `Use the
      preset helper`_).
-   - ``Add Texture...`` creates one grouped multi-q texture assignment,
+   - ``Add Texture…`` creates one grouped multi-q texture assignment,
      currently supporting square and hexagonal skyrmion lattices as well as
      custom Fourier texture terms (see `Add a multi-q texture`_).
 
@@ -191,7 +191,7 @@ To build a structure:
 
 3. Adjust the table:
 
-   - ``Edit...`` reopens the selected component in the same preset-aware dialog
+   - ``Edit…`` reopens the selected component in the same preset-aware dialog
      so its label, target, q vector, phase, and texture parameters can be
      changed, including its :ref:`per-atom phases
      <magnetic-fields-per-atom-phases>`. Double-clicking the ``Component`` cell
@@ -275,7 +275,7 @@ stored basis can be read directly.
    The panel with the helix of :doc:`/user_guide/examples/mnsi` selected: it
    uses ``q1`` only, and ``q2`` and ``q3`` are unused.
 
-To choose a component's q, use ``Add Component`` (or ``Edit...``). The
+To choose a component's q, use ``Add Component`` (or ``Edit…``). The
 add-component dialog shows the same rows, read-only, in its own
 ``Propagation-Vector Basis`` group, and its ``q from`` choice sets how the
 component's q is stored:
@@ -295,7 +295,7 @@ component's q is stored:
    :alt: The component dialog for a left-handed helix, with q from set to q1 =
          (0.0147, 0.0147, 0.0147) and the q fields shown read-only.
 
-   ``Edit...`` on the helix reopens it on the row it is stored as: ``q from``
+   ``Edit…`` on the helix reopens it on the row it is stored as: ``q from``
    reads ``q1 = (0.0147, 0.0147, 0.0147)``, and the component follows the row if
    the row is edited.
 
@@ -304,7 +304,7 @@ resulting vector read-only and a line beneath them gives the expression, such
 as ``q = q1 − q2 = (-0.5, 0, 0.25)``. A combination with no coefficient, one
 that uses a row without a vector, or one that sums to q = 0 is refused when
 the dialog is accepted. A component stored on rows follows them when a row is
-edited. ``Edit...`` reopens a component on the row or combination it is stored
+edited. ``Edit…`` reopens a component on the row or combination it is stored
 as; a component whose only q is zero reopens on vector entry.
 
 To change a stored row directly, double-click its ``q (r.l.u.)`` cell. The
@@ -341,7 +341,7 @@ position, so a sublattice phase needs one component rather than one per atom.
 Half a turn reverses an atom's moment in a q = 0 component.
 
 The ``Per-atom phases`` row of the add-component dialog shows the phases set on
-the atoms the component applies to, or ``None``. ``Per-Atom Phases...`` opens a
+the atoms the component applies to, or ``None``. ``Per-Atom Phases…`` opens a
 table of those atoms: number, species, fractional position and an editable
 ``Extra phase (turns)`` cell, blank for 0. A phase must lie between -10 and 10
 turns; any other entry is refused with a warning that names the atom when
@@ -363,7 +363,7 @@ target covers it again.
 Use the preset helper
 ~~~~~~~~~~~~~~~~~~~~~
 
-``Add Preset...`` opens the ``Add Magnetic Preset`` dialog, which builds one
+``Add Preset…`` opens the ``Add Magnetic Preset`` dialog, which builds one
 ordinary component from crystal-axis choices; the component can be edited like
 any other afterwards. In the dialog, set:
 
@@ -414,7 +414,7 @@ builders.
 Add a multi-q texture
 ~~~~~~~~~~~~~~~~~~~~~
 
-To add a skyrmion lattice or another multi-q texture, click ``Add Texture...``
+To add a skyrmion lattice or another multi-q texture, click ``Add Texture…``
 in the builder. The ``Add Magnetic Texture`` dialog starts from an abstract spin
 texture before applying it to selected atoms:
 
@@ -493,7 +493,7 @@ that plane or is not periodic on the magnetic cell; and when even the finest
 grid is too coarse.
 
 The accepted texture appears as one component row so that editing, preview
-selection, and atom targeting remain intuitive; ``Edit...`` reopens it in the
+selection, and atom targeting remain intuitive; ``Edit…`` reopens it in the
 texture dialog.
 
 How a texture is defined
@@ -565,7 +565,7 @@ Choose the muon site
 --------------------
 
 The ``Muon Site`` card shows a compact summary of the selected muon site. To
-choose or edit it, click ``Select Muon Site...``, pick a ``Source`` in the
+choose or edit it, click ``Select Muon Site…``, pick a ``Source`` in the
 ``Select Muon Site`` dialog and choose a row in the ``Site`` table (columns
 ``Site``, ``Source``, ``Cluster``, ``fx``, ``fy``, ``fz``), then click ``OK``.
 The selected site is normalized into one internal option containing a label,
@@ -621,7 +621,7 @@ Until a site is chosen, the page uses the lowest-energy pinned site (positive
 muon first), else the first structural-relaxation cluster, else the first UEP
 cluster. A project with none of these has no site: the ``Muon Site`` card
 reads ``Choose a muon site.``, and ``Calculate Dipolar Field``,
-``Dipolar Tensor...`` and ``Nuclear Relaxation...`` stay disabled, their
+``Dipolar Tensor…`` and ``Nuclear Relaxation…`` stay disabled, their
 tooltips saying a site is needed. With no site chosen, the dialog
 opens on ``Structural relaxation clustering`` when that source lists a site
 (a pinned site, or any cluster with ``Show every relaxed site`` ticked), and on
@@ -639,7 +639,7 @@ summary on the page repeats it. Fields computed at a UEP site are marked as
 estimates wherever they are shown: the ``Result`` column reads, for example,
 ``field, unrelaxed estimate``, the results status line says the site is
 unrelaxed, the distribution plot title ends in ``(unrelaxed estimate)``, its
-``Export Data...`` file carries an ``# Estimate:`` header line, and the
+``Export Data…`` file carries an ``# Estimate:`` header line, and the
 project survey's local-field markers read ``≈`` before the magnitude.
 Dipolar tensors and nuclear relaxation computed at a UEP site are marked the
 same way in their dialogs: the results show a note that they were computed at
@@ -659,7 +659,7 @@ cleared for every other site. The choice is stored with the selected site, the
 site summary on the page notes it, and saved workspaces restore it. When it is
 ticked, ``Calculate Dipolar Field`` applies the correction described in
 :ref:`Apply muon-induced distortion corrections
-<magnetic-fields-distortion-corrections>`. The ``Nuclear Relaxation...`` dialog
+<magnetic-fields-distortion-corrections>`. The ``Nuclear Relaxation…`` dialog
 has its own distortion option for the same relaxed structure (see `Calculate
 nuclear relaxation`_).
 
@@ -668,7 +668,7 @@ nuclear relaxation`_).
 Set the calculation parameters
 ------------------------------
 
-Click ``Calculation Settings...`` in the ``Calculation`` card to open the
+Click ``Calculation Settings…`` in the ``Calculation`` card to open the
 ``Calculation Settings`` dialog. Under ``Numerical Parameters`` it sets:
 
 - ``Cells along`` ``a``, ``b``, and ``c``: the number of unit-cell repeats
@@ -791,7 +791,7 @@ Set the demagnetizing field
 
 The ``Demagnetizing field`` row at the top of the ``Calculation`` card offers
 quick choices for the common limiting cases and an ``Advanced shape`` option,
-configured through the ``Advanced...`` button, for shape-specific tensors:
+configured through the ``Advanced…`` button, for shape-specific tensors:
 
 ``None``
    No demagnetizing-field correction is added.
@@ -805,7 +805,7 @@ configured through the ``Advanced...`` button, for shape-specific tensors:
    ``c`` axis as the plate normal.
 
 ``Advanced shape``
-   ``Advanced...`` opens the ``Advanced Demagnetizing Field`` window. Choose a
+   ``Advanced…`` opens the ``Advanced Demagnetizing Field`` window. Choose a
    ``Shape`` and its ``Parameters``, set the ``Orientation`` (see
    `Orient the sample`_), then click ``Use Shape``. The advanced shapes are
    ellipsoids (``Semi-axis a``, ``Semi-axis b``, ``Semi-axis c``), finite
@@ -854,9 +854,9 @@ photographed, and its size and thickness measured, so MuFinder can take its
 outline from the photo:
 
 1. In the ``Advanced Demagnetizing Field`` window, choose ``Plate from photo``
-   as the ``Shape`` and click ``From photo...``. The button reads ``Edit
-   outline...`` once the plate has an outline.
-2. In the ``Plate from Photo`` window, click ``Choose...`` and pick a photo of
+   as the ``Shape`` and click ``From photo…``. The button reads ``Edit
+   outline…`` once the plate has an outline.
+2. In the ``Plate from Photo`` window, click ``Choose…`` and pick a photo of
    the sample taken along its normal, on a plain background. PNG, JPEG, TIFF
    and BMP files are read; a photo larger than 1024 pixels is scaled down
    first.
@@ -907,7 +907,7 @@ under the fields, and ``Use Outline`` stays disabled until the threshold or
 MuFinder saves the outline with the project, at up to 256 pixels along its
 longer side, with the photo's path and the segmentation settings. The tensor
 needs only the saved outline, so a project still calculates after the photo
-moves; ``Edit outline...`` then shows the saved outline instead of the photo,
+moves; ``Edit outline…`` then shows the saved outline instead of the photo,
 and choosing the photo again re-enables the threshold controls. An
 incommensurate distribution records the sample it was calculated with, naming
 the outline by its size and SHA-256 digest rather than storing another copy.
@@ -1262,7 +1262,7 @@ receive different corrections.
 Calculate a dipolar tensor
 --------------------------
 
-The ``Dipolar Tensor...`` action opens a compact tensor workflow without adding
+The ``Dipolar Tensor…`` action opens a compact tensor workflow without adding
 more controls to the main Magnetic Fields tab. A dipolar tensor calculation
 requires a muon position and a set of magnetic-ion positions; it does not require
 a particular magnetic structure or moment direction. MuFinder therefore reuses
@@ -1270,7 +1270,7 @@ the selected muon site from the Magnetic Fields page and lets you choose which
 host atoms should be treated as magnetic ions.
 
 1. Select a muon site on the page (see `Choose the muon site`_).
-2. Click ``Dipolar Tensor...``.
+2. Click ``Dipolar Tensor…``.
 3. In the ``Magnetic Ions`` group choose the magnetic ions: ``Atoms with
    assigned moments``, ``All atoms``, ``Element``, ``Equivalent site`` or
    ``Atom indices`` (counted from 1 in the host's atom order, like the
@@ -1315,13 +1315,13 @@ sharing the same host structure and muon-site selection.
 Calculate nuclear relaxation
 ----------------------------
 
-The ``Nuclear Relaxation...`` action estimates static nuclear dipolar
+The ``Nuclear Relaxation…`` action estimates static nuclear dipolar
 linewidths for the selected muon site. It is available whenever a host
 structure and muon site are selected, and does not require an electronic
 magnetic model. MuFinder uses a native implementation of the mag2spectra
 second-moment workflow with bundled natural-abundance isotope data.
 
-1. Select a muon site on the page, then click ``Nuclear Relaxation...``.
+1. Select a muon site on the page, then click ``Nuclear Relaxation…``.
 2. In the ``Mode`` group choose the ``Field regime`` (``Zero field`` or
    ``Transverse field``) and the ``Sample`` (``Polycrystal`` or ``Single
    crystal``). The four supported modes are zero-field single crystal,
@@ -1411,7 +1411,7 @@ To keep a magnetic structure and its settings for later:
 2. Find the workspace as a child of ``Magnetic Fields`` in the project tree.
 3. To rename it, edit its page title.
 4. To delete it, use the delete button on its own page, or right-click its
-   project-tree node and choose ``Delete Workspace...``.
+   project-tree node and choose ``Delete Workspace…``.
 
 The latest field, dipolar-tensor and nuclear-relaxation results of the Magnetic
 Fields page and of each saved workspace are saved with the project and restored

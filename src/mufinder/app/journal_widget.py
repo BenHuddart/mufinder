@@ -83,7 +83,7 @@ class JournalWidget(QWidget):
 
         controls.addStretch(1)
 
-        self._export_button = QPushButton("Export...", self)
+        self._export_button = QPushButton("Export…", self)
         self._export_button.clicked.connect(self._export_journal)
         controls.addWidget(self._export_button)
         layout.addLayout(controls)

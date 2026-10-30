@@ -183,7 +183,7 @@ class SweepConvergenceWidget(QWidget):
         self.job_files_menu = JobFilesMenu()
         self._add_button = QPushButton(self._ADD_BUTTON_TEXT)
         self._generate_button = QPushButton(self._GENERATE_BUTTON_TEXT)
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
+        self._batch_configure_button = QPushButton("Configure Selected Parameters…")
         self._batch_configure_button.setEnabled(False)
         self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
         self._selection_count_label = QLabel("")
@@ -216,7 +216,7 @@ class SweepConvergenceWidget(QWidget):
         self._simulation_cell_summary = QLabel("Using single unit cell.")
         self._simulation_cell_summary.setWordWrap(True)
         self._simulation_cell_combo = QComboBox()
-        self._simulation_cell_create_button = QPushButton("Manage Supercells...")
+        self._simulation_cell_create_button = QPushButton("Manage Supercells…")
         self._simulation_cell_use_unit_button = QPushButton("Use Unit Cell")
 
         specs = get_gui_keyword_specs_for_files(
@@ -645,8 +645,8 @@ class SweepConvergenceWidget(QWidget):
     def _style_configure_button(self, button: QPushButton) -> None:
         metrics = button.fontMetrics()
         label_width = max(
-            metrics.horizontalAdvance("Configure..."),
-            metrics.horizontalAdvance("Configured..."),
+            metrics.horizontalAdvance("Configure…"),
+            metrics.horizontalAdvance("Configured…"),
         )
         button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         button.setMinimumWidth(max(self._CONFIGURE_COLUMN_MIN_WIDTH, label_width + 24))

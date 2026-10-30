@@ -35,11 +35,11 @@ Application shell
 
 - The ``File`` menu creates (``New Project``), opens (``Open Project``),
   reopens (``Open Recent``) and saves (``Save Project``) projects, and holds
-  ``Import Legacy Relaxations...`` and ``Remove Imported Relaxations...`` (see
+  ``Import Legacy Relaxations…`` and ``Remove Imported Relaxations…`` (see
   :doc:`/user_guide/legacy_import`).
 - The ``Setup`` menu configures the local CASTEP installation and keyword
-  catalog (``CASTEP...``, see :doc:`/getting_started/castep_setup`) and the
-  cluster profiles (``HPC Clusters...``, see
+  catalog (``CASTEP…``, see :doc:`/getting_started/castep_setup`) and the
+  cluster profiles (``HPC Clusters…``, see
   :doc:`/getting_started/running_jobs`).
 - ``View -> Appearance`` switches between ``Light``, ``Dark`` and ``System``
   themes. MuFinder bundles its own fonts, icons and control styling, so it looks
@@ -142,7 +142,7 @@ relaxed ``a``, ``b`` and ``c``; a run whose geometry optimization did not
 converge is marked failed, and each successful run adds a relaxed structure to
 the project.
 
-``Generate Comparison Table...`` compares one or more relaxed structures with
+``Generate Comparison Table…`` compares one or more relaxed structures with
 the experimental host, with supercell-aware atom matching, lattice,
 displacement, bonding, topology and symmetry metrics, a composite similarity
 score, the parameter differences between the selected jobs, and CSV export.
@@ -173,7 +173,7 @@ four methods: symmetry-aware random filling (by muon-muon separation or by a
 target number of positions), placement around atoms of a chosen element,
 manual fractional or Cartesian coordinates, and UEP cluster representatives.
 Selected rows can be moved to the symmetry-equivalent position closest to an
-anchor (``Cluster Positions...``) or removed before relaxation jobs are created.
+anchor (``Cluster Positions…``) or removed before relaxation jobs are created.
 Creating jobs asks for the charge state: positive muon, muonium, or both.
 
 The symmetry-aware random method follows the initial-position algorithm of
@@ -350,10 +350,10 @@ Across the workflows
 Legacy relaxation import
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-``File > Import Legacy Relaxations...`` imports muon structural relaxations
+``File > Import Legacy Relaxations…`` imports muon structural relaxations
 run by the legacy MuFinder application as read-only relaxation rows, so they
 can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
-``File > Remove Imported Relaxations...`` removes an import batch that nothing
+``File > Remove Imported Relaxations…`` removes an import batch that nothing
 downstream still uses.
 
 See :doc:`/user_guide/legacy_import`.

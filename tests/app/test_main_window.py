@@ -1090,7 +1090,7 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(
 
     window._refresh_quantum_corrections_view()
     configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 7)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
     jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
@@ -1474,7 +1474,7 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
     configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 6)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
     jobs = window._energy_barriers_controller.materialize([candidate.key])
 

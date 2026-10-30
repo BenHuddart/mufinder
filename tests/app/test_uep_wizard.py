@@ -275,6 +275,40 @@ def test_edit_slice_plane_dialog_uses_fractional_anchor_and_lattice_plane_compon
     dialog.close()
 
 
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_edit_slice_plane_dialog_confirms_before_deleting_the_plane(
+    qapp, monkeypatch, confirmed: bool
+) -> None:
+    lattice_vectors = ((4.0, 0.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 4.0))
+    plane = plane_from_fractional_anchor_and_miller(
+        anchor_fractional=(0.5, 0.5, 0.5),
+        miller_indices=(0.0, 0.0, 1.0),
+        lattice_vectors=lattice_vectors,
+        points_u=21,
+        points_v=21,
+    )
+    dialog = _EditSlicePlaneDialog(plane_number=2, plane=plane, lattice_vectors=lattice_vectors)
+    asked: list[tuple[object, ...]] = []
+
+    def _confirm(parent, title, text, detail="", accept_label="Remove", *args, **kwargs):
+        asked.append((parent, title, text, accept_label))
+        return confirmed
+
+    monkeypatch.setattr("mufinder.app.workflow_table_utils.confirm_destructive", _confirm)
+    deleted: list[bool] = []
+    dialog.plane_deleted.connect(lambda: deleted.append(True))
+    delete_button = next(
+        button for button in dialog.findChildren(QPushButton) if button.text() == "Delete Plane"
+    )
+
+    delete_button.click()
+
+    assert asked == [(dialog, "Delete slice plane", "Delete plane 2?", "Delete plane")]
+    assert deleted == ([True] if confirmed else [])
+    assert dialog.result() == (2 if confirmed else 0)
+    dialog.close()
+
+
 def test_uep_wizard_probe_has_no_direct_promotion_workflow(qapp) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
@@ -1139,7 +1173,7 @@ def test_uep_wizard_batch_search_starts_worker_thread_and_shows_busy_progress(
     assert dialog._batch_run.isEnabled() is False
     assert dialog._batch_progress.minimum() == 0
     assert dialog._batch_progress.maximum() == 0
-    assert dialog._batch_progress.format() == "Packing starts..."
+    assert dialog._batch_progress.format() == "Packing starts…"
     assert dialog._batch_calculate_zpe.isEnabled() is False
     assert dialog._batch_zpe_progress.format() == "Ready"
     assert "color: #FFFFFF;" not in dialog._batch_progress.styleSheet()
@@ -1329,7 +1363,7 @@ def test_uep_wizard_batch_zpe_starts_worker_thread_and_updates_progress(qapp, mo
     assert dialog._batch_calculate_zpe.isEnabled() is False
     assert dialog._batch_zpe_progress.minimum() == 0
     assert dialog._batch_zpe_progress.maximum() == 0
-    assert dialog._batch_zpe_progress.format() == "Preparing ZPE..."
+    assert dialog._batch_zpe_progress.format() == "Preparing ZPE…"
     dialog.close()
 
 
@@ -1758,7 +1792,7 @@ def test_uep_wizard_isosurface_mesh_busy_keeps_level_controls_enabled(qapp) -> N
     dialog._apply_potential_grid_cache(potential_grid(dialog._field))
     dialog._isosurface_mesh_thread = object()
 
-    dialog._set_isosurface_busy(True, status_text="Extracting isosurface preview...")
+    dialog._set_isosurface_busy(True, status_text="Extracting isosurface preview…")
 
     assert dialog._isosurface_slider.isEnabled() is True
     assert dialog._isosurface_level_input.isEnabled() is True

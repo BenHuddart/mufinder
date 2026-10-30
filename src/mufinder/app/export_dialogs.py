@@ -24,6 +24,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QWidget
 
 from mufinder.app import workflow_table_utils
+from mufinder.domain.text import plural
 from mufinder.science.structure_io import export_structure
 from mufinder.services.job_file_export import (
     JobFilesExport,
@@ -355,8 +356,7 @@ def _confirm_replacing(parent: QWidget, folder: Path, targets: Sequence[Path]) -
     return workflow_table_utils.confirm_destructive(
         parent,
         "Replace files",
-        f"Replace {workflow_table_utils.count_phrase(len(existing), ('file', 'files'))} "
-        f"in {folder}?",
+        f"Replace {plural(len(existing), 'file', 'files')} in {folder}?",
         _listed(str(path.relative_to(folder)) for path in existing),
         "Replace",
     )
@@ -377,7 +377,7 @@ def _listed(names: Iterable[str]) -> str:
 def _report_folder_export(
     parent: QWidget, folder: Path, written: int, failures: Sequence[str]
 ) -> None:
-    saved = f"Saved {workflow_table_utils.count_phrase(written, ('file', 'files'))} to:\n{folder}"
+    saved = f"Saved {plural(written, 'file', 'files')} to:\n{folder}"
     if failures:
         QMessageBox.warning(
             parent, "Export incomplete", f"{saved}\n\nCould not write:\n" + "\n".join(failures)

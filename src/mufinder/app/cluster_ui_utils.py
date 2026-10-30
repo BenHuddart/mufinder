@@ -38,7 +38,7 @@ def show_detailed_warning(
     lines = [line.strip() for line in text.replace("\r", "\n").splitlines() if line.strip()]
     summary = lines[0] if lines else text
     if len(summary) > 240:
-        summary = f"{summary[:237]}..."
+        summary = f"{summary[:239]}…"
 
     if len(lines) <= 1 and len(text) <= 240:
         QMessageBox.warning(parent, title, summary)
@@ -96,7 +96,7 @@ def resolve_cluster_credentials(
                 parent,
                 lambda: load_keychain_credentials(config),
                 title=f"{store.sentence_name} passwords",
-                description=f"Reading the Physics and Glamdring passwords from the {store.name}...",
+                description=f"Reading the Physics and Glamdring passwords from the {store.name}…",
                 cancellable=True,
             )
         except BlockingCallCancelled:
@@ -241,9 +241,9 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
 
     if isinstance(exc, SSHAuthenticationError):
         auth_hint = (
-            "Check the username/password pair in Setup -> HPC Clusters."
+            "Check the username/password pair in Setup > HPC Clusters."
             if config.auth_method == "password"
-            else "Check the username, SSH key path, and key passphrase in Setup -> HPC Clusters."
+            else "Check the username, SSH key path, and key passphrase in Setup > HPC Clusters."
         )
         return f"Authentication failed for {config.username}@{config.hostname}.\n\n{exc}\n\n{auth_hint}"
 
@@ -251,7 +251,7 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
         return (
             f"{exc}\n\n"
             "This usually means the configured host and port are reachable, but that endpoint is not "
-            "answering as an SSH server. Check the cluster hostname and SSH port in Setup -> HPC Clusters, "
+            "answering as an SSH server. Check the cluster hostname and SSH port in Setup > HPC Clusters, "
             "confirm VPN/network access, and try again in case the login node closed the connection under load."
         )
 

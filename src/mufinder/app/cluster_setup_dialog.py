@@ -132,7 +132,7 @@ class ClusterSetupDialog(QDialog):
 
         bottom_row = QHBoxLayout()
         self._test_button = QPushButton("Test Connection", self)
-        self._test_button.setToolTip("Connect to the selected cluster with the settings shown")
+        self._test_button.setToolTip("Connect to the selected cluster with the settings shown.")
         bottom_row.addWidget(self._test_button)
         bottom_row.addStretch(1)
         self._button_box = QDialogButtonBox(
@@ -159,11 +159,11 @@ class ClusterSetupDialog(QDialog):
         panel_layout.addWidget(self._cluster_list, 1)
         buttons = QHBoxLayout()
         self._add_button = QPushButton("Add", panel)
-        self._add_button.setToolTip("Add a new cluster")
+        self._add_button.setToolTip("Add a new cluster.")
         self._duplicate_button = QPushButton("Duplicate", panel)
-        self._duplicate_button.setToolTip("Add a copy of the selected cluster")
+        self._duplicate_button.setToolTip("Add a copy of the selected cluster.")
         self._remove_button = QPushButton("Remove", panel)
-        self._remove_button.setToolTip("Remove the selected cluster (Delete)")
+        self._remove_button.setToolTip("Remove the selected cluster (Delete).")
         for button in (self._add_button, self._duplicate_button, self._remove_button):
             buttons.addWidget(button)
         panel_layout.addLayout(buttons)
@@ -216,7 +216,7 @@ class ClusterSetupDialog(QDialog):
         keychain_layout.addWidget(self._keychain_check, 1)
         self._keychain_help_button = QToolButton(self._keychain_row)
         self._keychain_help_button.setText("?")
-        self._keychain_help_button.setToolTip(f"Show {store.name} setup commands")
+        self._keychain_help_button.setToolTip(f"Show {store.name} setup commands.")
         style_help_button(self._keychain_help_button)
         keychain_layout.addWidget(self._keychain_help_button)
 
@@ -387,7 +387,7 @@ class ClusterSetupDialog(QDialog):
         queue_buttons = QHBoxLayout()
         self._add_queue_button = QPushButton("Add Queue", tab)
         self._remove_queue_button = QPushButton("Remove Queue", tab)
-        self._remove_queue_button.setToolTip("Remove the selected queue (Delete)")
+        self._remove_queue_button.setToolTip("Remove the selected queue (Delete).")
         queue_buttons.addWidget(self._add_queue_button)
         queue_buttons.addWidget(self._remove_queue_button)
         queue_buttons.addStretch(1)

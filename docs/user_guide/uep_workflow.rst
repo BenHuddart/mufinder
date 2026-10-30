@@ -60,11 +60,11 @@ Open ``UEP`` in the project navigator, then:
    ``Structure`` to run on (the active host by default).
 2. **Add a source job.** Click ``Add Job`` to add a row to ``UEP Source
    Jobs``. Choose its ``Supercell`` (``Unit cell`` or a saved supercell;
-   ``Manage Supercells...`` in the drop-down opens the
+   ``Manage Supercells…`` in the drop-down opens the
    :doc:`/user_guide/supercells`).
-3. **Check the parameters.** Click ``Configure...`` in the row's ``Parameters``
+3. **Check the parameters.** Click ``Configure…`` in the row's ``Parameters``
    column to adjust the CASTEP settings, or select several rows and click
-   ``Configure Selected Parameters...``.
+   ``Configure Selected Parameters…``.
 4. **Run the job.** Click ``Run All Locally`` or ``Run All on Cluster`` (the
    ``Run Selected ...`` variants appear when rows are selected) and track the
    job through the ``Job Dashboard``.
@@ -120,11 +120,13 @@ The window offers:
 - full-cell 3D potential grids (``Calculate Cell Potential Grid``) shared
   between the isosurface and slice views, with a ``Gaussian width factor``
   control, zero-minimum shifting (``Set minimum potential to zero``) and XSF
-  export (``Export XSF...``);
+  export (``Export XSF…``);
 - responsive isosurface visualization from the cached full-cell potential grid;
 - interactive 2D slice planes (``Add Plane``) defined from one selected atom
   plus a normal, three selected atoms, or a best-fit plane through four or more
-  selected atoms;
+  selected atoms. A plane's numbered button opens it for editing, and
+  ``Delete Plane`` there removes it after a confirmation whose default is
+  ``Cancel``;
 - multi-atom selection in the structure viewer using ``Shift``-click so slice
   planes can be defined directly from the host structure;
 - slice saturation controls (``Slice saturation``, ``Min (eV)``, ``Max
@@ -228,7 +230,7 @@ index, clustering method, energies, and classification with each created site,
 and protects against adding the same UEP cluster row twice.
 
 Before staging the generated sites for CASTEP relaxation, you can use
-``Cluster Positions...`` in the ``Generation`` tab to rewrite selected
+``Cluster Positions…`` in the ``Generation`` tab to rewrite selected
 generated rows to the symmetry-equivalent representatives closest to a chosen
 fractional anchor. This is useful when several generated starts correspond to
 the same physical UEP site but sit in different symmetry-equivalent parts of

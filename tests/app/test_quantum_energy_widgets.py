@@ -58,7 +58,7 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
 
     button = widget._sources_table.cellWidget(0, 7)
     assert isinstance(button, QPushButton)
-    assert button.text() == "Configure..."
+    assert button.text() == "Configure…"
 
     button.click()
 
@@ -219,8 +219,8 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
     view_button = widget._sources_table.cellWidget(0, 7)
     assert isinstance(configure_button, QPushButton)
     assert isinstance(view_button, QPushButton)
-    assert configure_button.text() == "Configure..."
-    assert view_button.text() == "View..."
+    assert configure_button.text() == "Configure…"
+    assert view_button.text() == "View…"
 
     configure_button.click()
     view_button.click()
@@ -381,7 +381,7 @@ def test_energy_barriers_widget_marks_configured_path_row(qapp) -> None:
 
     configure_button = widget._sources_table.cellWidget(0, 6)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
 
     configure_button.click()
 
@@ -1011,12 +1011,12 @@ def test_quantum_row_menu_offers_the_shared_failed_job_reset_and_no_remove(
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
-        "Reset Failed Jobs...",
-        "Configure...",
+        "Reset Failed Jobs…",
+        "Configure…",
         "Open Containing Folder",
         "Export Inputs/Outputs…",
     ]
-    assert "Reset Failed Jobs... (2 of 3)" in texts
+    assert "Reset Failed Jobs… (2 of 3)" in texts
     menu.action("Cancel (1 of 3)").triggered.emit()
     assert cancelled == [["site-1"]]
     # Opening the menu fired the enabled reset: only the failed and cancelled rows go.
@@ -1034,13 +1034,13 @@ def test_quantum_reset_failed_button_follows_the_selection(
     widget.reset_failed_requested.connect(emitted.append)
     install_fake_menu(monkeypatch)
 
-    assert widget._reset_failed_button.text() == "Reset Failed Jobs..."
+    assert widget._reset_failed_button.text() == "Reset Failed Jobs…"
     assert widget._reset_failed_button.isEnabled() is False
 
     widget._sources_table.selectRow(1)
     assert widget._reset_failed_button.isEnabled() is False
     menu = open_reset_menu(widget._sources_table, row=1)
-    assert menu is not None and menu.action("Reset Failed Jobs...").enabled is False
+    assert menu is not None and menu.action("Reset Failed Jobs…").enabled is False
 
     widget._sources_table.selectAll()
     assert widget._reset_failed_button.isEnabled() is True
@@ -1095,8 +1095,8 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
         "Run on Cluster",
         "Cancel",
         "Inspect Failure",
-        "Reset Failed Jobs...",
-        "Configure...",
+        "Reset Failed Jobs…",
+        "Configure…",
         "Remove",
         "Open Containing Folder",
         "Export Inputs/Outputs…",

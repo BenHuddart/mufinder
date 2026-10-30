@@ -370,7 +370,7 @@ class MuonGenerationWidget(QWidget):
         self._cancel_generation_btn.setVisible(False)
         self._cancel_generation_btn.clicked.connect(self.cancel_generation_requested)
         action_row.addWidget(self._cancel_generation_btn)
-        self._cluster_btn = QPushButton("Cluster Positions...")
+        self._cluster_btn = QPushButton("Cluster Positions…")
         self._cluster_btn.setEnabled(False)
         self._cluster_btn.clicked.connect(self._open_cluster_positions_dialog)
         action_row.addWidget(self._cluster_btn)
@@ -595,7 +595,7 @@ class MuonGenerationWidget(QWidget):
             if hasattr(self, "_site_table"):
                 self._apply_stale_row_styling()
 
-    def set_generation_busy(self, busy: bool, message: str = "Generating sites...") -> None:
+    def set_generation_busy(self, busy: bool, message: str = "Generating sites…") -> None:
         """Show or clear the generation progress indicator."""
         if busy:
             self._apply_generation_progress_style(completed=False)

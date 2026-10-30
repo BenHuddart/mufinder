@@ -203,7 +203,7 @@ def test_muon_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -
     assert not combo.isEnabled()
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
-    assert configure_button.text() == "Configured..."
+    assert configure_button.text() == "Configured…"
     remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
@@ -690,7 +690,7 @@ def test_muon_relaxation_batch_configure_button_tracks_selection(qapp) -> None:
     widget = MuonRelaxationWidget()
     _stage_muon_rows(widget, 2)
 
-    assert widget._batch_configure_button.text() == "Configure Selected Parameters..."
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters…"
     widget._refresh_batch_button_state()
     assert widget._batch_configure_button.isEnabled() is False
 

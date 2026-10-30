@@ -797,7 +797,7 @@ Every workflow table has a per-row reset
 A failed job's recovery must not depend on the jobs dashboard: the dashboard row
 is easy to lose track of in a long project, and it disappears entirely once the
 job is dismissed. Every workflow table therefore offers the same recovery action
-on the row itself, via the ``Reset Failed Jobs...`` entry of the shared
+on the row itself, via the ``Reset Failed Jobs…`` entry of the shared
 right-click row menu.
 
 The shared implementation lives in ``mufinder.app.workflow_table_utils``:
@@ -824,7 +824,7 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
   path key) and a ``status_for_row``.
 - ``standard_row_actions`` — builds the rest of the shared menu around the reset
   entry (``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``
-  above it; ``Configure...``, ``Remove`` below), passed to the bind call as
+  above it; ``Configure…``, ``Remove`` below), passed to the bind call as
   ``leading_actions`` / ``additional_actions``. A table leaves out an action by
   not supplying its callback, and a table with no failed-job reset passes
   ``emit_reset=None``.
@@ -850,7 +850,7 @@ barriers and quantum corrections are refreshed through their controllers'
 .. _quantum-singlepoint-records:
 
 Quantum corrections follows the same shape: each row is bound to one phonon
-job, and its table also offers ``Reset Failed Jobs...`` as a button beside the
+job, and its table also offers ``Reset Failed Jobs…`` as a button beside the
 run buttons, emitting the same signal for the selected resettable rows. The
 reset's directory clean-up refuses a directory another job uses unless that job
 is reset in the same batch or is a *directory companion*
@@ -888,7 +888,7 @@ controls it had, but its workflow table row still points at it through the
 definition's persistent label→job-id mapping. Left alone, that row would project
 ``"failed"`` — not a member of ``READY_WORKFLOW_ROW_STATUSES`` — and its
 run actions would skip it forever, with no way back to ``defined``. The
-row's own ``Reset Failed Jobs...`` action cannot rescue it either: that action
+row's own ``Reset Failed Jobs…`` action cannot rescue it either: that action
 gates on the displayed status, and a dismissed row no longer reads as failed.
 
 Dismissal is therefore read as *"failure acknowledged, this row is actionable
@@ -900,7 +900,7 @@ again"*, via two pieces in ``mufinder.app.workflow_submission``:
   ``"ready"``; every other job projects its own status value. Every workflow's
   job→row-status projection goes through it. A *non*-dismissed failed job is
   unaffected: it still shows ``"failed"``, its row still refuses to submit, and
-  its recovery path is the row's own ``Reset Failed Jobs...`` action plus the
+  its recovery path is the row's own ``Reset Failed Jobs…`` action plus the
   dashboard ``Resubmit``/``Reset`` buttons that are still on screen.
 - ``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` — the lazy
   reset. ``WorkflowJobController.submit`` partitions the planned jobs and, for

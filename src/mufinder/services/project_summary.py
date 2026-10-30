@@ -31,6 +31,7 @@ from mufinder.domain.charge_states import (
 )
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result, Structure
+from mufinder.domain.text import plural
 from mufinder.science.ase_bridge import is_muon_label, reduced_formula
 from mufinder.services import supercell_assets
 from mufinder.services.magnetic_field_results import (
@@ -658,7 +659,7 @@ def _host_facts(document: ProjectDocument) -> tuple[str, ...]:
         return ("No host structure yet",)
     formula = structure_formula(host) or host.label
     atoms = sum(not is_muon_label(label) for label in host.species)
-    facts = [f"{formula} · {_count(atoms, 'atom')}"]
+    facts = [f"{formula} · {plural(atoms, 'atom')}"]
     if host.origin == "pristine_relaxation":
         facts.append("Active host is a relaxed structure")
     return tuple(facts)
@@ -673,7 +674,7 @@ def _supercell_facts(document: ProjectDocument) -> tuple[str, ...]:
         return ("No saved supercells",)
     labels = ", ".join(asset.label for asset in assets[:3])
     more = f" and {len(assets) - 3} more" if len(assets) > 3 else ""
-    return (f"{_count(len(assets), 'saved supercell')}: {labels}{more}",)
+    return (f"{plural(len(assets), 'saved supercell')}: {labels}{more}",)
 
 
 def _cutoff_facts(document: ProjectDocument) -> tuple[str, ...]:
@@ -702,9 +703,9 @@ def _pristine_facts(document: ProjectDocument) -> tuple[str, ...]:
     ]
     facts = list(_job_facts(document, WorkflowStage.PRISTINE_RELAXATION, "relaxation"))
     if relaxed:
-        facts.append(_count(len(relaxed), "relaxed structure"))
+        facts.append(plural(len(relaxed), "relaxed structure"))
     if document.comparison_tables:
-        facts.append(_count(len(document.comparison_tables), "comparison table"))
+        facts.append(plural(len(document.comparison_tables), "comparison table"))
     return tuple(facts) or ("Not visited",)
 
 
@@ -719,7 +720,7 @@ def _uep_facts(document: ProjectDocument) -> tuple[str, ...]:
             if isinstance(clusters, list):
                 minima += sum(isinstance(cluster, Mapping) for cluster in clusters)
     if minima:
-        facts.append(_count(minima, "clustered minimum", "clustered minima"))
+        facts.append(plural(minima, "clustered minimum", "clustered minima"))
     return tuple(facts) or ("Not visited",)
 
 
@@ -731,7 +732,7 @@ def _candidate_facts(document: ProjectDocument) -> tuple[str, ...]:
     if not sites:
         return ("No candidate sites yet",)
     from_uep = sum(site.generation_method.startswith("uep_cluster") for site in sites)
-    facts = [_count(len(sites), "candidate site")]
+    facts = [plural(len(sites), "candidate site")]
     if from_uep:
         facts.append(f"{from_uep} from UEP clusters")
     other_hosts = len(document.sites) - len(sites)
@@ -774,14 +775,14 @@ def _analysis_facts(document: ProjectDocument) -> tuple[str, ...]:
     workspaces = relaxation_analysis_workspaces(document)
     if not workspaces:
         return ("No analysis workspaces yet",)
-    facts = [_count(len(workspaces), "analysis workspace")]
+    facts = [plural(len(workspaces), "analysis workspace")]
     snapshots = document.ui_state.get(MUON_SITES_SUMMARY_SNAPSHOTS_KEY)
     if isinstance(snapshots, Mapping):
         for charge_state, snapshot in snapshots.items():
             sites = snapshot.get("sites") if isinstance(snapshot, Mapping) else None
             if isinstance(sites, list) and sites:
                 label = muon_charge_state_label(str(charge_state)).capitalize()
-                facts.append(f"{label}: {_count(len(sites), 'distinct site')} pinned")
+                facts.append(f"{label}: {plural(len(sites), 'distinct site')} pinned")
     return tuple(facts)
 
 
@@ -792,23 +793,23 @@ def _magnetic_facts(document: ProjectDocument) -> tuple[str, ...]:
         magnetic_structure.get("components") if isinstance(magnetic_structure, Mapping) else None
     )
     if isinstance(components, list) and components:
-        facts.append(_count(len(components), "magnetic component"))
+        facts.append(plural(len(components), "magnetic component"))
     workspaces = magnetic_field_workspaces(document)
     if workspaces:
-        facts.append(_count(len(workspaces), "saved workspace"))
+        facts.append(plural(len(workspaces), "saved workspace"))
     return tuple(facts) or ("No magnetic model yet",)
 
 
 def _polarisation_facts(document: ProjectDocument) -> tuple[str, ...]:
     count = sum(1 for result in document.results.values() if _is_polarisation_simulation(result))
-    return (_count(count, "simulation"),) if count else ("No polarisation simulations yet",)
+    return (plural(count, "simulation"),) if count else ("No polarisation simulations yet",)
 
 
 def _hyperfine_facts(document: ProjectDocument) -> tuple[str, ...]:
     count = sum(
         1 for result in document.results.values() if result.result_type == HYPERFINE_CALC_TYPE
     )
-    facts = [_count(count, "hyperfine result")] if count else []
+    facts = [plural(count, "hyperfine result")] if count else []
     facts.extend(_job_facts(document, WorkflowStage.HYPERFINE_COUPLING, "job", completed=False))
     return tuple(facts) or ("No hyperfine calculations yet",)
 
@@ -819,7 +820,7 @@ def _quantum_facts(document: ProjectDocument) -> tuple[str, ...]:
         for result in document.results.values()
         if result.result_type == QUANTUM_PHONON_CALC_TYPE
     ]
-    facts = [_count(len(results), "phonon result")] if results else []
+    facts = [plural(len(results), "phonon result")] if results else []
     facts.extend(_job_facts(document, WorkflowStage.QUANTUM_CORRECTIONS, "job", completed=False))
     return tuple(facts) or ("No quantum calculations yet",)
 
@@ -834,7 +835,7 @@ def _barrier_facts(document: ProjectDocument) -> tuple[str, ...]:
             heights.append(float(height))
     facts = []
     if heights:
-        facts.append(f"{_count(len(heights), 'barrier')}, lowest {min(heights):.2f} eV")
+        facts.append(f"{plural(len(heights), 'barrier')}, lowest {min(heights):.2f} eV")
     facts.extend(_job_facts(document, WorkflowStage.ENERGY_BARRIERS, "job", completed=False))
     return tuple(facts) or ("No barrier calculations yet",)
 
@@ -869,17 +870,13 @@ def _job_facts(
         return []
     parts: list[str] = []
     if completed and statuses[JobStatus.COMPLETED]:
-        parts.append(f"{_count(statuses[JobStatus.COMPLETED], f'{noun}')} complete")
+        parts.append(f"{plural(statuses[JobStatus.COMPLETED], f'{noun}')} complete")
     active = sum(statuses[status] for status in ACTIVE_JOB_STATUSES)
     if active:
         parts.append(f"{active} active")
     if statuses[JobStatus.FAILED]:
         parts.append(f"{statuses[JobStatus.FAILED]} failed")
     return [", ".join(parts)] if parts else []
-
-
-def _count(value: int, singular: str, plural: str | None = None) -> str:
-    return f"{value} {singular if value == 1 else plural or singular + 's'}"
 
 
 def _dict_list(value: object) -> list[dict[str, object]]:

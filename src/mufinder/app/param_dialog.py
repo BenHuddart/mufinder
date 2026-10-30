@@ -232,7 +232,7 @@ class ParameterDialog(QDialog):
             root.addWidget(self._intro_label)
 
         self._mixed_notice = QLabel(
-            "Parameters marked \u201cmixed\u201d differ between the selected rows. Each row keeps its "
+            "Parameters marked 'mixed' differ between the selected rows. Each row keeps its "
             "own value for them unless you change the parameter here.",
             self,
         )

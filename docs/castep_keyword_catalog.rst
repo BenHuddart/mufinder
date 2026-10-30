@@ -85,7 +85,7 @@ because a file elsewhere was moved. The copy does not track later changes to the
 original; after a CASTEP upgrade, generate or import again. When the saved setup
 names a complete catalog outside the application-data directory, startup
 installs it the same way, during the splash screen's ``Loading CASTEP
-configuration...`` step.
+configuration…`` step.
 
 Validation (``mufinder.castep_io.keyword_catalog_file``) requires ``cell`` and
 ``param`` sections whose entries carry ``option_type``, ``level`` and

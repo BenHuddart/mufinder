@@ -135,7 +135,7 @@ class SamplePhotoDialog(QDialog):
         self._path = QLineEdit(self)
         self._path.setReadOnly(True)
         self._path.setPlaceholderText("No photo chosen")
-        self._choose_button = QPushButton("Choose...", self)
+        self._choose_button = QPushButton("Choose…", self)
         self._choose_button.clicked.connect(self._choose_photo)
 
         self._image = QLabel(self)

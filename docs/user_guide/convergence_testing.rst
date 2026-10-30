@@ -34,7 +34,7 @@ Convergence Testing needs:
   or on a supercell saved from it.
 - **A supercell, if you want one.** By default the sweeps run on the host unit
   cell. To converge on a supercell instead, save it in the
-  :doc:`/user_guide/supercells` first (or from the ``Manage Supercells...`` button on the
+  :doc:`/user_guide/supercells` first (or from the ``Manage Supercells…`` button on the
   sweep page). See `Limitations`_ before choosing a supercell.
 - **A decision about the XC functional.** A converged cutoff or grid is only
   meaningful for the functional it was converged with. New sweep rows take the
@@ -55,12 +55,12 @@ adopted cutoff as its default ``CUT_OFF_ENERGY``.
    click ``Open Cutoff Convergence`` on the overview page). Under
    ``Simulation Cell``, leave ``Single unit cell`` selected or choose a saved
    supercell from ``Saved supercells``.
-2. **List the cutoffs.** Click ``Generate From Range...`` and set
+2. **List the cutoffs.** Click ``Generate From Range…`` and set
    ``Start (eV)``, ``Stop (eV)``, and ``Step (eV)`` (300, 1400, and 100 eV by
    default), or click ``Add Cutoff`` to add rows one at a time. Double-click a
    value to edit it.
 3. **Check the parameters.** Select the rows and click ``Configure Selected
-   Parameters...``, or click one row's ``Configure...`` button. The defaults
+   Parameters…``, or click one row's ``Configure…`` button. The defaults
    are listed in `Parameter dialogs`_. Tick ``Calculate Stress`` if you want
    stress to count towards convergence. The cutoff sweep writes no k-point
    setting by default (see `What MuFinder writes`_); add ``K-Point MP Grid``
@@ -80,7 +80,7 @@ adopted cutoff as its default ``CUT_OFF_ENERGY``.
    overview page.
 7. **Open the k-point sweep.** Select ``K-Point Grid`` in the navigator and
    pick the same simulation cell as the cutoff sweep.
-8. **List the grids.** Click ``Generate From Spacing...`` and set ``Minimum
+8. **List the grids.** Click ``Generate From Spacing…`` and set ``Minimum
    spacing (1/Ang)`` (``0.02`` by default) to generate every distinct grid
    CASTEP produces between ``1 x 1 x 1`` and that spacing (see `Generating
    k-point grids`_), or click ``Add Grid`` to enter grids by hand.
@@ -142,7 +142,7 @@ The sweep pages
 ``Simulation Cell``
    A summary of the cell the sweep will run on, a ``Saved supercells``
    drop-down (``Single unit cell`` plus every supercell saved for the active
-   host), ``Manage Supercells...`` to open the :doc:`/user_guide/supercells`, and ``Use
+   host), ``Manage Supercells…`` to open the :doc:`/user_guide/supercells`, and ``Use
    Unit Cell`` to return to the host unit cell. The cell is fixed for a job
    when the job is defined; changing the selection later does not change jobs
    already defined.
@@ -160,13 +160,13 @@ Sweep table (``Cutoff Sweep`` / ``K-Point Grid Sweep``)
    ``Max |Force| (eV/Ang)``
       The largest force on any atom in the completed job.
    ``Parameters``
-      ``Configure...``, or ``Configured...`` once the row has its own values
+      ``Configure…``, or ``Configured…`` once the row has its own values
       or has been submitted.
    (unlabelled)
       An ``x`` button that removes the row.
 Row controls
-   ``Add Cutoff`` / ``Add Grid``, ``Generate From Range...`` / ``Generate From
-   Spacing...``, ``Remove Selected``, ``Configure Selected Parameters...``,
+   ``Add Cutoff`` / ``Add Grid``, ``Generate From Range…`` / ``Generate From
+   Spacing…``, ``Remove Selected``, ``Configure Selected Parameters…``,
    and ``Examine Cutoff Convergence`` / ``Examine K-Point Convergence``.
    Right-click selected rows to run, cancel, inspect a failure, reset failed
    jobs, configure, or remove them. ``Delete`` (``Backspace`` on macOS)
@@ -197,7 +197,7 @@ Adding cutoffs
 ~~~~~~~~~~~~~~
 
 ``Add Cutoff`` adds 300 eV to an empty table, otherwise the last row's value
-plus 20 eV. ``Generate From Range...`` opens ``Generate Cutoffs From Range``,
+plus 20 eV. ``Generate From Range…`` opens ``Generate Cutoffs From Range``,
 which adds every value from ``Start (eV)`` to ``Stop (eV)`` inclusive in steps
 of ``Step (eV)``. New values are appended to the list (values already present
 are not repeated) unless ``Replace existing cutoff list`` is ticked. The dialog
@@ -214,7 +214,7 @@ Generating k-point grids
 
 ``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
 
-``Generate From Spacing...`` opens ``Generate K-Point Grids``. MuFinder walks
+``Generate From Spacing…`` opens ``Generate K-Point Grids``. MuFinder walks
 CASTEP's own spacing-to-grid rule, ``n_i = floor(|b_i| / (2 pi s)) + 1``, from
 large spacings down to ``Minimum spacing (1/Ang)``, using the reciprocal
 lattice of the selected simulation cell, and adds every distinct grid it passes
@@ -236,7 +236,7 @@ Parameter dialogs
    :alt: The parameter dialog of the 500 eV cutoff row, with the swept cutoff
          shown as set by the sweep.
 
-   The ``Configure...`` dialog of the 500 eV row.
+   The ``Configure…`` dialog of the 500 eV row.
 
 The row dialog follows the shared workflow layout, with the swept keyword
 shown as ``Variable (set by sweep)``. ``+ Add Parameter`` adds any other

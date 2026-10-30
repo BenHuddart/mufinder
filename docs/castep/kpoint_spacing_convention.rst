@@ -86,7 +86,7 @@ The convention's guarantee is that, for every grid ``g`` other than
 
 A grid that is not on CASTEP's curve, such as one entered by hand, still gets
 a spacing from ``spacing_from_grid``, but CASTEP turns that spacing into a
-different grid. Running the k-point sweep through ``Generate From Spacing...``
+different grid. Running the k-point sweep through ``Generate From Spacing…``
 keeps every grid on the curve.
 
 Where spacings appear
@@ -142,7 +142,7 @@ Key modules
      - ``SupercellColumn.suggested_spacing`` and the spacing default in the
        configure dialogs.
    * - ``mufinder.app.kpoint_convergence_widget``
-     - ``Generate From Spacing...`` rows of the k-point sweep, through
+     - ``Generate From Spacing…`` rows of the k-point sweep, through
        ``generate_kpoint_grids``.
    * - ``tests/science/test_kpoint_grids.py``
      - The round-trip, sweep and floating-point cases above, including

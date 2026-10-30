@@ -42,6 +42,7 @@ from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRo
 from mufinder.app.theme import current_palette, use_tabbed_table_corners
 from mufinder.app.workflow_row_widget import RelaxationRowTableWidget, RowEntry
 from mufinder.app.workflow_table_utils import set_workflow_table_item
+from mufinder.domain.text import plural
 
 
 _IMPORTED_ROW_TOOLTIP = (
@@ -366,7 +367,7 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
             QMessageBox.information(
                 self,
                 "Imported rows are read-only",
-                "The selected row(s) were imported from calculations run outside "
+                f"The selected {'row was' if len(row_ids) == 1 else 'rows were'} imported from calculations run outside "
                 "MuFinder, so their parameters cannot be edited. Use Configure on a "
                 "single row to view them.",
             )
@@ -375,7 +376,7 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
             QMessageBox.information(
                 self,
                 "Imported rows excluded",
-                f"{excluded} imported row(s) were left out of this edit because their "
+                f"{plural(excluded, 'imported row was', 'imported rows were')} left out of this edit because their "
                 "parameters describe calculations that have already run.",
             )
         return editable
@@ -388,7 +389,7 @@ class MuonRelaxationWidget(RelaxationRowTableWidget):
             QMessageBox.information(
                 self,
                 "Imported rows are read-only",
-                f"{len(protected)} imported row(s) were not removed. Imported "
+                f"{plural(len(protected), 'imported row was', 'imported rows were')} not removed. Imported "
                 "relaxations own the only copy of their results, so they are "
                 "removed through the Remove Imported Relaxations action instead.",
             )

@@ -27,6 +27,7 @@ from mufinder.app.workflow_parameters import (
 )
 from mufinder.domain.models import Structure
 from mufinder.castep_io.schema import KeywordSpec
+from mufinder.domain.text import plural
 from mufinder.science.energy_barriers import neb_farm_distribution
 from mufinder.science.site_generation import lattice_frac_to_cart
 
@@ -365,12 +366,12 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
         distribution = neb_farm_distribution(images=images, farms=farms)
         split = "/".join(str(count) for count in distribution.steady_counts)
         text = (
-            f"{images} images over {farms} farms -> {split} per farm "
+            f"{images} images over {farms} farms → {split} per farm "
             f"({distribution.efficiency:.0%} balance). "
             f"Needs at least {farms} MPI ranks, ideally a multiple of {farms}."
         )
         if distribution.idle_farms:
-            text += f" {distribution.idle_farms} farm(s) would sit idle."
+            text += f" {plural(distribution.idle_farms, 'farm')} would sit idle."
         hint.setText(text)
 
 

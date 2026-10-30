@@ -131,7 +131,8 @@ def validate_param_file(param_file: ParamFile) -> None:
         ):
             raise CastepValidationError(
                 f"{name.upper()} is only supported by this starter implementation for "
-                f"task(s) {', '.join(task.upper() for task in spec.allowed_tasks)}; "
+                f"{'task' if len(spec.allowed_tasks) == 1 else 'tasks'} "
+                f"{', '.join(task.upper() for task in spec.allowed_tasks)}; "
                 f"received TASK={normalized_task.upper()}."
             )
 

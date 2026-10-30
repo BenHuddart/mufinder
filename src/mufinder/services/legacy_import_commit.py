@@ -73,6 +73,7 @@ from mufinder.domain.models import (
     next_job_created_at,
     utc_now,
 )
+from mufinder.domain.text import plural
 from mufinder.science.lattice import lattice_frac_to_cart, vector_length, wrap_fractional
 from mufinder.services.legacy_import import (
     MUON_SPECIES,
@@ -759,7 +760,9 @@ def commit_legacy_import(
         action=IMPORT_ACTION,
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         actor="user",
-        description=(f"Imported {len(imported)} legacy muon relaxation(s) from {scan.root.name}"),
+        description=(
+            f"Imported {plural(len(imported), 'legacy muon relaxation')} from {scan.root.name}"
+        ),
         parameters={
             "batch_id": str(batch),
             "source_folder": str(scan.root),

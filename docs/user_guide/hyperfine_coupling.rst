@@ -53,8 +53,8 @@ Running the workflow
 1. **Open the page.** Select ``Hyperfine Coupling`` in the workflow navigator;
    it sits before ``Magnetic Fields``. The ``Hyperfine Jobs`` table lists the
    pinned sites with ``Status`` = ``ready``.
-2. **Configure before submitting.** Click a row's ``Configure...`` button, or
-   select several rows and click ``Configure Selected Parameters...``. The
+2. **Configure before submitting.** Click a row's ``Configure…`` button, or
+   select several rows and click ``Configure Selected Parameters…``. The
    settings start from the source relaxation (see `Configuration dialog`_) and
    stay editable until the row's job is submitted.
 3. **Submit.** Select the rows and click ``Run Selected Locally`` or
@@ -68,9 +68,9 @@ Running the workflow
    click ``Use in Magnetic Fields`` (see `Using the coupling in Magnetic
    Fields`_).
 
-A submitted row's parameters are locked; ``Configure...`` then opens them
+A submitted row's parameters are locked; ``Configure…`` then opens them
 read-only and says why. A failed, stopped or cancelled job recovers through
-``Reset Failed Jobs...``, which asks for confirmation first.
+``Reset Failed Jobs…``, which asks for confirmation first.
 
 The workflow page
 -----------------
@@ -92,7 +92,7 @@ the same notice as Quantum Corrections when nothing is pinned. Its columns are
 ``Site`` (double-click a relaxed site's label to rename it), ``Charge``
 (``positive muon`` or ``muonium``), ``Source Job`` (the muon relaxation the
 row was built from), ``Status`` (``ready`` before the row has a job, then its
-job's status) and ``Parameters`` (``Configure...``). Right-click selected rows
+job's status) and ``Parameters`` (``Configure…``). Right-click selected rows
 to run, cancel, inspect a failure, reset failed jobs or configure them. There
 is no ``Remove``: rows are derived from completed relaxations.
 

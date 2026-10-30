@@ -162,7 +162,7 @@ class KPointConvergenceWidget(SweepConvergenceWidget):
     _SWEEP_GROUP_TITLE = "K-Point Grid Sweep"
     _KEY_COLUMN_LABEL = "K-Point Grid"
     _ADD_BUTTON_TEXT = "Add Grid"
-    _GENERATE_BUTTON_TEXT = "Generate From Spacing..."
+    _GENERATE_BUTTON_TEXT = "Generate From Spacing…"
     _EXAMINE_BUTTON_TEXT = "Examine K-Point Convergence"
     _EXAMINE_READY_TOOLTIP = "Analyse completed k-point energy and force trends."
     _EXAMINE_WAITING_TOOLTIP = (

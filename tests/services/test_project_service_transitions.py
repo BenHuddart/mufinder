@@ -94,7 +94,9 @@ def test_assert_transition_full_matrix(current: JobStatus, target: JobStatus) ->
         with pytest.raises(ValueError) as excinfo:
             service._assert_transition(current, target)
         # Pin the exact message so a refactor cannot silently reword it.
-        assert str(excinfo.value) == (f"Invalid job transition: {current.value} -> {target.value}")
+        assert str(excinfo.value) == (
+            f"Invalid job transition from {current.value} to {target.value}"
+        )
 
 
 def test_allowed_map_matches_implementation_exactly() -> None:

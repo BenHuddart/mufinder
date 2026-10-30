@@ -497,7 +497,7 @@ class TestHostCompositionChecks:
         run = scan_legacy_folder(root, host_lattice=HOST_LATTICE, host_species=["Si", "Si"]).runs[0]
 
         assert not run.importable
-        assert any("host atom(s)" in item for item in run.blockers)
+        assert any("host atoms" in item for item in run.blockers)
 
     def test_a_wrong_composition_is_blocked(self, tmp_path: Path) -> None:
         root = build_folder(tmp_path, sites=(1,))

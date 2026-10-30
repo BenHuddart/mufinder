@@ -24,6 +24,7 @@ cluster and are tracked in a job dashboard.
 | CASTEP keyword catalog discovery and generation | `docs/castep_keyword_catalog.rst` |
 | k-point spacing and grid round-trip rules | `docs/castep/kpoint_spacing_convention.rst` |
 | Feature surface per workflow | `docs/user_guide/overview.rst` and the user guide |
+| Wording of UI text: case, counts, ellipsis, Remove vs Delete | `docs/ui_text.rst` |
 | How this repository is organised for agents | `docs/agent_harness.rst` |
 
 ## Making a change
@@ -111,8 +112,7 @@ duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
   define a local copy of a helper that exists there.
 - Write behaviour tests through public entry points. Do not add `*_coverage.py` files;
   close a coverage gap in the sibling test file.
-- Every feature covers its normal path, its validation and failure modes, and its
-  persistence behaviour.
+- Every feature covers its normal path, validation and failure modes, and persistence.
 - `tests/test_agent_harness.py` enforces layer boundaries (including no Qt widgets outside
   `app`), the `MainWindow` handler, duplicate-method and coverage-file ratchets, the
   plot-canvas rules, the shared-homes table and this file's pointers; run `make harness`

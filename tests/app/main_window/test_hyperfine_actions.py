@@ -97,7 +97,7 @@ def test_use_in_magnetic_fields_confirms_before_replacing_a_coupling(
     assert form["hyperfine_coupling_unit"] == "angstrom^-3"
     assert float(form["hyperfine_coupling"]) < 0
     assert messages and messages[-1].startswith(
-        "Filled the hyperfine coupling of 1 Magnetic Fields form(s)."
+        "Filled the hyperfine coupling of 1 Magnetic Fields form."
     )
     assert (
         window._magnetic_field_view.collect_state()["hyperfine_coupling"]
@@ -183,6 +183,6 @@ def test_use_in_magnetic_fields_warns_when_the_form_shell_splits_a_tie(
     window._on_use_hyperfine_in_magnetic_fields(str(result.id))
 
     (message,) = messages
-    assert message.startswith("Filled the hyperfine coupling of 1 Magnetic Fields form(s).")
+    assert message.startswith("Filled the hyperfine coupling of 1 Magnetic Fields form.")
     assert "\n\nWarning:\nMagnetic Fields: Contact neighbours (nnn) = 1 keeps 1 of the 2" in message
     assert "nnn = 2 includes them all" in message

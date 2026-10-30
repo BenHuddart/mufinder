@@ -33,6 +33,7 @@ from mufinder.castep_io.types import (
     ValueWithUnit,
 )
 from mufinder.domain.models import Project, Structure
+from mufinder.domain.text import plural
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
 from mufinder.science.supercell_matching import detect_supercell_matrix_from_lattices
 from mufinder.workflow.bridge import StructureBridgeError, structure_to_spec
@@ -151,21 +152,17 @@ def summarize_kpoint_adjustments(
 
     lines = ["Each grid keeps the project's reciprocal-space density.", ""]
     for (cell, change), count in ordered[:max_groups]:
-        lines.append(f"• {cell}: {change} ({_rows(count)})")
+        lines.append(f"• {cell}: {change} ({plural(count, 'row')})")
     hidden = len(ordered) - max_groups
     if hidden > 0:
         lines.append(
             f"• and {hidden} more {'change' if hidden == 1 else 'changes'}; see Show Details."
         )
     return KpointAdjustmentSummary(
-        headline=f"K-point grid rescaled for {_rows(len(records))}.",
+        headline=f"K-point grid rescaled for {plural(len(records), 'row')}.",
         body="\n".join(lines),
         details="\n".join(record.message for record in records),
     )
-
-
-def _rows(count: int) -> str:
-    return f"{count} {'row' if count == 1 else 'rows'}"
 
 
 def find_keyword_spec(name: str):

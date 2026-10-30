@@ -126,6 +126,7 @@ from mufinder.app.energy_barriers_widget import (
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
+from mufinder.domain.text import plural
 from mufinder.services.legacy_import import LegacyFolderScan
 from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
 from mufinder.services.legacy_import_removal import (
@@ -319,7 +320,7 @@ from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
-from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase, partial_count_suffix
+from mufinder.app.workflow_table_utils import SelectionFeedback, partial_count_suffix
 from mufinder.services.hyperfine_results import (
     apply_magnetic_field_handoff,
     plan_magnetic_field_handoff,
@@ -1176,7 +1177,7 @@ class MainWindow(QMainWindow):
         self._project_home_button.setObjectName("projectHomeButton")
         self._project_home_button.setIcon(icon("project_home"))
         self._project_home_button.setIconSize(QSize(22, 22))
-        self._project_home_button.setToolTip("Show project home")
+        self._project_home_button.setToolTip("Show project home.")
         self._project_home_button.setEnabled(False)
         self._project_home_button.clicked.connect(self._show_project_home)
         project_tree_header_layout.addWidget(self._project_home_button)
@@ -1566,10 +1567,10 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations...")
+        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations…")
         self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
 
-        self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations...")
+        self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations…")
         self._remove_imported_action.triggered.connect(self._on_remove_imported_relaxations)
 
         file_menu.addSeparator()
@@ -1578,9 +1579,9 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
         setup_menu = self.menuBar().addMenu("Setup")
-        castep_action = setup_menu.addAction(icon("settings"), "CASTEP...")
+        castep_action = setup_menu.addAction(icon("settings"), "CASTEP…")
         castep_action.triggered.connect(self._open_castep_setup_dialog)
-        cluster_action = setup_menu.addAction(icon("cluster"), "HPC Clusters...")
+        cluster_action = setup_menu.addAction(icon("cluster"), "HPC Clusters…")
         cluster_action.triggered.connect(self._open_cluster_setup_dialog)
 
         view_menu = self.menuBar().addMenu("View")
@@ -1768,8 +1769,8 @@ class MainWindow(QMainWindow):
         if reconciled:
             count = len(reconciled)
             self.statusBar().showMessage(
-                f"{count} local job(s) were stopped because MuFinder closed "
-                "while they were in progress."
+                f"{plural(count, 'local job was', 'local jobs were')} stopped because MuFinder closed "
+                f"while {'it was' if count == 1 else 'they were'} in progress"
             )
         else:
             self.statusBar().showMessage(f"Opened project {self._document.project.name}")
@@ -3597,7 +3598,7 @@ class MainWindow(QMainWindow):
         try:
             self._project_service.save_project(self._document)
         except ValueError:
-            self.statusBar().showMessage("Comparison table title was updated, but autosave failed.")
+            self.statusBar().showMessage("Comparison table title was updated, but autosave failed")
             return
         self.statusBar().showMessage(f"Renamed comparison table to '{table.label}'")
 
@@ -3768,7 +3769,7 @@ class MainWindow(QMainWindow):
                 no_eligible_message=(
                     "Selected jobs must be failed, stopped, or cancelled for local resubmission."
                 ),
-                success_message=lambda count: f"Resubmitted {count} local job(s)",
+                success_message=lambda count: f"Resubmitted {plural(count, 'local job')}",
             )
 
         if cluster_jobs:
@@ -3786,7 +3787,7 @@ class MainWindow(QMainWindow):
                 reuse_existing_remote_files=True,
                 fresh_start_job_ids=fresh_start_job_ids,
                 success_message=lambda count, cluster: (
-                    f"Resubmitted {count} cluster job(s) on {cluster}"
+                    f"Resubmitted {plural(count, 'cluster job')} on {cluster}"
                 ),
             )
 
@@ -3912,7 +3913,7 @@ class MainWindow(QMainWindow):
             self._request_dashboard_flush(
                 failure_message="Retry retrieval was requested, but autosave failed.",
             )
-            self.statusBar().showMessage(f"Retrying retrieval for {retried} cluster job(s)")
+            self.statusBar().showMessage(f"Retrying retrieval for {plural(retried, 'cluster job')}")
 
     def _on_dismiss_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -3948,7 +3949,7 @@ class MainWindow(QMainWindow):
             self._request_dashboard_flush(
                 failure_message="Jobs were dismissed, but autosave failed.",
             )
-            self.statusBar().showMessage(f"Dismissed {dismissed} job(s) from the dashboard")
+            self.statusBar().showMessage(f"Dismissed {plural(dismissed, 'job')} from the dashboard")
 
     def _dispatch_dashboard_action(
         self, button: SelectionSnapshotPushButton, job_id: UUID, kind: str
@@ -4098,7 +4099,7 @@ class MainWindow(QMainWindow):
                 )
             )
         menu.addSeparator()
-        delete_action = menu.addAction("Delete...")
+        delete_action = menu.addAction("Delete…")
         delete_action.triggered.connect(
             lambda _checked=False: self._on_dashboard_delete_key_requested()
         )
@@ -4110,7 +4111,7 @@ class MainWindow(QMainWindow):
             return
         # Cancel and Dismiss act immediately, so they are confirmed here; Reset
         # asks its own clean-up question, which has a Cancel.
-        phrase = count_phrase(len(job_ids), ("job", "jobs"))
+        phrase = plural(len(job_ids), "job")
         if kind == "cancel" and not workflow_table_utils.confirm_destructive(
             self, "Cancel jobs", f"Cancel {phrase}?", "", f"Cancel {phrase}", "Keep running"
         ):
@@ -4272,14 +4273,12 @@ class MainWindow(QMainWindow):
 
         lines: list[str] = []
         if cancel_count:
-            lines.append(f"Cancel {count_phrase(cancel_count, ('running job', 'running jobs'))}")
+            lines.append(f"Cancel {plural(cancel_count, 'running job', 'running jobs')}")
         if reset_count:
-            lines.append(
-                f"Reset {count_phrase(reset_count, ('failed job', 'failed jobs'))} to ready"
-            )
+            lines.append(f"Reset {plural(reset_count, 'failed job', 'failed jobs')} to ready")
         if delete_count:
             lines.append(
-                f"Delete {count_phrase(delete_count, ('finished job record', 'finished job records'))} "
+                f"Delete {plural(delete_count, 'finished job record', 'finished job records')} "
                 "and linked results"
             )
         total = cancel_count + reset_count + delete_count
@@ -4287,11 +4286,11 @@ class MainWindow(QMainWindow):
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Apply to selected jobs")
-        message.setText(f"Apply to {count_phrase(total, ('selected job', 'selected jobs'))}?")
+        message.setText(f"Apply to {plural(total, 'selected job', 'selected jobs')}?")
         informative = "\n".join(f"\u2022 {line}" for line in lines)
         if skipped_imported_count:
             informative += (
-                f"\n\n{count_phrase(skipped_imported_count, ('imported job', 'imported jobs'))} "
+                f"\n\n{plural(skipped_imported_count, 'imported job', 'imported jobs')} "
                 "will be left as is: imported jobs cannot be reset."
             )
         message.setInformativeText(informative)
@@ -4361,9 +4360,9 @@ class MainWindow(QMainWindow):
         if not confirmed and not workflow_table_utils.confirm_destructive(
             self,
             "Delete jobs",
-            f"Delete {len(deletable_jobs)} selected job(s)?",
+            f"Delete {plural(len(deletable_jobs), 'selected job')}?",
             "This removes the selected job records and any linked run/result records.",
-            accept_label=f"Delete {count_phrase(len(deletable_jobs), ('job', 'jobs'))}",
+            accept_label=f"Delete {plural(len(deletable_jobs), 'job', 'jobs')}",
         ):
             return
 
@@ -4373,7 +4372,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
-        self.statusBar().showMessage(f"Deleted {len(deletable_jobs)} job(s)")
+        self.statusBar().showMessage(f"Deleted {plural(len(deletable_jobs), 'job')}")
 
     @staticmethod
     def _cutoff_key(value: float) -> str:
@@ -4824,7 +4823,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "CASTEP executable missing",
-                "Configure a CASTEP executable in Setup -> CASTEP before submitting jobs.",
+                "Configure a CASTEP executable in Setup > CASTEP before submitting jobs.",
             )
             return
         if not self._keyword_catalog_guard.confirm_submission():
@@ -4898,7 +4897,7 @@ class MainWindow(QMainWindow):
             message = (
                 success_message(outcome.submitted_count)
                 if success_message is not None
-                else f"Submitted {outcome.submitted_count} local job(s)"
+                else f"Submitted {plural(outcome.submitted_count, 'local job')}"
             )
             self.statusBar().showMessage(message)
 
@@ -5006,7 +5005,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "No configured clusters",
-                "Configure at least one cluster in Setup -> HPC Clusters before submitting.",
+                "Configure at least one cluster in Setup > HPC Clusters before submitting.",
             )
             return None
         if not self._keyword_catalog_guard.confirm_submission():
@@ -5119,7 +5118,7 @@ class MainWindow(QMainWindow):
             message = (
                 success_message(submitted, cluster_name)
                 if success_message is not None
-                else f"Submitted {submitted} cluster job(s) on {cluster_name}"
+                else f"Submitted {plural(submitted, 'cluster job')} on {cluster_name}"
             )
             self.statusBar().showMessage(message)
 
@@ -5439,7 +5438,7 @@ class MainWindow(QMainWindow):
             pending = total - len(results_seen)
             failed.append(
                 f"- Cluster submission stopped responding after 3 minutes; "
-                f"{pending} pending job(s) were cancelled."
+                f"{plural(pending, 'pending job was', 'pending jobs were')} cancelled."
             )
 
         # Jobs prepared but never submitted (cancelled mid-batch or timed out)
@@ -5477,7 +5476,7 @@ class MainWindow(QMainWindow):
             "Confirm remote deletion",
             "Delete all existing remote job directories?",
             "The following remote directories will be deleted before submission.",
-            accept_label=f"Delete {count_phrase(len(unique_dirs), ('directory', 'directories'))}",
+            accept_label=f"Delete {plural(len(unique_dirs), 'directory', 'directories')}",
             detailed_text="\n".join(f"- {path}" for path in unique_dirs),
         )
 
@@ -5508,7 +5507,7 @@ class MainWindow(QMainWindow):
             cancelled += 1
 
         if cancelled:
-            self.statusBar().showMessage(f"Cancellation requested for {cancelled} job(s)")
+            self.statusBar().showMessage(f"Cancellation requested for {plural(cancelled, 'job')}")
 
     def _inspect_failed_jobs(self, jobs: list[Job]) -> None:
         if self._document is None:
@@ -5568,7 +5567,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Imported jobs cannot be reset",
-                f"{imported_count} imported job(s) were skipped. They record calculations "
+                f"{plural(imported_count, 'imported job was', 'imported jobs were')} skipped. They record calculations "
                 "run outside MuFinder, and their directories hold the only copy of those "
                 "results.",
             )
@@ -5606,10 +5605,10 @@ class MainWindow(QMainWindow):
             )
             if cleanup_choice:
                 self.statusBar().showMessage(
-                    f"Reset {reset_count} failed job(s) and cleaned directories"
+                    f"Reset {plural(reset_count, 'failed job')} and cleaned directories"
                 )
             else:
-                self.statusBar().showMessage(f"Reset {reset_count} failed job(s)")
+                self.statusBar().showMessage(f"Reset {plural(reset_count, 'failed job')}")
 
     def _refresh_views_after_job_reset(self) -> None:
         """Repaint every workflow table that can show a just-reset job.
@@ -6245,7 +6244,7 @@ class MainWindow(QMainWindow):
         ]
         hidden = len(jobs) - len(lines)
         if hidden > 0:
-            lines.append(f"…and {hidden} more job(s).")
+            lines.append(f"…and {plural(hidden, 'more job')}.")
         return "\n".join(lines)
 
     def _failure_diagnostics_for_job(
@@ -6300,7 +6299,7 @@ class MainWindow(QMainWindow):
         offset only, so an inspect on a runaway multi-hundred-MB job output
         never loads the whole file into memory; a partial leading line (cut
         mid-line by the seek) is dropped and a truncation marker is prefixed,
-        matching the "... [truncated]" convention used elsewhere in this file.
+        matching the "… [truncated]" convention used elsewhere in this file.
         """
 
         limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
@@ -6338,7 +6337,7 @@ class MainWindow(QMainWindow):
             excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, stop))
             excerpts.append(excerpt)
 
-        return "\n\n...\n\n".join(excerpts)
+        return "\n\n…\n\n".join(excerpts)
 
     @classmethod
     def _read_text_excerpt(cls, path: Path, *, max_chars: int = 12000) -> str:
@@ -6352,13 +6351,13 @@ class MainWindow(QMainWindow):
             return "[File is empty]"
         if len(stripped) <= max_chars:
             return stripped
-        return stripped[:max_chars] + "\n... [truncated]"
+        return stripped[:max_chars] + "\n… [truncated]"
 
     def _prompt_failed_job_cleanup(self, job_count: int) -> bool | None:
         answer = workflow_table_utils.confirm_choice(
             self,
             "Reset failed jobs",
-            f"Reset {job_count} failed job(s) to the 'defined' state?",
+            f"Reset {plural(job_count, 'failed job')} to the 'defined' state?",
             [("clean", "Clean and reset"), ("keep", "Reset, keep files"), ("cancel", "Cancel")],
             default="keep",
             escape="cancel",
@@ -6812,7 +6811,7 @@ class MainWindow(QMainWindow):
             config = by_name.get(target.casefold())
             if config is None:
                 failures.append(
-                    f"- {target}: cluster is not configured. Set it in Setup -> HPC Clusters."
+                    f"- {target}: cluster is not configured. Set it in Setup > HPC Clusters."
                 )
                 continue
             try:
@@ -6924,8 +6923,8 @@ class MainWindow(QMainWindow):
             failure_message="Jobs were stopped by the watchdog, but autosave failed."
         )
         self.statusBar().showMessage(
-            f"{stopped} job(s) were stopped by the job watchdog because no runner "
-            "was tracking them."
+            f"{plural(stopped, 'job was', 'jobs were')} stopped by the job watchdog because no runner "
+            f"was tracking {'it' if stopped == 1 else 'them'}"
         )
 
     def _sync_cluster_tracking_from_document(self) -> None:
@@ -7072,7 +7071,7 @@ class MainWindow(QMainWindow):
             self._convergence_controller.refresh_view()
             self._refresh_journal_view()
             self.statusBar().showMessage(
-                f"Using existing cutoff setup with {len(config.sweep_values)} cutoff job(s)"
+                f"Using existing cutoff setup with {plural(len(config.sweep_values), 'cutoff job')}"
             )
             return
 
@@ -7207,9 +7206,9 @@ class MainWindow(QMainWindow):
         thread.finished.connect(thread.deleteLater)
         method_label = "random" if method == "random" else "near-element"
         self._muon_generation_view.set_generation_busy(
-            True, f"Preparing {method_label} generation..."
+            True, f"Preparing {method_label} generation…"
         )
-        self.statusBar().showMessage(f"Generating {method_label} muon sites...")
+        self.statusBar().showMessage(f"Generating {method_label} muon sites…")
         thread.start()
 
     def _on_cancel_generation_requested(self) -> None:
@@ -7228,7 +7227,7 @@ class MainWindow(QMainWindow):
         # The run may have finished while the question was open.
         if self._muon_generation_thread is thread:
             thread.cancel()
-            self._muon_generation_view.set_generation_progress(0, 1, "Cancelling...")
+            self._muon_generation_view.set_generation_progress(0, 1, "Cancelling…")
 
     def _muon_generation_blocks_host_change(self) -> bool:
         """Refuse a host change while a generation computes sites for the current host."""
@@ -7286,7 +7285,7 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.set_generation_progress(
             len(sites),
             max(len(sites), 1),
-            f"Generated {len(sites)} site(s)",
+            f"Generated {plural(len(sites), 'site')}",
         )
         self._refresh_muon_generation_table()
         if used_spacing is not None:
@@ -7353,7 +7352,7 @@ class MainWindow(QMainWindow):
                 suffix += f" (estimated spacing {estimated:.2f} A; used {used:.2f} A)"
             else:
                 suffix += f" (estimated spacing {estimated:.2f} A)"
-        self.statusBar().showMessage(f"Generated {len(created)} muon site(s){suffix}")
+        self.statusBar().showMessage(f"Generated {plural(len(created), 'muon site')}{suffix}")
 
     def _on_delete_muon_candidates_requested(self, raw_site_ids: object) -> None:
         if self._document is None:
@@ -7377,7 +7376,7 @@ class MainWindow(QMainWindow):
             )
         self._refresh_muon_generation_table()
         self._refresh_journal_view()
-        self.statusBar().showMessage(f"Deleted {len(removed)} generated muon site(s)")
+        self.statusBar().showMessage(f"Deleted {plural(len(removed), 'generated muon site')}")
 
     def _on_cluster_muon_positions_requested(self, payload: object) -> None:
         if self._document is None:
@@ -7410,7 +7409,7 @@ class MainWindow(QMainWindow):
         self._refresh_muon_generation_table()
         self._muon_generation_view.select_site_ids(clustered_ids)
         self._refresh_journal_view()
-        self.statusBar().showMessage(f"Clustered {len(clustered)} muon position(s)")
+        self.statusBar().showMessage(f"Clustered {plural(len(clustered), 'muon position')}")
 
     def _on_create_muon_relaxation_jobs_requested(self, raw_site_ids: object) -> None:
         if self._document is None:
@@ -7465,7 +7464,7 @@ class MainWindow(QMainWindow):
             muon_charge_state_label(charge_state) for charge_state in charge_states
         )
         self.statusBar().showMessage(
-            f"Staged {len(staged)} muon relaxation position(s) for {charge_label}"
+            f"Staged {plural(len(staged), 'muon relaxation position')} for {charge_label}"
         )
 
     def _on_muon_form_state_changed(self, state: dict) -> None:
@@ -7582,14 +7581,14 @@ class MainWindow(QMainWindow):
         route = item.data(0, Qt.ItemDataRole.UserRole)
         menu = QMenu(self._project_tree)
         if (analysis_id := self._relaxation_analysis_workspace_id_from_route(route)) is not None:
-            action = menu.addAction("Delete Analysis...")
+            action = menu.addAction("Delete Analysis…")
             action.triggered.connect(
                 lambda _checked=False, wid=analysis_id: self._delete_relaxation_analysis_workspace(
                     wid
                 )
             )
         elif (magnetic_id := self._magnetic_field_workspace_id_from_route(route)) is not None:
-            action = menu.addAction("Delete Workspace...")
+            action = menu.addAction("Delete Workspace…")
             action.triggered.connect(
                 lambda _checked=False, wid=magnetic_id: self._delete_magnetic_field_workspace(wid)
             )
@@ -7708,7 +7707,7 @@ class MainWindow(QMainWindow):
             return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
         self.statusBar().showMessage(
-            f"Added {len(selected)} relaxation result(s) to the analysis workspace"
+            f"Added {plural(len(selected), 'relaxation result')} to the analysis workspace"
         )
 
     # --- Muon Sites summary (pinned analyses) -------------------------------
@@ -7717,8 +7716,8 @@ class MainWindow(QMainWindow):
     def _muon_sites_summary_placeholder(charge_state: str) -> str:
         label = muon_charge_state_label(charge_state)
         return (
-            f"No {label} analysis is pinned yet. Use “Go to Analysis” to cluster the "
-            f"relaxed {label} sites, then choose “Pin to Summary” to bring the distinct "
+            f"No {label} analysis is pinned yet. Use 'Go to Analysis' to cluster the "
+            f"relaxed {label} sites, then choose 'Pin to Summary' to bring the distinct "
             "sites here."
         )
 
@@ -7827,7 +7826,7 @@ class MainWindow(QMainWindow):
         )
         if not resolved:
             self.statusBar().showMessage(
-                "The pinned analysis has changed — opened the Analysis tab instead."
+                "The pinned analysis has changed — opened the Analysis tab instead"
             )
 
     def _on_open_muon_analysis_requested(self, workspace_id: str) -> None:
@@ -9374,7 +9373,7 @@ class MainWindow(QMainWindow):
     def _begin_legacy_scan(self, root: Path, host: Structure) -> None:
         """Scan ``root`` on a worker thread, then review and commit."""
 
-        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations...")
+        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations…")
         if self._import_legacy_action is not None:
             self._import_legacy_action.setEnabled(False)
         self._legacy_scan_host = host
@@ -9393,7 +9392,7 @@ class MainWindow(QMainWindow):
     def _on_legacy_scan_progress(self, done: int, total: int) -> None:
         root = self._legacy_scan_root
         name = root.name if root is not None else "folder"
-        self.statusBar().showMessage(f"Scanning {name}: relaxation {done} of {total}...")
+        self.statusBar().showMessage(f"Scanning {name}: relaxation {done} of {total}…")
 
     @Slot(str)
     def _on_legacy_scan_failed(self, message: str) -> None:
@@ -9483,15 +9482,17 @@ class MainWindow(QMainWindow):
             failure_message="Legacy relaxations were imported, but autosave failed.",
         )
 
-        messages = [f"Imported {len(outcome.imported)} relaxation(s)."]
+        messages = [f"Imported {plural(len(outcome.imported), 'relaxation')}."]
         if outcome.skipped:
-            messages.append(f"{len(outcome.skipped)} were skipped.")
+            messages.append(f"{plural(len(outcome.skipped), 'run was', 'runs were')} skipped.")
         row_warnings = [note for item in outcome.imported for note in item.warnings]
         if row_warnings:
             messages.append("")
             messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
         QMessageBox.information(self, "Import complete", "\n".join(messages))
-        self.statusBar().showMessage(f"Imported {len(outcome.imported)} legacy relaxation(s)")
+        self.statusBar().showMessage(
+            f"Imported {plural(len(outcome.imported), 'legacy relaxation')}"
+        )
 
     def _on_remove_imported_relaxations(self) -> None:
         """Remove one import batch, or explain why it cannot be removed.
@@ -9516,7 +9517,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        labels = [f"{label} ({count} relaxation(s))" for label, count, _batch_id in batches]
+        labels = [f"{label} ({plural(count, 'relaxation')})" for label, count, _batch_id in batches]
         choice, accepted = QInputDialog.getItem(
             self, "Remove Imported Relaxations", "Import batch", labels, 0, False
         )
@@ -9546,12 +9547,10 @@ class MainWindow(QMainWindow):
         if not workflow_table_utils.confirm_destructive(
             self,
             "Remove imported relaxations?",
-            f"Permanently remove {len(plan.targets)} imported relaxation(s) and delete "
+            f"Permanently remove {plural(len(plan.targets), 'imported relaxation')} and delete "
             "their job directories, including the archived original input files?",
             "MuFinder did not run these calculations and cannot recreate them.",
-            accept_label=(
-                f"Remove {count_phrase(len(plan.targets), ('relaxation', 'relaxations'))}"
-            ),
+            accept_label=(f"Remove {plural(len(plan.targets), 'relaxation', 'relaxations')}"),
         ):
             return
 
@@ -9581,7 +9580,7 @@ class MainWindow(QMainWindow):
 
         if errors:
             QMessageBox.warning(self, "Removal issues", "\n".join(errors))
-        self.statusBar().showMessage(f"Removed {removed} imported relaxation(s)")
+        self.statusBar().showMessage(f"Removed {plural(removed, 'imported relaxation')}")
 
     def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:
         """Return the widget's form state with ``targets``' rows dropped."""
@@ -10191,7 +10190,7 @@ class MainWindow(QMainWindow):
         if isinstance(value, ValueWithUnit):
             return f"{value.value} {value.unit}".strip()
         if isinstance(value, BlockSection):
-            return f"%BLOCK {value.name} ({len(value.rows)} row(s))"
+            return f"%BLOCK {value.name} ({plural(len(value.rows), 'row')})"
         if isinstance(value, (list, tuple)):
             return ", ".join(str(entry) for entry in value)
         if isinstance(value, dict):
@@ -10517,7 +10516,7 @@ class MainWindow(QMainWindow):
         ]
         skipped = [f"{target.title}: {target.error}" for target in targets if target.error]
         ambiguous = [f"{target.title}: {target.warning}" for target in targets if target.warning]
-        message = f"Filled the hyperfine coupling of {changed} Magnetic Fields form(s)."
+        message = f"Filled the hyperfine coupling of {plural(changed, 'Magnetic Fields form')}."
         if lines:
             message += "\n\n" + "\n".join(lines)
         if ambiguous:
@@ -10615,7 +10614,7 @@ class MainWindow(QMainWindow):
         self._refresh_energy_barriers_view()
         self._refresh_jobs_table()
         self._refresh_journal_view()
-        self.statusBar().showMessage(f"Deleted {len(keys)} energy-barrier path(s)")
+        self.statusBar().showMessage(f"Deleted {plural(len(keys), 'energy-barrier path')}")
         self._persist_document_ui_state(
             failure_message="Energy Barriers paths were removed, but autosave failed."
         )
@@ -10715,7 +10714,7 @@ class MainWindow(QMainWindow):
         self._refresh_uep_rows()
         self._refresh_journal_view()
         self.statusBar().showMessage(
-            f"Configured {len(config.rows)} UEP source job(s); input files will be generated on submission"
+            f"Configured {plural(len(config.rows), 'UEP source job')}; input files will be generated on submission"
         )
 
     def _on_open_uep_analysis_requested(self, label: object) -> None:

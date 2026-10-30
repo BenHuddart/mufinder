@@ -3,7 +3,7 @@ Generate Comparison Table
 
 The comparison table checks how well a DFT-relaxed host reproduces the
 experimental structure you started from. In ``Pristine Relaxation``, click
-``Generate Comparison Table...`` to compare the project's active
+``Generate Comparison Table…`` to compare the project's active
 (experimental) host structure against one or more completed pristine-relaxation
 structures. MuFinder normalizes the cells into a common frame, matches atoms
 under periodic boundary conditions, and reports lattice, displacement, bonding,
@@ -26,7 +26,7 @@ Running the workflow
 --------------------
 
 1. **Open the page.** Select ``Pristine Relaxation`` in the navigator.
-2. **Start the comparison.** Click ``Generate Comparison Table...``.
+2. **Start the comparison.** Click ``Generate Comparison Table…``.
 3. **Choose the relaxations.** In the ``Generate Comparison Table`` dialog, tick
    ``Include`` for one or more completed pristine-relaxation jobs. Each row
    shows the job's ``Label``, ``Supercell``, ``Status``, ``Total Energy (eV)``,
@@ -42,11 +42,11 @@ Running the workflow
       ``Generate Comparison Table`` with the CoF₂ pristine relaxation ticked.
 5. **Read the table.** MuFinder opens the new table, listed under ``Pristine
    Relaxation`` in the project tree. It is saved with the project.
-6. **Rename or remove it.** The title at the top of an existing table stays
+6. **Rename or delete it.** The title at the top of an existing table stays
    editable: editing it updates the table's label in the project tree and is
-   saved with the project. The ``Remove`` button at the top right deletes the
-   table after a confirmation prompt, with ``No`` as the default.
-7. **Export it (optional).** Click ``Export CSV...`` (see `Export`_).
+   saved with the project. The ``Delete`` button at the top right deletes the
+   table after a confirmation prompt, with ``Cancel`` as the default.
+7. **Export it (optional).** Click ``Export CSV…`` (see `Export`_).
 
 The comparison table
 --------------------
@@ -475,7 +475,7 @@ Important details:
 Export
 ------
 
-Use ``Export CSV...`` in the comparison view to export the displayed values for
+Use ``Export CSV…`` in the comparison view to export the displayed values for
 external analysis or record-keeping.
 
 Known limitations

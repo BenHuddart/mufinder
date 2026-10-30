@@ -950,10 +950,10 @@ def test_quantum_controller_configure_request_edits_a_defined_or_dismissed_job(
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        (JobStatus.RUNNING, "phonon job is running; cancel it, then use Reset Failed Jobs..."),
+        (JobStatus.RUNNING, "phonon job is running; cancel it, then use Reset Failed Jobs…"),
         (JobStatus.QUEUED, "phonon job is queued; cancel it"),
-        (JobStatus.FAILED, "phonon job is failed; use Reset Failed Jobs... to edit"),
-        (JobStatus.CANCELLED, "phonon job is cancelled; use Reset Failed Jobs..."),
+        (JobStatus.FAILED, "phonon job is failed; use Reset Failed Jobs… to edit"),
+        (JobStatus.CANCELLED, "phonon job is cancelled; use Reset Failed Jobs…"),
         (JobStatus.COMPLETED, "phonon job has completed; delete it from the Job Dashboard"),
     ],
 )

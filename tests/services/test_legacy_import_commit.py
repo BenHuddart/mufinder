@@ -434,7 +434,7 @@ class TestJournal:
         assert len(entries) == 1
         assert entries[0].title == "Legacy relaxations imported"
         assert "read-only" in entries[0].body
-        assert "2 muon relaxation(s)" in entries[0].body
+        assert "2 muon relaxations" in entries[0].body
 
     def test_the_entry_flags_skipped_runs_and_conflicts(
         self, tmp_path: Path, document: ProjectDocument, host_structure: Structure

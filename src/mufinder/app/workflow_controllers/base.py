@@ -39,6 +39,7 @@ from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
+from mufinder.domain.text import plural
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_file_cleanup import JobFileCleanup
@@ -141,8 +142,8 @@ def _success_message(target: str, skipped: int) -> Callable[..., str]:
     rows = "row" if skipped == 1 else "rows"
     note = f"; skipped {skipped} selected {rows} that {'was' if skipped == 1 else 'were'} not ready"
     if target == "local":
-        return lambda count: f"Submitted {count} local job(s){note}"
-    return lambda count, cluster: f"Submitted {count} cluster job(s) on {cluster}{note}"
+        return lambda count: f"Submitted {plural(count, 'local job')}{note}"
+    return lambda count, cluster: f"Submitted {plural(count, 'cluster job')} on {cluster}{note}"
 
 
 class WorkflowJobController:

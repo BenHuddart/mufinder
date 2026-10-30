@@ -35,7 +35,7 @@ class MuFinderSplashScreen(QSplashScreen):
         super().__init__(self._make_canvas(self._fallback_device_pixel_ratio()))
         ensure_fonts_loaded()
         self._progress = 0
-        self._message = "Starting MuFinder..."
+        self._message = "Starting MuFinder…"
         self._logo = self._load_logo()
         self._title_font_family = self._best_font_family(_TITLE_FONT_CANDIDATES, fallback="Serif")
         self._body_font_family = self._best_font_family(_BODY_FONT_CANDIDATES, fallback="Helvetica")

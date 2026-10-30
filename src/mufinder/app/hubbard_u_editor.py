@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.theme import style_section_title, track_item_view_corners
 from mufinder.castep_io.types import BlockSection
+from mufinder.domain.text import plural
 
 ORBITALS: tuple[str, ...] = ("s", "p", "d", "f")
 HUBBARD_UNITS: tuple[str, ...] = ("eV", "Ha")
@@ -46,7 +47,7 @@ def summarize_hubbard_u(value: BlockSection | None) -> str:
     try:
         entries = hubbard_entries_from_block(value)
     except ValueError:
-        return f"{len(value.rows)} row(s)"
+        return plural(len(value.rows), "row")
     unit = value.unit or "eV"
     if not entries:
         return "Not set"

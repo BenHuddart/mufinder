@@ -180,6 +180,6 @@ def test_read_log_tail_truncates_large_files(tmp_path: Path) -> None:
 
     assert read_log_tail(path) == path.read_text(encoding="utf-8")
     tail = read_log_tail(path, max_bytes=20)
-    assert tail.startswith("[... truncated] ...\n")
+    assert tail.startswith("[… truncated] …\n")
     assert tail.endswith("last line\n")
     assert "first line" not in tail

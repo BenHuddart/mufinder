@@ -110,7 +110,7 @@ class HostStructureWidget(QWidget):
 
         self._load_button = QPushButton("Load Structure (.cif/.mcif/.cell)")
         self._load_button.clicked.connect(self.load_requested.emit)
-        self._supercell_button = QPushButton("Supercell Editor...")
+        self._supercell_button = QPushButton("Supercell Editor…")
         self._supercell_button.setEnabled(False)
         self._supercell_button.clicked.connect(self._on_supercell_preview_requested)
 

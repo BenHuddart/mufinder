@@ -133,7 +133,7 @@ first half of that path.
 
    The 1 → 1′ hops and the 1 → 2 hop that the NEB band follows.
 
-``View...`` on the 1 → 2 row shows the hop in the pristine supercell, here
+``View…`` on the 1 → 2 row shows the hop in the pristine supercell, here
 viewed down a, where the two muon positions near the bottom of the cell stand
 clear of the atom columns.
 

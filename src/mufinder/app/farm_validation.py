@@ -21,6 +21,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from mufinder.domain.text import plural
+
 
 @dataclass(frozen=True, slots=True)
 class FarmRankVerdict:
@@ -62,7 +64,7 @@ def check_farm_counts(
         return FarmRankVerdict(
             blocking_message=(
                 f"{_describe(farmed)} configured for task farming, which needs multiple "
-                "MPI ranks. Set up mpirun in Setup -> CASTEP, or set the farm count back "
+                "MPI ranks. Set up mpirun in Setup > CASTEP, or set the farm count back "
                 "to 1 in Configure."
             )
         )
@@ -84,7 +86,7 @@ def check_farm_counts(
         return FarmRankVerdict(
             warning_message=(
                 f"{available} {rank_label} do not divide evenly into "
-                f"{_join(str(count) for count in uneven)} farms. At least {idle} rank(s) "
+                f"{_join(str(count) for count in uneven)} farms. At least {plural(idle, 'rank')} "
                 "will sit idle for the whole run."
             )
         )

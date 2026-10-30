@@ -309,5 +309,5 @@ def test_journal_widget_rebuilds_when_the_last_record_was_replaced(qapp) -> None
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     bodies = [label.text() for label in widget.findChildren(QLabel, "journalEntryBody")]
-    assert bodies[-1] == "Generated 0 muon site(s) using grid."
+    assert bodies[-1] == "Generated 0 muon sites using grid."
     widget.close()

@@ -285,7 +285,7 @@ def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> Non
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Criteria", "..."),
+            ("Criteria", "…"),
         ],
         snapshot={
             "default_value": 550.0,
@@ -307,7 +307,7 @@ def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> Non
     widget.set_cutoff_panel(
         summary_rows=[
             ("Project default", "550 eV"),
-            ("Criteria", "..."),
+            ("Criteria", "…"),
         ],
         snapshot={
             "default_value": 550.0,

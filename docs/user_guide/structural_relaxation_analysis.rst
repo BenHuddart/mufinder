@@ -38,13 +38,13 @@ Running the workflow
 2. **Add a row.** Click ``Add Job``. Each row is one relaxation job, labelled
    ``relax_1``, ``relax_2`` and so on.
 3. **Choose the cell.** In the row's ``Supercell`` drop-down, pick ``Unit
-   cell`` or a saved supercell, or choose ``Manage Supercells...`` to open the
+   cell`` or a saved supercell, or choose ``Manage Supercells…`` to open the
    :doc:`/user_guide/supercells`.
 4. **Decide whether the cell may change.** The ``Fix Cell`` drop-down reads
    ``No (relax)`` by default, so the lattice relaxes as well as the atoms.
    Choose ``Yes (fixed)`` to relax the atomic positions in the starting cell.
-5. **Check the parameters.** Click the row's ``Configure...`` button, or select
-   rows and click ``Configure Selected Parameters...``. The shared parameter
+5. **Check the parameters.** Click the row's ``Configure…`` button, or select
+   rows and click ``Configure Selected Parameters…``. The shared parameter
    dialog lists ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy
    Tolerance`` and ``K-Point MP Grid`` first.
 6. **Run the jobs.** Set the ``Job name prefix`` (``pristine_relax`` by
@@ -55,7 +55,7 @@ Running the workflow
 7. **Read the relaxed lattice.** When a job completes, its ``a (Ang)``,
    ``b (Ang)`` and ``c (Ang)`` cells fill in. A job whose CASTEP output
    reports incomplete geometry convergence is marked failed.
-8. **Compare with experiment.** Click ``Generate Comparison Table...`` (see
+8. **Compare with experiment.** Click ``Generate Comparison Table…`` (see
    :doc:`/user_guide/comparison_table`), or use a completed relaxation as the
    comparison host in `Displacement analysis`_.
 
@@ -74,7 +74,7 @@ The ``Relaxation Jobs`` table has one row per job:
 ``Label``
    The job's name.
 ``Supercell``
-   ``Unit cell`` or a saved supercell, plus ``Manage Supercells...``.
+   ``Unit cell`` or a saved supercell, plus ``Manage Supercells…``.
 ``Fix Cell``
    ``Yes (fixed)`` or ``No (relax)``. MuFinder writes a fixed cell as
    ``FIX_ALL_CELL``.
@@ -83,7 +83,7 @@ The ``Relaxation Jobs`` table has one row per job:
 ``a (Ang)``, ``b (Ang)``, ``c (Ang)``
    The relaxed lattice lengths, once the job has completed.
 ``Parameters``
-   ``Configure...``, which opens the shared CASTEP parameter dialog for the
+   ``Configure…``, which opens the shared CASTEP parameter dialog for the
    row.
 
 Generated jobs take the project default XC functional, cutoff energy and
@@ -144,13 +144,13 @@ Running the workflow
    relaxations of the same charge state, ticking ``Add`` for each. The dialog
    reports each relaxation's energy as ``dE vs workspace min (eV)``, so a
    negative value means that adding it would reset the workspace zero.
-4. **Cluster the sites.** Click ``Clustering...``, choose a ``Method`` and
+4. **Cluster the sites.** Click ``Clustering…``, choose a ``Method`` and
    click ``Apply Clustering`` (see `Clustering`_).
 5. **Inspect distortions (optional).** Click ``Analyse Displacements`` (see
    `Displacement analysis`_).
 6. **Pin the result.** Click ``Pin to Summary`` to copy the distinct sites to
    the ``Muon Sites`` summary page (see `The Muon Sites summary`_).
-7. **Export (optional).** Click ``Export CIF...`` for the host with every
+7. **Export (optional).** Click ``Export CIF…`` for the host with every
    muon position (see `Exporting to CIF`_), or ``Export Relaxed Structures``
    for the relaxed supercells themselves (see `Exporting relaxed structures`_).
 
@@ -182,9 +182,9 @@ The header of each workspace has:
    ``Positive muon`` or ``Muonium``, fixed when the workspace was created.
 ``Show shifted positions``
    Display option described under `Site ordering`_.
-``Delete Analysis...``
+``Delete Analysis…``
    Removes the workspace (see `Deleting a workspace`_).
-``Add Structure to Analysis``, ``Clustering...``, ``Analyse Displacements``, ``Pin to Summary``, ``Export CIF...``
+``Add Structure to Analysis``, ``Clustering…``, ``Analyse Displacements``, ``Pin to Summary``, ``Export CIF…``
    The steps above.
 ``Export Relaxed Structures``
    A drop-down that saves the relaxed supercells of the selected sites (see `Exporting
@@ -198,7 +198,7 @@ the application is running; deleting one is.
 Clustering
 ~~~~~~~~~~
 
-The ``Clustering...`` button opens the ``Clustering - <workspace>`` dialog,
+The ``Clustering…`` button opens the ``Clustering - <workspace>`` dialog,
 which provides three methods, selected with ``Method``. Click ``Apply
 Clustering`` to store the result on the workspace.
 
@@ -303,8 +303,8 @@ from the muon.
 Deleting a workspace
 ~~~~~~~~~~~~~~~~~~~~
 
-Click ``Delete Analysis...`` in a workspace's header, or right-click the
-workspace's node in the project tree and choose ``Delete Analysis...``. MuFinder
+Click ``Delete Analysis…`` in a workspace's header, or right-click the
+workspace's node in the project tree and choose ``Delete Analysis…``. MuFinder
 asks for confirmation first, with ``Cancel`` as the default. If the deleted
 workspace was the one showing, the Analysis page stays open.
 
@@ -370,7 +370,7 @@ with distinct ``Mu1``, ``Mu2``, ... ``_atom_site_label`` values. The file is
 written in P1 with every atom listed explicitly, since muon sites generally
 break the host's symmetry.
 
-- In the ``Analysis`` tab, each workspace's ``Export CIF...`` button exports
+- In the ``Analysis`` tab, each workspace's ``Export CIF…`` button exports
   every relaxed muon position currently in that workspace: one CIF site per
   completed relaxation added to the workspace, whether or not clustering has
   been applied. Use this when you want the full set of raw relaxation endpoints
@@ -489,7 +489,7 @@ continuation is recorded in the Journal.
 
 The job dashboard's ``Resubmit`` also resumes from the checkpoint when you
 choose ``Continue from the checkpoint`` (see :doc:`/getting_started/running_jobs`).
-Neither route deletes the run directory's contents. ``Reset Failed Jobs...``
+Neither route deletes the run directory's contents. ``Reset Failed Jobs…``
 with its optional clean-up does: it deletes the local ``.check`` and
 ``.castep`` files and ``{seed}-out.cell``, keeping only the ``.cell`` and
 ``.param`` inputs, although it never cleans a folder another job still uses.

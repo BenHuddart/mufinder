@@ -10,6 +10,7 @@ from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import MANUAL_DEFAULT_METHOD, ProvenanceRecord
+from mufinder.domain.text import plural
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,14 +293,15 @@ def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
                 conflicts += len(entry["conflicts"])
 
     body = (
-        f"Imported {imported} muon relaxation(s) from {folder}. These were run "
+        f"Imported {plural(imported, 'muon relaxation')} from {folder}. These were run "
         "outside MuFinder; their rows are read-only."
     )
     if skipped:
-        body += f" {skipped} run(s) were skipped."
+        body += f" {plural(skipped, 'run was', 'runs were')} skipped."
     if conflicts:
         body += (
-            f" {conflicts} parameter disagreement(s) were resolved in favour of the "
+            f" {plural(conflicts, 'parameter disagreement was', 'parameter disagreements were')} "
+            "resolved in favour of the "
             "value the calculation actually used."
         )
 
@@ -321,7 +323,7 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
 
     labels = record.parameters.get("labels")
     count = len(labels) if isinstance(labels, list) else 0
-    body = f"Removed {count} imported muon relaxation(s) from the project."
+    body = f"Removed {plural(count, 'imported muon relaxation')} from the project."
     if record.parameters.get("deleted_files"):
         body += " Their job directories were deleted, including the archived original input files."
     return _entry(
@@ -344,7 +346,7 @@ def _configure_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="milestone",
         title="Cutoff convergence configured",
-        body=f"Prepared a cutoff convergence sweep with {count} cutoff value(s).",
+        body=f"Prepared a cutoff convergence sweep with {plural(count, 'cutoff value')}.",
     )
 
 
@@ -356,7 +358,7 @@ def _configure_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="milestone",
         title="K-point convergence configured",
-        body=f"Prepared a k-point convergence sweep with {count} grid value(s).",
+        body=f"Prepared a k-point convergence sweep with {plural(count, 'grid value')}.",
     )
 
 
@@ -368,7 +370,7 @@ def _configure_pristine_relaxation_entry(record: ProvenanceRecord) -> JournalEnt
         record,
         stamp_kind="milestone",
         title="Pristine relaxation configured",
-        body=f"Prepared {count} pristine relaxation job row(s) for later submission.",
+        body=f"Prepared {plural(count, 'pristine relaxation job row')} for later submission.",
     )
 
 
@@ -380,7 +382,7 @@ def _configure_uep_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="milestone",
         title="UEP source workflow configured",
-        body=f"Prepared {count} UEP source job row(s) for later submission.",
+        body=f"Prepared {plural(count, 'UEP source job row')} for later submission.",
     )
 
 
@@ -478,7 +480,7 @@ def _generate_candidates_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="milestone",
         title="Muon sites generated",
-        body=f"Generated {count} muon site(s) using {method}.",
+        body=f"Generated {plural(count, 'muon site')} using {method}.",
     )
 
 
@@ -489,7 +491,7 @@ def _generation_partial_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="warning",
         title="Site generation stopped short",
-        body=f"Requested {requested} site(s) but only generated {generated}.",
+        body=f"Requested {plural(requested, 'site')} but only generated {generated}.",
     )
 
 
@@ -518,7 +520,7 @@ def _submit_jobs_entry(record: ProvenanceRecord) -> JournalEntry:
     count = len(labels) if isinstance(labels, list) else _int_param(record, "job_count") or 0
     target = _text_param(record, "execution_target") or "local"
     label_text = _label_summary(labels)
-    body = f"Submitted {count} job(s) to {target}."
+    body = f"Submitted {plural(count, 'job')} to {target}."
     if label_text:
         body += f" Jobs: {label_text}."
     return _entry(
@@ -580,7 +582,7 @@ def _create_comparison_table_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="success",
         title="Comparison table created",
-        body=f"Created '{table_label}' using {count} relaxed DFT structure(s).",
+        body=f"Created '{table_label}' using {plural(count, 'relaxed DFT structure')}.",
     )
 
 
@@ -610,10 +612,10 @@ def _job_summary_text(record: ProvenanceRecord) -> str:
             pass
     derived_count = _int_param(record, "derived_structure_count")
     if derived_count:
-        parts.append(f"Produced {derived_count} derived structure(s).")
+        parts.append(f"Produced {plural(derived_count, 'derived structure')}.")
     warnings_count = _int_param(record, "warnings_count")
     if warnings_count:
-        parts.append(f"Recorded {warnings_count} warning(s).")
+        parts.append(f"Recorded {plural(warnings_count, 'warning')}.")
     error_message = _text_param(record, "error_message")
     if error_message:
         parts.append(error_message.rstrip(".") + ".")

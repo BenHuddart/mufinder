@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.farm_validation import check_farm_counts
+from mufinder.domain.text import plural
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +58,9 @@ class LocalSubmissionDialog(QDialog):
         layout = QVBoxLayout(self)
 
         summary = QLabel(
-            f"You are about to run {len(self._job_labels)} job(s): "
+            f"You are about to run {plural(len(self._job_labels), 'job')}: "
             + ", ".join(self._job_labels[:6])
-            + ("..." if len(self._job_labels) > 6 else "")
+            + ("…" if len(self._job_labels) > 6 else "")
         )
         summary.setWordWrap(True)
         layout.addWidget(summary)
@@ -111,7 +112,7 @@ class LocalSubmissionDialog(QDialog):
             self._core_spin.setRange(1, 1)
             self._core_spin.setValue(1)
             self._core_hint.setText(
-                "Set up mpirun in Setup -> CASTEP to enable multi-core local runs."
+                "Set up mpirun in Setup > CASTEP to enable multi-core local runs."
             )
 
         self._button_box = QDialogButtonBox(

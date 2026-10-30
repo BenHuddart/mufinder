@@ -63,7 +63,8 @@ class KeychainCredentialError(ConnectionError):
     ) -> None:
         self.issues = list(issues)
         missing = ", ".join(f"{issue.service}/{issue.account}" for issue in self.issues)
-        super().__init__(f"Missing {store_name} credential(s): {missing}")
+        noun = "credential" if len(self.issues) == 1 else "credentials"
+        super().__init__(f"Missing {store_name} {noun}: {missing}")
 
 
 SubprocessRun = Callable[..., subprocess.CompletedProcess[str]]

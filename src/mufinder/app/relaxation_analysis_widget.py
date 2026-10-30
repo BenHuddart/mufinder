@@ -2102,7 +2102,7 @@ class RelaxationAnalysisWidget(QWidget):
         add_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid)
         )
-        cluster_button = QPushButton("Clustering...", header)
+        cluster_button = QPushButton("Clustering…", header)
         cluster_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid)
         )
@@ -2119,7 +2119,7 @@ class RelaxationAnalysisWidget(QWidget):
                 wid
             )
         )
-        export_cif_button = QPushButton("Export CIF...", header)
+        export_cif_button = QPushButton("Export CIF…", header)
         export_cif_button.setToolTip(
             "Export the host structure and every relaxed muon position in this "
             "workspace (not just cluster representatives) as a CIF file."
@@ -2140,7 +2140,7 @@ class RelaxationAnalysisWidget(QWidget):
             lambda fmt, wid=_workspace_id(workspace): self._export_relaxed_structures(wid, fmt),
         )
         export_relaxed_button.setMenu(export_relaxed_menu)
-        delete_button = QPushButton("Delete Analysis...", header)
+        delete_button = QPushButton("Delete Analysis…", header)
         delete_button.setObjectName("analysisWorkspaceDeleteButton")
         delete_button.setToolTip(
             "Delete this analysis workspace and its clustering. The structural "

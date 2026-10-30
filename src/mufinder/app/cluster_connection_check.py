@@ -122,7 +122,7 @@ class ClusterConnectionCheck(QObject):
             return
         self._active = True
         host = self._config.name or self._config.hostname
-        progress = QProgressDialog(f"Connecting to {host}...", "Cancel", 0, 0, self._parent_widget)
+        progress = QProgressDialog(f"Connecting to {host}…", "Cancel", 0, 0, self._parent_widget)
         progress.setWindowTitle(self._title)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)

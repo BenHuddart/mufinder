@@ -70,7 +70,7 @@ class PristineRelaxationWidget(RelaxationRowTableWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._generate_comparison_button = QPushButton("Generate Comparison Table...")
+        self._generate_comparison_button = QPushButton("Generate Comparison Table…")
         self._build_layout(
             title="Pristine Relaxation",
             subtitle="Create labelled geometry-optimization jobs with per-job supercells and cell constraints.",
