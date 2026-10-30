@@ -692,6 +692,16 @@ class ClusterJobRunner(QObject):
     def _poll_queue(self) -> None:
         if not self.is_connected:
             self._poll_timer.stop()
+            if self._ssh is not None:
+                # The transport died under an open connection. Close it so the
+                # connection state stops reporting a live link.
+                cluster_name = self._config.name if self._config is not None else "the cluster"
+                has_polled_jobs = self._has_active_jobs_for_connected_cluster()
+                self.disconnect()
+                if has_polled_jobs:
+                    self.poll_failed.emit(
+                        f"Queue polling failed for {cluster_name}: the connection was lost."
+                    )
             return
 
         ssh = self._require_ssh()
