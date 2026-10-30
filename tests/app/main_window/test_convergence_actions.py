@@ -1970,7 +1970,7 @@ def test_main_window_adopted_cutoff_refreshes_the_window(main_window, tmp_path: 
     select_route(window, "convergence_cutoff")
     assert window._main_stack.currentWidget() is window._convergence_view
 
-    window._convergence_controller.adopt(550.0, "converged", 0.001, 0.05)
+    window._convergence_controller.adopt(550.0, "converged", 0.001, 0.05, point_labels={})
 
     for strip in window._project_defaults_strips():
         assert strip._cutoff_value.text() == "550 eV"

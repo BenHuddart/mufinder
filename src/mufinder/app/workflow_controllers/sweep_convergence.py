@@ -547,7 +547,7 @@ class SweepConvergenceController(WorkflowJobController):
         force_threshold: float,
         stress_threshold: float | None = None,
         *,
-        point_labels: Mapping[float, str] | None = None,
+        point_labels: Mapping[float, str],
     ) -> None:
         """Make the examiner's adopted axis ``value`` the project default.
 
@@ -560,8 +560,7 @@ class SweepConvergenceController(WorkflowJobController):
         if document is None:
             return
 
-        labels = point_labels if point_labels is not None else {}
-        key = self.resolve_adopted_key(value, labels)
+        key = self.resolve_adopted_key(value, point_labels)
         if key is None:
             self._deps.show_warning("Adopt failed", self.unresolved_adopt_message())
             return
@@ -589,7 +588,7 @@ class SweepConvergenceController(WorkflowJobController):
             ),
             definition_cell_id=definition_cell_id,
             xc_functional=xc_functional,
-            point_labels=labels,
+            point_labels=point_labels,
         )
         self._deps.refresh_after_default_adopted()
         self._context.persist_ui_state(failure_message=self.snapshot_persist_failure_message)
