@@ -81,7 +81,7 @@ adopted cutoff as its default ``CUT_OFF_ENERGY``.
 7. **Open the k-point sweep.** Select ``K-Point Grid`` in the navigator and
    pick the same simulation cell as the cutoff sweep.
 8. **List the grids.** Click ``Generate From Spacing…`` and set ``Minimum
-   spacing (1/Ang)`` (``0.02`` by default) to generate every distinct grid
+   spacing (1/Ang)`` (``0.04`` by default) to generate every distinct grid
    CASTEP produces between ``1 x 1 x 1`` and that spacing (see `Generating
    k-point grids`_), or click ``Add Grid`` to enter grids by hand.
 9. **Check the parameters and run.** As in steps 3 and 4. The rows now use the
@@ -211,9 +211,9 @@ Generating k-point grids
 
 .. figure:: ../_generated/screenshots/kpoint_convergence_page.webp
    :alt: The K-Point Convergence page with the grids generated for CoF2
-         down to 0.05 1/Ang.
+         down to 0.04 1/Ang.
 
-   Grids generated for CoF₂ with a minimum spacing of 0.05 1/Ang.
+   Grids generated for CoF₂ with a minimum spacing of 0.04 1/Ang.
 
 ``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
 

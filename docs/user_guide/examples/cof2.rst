@@ -62,7 +62,7 @@ keeps the muon's periodic images 10 Å apart (see :doc:`/user_guide/supercells`)
    The saved ``CoF2 2x2x2`` supercell.
 
 The cutoff sweep runs from 300 to 800 eV and the k-point sweep over the grids
-``Generate From Spacing…`` gives for this cell down to 0.05 1/Å; the project
+``Generate From Spacing…`` gives for this cell down to 0.04 1/Å; the project
 adopts 600 eV and a 4 × 4 × 6 grid (see
 :doc:`/user_guide/convergence_testing`). The sweep data on the overview are
 illustrative.

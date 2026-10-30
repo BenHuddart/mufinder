@@ -180,9 +180,9 @@ and k-point grid, so settle them first.
 
    .. figure:: ../_generated/screenshots/kpoint_convergence_page.webp
       :alt: The K-Point Convergence page with the grids generated for CoF2 down
-            to 0.05 1/Ang.
+            to 0.04 1/Ang.
 
-      The grids generated for CoF₂ down to a spacing of 0.05 1/Ang.
+      The grids generated for CoF₂ down to a spacing of 0.04 1/Ang.
 
 7. Run them, then click ``Examine K-Point Convergence``, ``Analyse
    Convergence`` and ``Set <grid> as Project Default K-Point Grid``.
