@@ -15,6 +15,7 @@ import pytest
 
 from mufinder.science import lattice as lattice_module
 from mufinder.science.lattice import (
+    MUON_FRACTIONAL_SNAP_TOLERANCE,
     LatticeError,
     cartesian_to_fractional,
     cartesian_to_reciprocal,
@@ -222,6 +223,30 @@ def test_folding_a_supercell_position_matches_the_legacy_import_arithmetic() -> 
     for position, _ in _random_pairs(50):
         folded = tuple(wrap_fractional(lattice_frac_to_cart(position, matrix)))
         assert folded == _legacy_import_fold_to_host(position, matrix)
+
+
+@pytest.mark.parametrize(
+    ("value", "snapped", "plain"),
+    [
+        (-1e-7, 0.0, 1.0 - 1e-7),
+        (-5e-6, 1.0 - 5e-6, 1.0 - 5e-6),
+        (1.0 - 1e-12, 0.0, 1.0 - 1e-12),
+        (2.25, 0.25, 0.25),
+    ],
+)
+def test_wrap_fractional_snaps_only_within_the_tolerance_below_one(value, snapped, plain) -> None:
+    (with_snap,) = wrap_fractional([value], snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE)
+    (without_snap,) = wrap_fractional([value])
+
+    assert MUON_FRACTIONAL_SNAP_TOLERANCE == 1e-6
+    assert with_snap == pytest.approx(snapped, abs=1e-15)
+    assert without_snap == pytest.approx(plain, abs=1e-15)
+
+
+@pytest.mark.parametrize("tolerance", [-1e-6, 1.0, float("nan")])
+def test_wrap_fractional_rejects_a_snap_tolerance_outside_the_unit_interval(tolerance) -> None:
+    with pytest.raises(LatticeError, match="snap tolerance"):
+        wrap_fractional([0.5, 0.5, 0.5], snap_tolerance=tolerance)
 
 
 # Minimum image

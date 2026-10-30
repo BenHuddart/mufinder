@@ -22,6 +22,7 @@ from mufinder.domain.constants import (
 )
 from mufinder.domain.models import Structure
 from mufinder.science.ase_bridge import element_symbol, structure_to_ase_atoms
+from mufinder.science.lattice import MUON_FRACTIONAL_SNAP_TOLERANCE, wrap_fractional
 from mufinder.science.muon_distortion import MuonDistortion, map_muon_distortion
 
 SEC2_TO_US2 = 1e-12
@@ -420,7 +421,12 @@ def calculate_nuclear_width_tensors(
     isotropic, quadratic, quartic, zf_isotropic, zf_quadratic = tensors
     return NuclearWidthTensors(
         site_label=site_label,
-        muon_position=_canonical_fractional(muon_position),
+        muon_position=tuple(
+            wrap_fractional(
+                np.asarray(muon_position, dtype=float).reshape(3),
+                snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE,
+            )
+        ),
         isotropic=isotropic,
         quadratic=quadratic,
         quartic=quartic,
@@ -648,7 +654,12 @@ def _calculate_second_moment(
     )
     return _result_from_sigma(
         site_label=site_label,
-        muon_position=_canonical_fractional(muon_position)
+        muon_position=tuple(
+            wrap_fractional(
+                np.asarray(muon_position, dtype=float).reshape(3),
+                snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE,
+            )
+        )
         if muon_position_fractional
         else tuple(float(v) for v in muon_position),
         mode=mode,
@@ -1001,14 +1012,6 @@ def _unit_directions(
     if np.any(norms == 0.0):
         raise NuclearRelaxationError(f"{name} must be non-zero.")
     return arr / norms, arr.ndim == 1
-
-
-def _canonical_fractional(
-    frac: Sequence[float], *, atol: float = 1e-6
-) -> tuple[float, float, float]:
-    arr = np.mod(np.asarray(frac, dtype=float).reshape(3), 1.0)
-    arr[np.isclose(arr, 1.0, atol=atol, rtol=0.0)] = 0.0
-    return (float(arr[0]), float(arr[1]), float(arr[2]))
 
 
 def _auto_radii_sequence() -> Iterable[float]:

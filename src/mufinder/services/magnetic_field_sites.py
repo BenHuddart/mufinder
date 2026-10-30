@@ -37,8 +37,9 @@ RELAXATION_SITE_SOURCE = "relaxation_clustering"
 #: The source of a fractional position typed in by the user.
 CUSTOM_SITE_SOURCE = "custom"
 
-#: Generation methods of the UEP cluster sites stored in a project's sites.
-UEP_CLUSTER_SITE_METHODS = frozenset({"uep_cluster", "uep_cluster_member", "uep_batch_cluster"})
+#: Generation methods of the stored UEP cluster sites the page offers. A site that
+#: an older project stored as ``uep_batch_cluster`` is not offered.
+UEP_CLUSTER_SITE_METHODS = frozenset({"uep_cluster", "uep_cluster_member"})
 
 _SOURCE_LABELS = {
     UEP_SITE_SOURCE: "UEP clustering (unrelaxed estimate)",

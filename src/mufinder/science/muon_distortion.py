@@ -21,6 +21,7 @@ import numpy as np
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
+from mufinder.science.lattice import MUON_FRACTIONAL_SNAP_TOLERANCE, wrap_fractional
 from mufinder.science.spglib_compat import (
     SYMMETRY_TOLERANCE_ANG,
     operation_images,
@@ -126,7 +127,12 @@ def map_muon_distortion(
     relative_super = frac_super[host_rows] - muon_super
     relative_super -= np.round(relative_super)
     muon_unit = muon_super @ matrix
-    site = _canonical_fractional(muon_position)
+    site = np.asarray(
+        wrap_fractional(
+            np.asarray(muon_position, dtype=float).reshape(3),
+            snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE,
+        )
+    )
     lattice_shift = np.round(muon_unit - site)
     muon_unit = muon_unit - lattice_shift
     muon_offset = float(np.linalg.norm((muon_unit - site) @ unit_lattice))
@@ -179,7 +185,12 @@ def equivalent_site_distortion(
     sites.
     """
 
-    target = _canonical_fractional(muon_position)
+    target = np.asarray(
+        wrap_fractional(
+            np.asarray(muon_position, dtype=float).reshape(3),
+            snap_tolerance=MUON_FRACTIONAL_SNAP_TOLERANCE,
+        )
+    )
     source = np.asarray(distortion.muon_fractional, dtype=float)
     if _same_fractional(source, target, tolerance):
         return distortion
@@ -324,10 +335,3 @@ def _check_one_to_one(
 def _same_fractional(left: np.ndarray, right: np.ndarray, tolerance: float) -> bool:
     delta = np.asarray(left, dtype=float) - np.asarray(right, dtype=float)
     return bool(np.all(np.abs(delta - np.round(delta)) <= float(tolerance)))
-
-
-def _canonical_fractional(position: Sequence[float]) -> np.ndarray:
-    arr = np.asarray(position, dtype=float).reshape(3)
-    out = np.mod(arr, 1.0)
-    out[np.isclose(out, 1.0, atol=1e-10)] = 0.0
-    return out

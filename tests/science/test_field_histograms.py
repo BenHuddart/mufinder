@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from mufinder.science.magnetic_fields import MagneticFieldError
 from mufinder.science.field_histograms import (
     common_binned_series,
     distribution_series,
@@ -14,7 +15,6 @@ from mufinder.science.field_histograms import (
     field_magnitudes,
     histogram_edges_from_centres,
     interval_steps_with_zero_baseline,
-    magnitude_histogram,
     normalized_probabilities,
     probability_steps_with_zero_baseline,
     summed_probability_intervals,
@@ -114,10 +114,27 @@ def test_series_leaves_out_a_result_with_neither_histogram_nor_samples() -> None
     assert [label for *_values, label in series] == ["site 2"]
 
 
-def test_magnitudes_and_histogram_of_no_samples_are_empty() -> None:
+def test_magnitudes_of_no_samples_are_empty() -> None:
     assert field_magnitudes(SimpleNamespace()).size == 0
-    centres, counts = magnitude_histogram(np.asarray([], dtype=float))
-    assert centres.size == 0 and counts.size == 0
+
+
+def test_series_bins_a_single_field_value_into_a_narrow_spike() -> None:
+    result = _distribution("site 1", [[0.0, 0.0, 0.2]] * 100)
+
+    ((centres, probabilities, _magnitudes, _label),) = distribution_series([result])
+
+    assert centres.size == 20
+    # The bins span about 1e-6 of the field, not a 1 T window.
+    assert centres.max() - centres.min() < 1e-6 * 0.2
+    assert centres.mean() == pytest.approx(0.2)
+    assert probabilities.max() == pytest.approx(1.0)
+
+
+def test_series_raises_for_a_non_finite_sample_it_has_to_bin() -> None:
+    result = _distribution("site 1", [[0.0, 0.0, 0.2], [0.0, 0.0, np.nan]])
+
+    with pytest.raises(MagneticFieldError, match="non-finite"):
+        distribution_series([result])
 
 
 def test_probabilities_scale_to_the_tallest_bin() -> None:

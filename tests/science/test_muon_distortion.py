@@ -101,6 +101,17 @@ def test_lattice_translation_of_the_site_is_accepted() -> None:
     np.testing.assert_allclose(distortion.displacements, 0.0, atol=1e-12)
 
 
+@pytest.mark.parametrize(("y", "home_y"), [(-1e-7, 0.0), (-5e-6, 1.0 - 5e-6), (1.0 - 1e-12, 0.0)])
+def test_site_just_below_a_cell_face_matches_the_relaxed_muon(y, home_y) -> None:
+    # Within 1e-6 below 1 a coordinate is taken as 0; either way the site matches.
+    relaxed = relaxed_muon_supercell(_IRON, (3, 3, 3), _SITE)
+
+    distortion = map_muon_distortion(_IRON, relaxed, (0.5, y, 0.0))
+
+    assert distortion.muon_offset_ang == pytest.approx(0.0, abs=3.0 * 5e-6 + 1e-12)
+    assert distortion.muon_fractional == pytest.approx((0.5, home_y, 0.0), abs=1e-12)
+
+
 @pytest.mark.parametrize(
     ("species", "message"),
     [
