@@ -1099,3 +1099,7 @@ def test_convergence_widget_remove_button_is_named_after_its_cutoff(qapp) -> Non
         widget._table.cellWidget(0, widget._REMOVE_COLUMN).accessibleName()
         == f"Remove Cutoff {key_item.text()}"
     )
+    assert (
+        widget._table.cellWidget(0, widget._CONFIGURE_COLUMN).accessibleName()
+        == f"Configure Cutoff {key_item.text()}"
+    )

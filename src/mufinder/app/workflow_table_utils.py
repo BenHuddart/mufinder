@@ -361,6 +361,18 @@ def create_workflow_table(
     return table
 
 
+def name_row_control(control: QWidget | None, action: str, row_label: str) -> None:
+    """Name a control in a table row ``"<action> <row label>"`` for screen readers.
+
+    Every row has its own Remove, Configure and similar controls, so the name
+    says which row each one acts on (``Remove mu1``, ``Supercell for mu1``).
+    Call it again when the row's label changes.
+    """
+
+    if control is not None:
+        control.setAccessibleName(" ".join(part for part in (action, row_label.strip()) if part))
+
+
 def set_workflow_table_item(table: QTableWidget, row: int, column: int, text: str) -> None:
     item = table.item(row, column)
     if item is None:

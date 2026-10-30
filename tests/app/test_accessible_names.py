@@ -1,7 +1,8 @@
 """Every visible control on every workflow page has a name a screen reader can announce.
 
 The census opens each page of a project with the shared host structure, with
-one job row staged on every page that stages rows, and counts the visible
+one row on every page that lists rows (a staged job, a stored field result, a
+source or a result), and counts the visible
 controls a screen reader could only announce by their kind ("button",
 "edit", "table"). A control counts as unnamed when it is a button whose text
 is empty or one character, a line edit, combo box, spin box, item view or
@@ -20,6 +21,7 @@ from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
+import shiboken6
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -32,7 +34,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.energy_barriers_widget import EnergyBarrierNebResultRow, EnergyBarrierSourceRow
+from mufinder.app.hyperfine_coupling_widget import HyperfineResultRow, HyperfineSourceRow
+from mufinder.app.quantum_corrections_widget import QuantumResultRow, QuantumSourceRow
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
+from mufinder.services.magnetic_field_results import (
+    MAGNETIC_FIELD_PAGE_OWNER,
+    store_magnetic_field_results,
+)
+from tests.support.field_results import field_result
 
 PAGE_ROUTES = (
     "host_structure",
@@ -85,9 +95,15 @@ def _counted_controls(page: QWidget) -> Iterator[QWidget]:
         yield widget
 
 
+def _address(widget: QWidget) -> int:
+    """The C++ object's address: wrapper ids can be reused once a wrapper is collected."""
+
+    return shiboken6.getCppPointer(widget)[0]
+
+
 def _is_unnamed(widget: QWidget, buddies: set[int]) -> bool:
     text = widget.text().strip() if isinstance(widget, QAbstractButton) else ""
-    return len(text) <= 1 and not widget.accessibleName() and id(widget) not in buddies
+    return len(text) <= 1 and not widget.accessibleName() and _address(widget) not in buddies
 
 
 def _describe(widget: QWidget) -> str:
@@ -95,7 +111,7 @@ def _describe(widget: QWidget) -> str:
     return f"{type(widget).__name__}(text={text!r}, tooltip={widget.toolTip()[:60]!r})"
 
 
-def _stage_one_row_per_page(window) -> None:
+def _stage_rows(window, document) -> None:
     """Give every page that stages job rows one row, so its row controls are counted."""
 
     window._convergence_view._add_row(300.0)
@@ -106,9 +122,69 @@ def _stage_one_row_per_page(window) -> None:
         [{"id": str(uuid4()), "label": "Manual Site 1", "fractional_position": [0.1, 0.2, 0.3]}],
         charge_states=(POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE),
     )
+    # Polarisation lists the stored field results when it is shown.
+    store_magnetic_field_results(
+        document,
+        MAGNETIC_FIELD_PAGE_OWNER,
+        {
+            "magnetic_field_results": {
+                "kind": "commensurate",
+                "results": [field_result((0.0, 0.0, 0.01)).to_json()],
+            }
+        },
+    )
 
 
-def _census(window, qapp, routes=PAGE_ROUTES) -> dict[str, list[str]]:
+def _show_hyperfine_rows(window) -> None:
+    view = window._hyperfine_coupling_view
+    view.set_sources([HyperfineSourceRow("mu1", "mu1", "Positive muon", "relax-mu1", "ready")])
+    view.set_results(
+        [HyperfineResultRow("mu1", "mu1", "Positive muon", "1.0", "0.1", "0.0", "0.1", "0.0")]
+    )
+
+
+def _show_quantum_rows(window) -> None:
+    view = window._quantum_corrections_view
+    view.set_sources(
+        [QuantumSourceRow("mu1", "mu1", "Positive muon", "0.00", "9", "relax-mu1", "1", "ready")]
+    )
+    view.set_results([QuantumResultRow("mu1", "mu1", "0.58", "1, 2, 3", "0.1", "0.0", "completed")])
+
+
+def _show_energy_barrier_rows(window) -> None:
+    view = window._energy_barriers_view
+    view.set_sources(
+        [EnergyBarrierSourceRow("mu1-mu2", "mu1", "mu2", "Positive muon", "1.0", "ready")]
+    )
+    view.set_neb_results(
+        [
+            EnergyBarrierNebResultRow(
+                "neb-1",
+                "mu1 to mu2",
+                "Positive muon",
+                "1.0",
+                "0.2",
+                "0.2",
+                "0.0",
+                "5",
+                "completed",
+                "",
+            )
+        ]
+    )
+
+
+# The source pages rebuild their rows from the project when they are shown, so
+# their rows are put in after the page is showing.
+_SHOW_ROWS = {
+    "hyperfine_coupling": _show_hyperfine_rows,
+    "quantum_corrections": _show_quantum_rows,
+    "energy_barriers": _show_energy_barrier_rows,
+}
+
+
+def _census(window, qapp, routes=PAGE_ROUTES, show_rows=None) -> dict[str, list[str]]:
+    show_rows = show_rows or {}
     window.show()
     qapp.processEvents()
     unnamed: dict[str, list[str]] = {}
@@ -116,9 +192,13 @@ def _census(window, qapp, routes=PAGE_ROUTES) -> dict[str, list[str]]:
         for route in routes:
             assert window._find_tree_item_by_route(route) is not None, route
             window._set_active_route(route)
+            if route in show_rows:
+                show_rows[route](window)
             qapp.processEvents()
             page = window._main_stack.currentWidget()
-            buddies = {id(label.buddy()) for label in window.findChildren(QLabel) if label.buddy()}
+            buddies = {
+                _address(label.buddy()) for label in window.findChildren(QLabel) if label.buddy()
+            }
             unnamed[route] = [
                 _describe(widget)
                 for widget in _counted_controls(page)
@@ -133,9 +213,9 @@ def _census(window, qapp, routes=PAGE_ROUTES) -> dict[str, list[str]]:
 
 @pytest.fixture
 def unnamed_controls_by_page(project_with_host, qapp) -> dict[str, list[str]]:
-    window, _service, _document = project_with_host
-    _stage_one_row_per_page(window)
-    return _census(window, qapp)
+    window, _service, document = project_with_host
+    _stage_rows(window, document)
+    return _census(window, qapp, show_rows=_SHOW_ROWS)
 
 
 def test_no_page_has_more_unnamed_controls_than_its_budget(unnamed_controls_by_page) -> None:
@@ -179,3 +259,27 @@ def test_census_counts_an_unnamed_control_until_it_is_named_or_labelled(
     label.setBuddy(button)
 
     assert _census(window, qapp, ("host_structure",)) == {"host_structure": []}
+
+
+def test_census_counts_the_row_controls_of_every_page_that_lists_rows(
+    unnamed_controls_by_page, project_with_host
+) -> None:
+    window, _service, _document = project_with_host
+    tables = {
+        "convergence_cutoff": window._convergence_view._table,
+        "convergence_kpoint": window._kpoint_convergence_view._table,
+        "pristine_relaxation": window._pristine_relaxation_view._table,
+        "uep": window._uep_view._table,
+        "muon_relaxations": window._muon_relaxation_view._table,
+        "polarisation": window._polarisation_view._sources_table,
+        "hyperfine_coupling": window._hyperfine_coupling_view._results_table,
+        "quantum_corrections": window._quantum_corrections_view._results_table,
+        "energy_barriers": window._energy_barriers_view._sources_table,
+    }
+
+    assert set(unnamed_controls_by_page) == set(PAGE_ROUTES)
+    assert [route for route, table in tables.items() if table.rowCount() == 0] == []
+    view = window._muon_relaxation_view
+    assert view._table.cellWidget(0, view._REMOVE_COLUMN).accessibleName() == (
+        "Remove Manual Site 1 (positive muon)"
+    )

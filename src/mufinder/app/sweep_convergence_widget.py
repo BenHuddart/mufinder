@@ -73,6 +73,7 @@ from mufinder.app.workflow_table_utils import (
     bind_reset_failed_context_menu,
     confirm_row_removal,
     create_workflow_table,
+    name_row_control,
     selected_table_rows,
     standard_row_actions,
     style_workflow_configure_button,
@@ -108,8 +109,9 @@ class SweepConvergenceWidget(QWidget):
     - ``_REMOVE_SIGNAL``, the name of the subclass's own removal signal;
     - the wording: ``_TITLE``, ``_SUBTITLE``, ``_SWEEP_GROUP_TITLE``,
       ``_KEY_COLUMN_LABEL``, the button texts, the Examine tooltips, the row
-      nouns (``_ROW_NOUN`` also names each row's remove button for screen
-      readers), the dialog subject and intro, and the warning messages.
+      nouns (``_ROW_NOUN`` also names each row's Remove and Configure buttons
+      for screen readers), the dialog subject and intro, and the warning
+      messages.
 
     Behaviour one sweep alone has is a private override: the cutoff sweep
     titles a single-row dialog by its cutoff (``_dialog_subject``), repairs
@@ -736,9 +738,11 @@ class SweepConvergenceWidget(QWidget):
                 flags |= Qt.ItemFlag.ItemIsEditable
                 key_item.setToolTip("")
             key_item.setFlags(flags)
-            remove_button = self._table.cellWidget(row, self._REMOVE_COLUMN)
-            if remove_button is not None:
-                remove_button.setAccessibleName(f"Remove {self._ROW_NOUN} {key_item.text()}")
+            row_label = f"{self._ROW_NOUN} {key_item.text().strip()}"
+            name_row_control(self._table.cellWidget(row, self._REMOVE_COLUMN), "Remove", row_label)
+            name_row_control(
+                self._table.cellWidget(row, self._CONFIGURE_COLUMN), "Configure", row_label
+            )
 
         for column, text in (
             (self._STATUS_COLUMN, status_text),

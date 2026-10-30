@@ -93,6 +93,7 @@ from mufinder.app.workflow_table_utils import (
     bind_reset_failed_context_menu,
     confirm_row_removal,
     create_workflow_table,
+    name_row_control,
     selected_table_rows,
     set_workflow_table_item,
     standard_row_actions,
@@ -781,10 +782,10 @@ class RowTableWidget(QWidget):
         row_label = self._row_display_label(row, table=target)
         if isinstance(supercell_combo, QComboBox):
             supercell_combo.setEnabled(not locked)
-            supercell_combo.setAccessibleName(f"Supercell for {row_label}")
+            name_row_control(supercell_combo, "Supercell for", row_label)
         remove_button = target.cellWidget(row, self._REMOVE_COLUMN)
         if isinstance(remove_button, QToolButton):
-            remove_button.setAccessibleName(f"Remove {row_label}")
+            name_row_control(remove_button, "Remove", row_label)
             remove_button.setEnabled(not read_only)
             remove_button.setToolTip(self._READ_ONLY_ROW_TOOLTIP if read_only else "")
 
@@ -793,6 +794,7 @@ class RowTableWidget(QWidget):
 
         configure_button = target.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
+            name_row_control(configure_button, "Configure", row_label)
             style_workflow_configure_button(
                 configure_button,
                 workflow_label="CASTEP",
@@ -1466,6 +1468,11 @@ class SourceTableWidget(QWidget):
 
         raise NotImplementedError
 
+    def source_row_label(self, row: Any) -> str:
+        """Return how the row's own controls name it for screen readers: its first cell."""
+
+        return str(self.source_row_values(row)[0])
+
     def create_source_row_cells(self, row_index: int, row: Any) -> None:
         """Add the workflow's own cells to a filled row (default: none)."""
 
@@ -1596,6 +1603,7 @@ class SourceTableWidget(QWidget):
         table = self._sources_table
         button = SelectionSnapshotPushButton(table)
         button.selection_snapshot_key = row.key
+        name_row_control(button, "Configure", self.source_row_label(row))
         style_workflow_configure_button(
             button,
             workflow_label=self._SOURCE_WORKFLOW_LABEL,

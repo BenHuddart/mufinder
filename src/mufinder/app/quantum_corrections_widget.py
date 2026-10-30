@@ -29,6 +29,7 @@ from mufinder.app.workflow_table_utils import (
     SelectionFeedback,
     create_workflow_table,
     fill_workflow_table,
+    name_row_control,
     set_header_tooltips,
 )
 
@@ -324,6 +325,10 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
             button = QPushButton("Launch Analysis")
+            label_item = self._results_table.item(row_index, 0)
+            name_row_control(
+                button, "Launch Analysis for", "" if label_item is None else label_item.text()
+            )
             button.clicked.connect(
                 lambda _checked=False, key=row.key: self.analysis_requested.emit(key)
             )

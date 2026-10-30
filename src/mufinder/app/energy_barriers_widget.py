@@ -54,6 +54,7 @@ from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
     confirm_row_removal,
     create_workflow_table,
+    name_row_control,
     set_workflow_table_item,
     workflow_row_is_locked,
 )
@@ -925,9 +926,13 @@ class EnergyBarriersWidget(SourceTableWidget):
     def source_row_values(self, row: EnergyBarrierSourceRow) -> tuple[str, ...]:
         return (row.reactant, row.product, row.charge_state, row.path_length, row.farms, row.status)
 
+    def source_row_label(self, row: EnergyBarrierSourceRow) -> str:
+        return f"{row.reactant} to {row.product}"
+
     def create_source_row_cells(self, row_index: int, row: EnergyBarrierSourceRow) -> None:
         view_button = QPushButton("View...", self._sources_table)
         view_button.setToolTip("Open the path viewer for this diffusion path.")
+        name_row_control(view_button, "View", self.source_row_label(row))
         view_button.clicked.connect(
             lambda _checked=False, key=row.key: self.view_source_requested.emit(key)
         )

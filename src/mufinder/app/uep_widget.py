@@ -32,7 +32,7 @@ from mufinder.app.workflow_parameters import (
     seed_xc_functional_default,
 )
 from mufinder.app.workflow_row_widget import RowEntry, RowTableWidget
-from mufinder.app.workflow_table_utils import set_workflow_table_item
+from mufinder.app.workflow_table_utils import name_row_control, set_workflow_table_item
 from mufinder.castep_io.gui_metadata import get_gui_keyword_specs_for_files
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import ValueWithUnit
@@ -253,6 +253,11 @@ class UEPWidget(RowTableWidget):
         locked: bool,
     ) -> None:
         del row_id, locked
+        name_row_control(
+            table.cellWidget(row, self._WIZARD_COLUMN),
+            "Open Wizard for",
+            self._row_display_label(row, table=table),
+        )
         self._set_float_item(
             row,
             self._TOTAL_ENERGY_COLUMN,

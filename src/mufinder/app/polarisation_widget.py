@@ -53,6 +53,7 @@ from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
     create_workflow_table,
     format_vector_components,
+    name_row_control,
 )
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.science.polarisation import PolarisationError
@@ -452,12 +453,13 @@ class PolarisationWidget(QWidget):
         self._sphere_points = QSpinBox(self)
         self._sphere_points.setRange(1, MAX_SPHERE_POINTS)
         self._sphere_points.setMaximumWidth(100)
-        self._sphere_points.setAccessibleName("Sphere Points")
         self._sphere_points.setToolTip(
             "Orientations of the applied field in a polycrystal; the zero-field average is exact."
         )
 
         self._lambda_z = _rate_input("Longitudinal relaxation rate λ_z")
+        # The form label is rich text (λ<sub>z</sub>), which a buddy would read out as markup.
+        self._lambda_z.setAccessibleName("λz")
         self._sigma = _rate_input("Gaussian width σ of the oscillating part")
         self._sigma.setAccessibleName("σ")
         self._sigma_from_widths = QCheckBox("From nuclear widths", self)
@@ -475,7 +477,6 @@ class PolarisationWidget(QWidget):
         self._time_points = QSpinBox(self)
         self._time_points.setRange(2, MAX_TIME_POINTS)
         self._time_points.setMaximumWidth(100)
-        self._time_points.setAccessibleName("Time Points")
 
         self._collision_rate = _rate_input("Strong-collision rate ν; 0 is static")
         self._collision_rate.setAccessibleName("Collision Rate ν")
@@ -550,7 +551,9 @@ class PolarisationWidget(QWidget):
         sample_layout = QHBoxLayout(sample_row)
         sample_layout.setContentsMargins(0, 0, 0, 0)
         sample_layout.addWidget(self._sample)
-        sample_layout.addWidget(QLabel("Sphere points", sample_row))
+        sphere_points_label = QLabel("Sphere points", sample_row)
+        sphere_points_label.setBuddy(self._sphere_points)
+        sample_layout.addWidget(sphere_points_label)
         sample_layout.addWidget(self._sphere_points)
         sample_layout.addStretch(1)
         form.addRow("Sample", sample_row)
@@ -568,7 +571,9 @@ class PolarisationWidget(QWidget):
         time_layout = QHBoxLayout(time_row)
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.addWidget(self._end_time)
-        time_layout.addWidget(QLabel("Points", time_row))
+        time_points_label = QLabel("Points", time_row)
+        time_points_label.setBuddy(self._time_points)
+        time_layout.addWidget(time_points_label)
         time_layout.addWidget(self._time_points)
         time_layout.addStretch(1)
         form.addRow("End time", time_row)
@@ -694,6 +699,7 @@ class PolarisationWidget(QWidget):
                 weight.setMaximumWidth(90)
                 weight.setValue(float(weights.get(source.owner, 1.0)))
                 weight.valueChanged.connect(self._on_setting_changed)
+                name_row_control(weight, "Weight for", source.label)
                 table.setCellWidget(row, _WEIGHT_COLUMN, weight)
         finally:
             table.blockSignals(False)

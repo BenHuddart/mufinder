@@ -42,6 +42,7 @@ from mufinder.app.workflow_table_utils import (
     create_workflow_table,
     format_table_number,
     format_vector_components,
+    name_row_control,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
@@ -60,6 +61,16 @@ def test_create_workflow_table_takes_the_accessible_name(qapp) -> None:
         "Cutoff Jobs"
     )
     assert create_workflow_table(("A",)).accessibleName() == ""
+
+
+def test_name_row_control_names_the_row_and_skips_missing_parts(button) -> None:
+    name_row_control(button, "Remove", " mu1 ")
+    assert button.accessibleName() == "Remove mu1"
+
+    name_row_control(button, "Remove", "")
+    assert button.accessibleName() == "Remove"
+
+    name_row_control(None, "Remove", "mu1")
 
 
 def test_create_workflow_table_default_chrome(qapp) -> None:

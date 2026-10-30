@@ -6883,6 +6883,7 @@ class MagneticFieldWidget(QWidget):
         structure_left_layout.addLayout(action_row)
         structure_right_layout = QVBoxLayout()
         hyperfine_label = QLabel("Hyperfine coupling")
+        hyperfine_label.setBuddy(self._hyperfine_coupling)
         hyperfine_label.setToolTip(
             "Contact hyperfine coupling for the muesr ACont term. Internally converted to Å⁻³."
         )
@@ -7477,7 +7478,6 @@ class MagneticFieldWidget(QWidget):
         edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 8, edit))
         edit.setToolTip("Set to zero to omit the contact hyperfine contribution.")
         edit.setMinimumWidth(104)
-        edit.setAccessibleName("Hyperfine Coupling")
         return edit
 
     @staticmethod
