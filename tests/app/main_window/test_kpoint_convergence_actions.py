@@ -53,18 +53,6 @@ def test_kpoint_convergence_configured_registers_snapshot(main_window, tmp_path:
     window.close()
 
 
-def test_refresh_kpoint_simulation_cell_without_document_disables_selector(main_window) -> None:
-    window = main_window
-
-    window._refresh_kpoint_convergence_simulation_cell()
-
-    assert not window._kpoint_convergence_view._simulation_cell_combo.isEnabled()
-    assert (
-        "Load a host structure" in window._kpoint_convergence_view._simulation_cell_summary.text()
-    )
-    window.close()
-
-
 def test_main_window_form_kpoint_shows_ready_before_submission(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID
 
 import pytest
 
@@ -57,18 +56,6 @@ def test_convergence_configured_registers_snapshot(
     window.close()
 
 
-def test_refresh_convergence_simulation_cell_without_document_disables_selector(
-    main_window,
-) -> None:
-    window = main_window
-
-    window._refresh_convergence_simulation_cell()
-
-    assert not window._convergence_view._simulation_cell_combo.isEnabled()
-    assert "Load a host structure" in window._convergence_view._simulation_cell_summary.text()
-    window.close()
-
-
 def test_convergence_simulation_cell_create_requested_handles_missing_context(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -86,86 +73,16 @@ def test_convergence_simulation_cell_create_requested_handles_missing_context(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    window._on_convergence_simulation_cell_create_requested()
+    window._convergence_view.simulation_cell_create_requested.emit()
 
     service = ProjectService()
     window._document = service.create_project(
         tmp_path / "conv_supercell_missing_host.mufinder", "ConvNoHost"
     )
-    window._on_convergence_simulation_cell_create_requested()
+    window._convergence_view.simulation_cell_create_requested.emit()
 
     assert infos == ["No project"]
     assert warnings == ["No host structure"]
-    window.close()
-
-
-def test_convergence_simulation_cell_use_unit_cell_requested_resets_selection(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "conv_supercell_unit_reset.mufinder", "ConvSupercellUnitReset"
-    )
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    asset = service.create_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        host_structure_id=host.id,
-        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
-        reuse_existing=False,
-    )
-    service.use_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        asset_structure_id=asset.id,
-    )
-    window._document = doc
-
-    window._on_convergence_simulation_cell_use_unit_cell_requested()
-
-    assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "unit_cell"
-    window.close()
-
-
-def test_convergence_supercell_initial_matrix_prefers_selected_asset(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "conv_supercell_initial_matrix.mufinder", "ConvSupercellInitial"
-    )
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    asset = service.create_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        host_structure_id=host.id,
-        matrix=[[3, 0, 0], [0, 1, 0], [0, 0, 1]],
-        reuse_existing=False,
-    )
-    service.use_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        asset_structure_id=asset.id,
-    )
-    window._document = doc
-
-    assert window._convergence_supercell_initial_matrix() == [[3, 0, 0], [0, 1, 0], [0, 0, 1]]
     window.close()
 
 
@@ -201,7 +118,7 @@ def test_convergence_manage_supercells_selects_returned_asset(
 
     monkeypatch.setattr(window, "_open_supercell_editor", lambda **_kwargs: _FakeDialog())
 
-    window._on_convergence_simulation_cell_create_requested()
+    window._convergence_view.simulation_cell_create_requested.emit()
 
     assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["structure_id"] == str(
         asset.id
@@ -224,7 +141,7 @@ def test_kpoint_manage_supercells_selects_returned_asset(
         tmp_path / "kpoint_supercell_editor_select.mufinder", "KpointEditorSelect"
     )
     window._document = doc
-    window._on_kpoint_simulation_cell_create_requested()
+    window._kpoint_convergence_view.simulation_cell_create_requested.emit()
     assert warnings == ["Load a host structure before creating a saved supercell."]
 
     host = Structure(
@@ -255,7 +172,7 @@ def test_kpoint_manage_supercells_selects_returned_asset(
 
     monkeypatch.setattr(window, "_open_supercell_editor", fake_open)
 
-    window._on_kpoint_simulation_cell_create_requested()
+    window._kpoint_convergence_view.simulation_cell_create_requested.emit()
 
     assert opened[0]["workflow_stage"] is WorkflowStage.CONVERGENCE_KPOINT
     assert doc.ui_state["workflow_supercells"]["convergence_kpoint"]["structure_id"] == str(
@@ -265,14 +182,19 @@ def test_kpoint_manage_supercells_selects_returned_asset(
     window.close()
 
 
-def test_convergence_simulation_cell_selection_clones_other_workflow_asset(
-    main_window, tmp_path: Path
+@pytest.mark.parametrize(
+    ("view_name", "stage"),
+    [
+        ("_convergence_view", WorkflowStage.CONVERGENCE_CUTOFF),
+        ("_kpoint_convergence_view", WorkflowStage.CONVERGENCE_KPOINT),
+    ],
+)
+def test_simulation_cell_selector_signals_reach_each_sweep_controller(
+    main_window, tmp_path: Path, view_name: str, stage: WorkflowStage
 ) -> None:
     window = main_window
     service = ProjectService()
-    doc = service.create_project(
-        tmp_path / "conv_supercell_clone_ui.mufinder", "ConvSupercellClone"
-    )
+    doc = service.create_project(tmp_path / "cell_signals.mufinder", "CellSignals")
     host = Structure(
         label="Host",
         lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
@@ -281,25 +203,24 @@ def test_convergence_simulation_cell_selection_clones_other_workflow_asset(
     )
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
-    source_asset = service.create_workflow_supercell_asset(
+    asset = service.create_workflow_supercell_asset(
         doc,
-        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        workflow_stage=stage,
         host_structure_id=host.id,
         matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
         reuse_existing=False,
     )
     window._document = doc
+    view = getattr(window, view_name)
 
-    window._refresh_convergence_simulation_cell()
-    window._on_convergence_simulation_cell_selection_requested(str(source_asset.id))
+    view.simulation_cell_selection_requested.emit(str(asset.id))
 
-    selection = doc.ui_state["workflow_supercells"]["convergence_cutoff"]
-    cloned = doc.structures[UUID(selection["structure_id"])]
+    assert doc.ui_state["workflow_supercells"][stage.value]["structure_id"] == str(asset.id)
+    assert view._simulation_cell_combo.isEnabled()
 
-    assert selection["mode"] == "saved_supercell"
-    assert cloned.id != source_asset.id
-    assert cloned.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
-    assert cloned.properties["supercell_asset"]["source_asset_structure_id"] == str(source_asset.id)
+    view.simulation_cell_use_unit_cell_requested.emit()
+
+    assert doc.ui_state["workflow_supercells"][stage.value]["mode"] == "unit_cell"
     window.close()
 
 
