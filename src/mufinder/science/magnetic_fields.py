@@ -27,7 +27,11 @@ from mufinder.science.spglib_compat import (
     symmetry_operations,
     symmetry_orbit,
 )
-from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
+from mufinder.science.demagnetization import (
+    DemagnetizingSample,
+    demagnetizing_tensor,
+    principal_demagnetizing_tensor,
+)
 from mufinder.science._muesr_compat import muesr_imports
 from mufinder.science.magnetic_structure import (
     AtomSelector,
@@ -43,7 +47,6 @@ from mufinder.science.muon_distortion import (
     map_muon_distortion,
 )
 
-MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = MUON_GAMMA_OVER_2PI_MHZ_T
 CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB = (
     (2.0 * MU0_T_M_PER_A / 3.0) * BOHR_MAGNETON_J_PER_T / (METRES_PER_ANGSTROM**3)
 )
@@ -67,7 +70,7 @@ _CONTACT_COUPLING_FACTORS_TO_ANGSTROM_MINUS3 = {
     "ang^-3": 1.0,
     "T_per_muB": 1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
     "MHz_per_muB": (
-        (1.0 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T) / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
+        (1.0 / MUON_GAMMA_OVER_2PI_MHZ_T) / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
     ),
 }
 
@@ -1681,31 +1684,6 @@ def _phase_numerator(
     return (total % common, common)
 
 
-def calculate_dipolar_tensors(
-    structure: Structure,
-    model: MagneticStructureModel,
-    muon_sites: Sequence[MuonSite | Sequence[float]],
-    *,
-    options: MagneticFieldOptions | None = None,
-) -> tuple[dict[str, object], ...]:
-    """Calculate dipolar tensors for atoms targeted by a magnetic model.
-
-    This compatibility wrapper keeps the historical model-based entry point.
-    New code should prefer :func:`calculate_dipolar_tensors_for_atoms`, which
-    accepts the magnetic-ion selection directly.
-    """
-
-    opts = options or MagneticFieldOptions()
-    indices = assigned_magnetic_atom_indices(structure, model)
-    results = calculate_dipolar_tensors_for_atoms(
-        structure,
-        muon_sites,
-        magnetic_ion_indices=indices,
-        options=opts,
-    )
-    return tuple(result.to_json() for result in results)
-
-
 def calculate_dipolar_tensors_for_atoms(
     structure: Structure,
     muon_sites: Sequence[MuonSite | Sequence[float]],
@@ -2697,6 +2675,9 @@ def _bulk_magnetization_field(structure: Structure, models: Sequence[MuesrModelD
     return MAGNETIZATION_FIELD_T_PER_MUB_PER_ANGSTROM_MINUS3 * moment / volume
 
 
+_PLATE_NORMAL_AXES = frozenset({"a", "b", "c", "x", "y", "z"})
+
+
 def _demag_tensor(options: MagneticFieldOptions) -> np.ndarray | None:
     if options.demag_sample is not None:
         return demagnetizing_tensor(options.demag_sample)
@@ -2704,16 +2685,17 @@ def _demag_tensor(options: MagneticFieldOptions) -> np.ndarray | None:
     if shape in {"", "none"}:
         return None
     if shape == "sphere":
-        tensor = np.eye(3, dtype=float) / 3.0
-    elif shape in {"infinite_plate", "plate", "infinite plate"}:
-        axis = {"a": 0, "x": 0, "b": 1, "y": 1, "c": 2, "z": 2}.get(
-            options.plate_normal_axis.lower(), 2
+        return principal_demagnetizing_tensor(DemagnetizingSample(shape="sphere"))
+    if shape in {"infinite_plate", "plate", "infinite plate"}:
+        # An axis other than a, b, c, x, y or z falls back to c rather than raising.
+        axis = options.plate_normal_axis.lower()
+        return principal_demagnetizing_tensor(
+            DemagnetizingSample(
+                shape="infinite_plate",
+                plate_normal_axis=axis if axis in _PLATE_NORMAL_AXES else "c",
+            )
         )
-        tensor = np.zeros((3, 3), dtype=float)
-        tensor[axis, axis] = 1.0
-    else:
-        raise MagneticFieldError(f"unknown demagnetizing shape '{options.demag_shape}'")
-    return tensor
+    raise MagneticFieldError(f"unknown demagnetizing shape '{options.demag_shape}'")
 
 
 def _field_vector(local_field: object, primary: str, fallback: str) -> np.ndarray:

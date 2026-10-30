@@ -90,6 +90,7 @@ from mufinder.app.workflow_table_utils import (
     format_table_number,
     format_vector_components,
 )
+from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
 from mufinder.persistence.codec import to_jsonable
@@ -110,7 +111,6 @@ from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
     MagneticFieldError,
     MagneticFieldOptions,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     assigned_magnetic_atom_indices,
     calculate_commensurate_approximant_fields,
     calculate_commensurate_fields,
@@ -1132,13 +1132,6 @@ class MagneticComponentDialog(QDialog):
 
     def _secondary_unit_direction(self) -> np.ndarray:
         return self._unit_direction(self._secondary_direction, "second direction")
-
-    def _validate_directions(self) -> tuple[np.ndarray, np.ndarray]:
-        primary = self._primary_unit_direction()
-        secondary = self._secondary_unit_direction()
-        if abs(float(primary @ secondary)) > _DIRECTION_TOLERANCE:
-            raise ValueError("first and second directions must be perpendicular")
-        return primary, secondary
 
     def selector(self) -> AtomSelector:
         if self._species_radio.isChecked():
@@ -2761,7 +2754,8 @@ class MagneticTextureDialog(QDialog):
         <html>
         <body style="font-size: 13px;">
           <p>
-            These controls are adapted from the spin-texture modulation workflow in <b>mag2spectra</b>.
+            These controls rescale a multi-q texture by an inverse magnitude field, so the local
+            moment length stays close to constant, and then prune the weakest Fourier terms.
             They are useful when a compact multi-q ansatz has the right winding pattern but the local
             moment length varies too strongly across the texture.
           </p>
@@ -3136,7 +3130,7 @@ class MagneticTextureDialog(QDialog):
             if self._magnitude_map_check.isChecked():
                 self._draw_magnitude_map(texture)
             self._preview_error = None
-        except Exception as exc:
+        except ValueError as exc:
             self._preview.set_moments(None)
             if self._magnitude_map_check.isChecked():
                 self._draw_magnitude_map(None)
@@ -3149,7 +3143,7 @@ class MagneticTextureDialog(QDialog):
         try:
             self.q_basis_vectors()
             self.texture()
-        except Exception as exc:
+        except ValueError as exc:
             QMessageBox.warning(self, "Invalid magnetic texture", str(exc))
             return
         super().accept()
@@ -4153,7 +4147,7 @@ class MagneticStructureBuilderDialog(QDialog):
                 )
             classification = classify_magnetic_model(self._host_structure, self._model)
             self._classification.setText(f"Structure type: {classification.replace('_', ' ')}")
-        except Exception as exc:  # pragma: no cover - defensive UI guard
+        except ValueError as exc:
             self._viewer.set_moment_vectors(None)
             self._preview_status.setText(f"Preview unavailable: {exc}")
             self._classification.setText("Structure type: -")
@@ -5108,7 +5102,7 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         spinbox.setRange(1, 500)
         spinbox.setValue(int(value))
         spinbox.setToolTip(
-            "Unit-cell repeats used for the muesr lattice summation. Larger values are slower but reduce cutoff effects."
+            "Unit-cell repeats used for the dipolar lattice summation. Larger values are slower but reduce cutoff effects."
         )
         spinbox.setMinimumWidth(104)
         return spinbox
@@ -5133,7 +5127,7 @@ class MagneticFieldCalculationSettingsDialog(QDialog):
         spinbox.setSingleStep(512)
         spinbox.setValue(int(value))
         spinbox.setToolTip(
-            "Phase lookup resolution passed to muesr for each Fourier component. "
+            "Phase lookup resolution of the field calculation for each Fourier component. "
             "This is separate from the number of distribution samples."
         )
         spinbox.setMinimumWidth(112)
@@ -5989,7 +5983,7 @@ class NuclearRelaxationDialog(QDialog):
             return
         try:
             result = self._calculate_callback(self)
-        except Exception as exc:  # noqa: BLE001 - UI boundary
+        except ValueError as exc:
             self._status.setText(f"Calculation failed: {exc}")
             return
         payload = result.to_json() if hasattr(result, "to_json") else dict(result)
@@ -6111,119 +6105,6 @@ class NuclearRelaxationDialog(QDialog):
         edit.setValidator(QDoubleValidator(bottom, 1_000_000.0, 12, edit))
         edit.setMinimumWidth(92)
         return edit
-
-
-class DipolarTensorResultsDialog(QDialog):
-    """Display one or more dipolar tensor matrices."""
-
-    def __init__(self, results: Sequence[object], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._results = tuple(results)
-        self._matrix_tables: list[QTableWidget] = []
-        self._raw_tensors: list[np.ndarray] = []
-        self.setWindowTitle("Dipolar Tensor Results")
-        self.resize(560, 440)
-
-        layout = QVBoxLayout(self)
-        title = QLabel("Dipolar tensors")
-        style_section_title(title)
-        layout.addWidget(title)
-
-        unit_row = QHBoxLayout()
-        unit_row.addWidget(QLabel("Units"))
-        self._unit_combo = QComboBox()
-        for unit_key, label in CONTACT_COUPLING_UNIT_OPTIONS:
-            self._unit_combo.addItem(label, unit_key)
-        t_index = self._unit_combo.findData("T_per_muB")
-        if t_index >= 0:
-            self._unit_combo.setCurrentIndex(t_index)
-        self._unit_combo.currentIndexChanged.connect(self._refresh_tensor_units)
-        unit_row.addWidget(self._unit_combo)
-        unit_row.addStretch(1)
-        layout.addLayout(unit_row)
-
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        content = QWidget(scroll)
-        content_layout = QVBoxLayout(content)
-        content_layout.setSpacing(14)
-        for result in self._results:
-            content_layout.addWidget(self._result_card(result))
-        content_layout.addStretch(1)
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _result_card(self, result: object) -> QWidget:
-        group = QGroupBox(str(getattr(result, "site_label", "site")))
-        layout = QVBoxLayout(group)
-        position = getattr(result, "muon_position", None)
-        if position is not None:
-            try:
-                x, y, z = _tuple3(position)
-                summary = QLabel(f"Muon position: ({x:.6g}, {y:.6g}, {z:.6g})")
-                style_hint_text(summary)
-                layout.addWidget(summary)
-            except (TypeError, ValueError):
-                pass
-
-        table = QTableWidget(3, 3, group)
-        track_item_view_corners(table)
-        table.setHorizontalHeaderLabels(["x", "y", "z"])
-        table.setVerticalHeaderLabels(["x", "y", "z"])
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        tensor = self._tensor(result)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        table.setMinimumHeight(136)
-        layout.addWidget(table)
-        self._raw_tensors.append(tensor)
-        self._matrix_tables.append(table)
-        self._set_table_tensor(table, self._display_tensor(tensor))
-        return group
-
-    def _refresh_tensor_units(self) -> None:
-        label = self._unit_combo.currentText()
-        for table in self._matrix_tables:
-            table.setToolTip(f"Dipolar tensor in {label}")
-        for table, tensor in zip(self._matrix_tables, self._raw_tensors, strict=True):
-            self._set_table_tensor(table, self._display_tensor(tensor))
-
-    def _display_tensor(self, tensor_T_per_muB: np.ndarray) -> np.ndarray:
-        return np.asarray(tensor_T_per_muB, dtype=float) * self._display_factor()
-
-    def _display_factor(self) -> float:
-        unit = str(self._unit_combo.currentData() or "T_per_muB")
-        if unit == "MHz_per_muB":
-            return MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-        if unit in {"angstrom^-3", "a^-3", "ang^-3"}:
-            return 1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
-        return 1.0
-
-    @staticmethod
-    def _set_table_tensor(table: QTableWidget, tensor: np.ndarray) -> None:
-        for row in range(3):
-            for column in range(3):
-                item = table.item(row, column)
-                if item is None:
-                    item = QTableWidgetItem()
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    table.setItem(row, column, item)
-                item.setText(f"{float(tensor[row, column]):.8g}")
-
-    @staticmethod
-    def _tensor(result: object) -> np.ndarray:
-        tensor = getattr(result, "tensor_T_per_muB", None)
-        if tensor is None and isinstance(result, Mapping):
-            tensor = result.get("dipolar_tensor_T_per_muB")
-        arr = np.asarray(tensor, dtype=float)
-        if arr.shape != (3, 3):
-            arr = np.zeros((3, 3), dtype=float)
-        return arr
 
 
 class DipolarTensorDialog(QDialog):
@@ -6446,10 +6327,7 @@ class DipolarTensorDialog(QDialog):
         except MagneticFieldDependencyError as exc:
             self._status.setText(f"Result unavailable: {exc}")
             return
-        except (MagneticFieldError, ValueError) as exc:
-            self._status.setText(f"Calculation failed: {exc}")
-            return
-        except Exception as exc:  # pragma: no cover - defensive UI boundary
+        except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
             self._status.setText(f"Calculation failed: {exc}")
             return
         self._results_state = [self._result_to_state(result) for result in results]
@@ -6508,7 +6386,7 @@ class DipolarTensorDialog(QDialog):
         self._indices_edit.setEnabled(self._indices_radio.isChecked())
         try:
             indices = self.selected_ion_indices()
-        except Exception:
+        except ValueError:
             indices = ()
         has_site = self._muon_site is not None
         self._calculate_button.setEnabled(has_site and bool(indices))
@@ -6585,7 +6463,7 @@ class DipolarTensorDialog(QDialog):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         table.setMinimumHeight(136)
-        tensor = DipolarTensorResultsDialog._tensor(result)
+        tensor = _dipolar_result_tensor(result)
         self._result_tables.append(table)
         self._result_tensors.append(tensor)
         self._set_result_table_tensor(table, self._display_result_tensor(tensor))
@@ -6602,7 +6480,7 @@ class DipolarTensorDialog(QDialog):
     def _result_display_factor(self) -> float:
         unit = str(self._result_unit_combo.currentData() or "T_per_muB")
         if unit == "MHz_per_muB":
-            return MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+            return MUON_GAMMA_OVER_2PI_MHZ_T
         if unit in {"angstrom^-3", "a^-3", "ang^-3"}:
             return 1.0 / CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
         return 1.0
@@ -6887,7 +6765,7 @@ class MagneticFieldWidget(QWidget):
         hyperfine_label = QLabel("Hyperfine coupling")
         hyperfine_label.setBuddy(self._hyperfine_coupling)
         hyperfine_label.setToolTip(
-            "Contact hyperfine coupling for the muesr ACont term. Internally converted to Å⁻³."
+            "Contact hyperfine coupling that sets the Fermi contact field. Internally converted to Å⁻³."
         )
         hyperfine_row = QHBoxLayout()
         hyperfine_row.addWidget(self._hyperfine_coupling)
@@ -7308,7 +7186,7 @@ class MagneticFieldWidget(QWidget):
             return
         try:
             classification = classify_magnetic_model(self._host_structure, self._model)
-        except Exception:
+        except ValueError:
             self._classification.setText("Structure type: unavailable")
             return
         self._classification.setText(f"Structure type: {classification.replace('_', ' ')}")
@@ -7397,19 +7275,12 @@ class MagneticFieldWidget(QWidget):
         )
 
     @staticmethod
-    def _fractional_position_input(value: str) -> QLineEdit:
-        edit = QLineEdit(value)
-        edit.setValidator(QDoubleValidator(0.0, 1.0, 8, edit))
-        edit.setPlaceholderText("0.0")
-        return edit
-
-    @staticmethod
     def _calculation_cell_input(value: int) -> QSpinBox:
         spinbox = QSpinBox()
         spinbox.setRange(1, 500)
         spinbox.setValue(int(value))
         spinbox.setToolTip(
-            "Unit-cell repeats used for the muesr lattice summation. Larger values are slower but reduce cutoff effects."
+            "Unit-cell repeats used for the dipolar lattice summation. Larger values are slower but reduce cutoff effects."
         )
         spinbox.setMinimumWidth(104)
         return spinbox
@@ -7434,7 +7305,7 @@ class MagneticFieldWidget(QWidget):
         spinbox.setSingleStep(512)
         spinbox.setValue(int(value))
         spinbox.setToolTip(
-            "Phase lookup resolution passed to muesr for each Fourier component. "
+            "Phase lookup resolution of the field calculation for each Fourier component. "
             "This is separate from the number of distribution samples."
         )
         spinbox.setMinimumWidth(112)
@@ -7633,9 +7504,7 @@ class MagneticFieldWidget(QWidget):
             self._calculation_status.setText(f"Calculation failed: {exc}")
             # The earlier results were cleared on entry; save that so they do not come back.
             self._emit_form_state_changed()
-        except MagneticFieldError as exc:
-            self._calculation_status.setText(f"Calculation failed: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive UI boundary
+        except Exception as exc:  # noqa: BLE001 - muesr and muLFC raise untyped errors
             self._calculation_status.setText(f"Calculation failed: {exc}")
 
     def _distorted_structure_for_site(self, site: MagneticMuonSiteOption) -> Structure | None:
@@ -8858,6 +8727,15 @@ def _job_label(document: ProjectDocument, raw_job_id: object, *, fallback: str) 
     return job.label if job is not None and job.label else fallback
 
 
+def _dipolar_result_tensor(result: Mapping[str, object]) -> np.ndarray:
+    """Return a stored dipolar result's tensor in T per mu_B, or zeros when it is not 3 x 3."""
+
+    arr = np.asarray(result.get("dipolar_tensor_T_per_muB"), dtype=float)
+    if arr.shape != (3, 3):
+        arr = np.zeros((3, 3), dtype=float)
+    return arr
+
+
 def _uuid_or_none(value: object) -> UUID | None:
     try:
         return UUID(str(value))
@@ -9050,7 +8928,7 @@ def _equivalent_selector_label(selector: AtomSelector, structure: Structure) -> 
     position = _fractional_position_label(structure.fractional_positions[representative])
     try:
         indices = resolve_atom_selector(structure, selector)
-    except Exception:
+    except ValueError:
         indices = (representative,)
     count = len(indices)
     index_label = ", ".join(str(index + 1) for index in indices)

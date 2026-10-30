@@ -16,15 +16,10 @@ from mufinder.science.demagnetization import (
     demagnetizing_factors_ellipsoid,
     demagnetizing_factors_rectangular_prism,
     demagnetizing_tensor,
-    demagnetizing_tensor_field,
     fourier_box_shape,
     fourier_demagnetizing_result,
-    fourier_k_grid,
-    magnetometric_demagnetizing_tensor,
     magnetometric_rectangular_prism_tensor,
     principal_demagnetizing_tensor,
-    rectangular_prism_shape,
-    rectangular_prism_tensor,
     sample_fourier_box,
     sample_orientation,
     voxel_demagnetizing_tensor,
@@ -476,126 +471,51 @@ def test_magnetometric_prism_tensor_warns_that_grid_arguments_are_ignored() -> N
     np.testing.assert_allclose(tensor, np.eye(3) / 3.0, atol=1e-14)
 
 
-# rectangular_prism_tensor (local Joseph-Schlomann tensor)
+# Fourier method for voxel shapes
 
 
-def test_rectangular_prism_local_tensor_is_symmetric() -> None:
-    tensor = rectangular_prism_tensor(0.1, 0.2, 0.3, (1.0, 2.0, 3.0))
+def _full_spectrum_tensor(embedded: np.ndarray, spacing, sample_volume: float) -> np.ndarray:
+    """Eq. 11 of Beleggia and De Graef summed over the whole FFT spectrum, as a reference."""
 
-    assert tensor.shape == (3, 3)
-    np.testing.assert_allclose(tensor, tensor.T, atol=1e-12)
-
-
-def test_rectangular_prism_tensor_outside_x_correction() -> None:
-    # A point clearly outside along x only triggers the nxx -1 correction.
-    inside = rectangular_prism_tensor(0.0, 0.0, 0.0, (1.0, 1.0, 1.0))
-    outside = rectangular_prism_tensor(5.0, 0.0, 0.0, (1.0, 1.0, 1.0))
-    assert inside.shape == (3, 3)
-    assert outside.shape == (3, 3)
-    np.testing.assert_allclose(outside, outside.T, atol=1e-12)
-
-
-def test_rectangular_prism_tensor_broadcasts_arrays() -> None:
-    x = np.linspace(-0.5, 0.5, 3)[:, None, None]
-    y = np.linspace(-0.5, 0.5, 3)[None, :, None]
-    z = np.linspace(-0.5, 0.5, 3)[None, None, :]
-    tensor = rectangular_prism_tensor(x, y, z, (1.0, 1.0, 1.0))
-    assert tensor.shape == (3, 3, 3, 3, 3)
-    # Symmetric in the tensor indices for every grid point.
-    np.testing.assert_allclose(tensor[0, 1], tensor[1, 0], atol=1e-12)
-
-
-def test_rectangular_prism_tensor_bad_half_lengths_raises() -> None:
-    with pytest.raises(DemagnetizationError, match="positive"):
-        rectangular_prism_tensor(0.0, 0.0, 0.0, (1.0, -1.0, 1.0))
-
-
-# rectangular_prism_shape and fourier_k_grid
-
-
-def test_rectangular_prism_shape_marks_interior() -> None:
-    shape = rectangular_prism_shape((9, 9, 9), (0.25, 0.25, 0.25), 0.1)
-    assert shape.dtype == bool
-    assert shape.shape == (9, 9, 9)
-    # Centre voxel (coord 0) is inside; outer voxels (coord 0.4 > 0.25) outside.
-    assert bool(shape[4, 4, 4]) is True
-    assert bool(shape[0, 0, 0]) is False
-
-
-def test_rectangular_prism_shape_accepts_per_axis_spacing() -> None:
-    scalar = rectangular_prism_shape((5, 5, 5), (1.0, 1.0, 1.0), 0.5)
-    vector = rectangular_prism_shape((5, 5, 5), (1.0, 1.0, 1.0), (0.5, 0.5, 0.5))
-
-    assert vector.any()
-    np.testing.assert_array_equal(scalar, vector)
-
-
-def test_rectangular_prism_shape_zero_dim_raises() -> None:
-    with pytest.raises(DemagnetizationError, match="positive"):
-        rectangular_prism_shape((0, 5, 5), (1.0, 1.0, 1.0), 0.5)
-
-
-def test_rectangular_prism_shape_rejects_two_component_spacing() -> None:
-    with pytest.raises(DemagnetizationError, match="scalar or a three-vector"):
-        rectangular_prism_shape((5, 5, 5), (1.0, 1.0, 1.0), (1.0, 2.0))
-
-
-def test_fourier_k_grid_shapes_and_zero_origin() -> None:
-    kx, ky, kz = fourier_k_grid((4, 6, 8), 0.5)
-    assert kx.shape == ky.shape == kz.shape == (4, 6, 8)
-    # The first element (DC component) is the reciprocal-space origin.
-    assert kx[0, 0, 0] == 0.0
-    assert ky[0, 0, 0] == 0.0
-    assert kz[0, 0, 0] == 0.0
-
-
-def test_fourier_k_grid_rejects_non_positive_spacing() -> None:
-    with pytest.raises(DemagnetizationError, match="spacing values must be positive"):
-        fourier_k_grid((4, 4, 4), 0.0)
-
-
-# magnetometric_demagnetizing_tensor (Fourier path)
-
-
-def test_magnetometric_demagnetizing_tensor_cube_is_isotropic() -> None:
-    n = 16
-    spacing = 1.0 / n
-    grid_shape = (n, n, n)
-    half = 0.25
-    shape_grid = rectangular_prism_shape(grid_shape, (half, half, half), spacing)
-    amplitude = np.fft.fftn(shape_grid.astype(float)) * (spacing**3)
-    kx, ky, kz = fourier_k_grid(grid_shape, spacing)
-    volume = (2 * half) ** 3
-    tensor = magnetometric_demagnetizing_tensor(
-        amplitude,
-        kx,
-        ky,
-        kz,
-        sample_volume=volume,
-        domain_lengths=(1.0, 1.0, 1.0),
+    voxel_volume = float(np.prod(spacing))
+    amplitude = np.fft.fftn(embedded) * voxel_volume
+    k = np.meshgrid(
+        *(
+            2.0 * np.pi * np.fft.fftfreq(n, d=step)
+            for n, step in zip(embedded.shape, spacing, strict=True)
+        ),
+        indexing="ij",
     )
-    # With k = 0 on the diagonal the trace is 1 by Parseval's theorem, unnormalised.
-    assert float(np.trace(tensor)) == pytest.approx(1.0, abs=1e-12)
-    np.testing.assert_allclose(tensor, np.eye(3) / 3.0, atol=1e-12)
+    k2 = k[0] ** 2 + k[1] ** 2 + k[2] ** 2
+    valid = k2 > 0.0
+    power = np.abs(amplitude) ** 2
+    box_volume = float(np.prod([n * step for n, step in zip(embedded.shape, spacing, strict=True)]))
+    prefactor = 1.0 / (sample_volume * box_volume)
+    tensor = np.empty((3, 3))
+    for i in range(3):
+        for j in range(3):
+            tensor[i, j] = prefactor * float(
+                np.sum(power[valid] * k[i][valid] * k[j][valid] / k2[valid])
+            )
+    return tensor + np.eye(3) * prefactor * float(np.sum(power[~valid])) / 3.0
 
 
-def test_magnetometric_demagnetizing_tensor_matches_the_voxel_path() -> None:
+def test_voxel_cube_tensor_is_isotropic_with_unit_trace() -> None:
+    # Cubic symmetry makes the three diagonal elements equal and the mirror planes
+    # remove the off-diagonal ones, so the tensor is exactly 1/3 times the identity.
+    result = voxel_demagnetizing_tensor(np.ones((8, 8, 8), dtype=bool), 0.25, padding=2.0)
+
+    np.testing.assert_allclose(result.tensor, np.eye(3) / 3.0, atol=1e-12)
+
+
+def test_voxel_tensor_matches_the_full_spectrum_sum() -> None:
     mask = np.ones((4, 4, 2), dtype=bool)
     mask[0, 0, 0] = False
     spacing = (0.5, 0.75, 0.2)
     box = fourier_box_shape(mask.shape, spacing, 2.0)
     embedded = np.zeros(box)
     embedded[: mask.shape[0], : mask.shape[1], : mask.shape[2]] = mask
-    voxel_volume = float(np.prod(spacing))
-    kx, ky, kz = fourier_k_grid(box, spacing)
-    tensor = magnetometric_demagnetizing_tensor(
-        np.fft.fftn(embedded) * voxel_volume,
-        kx,
-        ky,
-        kz,
-        sample_volume=float(mask.sum()) * voxel_volume,
-        domain_lengths=[n * s for n, s in zip(box, spacing, strict=True)],
-    )
+    tensor = _full_spectrum_tensor(embedded, spacing, float(mask.sum()) * float(np.prod(spacing)))
 
     voxel = voxel_demagnetizing_tensor(mask, spacing, padding=2.0).tensor
 
@@ -613,43 +533,6 @@ def test_mirror_symmetric_voxel_shape_has_no_off_diagonal_elements() -> None:
     tensor = voxel_demagnetizing_tensor(mask, (0.5, 0.75, 0.2), padding=2.0).tensor
 
     np.testing.assert_allclose(tensor - np.diag(np.diag(tensor)), 0.0, atol=1e-14)
-
-
-def test_magnetometric_demagnetizing_tensor_zero_amplitude_gives_zero() -> None:
-    grid_shape = (4, 4, 4)
-    kx, ky, kz = fourier_k_grid(grid_shape, 1.0)
-    amplitude = np.zeros(grid_shape, dtype=complex)
-    tensor = magnetometric_demagnetizing_tensor(
-        amplitude,
-        kx,
-        ky,
-        kz,
-        sample_volume=1.0,
-        domain_lengths=(1.0, 1.0, 1.0),
-    )
-    np.testing.assert_array_equal(tensor, np.zeros((3, 3)))
-
-
-def test_magnetometric_demagnetizing_tensor_nonpositive_volume_raises() -> None:
-    grid_shape = (4, 4, 4)
-    kx, ky, kz = fourier_k_grid(grid_shape, 1.0)
-    amplitude = np.zeros(grid_shape, dtype=complex)
-    with pytest.raises(DemagnetizationError, match="sample_volume"):
-        magnetometric_demagnetizing_tensor(
-            amplitude, kx, ky, kz, sample_volume=0.0, domain_lengths=(1.0, 1.0, 1.0)
-        )
-
-
-def test_magnetometric_demagnetizing_tensor_shape_mismatch_raises() -> None:
-    kx, ky, kz = fourier_k_grid((4, 4, 4), 1.0)
-    amplitude = np.zeros((4, 4, 3), dtype=complex)
-    with pytest.raises(DemagnetizationError, match="identical shapes"):
-        magnetometric_demagnetizing_tensor(
-            amplitude, kx, ky, kz, sample_volume=1.0, domain_lengths=(1.0, 1.0, 1.0)
-        )
-
-
-# Fourier method for voxel shapes
 
 
 def _voxel_sphere(n: int) -> np.ndarray:
@@ -784,51 +667,6 @@ def test_sample_fourier_box_matches_the_calculation_and_checks_its_size() -> Non
 def test_voxel_tensor_rejects_a_box_too_large_to_hold() -> None:
     with pytest.raises(DemagnetizationError, match="million voxels"):
         voxel_demagnetizing_tensor(np.ones((64, 64, 1), dtype=bool), (1.0, 1.0, 1e-3))
-
-
-def test_tensor_field_trace_is_one_inside_and_zero_outside() -> None:
-    mask = np.zeros((6, 5, 3), dtype=bool)
-    mask[0:6, 0:5, 0:2] = True
-    mask[2:4, 1:3, 0:2] = False
-    field = demagnetizing_tensor_field(mask, (1.0, 1.0, 0.5), padding=2.0)
-    trace = np.einsum("ii...->...", field.values)
-
-    np.testing.assert_allclose(trace, field.mask.astype(float), atol=1e-12)
-    assert field.values.shape == (3, 3, *field.mask.shape)
-
-
-def test_tensor_field_matches_the_local_prism_tensor_at_its_centre() -> None:
-    n = 24
-    field = demagnetizing_tensor_field(np.ones((n, n, n), dtype=bool), 1.0 / n, padding=3.0)
-    centre = field.values[:, :, n // 2, n // 2, n // 2]
-    # The voxel grid is offset by half a voxel, so compare with the tensor there.
-    offset = 0.5 / n
-    local = rectangular_prism_tensor(offset, offset, offset, (0.5, 0.5, 0.5))
-
-    np.testing.assert_allclose(centre, local, atol=0.01)
-
-
-def test_tensor_field_of_a_mirror_symmetric_shape_averages_without_off_diagonals() -> None:
-    # A diagonal line of voxels: symmetric under z -> -z, but not axis-aligned.
-    mask = np.eye(4, dtype=bool)[:, :, None]
-    field = demagnetizing_tensor_field(mask, 1.0, padding=2.0)
-    average = field.values[:, :, field.mask].mean(axis=-1)
-
-    np.testing.assert_allclose(average[[0, 1], [2, 2]], 0.0, atol=1e-14)
-    np.testing.assert_allclose(
-        average, voxel_demagnetizing_tensor(mask, 1.0, padding=2.0).tensor, atol=1e-12
-    )
-
-
-def test_tensor_field_averages_to_the_magnetometric_tensor() -> None:
-    mask = np.ones((8, 6, 2), dtype=bool)
-    spacing = (1.0, 1.0, 0.5)
-    field = demagnetizing_tensor_field(mask, spacing, padding=2.0)
-    average = field.values[:, :, field.mask].mean(axis=-1)
-
-    np.testing.assert_allclose(
-        average, voxel_demagnetizing_tensor(mask, spacing, padding=2.0).tensor, atol=1e-12
-    )
 
 
 # Voxel-grid and image-plate samples

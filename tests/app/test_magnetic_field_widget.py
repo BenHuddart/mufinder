@@ -21,7 +21,6 @@ from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.magnetic_field_widget import (
     DipolarTensorDialog,
-    DipolarTensorResultsDialog,
     AtomPhaseDialog,
     MagneticComponentDialog,
     MagneticFieldCalculationSettingsDialog,
@@ -37,12 +36,16 @@ from mufinder.app.magnetic_field_widget import (
     _component_moment_label,
     _selector_label,
 )
+from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
+from mufinder.science.magnetic_fields import MagneticFieldDependencyError, MagneticFieldError
+from mufinder.science.nuclear_relaxation import NuclearRelaxationError
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     ComplexVector,
     FourierTerm,
     MagneticComponent,
+    MagneticStructureError,
     MagneticStructureModel,
     MagneticTexture,
     MagneticTextureTerm,
@@ -147,6 +150,28 @@ def test_magnetic_structure_builder_imports_legacy_host_spins(qapp, tmp_path) ->
     assert dialog._viewer._show_cell.objectName() == "magneticBuilderViewerCheckBox"
     assert "spacing: 9px" in dialog._viewer._show_cell.styleSheet()
     assert len(dialog.model().components) == 2
+    dialog.close()
+
+
+def test_magnetic_structure_builder_preview_reports_an_invalid_model(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-invalid.mufinder", "Magnetic")
+    service.add_structure(document, _host_structure())
+    dialog = MagneticStructureBuilderDialog()
+    dialog.set_document(document)
+
+    def _invalid(*_args, **_kwargs):
+        raise MagneticStructureError("atom selector contains an out-of-range index")
+
+    monkeypatch.setattr(magnetic_field_widget_module, "moments_in_supercell", _invalid)
+    dialog._build_from_host_spins()
+
+    assert dialog._preview_status.text() == (
+        "Preview unavailable: atom selector contains an out-of-range index"
+    )
+    assert dialog._classification.text() == "Structure type: -"
     dialog.close()
 
 
@@ -551,6 +576,27 @@ def test_magnetic_structure_builder_edits_selected_component(qapp, tmp_path, mon
     dialog.close()
 
 
+def test_magnetic_texture_dialog_refuses_a_zero_core_direction(qapp, monkeypatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        magnetic_field_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dialog = MagneticTextureDialog(_multi_species_structure())
+    _set_direction(dialog._q1, (0.1, 0.0, 0.0))
+    _set_direction(dialog._core_direction, (0.0, 0.0, 0.0))
+
+    dialog._refresh_preview()
+    dialog.accept()
+
+    message = "core direction must be a non-zero direction"
+    assert dialog._diagnostics.text() == f"Texture preview unavailable: {message}"
+    assert warnings == [message]
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    dialog.close()
+
+
 def test_magnetic_texture_dialog_builds_hexagonal_texture_component(qapp) -> None:
     dialog = MagneticTextureDialog(_multi_species_structure(), selected_indices=(0, 2))
     dialog._selected_radio.setChecked(True)
@@ -776,7 +822,7 @@ def test_magnetic_texture_dialog_magnitude_pruning_help_uses_current_values(qapp
 
     html = dialog._magnitude_pruning_help_html()
 
-    assert "mag2spectra" in html
+    assert "inverse magnitude field" in html
     assert "16 × 24 × 2" in html
     assert "0.0005" in html
     assert "Keep strongest N" in html
@@ -2147,6 +2193,105 @@ def test_magnetic_field_widget_never_shows_a_non_finite_field(qapp, tmp_path, mo
         "so it is not shown"
     )
     widget.close()
+
+
+def test_magnetic_field_widget_shows_an_unclassifiable_model(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-unclassified.mufinder", "Unclassified")
+    service.add_structure(document, _host_structure())
+
+    def _unclassifiable(*_args, **_kwargs):
+        raise MagneticFieldError("magnetic structure has no non-zero Fourier components")
+
+    monkeypatch.setattr(magnetic_field_widget_module, "classify_magnetic_model", _unclassifiable)
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+
+    assert widget._classification.text() == "Structure type: unavailable"
+    widget.close()
+
+
+def test_magnetic_field_widget_reports_an_untyped_backend_error(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "magnetic-backend.mufinder", "Backend Error")
+    service.add_structure(document, _host_structure())
+
+    def _backend_failure(*_args, **_kwargs):
+        raise RuntimeError("Symbolic FC not defined!")
+
+    monkeypatch.setattr(
+        magnetic_field_widget_module,
+        "classify_magnetic_model",
+        lambda *_args, **_kwargs: "commensurate",
+    )
+    monkeypatch.setattr(
+        magnetic_field_widget_module, "calculate_commensurate_fields", _backend_failure
+    )
+
+    widget = MagneticFieldWidget()
+    widget.set_document(document)
+    widget._set_model(MagneticStructureModel(components=(_component("one", "One", 0),)))
+    widget._selected_muon_site = _custom_muon_site((0.25, 0.5, 0.75))
+    widget._sync_enabled_state()
+    widget._calculate_fields()
+
+    assert widget._calculation_status.text() == "Calculation failed: Symbolic FC not defined!"
+    assert widget._result_table.rowCount() == 0
+    widget.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (
+            MagneticFieldDependencyError("muesr is required"),
+            "Result unavailable: muesr is required",
+        ),
+        (MagneticFieldError("no ions"), "Calculation failed: no ions"),
+        (TypeError("bad sample"), "Calculation failed: bad sample"),
+    ],
+)
+def test_dipolar_tensor_dialog_reports_a_failed_calculation(
+    qapp, error: Exception, status: str
+) -> None:
+    def _calculate(_dialog):
+        raise error
+
+    dialog = DipolarTensorDialog(
+        _host_structure(),
+        MagneticStructureModel(components=(_component("one", "One", 0),)),
+        _custom_muon_site((0.25, 0.25, 0.25)),
+        include_equivalent_sites=False,
+        calculate_callback=_calculate,
+    )
+
+    dialog._calculate()
+
+    assert dialog._status.text() == status
+    assert dialog.results_state() == []
+    dialog.close()
+
+
+def test_nuclear_relaxation_dialog_reports_a_failed_calculation(qapp) -> None:
+    def _calculate(_dialog):
+        raise NuclearRelaxationError("No isotope data available for element 'Xx'")
+
+    dialog = NuclearRelaxationDialog(
+        muon_site=_custom_muon_site((0.25, 0.25, 0.25)),
+        distortion_available=False,
+        calculate_callback=_calculate,
+    )
+
+    dialog._calculate()
+
+    assert dialog._status.text() == (
+        "Calculation failed: No isotope data available for element 'Xx'"
+    )
+    assert dialog.results_state() == {}
+    dialog.close()
 
 
 def test_magnetic_field_widget_never_restores_a_non_finite_field(qapp, tmp_path) -> None:
@@ -4141,43 +4286,56 @@ def test_dipolar_tensor_dialog_shows_and_updates_recent_results(qapp) -> None:
     dialog.close()
 
 
-def test_dipolar_tensor_results_dialog_displays_matrix(qapp) -> None:
-    class _Result:
-        site_label = "site 1"
-        muon_position = (0.25, 0.25, 0.25)
-        tensor_T_per_muB = ((1.0, 0.1, 0.2), (0.1, 2.0, 0.3), (0.2, 0.3, 3.0))
+def _dipolar_dialog_with_result(tensor) -> DipolarTensorDialog:
+    return DipolarTensorDialog(
+        _host_structure(),
+        MagneticStructureModel(components=(_component("one", "One", 0),)),
+        _custom_muon_site((0.25, 0.25, 0.25)),
+        include_equivalent_sites=False,
+        results_state=[
+            {
+                "site_label": "site 1",
+                "muon_position": [0.25, 0.25, 0.25],
+                "dipolar_tensor_T_per_muB": tensor,
+            }
+        ],
+    )
 
-    dialog = DipolarTensorResultsDialog((_Result(),))
 
-    assert len(dialog._matrix_tables) == 1
-    assert dialog._matrix_tables[0].item(1, 1).text() == "2"
+def test_dipolar_tensor_dialog_converts_results_to_megahertz(qapp) -> None:
+    dialog = _dipolar_dialog_with_result([[1.0, 0.1, 0.2], [0.1, 2.0, 0.3], [0.2, 0.3, 3.0]])
+    combo = dialog._result_unit_combo
 
-    assert [dialog._unit_combo.itemData(index) for index in range(dialog._unit_combo.count())] == [
+    assert dialog._result_tables[0].item(1, 1).text() == "2"
+    assert [combo.itemData(index) for index in range(combo.count())] == [
         "angstrom^-3",
         "T_per_muB",
         "MHz_per_muB",
     ]
-    assert dialog._unit_combo.currentData() == "T_per_muB"
-    dialog._unit_combo.setCurrentIndex(dialog._unit_combo.findData("MHz_per_muB"))
+    assert combo.currentData() == "T_per_muB"
+    combo.setCurrentIndex(combo.findData("MHz_per_muB"))
 
-    assert float(dialog._matrix_tables[0].item(1, 1).text()) == pytest.approx(
-        2.0 * magnetic_field_widget_module.MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    assert float(dialog._result_tables[0].item(1, 1).text()) == pytest.approx(
+        2.0 * MUON_GAMMA_OVER_2PI_MHZ_T
     )
     dialog.close()
 
 
-def test_dipolar_tensor_results_dialog_converts_to_angstrom_units(qapp) -> None:
-    class _Result:
-        site_label = "site 1"
-        muon_position = (0.25, 0.25, 0.25)
-        tensor_T_per_muB = ((1.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+def test_dipolar_tensor_dialog_converts_results_to_angstrom_units(qapp) -> None:
+    dialog = _dipolar_dialog_with_result([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    combo = dialog._result_unit_combo
+    combo.setCurrentIndex(combo.findData("angstrom^-3"))
 
-    dialog = DipolarTensorResultsDialog((_Result(),))
-    dialog._unit_combo.setCurrentIndex(dialog._unit_combo.findData("angstrom^-3"))
-
-    assert float(dialog._matrix_tables[0].item(0, 0).text()) == pytest.approx(
+    assert float(dialog._result_tables[0].item(0, 0).text()) == pytest.approx(
         1.0 / magnetic_field_widget_module.CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB
     )
+    dialog.close()
+
+
+def test_dipolar_tensor_dialog_shows_zeros_for_a_malformed_stored_tensor(qapp) -> None:
+    dialog = _dipolar_dialog_with_result([[1.0, 2.0]])
+
+    assert [dialog._result_tables[0].item(0, column).text() for column in range(3)] == ["0"] * 3
     dialog.close()
 
 
