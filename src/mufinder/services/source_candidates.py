@@ -44,6 +44,7 @@ from mufinder.domain.models import (
     Result,
     Structure,
 )
+from mufinder.persistence.codec import float_triplet_or_none
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
     MuonPath,
@@ -1174,12 +1175,7 @@ def energy_barrier_neb_result_path_label(
 def coerce_fractional_triplet(value: object) -> tuple[float, float, float] | None:
     """Return ``value`` as three floats, or ``None`` when it is not a numeric triplet."""
 
-    if not isinstance(value, (list, tuple)) or len(value) != 3:
-        return None
-    try:
-        return (float(value[0]), float(value[1]), float(value[2]))
-    except (TypeError, ValueError):
-        return None
+    return float_triplet_or_none(value)
 
 
 def completed_muon_relaxation_sources(

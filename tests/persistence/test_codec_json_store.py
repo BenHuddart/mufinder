@@ -19,7 +19,15 @@ import pytest
 
 from mufinder.domain import cluster, models
 
-from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
+from mufinder.persistence.codec import (
+    float_triplet,
+    float_triplet_or_none,
+    int_or_none,
+    parse_datetime,
+    parse_uuid,
+    to_jsonable,
+    uuid_or_none,
+)
 from mufinder.persistence.json_store import ProjectStore
 
 
@@ -249,3 +257,34 @@ def test_prune_entities_removes_stale_files_and_reports_the_kept_ones_on_disk(
     assert sorted(path.name for path in jobs_dir.iterdir()) == ["kept.json", "notes.txt"]
     assert store.load_entities("jobs") == [{"id": "kept"}]
     assert store.prune_entities("absent_type", {"kept"}) == set()
+
+
+def test_lenient_readers_give_none_for_values_that_do_not_convert() -> None:
+    identifier = uuid4()
+
+    assert uuid_or_none(str(identifier)) == identifier
+    assert uuid_or_none(identifier) == identifier
+    for value in (None, "", "not-a-uuid", 0, False):
+        assert uuid_or_none(value) is None
+    assert int_or_none("3") == 3
+    assert int_or_none(2.7) == 2
+    for value in (None, "three", [1]):
+        assert int_or_none(value) is None
+
+
+def test_float_triplet_reads_three_numbers_and_raises_otherwise() -> None:
+    assert float_triplet([1, "2", 3.5]) == (1.0, 2.0, 3.5)
+    assert float_triplet((0.0, 0.0, 0.0)) == (0.0, 0.0, 0.0)
+    with pytest.raises(ValueError, match="three-vector"):
+        float_triplet([1.0, 2.0])
+    with pytest.raises(ValueError):
+        float_triplet(["x", 0.0, 0.0])
+    with pytest.raises(TypeError):
+        float_triplet(None)
+
+
+def test_float_triplet_or_none_reads_only_a_list_or_tuple_of_three_numbers() -> None:
+    assert float_triplet_or_none([1, "2", 3.5]) == (1.0, 2.0, 3.5)
+    assert float_triplet_or_none((0.0, 0.0, 0.0)) == (0.0, 0.0, 0.0)
+    for value in (None, [1.0, 2.0], ["x", 0.0, 0.0], "abc", {0: 1.0, 1: 2.0, 2: 3.0}):
+        assert float_triplet_or_none(value) is None

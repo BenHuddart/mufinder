@@ -24,7 +24,7 @@ from mufinder.domain.charge_states import (
     canonical_charge_state,
     muon_charge_state_label,
 )
-from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.services.project_document import ProjectDocument
 from mufinder.services.project_summary import (
     MUON_SITES_SUMMARY_SNAPSHOTS_KEY,
@@ -175,7 +175,7 @@ def build_muon_sites_summary_snapshot(workspace: Mapping[str, object]) -> dict[s
             energy: float | None = None if raw_energy is None else float(raw_energy)
         except (TypeError, ValueError):
             energy = None
-        representative = _uuid_or_none(cluster.get("representative_job_id"))
+        representative = uuid_or_none(cluster.get("representative_job_id"))
         sites.append(
             {
                 "cluster_index": cluster_index,
@@ -294,7 +294,7 @@ def pinned_muon_sites(document: ProjectDocument | None, charge_state: str) -> li
         except (TypeError, ValueError):
             energy = None
         if "representative_job_id" in raw:
-            job_id = _uuid_or_none(raw.get("representative_job_id"))
+            job_id = uuid_or_none(raw.get("representative_job_id"))
         else:
             job_id = legacy_job_ids.get(cluster_index)
         sites.append(
@@ -522,7 +522,7 @@ def _workspace_representative_job_ids(
                 cluster_index = int(cluster.get("cluster_index", 0))
             except (TypeError, ValueError):
                 continue
-            job_id = _uuid_or_none(cluster.get("representative_job_id"))
+            job_id = uuid_or_none(cluster.get("representative_job_id"))
             if job_id is not None:
                 job_ids[cluster_index] = job_id
         return job_ids
@@ -531,15 +531,6 @@ def _workspace_representative_job_ids(
 
 def _candidate_charge_state(candidate: QuantumSourceCandidate) -> str | None:
     return charge_state_for_job(candidate.job)
-
-
-def _uuid_or_none(value: object) -> UUID | None:
-    if value is None:
-        return None
-    try:
-        return UUID(str(value))
-    except ValueError:
-        return None
 
 
 __all__ = [

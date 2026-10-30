@@ -2167,6 +2167,412 @@ def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStruct
     )
 
 
+def magnetic_model_for_host(stored: object, host: Structure | None) -> MagneticStructureModel:
+    """Return the magnetic model saved for ``host``, or one built from its spins.
+
+    ``stored`` is the project's (or a workspace's) saved model payload. When it
+    is not a mapping, the host's own ``magnetic_structure`` property is used. A
+    payload with ``components`` is read as a model; anything else falls back to
+    :func:`magnetic_model_from_legacy_structure`. With no host the model is
+    empty.
+    """
+
+    if host is None:
+        return MagneticStructureModel()
+    payload = stored if isinstance(stored, dict) else host.properties.get("magnetic_structure")
+    if isinstance(payload, dict) and "components" in payload:
+        return MagneticStructureModel.from_json(payload)
+    return magnetic_model_from_legacy_structure(host)
+
+
+# --- Builder geometry: q-basis rows, propagation and moment directions ---------
+
+# Below this length a direction or a projection counts as zero.
+_DIRECTION_TOLERANCE = 1e-6
+
+
+def unit_q_coeff(index: int) -> tuple[float, float, float]:
+    """Return the q-basis coefficients that select basis row ``index`` alone."""
+
+    rows = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
+    return rows[int(index)]
+
+
+def _float_triple(values: Sequence[float]) -> tuple[float, float, float]:
+    arr = np.asarray(values, dtype=float)
+    return (float(arr[0]), float(arr[1]), float(arr[2]))
+
+
+def component_propagation_rlu(
+    model: MagneticStructureModel, component: MagneticComponent
+) -> tuple[float, float, float]:
+    """Return a component's q in r.l.u.: its first finite-q term's, else its first term's, else zero."""
+
+    for term in component.terms:
+        if any(abs(float(value)) > 1e-12 for value in term.q_coeff):
+            return _float_triple(model.q_coeff_to_rlu(term.q_coeff))
+    if component.terms:
+        return _float_triple(model.q_coeff_to_rlu(component.terms[0].q_coeff))
+    return (0.0, 0.0, 0.0)
+
+
+def component_propagation_coeff(
+    component: MagneticComponent,
+) -> tuple[float, float, float] | None:
+    """Return the q-basis coefficients of a component's first finite-q term, or ``None`` when it has none."""
+
+    for term in component.terms:
+        if any(abs(float(value)) > 1e-12 for value in term.q_coeff):
+            return _float_triple(term.q_coeff)
+    return None
+
+
+def used_q_basis_indices(
+    model: MagneticStructureModel, *, ignored_component_ids: set[str] | None = None
+) -> set[int]:
+    """Return the q-basis rows the model's components use, leaving out ``ignored_component_ids``."""
+
+    used: set[int] = set()
+    for component in model.components:
+        if ignored_component_ids is not None and component.component_id in ignored_component_ids:
+            continue
+        used.update(component_q_basis_indices(component))
+    return used
+
+
+def allocate_q_basis_row(
+    model: MagneticStructureModel,
+    q_vector: Sequence[float],
+    *,
+    ignored_component_ids: set[str] | None = None,
+) -> tuple[tuple[tuple[float, float, float], ...], tuple[float, float, float] | None]:
+    """Find or free a q-basis row for ``q_vector``.
+
+    Returns the q basis, with ``q_vector`` written into a free row when no row
+    already holds it, and the coefficients that select that row. A used row
+    that matches comes first, then a free row that matches, then the first
+    free row. The coefficients are ``None`` when every row is used by another
+    q; a zero ``q_vector`` needs no row and gets zero coefficients.
+    """
+
+    q = np.asarray(q_vector, dtype=float)
+    basis = list(model.q_basis_rlu)
+    if np.allclose(q, 0.0, atol=1e-12):
+        return tuple(basis), (0.0, 0.0, 0.0)
+    used_indices = used_q_basis_indices(model, ignored_component_ids=ignored_component_ids)
+    for index, row in enumerate(basis):
+        if index in used_indices and np.allclose(row, q, atol=1e-9):
+            return tuple(basis), unit_q_coeff(index)
+    for index, row in enumerate(basis):
+        if index not in used_indices and np.allclose(row, q, atol=1e-9):
+            return tuple(basis), unit_q_coeff(index)
+    for index in range(len(basis)):
+        if index not in used_indices:
+            basis[index] = tuple(float(value) for value in q)
+            return tuple(basis), unit_q_coeff(index)
+    return tuple(basis), None
+
+
+def allocate_texture_q_basis_rows(
+    model: MagneticStructureModel,
+    q_vectors: Sequence[Sequence[float]],
+    *,
+    ignored_component_ids: set[str] | None = None,
+) -> tuple[tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float], ...] | None]:
+    """Find or free a q-basis row for each of a texture's (at most three) q vectors.
+
+    Returns the q basis and the three rows of coefficients that map the
+    texture's own q basis onto it; a zero vector maps to zero. The rows are
+    ``None`` when a vector finds neither a matching row nor a free one.
+    """
+
+    basis = [tuple(float(value) for value in row) for row in model.q_basis_rlu]
+    used_indices = used_q_basis_indices(model, ignored_component_ids=ignored_component_ids)
+    transform_rows: list[tuple[float, float, float]] = []
+    allocated: set[int] = set()
+    for q_vector in q_vectors[:3]:
+        q = np.asarray(q_vector, dtype=float)
+        if np.allclose(q, 0.0, atol=1e-12):
+            transform_rows.append((0.0, 0.0, 0.0))
+            continue
+        matched = None
+        for index, row in enumerate(basis):
+            if np.allclose(row, q, atol=1e-9, rtol=0.0):
+                matched = index
+                break
+        if matched is None:
+            for index in range(3):
+                if index not in used_indices and index not in allocated:
+                    matched = index
+                    basis[index] = tuple(float(value) for value in q)
+                    break
+        if matched is None:
+            return tuple(basis), None
+        allocated.add(matched)
+        transform_rows.append(unit_q_coeff(matched))
+    while len(transform_rows) < 3:
+        transform_rows.append((0.0, 0.0, 0.0))
+    return tuple(basis), tuple(transform_rows)
+
+
+def unit_direction_or(
+    vector: Sequence[float], fallback: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    """Return ``vector`` normalised, or ``fallback`` when it is (almost) zero."""
+
+    arr = np.asarray(vector, dtype=float)
+    norm = float(np.linalg.norm(arr))
+    if norm <= _DIRECTION_TOLERANCE:
+        return fallback
+    return tuple(float(value) for value in arr / norm)  # type: ignore[return-value]
+
+
+def perpendicular_unit_direction(vector: Sequence[float]) -> np.ndarray:
+    """Return a unit vector perpendicular to ``vector``, built from x (or y when x is nearly parallel).
+
+    A zero ``vector`` is taken as z.
+    """
+
+    axis = np.asarray(vector, dtype=float)
+    norm = float(np.linalg.norm(axis))
+    if norm <= _DIRECTION_TOLERANCE:
+        axis = np.asarray((0.0, 0.0, 1.0), dtype=float)
+    else:
+        axis = axis / norm
+    trial = np.asarray((1.0, 0.0, 0.0), dtype=float)
+    if abs(float(axis @ trial)) > 0.9:
+        trial = np.asarray((0.0, 1.0, 0.0), dtype=float)
+    projected = trial - float(trial @ axis) * axis
+    projected_norm = float(np.linalg.norm(projected))
+    if projected_norm <= _DIRECTION_TOLERANCE:
+        return np.asarray((0.0, 0.0, 1.0), dtype=float)
+    return projected / projected_norm
+
+
+def nonzero_unit_direction(vector: Sequence[float], label: str) -> np.ndarray:
+    """Return ``vector`` normalised, raising ``ValueError`` naming ``label`` when it is (almost) zero."""
+
+    arr = np.asarray(vector, dtype=float)
+    norm = float(np.linalg.norm(arr))
+    if norm <= _DIRECTION_TOLERANCE:
+        raise ValueError(f"{label} must be a non-zero direction")
+    return arr / norm
+
+
+def propagation_direction(
+    lattice_vectors: Sequence[Sequence[float]],
+    q_rlu: Sequence[float],
+    *,
+    allow_fallback: bool = False,
+) -> np.ndarray:
+    """Return the Cartesian unit vector along a helix, cycloid or conical component's q.
+
+    A zero q, or one with no Cartesian direction, raises ``ValueError``; with
+    ``allow_fallback`` it gives z instead.
+    """
+
+    q = np.asarray(q_rlu, dtype=float)
+    if float(np.linalg.norm(q)) <= _DIRECTION_TOLERANCE:
+        if allow_fallback:
+            return np.asarray((0.0, 0.0, 1.0), dtype=float)
+        raise ValueError("q must be non-zero for helical, cycloidal, and conical components")
+    try:
+        return q_cartesian_direction(lattice_vectors, q)
+    except MagneticStructureError:
+        if allow_fallback:
+            return np.asarray((0.0, 0.0, 1.0), dtype=float)
+        raise ValueError("q must define a non-zero propagation direction") from None
+
+
+def rotation_handedness(
+    primary: Sequence[float], secondary: Sequence[float], q_direction: Sequence[float]
+) -> int:
+    """Return the sense of rotation about q: +1 when the triple product of q, primary and secondary is not negative, else -1."""
+
+    primary_arr = np.asarray(primary, dtype=float)
+    secondary_arr = np.asarray(secondary, dtype=float)
+    q_arr = np.asarray(q_direction, dtype=float)
+    return 1 if float(np.dot(np.cross(q_arr, primary_arr), secondary_arr)) >= 0.0 else -1
+
+
+def reference_direction_perpendicular_to(
+    reference: Sequence[float], q_direction: np.ndarray
+) -> np.ndarray:
+    """Return the unit part of ``reference`` perpendicular to the unit ``q_direction``.
+
+    When ``reference`` is (almost) parallel to q, any unit vector perpendicular
+    to q is returned instead (:func:`perpendicular_unit_direction`).
+    """
+
+    raw = np.asarray(reference, dtype=float)
+    projected = raw - float(raw @ q_direction) * q_direction
+    norm = float(np.linalg.norm(projected))
+    if norm <= _DIRECTION_TOLERANCE:
+        return perpendicular_unit_direction(q_direction)
+    return projected / norm
+
+
+def constrained_secondary_direction(
+    kind: str, q_direction: np.ndarray, primary: np.ndarray, handedness: float
+) -> np.ndarray:
+    """Return the second moment direction of a helix, conical or cycloid component.
+
+    A cycloid rotates in the plane holding q, so its second direction is
+    ``handedness * q``. A helix or conical component rotates about q, so it is
+    ``handedness * q x primary``, normalised.
+    """
+
+    if kind == "cycloid":
+        return handedness * q_direction
+    secondary = handedness * np.cross(q_direction, primary)
+    secondary_norm = float(np.linalg.norm(secondary))
+    if secondary_norm <= _DIRECTION_TOLERANCE:
+        return perpendicular_unit_direction(primary)
+    return secondary / secondary_norm
+
+
+def conical_component_geometry(
+    component: MagneticComponent, q_direction: np.ndarray | None
+) -> tuple[float, float, np.ndarray, np.ndarray, np.ndarray]:
+    """Read a conical component's cone back from its two terms.
+
+    Returns the moment amplitude, the cone angle in degrees, the unit real and
+    imaginary directions of the rotating term and the cone axis. The axis is
+    ``q_direction``, or the real direction crossed with the imaginary one when
+    q is not known. The component must have at least two terms: the static
+    term first, then the rotating one.
+    """
+
+    static = np.asarray(component.terms[0].coefficient.real, dtype=float)
+    rotating = component.terms[1].coefficient
+    real = np.asarray(rotating.real, dtype=float)
+    imag = np.asarray(rotating.imaginary, dtype=float)
+    real_direction = np.asarray(unit_direction_or(real, (0.0, 0.0, 1.0)), dtype=float)
+    imag_direction = np.asarray(unit_direction_or(imag, (1.0, 0.0, 0.0)), dtype=float)
+    axis = np.cross(real_direction, imag_direction) if q_direction is None else q_direction
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm <= _DIRECTION_TOLERANCE:
+        axis = np.asarray((0.0, 0.0, 1.0), dtype=float)
+    else:
+        axis = axis / axis_norm
+    signed_static = float(static @ axis)
+    rotating_norm = 0.5 * (float(np.linalg.norm(real)) + float(np.linalg.norm(imag)))
+    amplitude = float(np.hypot(signed_static, rotating_norm))
+    cone_angle = float(np.degrees(np.arctan2(rotating_norm, signed_static)))
+    return amplitude, cone_angle, real_direction, imag_direction, axis
+
+
+# --- Previews ------------------------------------------------------------------
+
+
+def tiled_supercell_structure(
+    structure: Structure,
+    repeats: tuple[int, int, int],
+) -> tuple[Structure, np.ndarray]:
+    """Tile ``structure`` ``repeats`` times along a, b and c for a moment preview.
+
+    The atoms come in the order :func:`moments_in_supercell` gives its moments:
+    cell by cell (c fastest), then atom by atom, at unwrapped positions. Returns
+    the tiled structure and, for each of its atoms, the index of the unit-cell
+    atom it copies.
+    """
+
+    repeat_array = np.asarray(repeats, dtype=float)
+    base_frac = np.asarray(structure.fractional_positions, dtype=float)
+    offsets = np.array(
+        [
+            (i, j, k)
+            for i in range(repeats[0])
+            for j in range(repeats[1])
+            for k in range(repeats[2])
+        ],
+        dtype=float,
+    )
+    atom_count = len(structure.species)
+    positions_frac = (
+        (base_frac[np.newaxis, :, :] + offsets[:, np.newaxis, :]) / repeat_array
+    ).reshape(-1, 3)
+    atom_indices = np.tile(np.arange(atom_count, dtype=int), len(offsets))
+    lattice = np.asarray(structure.lattice_vectors, dtype=float).copy()
+    lattice[0] *= repeats[0]
+    lattice[1] *= repeats[1]
+    lattice[2] *= repeats[2]
+    preview = Structure(
+        label=f"{structure.label or 'structure'} preview {repeats[0]}x{repeats[1]}x{repeats[2]}",
+        origin=structure.origin,
+        lattice_vectors=lattice.tolist(),
+        species=[structure.species[int(index)] for index in atom_indices],
+        fractional_positions=positions_frac.tolist(),
+        source_file=structure.source_file,
+        parent_structure_id=structure.id,
+        properties={
+            **structure.properties,
+            "pbc": structure.properties.get("pbc", [True, True, True]),
+        },
+    )
+    return preview, atom_indices
+
+
+def evaluate_texture_preview_grid(
+    texture: MagneticTexture,
+    *,
+    mode: str = "custom",
+    core_direction: Sequence[float] = (0.0, 0.0, -1.0),
+    resolution: int = 73,
+    repeats: float = 3.0,
+) -> np.ndarray:
+    """Evaluate a texture on a square window ``repeats`` periods wide, for a 2D preview.
+
+    The texture's q-basis rows are drawn as 2D vectors: at 120 degrees for a
+    hexagonal skyrmion, at right angles otherwise, with the second row flipped
+    for a skyrmion whose core points along -z, so the drawn sense of rotation
+    matches the moments. Returns the real moments, shape
+    ``(resolution, resolution, 3)``.
+    """
+
+    axis = np.linspace(-0.5 * repeats, 0.5 * repeats, int(resolution), endpoint=True)
+    xx, yy = np.meshgrid(axis, axis, indexing="ij")
+    core = np.asarray(core_direction, dtype=float)
+    handed_plot_sign = -1.0 if core.size >= 3 and float(core[2]) < 0.0 else 1.0
+    if mode == "hexagonal_skyrmion":
+        preview_q_basis = np.array(
+            (
+                (1.0, 0.0),
+                (-0.5, handed_plot_sign * np.sqrt(3.0) / 2.0),
+                (0.0, 0.0),
+            ),
+            dtype=float,
+        )
+    elif mode == "square_skyrmion":
+        preview_q_basis = np.array(
+            (
+                (1.0, 0.0),
+                (0.0, handed_plot_sign),
+                (0.0, 0.0),
+            ),
+            dtype=float,
+        )
+    else:
+        preview_q_basis = np.array(
+            (
+                (1.0, 0.0),
+                (0.0, 1.0),
+                (0.0, 0.0),
+            ),
+            dtype=float,
+        )
+    moments = np.zeros((axis.size, axis.size, 3), dtype=complex)
+    for term in texture.terms:
+        q = np.asarray(term.q_coeff, dtype=float)
+        q_xy = q[:3] @ preview_q_basis
+        q_dot = q_xy[0] * xx + q_xy[1] * yy
+        moments += (
+            term.coefficient.to_array()[np.newaxis, np.newaxis, :]
+            * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
+        )
+    return moments.real
+
+
 def _build_single_term_component(
     *,
     kind: str,

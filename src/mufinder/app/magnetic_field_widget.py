@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from html import escape
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import numpy as np
 from matplotlib.ticker import ScalarFormatter
@@ -93,7 +92,12 @@ from mufinder.app.workflow_table_utils import (
 from mufinder.domain.constants import MUON_GAMMA_OVER_2PI_MHZ_T
 from mufinder.domain.models import Structure
 from mufinder.domain.text import plural
-from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.codec import (
+    float_triplet,
+    float_triplet_or_none,
+    to_jsonable,
+    uuid_or_none,
+)
 from mufinder.science.ase_bridge import host_elements, reduced_formula
 from mufinder.science.demagnetization import (
     DemagnetizationError,
@@ -102,6 +106,15 @@ from mufinder.science.demagnetization import (
     SampleOrientation,
     principal_demagnetizing_tensor,
     sample_orientation,
+)
+from mufinder.science.field_histograms import (
+    common_binned_series,
+    distribution_series,
+    field_axis_limits,
+    interval_steps_with_zero_baseline,
+    probability_steps_with_zero_baseline,
+    summed_probability_intervals,
+    summed_probability_steps,
 )
 from mufinder.science.lattice import reciprocal_to_cartesian
 from mufinder.science.magnetic_fields import (
@@ -124,6 +137,22 @@ from mufinder.science.magnetic_fields import (
 )
 from mufinder.science.magnetic_structure import (
     AtomSelector,
+    allocate_q_basis_row,
+    allocate_texture_q_basis_rows,
+    component_propagation_coeff,
+    component_propagation_rlu,
+    conical_component_geometry,
+    constrained_secondary_direction,
+    evaluate_texture_preview_grid,
+    magnetic_model_for_host,
+    nonzero_unit_direction,
+    perpendicular_unit_direction,
+    propagation_direction,
+    reference_direction_perpendicular_to,
+    rotation_handedness,
+    tiled_supercell_structure,
+    unit_direction_or,
+    unit_q_coeff,
     atom_phases_for_selection,
     MagneticComponent,
     MagneticStructureModel,
@@ -155,7 +184,6 @@ from mufinder.science.magnetic_structure import (
     prune_texture_terms,
     q_basis_combination_rlu,
     q_basis_slots,
-    q_cartesian_direction,
     q_coeff_expression,
     reciprocal_axis_q_rlu,
     resolve_atom_selector,
@@ -176,24 +204,34 @@ from mufinder.science.nuclear_relaxation import (
 )
 from mufinder.services.magnetic_field_results import (
     UEP_SITE_SOURCE,
+    UNRELAXED_ESTIMATE_SUFFIX,
     UNRELAXED_RESULTS_NOTE,
+    UNRELAXED_SITE_NOTE,
     is_unrelaxed_site_source,
+)
+from mufinder.services.magnetic_field_sites import (
+    CUSTOM_SITE_SOURCE,
+    RELAXATION_SITE_SOURCE,
+    MagneticMuonSiteOption,
+    default_muon_site,
+    distortion_structure,
+    muon_site_options,
+    same_muon_site,
+    site_cartesian_position,
+    site_source_label,
 )
 from mufinder.services.muon_sites_summary import (
     MAGNETIC_FIELDS_SCOPE,
     NO_PINNED_SITES_NOTICE,
     has_pinned_sites,
-    pinned_sites_by_representative,
     set_show_every_relaxed_site,
     show_every_relaxed_site,
 )
+from mufinder.services.project_document import active_host_structure
 from mufinder.services.project_service import ProjectDocument
 
 
-_DIRECTION_TOLERANCE = 1e-6
 _Q_BASIS_HEADERS = ("Row", "q (r.l.u.)", "Used by")
-_UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
-_RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _SITE_OPTION_ROLE = int(Qt.ItemDataRole.UserRole) + 41
 _DISTORTION_CORRECTED_FIELD = "field (distortion-corrected)"
 _DISTORTION_CORRECTED_DISTRIBUTION = "distribution mean (distortion-corrected)"
@@ -208,11 +246,6 @@ def _distribution_label(calculation_parameters: object) -> str:
     return _DISTORTION_CORRECTED_DISTRIBUTION if corrected else "distribution mean"
 
 
-_UNRELAXED_ESTIMATE_NOTE = (
-    "UEP sites are unrelaxed, so fields computed at them are estimates: "
-    "the relaxed muon site can sit some distance from the UEP minimum."
-)
-_UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are estimates."
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
@@ -250,21 +283,6 @@ DEMAG_ORIENTATION_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 # Offered only for a sample whose rotation was saved without crystal directions.
 DEMAG_SAVED_ROTATION_OPTION = ("saved", "Saved rotation")
-
-
-@dataclass(frozen=True, slots=True)
-class MagneticMuonSiteOption:
-    """Muon-site option selected for magnetic-field calculation."""
-
-    source: str
-    label: str
-    fractional_position: tuple[float, float, float]
-    cartesian_position: tuple[float, float, float] | None = None
-    cluster_label: str | None = None
-    source_label: str | None = None
-    distortion_structure_id: UUID | None = None
-    properties: dict[str, object] | None = None
-    include_distortion: bool = False
 
 
 class MagneticComponentDialog(QDialog):
@@ -755,28 +773,13 @@ class MagneticComponentDialog(QDialog):
         if not component.terms:
             return
         if component.kind == "conical" and len(component.terms) >= 2:
-            static = np.asarray(component.terms[0].coefficient.real, dtype=float)
-            rotating = component.terms[1].coefficient
-            real = np.asarray(rotating.real, dtype=float)
-            imag = np.asarray(rotating.imaginary, dtype=float)
-            real_direction = np.asarray(_fallback_direction(real, (0.0, 0.0, 1.0)), dtype=float)
-            imag_direction = np.asarray(_fallback_direction(imag, (1.0, 0.0, 0.0)), dtype=float)
-            q_direction = self._q_cartesian_direction(allow_fallback=True)
-            if q_direction is None:
-                axis = np.cross(real_direction, imag_direction)
-            else:
-                axis = q_direction
-            axis_norm = float(np.linalg.norm(axis))
-            if axis_norm <= _DIRECTION_TOLERANCE:
-                axis = np.asarray((0.0, 0.0, 1.0), dtype=float)
-            else:
-                axis = axis / axis_norm
-            signed_static = float(static @ axis)
-            rotating_norm = 0.5 * (float(np.linalg.norm(real)) + float(np.linalg.norm(imag)))
-            self._amplitude.setText(f"{float(np.hypot(signed_static, rotating_norm)):.8g}")
-            self._cone_angle.setText(
-                f"{float(np.degrees(np.arctan2(rotating_norm, signed_static))):.8g}"
+            amplitude, cone_angle, real_direction, imag_direction, axis = (
+                conical_component_geometry(
+                    component, self._q_cartesian_direction(allow_fallback=True)
+                )
             )
+            self._amplitude.setText(f"{amplitude:.8g}")
+            self._cone_angle.setText(f"{cone_angle:.8g}")
             self._set_direction_inputs(self._primary_direction, real_direction)
             self._set_handedness_from_axes(real_direction, imag_direction, axis)
             self._sync_constrained_direction_inputs()
@@ -789,7 +792,7 @@ class MagneticComponentDialog(QDialog):
         if component.kind in {"helix", "cycloid"}:
             self._amplitude.setText(f"{(0.5 * (real_norm + imag_norm)):.8g}")
             self._set_direction_inputs(
-                self._primary_direction, _fallback_direction(real, (0.0, 0.0, 1.0))
+                self._primary_direction, unit_direction_or(real, (0.0, 0.0, 1.0))
             )
             q_direction = self._q_cartesian_direction(allow_fallback=True)
             if q_direction is not None:
@@ -797,15 +800,15 @@ class MagneticComponentDialog(QDialog):
                     self._set_handedness(1 if float(np.dot(imag, q_direction)) >= 0.0 else -1)
                 else:
                     self._set_handedness_from_axes(
-                        np.asarray(_fallback_direction(real, (0.0, 0.0, 1.0)), dtype=float),
-                        np.asarray(_fallback_direction(imag, (1.0, 0.0, 0.0)), dtype=float),
+                        np.asarray(unit_direction_or(real, (0.0, 0.0, 1.0)), dtype=float),
+                        np.asarray(unit_direction_or(imag, (1.0, 0.0, 0.0)), dtype=float),
                         q_direction,
                     )
             self._sync_constrained_direction_inputs()
             return
         self._amplitude.setText(f"{real_norm:.8g}")
         self._set_direction_inputs(
-            self._primary_direction, _fallback_direction(real, (0.0, 0.0, 1.0))
+            self._primary_direction, unit_direction_or(real, (0.0, 0.0, 1.0))
         )
         self._set_direction_inputs(self._secondary_direction, (1.0, 0.0, 0.0))
 
@@ -837,27 +840,16 @@ class MagneticComponentDialog(QDialog):
         secondary: Sequence[float],
         q_direction: Sequence[float],
     ) -> None:
-        primary_arr = np.asarray(primary, dtype=float)
-        secondary_arr = np.asarray(secondary, dtype=float)
-        q_arr = np.asarray(q_direction, dtype=float)
-        sign = 1 if float(np.dot(np.cross(q_arr, primary_arr), secondary_arr)) >= 0.0 else -1
-        self._set_handedness(sign)
+        self._set_handedness(rotation_handedness(primary, secondary, q_direction))
 
     def _q_cartesian_direction(self, *, allow_fallback: bool = False) -> np.ndarray | None:
         try:
-            q_rlu = np.asarray(self.q_vector(), dtype=float)
+            q_rlu = self.q_vector()
         except ValueError:
             return None
-        if float(np.linalg.norm(q_rlu)) <= _DIRECTION_TOLERANCE:
-            if allow_fallback:
-                return np.asarray((0.0, 0.0, 1.0), dtype=float)
-            raise ValueError("q must be non-zero for helical, cycloidal, and conical components")
-        try:
-            return q_cartesian_direction(self._structure.lattice_vectors, q_rlu)
-        except MagneticStructureError:
-            if allow_fallback:
-                return np.asarray((0.0, 0.0, 1.0), dtype=float)
-            raise ValueError("q must define a non-zero propagation direction") from None
+        return propagation_direction(
+            self._structure.lattice_vectors, q_rlu, allow_fallback=allow_fallback
+        )
 
     def _projected_reference_direction(self, q_direction: np.ndarray) -> np.ndarray:
         try:
@@ -869,12 +861,8 @@ class MagneticComponentDialog(QDialog):
                 dtype=float,
             )
         except ValueError:
-            return _orthogonal_unit(q_direction)
-        projected = raw - float(raw @ q_direction) * q_direction
-        norm = float(np.linalg.norm(projected))
-        if norm <= _DIRECTION_TOLERANCE:
-            return _orthogonal_unit(q_direction)
-        return projected / norm
+            return perpendicular_unit_direction(q_direction)
+        return reference_direction_perpendicular_to(raw, q_direction)
 
     def _constrained_component_directions(
         self, kind: str
@@ -883,16 +871,9 @@ class MagneticComponentDialog(QDialog):
         if q_direction is None:
             raise ValueError("q must be valid for helical, cycloidal, and conical components")
         primary = self._projected_reference_direction(q_direction)
-        sign = float(self._handedness_sign())
-        if kind == "cycloid":
-            secondary = sign * q_direction
-        else:
-            secondary = sign * np.cross(q_direction, primary)
-            secondary_norm = float(np.linalg.norm(secondary))
-            if secondary_norm <= _DIRECTION_TOLERANCE:
-                secondary = _orthogonal_unit(primary)
-            else:
-                secondary = secondary / secondary_norm
+        secondary = constrained_secondary_direction(
+            kind, q_direction, primary, float(self._handedness_sign())
+        )
         return primary, secondary, q_direction
 
     def _sync_constrained_direction_inputs(self) -> None:
@@ -1081,7 +1062,7 @@ class MagneticComponentDialog(QDialog):
 
         source = self._q_source()
         if isinstance(source, int):
-            return _unit_q_coeff(source)
+            return unit_q_coeff(source)
         if source == self._Q_SOURCE_COMBINATION:
             values = tuple(
                 self._decimal_value(edit, f"q{index + 1} coefficient") if edit.isEnabled() else 0.0
@@ -1232,14 +1213,9 @@ class MagneticComponentDialog(QDialog):
     def _unit_direction(
         self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str
     ) -> np.ndarray:
-        vector = np.asarray(
-            [self._decimal_value(edit, f"{label} component") for edit in inputs],
-            dtype=float,
+        return nonzero_unit_direction(
+            [self._decimal_value(edit, f"{label} component") for edit in inputs], label
         )
-        norm = float(np.linalg.norm(vector))
-        if norm <= _DIRECTION_TOLERANCE:
-            raise ValueError(f"{label} must be a non-zero direction")
-        return vector / norm
 
     @staticmethod
     def _direction_display(inputs: tuple[QLineEdit, QLineEdit, QLineEdit]) -> str:
@@ -1545,12 +1521,12 @@ class MagneticPresetDialog(QDialog):
         """Return the stored basis row the preset propagates along, or ``None`` for a new reciprocal-axis q."""
 
         source = self._propagation_combo.currentData()
-        return _unit_q_coeff(source) if isinstance(source, int) else None
+        return unit_q_coeff(source) if isinstance(source, int) else None
 
     def q_vector(self) -> tuple[float, float, float]:
         source = self._propagation_combo.currentData()
         if isinstance(source, int):
-            return _tuple3_float(self._model.q_basis_rlu[source])
+            return float_triplet(self._model.q_basis_rlu[source])
         try:
             if self._wavevector_in_inverse_angstrom():
                 return wavevector_rlu_from_inverse_angstrom(
@@ -2032,59 +2008,6 @@ class MagneticTexturePreview(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.reset_view(initial_view_fraction=self._initial_view_fraction)
             event.accept()
-
-
-def _evaluate_texture_preview_grid(
-    texture: MagneticTexture,
-    *,
-    mode: str = "custom",
-    core_direction: Sequence[float] = (0.0, 0.0, -1.0),
-    resolution: int = 73,
-    repeats: float = 3.0,
-) -> np.ndarray:
-    """Evaluate a continuous 2D phase window for the texture preview."""
-
-    axis = np.linspace(-0.5 * repeats, 0.5 * repeats, int(resolution), endpoint=True)
-    xx, yy = np.meshgrid(axis, axis, indexing="ij")
-    core = np.asarray(core_direction, dtype=float)
-    handed_plot_sign = -1.0 if core.size >= 3 and float(core[2]) < 0.0 else 1.0
-    if mode == "hexagonal_skyrmion":
-        preview_q_basis = np.array(
-            (
-                (1.0, 0.0),
-                (-0.5, handed_plot_sign * np.sqrt(3.0) / 2.0),
-                (0.0, 0.0),
-            ),
-            dtype=float,
-        )
-    elif mode == "square_skyrmion":
-        preview_q_basis = np.array(
-            (
-                (1.0, 0.0),
-                (0.0, handed_plot_sign),
-                (0.0, 0.0),
-            ),
-            dtype=float,
-        )
-    else:
-        preview_q_basis = np.array(
-            (
-                (1.0, 0.0),
-                (0.0, 1.0),
-                (0.0, 0.0),
-            ),
-            dtype=float,
-        )
-    moments = np.zeros((axis.size, axis.size, 3), dtype=complex)
-    for term in texture.terms:
-        q = np.asarray(term.q_coeff, dtype=float)
-        q_xy = q[:3] @ preview_q_basis
-        q_dot = q_xy[0] * xx + q_xy[1] * yy
-        moments += (
-            term.coefficient.to_array()[np.newaxis, np.newaxis, :]
-            * np.exp(-2j * np.pi * q_dot)[..., np.newaxis]
-        )
-    return moments.real
 
 
 def _beside_square_cell(cell_axis):
@@ -3107,7 +3030,7 @@ class MagneticTextureDialog(QDialog):
     def _refresh_preview(self) -> None:
         try:
             texture = self.texture()
-            moments = _evaluate_texture_preview_grid(
+            moments = evaluate_texture_preview_grid(
                 texture,
                 mode=self.mode(),
                 core_direction=self._unit_direction(self._core_direction, "core direction"),
@@ -3159,11 +3082,7 @@ class MagneticTextureDialog(QDialog):
     def _unit_direction(
         self, inputs: tuple[QLineEdit, QLineEdit, QLineEdit], label: str
     ) -> np.ndarray:
-        vector = np.asarray(self._direction_value(inputs, label), dtype=float)
-        norm = float(np.linalg.norm(vector))
-        if norm <= _DIRECTION_TOLERANCE:
-            raise ValueError(f"{label} must be a non-zero direction")
-        return vector / norm
+        return nonzero_unit_direction(self._direction_value(inputs, label), label)
 
     def _table_decimal(self, row: int, column: int) -> float:
         item = self._custom_table.item(row, column)
@@ -3434,9 +3353,12 @@ class MagneticStructureBuilderDialog(QDialog):
 
     def set_document(self, document: ProjectDocument | None) -> None:
         self._document = document
-        self._host_structure = _active_host_structure(document)
+        self._host_structure = None if document is None else active_host_structure(document)
         self._preview_atom_indices = np.empty((0,), dtype=int)
-        self._model = self._model_from_document(document, self._host_structure)
+        self._model = magnetic_model_for_host(
+            None if document is None else document.project.magnetic_structure,
+            self._host_structure,
+        )
         self._populate_components()
         self._sync_enabled_state()
         self._refresh_preview()
@@ -3473,20 +3395,6 @@ class MagneticStructureBuilderDialog(QDialog):
         spinbox.setValue(1)
         spinbox.setKeyboardTracking(False)
         return spinbox
-
-    def _model_from_document(
-        self,
-        document: ProjectDocument | None,
-        host: Structure | None,
-    ) -> MagneticStructureModel:
-        if document is None or host is None:
-            return MagneticStructureModel()
-        payload = document.project.magnetic_structure
-        if not isinstance(payload, dict):
-            payload = host.properties.get("magnetic_structure")
-        if isinstance(payload, dict) and "components" in payload:
-            return MagneticStructureModel.from_json(payload)
-        return magnetic_model_from_legacy_structure(host)
 
     def _sync_enabled_state(self) -> None:
         has_host = self._host_structure is not None
@@ -3845,9 +3753,9 @@ class MagneticStructureBuilderDialog(QDialog):
             self._host_structure,
             selected_indices=self._selected_base_atom_indices(),
             component=component,
-            q_vector=_component_edit_q_vector(self._model, component),
+            q_vector=component_propagation_rlu(self._model, component),
             model=self._model,
-            q_coeff=_component_edit_q_coeff(component),
+            q_coeff=component_propagation_coeff(component),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3902,22 +3810,9 @@ class MagneticStructureBuilderDialog(QDialog):
         *,
         ignored_component_ids: set[str] | None = None,
     ) -> tuple[tuple[tuple[float, float, float], ...], tuple[float, float, float] | None]:
-        q = np.asarray(q_vector, dtype=float)
-        basis = list(self._model.q_basis_rlu)
-        if np.allclose(q, 0.0, atol=1e-12):
-            return tuple(basis), (0.0, 0.0, 0.0)
-        used_indices = self._used_q_basis_indices(ignored_component_ids=ignored_component_ids)
-        for index, row in enumerate(basis):
-            if index in used_indices and np.allclose(row, q, atol=1e-9):
-                return tuple(basis), _unit_q_coeff(index)
-        for index, row in enumerate(basis):
-            if index not in used_indices and np.allclose(row, q, atol=1e-9):
-                return tuple(basis), _unit_q_coeff(index)
-        for index in range(len(basis)):
-            if index not in used_indices:
-                basis[index] = tuple(float(value) for value in q)
-                return tuple(basis), _unit_q_coeff(index)
-        return tuple(basis), None
+        return allocate_q_basis_row(
+            self._model, q_vector, ignored_component_ids=ignored_component_ids
+        )
 
     def _q_basis_for_texture(
         self,
@@ -3927,44 +3822,9 @@ class MagneticStructureBuilderDialog(QDialog):
     ) -> tuple[
         tuple[tuple[float, float, float], ...], tuple[tuple[float, float, float], ...] | None
     ]:
-        basis = [tuple(float(value) for value in row) for row in self._model.q_basis_rlu]
-        used_indices = self._used_q_basis_indices(ignored_component_ids=ignored_component_ids)
-        transform_rows: list[tuple[float, float, float]] = []
-        allocated: set[int] = set()
-        for q_vector in q_vectors[:3]:
-            q = np.asarray(q_vector, dtype=float)
-            if np.allclose(q, 0.0, atol=1e-12):
-                transform_rows.append((0.0, 0.0, 0.0))
-                continue
-            matched = None
-            for index, row in enumerate(basis):
-                if np.allclose(row, q, atol=1e-9, rtol=0.0):
-                    matched = index
-                    break
-            if matched is None:
-                for index in range(3):
-                    if index not in used_indices and index not in allocated:
-                        matched = index
-                        basis[index] = tuple(float(value) for value in q)
-                        break
-            if matched is None:
-                return tuple(basis), None
-            allocated.add(matched)
-            transform_rows.append(_unit_q_coeff(matched))
-        while len(transform_rows) < 3:
-            transform_rows.append((0.0, 0.0, 0.0))
-        return tuple(basis), tuple(transform_rows)
-
-    def _used_q_basis_indices(self, *, ignored_component_ids: set[str] | None = None) -> set[int]:
-        used: set[int] = set()
-        for component in self._model.components:
-            if (
-                ignored_component_ids is not None
-                and component.component_id in ignored_component_ids
-            ):
-                continue
-            used.update(component_q_basis_indices(component))
-        return used
+        return allocate_texture_q_basis_rows(
+            self._model, q_vectors, ignored_component_ids=ignored_component_ids
+        )
 
     def _build_from_host_spins(self) -> None:
         if self._host_structure is None:
@@ -4108,7 +3968,7 @@ class MagneticStructureBuilderDialog(QDialog):
         component_ids = self._selected_component_ids() or None
         try:
             repeats = self._supercell_repeats()
-            preview_structure, preview_atom_indices = _preview_supercell_structure(
+            preview_structure, preview_atom_indices = tiled_supercell_structure(
                 self._host_structure, repeats
             )
             self._preview_atom_indices = preview_atom_indices
@@ -4180,11 +4040,13 @@ class MuonSiteSelectionDialog(QDialog):
         self._current_site = current_site
 
         self._site_source_combo = QComboBox()
-        self._site_source_combo.addItem(_site_source_label(UEP_SITE_SOURCE), UEP_SITE_SOURCE)
-        self._site_source_combo.addItem("Structural relaxation clustering", "relaxation_clustering")
-        self._site_source_combo.addItem("Custom fractional position", "custom")
+        self._site_source_combo.addItem(site_source_label(UEP_SITE_SOURCE), UEP_SITE_SOURCE)
+        self._site_source_combo.addItem(
+            site_source_label(RELAXATION_SITE_SOURCE), RELAXATION_SITE_SOURCE
+        )
+        self._site_source_combo.addItem("Custom fractional position", CUSTOM_SITE_SOURCE)
         self._site_source_combo.currentIndexChanged.connect(self._refresh_muon_site_selection)
-        self._estimate_note = QLabel(_UNRELAXED_ESTIMATE_NOTE)
+        self._estimate_note = QLabel(UNRELAXED_SITE_NOTE)
         self._estimate_note.setWordWrap(True)
         style_hint_text(self._estimate_note)
 
@@ -4229,10 +4091,10 @@ class MuonSiteSelectionDialog(QDialog):
 
     def selected_muon_site(self) -> MagneticMuonSiteOption | None:
         source = self._site_source()
-        if source == "custom":
+        if source == CUSTOM_SITE_SOURCE:
             if self._host_structure is None:
                 return None
-            fractional = tuple(
+            fractional = float_triplet(
                 _decimal_edit_value(edit, label)
                 for edit, label in (
                     (self._custom_x, "custom fx"),
@@ -4240,11 +4102,11 @@ class MuonSiteSelectionDialog(QDialog):
                     (self._custom_z, "custom fz"),
                 )
             )
-            cartesian = _fractional_to_cartesian(fractional, self._host_structure)
+            cartesian = site_cartesian_position(fractional, self._host_structure)
             return MagneticMuonSiteOption(
-                source="custom",
+                source=CUSTOM_SITE_SOURCE,
                 label="Custom site",
-                fractional_position=fractional,  # type: ignore[arg-type]
+                fractional_position=fractional,
                 cartesian_position=cartesian,
             )
         option = self._selected_site_option()
@@ -4338,8 +4200,8 @@ class MuonSiteSelectionDialog(QDialog):
         if site is None:
             # Relaxed sites come before unrelaxed UEP estimates once the relaxation list has any.
             source = (
-                "relaxation_clustering"
-                if self._site_options_for_source("relaxation_clustering")
+                RELAXATION_SITE_SOURCE
+                if self._site_options_for_source(RELAXATION_SITE_SOURCE)
                 else UEP_SITE_SOURCE
             )
             self._site_source_combo.setCurrentIndex(self._site_source_combo.findData(source))
@@ -4347,7 +4209,7 @@ class MuonSiteSelectionDialog(QDialog):
         index = self._site_source_combo.findData(site.source)
         if index >= 0:
             self._site_source_combo.setCurrentIndex(index)
-        if site.source == "custom":
+        if site.source == CUSTOM_SITE_SOURCE:
             self._custom_x.setText(f"{site.fractional_position[0]:.8g}")
             self._custom_y.setText(f"{site.fractional_position[1]:.8g}")
             self._custom_z.setText(f"{site.fractional_position[2]:.8g}")
@@ -4357,7 +4219,7 @@ class MuonSiteSelectionDialog(QDialog):
 
     def _refresh_muon_site_selection(self) -> None:
         source = self._site_source()
-        self._site_stack.setCurrentIndex(1 if source == "custom" else 0)
+        self._site_stack.setCurrentIndex(1 if source == CUSTOM_SITE_SOURCE else 0)
         self._estimate_note.setVisible(is_unrelaxed_site_source(source))
         self._site_options = self._site_options_for_source(source)
         self._refresh_site_scope(source)
@@ -4366,20 +4228,15 @@ class MuonSiteSelectionDialog(QDialog):
         self._refresh_site_status()
 
     def _site_options_for_source(self, source: str) -> list[MagneticMuonSiteOption]:
-        if self._document is None or self._host_structure is None:
-            return []
-        if source == UEP_SITE_SOURCE:
-            return _uep_cluster_muon_site_options(self._document, self._host_structure)
-        if source == "relaxation_clustering":
-            return _relaxation_cluster_muon_site_options(
-                self._document,
-                self._host_structure,
-                pinned_only=not show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE),
-            )
-        return []
+        return muon_site_options(
+            self._document,
+            self._host_structure,
+            source,
+            pinned_only=not show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE),
+        )
 
     def _refresh_site_scope(self, source: str) -> None:
-        self._site_scope.setVisible(source == "relaxation_clustering")
+        self._site_scope.setVisible(source == RELAXATION_SITE_SOURCE)
         show_every = show_every_relaxed_site(self._document, MAGNETIC_FIELDS_SCOPE)
         notice = "" if show_every or has_pinned_sites(self._document) else NO_PINNED_SITES_NOTICE
         self._site_scope.set_state(show_every_site=show_every, notice=notice)
@@ -4399,7 +4256,7 @@ class MuonSiteSelectionDialog(QDialog):
             self._site_table.insertRow(row)
             values = [
                 option.label,
-                option.source_label or _site_source_label(option.source),
+                option.source_label or site_source_label(option.source),
                 option.cluster_label or "-",
                 f"{option.fractional_position[0]:.5f}",
                 f"{option.fractional_position[1]:.5f}",
@@ -4414,7 +4271,7 @@ class MuonSiteSelectionDialog(QDialog):
             selected_row = 0
             if self._current_site is not None:
                 for row, option in enumerate(self._site_options):
-                    if _same_muon_site(option, self._current_site):
+                    if same_muon_site(option, self._current_site):
                         selected_row = row
                         break
             self._site_table.selectRow(selected_row)
@@ -4432,7 +4289,7 @@ class MuonSiteSelectionDialog(QDialog):
     def _sync_distortion_controls(self) -> None:
         option = self._selected_site_option()
         enabled = (
-            self._site_source() == "relaxation_clustering"
+            self._site_source() == RELAXATION_SITE_SOURCE
             and option is not None
             and option.distortion_structure_id is not None
         )
@@ -4453,7 +4310,7 @@ class MuonSiteSelectionDialog(QDialog):
             self._site_status.setText("Muon site: load a host structure first.")
             return
         source = self._site_source()
-        if source == "custom":
+        if source == CUSTOM_SITE_SOURCE:
             self._site_status.setText(
                 "Muon site: custom fractional coordinate in the active host cell."
             )
@@ -4461,7 +4318,7 @@ class MuonSiteSelectionDialog(QDialog):
         option = self._selected_site_option()
         if option is None:
             self._site_status.setText(
-                f"Muon site: no {_site_source_label(source).lower()} sites available."
+                f"Muon site: no {site_source_label(source).lower()} sites available."
             )
             return
         distortion_text = (
@@ -4542,13 +4399,13 @@ class MagneticFieldDistributionDialog(QDialog):
         series = self._distribution_series()
         common_edges: np.ndarray | None = None
         if len(series) > 1:
-            common = self._common_binned_series(series)
+            common = common_binned_series(series)
             if common is not None:
                 series, common_edges = common
         x_limits: list[tuple[float, float]] = []
         y_max = 0.0
         for centres, probabilities, magnitudes, _label in series:
-            x_limits.append(self._field_axis_limits(centres, magnitudes))
+            x_limits.append(field_axis_limits(centres, magnitudes))
             y_max = max(y_max, float(np.max(probabilities)))
 
         if series:
@@ -4556,11 +4413,11 @@ class MagneticFieldDistributionDialog(QDialog):
             high = max(limit[1] for limit in x_limits)
             for centres, probabilities, magnitudes, label in series:
                 if common_edges is None:
-                    plot_x, plot_y = self._probability_steps_with_zero_baseline(
+                    plot_x, plot_y = probability_steps_with_zero_baseline(
                         centres, probabilities, low, high
                     )
                 else:
-                    plot_x, plot_y = self._interval_steps_with_zero_baseline(
+                    plot_x, plot_y = interval_steps_with_zero_baseline(
                         common_edges, probabilities, low, high
                     )
                 line = axis.plot(plot_x, plot_y, linewidth=1.8, label=label)[0]
@@ -4568,13 +4425,13 @@ class MagneticFieldDistributionDialog(QDialog):
                 axis.fill_between(plot_x, plot_y, color=line.get_color(), alpha=fill_alpha)
             if len(series) > 1:
                 if common_edges is None:
-                    sum_x, sum_y, sum_values = self._summed_probability_steps(series, low, high)
+                    sum_x, sum_y, sum_values = summed_probability_steps(series, low, high)
                 else:
                     sum_values = np.sum(
                         [probabilities for _centres, probabilities, _magnitudes, _label in series],
                         axis=0,
                     )
-                    sum_x, sum_y = self._interval_steps_with_zero_baseline(
+                    sum_x, sum_y = interval_steps_with_zero_baseline(
                         common_edges, sum_values, low, high
                     )
                 sum_line = axis.plot(
@@ -4613,43 +4470,7 @@ class MagneticFieldDistributionDialog(QDialog):
         return f"{label} (unrelaxed estimate)" if self._estimate else label
 
     def _distribution_series(self) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, str]]:
-        series: list[tuple[np.ndarray, np.ndarray, np.ndarray, str]] = []
-        for index, result in enumerate(self._results):
-            centres = np.asarray(getattr(result, "histogram_centres_T", []), dtype=float)
-            counts = np.asarray(getattr(result, "histogram_counts", []), dtype=float)
-            magnitudes = self._magnitudes(result)
-            if centres.size == 0 or counts.size != centres.size:
-                centres, counts = self._histogram_from_magnitudes(magnitudes)
-            if not centres.size or not counts.size:
-                continue
-            probabilities = self._normalized_probabilities(counts)
-            label = str(getattr(result, "site_label", f"site {index + 1}"))
-            series.append((centres, probabilities, magnitudes, label))
-        return series
-
-    def _common_binned_series(
-        self,
-        series: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray, str]],
-    ) -> tuple[list[tuple[np.ndarray, np.ndarray, np.ndarray, str]], np.ndarray] | None:
-        finite_magnitudes = [
-            magnitudes[np.isfinite(magnitudes)]
-            for _centres, _probabilities, magnitudes, _label in series
-            if magnitudes.size
-        ]
-        if len(finite_magnitudes) != len(series):
-            return None
-        all_magnitudes = np.concatenate(finite_magnitudes)
-        if all_magnitudes.size == 0:
-            return None
-        low, high = self._field_axis_limits(np.asarray([], dtype=float), all_magnitudes)
-        bins = max(10, max(len(centres) for centres, _probabilities, _magnitudes, _label in series))
-        common_edges = np.linspace(low, high, int(bins) + 1, dtype=float)
-        common_centres = common_edges[:-1] + 0.5 * np.diff(common_edges)
-        out: list[tuple[np.ndarray, np.ndarray, np.ndarray, str]] = []
-        for _centres, _probabilities, magnitudes, label in series:
-            counts, _edges = np.histogram(magnitudes[np.isfinite(magnitudes)], bins=common_edges)
-            out.append((common_centres, self._normalized_probabilities(counts), magnitudes, label))
-        return out, common_edges
+        return distribution_series(self._results)
 
     def _export_data(self) -> None:
         path, _selected_filter = QFileDialog.getSaveFileName(
@@ -4672,22 +4493,22 @@ class MagneticFieldDistributionDialog(QDialog):
         series = self._distribution_series()
         common_edges: np.ndarray | None = None
         if len(series) > 1:
-            common = self._common_binned_series(series)
+            common = common_binned_series(series)
             if common is not None:
                 series, common_edges = common
         lines = self._export_header(series)
         if not series:
             return "\n".join(lines) + "\n"
         low = min(
-            self._field_axis_limits(centres, magnitudes)[0]
+            field_axis_limits(centres, magnitudes)[0]
             for centres, _probabilities, magnitudes, _label in series
         )
         high = max(
-            self._field_axis_limits(centres, magnitudes)[1]
+            field_axis_limits(centres, magnitudes)[1]
             for centres, _probabilities, magnitudes, _label in series
         )
         if common_edges is None:
-            interval_edges, values_by_label, sum_values = self._summed_probability_intervals(
+            interval_edges, values_by_label, sum_values = summed_probability_intervals(
                 series, low, high
             )
         else:
@@ -4720,13 +4541,13 @@ class MagneticFieldDistributionDialog(QDialog):
             f"# Distributions: {len(series)}",
         ]
         if self._estimate:
-            lines.append(f"# Estimate: {_UNRELAXED_ESTIMATE_NOTE}")
+            lines.append(f"# Estimate: {UNRELAXED_SITE_NOTE}")
         for index, result in enumerate(self._results, start=1):
             label = str(getattr(result, "site_label", f"site {index}"))
             position = getattr(result, "muon_position", None)
             if position is not None:
                 try:
-                    x, y, z = _tuple3(position)
+                    x, y, z = float_triplet(position)
                     lines.append(f"# {label} muon_position_fractional: {x:.12g} {y:.12g} {z:.12g}")
                 except (TypeError, ValueError):
                     pass
@@ -4742,189 +4563,6 @@ class MagneticFieldDistributionDialog(QDialog):
     @staticmethod
     def _safe_column_label(label: str) -> str:
         return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in label)
-
-    @staticmethod
-    def _magnitudes(result: object) -> np.ndarray:
-        fields = np.asarray(getattr(result, "fields_T", []), dtype=float)
-        if fields.ndim != 2 or fields.shape[1] != 3:
-            return np.asarray([], dtype=float)
-        return np.linalg.norm(fields, axis=1)
-
-    @staticmethod
-    def _histogram_from_magnitudes(magnitudes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if magnitudes.size == 0:
-            return np.asarray([], dtype=float), np.asarray([], dtype=float)
-        bins = min(80, max(10, int(np.sqrt(int(magnitudes.size))) * 2))
-        counts, edges = np.histogram(magnitudes, bins=bins)
-        centres = edges[:-1] + 0.5 * np.diff(edges)
-        return centres, counts.astype(float)
-
-    @staticmethod
-    def _normalized_probabilities(counts: np.ndarray) -> np.ndarray:
-        counts = np.asarray(counts, dtype=float)
-        if counts.size == 0 or not np.any(counts > 0.0):
-            return np.zeros_like(counts, dtype=float)
-        return counts / float(np.max(counts))
-
-    @staticmethod
-    def _probability_steps_with_zero_baseline(
-        centres: np.ndarray,
-        probabilities: np.ndarray,
-        low: float,
-        high: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        centres = np.asarray(centres, dtype=float)
-        probabilities = np.asarray(probabilities, dtype=float)
-        if centres.size == 0 or probabilities.size != centres.size or high <= low:
-            return centres, probabilities
-        edges = MagneticFieldDistributionDialog._histogram_edges_from_centres(centres, low, high)
-        return MagneticFieldDistributionDialog._interval_steps_with_zero_baseline(
-            edges, probabilities, low, high
-        )
-
-    @staticmethod
-    def _interval_steps_with_zero_baseline(
-        edges: np.ndarray,
-        values: np.ndarray,
-        low: float,
-        high: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        x_values: list[float] = []
-        y_values: list[float] = []
-        if low < edges[0]:
-            x_values.extend([float(low), float(min(edges[0], high))])
-            y_values.extend([0.0, 0.0])
-        for index, probability in enumerate(values):
-            left = max(float(edges[index]), float(low))
-            right = min(float(edges[index + 1]), float(high))
-            if right <= left:
-                continue
-            if x_values and not np.isclose(x_values[-1], left):
-                x_values.append(left)
-                y_values.append(y_values[-1])
-            x_values.extend([left, right])
-            y_values.extend([float(probability), float(probability)])
-        if not x_values:
-            return np.asarray([low, high], dtype=float), np.asarray([0.0, 0.0], dtype=float)
-        if high > edges[-1]:
-            edge = max(float(edges[-1]), float(low))
-            if not np.isclose(x_values[-1], edge):
-                x_values.append(edge)
-                y_values.append(y_values[-1])
-            x_values.extend([edge, float(high)])
-            y_values.extend([0.0, 0.0])
-        return np.asarray(x_values, dtype=float), np.asarray(y_values, dtype=float)
-
-    @staticmethod
-    def _histogram_edges_from_centres(centres: np.ndarray, low: float, high: float) -> np.ndarray:
-        centres = np.asarray(centres, dtype=float)
-        if centres.size == 1:
-            half_width = 0.5 * max(abs(float(centres[0])) * 1e-6, (high - low) * 1e-4, 1e-9)
-            return np.asarray([centres[0] - half_width, centres[0] + half_width], dtype=float)
-        midpoints = 0.5 * (centres[:-1] + centres[1:])
-        first_edge = centres[0] - (midpoints[0] - centres[0])
-        last_edge = centres[-1] + (centres[-1] - midpoints[-1])
-        return np.concatenate(([first_edge], midpoints, [last_edge])).astype(float)
-
-    @staticmethod
-    def _summed_probability_steps(
-        series: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray, str]],
-        low: float,
-        high: float,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        x_values = np.unique(
-            np.concatenate(
-                (
-                    [low, high],
-                    *(
-                        np.asarray(centres, dtype=float)
-                        for centres, _probabilities, _magnitudes, _label in series
-                    ),
-                )
-            )
-        )
-        x_values = x_values[np.isfinite(x_values)]
-        x_values.sort()
-        if x_values.size < 2:
-            x_values = np.asarray([low, high], dtype=float)
-        sum_values = np.zeros_like(x_values, dtype=float)
-        for centres, probabilities, _magnitudes, _label in series:
-            edges = MagneticFieldDistributionDialog._histogram_edges_from_centres(
-                np.asarray(centres, dtype=float), low, high
-            )
-            for index, probability in enumerate(probabilities):
-                left = edges[index]
-                right = edges[index + 1]
-                mask = (x_values >= left) & (x_values < right)
-                if index == len(probabilities) - 1:
-                    mask = mask | np.isclose(x_values, right)
-                sum_values[mask] += float(probability)
-        sum_values[np.isclose(x_values, low) | np.isclose(x_values, high)] = 0.0
-        return x_values, sum_values, sum_values
-
-    @staticmethod
-    def _summed_probability_intervals(
-        series: Sequence[tuple[np.ndarray, np.ndarray, np.ndarray, str]],
-        low: float,
-        high: float,
-    ) -> tuple[np.ndarray, dict[str, np.ndarray], np.ndarray]:
-        source_edges = [
-            MagneticFieldDistributionDialog._histogram_edges_from_centres(centres, low, high)
-            for centres, _probabilities, _magnitudes, _label in series
-        ]
-        raw_edges = np.concatenate(
-            ([low, high], *(np.clip(edges, low, high) for edges in source_edges))
-        )
-        edges = np.unique(raw_edges[np.isfinite(raw_edges)])
-        edges.sort()
-        if edges.size < 2:
-            edges = np.asarray([low, high], dtype=float)
-        midpoints = 0.5 * (edges[:-1] + edges[1:])
-        values_by_label: dict[str, np.ndarray] = {}
-        for (centres, probabilities, _magnitudes, label), edges_for_series in zip(
-            series, source_edges, strict=True
-        ):
-            values = np.zeros_like(midpoints, dtype=float)
-            for index, probability in enumerate(probabilities):
-                left = edges_for_series[index]
-                right = edges_for_series[index + 1]
-                mask = (midpoints >= left) & (midpoints < right)
-                if index == len(probabilities) - 1:
-                    mask = mask | np.isclose(midpoints, right)
-                values[mask] = float(probability)
-            values_by_label[label] = values
-        sum_values = (
-            np.sum(tuple(values_by_label.values()), axis=0)
-            if values_by_label
-            else np.zeros_like(midpoints)
-        )
-        return edges, values_by_label, sum_values
-
-    @staticmethod
-    def _field_axis_limits(centres: np.ndarray, magnitudes: np.ndarray) -> tuple[float, float]:
-        source = magnitudes if magnitudes.size else centres
-        finite = np.asarray(source[np.isfinite(source)], dtype=float)
-        if finite.size == 0:
-            return (0.0, 1.0)
-        data_min = float(np.min(finite))
-        data_max = float(np.max(finite))
-        centre = 0.5 * (data_min + data_max)
-        span = data_max - data_min
-        scale = max(abs(centre), 1.0)
-        min_window = max(abs(centre) * 0.04, scale * 1e-4)
-        if span < min_window:
-            half_window = 0.5 * min_window
-            low = centre - half_window
-            high = centre + half_window
-        else:
-            padding = max(0.08 * span, scale * 1e-5)
-            low = data_min - padding
-            high = data_max + padding
-        if data_min >= 0.0:
-            low = max(0.0, low)
-        if high <= low:
-            high = low + max(scale * 1e-4, 1e-6)
-        return (low, high)
 
 
 class MagneticFieldCalculationSettingsDialog(QDialog):
@@ -5996,7 +5634,7 @@ class NuclearRelaxationDialog(QDialog):
             self._results_state["elements"] = list(elements)
         self._populate_results(self._results_state)
         mode = str(self._results_state.get("mode", self.options().mode))
-        suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
+        suffix = UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
         self._status.setText(
             f"Calculated {self._MODE_LABELS.get(mode, mode)} nuclear relaxation.{suffix}"
         )
@@ -6336,7 +5974,7 @@ class DipolarTensorDialog(QDialog):
                 state["site_source"] = self._muon_site.source
         self._populate_results(self._results_state)
         count = len(self._results_state)
-        suffix = _UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
+        suffix = UNRELAXED_ESTIMATE_SUFFIX if not self._estimate_note.isHidden() else ""
         self._status.setText(f"Calculated {plural(count, 'dipolar tensor')}.{suffix}")
 
     def _restore_selector_state(self, state: Mapping[str, object] | None) -> None:
@@ -6448,7 +6086,7 @@ class DipolarTensorDialog(QDialog):
         position = result.get("muon_position")
         if position is not None:
             try:
-                x, y, z = _tuple3(position)
+                x, y, z = float_triplet(position)
                 summary = QLabel(f"Muon position: ({x:.6g}, {y:.6g}, {z:.6g})")
                 style_hint_text(summary)
                 layout.addWidget(summary)
@@ -6878,11 +6516,11 @@ class MagneticFieldWidget(QWidget):
         deletable: bool = False,
     ) -> None:
         self._document = document
-        self._host_structure = _active_host_structure(document)
+        self._host_structure = None if document is None else active_host_structure(document)
         self.set_workspace_title(title, editable=title_editable, deletable=deletable)
-        self._model = self._model_from_document(
-            document, self._host_structure, magnetic_structure=magnetic_structure
-        )
+        if magnetic_structure is None and document is not None:
+            magnetic_structure = document.project.magnetic_structure
+        self._model = magnetic_model_for_host(magnetic_structure, self._host_structure)
         self._selected_muon_site = self._default_muon_site()
         self._refresh_measured_magnetization_unit()
         self._sync_enabled_state()
@@ -7098,26 +6736,6 @@ class MagneticFieldWidget(QWidget):
         self._refresh_calculation_settings_summary()
         self._clear_results(clear_state=True)
 
-    def _model_from_document(
-        self,
-        document: ProjectDocument | None,
-        host: Structure | None,
-        *,
-        magnetic_structure: Mapping[str, object] | None = None,
-    ) -> MagneticStructureModel:
-        if document is None or host is None:
-            return MagneticStructureModel()
-        payload = (
-            magnetic_structure
-            if magnetic_structure is not None
-            else document.project.magnetic_structure
-        )
-        if not isinstance(payload, dict):
-            payload = host.properties.get("magnetic_structure")
-        if isinstance(payload, dict) and "components" in payload:
-            return MagneticStructureModel.from_json(payload)
-        return magnetic_model_from_legacy_structure(host)
-
     def _sync_enabled_state(self) -> None:
         has_host = self._host_structure is not None
         self._edit_structure_button.setEnabled(has_host)
@@ -7224,19 +6842,7 @@ class MagneticFieldWidget(QWidget):
         self._emit_form_state_changed()
 
     def _default_muon_site(self) -> MagneticMuonSiteOption | None:
-        if self._document is None or self._host_structure is None:
-            return None
-        # The lowest-energy site pinned to the Muon Sites summary comes first.
-        for options in (
-            _relaxation_cluster_muon_site_options(
-                self._document, self._host_structure, pinned_only=True
-            ),
-            _relaxation_cluster_muon_site_options(self._document, self._host_structure),
-            _uep_cluster_muon_site_options(self._document, self._host_structure),
-        ):
-            if options:
-                return options[0]
-        return None
+        return default_muon_site(self._document, self._host_structure)
 
     def _muon_site_unavailable_reason(self) -> str | None:
         """Return why the selected muon site cannot be calculated, or ``None`` when it can."""
@@ -7258,14 +6864,14 @@ class MagneticFieldWidget(QWidget):
             self._site_summary.setText("Choose a muon site.")
             return
         site = self._selected_muon_site
-        source = site.source_label or _site_source_label(site.source)
+        source = site.source_label or site_source_label(site.source)
         cluster = f" ({site.cluster_label})" if site.cluster_label else ""
         distortion = (
             " Local field corrected for muon-induced displacements."
             if site.include_distortion
             else ""
         )
-        estimate = f" {_UNRELAXED_ESTIMATE_NOTE}" if is_unrelaxed_site_source(site.source) else ""
+        estimate = f" {UNRELAXED_SITE_NOTE}" if is_unrelaxed_site_source(site.source) else ""
         clearance_error = self._muon_site_unavailable_reason()
         refused = f" {clearance_error}" if clearance_error else ""
         self._site_summary.setText(
@@ -7510,10 +7116,7 @@ class MagneticFieldWidget(QWidget):
     def _distorted_structure_for_site(self, site: MagneticMuonSiteOption) -> Structure | None:
         if not site.include_distortion:
             return None
-        structure_id = site.distortion_structure_id
-        distorted = None
-        if self._document is not None and structure_id is not None:
-            distorted = self._document.structures.get(structure_id)
+        distorted = distortion_structure(self._document, site)
         if distorted is None:
             raise MagneticFieldError(
                 "the relaxed structure for the muon-induced distortion correction is no longer available"
@@ -7651,11 +7254,7 @@ class MagneticFieldWidget(QWidget):
         if site_reason is not None:
             QMessageBox.information(self, "Nuclear Relaxation", site_reason)
             return
-        distortion_available = (
-            self._document is not None
-            and site.distortion_structure_id is not None
-            and site.distortion_structure_id in self._document.structures
-        )
+        distortion_available = distortion_structure(self._document, site) is not None
         dialog = NuclearRelaxationDialog(
             muon_site=site,
             distortion_available=distortion_available,
@@ -7683,7 +7282,7 @@ class MagneticFieldWidget(QWidget):
         if options.use_distortion_correction:
             if self._document is None or site.distortion_structure_id is None:
                 raise NuclearRelaxationError("selected muon site has no distortion structure")
-            distorted = self._document.structures.get(site.distortion_structure_id)
+            distorted = distortion_structure(self._document, site)
             if distorted is None:
                 raise NuclearRelaxationError("selected distortion structure is no longer available")
             return calculate_nuclear_relaxation_with_distortion(
@@ -8014,12 +7613,7 @@ class MagneticFieldWidget(QWidget):
 
     @staticmethod
     def _state_float_triplet(value: object) -> tuple[float, float, float] | None:
-        if not isinstance(value, list | tuple) or len(value) != 3:
-            return None
-        try:
-            return (float(value[0]), float(value[1]), float(value[2]))
-        except (TypeError, ValueError):
-            return None
+        return float_triplet_or_none(value)
 
     @staticmethod
     def _state_int_triplet(value: object) -> tuple[int, int, int] | None:
@@ -8056,19 +7650,13 @@ class MagneticFieldWidget(QWidget):
             return None
         cartesian_position = self._state_float_triplet(value.get("cartesian_position"))
         if cartesian_position is None and self._host_structure is not None:
-            cartesian_position = _fractional_to_cartesian(fractional_position, self._host_structure)
+            cartesian_position = site_cartesian_position(fractional_position, self._host_structure)
 
-        distortion_structure_id = None
-        raw_distortion_id = value.get("distortion_structure_id")
-        if raw_distortion_id not in {None, ""}:
-            try:
-                distortion_structure_id = UUID(str(raw_distortion_id))
-            except ValueError:
-                distortion_structure_id = None
+        distortion_structure_id = uuid_or_none(value.get("distortion_structure_id"))
 
         properties = value.get("properties")
         return MagneticMuonSiteOption(
-            source=str(value.get("source", "custom")).strip() or "custom",
+            source=str(value.get("source", CUSTOM_SITE_SOURCE)).strip() or CUSTOM_SITE_SOURCE,
             label=str(value.get("label", "Custom site")).strip() or "Custom site",
             fractional_position=fractional_position,
             cartesian_position=cartesian_position,
@@ -8388,7 +7976,7 @@ class MagneticFieldWidget(QWidget):
         )
 
     def _estimate_status_suffix(self) -> str:
-        return _UNRELAXED_ESTIMATE_SUFFIX if self._results_are_estimates() else ""
+        return UNRELAXED_ESTIMATE_SUFFIX if self._results_are_estimates() else ""
 
     def _field_results_to_state(
         self, kind: str, results: object, *, site_source: str
@@ -8502,174 +8090,6 @@ class MagneticFieldWidget(QWidget):
         dialog.exec()
 
 
-def _active_host_structure(document: ProjectDocument | None) -> Structure | None:
-    if document is None or document.project.host_structure_id is None:
-        return None
-    return document.structures.get(document.project.host_structure_id)
-
-
-def _uep_cluster_muon_site_options(
-    document: ProjectDocument,
-    host_structure: Structure,
-) -> list[MagneticMuonSiteOption]:
-    options: list[MagneticMuonSiteOption] = []
-    seen: set[str] = set()
-
-    for site in document.sites.values():
-        if site.generation_method not in {"uep_cluster", "uep_cluster_member", "uep_batch_cluster"}:
-            continue
-        key = f"site:{site.id}"
-        seen.add(key)
-        options.append(
-            MagneticMuonSiteOption(
-                source=UEP_SITE_SOURCE,
-                label=site.label or "UEP cluster site",
-                source_label="Generated UEP site",
-                cluster_label=_cluster_label_from_properties(site.properties),
-                fractional_position=_tuple3(site.initial_fractional_position),
-                cartesian_position=_tuple3(site.initial_cartesian_position),
-                properties=dict(site.properties),
-            )
-        )
-
-    states = document.ui_state.get(_UEP_ANALYSIS_STATES_KEY, {})
-    if isinstance(states, dict):
-        for raw_job_id, state in states.items():
-            if not isinstance(state, dict):
-                continue
-            source_job_label = _job_label(document, raw_job_id, fallback="UEP source")
-            batch_results = state.get("batch_results")
-            summary = state.get("batch_summary_data")
-            if not isinstance(batch_results, list) or not isinstance(summary, dict):
-                continue
-            clusters = summary.get("clusters")
-            if not isinstance(clusters, (list, tuple)):
-                continue
-            for cluster in clusters:
-                if not isinstance(cluster, dict):
-                    continue
-                representative_index = _optional_int(cluster.get("representative_index"))
-                cluster_index = _optional_int(cluster.get("cluster_index"))
-                if representative_index is None or not (
-                    0 <= representative_index < len(batch_results)
-                ):
-                    continue
-                result = batch_results[representative_index]
-                if not isinstance(result, dict):
-                    continue
-                fractional = _triplet_or_none(
-                    result.get("optimized_fractional_position")
-                    or cluster.get("representative_fractional_position")
-                )
-                if fractional is None:
-                    continue
-                cartesian = _triplet_or_none(
-                    result.get("optimized_position_ang")
-                ) or _fractional_to_cartesian(fractional, host_structure)
-                key = f"uep:{raw_job_id}:{cluster_index}:{representative_index}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                options.append(
-                    MagneticMuonSiteOption(
-                        source=UEP_SITE_SOURCE,
-                        label=f"UEP cluster {cluster_index if cluster_index is not None else len(options) + 1}",
-                        source_label=str(source_job_label),
-                        cluster_label="-" if cluster_index is None else f"Cluster {cluster_index}",
-                        fractional_position=fractional,
-                        cartesian_position=cartesian,
-                        properties={
-                            "source_job_id": str(raw_job_id),
-                            "cluster": dict(cluster),
-                            "representative": dict(result),
-                        },
-                    )
-                )
-    return sorted(
-        options,
-        key=lambda option: (option.source_label or "", option.cluster_label or "", option.label),
-    )
-
-
-def _relaxation_cluster_muon_site_options(
-    document: ProjectDocument,
-    host_structure: Structure,
-    *,
-    pinned_only: bool = False,
-) -> list[MagneticMuonSiteOption]:
-    """Return the relaxation-analysis cluster representatives as muon-site options.
-
-    With ``pinned_only`` only the clusters pinned to the Muon Sites summary are
-    returned, labelled by Wyckoff label and cluster, in charge-state then
-    energy-rank order; a live cluster matches a pin by workspace and
-    representative relaxation job. Otherwise every workspace's clusters, sorted
-    by name.
-    """
-
-    workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
-    if not isinstance(workspaces, list):
-        return []
-    pinned = pinned_sites_by_representative(document) if pinned_only else {}
-    ranks = {key: order for order, key in enumerate(pinned)}
-    pinned_options: list[tuple[int, MagneticMuonSiteOption]] = []
-    options: list[MagneticMuonSiteOption] = []
-    for workspace in workspaces:
-        if not isinstance(workspace, dict):
-            continue
-        workspace_name = (
-            str(workspace.get("name", "Relaxation analysis")).strip() or "Relaxation analysis"
-        )
-        clustering = workspace.get("clustering")
-        result = clustering.get("result") if isinstance(clustering, dict) else None
-        if not isinstance(result, dict):
-            continue
-        clusters = result.get("clusters")
-        if not isinstance(clusters, (list, tuple)):
-            continue
-        for cluster in clusters:
-            if not isinstance(cluster, dict):
-                continue
-            fractional = _triplet_or_none(cluster.get("representative_fractional_position"))
-            if fractional is None:
-                continue
-            cluster_index = _optional_int(cluster.get("cluster_index"))
-            job_id = _uuid_or_none(cluster.get("representative_job_id"))
-            # A pin names its cluster's representative relaxation, which survives
-            # re-clustering; the cluster index does not.
-            pinned_key = (str(workspace.get("id", "")), job_id)
-            if pinned_only and pinned_key not in pinned:
-                continue
-            structure_id = _distorted_structure_id_for_job(document, job_id)
-            cartesian = _triplet_or_none(
-                cluster.get("representative_cartesian_position_ang")
-            ) or _fractional_to_cartesian(
-                fractional,
-                host_structure,
-            )
-            option = MagneticMuonSiteOption(
-                source="relaxation_clustering",
-                label=f"{workspace_name} cluster {cluster_index if cluster_index is not None else len(options) + 1}",
-                source_label=workspace_name,
-                cluster_label="-" if cluster_index is None else f"Cluster {cluster_index}",
-                fractional_position=fractional,
-                cartesian_position=cartesian,
-                distortion_structure_id=structure_id,
-                properties={"workspace": dict(workspace), "cluster": dict(cluster)},
-            )
-            if pinned_only:
-                # The label stays the workspace/cluster name so a saved selection
-                # still matches; the Cluster column carries the summary label.
-                option = replace(option, cluster_label=pinned[pinned_key].label)
-                pinned_options.append((ranks[pinned_key], option))
-            options.append(option)
-    if pinned_only:
-        return [option for _rank, option in sorted(pinned_options, key=lambda item: item[0])]
-    return sorted(
-        options,
-        key=lambda option: (option.source_label or "", option.cluster_label or "", option.label),
-    )
-
-
 def unrelaxed_results_note(parent: QWidget) -> QLabel:
     """Return a hidden note marking results computed at an unrelaxed UEP site as estimates."""
 
@@ -8680,53 +8100,6 @@ def unrelaxed_results_note(parent: QWidget) -> QLabel:
     return note
 
 
-def _site_source_label(source: str) -> str:
-    labels = {
-        UEP_SITE_SOURCE: "UEP clustering (unrelaxed estimate)",
-        "relaxation_clustering": "Structural relaxation clustering",
-        "custom": "Custom",
-    }
-    return labels.get(source, source.replace("_", " ").title())
-
-
-def _same_muon_site(left: MagneticMuonSiteOption, right: MagneticMuonSiteOption) -> bool:
-    return (
-        left.source == right.source
-        and left.label == right.label
-        and np.allclose(left.fractional_position, right.fractional_position, atol=1e-8)
-    )
-
-
-def _cluster_label_from_properties(properties: dict[str, object]) -> str | None:
-    cluster = properties.get("cluster_index")
-    if cluster is None:
-        return None
-    return f"Cluster {cluster}"
-
-
-def _distorted_structure_id_for_job(document: ProjectDocument, job_id: UUID | None) -> UUID | None:
-    if job_id is None:
-        return None
-    for run in document.runs.values():
-        if run.job_id != job_id or run.result_id is None:
-            continue
-        result = document.results.get(run.result_id)
-        if result is None:
-            continue
-        for structure_id in result.derived_structure_ids:
-            if structure_id in document.structures:
-                return structure_id
-    return None
-
-
-def _job_label(document: ProjectDocument, raw_job_id: object, *, fallback: str) -> str:
-    job_id = _uuid_or_none(raw_job_id)
-    if job_id is None:
-        return fallback
-    job = document.jobs.get(job_id)
-    return job.label if job is not None and job.label else fallback
-
-
 def _dipolar_result_tensor(result: Mapping[str, object]) -> np.ndarray:
     """Return a stored dipolar result's tensor in T per mu_B, or zeros when it is not 3 x 3."""
 
@@ -8734,36 +8107,6 @@ def _dipolar_result_tensor(result: Mapping[str, object]) -> np.ndarray:
     if arr.shape != (3, 3):
         arr = np.zeros((3, 3), dtype=float)
     return arr
-
-
-def _uuid_or_none(value: object) -> UUID | None:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _optional_int(value: object) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _triplet_or_none(value: object) -> tuple[float, float, float] | None:
-    if not isinstance(value, (list, tuple)) or len(value) != 3:
-        return None
-    try:
-        return _tuple3(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _tuple3(value: object) -> tuple[float, float, float]:
-    values = list(value)  # type: ignore[arg-type]
-    if len(values) != 3:
-        raise ValueError("expected a three-vector")
-    return (float(values[0]), float(values[1]), float(values[2]))
 
 
 def _non_finite_field_label(results: Sequence[object]) -> str | None:
@@ -8806,59 +8149,11 @@ def _raise_for_non_finite_fields(results: Sequence[object]) -> None:
         )
 
 
-def _fractional_to_cartesian(
-    fractional: tuple[float, float, float],
-    structure: Structure,
-) -> tuple[float, float, float]:
-    cart = np.asarray(fractional, dtype=float) @ np.asarray(structure.lattice_vectors, dtype=float)
-    return (float(cart[0]), float(cart[1]), float(cart[2]))
-
-
 def _decimal_edit_value(edit: QLineEdit, label: str) -> float:
     text = edit.text().strip()
     if not text:
         raise ValueError(f"{label} is required")
     return float(text)
-
-
-def _preview_supercell_structure(
-    structure: Structure,
-    repeats: tuple[int, int, int],
-) -> tuple[Structure, np.ndarray]:
-    repeat_array = np.asarray(repeats, dtype=float)
-    base_frac = np.asarray(structure.fractional_positions, dtype=float)
-    offsets = np.array(
-        [
-            (i, j, k)
-            for i in range(repeats[0])
-            for j in range(repeats[1])
-            for k in range(repeats[2])
-        ],
-        dtype=float,
-    )
-    atom_count = len(structure.species)
-    positions_frac = (
-        (base_frac[np.newaxis, :, :] + offsets[:, np.newaxis, :]) / repeat_array
-    ).reshape(-1, 3)
-    atom_indices = np.tile(np.arange(atom_count, dtype=int), len(offsets))
-    lattice = np.asarray(structure.lattice_vectors, dtype=float).copy()
-    lattice[0] *= repeats[0]
-    lattice[1] *= repeats[1]
-    lattice[2] *= repeats[2]
-    preview = Structure(
-        label=f"{structure.label or 'structure'} preview {repeats[0]}x{repeats[1]}x{repeats[2]}",
-        origin=structure.origin,
-        lattice_vectors=lattice.tolist(),
-        species=[structure.species[int(index)] for index in atom_indices],
-        fractional_positions=positions_frac.tolist(),
-        source_file=structure.source_file,
-        parent_structure_id=structure.id,
-        properties={
-            **structure.properties,
-            "pbc": structure.properties.get("pbc", [True, True, True]),
-        },
-    )
-    return preview, atom_indices
 
 
 def _nuclear_elements_text(elements: object) -> str:
@@ -9060,60 +8355,3 @@ def _format_float(value: object) -> str:
         return f"{float(value):.8g}"
     except (TypeError, ValueError):
         return ""
-
-
-def _component_edit_q_vector(
-    model: MagneticStructureModel, component: MagneticComponent
-) -> tuple[float, float, float]:
-    for term in component.terms:
-        if any(abs(float(value)) > 1e-12 for value in term.q_coeff):
-            return _tuple3_float(model.q_coeff_to_rlu(term.q_coeff))
-    if component.terms:
-        return _tuple3_float(model.q_coeff_to_rlu(component.terms[0].q_coeff))
-    return (0.0, 0.0, 0.0)
-
-
-def _component_edit_q_coeff(component: MagneticComponent) -> tuple[float, float, float] | None:
-    """Return the q-basis coefficients of a component's first finite-q term, or ``None`` when it has none."""
-
-    for term in component.terms:
-        if any(abs(float(value)) > 1e-12 for value in term.q_coeff):
-            return _tuple3_float(term.q_coeff)
-    return None
-
-
-def _tuple3_float(values: Sequence[float]) -> tuple[float, float, float]:
-    arr = np.asarray(values, dtype=float)
-    return (float(arr[0]), float(arr[1]), float(arr[2]))
-
-
-def _fallback_direction(
-    vector: Sequence[float], fallback: tuple[float, float, float]
-) -> tuple[float, float, float]:
-    arr = np.asarray(vector, dtype=float)
-    norm = float(np.linalg.norm(arr))
-    if norm <= _DIRECTION_TOLERANCE:
-        return fallback
-    return tuple(float(value) for value in arr / norm)
-
-
-def _orthogonal_unit(vector: Sequence[float]) -> np.ndarray:
-    axis = np.asarray(vector, dtype=float)
-    norm = float(np.linalg.norm(axis))
-    if norm <= _DIRECTION_TOLERANCE:
-        axis = np.asarray((0.0, 0.0, 1.0), dtype=float)
-    else:
-        axis = axis / norm
-    trial = np.asarray((1.0, 0.0, 0.0), dtype=float)
-    if abs(float(axis @ trial)) > 0.9:
-        trial = np.asarray((0.0, 1.0, 0.0), dtype=float)
-    projected = trial - float(trial @ axis) * axis
-    projected_norm = float(np.linalg.norm(projected))
-    if projected_norm <= _DIRECTION_TOLERANCE:
-        return np.asarray((0.0, 0.0, 1.0), dtype=float)
-    return projected / projected_norm
-
-
-def _unit_q_coeff(index: int) -> tuple[float, float, float]:
-    rows = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
-    return rows[int(index)]

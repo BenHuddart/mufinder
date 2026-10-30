@@ -74,6 +74,13 @@ UNRELAXED_RESULTS_NOTE = (
     "Computed at an unrelaxed UEP site, so these are estimates: "
     "the relaxed muon site can sit some distance from the UEP minimum."
 )
+#: Why a field at a UEP site is an estimate, shown where UEP sites are listed.
+UNRELAXED_SITE_NOTE = (
+    "UEP sites are unrelaxed, so fields computed at them are estimates: "
+    "the relaxed muon site can sit some distance from the UEP minimum."
+)
+#: Appended to a status line about results calculated at a UEP site.
+UNRELAXED_ESTIMATE_SUFFIX = " Computed at an unrelaxed UEP site, so these are estimates."
 
 MAGNETIC_FIELD_RESULT_TYPES = (
     MAGNETIC_FIELD_RESULT_TYPE,

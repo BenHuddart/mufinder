@@ -24,7 +24,24 @@ from mufinder.science.magnetic_structure import (
     MagneticTexture,
     MagneticTextureTerm,
     MuesrModelData,
+    allocate_q_basis_row,
+    allocate_texture_q_basis_rows,
     atom_resolved_fourier_components,
+    component_propagation_coeff,
+    component_propagation_rlu,
+    conical_component_geometry,
+    constrained_secondary_direction,
+    evaluate_texture_preview_grid,
+    magnetic_model_for_host,
+    nonzero_unit_direction,
+    perpendicular_unit_direction,
+    propagation_direction,
+    reference_direction_perpendicular_to,
+    rotation_handedness,
+    tiled_supercell_structure,
+    unit_direction_or,
+    unit_q_coeff,
+    used_q_basis_indices,
     build_collinear_component,
     build_conical_component,
     build_cycloid_component,
@@ -2351,3 +2368,296 @@ def test_spin_density_wave_preset_modulates_along_the_reference_axis() -> None:
 def test_magnetic_preset_rejects_invalid_choices(kind, overrides, message) -> None:
     with pytest.raises(MagneticStructureError, match=message):
         _preset(kind, **overrides)
+
+
+# Builder geometry: q-basis rows, propagation and moment directions
+
+
+def _ferromagnet(label: str = "fm") -> MagneticComponent:
+    return build_collinear_component(
+        label=label, selector=AtomSelector.all(), q_coeff=(0.0, 0.0, 0.0), moment=(0.0, 0.0, 1.0)
+    )
+
+
+def _sdw_on_row(row: int) -> MagneticComponent:
+    return build_spin_density_wave_component(
+        label=f"sdw {row}",
+        selector=AtomSelector.all(),
+        q_coeff=unit_q_coeff(row),
+        amplitude_vector=(0.0, 0.0, 1.0),
+        component_id=f"sdw-{row}",
+    )
+
+
+def test_allocating_a_zero_q_needs_no_basis_row() -> None:
+    full_basis = ((0.5, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.5))
+
+    q_basis, q_coeff = allocate_q_basis_row(
+        MagneticStructureModel(q_basis_rlu=full_basis), (0.0, 0.0, 0.0)
+    )
+
+    assert q_basis == full_basis
+    assert q_coeff == (0.0, 0.0, 0.0)
+
+
+def test_a_finite_q_after_a_zero_q_component_takes_a_free_basis_row() -> None:
+    stale_full_basis = ((0.25, 0.0, 0.0), (0.0, 0.25, 0.0), (0.0, 0.0, 0.25))
+    model = MagneticStructureModel(q_basis_rlu=stale_full_basis, components=(_ferromagnet(),))
+
+    q_basis, q_coeff = allocate_q_basis_row(model, (0.0, 0.0, 0.5))
+
+    assert q_basis[0] == (0.0, 0.0, 0.5)
+    assert q_coeff == (1.0, 0.0, 0.0)
+
+
+def test_allocating_a_q_reuses_the_row_that_holds_it() -> None:
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.0, 0.0, 0.0), (0.0, 0.0, 0.5), (0.0, 0.0, 0.0)),
+        components=(_sdw_on_row(1),),
+    )
+
+    q_basis, q_coeff = allocate_q_basis_row(model, (0.0, 0.0, 0.5))
+
+    assert q_coeff == (0.0, 1.0, 0.0)
+    assert q_basis == model.q_basis_rlu
+
+
+def test_allocating_a_q_fails_when_every_row_is_used() -> None:
+    basis = ((0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.1))
+    model = MagneticStructureModel(
+        q_basis_rlu=basis, components=tuple(_sdw_on_row(row) for row in range(3))
+    )
+
+    assert allocate_q_basis_row(model, (0.5, 0.5, 0.0)) == (basis, None)
+    # Leaving out the component on row 3 frees that row.
+    q_basis, q_coeff = allocate_q_basis_row(model, (0.5, 0.5, 0.0), ignored_component_ids={"sdw-2"})
+    assert q_coeff == (0.0, 0.0, 1.0)
+    assert q_basis[2] == (0.5, 0.5, 0.0)
+    assert used_q_basis_indices(model) == {0, 1, 2}
+    assert used_q_basis_indices(model, ignored_component_ids={"sdw-2"}) == {0, 1}
+
+
+def test_texture_q_vectors_share_matching_rows_and_take_free_ones() -> None:
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.1, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(_sdw_on_row(0),),
+    )
+
+    q_basis, transform = allocate_texture_q_basis_rows(
+        model, ((0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.0))
+    )
+
+    assert q_basis == ((0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.0))
+    assert transform == ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0))
+
+
+def test_texture_q_vectors_fail_without_enough_free_rows() -> None:
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.1, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(_sdw_on_row(0),),
+    )
+
+    _q_basis, transform = allocate_texture_q_basis_rows(
+        model, ((0.2, 0.0, 0.0), (0.0, 0.2, 0.0), (0.0, 0.0, 0.2))
+    )
+
+    assert transform is None
+
+
+def _cone() -> MagneticComponent:
+    return build_conical_component(
+        label="cone",
+        selector=AtomSelector.all(),
+        q_coeff=(1.0, 0.0, 0.0),
+        total_moment=2.0,
+        real_axis_direction=(1.0, 0.0, 0.0),
+        imaginary_axis_direction=(0.0, 1.0, 0.0),
+        static_axis_direction=(0.0, 0.0, 1.0),
+        cone_angle_degrees=30.0,
+    )
+
+
+def test_component_propagation_reads_the_first_finite_q_term() -> None:
+    model = MagneticStructureModel(q_basis_rlu=((0.0, 0.0, 0.25), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+    ferromagnet = _ferromagnet()
+
+    assert component_propagation_rlu(model, _cone()) == (0.0, 0.0, 0.25)
+    assert component_propagation_coeff(_cone()) == (1.0, 0.0, 0.0)
+    assert component_propagation_rlu(model, ferromagnet) == (0.0, 0.0, 0.0)
+    assert component_propagation_coeff(ferromagnet) is None
+    assert component_propagation_rlu(model, replace(ferromagnet, terms=())) == (0.0, 0.0, 0.0)
+
+
+def test_conical_geometry_reads_back_the_cone() -> None:
+    amplitude, angle, real, imag, axis = conical_component_geometry(
+        _cone(), np.asarray((0.0, 0.0, 1.0))
+    )
+
+    assert amplitude == pytest.approx(2.0)
+    assert angle == pytest.approx(30.0)
+    np.testing.assert_allclose(real, (1.0, 0.0, 0.0), atol=1e-12)
+    np.testing.assert_allclose(imag, (0.0, 1.0, 0.0), atol=1e-12)
+    np.testing.assert_allclose(axis, (0.0, 0.0, 1.0))
+    # Without q the axis is the rotation plane's normal.
+    *_rest, axis_without_q = conical_component_geometry(_cone(), None)
+    np.testing.assert_allclose(axis_without_q, (0.0, 0.0, 1.0), atol=1e-12)
+    assert rotation_handedness(real, imag, axis) == 1
+    assert rotation_handedness(imag, real, axis) == -1
+
+
+def test_unit_directions_and_their_fallbacks() -> None:
+    assert unit_direction_or((0.0, 3.0, 4.0), (1.0, 0.0, 0.0)) == pytest.approx((0.0, 0.6, 0.8))
+    assert unit_direction_or((0.0, 0.0, 1e-9), (1.0, 0.0, 0.0)) == (1.0, 0.0, 0.0)
+    np.testing.assert_allclose(nonzero_unit_direction((2.0, 0.0, 0.0), "axis"), (1.0, 0.0, 0.0))
+    with pytest.raises(ValueError, match="core direction must be a non-zero direction"):
+        nonzero_unit_direction((0.0, 0.0, 0.0), "core direction")
+
+
+@pytest.mark.parametrize(
+    ("vector", "expected"),
+    [
+        ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
+        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    ],
+)
+def test_perpendicular_unit_direction(vector, expected) -> None:
+    np.testing.assert_allclose(perpendicular_unit_direction(vector), expected, atol=1e-12)
+
+
+def test_reference_direction_is_projected_off_q() -> None:
+    q = np.asarray((0.0, 0.0, 1.0))
+
+    np.testing.assert_allclose(
+        reference_direction_perpendicular_to((1.0, 0.0, 1.0), q), (1.0, 0.0, 0.0)
+    )
+    # A reference along q gives some direction perpendicular to it.
+    np.testing.assert_allclose(
+        reference_direction_perpendicular_to((0.0, 0.0, 2.0), q), (1.0, 0.0, 0.0)
+    )
+
+
+def test_constrained_secondary_direction_by_kind() -> None:
+    q = np.asarray((0.0, 0.0, 1.0))
+    primary = np.asarray((1.0, 0.0, 0.0))
+
+    np.testing.assert_allclose(
+        constrained_secondary_direction("helix", q, primary, 1.0), (0.0, 1.0, 0.0)
+    )
+    np.testing.assert_allclose(
+        constrained_secondary_direction("conical", q, primary, -1.0), (0.0, -1.0, 0.0)
+    )
+    np.testing.assert_allclose(
+        constrained_secondary_direction("cycloid", q, primary, -1.0), (0.0, 0.0, -1.0)
+    )
+    # A primary along q has no cross product; a perpendicular direction is used.
+    np.testing.assert_allclose(constrained_secondary_direction("helix", q, q, 1.0), (1.0, 0.0, 0.0))
+
+
+def test_propagation_direction_and_its_errors() -> None:
+    lattice = ((3.0, 0.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 4.0))
+    flat = ((3.0, 0.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 0.0))
+
+    np.testing.assert_allclose(propagation_direction(lattice, (0.0, 0.0, 0.5)), (0.0, 0.0, 1.0))
+    with pytest.raises(ValueError, match="q must be non-zero"):
+        propagation_direction(lattice, (0.0, 0.0, 0.0))
+    with pytest.raises(ValueError, match="q must define a non-zero propagation direction"):
+        propagation_direction(flat, (0.5, 0.0, 0.0))
+    for q in ((0.0, 0.0, 0.0), (0.5, 0.0, 0.0)):
+        np.testing.assert_allclose(
+            propagation_direction(flat, q, allow_fallback=True), (0.0, 0.0, 1.0)
+        )
+
+
+# Previews
+
+
+def test_tiled_supercell_lists_atoms_in_the_order_of_the_moments() -> None:
+    structure = _structure()
+    model = MagneticStructureModel(components=(_ferromagnet(),))
+
+    tiled, atom_indices = tiled_supercell_structure(structure, (2, 1, 3))
+    positions, _moments, moment_indices = moments_in_supercell(structure, model, (2, 1, 3))
+
+    assert tiled.label == "Fe preview 2x1x3"
+    assert tiled.parent_structure_id == structure.id
+    assert len(tiled.species) == 12
+    np.testing.assert_array_equal(atom_indices, moment_indices)
+    assert tiled.species == [structure.species[index] for index in atom_indices]
+    np.testing.assert_allclose(
+        np.asarray(tiled.fractional_positions) @ np.asarray(tiled.lattice_vectors), positions
+    )
+    assert tiled.properties["pbc"] == [True, True, True]
+
+
+def test_texture_preview_uses_hexagonal_q_basis() -> None:
+    texture = MagneticTexture((MagneticTextureTerm.from_vector((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),))
+
+    square = evaluate_texture_preview_grid(
+        texture, mode="square_skyrmion", resolution=3, repeats=1.0
+    )
+    hexagonal = evaluate_texture_preview_grid(
+        texture, mode="hexagonal_skyrmion", resolution=3, repeats=1.0
+    )
+
+    assert np.isclose(square[2, 1, 2], 1.0)
+    assert abs(hexagonal[2, 1, 2]) < 1e-12
+
+
+def test_texture_preview_q_basis_follows_core_direction_handedness() -> None:
+    texture = MagneticTexture((MagneticTextureTerm.from_vector((0.0, 1.0, 0.0), (0.0, 0.0, 1.0j)),))
+
+    core_down = evaluate_texture_preview_grid(
+        texture,
+        mode="hexagonal_skyrmion",
+        core_direction=(0.0, 0.0, -1.0),
+        resolution=3,
+        repeats=1.0,
+    )
+    core_up = evaluate_texture_preview_grid(
+        texture,
+        mode="hexagonal_skyrmion",
+        core_direction=(0.0, 0.0, 1.0),
+        resolution=3,
+        repeats=1.0,
+    )
+
+    assert core_down[1, 2, 2] < 0.0
+    assert core_up[1, 2, 2] > 0.0
+    assert np.isclose(core_down[1, 2, 2], -core_up[1, 2, 2])
+
+
+# The saved model of a host
+
+
+def test_saved_model_payload_is_read_before_the_host_spins() -> None:
+    host = _structure(properties={"atomic_spins": [1.0, 0.0]})
+    saved = MagneticStructureModel(components=(_ferromagnet("saved"),))
+
+    model = magnetic_model_for_host(saved.to_json(), host)
+
+    assert [component.label for component in model.components] == ["saved"]
+
+
+def test_host_property_model_is_used_without_a_saved_payload() -> None:
+    stored = MagneticStructureModel(components=(_ferromagnet("on host"),))
+    host = _structure(properties={"magnetic_structure": stored.to_json()})
+
+    model = magnetic_model_for_host(None, host)
+
+    assert [component.label for component in model.components] == ["on host"]
+
+
+def test_a_payload_without_components_falls_back_to_the_host_spins() -> None:
+    host = _structure(properties={"atomic_spins": [2.0, 0.0]})
+
+    model = magnetic_model_for_host({"schema_version": 2}, host)
+
+    assert model == magnetic_model_from_legacy_structure(host)
+    assert len(model.components) == 1
+
+
+def test_no_host_gives_an_empty_model() -> None:
+    saved = MagneticStructureModel(components=(_ferromagnet("saved"),))
+
+    assert magnetic_model_for_host(saved.to_json(), None) == MagneticStructureModel()

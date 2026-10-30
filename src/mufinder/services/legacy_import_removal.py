@@ -41,6 +41,7 @@ from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import ProvenanceRecord
 from mufinder.domain.text import plural
+from mufinder.persistence.codec import uuid_or_none
 
 #: Provenance action for one removal. ``services.journal`` renders nothing for
 #: an action it does not know, so a matching journal builder is required.
@@ -176,7 +177,7 @@ def find_references(document: Any, targets: Sequence[ImportedRelaxationRef]) -> 
                 if not isinstance(entry, dict):
                     continue
                 referenced = {
-                    _as_uuid(entry.get(key))
+                    uuid_or_none(entry.get(key))
                     for key in (
                         "reactant_site_id",
                         "product_site_id",
@@ -201,22 +202,13 @@ def find_references(document: Any, targets: Sequence[ImportedRelaxationRef]) -> 
             raw_jobs = workspace.get("job_ids")
             if not isinstance(raw_jobs, list):
                 continue
-            if {_as_uuid(value) for value in raw_jobs}.intersection(job_ids):
+            if {uuid_or_none(value) for value in raw_jobs}.intersection(job_ids):
                 references.append(
                     f"relaxation analysis workspace '{workspace.get('name', 'workspace')}'"
                 )
 
     # Stable, de-duplicated: the same workspace can reference several targets.
     return list(dict.fromkeys(references))
-
-
-def _as_uuid(value: Any) -> UUID | None:
-    if value is None:
-        return None
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None
 
 
 def plan_removal(

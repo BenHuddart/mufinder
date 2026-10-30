@@ -143,7 +143,10 @@ policy, move the reusable part into the appropriate shared layer:
   its pristine host for finite-cell distortion corrections in
   ``mufinder.science.muon_distortion``, the hyperfine sign convention, unit
   conversions and spin density at the muon in ``mufinder.science.hyperfine``
-  (which takes the contact-shell mean from ``mufinder.science.magnetic_fields``)
+  (which takes the contact-shell mean from ``mufinder.science.magnetic_fields``),
+  the Magnetic Structure Builder's q-basis rows, propagation and moment
+  directions in ``mufinder.science.magnetic_structure``, the step curves of
+  a field distribution in ``mufinder.science.field_histograms``
   and every ``muesr`` import in
   ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
@@ -596,7 +599,20 @@ no two workflow widgets may define the same private method.
        ``remove_magnetic_field_results``, ``magnetic_field_results``,
        ``store_polarisation_result``, ``polarisation_result``; see
        :doc:`/user_guide/magnetic_fields`), and the note shown beside results
-       computed at an unrelaxed UEP site (``UNRELAXED_RESULTS_NOTE``).
+       computed at an unrelaxed UEP site (``UNRELAXED_RESULTS_NOTE``), the
+       note beside a list of UEP sites (``UNRELAXED_SITE_NOTE``) and the
+       status-line suffix for results there (``UNRELAXED_ESTIMATE_SUFFIX``).
+   * - ``mufinder.services.magnetic_field_sites``
+     - The muon sites the Magnetic Fields page offers, by source
+       (``muon_site_options``, ``uep_cluster_muon_site_options``,
+       ``relaxation_cluster_muon_site_options``, ``MagneticMuonSiteOption``),
+       the site a fresh page starts at (``default_muon_site``), the relaxed
+       structure a site's distortion correction uses
+       (``distortion_structure``) and the source names
+       (``RELAXATION_SITE_SOURCE``, ``CUSTOM_SITE_SOURCE``,
+       ``site_source_label``). It reads the UEP analysis states and the
+       relaxation-analysis workspaces through the ``ui_state`` keys of
+       ``project_survey`` and ``project_summary``.
    * - ``mufinder.services.polarisation_simulations``
      - The stored field results a polarisation simulation can use
        (``field_sources``), running a weighted selection of them
@@ -726,6 +742,13 @@ no two workflow widgets may define the same private method.
        (``*_from_dict``, ``ENTITY_DECODERS``, ``jobs_in_creation_order``) and
        the read-side repairs for older projects; encoding is ``to_jsonable``
        in ``mufinder.persistence.codec``.
+   * - ``mufinder.persistence.codec``
+     - Encoding to JSON (``to_jsonable``), the strict readers of record fields
+       (``parse_uuid``, ``parse_datetime``) and the lenient readers of loosely
+       typed saved state such as ``ui_state`` entries, which give ``None``
+       instead of raising (``uuid_or_none``, ``int_or_none``,
+       ``float_triplet_or_none``), and ``float_triplet``, which reads three
+       floats and raises ``TypeError`` or ``ValueError`` otherwise.
    * - ``mufinder.domain.constants``
      - Every physical constant and unit conversion (``HBAR_J_S``,
        ``MU0_T_M_PER_A``, ``BOHR_MAGNETON_J_PER_T``, ``BOHR_RADIUS_ANGSTROM``,
