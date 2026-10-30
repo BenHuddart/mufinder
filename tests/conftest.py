@@ -6,6 +6,7 @@ import atexit
 from collections.abc import Generator, Iterator
 import gc
 import os
+from pathlib import Path
 import sys
 
 import pytest
@@ -340,13 +341,38 @@ def answered_choices(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]
     return prompts
 
 
-@pytest.fixture(autouse=True)
-def _isolate_qsettings(tmp_path) -> Iterator[None]:
-    """Redirect QSettings to a per-test path so xdist workers cannot share state."""
+def _redirect_qsettings(root: Path) -> None:
+    """Point every file-backed QSettings store under ``root``.
+
+    The app builds ``QSettings("MuFinder", "MuFinder")``, which always uses the
+    native format whatever the default format is, so both formats are redirected
+    in both scopes. On Linux the native format is an INI file, so this covers
+    every store the app opens; macOS and Windows keep native settings outside
+    the file system, where ``QSettings.setPath`` has no effect.
+    """
 
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    for settings_format in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
+        for scope in (QSettings.Scope.UserScope, QSettings.Scope.SystemScope):
+            QSettings.setPath(settings_format, scope, str(root / scope.name))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_qsettings_session(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Redirect QSettings for the whole session, so wider-scoped fixtures are covered."""
+
+    root = tmp_path_factory.mktemp("qsettings-session")
+    _redirect_qsettings(root)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def _isolate_qsettings(tmp_path: Path, _isolate_qsettings_session: Path) -> Iterator[None]:
+    """Give each test its own QSettings stores so xdist workers and tests never share state."""
+
+    _redirect_qsettings(tmp_path)
     yield
+    _redirect_qsettings(_isolate_qsettings_session)
 
 
 @pytest.fixture(autouse=True)
