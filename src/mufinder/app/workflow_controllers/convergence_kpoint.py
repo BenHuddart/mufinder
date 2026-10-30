@@ -195,8 +195,8 @@ class ConvergenceKpointController(SweepConvergenceController):
     def examiner_points(
         states: Mapping[KPointGrid, SweepPointRunState],
         lattice_vectors: Sequence[Sequence[float]],
-    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], list[str]]:
-        """Key k-point sweep states by k-point count for the examiner's axis.
+    ) -> tuple[dict[float, SweepPointRunState], dict[float, KPointGrid], list[str]]:
+        """Key k-point sweep states, and the grid kept for each, by k-point count.
 
         Two different grids with the same count (only possible with hand-entered
         grids) cannot share a point on that axis. One is kept per count: a grid
@@ -209,7 +209,7 @@ class ConvergenceKpointController(SweepConvergenceController):
         for grid in states:
             by_count.setdefault(kpoint_count(grid), []).append(tuple(int(n) for n in grid))  # type: ignore[arg-type]
         counts_map: dict[float, SweepPointRunState] = {}
-        labels: dict[float, str] = {}
+        kept_grids: dict[float, KPointGrid] = {}
         notes: list[str] = []
         for count, grids in by_count.items():
             kept = grids[0]
@@ -232,39 +232,24 @@ class ConvergenceKpointController(SweepConvergenceController):
                     "Remove the extra grid from the sweep to examine it."
                 )
             counts_map[float(count)] = states[kept]
-            labels[float(count)] = f"Grid: {format_kpoint_grid(kept)}"
-        return counts_map, labels, notes
+            kept_grids[float(count)] = kept
+        return counts_map, kept_grids, notes
 
     def examiner_input(
         self, states: Mapping[KPointGrid, SweepPointRunState], cell: Structure
-    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], dict[str, object]]:
-        """Examine one grid per k-point count, labelled with its grid, on ``cell``'s lattice."""
+    ) -> tuple[dict[float, SweepPointRunState], dict[str, object]]:
+        """Examine one grid per k-point count, passed with its grid, on ``cell``'s lattice."""
 
-        counts_map, labels, notes = self.examiner_points(states, cell.lattice_vectors)
+        counts_map, grids, notes = self.examiner_points(states, cell.lattice_vectors)
         return (
             counts_map,
-            labels,
             {
                 "sweep_kind": "kpoint",
-                "point_labels": labels,
+                "point_grids": grids,
                 "lattice_vectors": cell.lattice_vectors,
                 "notes": notes,
             },
         )
-
-    def resolve_adopted_key(
-        self, value: float, point_labels: Mapping[float, str]
-    ) -> KPointGrid | None:
-        """Return the grid the adopted point's ``Grid:`` label names."""
-
-        label = point_labels.get(float(value), "")
-        if not label.startswith("Grid:"):
-            return None
-        payload = label.split(":", maxsplit=1)[1].strip().replace(" ", "")
-        return parse_grid_mapping_key(payload)
-
-    def unresolved_adopt_message(self) -> str:
-        return "Could not resolve the recommended k-point grid from the plotted data."
 
     def record_adopted_default(
         self,
@@ -279,7 +264,7 @@ class ConvergenceKpointController(SweepConvergenceController):
         cell_id: str | None,
         definition_cell_id: str | None,
         xc_functional: str | None,
-        point_labels: Mapping[float, str],
+        point_grids: Mapping[float, KPointGrid],
     ) -> str:
         """Set the grid with the lattice it was converged on, and pin its snapshot.
 
@@ -316,7 +301,7 @@ class ConvergenceKpointController(SweepConvergenceController):
                 energy_threshold=float(energy_threshold),
                 force_threshold=float(force_threshold),
                 simulation_cell_structure_id=definition_cell_id,
-                labels=point_labels,
+                point_grids=point_grids,
                 stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
             ),
         )

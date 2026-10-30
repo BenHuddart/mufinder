@@ -719,7 +719,7 @@ replacement named.
   return a ``ConvergenceAnalysis``. ``check_sweep_length`` runs the power-law
   sweep-length check on its own.
 - ``apply_kpoint_label_to_stress_result``: pass ``max_stresses``,
-  ``stress_threshold`` and ``point_labels`` to ``analyze_kpoint_convergence``.
+  ``stress_threshold`` and ``point_grids`` to ``analyze_kpoint_convergence``.
 - The ``method`` argument of ``analyze_convergence``, and the ``method``,
   ``fallback_suggestion`` and ``deltas`` fields of ``ConvergenceResult``:
   results now carry ``quantity``, ``summary``, ``explanation``,
@@ -781,6 +781,17 @@ code called it.
   from ``mufinder.services.convergence_defaults``, which takes the same
   arguments and returns the same copy.
 
+The names below were removed without a deprecation period. ``mufinder.app`` is
+not in the API reference, no project data depends on them, and nothing outside
+MuFinder's own code and tests used them.
+
+- ``ConvergenceExaminerDialog.cutoff_adopted`` and its ``point_labels``
+  keyword (``mufinder.app.convergence_examiner``): connect to
+  ``default_adopted``, which carries the adopted cutoff in eV or k-point grid,
+  and pass ``point_grids`` (the grid of each k-point count).
+- ``ConvergenceExaminerDialog._recommended_cutoff``: read
+  ``_recommended_value``.
+
 The helper below was removed without a deprecation period. It is not in the API
 reference, no project data depends on it, and only MuFinder's own code called it.
 
@@ -819,3 +830,18 @@ named.
 - ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``
   (``mufinder.services.cluster_runner``): import it from
   ``mufinder.services.cluster_retrieval``.
+
+The keywords below were replaced without a deprecation period, last accepted
+in 0.8.0. They are in the API reference, but only MuFinder's own code passed
+them and neither changes what a project stores: a k-point overview snapshot
+still records its grids as ``point_labels``, and older snapshots read as
+before. Code that passed one passes the grids instead.
+
+- ``point_labels`` of ``analyze_kpoint_convergence``
+  (``mufinder.science.convergence_analysis``): pass ``point_grids``, which maps
+  each k-point count to its grid (``{27.0: (3, 3, 3)}``) in place of the grid's
+  text (``{27.0: "3 x 3 x 3"}``).
+- ``labels`` of ``build_kpoint_overview_snapshot``
+  (``mufinder.services.convergence_defaults``): pass ``point_grids``, which
+  maps each k-point count to its grid in place of its ``Grid: a x b x c``
+  label.

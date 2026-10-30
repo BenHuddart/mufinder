@@ -15,7 +15,7 @@ from uuid import UUID
 
 from mufinder.domain.models import Structure
 from mufinder.persistence.codec import to_jsonable
-from mufinder.science.kpoint_grids import distinct_grid_spacings
+from mufinder.science.kpoint_grids import distinct_grid_spacings, format_kpoint_grid
 from mufinder.services.project_document import ProjectDocument
 
 #: ``ui_state`` key of the pinned overview snapshots, keyed by sweep kind.
@@ -99,13 +99,15 @@ def build_kpoint_overview_snapshot(
     energy_threshold: float,
     force_threshold: float,
     simulation_cell_structure_id: str | None,
-    labels: Mapping[float, str],
+    point_grids: Mapping[float, tuple[int, int, int]],
     stress_threshold: float | None = None,
 ) -> dict[str, object] | None:
     """Return the snapshot that pins an adopted k-point grid, with the point labels.
 
-    ``None`` when there is no active host or the k-point examiner has saved no
-    plot data.
+    ``point_grids`` maps each examined k-point count to its grid; the snapshot
+    stores them as ``point_labels`` (``{"8.0": "Grid: 2 x 2 x 2"}``), which the
+    overview shows and :func:`recompute_snapshot_spacings` reads back. ``None``
+    when there is no active host or the k-point examiner has saved no plot data.
     """
 
     return _build_overview_snapshot(
@@ -116,7 +118,9 @@ def build_kpoint_overview_snapshot(
         force_threshold=force_threshold,
         simulation_cell_structure_id=simulation_cell_structure_id,
         stress_threshold=stress_threshold,
-        point_labels={str(float(key)): value for key, value in labels.items()},
+        point_labels={
+            str(float(key)): kpoint_grid_label(grid) for key, grid in point_grids.items()
+        },
     )
 
 
@@ -269,10 +273,19 @@ def _active_host_id_text(document: ProjectDocument) -> str | None:
 # --- k-point spacings -----------------------------------------------------------
 
 
+def kpoint_grid_label(grid: tuple[int, int, int]) -> str:
+    """Return the ``Grid: a x b x c`` label a k-point snapshot stores for ``grid``.
+
+    :func:`kpoint_grids_from_labels` reads it back.
+    """
+
+    return f"Grid: {format_kpoint_grid(grid)}"
+
+
 def kpoint_grids_from_labels(
     point_labels: Mapping[float, str],
 ) -> dict[float, tuple[int, int, int]]:
-    """Parse the ``Grid: a x b x c`` point labels into grids keyed by plot position.
+    """Parse a k-point snapshot's ``Grid: a x b x c`` labels into grids keyed by count.
 
     Labels that are not a grid of three positive integers are skipped.
     """

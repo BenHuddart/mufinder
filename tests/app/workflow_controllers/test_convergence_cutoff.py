@@ -577,7 +577,7 @@ def test_adopting_a_result_from_another_functional_is_confirmed(tmp_path: Path) 
     statuses: list[str] = []
     controller = _examine_controller(document, window, service=service, statuses=statuses)
 
-    controller.adopt(400.0, "converged", 0.001, 0.05, point_labels={})
+    controller.adopt(400.0, "converged", 0.001, 0.05, point_grids={})
 
     ((title, text, choices, options),) = window.confirmations
     assert title == "Change project functional?"
@@ -589,7 +589,7 @@ def test_adopting_a_result_from_another_functional_is_confirmed(tmp_path: Path) 
     assert statuses == []
 
     window.confirm_answer = "change"
-    controller.adopt(400.0, "converged", 0.001, 0.05, point_labels={})
+    controller.adopt(400.0, "converged", 0.001, 0.05, point_grids={})
 
     assert document.project.recommended_cutoff_energy == pytest.approx(400.0)
     assert document.project.recommended_xc_functional == "PBE"
@@ -599,7 +599,7 @@ def test_adopting_without_a_project_does_nothing() -> None:
     window = RecordingSweepWindow()
     controller = _examine_controller(None, window)
 
-    controller.adopt(400.0, "converged", 0.001, 0.05, point_labels={})
+    controller.adopt(400.0, "converged", 0.001, 0.05, point_grids={})
 
     assert window.refreshes == 0
     assert controller.definition_xc_functional(None) is None

@@ -29,7 +29,12 @@ from mufinder.services.convergence_defaults import (
 from mufinder.services.definition_mappings import remove_cutoff_from_definition
 from mufinder.services.project_document import ProjectDocument
 
-from mufinder.app.convergence_types import CUTOFF_KEY_CODEC, ConvergenceConfig, SweepPointRunState
+from mufinder.app.convergence_types import (
+    CUTOFF_KEY_CODEC,
+    ConvergenceConfig,
+    KPointGrid,
+    SweepPointRunState,
+)
 from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.workflow_controllers.sweep_convergence import SweepConvergenceController
 
@@ -197,13 +202,10 @@ class ConvergenceCutoffController(SweepConvergenceController):
 
     def examiner_input(
         self, states: Mapping[float, SweepPointRunState], cell: Structure
-    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], dict[str, object]]:
+    ) -> tuple[dict[float, SweepPointRunState], dict[str, object]]:
         """Examine every cutoff as it is; the dialog's options keep their cutoff defaults."""
 
-        return dict(states), {}, {}
-
-    def resolve_adopted_key(self, value: float, point_labels: Mapping[float, str]) -> float:
-        return float(value)
+        return dict(states), {}
 
     def record_adopted_default(
         self,
@@ -218,7 +220,7 @@ class ConvergenceCutoffController(SweepConvergenceController):
         cell_id: str | None,
         definition_cell_id: str | None,
         xc_functional: str | None,
-        point_labels: Mapping[float, str],
+        point_grids: Mapping[float, KPointGrid],
     ) -> str:
         self._context.project_service.set_recommended_cutoff(
             document,
