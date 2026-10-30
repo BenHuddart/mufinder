@@ -7375,6 +7375,8 @@ class MainWindow(QMainWindow):
         if not self._accept_mixed_relaxation_calculations(joined):
             return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
+        # The workspace regrouped with the relaxations that joined it.
+        self._record_relaxed_sites_grouped(str(workspace_id))
         self.statusBar().showMessage(
             f"Added {plural(len(selected), 'relaxation result')} to the analysis workspace"
         )

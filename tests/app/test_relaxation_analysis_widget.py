@@ -1602,6 +1602,41 @@ def test_clustering_dialog_regroups_once_edits_pause_and_applies_what_the_contro
         dialog.close()
 
 
+def test_a_failed_tolerance_scan_is_reported_and_the_button_works_again(qapp, monkeypatch) -> None:
+    host = host_structure()
+    sites = [
+        _relaxed_site(host, (0.10, 0.10, 0.10), -10.0),
+        _relaxed_site(host, (0.25, 0.25, 0.25), -9.8),
+    ]
+    dialog = _clustering_dialog(host, sites)
+    warnings_shown: list[str] = []
+
+    def broken(*_args, **_kwargs):
+        raise ArithmeticError("singular cell")
+
+    monkeypatch.setattr(
+        relaxation_analysis_widget_module, "scan_connected_component_tolerances", broken
+    )
+    monkeypatch.setattr(
+        relaxation_analysis_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings_shown.append(text),
+    )
+    try:
+        dialog._scan_tolerances()
+        dialog._scan_thread.wait()
+        for _ in range(20):
+            qapp.processEvents()
+            if dialog._scan_thread is None:
+                break
+
+        assert warnings_shown == ["singular cell"]
+        assert dialog._scan_button.isEnabled()
+        assert dialog._scan_thread is None
+    finally:
+        dialog.close()
+
+
 def test_clustering_dialog_scans_tolerances_on_a_worker(qapp) -> None:
     host = host_structure()
     sites = [
@@ -1653,6 +1688,7 @@ def test_clustering_dialog_says_when_k_means_used_fewer_clusters(qapp) -> None:
 
         dialog._apply()
 
-        assert applied[-1]["kmeans_k"] == 2
+        assert applied[-1]["kmeans_k"] == 3
+        assert applied[-1]["grouping"]["kmeans_k"] == 2
     finally:
         dialog.close()

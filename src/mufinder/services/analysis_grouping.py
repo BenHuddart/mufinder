@@ -75,9 +75,12 @@ def grouping_settings(clustering: object) -> dict[str, object]:
         ("wyckoff_match_tolerance_ang", float),
     ):
         try:
-            settings[key] = cast(clustering[key])  # type: ignore[operator]
+            value = cast(clustering[key])  # type: ignore[operator]
         except (KeyError, TypeError, ValueError):
             continue
+        # Tolerances may be zero; t and k must be positive.
+        if value > 0 or (value == 0 and key.endswith("_ang")):
+            settings[key] = value
     return settings
 
 
@@ -142,15 +145,13 @@ def grouped_clustering_state(
 ) -> dict[str, object]:
     """Return the ``clustering`` mapping a workspace stores for ``grouping``.
 
-    It holds the method and settings (k-means with the ``k`` it used), the
+    It holds the method and settings (k-means with the ``k`` asked for), the
     result, the tolerance scan, and how the sites were grouped, recorded now
-    against ``host_structure``.
+    against ``host_structure`` (k-means with the ``k`` it used).
     """
 
     resolved = grouping_settings(settings)
     resolved["method"] = grouping.method
-    if grouping.kmeans_k_used is not None:
-        resolved["kmeans_k"] = int(grouping.kmeans_k_used)
     clustering: dict[str, object] = {
         **resolved,
         "tolerance_scan": [[float(row[0]), int(row[1])] for row in tolerance_scan],
@@ -162,7 +163,12 @@ def grouped_clustering_state(
             ],
         },
     }
-    clustering["grouping"] = relaxed_site_grouping(clustering, host_structure)
+    record = relaxed_site_grouping(clustering, host_structure)
+    if grouping.kmeans_k_used is not None:
+        # The stored k stays the one asked for, so it can grow with the sites;
+        # the record states the k this grouping used.
+        record["kmeans_k"] = int(grouping.kmeans_k_used)
+    clustering["grouping"] = record
     return clustering
 
 
@@ -175,23 +181,20 @@ def regroup_workspace(
 
     The workspace's stored method and settings are used (connected components
     within 0.25 Å for a new workspace). When the stored method cannot run, the
-    sites are grouped with the default instead, so the workspace is never left
-    ungrouped. The tolerance scan is cleared: it described the previous sites.
+    sites are grouped with the default instead. Should that fail too, the
+    workspace is left ungrouped (``result`` is ``None``) rather than raising.
+    The tolerance scan is cleared: it described the previous sites.
     """
 
     settings = grouping_settings(workspace.get("clustering"))
+    ungrouped = {**settings, "tolerance_scan": [], "result": None}
     if not sites:
-        return {**settings, "tolerance_scan": [], "result": None}
-    try:
-        grouping = group_relaxed_sites(sites, host_structure, settings)
-    except ValueError as exc:
-        if settings["method"] == METHOD_CONNECTED:
-            raise
-        _LOG.warning(
-            "Grouping with %s failed (%s); grouped with connected components instead.",
-            settings["method"],
-            exc,
-        )
-        settings = {**settings, "method": METHOD_CONNECTED}
-        grouping = group_relaxed_sites(sites, host_structure, settings)
-    return grouped_clustering_state(settings, grouping, host_structure)
+        return ungrouped
+    for attempt in (settings, dict(DEFAULT_GROUPING_SETTINGS)):
+        try:
+            grouping = group_relaxed_sites(sites, host_structure, attempt)
+        except ValueError as exc:
+            _LOG.warning("Grouping with %s failed: %s", attempt["method"], exc)
+            continue
+        return grouped_clustering_state(attempt, grouping, host_structure)
+    return ungrouped

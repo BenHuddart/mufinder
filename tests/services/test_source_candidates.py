@@ -824,6 +824,11 @@ def test_relaxations_in_different_supercells_or_cut_offs_are_different_calculati
     assert mixes_calculations([sources["a"], sources["c"]])
     assert mixes_calculations([sources["a"], sources["d"]])
     assert not mixes_calculations([])
+    # A relaxation whose row is unknown is compared by its cell alone.
+    (orphan,) = _sources_for(document, [("orphan", {"data": data})])
+    assert not mixes_calculations([sources["a"], orphan])
+    (bigger,) = _sources_for(document, [("bigger", {"data": data, "muon": None})])
+    assert mixes_calculations([orphan, bigger])
 
 
 def test_newest_completed_structure_id_picks_the_latest_completion(

@@ -151,7 +151,8 @@ Running the workflow
    relaxations of the same charge state, ticking ``Add`` for each. The dialog
    reports each relaxation's energy as ``dE vs workspace min (eV)``, so a
    negative value means that adding it would reset the workspace zero. The
-   workspace is grouped again with its own method and settings once they join.
+   workspace is grouped again with its own method and settings once they join,
+   and the Journal records the new grouping.
 4. **Change the grouping (optional).** Click ``Clustering…`` to compare the
    methods, choose a ``Method`` and click ``Apply Clustering`` to use it for
    this workspace instead (see `Clustering`_).
@@ -246,8 +247,9 @@ applies what the controls show.
 ``K-means``
    Divides the endpoints into the number of clusters you request in
    ``Clusters k``, but never into more clusters than there are distinct sites:
-   when ``k`` is larger, the dialog says how many clusters it used, and
-   ``Apply Clustering`` saves that number.
+   when ``k`` is larger, the dialog says how many clusters it used. ``Apply
+   Clustering`` keeps the ``k`` you asked for, so relaxations that join later
+   can fill it, and the grouping record states the number used.
 
 The ``Wyckoff tolerance (Å)`` control sets the maximum allowed distance from
 every anchored cluster member to the Wyckoff orbit assigned to its cluster (see

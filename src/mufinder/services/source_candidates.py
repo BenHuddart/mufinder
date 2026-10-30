@@ -1268,21 +1268,22 @@ def relaxation_calculation_key(
 ) -> tuple[object, ...]:
     """Return what must match for two relaxations' total energies to be comparable.
 
-    The supercell the row stores (else the relaxed cell's composition, which
-    separates supercells of different sizes) and the energy-defining settings
-    the row stores (:data:`RELAXATION_ENERGY_PARAMETERS`).
+    ``(composition, supercell, settings)``: the relaxed cell's composition,
+    which separates supercells of different sizes, then the supercell matrix
+    and the energy-defining settings (:data:`RELAXATION_ENERGY_PARAMETERS`)
+    the row stores, both ``None`` when the row is unknown. A row stores only
+    the settings it overrides, so a setting given explicitly and the same value
+    inherited from the project defaults compare as different.
     """
 
-    matrix = _stored_supercell_matrix(entry) if entry is not None else None
-    cell: object = (
-        ("supercell", _comparable_value(matrix))
-        if entry is not None
-        else ("composition", tuple(sorted(Counter(structure.species).items())))
-    )
-    values = entry.get("parameter_values") if entry is not None else None
+    composition = tuple(sorted(Counter(structure.species).items()))
+    if entry is None:
+        return (composition, None, None)
+    values = entry.get("parameter_values")
     parameters = values if isinstance(values, Mapping) else {}
     return (
-        cell,
+        composition,
+        ("supercell", _comparable_value(_stored_supercell_matrix(entry))),
         tuple(
             (name, _comparable_value(parameters.get(name))) for name in RELAXATION_ENERGY_PARAMETERS
         ),
@@ -1290,9 +1291,14 @@ def relaxation_calculation_key(
 
 
 def mixes_calculations(sources: Iterable[CompletedRelaxationAnalysisSource]) -> bool:
-    """Return whether ``sources`` come from more than one comparable calculation."""
+    """Return whether ``sources`` come from more than one comparable calculation.
 
-    return len({source.calculation for source in sources}) > 1
+    Cells are compared for every source; the supercell and settings only
+    between sources whose rows are known (:func:`relaxation_calculation_key`).
+    """
+
+    keys = [source.calculation for source in sources if len(source.calculation) == 3]
+    return any(len({key[part] for key in keys if key[part] is not None}) > 1 for part in range(3))
 
 
 def completed_muon_relaxation_sources(

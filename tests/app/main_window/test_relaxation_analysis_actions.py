@@ -33,7 +33,7 @@ def _source(
     position: tuple[float, float, float],
     energy: float,
     *,
-    calculation: tuple[object, ...] = ("same",),
+    calculation: tuple[object, ...] = ("Si2H", None, None),
 ) -> CompletedRelaxationAnalysisSource:
     return CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
@@ -107,8 +107,8 @@ def test_relaxations_from_different_calculations_need_a_confirmation(
 
     monkeypatch.setattr(workflow_table_utils, "confirm_choice", answer)
     sources = [
-        _source("A", (0.5, 0.25, 0.0), -10.0, calculation=("2x2x2",)),
-        _source("B", (0.25, 0.25, 0.25), -20.0, calculation=("3x3x3",)),
+        _source("A", (0.5, 0.25, 0.0), -10.0, calculation=("Si16H", None, None)),
+        _source("B", (0.25, 0.25, 0.25), -20.0, calculation=("Si54H", None, None)),
     ]
 
     _create(window, sources)
@@ -150,6 +150,10 @@ def test_relaxations_that_join_a_workspace_regroup_it(
     (workspace,) = window._relaxation_analysis_workspaces()
     assert len(workspace["job_ids"]) == 3
     assert workspace["clustering"]["result"]["cluster_labels"] == [1, 1, 2]
+    grouped = [
+        record for record in window._document.provenance if record.action == "group_relaxed_sites"
+    ]
+    assert grouped[-1].parameters["distinct_site_count"] == 2
 
 
 def test_the_displacement_reference_defaults_to_the_newest_pristine_relaxation(

@@ -83,8 +83,10 @@ def test_k_means_stores_the_k_it_used() -> None:
     clustering = regroup_workspace(workspace, SITES, host_structure())
 
     assert clustering["method"] == "kmeans"
-    assert clustering["kmeans_k"] == len(set(clustering["result"]["cluster_labels"]))
-    assert clustering["grouping"]["kmeans_k"] == clustering["kmeans_k"]
+    # The k asked for is kept, so it can grow with the sites; the record states the k used.
+    assert clustering["kmeans_k"] == 3
+    assert clustering["grouping"]["kmeans_k"] == 2
+    assert len(set(clustering["result"]["cluster_labels"])) == 2
 
 
 def test_a_method_that_cannot_run_falls_back_to_connected_components(
@@ -100,6 +102,20 @@ def test_a_method_that_cannot_run_falls_back_to_connected_components(
 
     assert clustering["method"] == "connected"
     assert clustering["result"]["cluster_labels"] == [1, 1, 2]
+
+
+def test_a_grouping_that_cannot_run_at_all_leaves_the_workspace_ungrouped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*_args, **_kwargs):
+        raise ValueError("no symmetry")
+
+    monkeypatch.setattr(analysis_grouping, "cluster_connected_components", broken)
+
+    clustering = regroup_workspace({}, SITES, host_structure())
+
+    assert clustering["result"] is None
+    assert clustering["method"] == "connected"
 
 
 def test_a_workspace_without_sites_holds_no_result() -> None:
@@ -119,3 +135,8 @@ def test_grouping_settings_fill_gaps_and_ignore_unreadable_values() -> None:
     assert settings["kmeans_k"] == 4
     assert settings["hierarchical_t"] == 0.5
     assert settings["connected_tolerance_ang"] == 1.0
+    negative = grouping_settings(
+        {"connected_tolerance_ang": -1, "kmeans_k": 0, "hierarchical_t": 0}
+    )
+    assert negative == DEFAULT_GROUPING_SETTINGS
+    assert grouping_settings({"wyckoff_match_tolerance_ang": 0})["wyckoff_match_tolerance_ang"] == 0

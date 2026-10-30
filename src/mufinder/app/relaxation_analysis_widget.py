@@ -691,8 +691,8 @@ class _ToleranceScanThread(QThread):
             rows = scan_connected_component_tolerances(
                 self._sites, self._host_structure, start_ang=0.0, stop_ang=1.0, points=51
             )
-        except RelaxationAnalysisError as exc:
-            self.scanned.emit(str(exc))
+        except Exception as exc:  # noqa: BLE001 - reported to the dialog, never lost
+            self.scanned.emit(str(exc) or type(exc).__name__)
             return
         self.scanned.emit(rows)
 
@@ -723,6 +723,8 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         # The k k-means used: at most the number of distinct sites.
         self._current_kmeans_k: int | None = None
         self._scan_thread: _ToleranceScanThread | None = None
+        # Set once the dialog closes, so a scan result delivered late is dropped.
+        self._closed = False
         # Control edits regroup once the edits pause, not on every step.
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -1044,16 +1046,22 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         if thread is not None:
             thread.wait()
             thread.deleteLater()
+        if self._closed:
+            return
         self._scan_button.setEnabled(True)
         self._scan_button.setText("Scan Tolerances")
         if isinstance(outcome, str):
             QMessageBox.warning(self, "Tolerance scan failed", outcome)
             return
-        self._tolerance_scan = tuple(outcome)  # type: ignore[arg-type]
+        # Points evaluated while the scan ran are kept beside the scanned grid.
+        rows = dict(parse_tolerance_scan(self._tolerance_scan))
+        rows.update({round(float(t), 10): int(count) for t, count in outcome})  # type: ignore[union-attr]
+        self._tolerance_scan = tuple(sorted(rows.items()))
         self._refresh()
 
     def done(self, result: int) -> None:  # noqa: D401 - Qt API.
         # A running scan finishes before the dialog goes; it takes well under a second.
+        self._closed = True
         self._refresh_timer.stop()
         if self._scan_thread is not None:
             self._scan_thread.wait()
