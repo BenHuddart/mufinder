@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtGui import QAction
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app import workflow_table_utils
@@ -2574,4 +2575,54 @@ def test_main_window_ends_watches_of_jobs_reset_since_failing(
 
     assert stopped == [[job.id]]
     assert job.last_status_message is None
+    window.close()
+
+
+def test_main_window_missing_username_opens_the_cluster_profile(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The submission dialog's offer reaches the setup dialog, on the right cluster."""
+
+    window = main_window
+    window._document = ProjectService().create_project(tmp_path / "profile.mufinder", "Profile")
+    cluster = ClusterConfig(name="SCARF", hostname="ui1.scarf.rl.ac.uk", username="alice")
+    opened: list[str | None] = []
+
+    class _FakeSetupDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, *, settings, parent, cluster_name) -> None:  # noqa: ANN001
+            opened.append(cluster_name)
+
+        def exec(self) -> int:
+            return 1
+
+    edit_callbacks: list[object] = []
+
+    class _FakeSubmissionDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, *, edit_cluster, **_kwargs) -> None:  # noqa: ANN001
+            edit_callbacks.append(edit_cluster)
+
+        def exec(self) -> int:
+            return 0
+
+    monkeypatch.setattr(main_window_module, "ClusterSetupDialog", _FakeSetupDialog)
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeSubmissionDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(window._keyword_catalog_guard, "confirm_submission", lambda: True)
+
+    assert window._choose_cluster_submission([], "SCARF") is None
+
+    (edit_cluster,) = edit_callbacks
+    assert edit_cluster(window, "SCARF") == [cluster]
+    assert opened == ["SCARF"]
+
+    # The Setup menu opens the dialog with no cluster chosen.
+    setup_action = next(
+        action for action in window.findChildren(QAction) if action.text() == "HPC Clusters…"
+    )
+    setup_action.trigger()
+    assert opened == ["SCARF", None]
     window.close()

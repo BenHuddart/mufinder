@@ -19,6 +19,14 @@ DEFAULT_CASTEP_EXECUTABLE = "castep.mpi"
 #: reuse the cluster's own job script.
 DEFAULT_KEYWORD_EXECUTION_MODE = "scheduler"
 
+#: Stands for the profile's username in ``default_working_directory``.
+USERNAME_TOKEN = "{username}"
+
+#: Literal usernames an earlier build shipped in its presets. A saved profile
+#: holding one reads as having no username (see docs/compatibility_policy.rst).
+PLACEHOLDER_USERNAME = "username"
+PLACEHOLDER_JUMP_USERNAME = "physics_username"
+
 
 @dataclass(frozen=True, slots=True)
 class ClusterQueue:
@@ -76,6 +84,28 @@ class ClusterConfig:
     keyword_execution_mode: str = DEFAULT_KEYWORD_EXECUTION_MODE
     keyword_shell_init: str = ""
     queues: tuple[ClusterQueue, ...] = ()
+
+    def working_directory_for(self, username: str | None = None) -> str:
+        """Return the default working directory with ``{username}`` filled in.
+
+        ``username`` replaces the profile's own. A directory that needs a
+        username and has none is ``""``, so it never reaches a remote path.
+        """
+
+        directory = self.default_working_directory.strip()
+        if USERNAME_TOKEN not in directory:
+            return directory
+        name = (self.username if username is None else username).strip()
+        return directory.replace(USERNAME_TOKEN, name) if name else ""
+
+    def missing_username_issue(self) -> str:
+        """Say which username this profile still needs to connect, or ``""``."""
+
+        if not self.username.strip():
+            return f"The cluster '{self.name}' has no username."
+        if self.jump_host_enabled and not self.jump_username.strip():
+            return f"The cluster '{self.name}' has no jump host username."
+        return ""
 
     def queue_names(self) -> list[str]:
         """Return the selectable queue names, the default queue first."""

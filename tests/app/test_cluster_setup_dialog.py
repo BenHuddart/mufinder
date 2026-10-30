@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 
 import pytest
 
 import mufinder.app.cluster_setup_dialog as dialog_module
 from mufinder.app import workflow_table_utils
 import mufinder.services.keychain as keychain_module
-from mufinder.cluster_setup import load_cluster_configs
+from mufinder.cluster_setup import (
+    load_cluster_config,
+    load_cluster_configs,
+    save_cluster_configs,
+)
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
 from tests.support.qt import pump_until
@@ -82,9 +87,9 @@ def test_cluster_setup_dialog_saves_configuration(qapp) -> None:
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._auth_combo.setCurrentText("password")
+    dialog._auth_combo.setCurrentText("Password")
     dialog._working_dir_edit.setText("/work/alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
     dialog._keyword_mode_combo.setCurrentText("Login node")
     dialog._keyword_shell_init_edit.setText("module load CASTEP")
 
@@ -127,7 +132,7 @@ def test_cluster_setup_dialog_addqueue_does_not_require_template(qapp) -> None:
     dialog._username_edit.setText("alice")
     dialog._queue_system_combo.setCurrentText("ADDQUEUE")
     dialog._walltime_edit.setText("")
-    dialog._template_path_edit.setText("")
+    dialog._set_template_path("")
     dialog._submit_command_edit.setText("/bin/addqueue")
 
     dialog._accept_and_save()
@@ -148,8 +153,8 @@ def test_cluster_setup_dialog_slurm_template_is_optional(qapp) -> None:
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("")
-    assert dialog._template_path_edit.placeholderText() == "Built-in SLURM template"
+    dialog._set_template_path("")
+    assert dialog._template_name_label.text() == "Built-in SLURM template"
 
     dialog._accept_and_save()
 
@@ -180,11 +185,11 @@ def test_cluster_setup_dialog_loads_redwood_jump_host_defaults(qapp) -> None:
     dialog._select_cluster("Redwood")
 
     assert dialog._hostname_edit.text() == "glamdring.physics.ox.ac.uk"
-    assert dialog._auth_combo.currentText() == "password"
+    assert dialog._auth_combo.currentText() == "Password"
     assert dialog._jump_enabled_check.isChecked() is True
     assert dialog._jump_hostname_edit.text() == "bastion.physics.ox.ac.uk"
-    assert dialog._jump_username_edit.text() == "physics_username"
-    assert dialog._jump_auth_combo.currentText() == "password"
+    assert dialog._jump_username_edit.text() == ""
+    assert dialog._jump_auth_combo.currentText() == "Password"
     assert dialog._keychain_check.isChecked() is False
     dialog.close()
 
@@ -196,13 +201,190 @@ def test_cluster_setup_dialog_groups_settings_into_tabs(qapp) -> None:
         "Connection",
         "Scheduler",
         "Queues",
-        "Keyword generation",
     ]
     assert dialog._ssh_form.indexOf(dialog._hostname_edit) >= 0
     assert dialog._jump_form.indexOf(dialog._jump_key_path_row) >= 0
     assert dialog._cluster_form.indexOf(dialog._working_dir_edit) >= 0
+    assert dialog._cluster_form.indexOf(dialog._keyword_mode_combo) >= 0
+    assert dialog._cluster_form.indexOf(dialog._keyword_shell_init_edit) >= 0
     assert dialog._tabs.widget(2).isAncestorOf(dialog._queue_table)
     assert dialog._tabs.objectName() == "mufinderTabs"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_built_ins_ask_for_a_username(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+
+    assert dialog._username_edit.text() == ""
+    assert dialog._username_edit.placeholderText() == "your SCARF username"
+    assert dialog._working_dir_edit.text() == "/work4/isis/{username}"
+
+    dialog._select_cluster("Redwood")
+    assert dialog._username_edit.placeholderText() == "your Redwood username"
+    assert dialog._jump_username_edit.placeholderText() == "your jump host username"
+
+    dialog._name_edit.setText("Other")
+    assert dialog._username_edit.placeholderText() == "your Other username"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_saves_a_built_in_left_without_a_username(qapp) -> None:
+    """Redwood is always listed, so it must not block saving a SCARF-only user."""
+
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    dialog._username_edit.setText("alice")
+    dialog._accept_and_save()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    scarf, redwood = load_cluster_configs(settings)
+    assert (scarf.username, scarf.working_directory_for()) == ("alice", "/work4/isis/alice")
+    assert (redwood.username, redwood.jump_username) == ("", "")
+    dialog.close()
+
+
+def test_cluster_setup_dialog_test_connection_needs_the_jump_host_username(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, _t, message: warnings.append(message)
+    )
+    dialog._select_cluster("Redwood")
+
+    dialog._test_connection()
+    dialog._username_edit.setText("alice")
+    dialog._test_connection()
+
+    assert warnings == [
+        "Enter a username before testing the connection.",
+        "Enter the jump host username before testing the connection.",
+    ]
+    dialog.close()
+
+
+def test_cluster_setup_dialog_opens_on_the_missing_username(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings, cluster_name="Redwood")
+    dialog.show()
+    dialog.activateWindow()
+
+    assert dialog._name_edit.text() == "Redwood"
+    assert dialog._tabs.currentIndex() == 0
+    assert pump_until(lambda: dialog.focusWidget() is dialog._username_edit, timeout=2.0)
+    dialog.close()
+
+    save_cluster_configs(
+        settings, [replace(load_cluster_config(settings, "Redwood"), username="a")]
+    )
+    dialog = ClusterSetupDialog(settings=settings, cluster_name="Redwood")
+    dialog.show()
+    dialog.activateWindow()
+    assert pump_until(lambda: dialog.focusWidget() is dialog._jump_username_edit, timeout=2.0)
+    dialog.close()
+
+
+def test_cluster_setup_dialog_ignores_an_unknown_cluster_to_open_on(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings(), cluster_name="gone")
+
+    assert dialog._name_edit.text() == "SCARF"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_shows_jump_host_fields_only_when_ticked(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog.show()
+
+    assert dialog._jump_enabled_check.isChecked() is False
+    assert dialog._jump_hostname_edit.isVisible() is False
+    assert dialog._jump_username_edit.isVisible() is False
+
+    dialog._jump_enabled_check.setChecked(True)
+    assert dialog._jump_hostname_edit.isVisible() is True
+    assert dialog._jump_key_path_row.isVisible() is True
+
+    dialog._jump_enabled_check.setChecked(False)
+    assert dialog._jump_hostname_edit.isVisible() is False
+
+    dialog._select_cluster("Redwood")
+    assert dialog._jump_hostname_edit.isVisible() is True
+    dialog.close()
+
+
+def test_cluster_setup_dialog_keeps_jump_host_values_while_the_box_is_unticked(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+    dialog._jump_enabled_check.setChecked(True)
+    dialog._jump_hostname_edit.setText("gw.example")
+    dialog._jump_username_edit.setText("gw-user")
+    dialog._jump_enabled_check.setChecked(False)
+
+    dialog._accept_and_save()
+
+    scarf = load_cluster_configs(settings)[0]
+    assert scarf.jump_host_enabled is False
+    assert (scarf.jump_hostname, scarf.jump_username) == ("gw.example", "gw-user")
+    dialog.close()
+
+
+def test_cluster_setup_dialog_names_authentication_methods(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    for combo in (dialog._auth_combo, dialog._jump_auth_combo):
+        assert [combo.itemText(i) for i in range(combo.count())] == ["SSH key", "Password"]
+        assert [combo.itemData(i) for i in range(combo.count())] == ["key", "password"]
+
+    dialog._auth_combo.setCurrentText("Password")
+    assert dialog._key_path_edit.isEnabled() is False
+    dialog._accept_and_save()
+
+    assert load_cluster_configs(settings)[0].auth_method == "password"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_template_row_names_the_template(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    # SCARF ships with the built-in token, which is never shown.
+    assert dialog._template_name_label.text() == "Built-in SCARF template"
+    assert dialog._template_custom_button.text() == "Use custom file…"
+    assert dialog._template_builtin_button.isEnabled() is False
+
+    monkeypatch.setattr(
+        dialog_module.QFileDialog,
+        "getOpenFileName",
+        lambda *_a, **_k: ("/templates/site.sh", "Shell Scripts (*.sh)"),
+    )
+    dialog._template_custom_button.click()
+    assert dialog._template_name_label.text() == "site.sh"
+    assert dialog._template_name_label.toolTip() == "/templates/site.sh"
+    assert dialog._template_builtin_button.isEnabled() is True
+    assert dialog._updated_selected_config().template_script_path == "/templates/site.sh"
+
+    dialog._template_builtin_button.click()
+    assert dialog._template_name_label.text() == "Built-in SCARF template"
+    assert dialog._updated_selected_config().template_script_path == "builtin:scarf-slurm"
+    assert dialog._template_builtin_button.isEnabled() is False
+    dialog.close()
+
+
+def test_cluster_setup_dialog_custom_template_goes_back_to_the_fallback_built_in(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._add_cluster()
+
+    dialog._set_template_path("/templates/site.sh")
+    dialog._template_builtin_button.click()
+
+    assert dialog._template_name_label.text() == "Built-in SLURM template"
+    assert dialog._updated_selected_config().template_script_path == ""
     dialog.close()
 
 
@@ -238,8 +420,8 @@ def test_cluster_setup_dialog_shows_keychain_option_for_macos_redwood(
     )
     dialog._show_keychain_help()
 
-    assert "security add-generic-password -a physics_username -s bastion -w" in messages[0]
-    assert "security add-generic-password -a username -s glamdring -w" in messages[0]
+    assert "security add-generic-password -a <username> -s bastion -w" in messages[0]
+    assert "security add-generic-password -a <username> -s glamdring -w" in messages[0]
     dialog.close()
 
 
@@ -265,8 +447,8 @@ def test_cluster_setup_dialog_shows_keyring_option_for_linux_redwood(
 
     assert shown[0][0] == "System keyring setup"
     assert "secret-tool store" in shown[0][1]
-    assert "service bastion account physics_username" in shown[0][1]
-    assert "service glamdring account username" in shown[0][1]
+    assert "service bastion account <username>" in shown[0][1]
+    assert "service glamdring account <username>" in shown[0][1]
     dialog.close()
 
 
@@ -292,15 +474,15 @@ def test_cluster_setup_dialog_saves_jump_host_configuration(qapp) -> None:
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._auth_combo.setCurrentText("password")
+    dialog._auth_combo.setCurrentText("Password")
     dialog._jump_enabled_check.setChecked(True)
     dialog._jump_hostname_edit.setText("bastion.example")
     dialog._jump_port_spin.setValue(2222)
     dialog._jump_username_edit.setText("physics-alice")
-    dialog._jump_auth_combo.setCurrentText("key")
+    dialog._jump_auth_combo.setCurrentText("SSH key")
     dialog._jump_key_path_edit.setText("/keys/physics")
     dialog._working_dir_edit.setText("/work/alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
 
     dialog._accept_and_save()
 
@@ -352,7 +534,7 @@ def test_cluster_setup_dialog_test_connection_uses_ssh_client(
 
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
     dialog._test_connection()
 
     assert pump_until(lambda: bool(infos), timeout=5.0)
@@ -387,8 +569,8 @@ def test_cluster_setup_dialog_test_connection_passes_key_passphrase(
 
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
-    dialog._auth_combo.setCurrentText("key")
+    dialog._set_template_path("/templates/slurm.sh")
+    dialog._auth_combo.setCurrentText("SSH key")
     dialog._test_connection()
 
     assert pump_until(lambda: bool(captured_passwords), timeout=5.0)
@@ -437,7 +619,7 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
 
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
     dialog._test_connection()
 
     assert pump_until(lambda: bool(infos), timeout=5.0)
@@ -503,6 +685,8 @@ def test_cluster_setup_dialog_test_connection_trusts_jump_and_target_host_keys(
     )
 
     dialog._select_cluster("Redwood")
+    dialog._username_edit.setText("glam-user")
+    dialog._jump_username_edit.setText("phys-user")
     dialog._test_connection()
 
     assert pump_until(lambda: bool(infos), timeout=5.0)
@@ -533,7 +717,7 @@ def test_cluster_setup_dialog_remove_cluster_and_auth_controls(qapp) -> None:
     dialog._add_cluster()
     assert dialog._cluster_list.count() >= 2
 
-    dialog._auth_combo.setCurrentText("password")
+    dialog._auth_combo.setCurrentText("Password")
     dialog._refresh_auth_controls()
     assert dialog._key_path_edit.isEnabled() is False
 
@@ -558,7 +742,7 @@ def test_cluster_setup_dialog_validation_blocks_invalid_save(
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("")
     dialog._username_edit.setText("")
-    dialog._template_path_edit.setText("")
+    dialog._set_template_path("")
 
     dialog._accept_and_save()
 
@@ -572,10 +756,11 @@ def test_cluster_setup_dialog_username_change_can_sync_working_dir(
     answered_choices,
 ) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._last_username = "carol"
 
     # The stub answers with the default, Update directory.
     dialog._username_edit.setText("alice")
-    dialog._working_dir_edit.setText("/work4/isis/username")
+    dialog._working_dir_edit.setText("/work4/isis/carol")
     dialog._maybe_sync_working_dir_for_username()
 
     assert dialog._working_dir_edit.text() == "/work4/isis/alice"
@@ -598,7 +783,7 @@ def test_cluster_setup_dialog_saves_default_mem_per_cpu_for_slurm(qapp) -> None:
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
     dialog._default_mem_per_cpu_check.setChecked(True)
     dialog._default_mem_per_cpu_edit.setValue(6.0)
 
@@ -616,7 +801,7 @@ def test_cluster_setup_dialog_default_mem_per_cpu_is_unset_by_default(qapp) -> N
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
 
     assert dialog._default_mem_per_cpu_check.isChecked() is False
     assert dialog._default_mem_per_cpu_edit.isEnabled() is False
@@ -657,7 +842,7 @@ def test_cluster_setup_dialog_round_trips_default_mem_per_cpu(qapp) -> None:
     dialog._name_edit.setText("alpha")
     dialog._hostname_edit.setText("alpha.example")
     dialog._username_edit.setText("alice")
-    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._set_template_path("/templates/slurm.sh")
     dialog._default_mem_per_cpu_check.setChecked(True)
     dialog._default_mem_per_cpu_edit.setValue(7.5)
     dialog._accept_and_save()

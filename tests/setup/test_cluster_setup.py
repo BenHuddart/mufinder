@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 import mufinder.cluster_setup as cluster_setup_module
@@ -133,8 +135,10 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert len(loaded) == 2
     assert loaded[0].name == "SCARF"
     assert loaded[0].hostname == "ui1.scarf.rl.ac.uk"
-    assert loaded[0].username == "username"
-    assert loaded[0].default_working_directory == "/work4/isis/username"
+    assert loaded[0].username == ""
+    assert loaded[0].default_working_directory == "/work4/isis/{username}"
+    assert loaded[0].working_directory_for() == ""
+    assert loaded[0].working_directory_for("alice") == "/work4/isis/alice"
     assert loaded[0].queue_system == "SLURM"
     assert loaded[0].cores_per_node == 24
     assert loaded[0].default_walltime == "12:00:00"
@@ -149,10 +153,11 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[1].jump_host_enabled is True
     assert loaded[1].jump_hostname == "bastion.physics.ox.ac.uk"
     assert loaded[1].jump_port == 22
-    assert loaded[1].jump_username == "physics_username"
+    assert loaded[1].username == ""
+    assert loaded[1].jump_username == ""
     assert loaded[1].jump_auth_method == "password"
     assert loaded[1].use_macos_keychain_passwords is False
-    assert loaded[1].default_working_directory == "/mnt/redwoodfs/username"
+    assert loaded[1].default_working_directory == "/mnt/redwoodfs/{username}"
     assert loaded[1].queue_system == "ADDQUEUE"
     assert loaded[1].default_walltime == ""
     assert loaded[1].default_queue_name == "redwood"
@@ -237,8 +242,75 @@ def test_cluster_setup_legacy_saved_configs_pick_keyword_defaults() -> None:
     assert redwood.auth_method == "password"
     assert redwood.jump_host_enabled is True
     assert redwood.jump_hostname == "bastion.physics.ox.ac.uk"
-    assert redwood.jump_username == "physics_username"
+    assert redwood.jump_username == ""
     assert redwood.use_macos_keychain_passwords is False
+
+
+def test_cluster_setup_reads_the_shipped_placeholder_usernames_as_empty() -> None:
+    """A profile saved from the old presets holds the literal names, never a real one."""
+
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", ["SCARF", "Redwood"])
+    settings.setValue("clusters/SCARF/hostname", "ui1.scarf.rl.ac.uk")
+    settings.setValue("clusters/SCARF/username", "username")
+    settings.setValue("clusters/SCARF/default_working_directory", "/work4/isis/username")
+    settings.setValue("clusters/Redwood/hostname", "glamdring.physics.ox.ac.uk")
+    settings.setValue("clusters/Redwood/username", "username")
+    settings.setValue("clusters/Redwood/jump_host_enabled", True)
+    settings.setValue("clusters/Redwood/jump_hostname", "bastion.physics.ox.ac.uk")
+    settings.setValue("clusters/Redwood/jump_username", "physics_username")
+    settings.setValue("clusters/Redwood/default_working_directory", "/mnt/redwoodfs/username/x")
+
+    scarf, redwood = load_cluster_configs(settings)
+
+    assert (scarf.username, scarf.default_working_directory) == ("", "/work4/isis/{username}")
+    assert (redwood.username, redwood.jump_username) == ("", "")
+    assert redwood.default_working_directory == "/mnt/redwoodfs/{username}/x"
+    assert redwood.working_directory_for("bob") == "/mnt/redwoodfs/bob/x"
+
+    # Saving writes the values as read, so the placeholders do not come back.
+    save_cluster_configs(settings, [scarf, redwood])
+    assert settings.value("clusters/SCARF/username") == ""
+    assert settings.value("clusters/Redwood/jump_username") == ""
+    assert settings.value("clusters/SCARF/default_working_directory") == "/work4/isis/{username}"
+
+
+def test_cluster_setup_keeps_saved_usernames_and_directories() -> None:
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", ["SCARF", "Redwood"])
+    settings.setValue("clusters/SCARF/hostname", "ui1.scarf.rl.ac.uk")
+    settings.setValue("clusters/SCARF/username", "alice")
+    settings.setValue("clusters/SCARF/default_working_directory", "/work4/isis/username")
+    settings.setValue("clusters/SCARF/auth_method", "password")
+    settings.setValue("clusters/SCARF/keyword_execution_mode", "direct")
+    settings.setValue("clusters/SCARF/keyword_shell_init", "module load X")
+    settings.setValue("clusters/SCARF/template_script_path", "/templates/site.sh")
+    settings.setValue("clusters/Redwood/hostname", "glamdring.physics.ox.ac.uk")
+    settings.setValue("clusters/Redwood/username", "bob")
+    settings.setValue("clusters/Redwood/jump_username", "bob-physics")
+
+    scarf, redwood = load_cluster_configs(settings)
+
+    assert scarf.username == "alice"
+    assert scarf.working_directory_for() == "/work4/isis/username"
+    assert scarf.auth_method == "password"
+    assert scarf.keyword_execution_mode == "direct"
+    assert scarf.keyword_shell_init == "module load X"
+    assert scarf.template_script_path == "/templates/site.sh"
+    assert (redwood.username, redwood.jump_username) == ("bob", "bob-physics")
+
+
+def test_cluster_config_says_which_username_is_missing() -> None:
+    config = ClusterConfig(name="alpha", hostname="alpha.example")
+    assert config.missing_username_issue() == "The cluster 'alpha' has no username."
+
+    config = replace(config, username="alice")
+    assert config.missing_username_issue() == ""
+
+    config = replace(config, jump_host_enabled=True)
+    assert config.missing_username_issue() == "The cluster 'alpha' has no jump host username."
+
+    assert replace(config, jump_username="gw").missing_username_issue() == ""
 
 
 def test_cluster_setup_roundtrips_jump_host_settings() -> None:

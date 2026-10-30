@@ -805,3 +805,191 @@ def test_entering_a_listed_queue_name_applies_its_defaults(qapp) -> None:
     assert config.queue_name == "hourly"
     assert (config.num_processes, config.walltime) == (44, "00:59:00")
     dialog.close()
+
+
+def _scarf_like(username: str = "") -> ClusterConfig:
+    return ClusterConfig(
+        name="SCARF",
+        hostname="ui1.scarf.rl.ac.uk",
+        username=username,
+        default_working_directory="/work4/isis/{username}",
+        queue_system="SLURM",
+        cores_per_node=24,
+        default_walltime="12:00:00",
+    )
+
+
+def test_cluster_submission_dialog_refuses_an_empty_username_and_offers_the_profile(
+    qapp,
+    answered_choices,
+) -> None:
+    opened: list[str] = []
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[_scarf_like()],
+        edit_cluster=lambda _parent, name: opened.append(name) or [_scarf_like()],
+    )
+    assert dialog.config().username == ""
+    assert dialog.config().working_directory == ""
+
+    dialog._accept_if_valid()
+
+    assert dialog.result() != dialog.DialogCode.Accepted
+    (prompt,) = answered_choices
+    assert prompt["title"] == "Missing username"
+    assert prompt["text"] == (
+        "The cluster 'SCARF' has no username. Set it in Setup > HPC Clusters before submitting."
+    )
+    assert prompt["choices"] == [("setup", "Open Setup > HPC Clusters…"), ("cancel", "Cancel")]
+    assert (prompt["default"], prompt["escape"]) == ("cancel", "cancel")
+    # The stub answers with the default, so the profile stays closed.
+    assert opened == []
+    dialog.close()
+
+
+def test_cluster_submission_dialog_picks_up_the_username_set_on_the_profile(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dialog_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "setup"
+    )
+    opened: list[str] = []
+
+    def _edit(parent, name: str) -> list[ClusterConfig]:  # noqa: ANN001
+        assert parent is dialog
+        opened.append(name)
+        return [_scarf_like("alice")]
+
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[_scarf_like()],
+        project_name="proj",
+        edit_cluster=_edit,
+    )
+    dialog._walltime_edit.setText("03:00:00")
+    dialog._target_secret_edit.setText("typed passphrase")
+
+    dialog._accept_if_valid()
+
+    assert opened == ["SCARF"]
+    assert dialog.result() != dialog.DialogCode.Accepted
+    config = dialog.config()
+    assert config.username == "alice"
+    assert config.working_directory == "/work4/isis/alice/proj"
+    # What the user typed for the submission survives the visit to the profile.
+    assert config.walltime == "03:00:00"
+    assert dialog._target_secret_edit.text() == "typed passphrase"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_reads_the_keyring_for_the_typed_username(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "linux")
+    redwood = ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="phys",
+        jump_auth_method="password",
+        use_macos_keychain_passwords=True,
+        default_working_directory="/mnt/redwoodfs/{username}",
+    )
+    accounts: list[str] = []
+
+    def _resolve(_parent, config, **_kwargs):  # noqa: ANN001
+        accounts.append(config.username)
+        return SSHCredentials(target_secret="a", jump_secret="b")
+
+    monkeypatch.setattr(dialog_module, "resolve_cluster_credentials", _resolve)
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[redwood])
+    dialog._username_edit.setText("alice")
+
+    dialog._accept_if_valid()
+
+    assert accounts == ["alice"]
+    assert dialog.result() == dialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_cluster_submission_dialog_refuses_a_missing_jump_host_username(
+    qapp,
+    answered_choices,
+) -> None:
+    gateway = replace(_scarf_like("alice"), jump_host_enabled=True, jump_hostname="gw.example")
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[gateway],
+        edit_cluster=lambda _parent, _name: [gateway],
+    )
+
+    dialog._accept_if_valid()
+
+    assert dialog.result() != dialog.DialogCode.Accepted
+    (prompt,) = answered_choices
+    assert "no jump host username" in prompt["text"]
+    dialog.close()
+
+
+def test_cluster_submission_dialog_accepts_a_username_typed_for_the_run(qapp) -> None:
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[_scarf_like()],
+        project_name="proj",
+    )
+
+    dialog._username_edit.setText("bob")
+    assert dialog.config().working_directory == "/work4/isis/bob/proj"
+
+    dialog._working_directory_edit.setText("/scratch/elsewhere")
+    dialog._username_edit.setText("carol")
+    assert dialog.config().working_directory == "/scratch/elsewhere"
+
+    dialog._accept_if_valid()
+    assert dialog.result() == dialog.DialogCode.Accepted
+    dialog.close()
+
+
+def test_cluster_submission_dialog_warns_without_a_way_to_open_the_profile(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, _t, text: warnings.append(text)
+    )
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_scarf_like()])
+
+    dialog._accept_if_valid()
+
+    assert dialog.result() != dialog.DialogCode.Accepted
+    assert "has no username" in warnings[0]
+    dialog.close()
+
+
+def test_cluster_submission_dialog_does_not_restore_the_placeholder_username(qapp) -> None:
+    """An old project recorded the preset's literal name and the directory built from it."""
+
+    initial = ClusterSubmissionConfig(
+        cluster_name="SCARF",
+        working_directory="/work4/isis/username/proj/convergence",
+        username="username",
+        num_processes=48,
+        walltime="06:00:00",
+    )
+
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[_scarf_like()],
+        initial_config=initial,
+    )
+
+    config = dialog.config()
+    assert config.username == ""
+    assert config.working_directory == ""
+    assert config.num_processes == 48
+    dialog.close()
