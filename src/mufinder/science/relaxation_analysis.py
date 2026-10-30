@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID
 
@@ -140,8 +140,10 @@ def _muon_image_nearest_marker(
 ) -> tuple[float, float, float] | None:
     """The image of the muon position nearest the relaxed structure's muon marker, in the supercell frame.
 
-    ``None`` when the comparison was not tiled or the relaxed structure has no
-    single muon marker.
+    When the comparison was not tiled the two cells are the same size, so the
+    marker itself is the position: the given coordinate may be in the host
+    cell, which a pristine supercell is not. ``None`` when the relaxed structure
+    has no single muon marker.
     """
 
     markers = [
@@ -151,8 +153,10 @@ def _muon_image_nearest_marker(
         )
         if str(species).strip().casefold() == "h:mu"
     ]
-    if not normalized.is_supercell or len(markers) != 1:
+    if len(markers) != 1:
         return None
+    if not normalized.is_supercell:
+        return _wrap_fractional(markers[0])
     matrix = np.asarray(normalized.supercell_matrix, dtype=float)
     try:
         inverse = np.linalg.inv(matrix)
@@ -458,7 +462,10 @@ def anchored_sites(
     symprec: float = SYMMETRY_TOLERANCE_ANG,
     tolerance: float = 1e-6,
 ) -> tuple[AnchoredRelaxedSite, ...]:
-    """Return non-mutating symmetry-shifted positions clumped by cluster."""
+    """Return non-mutating symmetry-shifted positions clumped by cluster.
+
+    A site labelled 0 is ungrouped and keeps its position.
+    """
 
     ordered_sites = normalize_site_energies(sites)
     if len(ordered_sites) != len(cluster_labels):
@@ -481,6 +488,18 @@ def anchored_sites(
     anchored: list[AnchoredRelaxedSite] = []
     for index, site in enumerate(ordered_sites):
         label = labels[index]
+        if label <= 0:
+            # An ungrouped site (label 0) has no cluster to anchor to.
+            anchored.append(
+                AnchoredRelaxedSite(
+                    site_index=index,
+                    cluster_index=label,
+                    original_fractional_position=site.folded_fractional_position,
+                    shifted_fractional_position=site.folded_fractional_position,
+                    shifted=False,
+                )
+            )
+            continue
         shifted = closest_symmetry_equivalent_position(
             site.folded_fractional_position,
             anchor_frac=anchors[label],
@@ -533,6 +552,70 @@ def _fake_uep_optimizations(sites: Sequence[RelaxedMuonSite]) -> tuple[UepOptimi
     return tuple(optimizations)
 
 
+#: Smallest span each relaxed-site feature column is scaled by before the
+#: hierarchical and k-means methods compare sites: 0.01 eV of energy and 0.05 of
+#: a fractional coordinate. Differences below these scales (numerical noise
+#: between relaxations that reached the same site) never separate two sites,
+#: however small the spread of the whole workspace is.
+FEATURE_SPAN_FLOOR_ENERGY_EV = 0.01
+FEATURE_SPAN_FLOOR_FRACTIONAL = 0.05
+
+
+def _feature_span_floors(column_count: int) -> np.ndarray:
+    # The features are the energy then the three asymmetric fractional coordinates.
+    return np.asarray(
+        [FEATURE_SPAN_FLOOR_ENERGY_EV] + [FEATURE_SPAN_FLOOR_FRACTIONAL] * (column_count - 1),
+        dtype=float,
+    )
+
+
+def floored_feature_scaling(genome_vectors: Sequence[Sequence[float]]) -> np.ndarray:
+    """Scale each relaxed-site feature column to its span, with the span floored.
+
+    Each column is shifted to start at zero and divided by its span (max minus
+    min) or by its physical floor (:data:`FEATURE_SPAN_FLOOR_ENERGY_EV`,
+    :data:`FEATURE_SPAN_FLOOR_FRACTIONAL`), whichever is larger. Plain min-max
+    scaling would stretch positional noise of 1e-7 over the whole [0, 1]
+    range and split one site into several.
+    """
+
+    vectors = np.asarray(genome_vectors, dtype=float)
+    if vectors.size == 0:
+        return vectors.reshape(0, 0)
+    floors = _feature_span_floors(vectors.shape[1])
+    minima = vectors.min(axis=0)
+    spans = np.maximum(vectors.max(axis=0) - minima, floors)
+    return (vectors - minima) / spans
+
+
+def same_site_feature_groups(genome_vectors: Sequence[Sequence[float]]) -> list[list[int]]:
+    """Return the indexes of the relaxed sites that describe one site, group by group.
+
+    Two sites are the same when every feature differs by less than its
+    physical floor (:data:`FEATURE_SPAN_FLOOR_ENERGY_EV`,
+    :data:`FEATURE_SPAN_FLOOR_FRACTIONAL`), and sameness is chained (single
+    linkage), so the groups are the connected components of that graph.
+    """
+
+    vectors = np.asarray(genome_vectors, dtype=float)
+    if vectors.size == 0:
+        return []
+    scaled = vectors / _feature_span_floors(vectors.shape[1])
+    differences = np.abs(scaled[:, None, :] - scaled[None, :, :]).max(axis=-1)
+    adjacency = ((differences < 1.0) & ~np.eye(len(vectors), dtype=bool)).astype(int)
+    return _connected_components(adjacency)
+
+
+def distinct_feature_count(genome_vectors: Sequence[Sequence[float]]) -> int:
+    """Return how many distinct sites the relaxed-site features describe.
+
+    The number of :func:`same_site_feature_groups`. K-means never asks for
+    more clusters than this.
+    """
+
+    return len(same_site_feature_groups(genome_vectors))
+
+
 def cluster_soprano_style(
     sites: Sequence[RelaxedMuonSite],
     host_structure: Structure,
@@ -542,7 +625,17 @@ def cluster_soprano_style(
     kmeans_k: int = 4,
     symprec: float = SYMMETRY_TOLERANCE_ANG,
 ) -> UepClusteringResult:
-    """Cluster structural-relaxation endpoints with pymuon-suite-style features."""
+    """Cluster structural-relaxation endpoints with pymuon-suite-style features.
+
+    The features (energy and asymmetric-unit fractional position) are those
+    of the UEP clustering, scaled by :func:`floored_feature_scaling` rather
+    than plain min-max. The sites of one :func:`same_site_feature_groups`
+    group are then compared as one point (their mean scaled features), so
+    neither method can separate relaxations that differ by less than the
+    physical floors, whatever ``t`` or ``k`` is. K-means asks for at most as
+    many clusters as there are groups; ``summary.clustering_kmeans_k`` holds
+    the number it used.
+    """
 
     active = UepClusteringConfig(
         clustering_method=str(method).strip().lower(),
@@ -555,6 +648,22 @@ def cluster_soprano_style(
         source_structure=host_structure,
         config=active,
     )
+    if prepared.optimizations:
+        scaled = floored_feature_scaling(prepared.genome_vectors)
+        groups = same_site_feature_groups(prepared.genome_vectors)
+        for members in groups:
+            scaled[members] = scaled[members].mean(axis=0)
+        # The cached linkage was built from the plain min-max features, so it is dropped.
+        prepared = replace(
+            prepared,
+            normalized_genome_vectors=tuple(
+                tuple(float(value) for value in row) for row in scaled.tolist()
+            ),
+            linkage_matrix=(),
+        )
+        if active.clustering_method == "kmeans":
+            active = replace(active, clustering_kmeans_k=min(int(kmeans_k), max(len(groups), 1)))
+            return cluster_prepared_uep_dataset(prepared, config=active, kmeans_point_groups=groups)
     return cluster_prepared_uep_dataset(prepared, config=active)
 
 
@@ -659,7 +768,8 @@ def analyze_displacements(
     distances are evaluated. A position in the comparison cell names one site
     in each of the supercell's copies of that cell, so when the relaxed
     structure carries a muon marker the copy nearest the marker is used: the
-    distances are measured from the site the muon relaxed to. Nearest means
+    distances are measured from the site the muon relaxed to. A comparison of
+    the relaxed cell's own size uses the marker itself. Nearest means
     with the lattice metric (:func:`~mufinder.science.lattice.nearest_image_delta`),
     as do the ion distances and displacements below, so skewed cells are
     handled.
