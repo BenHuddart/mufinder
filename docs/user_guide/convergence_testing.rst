@@ -296,7 +296,8 @@ Folders are created in the project's ``files/convergence_cutoff`` and
 ``files/convergence_kpoint`` folders when the job is first submitted.
 
 The ``.cell`` file contains the selected cell's ``LATTICE_CART`` and
-``POSITIONS_FRAC`` blocks and ``SYMMETRY_GENERATE``. A k-point job adds its
+``POSITIONS_FRAC`` blocks and, unless ``Generate Symmetry`` is unchecked,
+``SYMMETRY_GENERATE``. A k-point job adds its
 ``KPOINT_MP_GRID``. A cutoff job writes no k-point keyword unless you add one,
 so CASTEP chooses the sampling itself. The ``.param`` file contains ``TASK :
 SINGLEPOINT``, the swept or default ``CUT_OFF_ENERGY`` (or ``BASIS_PRECISION``),

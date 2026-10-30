@@ -1103,3 +1103,36 @@ def test_convergence_widget_remove_button_is_named_after_its_cutoff(qapp) -> Non
         widget._table.cellWidget(0, widget._CONFIGURE_COLUMN).accessibleName()
         == f"Configure Cutoff {key_item.text()}"
     )
+
+
+def test_convergence_widget_disabled_symmetry_reopens_unchecked(qapp) -> None:
+    widget = CutoffConvergenceWidget()
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="convergence_cutoff",
+        values=dict(widget._default_params),
+    )
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+    collected = dialog.collect_values()
+    assert collected["symmetry_generate"] is False
+
+    reopened = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="convergence_cutoff",
+        values=collected,
+    )
+
+    assert reopened._rows["symmetry_generate"].editor.value() is False
+
+
+def test_convergence_widget_untouched_dialog_still_means_the_defaults(qapp) -> None:
+    # Calculate Stress is an unchecked flag by default, so a dialog accepted
+    # unchanged must collect the False the defaults hold.
+    widget = CutoffConvergenceWidget()
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="convergence_cutoff",
+        values=dict(widget._default_params),
+    )
+
+    assert widget._is_default_parameter_set(widget._sanitize(dialog.collect_values()))

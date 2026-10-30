@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
 from mufinder.app.help_dialog import ParameterHelpDialog
 from mufinder.app.param_widgets import ParamEditorBase, create_param_editor
 from mufinder.castep_io.gui_metadata import (
+    gui_flag_is_explicitly_off,
+    gui_flag_is_unset,
     gui_value_is_active,
     infer_task,
     keyword_category_label,
@@ -517,7 +519,9 @@ class ParameterDialog(QDialog):
         """Collect structured values for currently active rows.
 
         Rows hidden by the search filter are still collected. A mixed parameter
-        the user did not touch is left out (see :meth:`set_mixed_names`).
+        the user did not touch is left out (see :meth:`set_mixed_names`). An
+        unchecked flag is left out unless it is on by default; then it is
+        collected as ``False``, so the workflow default does not turn it back on.
         """
 
         values: dict[str, Any] = {"task": self._task}
@@ -531,7 +535,7 @@ class ParameterDialog(QDialog):
             value = row.editor.value()
             if value in (None, ""):
                 continue
-            if row.spec.kind == "flag" and not bool(value):
+            if gui_flag_is_unset(row.spec, value):
                 continue
             values[name] = value
         return values
@@ -556,7 +560,12 @@ class ParameterDialog(QDialog):
                 name in self._specs_by_name
                 and self._is_advanced_name(name)
                 and name not in self._blocked_names
-                and gui_value_is_active(self._specs_by_name[name], value)
+                and (
+                    gui_value_is_active(self._specs_by_name[name], value)
+                    # Only a row collects a value: without one, a flag stored
+                    # as off would go back to its enabled default.
+                    or gui_flag_is_explicitly_off(self._specs_by_name[name], value)
+                )
             ):
                 candidates.add(name)
         self._added_advanced = candidates

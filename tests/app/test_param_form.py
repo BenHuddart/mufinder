@@ -98,3 +98,27 @@ def test_param_form_validate_conflicting_booleans(qapp) -> None:
     form.set_values({"spin_polarized": True, "spin_polarised": True})
     errors = form.validate()
     assert any("conflicts with" in error for error in errors)
+
+
+def test_param_form_collects_an_unchecked_flag_as_false(qapp) -> None:
+    form = CastepParamForm(
+        specs=[
+            KeywordSpec(
+                name="symmetry_generate",
+                file="cell",
+                kind="flag",
+                value_type="bool",
+                widget_hint="flag",
+                basic_workflows=("convergence_cutoff",),
+                default_value=True,
+            ),
+        ],
+        workflow_stage="convergence_cutoff",
+        include_advanced=False,
+    )
+    assert form.collect_values()["symmetry_generate"] is True
+
+    form.set_values({"symmetry_generate": False})
+
+    assert form.collect_values()["symmetry_generate"] is False
+    assert form.validate() == []

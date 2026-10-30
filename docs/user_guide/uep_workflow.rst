@@ -64,7 +64,8 @@ Open ``UEP`` in the project navigator, then:
    :doc:`/user_guide/supercells`).
 3. **Check the parameters.** Click ``Configure…`` in the row's ``Parameters``
    column to adjust the CASTEP settings, or select several rows and click
-   ``Configure Selected Parameters…``.
+   ``Configure Selected Parameters…``. ``Generate Symmetry`` is on by default;
+   unchecking it leaves ``SYMMETRY_GENERATE`` out of that row's ``.cell`` file.
 4. **Run the job.** Click ``Run All Locally`` or ``Run All on Cluster`` (the
    ``Run Selected ...`` variants appear when rows are selected) and track the
    job through the ``Job Dashboard``.

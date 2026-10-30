@@ -273,6 +273,23 @@ def gui_value_is_active(spec: KeywordSpec, value: object) -> bool:
     return True
 
 
+def gui_flag_is_explicitly_off(spec: KeywordSpec, value: object) -> bool:
+    """Return whether ``value`` turns off a flag that is on by default.
+
+    Only then does an unchecked flag say something absence does not: left out,
+    the workflow's enabled default would apply. A flag that is off by default
+    has nothing to override, so its unchecked state stays unset.
+    """
+
+    return spec.kind == "flag" and value is False and bool(spec.default_value)
+
+
+def gui_flag_is_unset(spec: KeywordSpec, value: object) -> bool:
+    """Return whether an unchecked flag says nothing, so an editor leaves it out."""
+
+    return spec.kind == "flag" and not bool(value) and not gui_flag_is_explicitly_off(spec, value)
+
+
 def validate_gui_values(
     values: Mapping[str, object],
     specs_by_name: Mapping[str, KeywordSpec],
