@@ -164,6 +164,31 @@ class HostStructureWidget(QWidget):
         layout.addWidget(info)
         layout.addWidget(self._splitter, 1)
 
+    def _fit_atom_columns(self) -> None:
+        """Make each column as wide as its widest value, whatever the row count.
+
+        ``ResizeToContents`` measures only the first ``resizeContentsPrecision``
+        rows, and again on every resize event. Above that many rows the columns
+        are fixed instead, at the width of the value that measures widest.
+        """
+        table = self._atom_table
+        header = table.horizontalHeader()
+        row_count = table.rowCount()
+        if row_count <= header.resizeContentsPrecision():
+            header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            return
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        table.ensurePolished()
+        metrics = table.fontMetrics()
+        grid_width = 1 if table.showGrid() else 0
+        for column in range(table.columnCount()):
+            row_of_text = {table.item(row, column).text(): row for row in range(row_count)}
+            widest = row_of_text[max(row_of_text, key=metrics.horizontalAdvance)]
+            cell_width = table.sizeHintForIndex(table.model().index(widest, column)).width()
+            table.setColumnWidth(
+                column, max(header.sectionSizeHint(column), cell_width + grid_width)
+            )
+
     def _seed_splitter(self) -> None:
         """Give the table the width its contents need, for a new structure or new contents.
 
@@ -265,6 +290,7 @@ class HostStructureWidget(QWidget):
                 self._set_readonly_item(row, 3, f"{float(frac[2]):.4f}")
                 self._set_spin_item(row, self._atomic_spins[row])
 
+            self._fit_atom_columns()
             self._seed_splitter()
             self._viewer.set_spins(self._atomic_spins)
             self._updating = False
@@ -338,6 +364,8 @@ class HostStructureWidget(QWidget):
             self._set_spin_item(row, spin_value)
         finally:
             self._updating = False
+        self._fit_atom_columns()
+        self._seed_splitter()
         self._viewer.set_spins(self._atomic_spins)
         self._emit_magnetic_configuration()
 

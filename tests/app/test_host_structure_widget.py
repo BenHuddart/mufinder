@@ -101,6 +101,70 @@ def test_atom_table_fits_with_four_digit_row_numbers_and_a_vertical_scrollbar(qa
     _assert_atom_table_fits(widget)
 
 
+def _host_with_a_wide_coordinate_after_row_1000():
+    """1,200 atoms whose only long ``fX`` value, ``-0.8888``, is at row 1,101."""
+    positions = [(0.1111, 0.0, index / 1200) for index in range(1200)]
+    positions[1100] = (-0.8888, 0.0, 1100 / 1200)
+    return host_structure(species=["Si"] * 1200, positions=positions)
+
+
+def _assert_cell_shows_in_full(widget: HostStructureWidget, row: int, column: int) -> None:
+    """The column is at least as wide as Qt would make it having measured every row."""
+    table = widget._atom_table
+    header = table.horizontalHeader()
+    precision = header.resizeContentsPrecision()
+    header.setResizeContentsPrecision(-1)
+    try:
+        assert table.columnWidth(column) >= table.sizeHintForColumn(column)
+    finally:
+        header.setResizeContentsPrecision(precision)
+    assert (
+        table.columnWidth(column)
+        >= table.sizeHintForIndex(table.model().index(row, column)).width()
+    )
+
+
+def test_a_wider_value_first_appearing_after_row_1000_shows_in_full(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(_host_with_a_wide_coordinate_after_row_1000())
+    widget.resize(1000, 500)
+    widget.show()
+    qapp.processEvents()
+
+    assert widget._atom_table.item(1100, 1).text() == "-0.8888"
+    _assert_cell_shows_in_full(widget, 1100, 1)
+    _assert_atom_table_fits(widget)
+
+
+def test_a_wider_spin_typed_after_row_1000_shows_in_full(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(_crowded_host(1200))
+    widget.resize(1000, 500)
+    widget.show()
+    qapp.processEvents()
+
+    widget._atom_table.item(1100, 4).setText("-123456789.5")
+    qapp.processEvents()
+
+    assert widget._atom_table.item(1100, 4).text() == "-123456789.5000"
+    _assert_cell_shows_in_full(widget, 1100, 4)
+    _assert_atom_table_fits(widget)
+
+
+def test_columns_fit_a_small_host_loaded_after_a_large_one(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(_crowded_host(1200))
+    widget.set_structure(magnetic_silicon_oxide_host())
+    widget.resize(1000, 500)
+    widget.show()
+    qapp.processEvents()
+
+    widget._atom_table.item(1, 4).setText("-123456789.5")
+    qapp.processEvents()
+
+    _assert_cell_shows_in_full(widget, 1, 4)
+
+
 def test_viewer_keeps_its_minimum_and_the_table_scrolls_on_a_small_screen(qapp) -> None:
     """Below the table's content width the table scrolls; the viewer keeps its 380 px."""
     widget = HostStructureWidget()

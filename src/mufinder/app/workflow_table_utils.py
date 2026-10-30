@@ -359,13 +359,16 @@ def table_natural_width(table: QTableWidget) -> int:
     """Return the width that shows every column in full, without a horizontal scrollbar.
 
     It measures the contents, so it holds for a table that has not been shown yet and
-    for a stretched column. It reserves the vertical scrollbar whether or not the rows
-    overflow today, because a shorter window must not then clip the last column.
+    for a stretched column; a ``Fixed`` column counts at the width it was given. It
+    reserves the vertical scrollbar whether or not the rows overflow today, because a
+    shorter window must not then clip the last column.
     """
 
     header = table.horizontalHeader()
     width = sum(
-        max(header.sectionSizeHint(column), table.sizeHintForColumn(column))
+        table.columnWidth(column)
+        if header.sectionResizeMode(column) == QHeaderView.ResizeMode.Fixed
+        else max(header.sectionSizeHint(column), table.sizeHintForColumn(column))
         for column in range(table.columnCount())
         if not table.isColumnHidden(column)
     )
