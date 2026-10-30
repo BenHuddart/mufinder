@@ -1472,7 +1472,7 @@ Controller summary
        through the deps (``run_examiner``, ``show_warning``,
        ``confirm_choice``, ``refresh_after_default_adopted``).
 
-       It also owns the ``Simulation Cell`` selector.
+       It also owns the ``Simulation cell`` selector.
        ``refresh_simulation_cell`` shows the stage's saved supercells, the
        selection and the species of the resolved cell; the
        ``show_simulation_cell_structure`` hook hands that cell to a widget that

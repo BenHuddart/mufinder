@@ -143,6 +143,7 @@ class SweepConvergenceWidget(QWidget):
     _KEY_COLUMN_WIDTH = 132
     _CONFIGURE_COLUMN_MIN_WIDTH = 136
     _REMOVE_COLUMN_WIDTH = 34
+    _SIMULATION_CELL_COMBO_CHARS = 32
 
     _CODEC: SweepKeyCodec[Any]
     _WORKFLOW_STAGE = ""
@@ -213,11 +214,12 @@ class SweepConvergenceWidget(QWidget):
         self._table = self._create_table()
 
         self._name_prefix = QLineEdit(self._NAME_PREFIX_DEFAULT)
-        self._simulation_cell_summary = QLabel("Using single unit cell.")
-        self._simulation_cell_summary.setWordWrap(True)
         self._simulation_cell_combo = QComboBox()
+        self._simulation_cell_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._simulation_cell_combo.setMinimumContentsLength(self._SIMULATION_CELL_COMBO_CHARS)
         self._simulation_cell_create_button = QPushButton("Manage Supercells…")
-        self._simulation_cell_use_unit_button = QPushButton("Use Unit Cell")
 
         specs = get_gui_keyword_specs_for_files(
             files=("param", "cell"),
@@ -244,7 +246,10 @@ class SweepConvergenceWidget(QWidget):
     # -- Hooks -----------------------------------------------------------------
 
     def next_key(self, previous: Any | None) -> Any:
-        """Return the key a new row starts from, given the last row's key."""
+        """Return the key a new row starts from, given the last row's key.
+
+        A subclass may also read the table, to step past keys already listed.
+        """
 
         raise NotImplementedError
 
@@ -352,21 +357,15 @@ class SweepConvergenceWidget(QWidget):
 
         layout.addWidget(self._warning_label)
 
-        simulation_group = QGroupBox("Simulation Cell")
-        simulation_layout = QVBoxLayout(simulation_group)
-        simulation_layout.setContentsMargins(10, 8, 10, 8)
-        simulation_layout.setSpacing(6)
-        simulation_layout.addWidget(self._simulation_cell_summary)
         simulation_row = QHBoxLayout()
         simulation_row.setSpacing(8)
-        simulation_cell_label = QLabel("Saved supercells")
+        simulation_cell_label = QLabel("Simulation cell")
         simulation_cell_label.setBuddy(self._simulation_cell_combo)
         simulation_row.addWidget(simulation_cell_label)
-        simulation_row.addWidget(self._simulation_cell_combo, 1)
+        simulation_row.addWidget(self._simulation_cell_combo)
         simulation_row.addWidget(self._simulation_cell_create_button)
-        simulation_row.addWidget(self._simulation_cell_use_unit_button)
-        simulation_layout.addLayout(simulation_row)
-        layout.addWidget(simulation_group)
+        simulation_row.addStretch(1)
+        layout.addLayout(simulation_row)
 
         sweep_group = QGroupBox(self._SWEEP_GROUP_TITLE)
         sweep_layout = QVBoxLayout(sweep_group)
@@ -382,12 +381,8 @@ class SweepConvergenceWidget(QWidget):
         controls_row.addWidget(self._selection_count_label)
         controls_row.addWidget(self._remove_selected_button)
         controls_row.addWidget(self._batch_configure_button)
+        controls_row.addWidget(self._examine_button)
         sweep_layout.addLayout(controls_row)
-
-        examine_row = QHBoxLayout()
-        examine_row.addStretch(1)
-        examine_row.addWidget(self._examine_button)
-        sweep_layout.addLayout(examine_row)
         layout.addWidget(sweep_group, 1)
 
         run_group = QGroupBox("Run Jobs")
@@ -457,9 +452,6 @@ class SweepConvergenceWidget(QWidget):
         self._simulation_cell_create_button.clicked.connect(
             self.simulation_cell_create_requested.emit
         )
-        self._simulation_cell_use_unit_button.clicked.connect(
-            self.simulation_cell_use_unit_cell_requested.emit
-        )
 
     # -- Project state pushed in -------------------------------------------------
 
@@ -482,7 +474,9 @@ class SweepConvergenceWidget(QWidget):
     ) -> None:
         self._updating_simulation_cell = True
         try:
-            self._simulation_cell_summary.setText(summary)
+            # The combo shows the cell; the tooltip keeps what the choice cannot
+            # say: why it fell back to the unit cell, or why it is disabled.
+            self._simulation_cell_combo.setToolTip(summary)
             self._simulation_cell_combo.clear()
             self._simulation_cell_combo.addItem("Single unit cell", None)
             for asset in assets:
@@ -499,7 +493,6 @@ class SweepConvergenceWidget(QWidget):
 
             self._simulation_cell_combo.setEnabled(enabled)
             self._simulation_cell_create_button.setEnabled(enabled)
-            self._simulation_cell_use_unit_button.setEnabled(enabled)
         finally:
             self._updating_simulation_cell = False
 

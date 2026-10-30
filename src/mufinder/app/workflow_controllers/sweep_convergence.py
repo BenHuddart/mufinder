@@ -30,7 +30,7 @@ existing definition with the same configuration and context
 The ``register_configured_definition`` hook calls the sweep's project-service
 registration.
 
-It also keeps the sweep's ``Simulation Cell`` selector in step with the
+It also keeps the sweep's ``Simulation cell`` selector in step with the
 project (:meth:`~SweepConvergenceController.refresh_simulation_cell`) and
 handles its three requests: pick a saved supercell
 (:meth:`~SweepConvergenceController.select_simulation_cell`), go back to the

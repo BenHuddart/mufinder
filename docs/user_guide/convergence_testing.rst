@@ -52,9 +52,9 @@ Converge the cutoff first, then the k-point grid: the k-point sweep takes the
 adopted cutoff as its default ``CUT_OFF_ENERGY``.
 
 1. **Open the cutoff sweep.** Select ``Cutoff Energy`` in the navigator (or
-   click ``Open Cutoff Convergence`` on the overview page). Under
-   ``Simulation Cell``, leave ``Single unit cell`` selected or choose a saved
-   supercell from ``Saved supercells``.
+   click ``Open Cutoff Convergence`` on the overview page). In the ``Simulation
+   cell`` drop-down, leave ``Single unit cell`` selected or choose a saved
+   supercell.
 2. **List the cutoffs.** Click ``Generate From Range…`` and set
    ``Start (eV)``, ``Stop (eV)``, and ``Step (eV)`` (300, 1400, and 100 eV by
    default), or click ``Add Cutoff`` to add rows one at a time. Double-click a
@@ -143,13 +143,12 @@ The sweep pages
    The current ``XC``, ``Cutoff`` and ``K-points`` defaults. Hover a value for
    how it was established, or click ``Edit…`` to open the ``Project Defaults``
    dialog (see `Adopting a result as a project default`_).
-``Simulation Cell``
-   A summary of the cell the sweep will run on, a ``Saved supercells``
-   drop-down (``Single unit cell`` plus every supercell saved for the active
-   host), ``Manage Supercells…`` to open the :doc:`/user_guide/supercells`, and ``Use
-   Unit Cell`` to return to the host unit cell. The cell is fixed for a job
-   when the job is defined; changing the selection later does not change jobs
-   already defined.
+``Simulation cell``
+   A drop-down of the cell the sweep will run on (``Single unit cell`` plus
+   every supercell saved for the active host) and ``Manage Supercells…`` to
+   open the :doc:`/user_guide/supercells`. Hover the drop-down for the full
+   name of the selected cell. The cell is fixed for a job when the job is
+   defined; changing the selection later does not change jobs already defined.
 Sweep table (``Cutoff Sweep`` / ``K-Point Grid Sweep``)
    One row per sweep point:
 
@@ -216,7 +215,10 @@ Generating k-point grids
 
    Grids generated for CoF₂ with a minimum spacing of 0.04 1/Ang.
 
-``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the last row's grid.
+``Add Grid`` opens ``Add K-Point Grid``, pre-filled with the next grid up: one
+more k-point along each axis than the last row (``1 x 1 x 1`` when the last row
+holds no valid grid), stepping past any grid already listed. Edit the values for
+an anisotropic step; ``Generate From Spacing…`` follows the cell's own spacing.
 
 ``Generate From Spacing…`` opens ``Generate K-Point Grids``. MuFinder walks
 CASTEP's own spacing-to-grid rule, ``n_i = floor(|b_i| / (2 pi s)) + 1``, from

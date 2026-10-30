@@ -171,6 +171,54 @@ def test_kpoint_widget_open_add_grid_dialog_adds_row_on_accept(
     assert _table_grids(widget) == [(4, 4, 2)]
 
 
+@pytest.mark.parametrize(
+    ("listed", "expected"),
+    [
+        ([], (1, 1, 1)),
+        ([(1, 1, 1)], (2, 2, 2)),
+        ([(3, 3, 4)], (4, 4, 5)),
+        # The last row is not the largest: step past grids already listed.
+        ([(3, 3, 3), (4, 4, 4), (2, 2, 2)], (5, 5, 5)),
+        ([(1, 1, 1), (1, 1, 1)], (2, 2, 2)),
+    ],
+)
+def test_add_grid_dialog_prefills_the_next_unlisted_grid_up(
+    qapp, monkeypatch: pytest.MonkeyPatch, listed, expected
+) -> None:
+    widget = KPointConvergenceWidget()
+    for grid in listed:
+        widget._add_row(grid)
+    # OK without editing: the dialog's real pre-filled grid is what gets added.
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointGridDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
+    )
+
+    widget._on_add_clicked()
+
+    assert _table_grids(widget) == [*listed, expected]
+
+
+def test_add_grid_dialog_accepted_unedited_leaves_the_sweep_runnable(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_row((2, 2, 2))
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        kpoint_widget_module.KPointGridDialog, "exec", lambda _self: QDialog.DialogCode.Accepted
+    )
+    monkeypatch.setattr(
+        kpoint_widget_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _message: warnings.append(title),
+    )
+
+    widget._on_add_clicked()
+
+    assert widget.build_config() is not None
+    assert warnings == []
+
+
 def test_kpoint_widget_open_add_grid_dialog_ignores_cancel(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
