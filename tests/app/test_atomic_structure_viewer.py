@@ -638,6 +638,71 @@ def test_two_atoms_moved_onto_one_point_draw_no_bond(bonded_viewer) -> None:
     assert viewer._pyvista_bond_pieces == {}
 
 
+# Three Fe atoms in a 5 Å cube; the last carries no spin, so two arrows are drawn.
+def _spin_trio(
+    *,
+    positions=((0.1, 0.2, 0.3), (0.5, 0.2, 0.3), (0.3, 0.6, 0.7)),
+    spins=(1.5, -2.0, 0.0),
+):
+    return host_structure(
+        species=("Fe", "Fe", "Fe"),
+        positions=positions,
+        properties={"atomic_spins": list(spins)},
+    )
+
+
+def test_every_spin_arrow_is_drawn_by_one_actor(viewer) -> None:
+    viewer.set_structure(_spin_trio())
+
+    assert viewer._show_spins.isChecked()
+    assert len(viewer._pyvista_spin_actors) == 1
+    mesh = viewer._pyvista_spin_actors[0].mesh
+    # One block of shaft and head points per arrow; the atom without a spin has none.
+    pv = pytest.importorskip("pyvista")
+    arrow_points = pv.Cylinder(resolution=18).n_points + pv.Cone(resolution=18).n_points
+    assert mesh.n_points == 2 * arrow_points
+    assert viewer._pyvista_spin_rows.tolist() == [0, 1]
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        AtomicStructureViewer.set_structure_preserving_view,
+        AtomicStructureViewer.update_structure_geometry_preserving_view,
+    ],
+)
+def test_a_same_topology_update_moves_the_spin_arrows_in_place(viewer, monkeypatch, update) -> None:
+    viewer.set_structure(_spin_trio())
+    spin_actor = viewer._pyvista_spin_actors[0]
+    before = np.asarray(spin_actor.mesh.points, dtype=float).copy()
+    counter = _RenderCounter(viewer, monkeypatch)
+    renders = count_scene_renders(monkeypatch)
+    moved_positions = ((0.12, 0.2, 0.3), (0.5, 0.26, 0.31), (0.3, 0.6, 0.7))
+
+    update(viewer, _spin_trio(positions=moved_positions))
+
+    assert counter.add_mesh_render_flags == []
+    assert renders[viewer] == 0
+    assert viewer._pyvista_spin_actors == [spin_actor]
+    offsets = (np.asarray(moved_positions) - np.asarray(_spin_trio().fractional_positions)) * 5.0
+    expected = before.reshape(2, -1, 3) + offsets[:2, None, :]
+    assert np.allclose(spin_actor.mesh.points, expected.reshape(-1, 3))
+
+
+def test_a_same_topology_update_with_new_spins_draws_the_arrows_again(viewer) -> None:
+    viewer.set_structure(_spin_trio())
+    atom_actor = viewer._pyvista_atom_actor
+    spin_actor = viewer._pyvista_spin_actors[0]
+
+    viewer.set_structure_preserving_view(_spin_trio(spins=(0.0, -2.0, 1.0)))
+
+    assert viewer._pyvista_atom_actor is atom_actor
+    assert len(viewer._pyvista_spin_actors) == 1
+    assert viewer._pyvista_spin_actors[0] is not spin_actor
+    assert spin_actor not in viewer._canvas.plotter._actors
+    assert viewer._pyvista_spin_rows.tolist() == [1, 2]
+
+
 def test_atomic_structure_viewer_named_views_follow_lattice_vectors_for_hexagonal_cell(
     qapp,
 ) -> None:

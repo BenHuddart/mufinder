@@ -18,11 +18,13 @@ from mufinder.app.atomic_structure_viewer import (
     _build_pyvista_bond_line_mesh,
     _build_pyvista_bond_tube_mesh,
     _build_pyvista_sphere_mesh,
+    _build_pyvista_spin_arrow_mesh,
     _draw_atom_spheres,
     _draw_spin_arrows,
     _draw_split_bond_cylinder,
     _plot_cylinder_segment,
     _set_equal_limits,
+    _spin_arrow_layout,
     _ViewerIsosurfaceSpec,
     _ViewerPointOverlaySpec,
     _ViewerSliceSpec,
@@ -74,6 +76,81 @@ def test_atomic_structure_viewer_spin_arrow_geometry_is_centered() -> None:
     assert points.shape == (4, 3)
     assert np.any(points[:, 2] > 0.0)
     assert np.any(points[:, 2] < 1.0)
+
+
+_ARROW_POSITIONS = np.array(
+    [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 0.0, 1.0], [0.0, 2.0, 0.0], [3.0, 3.0, 3.0]]
+)
+_ARROW_RADII = np.array([0.6, 0.45, 0.5, 0.7, 0.4])
+# Vector moments: up, down along -y, mostly -x, none, and a tiny one that keeps the minimum length.
+_ARROW_MOMENTS = np.array(
+    [[0.0, 0.0, 1.2], [0.0, -0.8, 0.0], [-2.0, 0.5, -1.0], [0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]
+)
+
+
+def test_spin_arrows_point_along_their_moments_with_length_set_by_moment_and_radius() -> None:
+    pv = pytest.importorskip("pyvista")
+
+    layout = _spin_arrow_layout(_ARROW_POSITIONS, _ARROW_RADII, _ARROW_MOMENTS)
+    mesh = _build_pyvista_spin_arrow_mesh(pv, layout)
+
+    assert layout.rows.tolist() == [0, 1, 2, 4]
+    blocks = np.asarray(mesh.points, dtype=float).reshape(4, -1, 3)
+    colours = np.asarray(mesh.point_data["spin_rgba"]).reshape(4, -1, 4)
+    for block, block_colours, row in zip(blocks, colours, layout.rows):
+        moment = _ARROW_MOMENTS[row]
+        direction = moment / np.linalg.norm(moment)
+        along = (block - _ARROW_POSITIONS[row]) @ direction
+        across = block - _ARROW_POSITIONS[row] - np.outer(along, direction)
+        expected_length = max(0.3, 0.85 * np.linalg.norm(moment)) + 0.4 * _ARROW_RADII[row]
+        # Centred on its atom, along the moment, tip at the far end.
+        assert along.min() == pytest.approx(-0.5 * expected_length)
+        assert along.max() == pytest.approx(0.5 * expected_length)
+        tip = block[np.argmax(along)]
+        assert np.allclose(tip, _ARROW_POSITIONS[row] + 0.5 * expected_length * direction)
+        assert np.linalg.norm(across, axis=1).max() == pytest.approx(
+            max(0.12, 0.2 * _ARROW_RADII[row])
+        )
+        # Blue when the moment's z component is not negative, red otherwise.
+        expected_rgb = [0x1F, 0x78, 0xB4] if moment[2] >= 0.0 else [0xD7, 0x30, 0x1F]
+        assert np.all(block_colours[:, :3] == expected_rgb)
+        assert set(block_colours[:, 3].tolist()) == {224, 230}
+
+
+def test_spin_arrow_mesh_is_the_cylinders_and_cones_pyvista_draws() -> None:
+    pv = pytest.importorskip("pyvista")
+    layout = _spin_arrow_layout(_ARROW_POSITIONS, _ARROW_RADII, _ARROW_MOMENTS)
+
+    mesh = _build_pyvista_spin_arrow_mesh(pv, layout)
+
+    blocks = np.asarray(mesh.points, dtype=float).reshape(len(layout.rows), -1, 3)
+    for index, block in enumerate(blocks):
+        direction = tuple(layout.directions[index])
+        shaft = pv.Cylinder(
+            center=tuple(0.5 * (layout.tails[index] + layout.shaft_ends[index])),
+            direction=direction,
+            radius=float(layout.shaft_radii[index]),
+            height=float(np.linalg.norm(layout.shaft_ends[index] - layout.tails[index])),
+            resolution=18,
+        )
+        head = pv.Cone(
+            center=tuple(0.5 * (layout.shaft_ends[index] + layout.tips[index])),
+            direction=direction,
+            height=float(np.linalg.norm(layout.tips[index] - layout.shaft_ends[index])),
+            radius=float(layout.head_radii[index]),
+            resolution=18,
+        )
+        assert np.allclose(block, np.vstack([shaft.points, head.points]), atol=1e-5)
+    assert mesh.n_cells == len(blocks) * (shaft.n_cells + head.n_cells)
+
+
+def test_spin_arrow_mesh_is_none_without_a_moment() -> None:
+    pv = pytest.importorskip("pyvista")
+
+    layout = _spin_arrow_layout(_ARROW_POSITIONS[:1], _ARROW_RADII[:1], np.zeros(1))
+
+    assert layout.rows.size == 0
+    assert _build_pyvista_spin_arrow_mesh(pv, layout) is None
 
 
 def test_split_bond_cylinder_draws_two_half_segments_with_per_atom_colors() -> None:

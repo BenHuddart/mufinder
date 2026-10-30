@@ -1302,8 +1302,10 @@ while no overlay is shown (loading a structure clears the overlays), and
 The atom glyphs, pick points and selection highlight move by each atom's
 displacement; the bonds are re-measured, a merged bond mesh takes the new
 geometry and each half-bond cylinder that stays is carried onto its new ends
-by its actor's transform, so only a bond that forms gets a new actor. Spin
-arrows are redrawn. A change of colours, radii or visible atoms rebuilds the
+by its actor's transform, so only a bond that forms gets a new actor. The spin
+arrows are one mesh with one actor, a shaft and a head per atom whose moment is
+not zero; they move with their atoms, and are drawn again (still one actor)
+only when the spins change. A change of colours, radii or visible atoms rebuilds the
 atom meshes, and a change of species, order or cell loads the structure as
 new. Stepping an NEB band or animating a phonon mode therefore adds no atom
 mesh per frame.

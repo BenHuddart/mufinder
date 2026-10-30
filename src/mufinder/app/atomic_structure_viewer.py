@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from copy import deepcopy
-from functools import wraps
+from functools import cache, wraps
 import importlib.util
 import logging
 import math
@@ -824,6 +824,13 @@ def _draw_split_bond_cylinder(
     return segments
 
 
+_SPIN_ARROW_RESOLUTION = 18
+_SPIN_UP_COLOR = "#1f78b4"
+_SPIN_DOWN_COLOR = "#d7301f"
+_SPIN_SHAFT_OPACITY = 0.88
+_SPIN_HEAD_OPACITY = 0.9
+
+
 def _draw_spin_arrows(
     axis,
     positions: np.ndarray,
@@ -868,7 +875,7 @@ def _draw_spin_arrows(
         shaft_end_z = center_z + direction * shaft_tip_offset
         tip_z = center_z + direction * half_length
 
-        color = "#1f78b4" if direction > 0 else "#d7301f"
+        color = _SPIN_UP_COLOR if direction > 0 else _SPIN_DOWN_COLOR
 
         if is_vector:
             tail = np.asarray(position, dtype=float) - direction_vector * half_length
@@ -1253,6 +1260,192 @@ def _build_pyvista_atom_glyph_mesh(
         subdivisions=subdivisions,
         point_data={"atom_rgb": rgb},
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _SpinArrowLayout:
+    """Where each spin arrow sits: one entry per atom whose moment is not zero.
+
+    ``rows`` are the arrows' atoms as rows of the positions given. An arrow is
+    centred on its atom and points along the moment (a scalar spin points along
+    ``+z``); its shaft runs from ``tails`` to ``shaft_ends`` and its head from
+    ``shaft_ends`` to ``tips``. ``points_up`` is whether the moment's ``z``
+    component is not negative, which sets the arrow's colour.
+    """
+
+    rows: np.ndarray
+    directions: np.ndarray
+    tails: np.ndarray
+    shaft_ends: np.ndarray
+    tips: np.ndarray
+    shaft_radii: np.ndarray
+    head_radii: np.ndarray
+    points_up: np.ndarray
+
+
+def _spin_arrow_layout(
+    positions: np.ndarray, radii: np.ndarray, spins: np.ndarray
+) -> _SpinArrowLayout:
+    """Lay out the spin arrows of atoms at ``positions`` with ``radii`` and ``spins``.
+
+    ``spins`` holds one scalar spin or one moment vector per atom. The arrow's
+    length grows with the moment and the atom's radius; its head takes 38 % of
+    it, at least 0.12 Å and at most 45 %.
+    """
+
+    positions = np.asarray(positions, dtype=float).reshape(-1, 3)
+    radii = np.asarray(radii, dtype=float).reshape(-1)
+    spin_values = np.asarray(spins, dtype=float)
+    if spin_values.ndim == 2 and spin_values.shape[1] == 3:
+        vectors = spin_values.reshape(-1, 3)
+    else:
+        vectors = np.zeros((spin_values.size, 3), dtype=float)
+        vectors[:, 2] = spin_values.reshape(-1)
+    magnitudes = np.linalg.norm(vectors, axis=1)
+    rows = np.flatnonzero(magnitudes > 1e-10)
+    magnitudes = magnitudes[rows]
+    directions = vectors[rows] / magnitudes[:, None]
+    atom_radii = radii[rows]
+    centres = positions[rows]
+    arrow_lengths = np.maximum(0.3, magnitudes * 0.85) + 0.4 * atom_radii
+    half_lengths = 0.5 * arrow_lengths
+    head_lengths = np.minimum(np.maximum(0.12, arrow_lengths * 0.38), half_lengths * 0.9)
+    shaft_tip_offsets = np.maximum(half_lengths - head_lengths, 0.05)
+    return _SpinArrowLayout(
+        rows=rows,
+        directions=directions,
+        tails=centres - directions * half_lengths[:, None],
+        shaft_ends=centres + directions * shaft_tip_offsets[:, None],
+        tips=centres + directions * half_lengths[:, None],
+        shaft_radii=np.maximum(0.055, 0.12 * atom_radii),
+        head_radii=np.maximum(0.12, 0.2 * atom_radii),
+        points_up=directions[:, 2] >= 0.0,
+    )
+
+
+def _pyvista_cylinder_frames(directions: np.ndarray) -> np.ndarray:
+    """The rotation PyVista's ``Cylinder`` gives a cylinder along each of ``directions``.
+
+    Column 0 of each matrix is the direction; columns 1 and 2 are the frame
+    PyVista builds from the ``y`` axis, so the facets sit where ``Cylinder`` puts them.
+    """
+
+    count = len(directions)
+    helpers = np.tile(np.array([0.0, 1.0, 0.0]), (count, 1))
+    along_y = np.all(np.isclose(directions, [0.0, 1.0, 0.0], rtol=1e-5, atol=1e-8), axis=1)
+    along_minus_y = np.all(np.isclose(directions, [0.0, -1.0, 0.0], rtol=1e-5, atol=1e-8), axis=1)
+    helpers[along_y] = [-1.0, 0.0, 0.0]
+    helpers[along_minus_y] = [1.0, 0.0, 0.0]
+    normals_z = np.cross(directions, helpers)
+    normals_z /= np.linalg.norm(normals_z, axis=1)[:, None]
+    normals_y = np.cross(normals_z, directions)
+    return np.stack([directions, normals_y, normals_z], axis=2)
+
+
+def _vtk_cone_frames(directions: np.ndarray) -> np.ndarray:
+    """The rotation VTK's cone source gives a cone along each of ``directions``.
+
+    VTK turns its ``+x`` cone half a turn about the bisector of ``+x`` and the
+    direction; a direction with negative ``x`` is first turned half a turn about ``y``.
+    """
+
+    count = len(directions)
+    flip = directions[:, 0] < 0.0
+    axes = 0.5 * directions.copy()
+    axes[:, 0] += np.where(flip, -0.5, 0.5)
+    axes /= np.linalg.norm(axes, axis=1)[:, None]
+    frames = 2.0 * axes[:, :, None] * axes[:, None, :] - np.eye(3)[None, :, :]
+    half_turn_y = np.diag([-1.0, 1.0, -1.0])
+    frames[flip] = frames[flip] @ half_turn_y
+    return frames.reshape(count, 3, 3)
+
+
+def _padded_cells_index_mask(cells: np.ndarray) -> np.ndarray:
+    """Which entries of a padded VTK cell array (``n, i0, ..., n, ...``) are point indices."""
+
+    mask = np.ones(len(cells), dtype=bool)
+    cursor = 0
+    while cursor < len(cells):
+        mask[cursor] = False
+        cursor += int(cells[cursor]) + 1
+    return mask
+
+
+@cache
+def _spin_arrow_template(pv) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """One unit arrow along ``+x``: its shaft points, head points, padded cells and which
+    cell entries are point indices (the head's indices follow the shaft's points)."""
+
+    shaft = pv.Cylinder(radius=1.0, height=1.0, resolution=_SPIN_ARROW_RESOLUTION)
+    head = pv.Cone(radius=1.0, height=1.0, resolution=_SPIN_ARROW_RESOLUTION)
+    shaft_points = np.asarray(shaft.points, dtype=float)
+    head_points = np.asarray(head.points, dtype=float)
+    shaft_cells = np.asarray(shaft.faces, dtype=np.int64)
+    head_cells = np.asarray(head.faces, dtype=np.int64)
+    head_cells = np.where(
+        _padded_cells_index_mask(head_cells), head_cells + len(shaft_points), head_cells
+    )
+    arrow_cells = np.concatenate([shaft_cells, head_cells])
+    return shaft_points, head_points, arrow_cells, _padded_cells_index_mask(arrow_cells)
+
+
+def _build_pyvista_spin_arrow_mesh(pv, layout: _SpinArrowLayout):
+    """One mesh of every spin arrow in ``layout``: a cylinder shaft and a cone head each.
+
+    Each arrow is one equal block of points, in ``layout`` order, so the mesh
+    moves with its atoms like the atom glyphs. The arrows are the shapes
+    PyVista's ``Cylinder`` and ``Cone`` draw between the same points, with
+    ``spin_rgba`` colouring them by direction and giving shaft and head their
+    opacities. ``None`` when there is no arrow.
+    """
+
+    count = len(layout.rows)
+    if count == 0:
+        return None
+    shaft_points, head_points, arrow_cells, index_mask = _spin_arrow_template(pv)
+
+    def place(unit_points, frames, lengths, radii, centres) -> np.ndarray:
+        scaled = unit_points[None, :, :] * np.stack([lengths, radii, radii], axis=1)[:, None, :]
+        return np.einsum("nij,npj->npi", frames, scaled) + centres[:, None, :]
+
+    shaft_vectors = layout.shaft_ends - layout.tails
+    head_vectors = layout.tips - layout.shaft_ends
+    placed_shafts = place(
+        shaft_points,
+        _pyvista_cylinder_frames(layout.directions),
+        np.linalg.norm(shaft_vectors, axis=1),
+        layout.shaft_radii,
+        0.5 * (layout.tails + layout.shaft_ends),
+    )
+    placed_heads = place(
+        head_points,
+        _vtk_cone_frames(layout.directions),
+        np.linalg.norm(head_vectors, axis=1),
+        layout.head_radii,
+        0.5 * (layout.shaft_ends + layout.tips),
+    )
+    points = np.concatenate([placed_shafts, placed_heads], axis=1).reshape(-1, 3)
+
+    block_size = len(shaft_points) + len(head_points)
+    offsets = np.arange(count, dtype=np.int64)[:, None] * block_size
+    cells = arrow_cells[None, :] + offsets * index_mask[None, :]
+
+    up = QColor(_SPIN_UP_COLOR).getRgb()[:3]
+    down = QColor(_SPIN_DOWN_COLOR).getRgb()[:3]
+    rgb = np.where(layout.points_up[:, None], up, down).astype(np.uint8)
+    alpha = np.concatenate(
+        [
+            np.full(len(shaft_points), round(255 * _SPIN_SHAFT_OPACITY)),
+            np.full(len(head_points), round(255 * _SPIN_HEAD_OPACITY)),
+        ]
+    ).astype(np.uint8)
+    rgba = np.empty((count, block_size, 4), dtype=np.uint8)
+    rgba[:, :, :3] = rgb[:, None, :]
+    rgba[:, :, 3] = alpha[None, :]
+
+    mesh = pv.PolyData(points, faces=cells.reshape(-1))
+    mesh.point_data["spin_rgba"] = rgba.reshape(-1, 4)
+    return mesh
 
 
 def _pyvista_actor_dataset(actor: object | None):
@@ -1972,7 +2165,12 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_bond_pieces: dict[
             tuple[int, int, int], tuple[object, np.ndarray, np.ndarray]
         ] = {}
+        # Every spin arrow is one actor (the list holds it, or nothing); the rows of
+        # the drawn atoms that carry an arrow, in the mesh's block order, and the
+        # spins drawn let a move carry the arrows along without drawing them again.
         self._pyvista_spin_actors: list[object] = []
+        self._pyvista_spin_rows = np.empty(0, dtype=int)
+        self._pyvista_drawn_spins: np.ndarray | None = None
         self._pyvista_last_camera_signature: tuple[float, ...] | None = None
         self._pyvista_camera_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = (
             None
@@ -2372,6 +2570,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_bond_actors = []
         self._pyvista_bond_pieces = {}
         self._pyvista_spin_actors = []
+        self._pyvista_drawn_spins = None
         self._selection_label.setText("Selected atom: -")
         self._render()
 
@@ -3194,25 +3393,8 @@ class AtomicStructureViewer(QWidget):
     def _spin_extent_points(
         self, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray
     ) -> np.ndarray:
-        tips: list[np.ndarray] = []
-        for position, radius, spin in zip(positions, radii, spins):
-            spin_array = np.asarray(spin, dtype=float)
-            spin_vector = (
-                spin_array
-                if spin_array.shape == (3,)
-                else np.array([0.0, 0.0, float(spin_array)], dtype=float)
-            )
-            magnitude = float(np.linalg.norm(spin_vector))
-            if magnitude <= 1e-10:
-                continue
-            direction_vector = spin_vector / magnitude
-            arrow_length = max(0.3, magnitude * 0.85) + 0.4 * float(radius)
-            half_length = 0.5 * arrow_length
-            tips.append(np.asarray(position, dtype=float) + direction_vector * half_length)
-            tips.append(np.asarray(position, dtype=float) - direction_vector * half_length)
-        if not tips:
-            return np.empty((0, 3), dtype=float)
-        return np.vstack(tips)
+        layout = _spin_arrow_layout(positions, radii, spins)
+        return np.vstack([layout.tips, layout.tails])
 
     @contextmanager
     def batch_update(self) -> Iterator[None]:
@@ -3340,6 +3522,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_bond_actors = []
         self._pyvista_bond_pieces = {}
         self._pyvista_spin_actors = []
+        self._pyvista_drawn_spins = None
         plotter.clear()
         _configure_transparent_pyvista_background(plotter)
         plotter.enable_parallel_projection()
@@ -4097,8 +4280,9 @@ class AtomicStructureViewer(QWidget):
         The scene must already draw these atoms with the same colours, radii and
         visible set. The atom glyphs, pick points and selection highlight move by
         each atom's displacement; the bonds are re-measured and redrawn into their
-        meshes, with new bond actors only when the bonded pairs change; spin arrows
-        are redrawn. Returns ``False``, having changed nothing, when the atoms need
+        meshes, with new bond actors only when the bonded pairs change; the spin
+        arrows move with their atoms, and are drawn again only when the spins
+        changed. Returns ``False``, having changed nothing, when the atoms need
         new meshes instead.
         """
 
@@ -4165,13 +4349,15 @@ class AtomicStructureViewer(QWidget):
                 visible_mask=visible_mask,
                 alpha=float(np.clip(0.84 * atom_alpha, 0.2, 0.8)),
             )
-        self._remove_pyvista_actor_group(self._pyvista_spin_actors)
-        self._pyvista_spin_actors = []
         visible_spins = self._filtered_spin_values(self._spins, visible_mask)
-        if spins_shown and visible_spins is not None:
-            self._pyvista_spin_actors = self._draw_pyvista_spins(
-                plotter, pv, positions[visible_indices], radii[visible_indices], visible_spins
-            )
+        if not (spins_shown and self._move_pyvista_spins(offsets[visible_indices], visible_spins)):
+            self._remove_pyvista_actor_group(self._pyvista_spin_actors)
+            self._pyvista_spin_actors = []
+            self._pyvista_drawn_spins = None
+            if spins_shown and visible_spins is not None:
+                self._pyvista_spin_actors = self._draw_pyvista_spins(
+                    plotter, pv, positions[visible_indices], radii[visible_indices], visible_spins
+                )
         self._pyvista_last_camera_signature = self._pyvista_camera_signature()
         self._draw_canvas()
         return True
@@ -4260,6 +4446,7 @@ class AtomicStructureViewer(QWidget):
         )
         if not (self._show_spins.isChecked() and visible_spins is not None):
             self._pyvista_spin_actors = []
+            self._pyvista_drawn_spins = None
         self._try_update_pyvista_bond_overlay() if self._show_bonds.isChecked() else self._remove_pyvista_actor_group(
             self._pyvista_bond_actors
         )
@@ -4374,6 +4561,7 @@ class AtomicStructureViewer(QWidget):
 
         removed = self._remove_pyvista_actor_group(self._pyvista_spin_actors)
         self._pyvista_spin_actors = []
+        self._pyvista_drawn_spins = None
         has_spins = (
             self._show_spins.isChecked()
             and self._spins is not None
@@ -4725,63 +4913,51 @@ class AtomicStructureViewer(QWidget):
     def _draw_pyvista_spins(
         self, plotter, pv, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray
     ) -> list[object]:
-        actors: list[object] = []
-        for position, radius, spin in zip(positions, radii, spins):
-            spin_array = np.asarray(spin, dtype=float)
-            spin_vector = (
-                spin_array
-                if spin_array.shape == (3,)
-                else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+        """Draw every spin arrow as one actor; returns it in a list, empty when no arrow shows.
+
+        Records which drawn atoms carry an arrow and the spins drawn, so a move of
+        the same atoms with the same spins carries the arrows along in place.
+        """
+
+        layout = _spin_arrow_layout(positions, radii, spins)
+        self._pyvista_spin_rows = layout.rows
+        self._pyvista_drawn_spins = np.array(spins, dtype=float, copy=True)
+        mesh = _build_pyvista_spin_arrow_mesh(pv, layout)
+        if mesh is None:
+            return []
+        return [
+            plotter.add_mesh(
+                mesh,
+                scalars="spin_rgba",
+                rgba=True,
+                smooth_shading=True,
+                ambient=0.58,
+                diffuse=0.28,
+                specular=0.0,
+                specular_power=1.0,
+                pbr=False,
+                render=False,
             )
-            magnitude = float(np.linalg.norm(spin_vector))
-            if magnitude <= 1e-10:
-                continue
-            direction_vector = spin_vector / magnitude
-            direction = 1.0 if direction_vector[2] >= 0.0 else -1.0
-            sphere_radius = float(radius)
-            arrow_length = max(0.3, magnitude * 0.85) + 0.4 * sphere_radius
-            half_length = 0.5 * arrow_length
-            head_length = min(max(0.12, arrow_length * 0.38), half_length * 0.9)
-            shaft_tip_offset = max(half_length - head_length, 0.05)
-            shaft_radius = max(0.055, 0.12 * sphere_radius)
-            head_radius = max(0.12, 0.2 * sphere_radius)
-            tail = np.asarray(position, dtype=float) - direction_vector * half_length
-            shaft_end = np.asarray(position, dtype=float) + direction_vector * shaft_tip_offset
-            tip = np.asarray(position, dtype=float) + direction_vector * half_length
-            color = "#1f78b4" if direction > 0 else "#d7301f"
-            actor = self._add_pyvista_cylinder(
-                plotter,
-                pv,
-                tail,
-                shaft_end,
-                radius=shaft_radius,
-                color=np.array(QColor(color).getRgbF()[:3]),
-                alpha=0.88,
-            )
-            if actor is not None:
-                actors.append(actor)
-            cone = pv.Cone(
-                center=tuple(float(value) for value in 0.5 * (shaft_end + tip)),
-                direction=tuple(float(value) for value in direction_vector),
-                height=float(np.linalg.norm(tip - shaft_end)),
-                radius=float(head_radius),
-                resolution=18,
-            )
-            actors.append(
-                plotter.add_mesh(
-                    cone,
-                    color=color,
-                    opacity=0.9,
-                    smooth_shading=True,
-                    ambient=0.58,
-                    diffuse=0.28,
-                    specular=0.0,
-                    specular_power=1.0,
-                    pbr=False,
-                    render=False,
-                )
-            )
-        return actors
+        ]
+
+    def _move_pyvista_spins(self, offsets: np.ndarray, spins: np.ndarray | None) -> bool:
+        """Move the drawn arrows by their atoms' ``offsets`` (one per drawn atom).
+
+        Only when one arrow actor draws exactly ``spins``; returns ``False``,
+        having changed nothing, when the arrows must be drawn again instead.
+        """
+
+        if spins is None or len(self._pyvista_spin_actors) != 1:
+            return False
+        drawn = self._pyvista_drawn_spins
+        if drawn is None or drawn.shape != np.shape(spins) or not np.array_equal(drawn, spins):
+            return False
+        mesh = _pyvista_actor_dataset(self._pyvista_spin_actors[0])
+        points = _translated_glyph_points(mesh, np.asarray(offsets)[self._pyvista_spin_rows])
+        if points is None:
+            return False
+        mesh.points = points
+        return True
 
     def _draw_crystallographic_axes(self) -> None:
         if self._shutting_down:
