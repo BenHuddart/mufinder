@@ -319,33 +319,236 @@ def test_dashboard_flush_stream_is_rate_limited_to_min_interval(
     window.close()
 
 
-def test_main_window_cluster_connection_indicator_and_refresh(
-    main_window, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    window = main_window
-
-    monkeypatch.setattr(
-        type(window._cluster_runner),
-        "connected_cluster_name",
-        property(lambda _self: "alpha"),
+def _cluster_widgets(window) -> tuple:
+    return (
+        window._cluster_connection_label,
+        window._cluster_queue_checked_label,
+        window._cluster_refresh_button,
     )
 
-    window._on_cluster_connection_status_changed(True)
-    assert window._cluster_connection_label.text() == "Cluster: connected (alpha)"
-    assert window._cluster_refresh_button.isEnabled() is True
 
+def _shown(window) -> list[bool]:
+    return [not widget.isHidden() for widget in _cluster_widgets(window)]
+
+
+def _project_with_job(
+    window,
+    tmp_path: Path,
+    *,
+    target: str = "SCARF",
+    status: JobStatus = JobStatus.RUNNING,
+    remote_job_id: str | None = "12345",
+):
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "status_bar.mufinder", "StatusBar")
+    job = service.add_job(
+        doc,
+        label="job",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        execution_target=target,
+    )
+    job.status = status
+    job.remote_job_id = remote_job_id
+    window._document = doc
+    window._refresh_jobs_table()
+    return job
+
+
+def _connect_status_bar(window, monkeypatch: pytest.MonkeyPatch, name: str | None) -> None:
+    monkeypatch.setattr(
+        type(window._cluster_runner), "connected_cluster_name", property(lambda _self: name)
+    )
+    monkeypatch.setattr(
+        type(window._cluster_runner), "is_connected", property(lambda _self: name is not None)
+    )
+    window._on_cluster_connection_status_changed(name is not None)
+
+
+def test_status_bar_hides_cluster_widgets_with_no_project(main_window) -> None:
+    assert main_window._document is None
+    assert _shown(main_window) == [False, False, False]
+    assert main_window._cluster_refresh_button.isEnabled() is False
+    assert "nothing to poll" in main_window._cluster_refresh_button.toolTip()
+
+
+def test_status_bar_hides_cluster_widgets_for_a_local_only_project(
+    main_window, tmp_path: Path
+) -> None:
+    _project_with_job(main_window, tmp_path, target="local")
+    assert _shown(main_window) == [False, False, False]
+
+
+def test_status_bar_shows_cluster_widgets_for_an_active_cluster_job(
+    main_window, tmp_path: Path
+) -> None:
+    _project_with_job(main_window, tmp_path)
+
+    assert _shown(main_window) == [True, True, True]
+    assert main_window._cluster_connection_label.text() == "Not connected to SCARF"
+    assert main_window._cluster_queue_checked_label.text() == "Queue last checked: never"
+    assert main_window._cluster_refresh_button.isEnabled() is True
+
+
+def test_status_bar_hides_cluster_widgets_when_the_last_cluster_job_ends(
+    main_window, tmp_path: Path
+) -> None:
+    job = _project_with_job(main_window, tmp_path)
+    job.status = JobStatus.COMPLETED
+    main_window._refresh_jobs_table()
+    assert _shown(main_window) == [False, False, False]
+
+
+def test_status_bar_connection_colour_follows_the_state(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    palette = main_window_module.current_palette()
+    label = window._cluster_connection_label
+    monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
+    _project_with_job(window, tmp_path)
+
+    # Idle: reopened project, nothing has dropped.
+    assert label.text() == "Not connected to SCARF"
+    assert palette.text_muted in label.styleSheet()
+
+    _connect_status_bar(window, monkeypatch, "SCARF")
+    assert label.text() == "Connected to SCARF"
+    assert palette.success in label.styleSheet()
+
+    # A deliberate disconnect is not a drop.
+    _connect_status_bar(window, monkeypatch, None)
+    assert label.text() == "Not connected to SCARF"
+    assert palette.text_muted in label.styleSheet()
+
+    # The runner signals the disconnect, then the failed poll.
+    _connect_status_bar(window, monkeypatch, "SCARF")
+    _connect_status_bar(window, monkeypatch, None)
+    window._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
+    assert label.text() == "Connection to SCARF lost"
+    assert palette.danger in label.styleSheet()
+
+    # Reconnecting clears the drop.
+    _connect_status_bar(window, monkeypatch, "SCARF")
+    assert label.text() == "Connected to SCARF"
+    _connect_status_bar(window, monkeypatch, None)
+    assert palette.text_muted in label.styleSheet()
+
+
+def test_status_bar_opening_a_project_forgets_the_previous_drop_and_check(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
+    _project_with_job(window, tmp_path)
+    _connect_status_bar(window, monkeypatch, "SCARF")
     window._on_cluster_queue_checked("12:34:56")
-    assert "12:34:56" in window._cluster_queue_checked_label.text()
+    _connect_status_bar(window, monkeypatch, None)
+    window._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
+    assert window._cluster_queue_checked_label.text() == "Queue last checked: 12:34:56"
 
+    window._reset_job_tracking_for_project_change()
+    window._refresh_jobs_table()
+
+    assert window._cluster_connection_label.text() == "Not connected to SCARF"
+    assert window._cluster_queue_checked_label.text() == "Queue last checked: never"
+
+
+def test_status_bar_refresh_disabled_with_a_tooltip_when_no_job_can_be_polled(
+    main_window, tmp_path: Path
+) -> None:
+    job = _project_with_job(main_window, tmp_path, status=JobStatus.SUBMITTING, remote_job_id=None)
+    button = main_window._cluster_refresh_button
+
+    assert _shown(main_window) == [True, True, True]
+    assert button.isEnabled() is False
+    assert "no active cluster job has a remote job ID" in button.toolTip()
+
+    job.remote_job_id = "12345"
+    main_window._refresh_jobs_table()
+    assert button.isEnabled() is True
+    assert "Check the cluster queue now" in button.toolTip()
+
+
+def test_status_bar_reports_the_result_of_a_queue_refresh(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    job = _project_with_job(window, tmp_path)
+    _connect_status_bar(window, monkeypatch, "SCARF")
     calls: list[str] = []
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: calls.append("refresh"))
-    window._on_refresh_cluster_queue()
-    assert calls == ["refresh"]
 
-    window._on_cluster_connection_status_changed(False)
-    assert window._cluster_connection_label.text() == "Cluster: disconnected"
-    assert window._cluster_refresh_button.isEnabled() is True
-    window.close()
+    # A periodic poll says nothing in the status bar.
+    window.statusBar().showMessage("Ready")
+    snapshot = SimpleNamespace(
+        checked_at="12:34:56",
+        elapsed_by_job_id={},
+        observations_by_job_id={job.id: "scheduler reports RUNNING"},
+    )
+    window._on_cluster_queue_checked(snapshot)
+    assert window.statusBar().currentMessage() == "Ready"
+
+    window._cluster_refresh_button.click()
+    assert calls == ["refresh"]
+    window._on_cluster_queue_checked(snapshot)
+    assert window.statusBar().currentMessage() == "Refreshed queue: checked 1 job at 12:34:56"
+
+    window.statusBar().showMessage("Ready")
+    window._on_cluster_queue_checked(snapshot)
+    assert window.statusBar().currentMessage() == "Ready"
+
+
+def test_status_bar_refresh_reconnects_when_connected_to_another_cluster(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    _project_with_job(window, tmp_path)
+    _connect_status_bar(window, monkeypatch, "PSI")
+    assert window._cluster_connection_label.text() == "Not connected to SCARF"
+
+    scarf = ClusterConfig(
+        name="SCARF",
+        hostname="ui1.scarf.rl.ac.uk",
+        username="alice",
+        auth_method="key",
+        key_path="",
+        default_working_directory="/work4/isis/alice",
+        queue_system="SLURM",
+        cores_per_node=24,
+        default_walltime="12:00:00",
+        template_script_path="builtin:scarf-slurm",
+    )
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [scarf])
+    connected: list[str] = []
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "connect_to_cluster",
+        lambda config, password=None: connected.append(config.name),
+    )
+    polls: list[str] = []
+    monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: polls.append("poll"))
+
+    window._cluster_refresh_button.click()
+
+    assert connected == ["SCARF"]
+    assert polls == ["poll"]
+
+
+def test_status_bar_reports_a_failed_queue_refresh(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_a, **_k: None)
+    _project_with_job(window, tmp_path)
+    _connect_status_bar(window, monkeypatch, "SCARF")
+    monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: None)
+
+    window._cluster_refresh_button.click()
+    _connect_status_bar(window, monkeypatch, None)
+    window._on_cluster_poll_failed("Queue polling failed for SCARF: timeout")
+
+    assert window.statusBar().currentMessage() == "Failed to check queue on SCARF"
 
 
 def test_main_window_cluster_queue_checked_formats_timezone_aware_times_locally(

@@ -278,6 +278,12 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.persistence.codec import to_jsonable, uuid_or_none
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.cluster_runner import CheckpointProbeResult
+from mufinder.services.cluster_status import (
+    ClusterConnectionTone,
+    cluster_status,
+    is_monitored_cluster_job,
+    monitored_cluster_names,
+)
 from mufinder.services.cluster_submission_planner import (
     ClusterSubmissionPlan,
     can_reuse_cluster_connection,
@@ -636,7 +642,10 @@ class MainWindow(QMainWindow):
         self._project_home_page: QWidget | None = None
         self._project_home: ProjectHomeWidget | None = None
         self._project_home_button: QToolButton | None = None
-        self._cluster_connected = False
+        self._cluster_last_connected_name: str | None = None
+        self._cluster_lost_names: set[str] = set()
+        self._cluster_status_tone = ClusterConnectionTone.NEUTRAL
+        self._queue_refreshes_pending = 0
         self._magnetic_field_workspace_widgets: dict[str, MagneticFieldWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
         self._quantum_analysis_dialogs: dict[UUID, QuantumPhononAnalysisDialog] = {}
@@ -1164,10 +1173,9 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._build_menu()
         self.setStatusBar(QStatusBar(self))
-        self._cluster_connection_label = QLabel("Cluster: disconnected", self)
+        self._cluster_connection_label = QLabel(self)
         self._cluster_queue_checked_label = QLabel("Queue last checked: never", self)
         self._cluster_refresh_button = QPushButton("Refresh Queue", self)
-        self._cluster_refresh_button.setEnabled(True)
         self._cluster_refresh_button.clicked.connect(self._on_refresh_cluster_queue)
         self._keyword_catalog_guard = KeywordCatalogGuard(
             parent=self,
@@ -1178,7 +1186,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._cluster_connection_label)
         self.statusBar().addPermanentWidget(self._cluster_queue_checked_label)
         self.statusBar().addPermanentWidget(self._cluster_refresh_button)
-        self._refresh_cluster_connection_label_colour()
+        self._sync_cluster_status_widgets()
         self.statusBar().showMessage("Ready")
 
     def _build_layout(self) -> None:
@@ -2057,6 +2065,9 @@ class MainWindow(QMainWindow):
         # inside clear_tracked_jobs so the watchdog observes the drop at once.
         self._cluster_runner.clear_tracked_jobs()
         self._sync_cluster_tracking_from_document()
+        self._cluster_lost_names.clear()
+        self._queue_refreshes_pending = 0
+        self._cluster_queue_checked_label.setText("Queue last checked: never")
 
         # Reconcile local jobs that were still in progress when MuFinder closed.
         # This must run BEFORE the jobs table is rebuilt below so the user never
@@ -2477,6 +2488,7 @@ class MainWindow(QMainWindow):
             self._muon_relaxation_view.set_runtime_states({})
             self._uep_view.set_runtime_states({})
             self._refresh_relaxation_analysis_context()
+            self._sync_cluster_status_widgets()
             return
 
         now = utc_now()
@@ -2488,6 +2500,7 @@ class MainWindow(QMainWindow):
         self._job_progress.follow(desired_jobs)
         self._sync_jobs_table_rows(desired_jobs, now=now)
         self._sync_job_runtime_timer()
+        self._sync_cluster_status_widgets()
 
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
@@ -6237,25 +6250,48 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Cancelled cluster job {job.label}")
 
     def _on_cluster_connection_status_changed(self, connected: bool) -> None:
-        self._cluster_connected = bool(connected)
         if connected:
-            cluster_name = self._cluster_runner.connected_cluster_name or "unknown"
-            self._cluster_connection_label.setText(f"Cluster: connected ({cluster_name})")
-            self._refresh_cluster_connection_label_colour()
-            self._cluster_refresh_button.setEnabled(True)
-            return
+            name = self._cluster_runner.connected_cluster_name
+            self._cluster_last_connected_name = name
+            self._cluster_lost_names.discard((name or "").strip().casefold())
+        else:
+            # Polls are serial, so any poll requested before this has already reported.
+            self._queue_refreshes_pending = 0
+            self._cluster_elapsed_seconds_by_job = {}
+            self._cluster_elapsed_checked_at = None
+        self._sync_cluster_status_widgets()
 
-        self._cluster_elapsed_seconds_by_job = {}
-        self._cluster_elapsed_checked_at = None
-        self._cluster_connection_label.setText("Cluster: disconnected")
+    def _sync_cluster_status_widgets(self) -> None:
+        """Show the cluster widgets only while the project has cluster jobs to follow."""
+
+        status = cluster_status(
+            self._document.jobs.values() if self._document is not None else (),
+            connected_cluster=self._cluster_runner.connected_cluster_name,
+            lost_clusters=self._cluster_lost_names,
+        )
+        self._cluster_connection_label.setText(status.connection_text)
+        self._cluster_status_tone = status.tone
         self._refresh_cluster_connection_label_colour()
-        self._cluster_queue_checked_label.setText("Queue last checked: disconnected")
-        self._cluster_refresh_button.setEnabled(True)
+        self._cluster_refresh_button.setEnabled(status.can_poll)
+        self._cluster_refresh_button.setToolTip(status.refresh_tooltip)
+        for widget in (
+            self._cluster_connection_label,
+            self._cluster_queue_checked_label,
+            self._cluster_refresh_button,
+        ):
+            widget.setVisible(status.visible)
 
     def _refresh_cluster_connection_label_colour(self) -> None:
         palette = current_palette()
-        colour = palette.success if self._cluster_connected else palette.danger
-        self._cluster_connection_label.setStyleSheet(f"color: {colour};")
+        colour = {
+            ClusterConnectionTone.NEUTRAL: palette.text_muted,
+            ClusterConnectionTone.CONNECTED: palette.success,
+            ClusterConnectionTone.LOST: palette.danger,
+        }[self._cluster_status_tone]
+        # This runs on every dashboard flush; only an actual change re-styles.
+        style = f"color: {colour};"
+        if self._cluster_connection_label.styleSheet() != style:
+            self._cluster_connection_label.setStyleSheet(style)
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
         # Stamp per-job monitor metadata (last_checked_at/source/message) from
@@ -6308,10 +6344,25 @@ class MainWindow(QMainWindow):
         else:
             stamp = "unknown"
         self._cluster_queue_checked_label.setText(f"Queue last checked: {stamp}")
+        if self._queue_refreshes_pending:
+            self._queue_refreshes_pending -= 1
+            checked = len(getattr(checked_at, "observations_by_job_id", ()))
+            self.statusBar().showMessage(
+                f"Refreshed queue: checked {plural(checked, 'job')} at {stamp}"
+            )
         self._sync_job_runtime_timer()
         self._refresh_active_job_runtime_cells()
 
     def _on_cluster_poll_failed(self, message: str) -> None:
+        # A failed poll is what closes a connection without being asked to, so
+        # this is the drop the connection label reports (the runner signals the
+        # disconnect first, which also happens on every deliberate reconnect).
+        name = self._cluster_last_connected_name
+        if name:
+            self._cluster_lost_names.add(name.strip().casefold())
+        self._queue_refreshes_pending = 0
+        self._sync_cluster_status_widgets()
+        self.statusBar().showMessage(f"Failed to check queue on {name or 'the cluster'}")
         show_detailed_warning(
             self,
             "Queue polling failed",
@@ -6351,11 +6402,13 @@ class MainWindow(QMainWindow):
     def _on_refresh_cluster_queue(self) -> None:
         try:
             self._sync_cluster_tracking_from_document()
-            if not self._cluster_runner.is_connected:
+            if not self._connected_to_a_monitored_cluster():
                 self._refresh_queue_for_active_dashboard_clusters()
                 return
-            self._cluster_runner.refresh_queue()
+            self._request_queue_poll()
         except Exception as exc:  # noqa: BLE001
+            self._queue_refreshes_pending = 0
+            self.statusBar().showMessage("Failed to refresh queue")
             show_detailed_warning(
                 self,
                 "Queue refresh failed",
@@ -6363,14 +6416,23 @@ class MainWindow(QMainWindow):
                 informative_text="Open Details to inspect the full queue refresh error.",
             )
 
-    def _refresh_queue_for_active_dashboard_clusters(self) -> None:
-        if self._document is None:
-            self._cluster_runner.refresh_queue()
-            return
+    def _connected_to_a_monitored_cluster(self) -> bool:
+        # A connection left over from another project would poll none of this
+        # project's jobs, so it counts as not connected.
+        if not self._cluster_runner.is_connected:
+            return False
+        connected = (self._cluster_runner.connected_cluster_name or "").strip().casefold()
+        return connected in {name.casefold() for name in self._active_dashboard_cluster_targets()}
 
+    def _request_queue_poll(self) -> None:
+        # The poll runs on the cluster worker; its result reaches the status bar
+        # through the queue_checked or poll_failed signal.
+        self._queue_refreshes_pending += 1
+        self._cluster_runner.refresh_queue()
+
+    def _refresh_queue_for_active_dashboard_clusters(self) -> None:
         target_clusters = self._active_dashboard_cluster_targets()
         if not target_clusters:
-            self._cluster_runner.refresh_queue()
             return
 
         configured = load_cluster_configs(self._settings)
@@ -6387,7 +6449,7 @@ class MainWindow(QMainWindow):
                 continue
             try:
                 self._connect_to_cluster_with_trust(config, credentials=SSHCredentials())
-                self._cluster_runner.refresh_queue()
+                self._request_queue_poll()
                 refreshed.append(config.name)
             except Exception as exc:  # noqa: BLE001
                 auth_method = config.auth_method.strip().lower()
@@ -6403,7 +6465,7 @@ class MainWindow(QMainWindow):
                         continue
                     try:
                         self._connect_to_cluster_with_trust(config, credentials=credentials)
-                        self._cluster_runner.refresh_queue()
+                        self._request_queue_poll()
                         refreshed.append(config.name)
                         continue
                     except Exception as retry_exc:  # noqa: BLE001
@@ -6414,9 +6476,7 @@ class MainWindow(QMainWindow):
                 failures.append(f"- {config.name}: {format_cluster_connection_error(config, exc)}")
 
         if refreshed:
-            self.statusBar().showMessage(
-                "Queue refreshed for clusters: " + ", ".join(sorted(set(refreshed)))
-            )
+            self.statusBar().showMessage("Reconnected to " + ", ".join(sorted(set(refreshed))))
 
         if failures:
             show_detailed_warning(
@@ -6425,26 +6485,14 @@ class MainWindow(QMainWindow):
                 "Some clusters could not be refreshed:\n" + "\n".join(failures),
                 informative_text="Open Details to inspect the full queue refresh failures.",
             )
+            self.statusBar().showMessage(
+                f"Failed to refresh queue on {plural(len(failures), 'cluster')}"
+            )
 
     def _active_dashboard_cluster_targets(self) -> list[str]:
         if self._document is None:
             return []
-
-        targets: list[str] = []
-        seen: set[str] = set()
-        for job in self._document.jobs.values():
-            # A job awaiting scheduler reappearance is polled like an active one.
-            if job.status not in ACTIVE_JOB_STATUSES and not awaits_scheduler_reappearance(job):
-                continue
-            target = job.execution_target.strip()
-            if not target or target.casefold() == "local":
-                continue
-            key = target.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            targets.append(target)
-        return targets
+        return monitored_cluster_names(self._document.jobs.values())
 
     def _on_job_watchdog_tick(self) -> None:
         """Stop active jobs that no runner is tracking (two-tick confirmed).
@@ -6505,7 +6553,7 @@ class MainWindow(QMainWindow):
             return
 
         for job in self._document.jobs.values():
-            if job.status in ACTIVE_JOB_STATUSES or awaits_scheduler_reappearance(job):
+            if is_monitored_cluster_job(job):
                 self._track_cluster_job(job)
 
     def _track_cluster_job(self, job: Job) -> None:
