@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton, QSpinBox, QTableWidget
+
+from mufinder.app.magnetic_field_widget import MagneticFieldWidget
+from mufinder.app.polarisation_widget import PolarisationWidget
 from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_PAGE_OWNER,
     store_magnetic_field_results,
@@ -12,6 +16,7 @@ from mufinder.services.polarisation_simulations import polarisation_simulations
 from mufinder.services.project_summary import COMPLETION_CHECKS
 from tests.support.field_results import field_result
 from tests.support.main_window import select_route, window_with_host
+from tests.support.qt import find_control
 
 
 def _field_form(*totals: tuple[float, float, float]) -> dict[str, object]:
@@ -38,6 +43,26 @@ def _window_with_fields(tmp_path: Path):
     return window, service, document
 
 
+def _polarisation_page(window) -> PolarisationWidget:
+    (page,) = window.findChildren(PolarisationWidget)
+    return page
+
+
+def _polarisation_button(window, title: str) -> QPushButton:
+    """The ``Polarisation →`` button of the Magnetic Fields page or workspace called ``title``."""
+
+    (page,) = (
+        page
+        for page in window.findChildren(MagneticFieldWidget)
+        if any(label.text() == title for label in page.findChildren(QLabel))
+    )
+    return find_control(page, "Polarisation →", QPushButton)
+
+
+def _checked_owners(page: PolarisationWidget) -> list[str]:
+    return [source["owner"] for source in page.collect_state()["sources"]]
+
+
 def test_polarisation_route_shows_the_page_with_the_projects_field_results(
     qapp, tmp_path: Path
 ) -> None:
@@ -45,8 +70,9 @@ def test_polarisation_route_shows_the_page_with_the_projects_field_results(
 
     select_route(window, "polarisation")
 
-    assert window._main_stack.currentWidget() is window._polarisation_view
-    assert window._polarisation_view._sources_table.rowCount() == 2
+    page = _polarisation_page(window)
+    assert page.isVisibleTo(window)
+    assert find_control(page, "Field Results", QTableWidget).rowCount() == 2
     window.close()
 
 
@@ -54,18 +80,17 @@ def test_polarisation_buttons_open_the_page_with_their_fields_selected(
     qapp, tmp_path: Path
 ) -> None:
     window, _service, _document = _window_with_fields(tmp_path)
-    page_button = window._magnetic_field_view._polarisation_button
+    page = _polarisation_page(window)
+    page_button = _polarisation_button(window, "Magnetic Fields")
     assert page_button.isEnabled()
 
-    window._magnetic_field_workspace_widgets["ws-1"]._polarisation_button.click()
+    _polarisation_button(window, "Second site").click()
 
-    assert window._main_stack.currentWidget() is window._polarisation_view
-    assert [s.owner for s in window._polarisation_view._checked_sources()] == ["ws-1"]
+    assert page.isVisibleTo(window)
+    assert _checked_owners(page) == ["ws-1"]
 
     page_button.click()
-    assert [s.owner for s in window._polarisation_view._checked_sources()] == [
-        MAGNETIC_FIELD_PAGE_OWNER
-    ]
+    assert _checked_owners(page) == [MAGNETIC_FIELD_PAGE_OWNER]
     window.close()
 
 
@@ -74,11 +99,11 @@ def test_a_simulation_is_saved_marks_the_stage_and_its_form_reloads(qapp, tmp_pa
 
     window, service, document = _window_with_fields(tmp_path)
     select_route(window, "polarisation")
-    page = window._polarisation_view
-    page._time_points.setValue(201)
-    page._title_edit.setText("ZF")
+    page = _polarisation_page(window)
+    find_control(page, "Points", QSpinBox).setValue(201)
+    find_control(page, "Name", QLineEdit).setText("ZF")
 
-    page._add_button.click()
+    find_control(page, "Add Simulation", QPushButton).click()
 
     assert COMPLETION_CHECKS["polarisation"](document)
     reloaded = service.load_project(document.project_root)
@@ -89,7 +114,7 @@ def test_a_simulation_is_saved_marks_the_stage_and_its_form_reloads(qapp, tmp_pa
     reopened = MainWindow()
     reopened._document = reloaded
     reopened._refresh_ui_after_project_change()
-    assert reopened._polarisation_view.selected_simulation_id() == record.simulation_id
-    assert reopened._polarisation_view.settings().time_points == 201
+    assert _polarisation_page(reopened).selected_simulation_id() == record.simulation_id
+    assert _polarisation_page(reopened).settings().time_points == 201
     window.close()
     reopened.close()

@@ -9,6 +9,14 @@ weighted selection of them with
 :func:`~mufinder.science.polarisation_simulation.simulate_polarisation`. A
 source's weight is shared equally by the equivalent positions it holds.
 
+:func:`run_polarisation_simulation` is two steps, for callers that run the
+simulation on a worker thread: :func:`prepare_polarisation_simulation` reads
+everything the simulation needs from the project into a
+:class:`PolarisationSimulationRequest`, and
+:func:`run_prepared_polarisation_simulation` simulates the request, which
+holds its own copy of the fields, without reading the project, so the project can change, or the run be abandoned,
+while it computes.
+
 Each simulation is a ``muon_polarisation`` record whose ``data["owner"]`` is
 :func:`simulation_owner` of its id, so
 :func:`~mufinder.services.magnetic_field_results.polarisation_result` reads its
@@ -25,12 +33,13 @@ and can be recalculated once every source has fields again.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from mufinder.domain.models import Result
+from mufinder.domain.models import Result, Structure
 from mufinder.science.magnetic_fields import (
     MagneticFieldDistributionResult,
     MagneticFieldResult,
@@ -162,17 +171,45 @@ class PolarisationSimulationRecord:
 
 @dataclass(frozen=True, slots=True)
 class SimulationSummary:
-    """What a stored simulation was asked for, without its traces."""
+    """What a stored simulation was asked for, without its traces.
+
+    ``result_id`` is the id of the stored record, which changes whenever the
+    simulation is stored with different data, so a reader can keep a decoded
+    simulation until its record changes.
+    """
 
     simulation_id: str
     title: str
     settings: PolarisationSettings
     sources: tuple[SimulationSource, ...]
     site_source: str | None = None
+    result_id: str = ""
 
     @property
     def estimate(self) -> bool:
         return is_unrelaxed_site_source(self.site_source)
+
+
+@dataclass(frozen=True, slots=True)
+class PolarisationSimulationRequest:
+    """What one simulation reads, taken from the project when it was asked for.
+
+    ``sources`` name the field record each source is simulated from;
+    ``field_results`` and ``site_sources`` hold each record's decoded fields
+    and site source, in the same order, so the request shares no data with
+    the project. ``lattice_vectors`` are the host's; ``host`` is a copy of the
+    host structure when the settings sum nuclear widths, and ``None``
+    otherwise.
+    """
+
+    simulation_id: str
+    title: str
+    settings: PolarisationSettings
+    sources: tuple[SimulationSource, ...]
+    field_results: tuple[tuple[FieldResult, ...], ...]
+    site_sources: tuple[str | None, ...]
+    lattice_vectors: tuple[tuple[float, float, float], ...]
+    host: Structure | None
 
 
 def simulation_owner(simulation_id: str) -> str:
@@ -198,7 +235,7 @@ def field_results_for_source(document: ProjectDocument, owner: str) -> list[Fiel
     record = magnetic_field_result(document, owner, MAGNETIC_FIELD_RESULT_TYPE)
     if record is None:
         raise PolarisationError(f"{owner!r} has no field results")
-    return _field_results(record)
+    return _field_results(record.data if isinstance(record.data, Mapping) else {})
 
 
 def run_polarisation_simulation(
@@ -215,6 +252,32 @@ def run_polarisation_simulation(
     from. ``simulation_id`` recalculates an existing simulation in place.
     """
 
+    return run_prepared_polarisation_simulation(
+        prepare_polarisation_simulation(
+            document,
+            title=title,
+            settings=settings,
+            sources=sources,
+            simulation_id=simulation_id,
+        )
+    )
+
+
+def prepare_polarisation_simulation(
+    document: ProjectDocument,
+    *,
+    title: str,
+    settings: PolarisationSettings,
+    sources: Sequence[SimulationSource],
+    simulation_id: str | None = None,
+) -> PolarisationSimulationRequest:
+    """Read what simulating ``sources`` with ``settings`` needs from ``document``.
+
+    Refuses, with :class:`PolarisationError`, a selection without sources, a
+    project without a host structure, a source selected twice or without
+    field results, and a negative weight.
+    """
+
     if not sources:
         raise PolarisationError("select at least one field result")
     host = active_host_structure(document)
@@ -224,9 +287,8 @@ def run_polarisation_simulation(
     if len(set(owners)) != len(owners):
         raise PolarisationError("a field result is selected more than once")
     titles = _source_titles(document)
-    results: list[FieldResult] = []
-    weights: list[float] = []
     used: list[SimulationSource] = []
+    field_results: list[tuple[FieldResult, ...]] = []
     site_sources: list[str | None] = []
     for source in sources:
         record = (
@@ -238,9 +300,6 @@ def run_polarisation_simulation(
             raise PolarisationError(f"{source.title or source.owner} has no field results")
         if not source.weight >= 0.0:
             raise PolarisationError("source weights must be >= 0")
-        entries = _field_results(record)
-        results.extend(entries)
-        weights.extend([float(source.weight) / len(entries)] * len(entries))
         used.append(
             SimulationSource(
                 owner=source.owner,
@@ -249,11 +308,38 @@ def run_polarisation_simulation(
                 weight=float(source.weight),
             )
         )
-        site_sources.append(field_result_site_source(record.data))
+        data = record.data if isinstance(record.data, Mapping) else {}
+        field_results.append(tuple(_field_results(data)))
+        site_sources.append(field_result_site_source(data))
+    return PolarisationSimulationRequest(
+        simulation_id=simulation_id or uuid4().hex,
+        title=title.strip() or "Simulation",
+        settings=settings,
+        sources=tuple(used),
+        field_results=tuple(field_results),
+        site_sources=tuple(site_sources),
+        lattice_vectors=tuple((float(x), float(y), float(z)) for x, y, z in host.lattice_vectors),
+        host=copy.deepcopy(host) if settings.sigma_from_nuclear_widths else None,
+    )
+
+
+def run_prepared_polarisation_simulation(
+    request: PolarisationSimulationRequest,
+) -> PolarisationSimulationRecord:
+    """Simulate ``request`` and return the record, not yet stored; reads no project."""
+
+    settings = request.settings
+    host = request.host
+    site_sources = request.site_sources
+    results: list[FieldResult] = []
+    weights: list[float] = []
+    for source, entries in zip(request.sources, request.field_results, strict=True):
+        results.extend(entries)
+        weights.extend([float(source.weight) / len(entries)] * len(entries))
     if sum(weights) <= 0.0:
         raise PolarisationError("at least one source needs a positive weight")
     tensors = None
-    if settings.sigma_from_nuclear_widths:
+    if settings.sigma_from_nuclear_widths and host is not None:
         # Equivalent translations of one site share a position: sum it once.
         by_position: dict[tuple[float, ...], NuclearWidthTensors] = {}
         tensors = []
@@ -267,15 +353,15 @@ def run_polarisation_simulation(
     simulation = simulate_polarisation(
         settings,
         results,
-        lattice_vectors=host.lattice_vectors,
+        lattice_vectors=request.lattice_vectors,
         site_weights=weights,
         nuclear_width_tensors=tensors,
     )
     return PolarisationSimulationRecord(
-        simulation_id=simulation_id or uuid4().hex,
-        title=title.strip() or "Simulation",
+        simulation_id=request.simulation_id,
+        title=request.title,
         settings=settings,
-        sources=tuple(used),
+        sources=request.sources,
         simulation=simulation,
         site_source=UEP_SITE_SOURCE
         if any(is_unrelaxed_site_source(item) for item in site_sources)
@@ -417,8 +503,7 @@ def _source_titles(document: ProjectDocument) -> dict[str, str]:
     return titles
 
 
-def _field_results(record: Result) -> list[FieldResult]:
-    data = record.data if isinstance(record.data, Mapping) else {}
+def _field_results(data: Mapping[str, Any]) -> list[FieldResult]:
     kind = data.get("kind")
     payloads = data.get("results")
     if not isinstance(payloads, list) or not payloads:
@@ -483,6 +568,7 @@ def _simulation_header(result: Result) -> tuple[SimulationSummary, Mapping[str, 
         settings=settings,
         sources=sources,
         site_source=str(data["site_source"]) if data.get("site_source") else None,
+        result_id=str(result.id),
     )
     return summary, data
 

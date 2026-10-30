@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app import workflow_table_utils
 from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
+from mufinder.app.decimal_input import VectorInput
 from mufinder.app.export_dialogs import (
     DATA_TEXT_FORMATS,
     ask_save_path,
@@ -73,8 +74,9 @@ from mufinder.services.polarisation_simulations import (
     field_sources,
     polarisation_simulation,
     polarisation_simulation_summaries,
+    prepare_polarisation_simulation,
     remove_polarisation_simulation,
-    run_polarisation_simulation,
+    run_prepared_polarisation_simulation,
     stale_sources,
     store_polarisation_simulation,
 )
@@ -103,61 +105,6 @@ _TABLE_MAX_HEIGHT = 150
 _SIMULATION_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
 
-class VectorInput(QWidget):
-    """Three decimal boxes for a vector; empty boxes count as zero.
-
-    ``name`` names each box for screen readers as ``"<name> x"`` and so on.
-    """
-
-    def __init__(
-        self,
-        values: Sequence[float] = (0.0, 0.0, 0.0),
-        *,
-        name: str,
-        tooltip: str = "",
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        style_inline_group(self)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self._edits = []
-        for axis in ("x", "y", "z"):
-            edit = QLineEdit(self)
-            edit.setValidator(QDoubleValidator(edit))
-            edit.setMaximumWidth(64)
-            edit.setToolTip(f"{tooltip} ({axis})" if tooltip else axis)
-            edit.setAccessibleName(f"{name} {axis}")
-            layout.addWidget(edit)
-            self._edits.append(edit)
-        layout.addStretch(1)
-        self.set_value(values)
-
-    @property
-    def edits(self) -> tuple[QLineEdit, ...]:
-        return tuple(self._edits)
-
-    def value(self, name: str) -> tuple[float, float, float]:
-        """Return the vector; raises ``ValueError`` naming ``name`` for a non-number."""
-
-        components = []
-        for edit in self._edits:
-            text = edit.text().strip()
-            try:
-                value = float(text) if text else 0.0
-            except ValueError as exc:
-                raise ValueError(f"{name} components must be decimal numbers") from exc
-            if not np.isfinite(value):
-                raise ValueError(f"{name} components must be finite")
-            components.append(value)
-        x, y, z = components
-        return (x, y, z)
-
-    def set_value(self, values: Sequence[float]) -> None:
-        for edit, value in zip(self._edits, values, strict=True):
-            edit.setText(f"{float(value):g}")
-
-
 class PolarisationWidget(QWidget):
     """Simulate the muon polarisation and its spectrum from stored field results.
 
@@ -176,8 +123,14 @@ class PolarisationWidget(QWidget):
         self._document: ProjectDocument | None = None
         self._sources: list[FieldSource] = []
         self._restoring = False
-        # Decoded simulations by id, cleared whenever the list is re-read.
-        self._record_cache: dict[str, PolarisationSimulationRecord] = {}
+        # The selected simulation, decoded, by id, with the id of the stored record
+        # it was decoded from; it is dropped once its record changes or goes, or
+        # another simulation is decoded.
+        self._record_cache: dict[str, tuple[str, PolarisationSimulationRecord]] = {}
+        # The stored record id of each listed simulation.
+        self._result_ids: dict[str, str] = {}
+        # What the plot shows: the stored record (None for none) and the palette.
+        self._drawn: tuple[str | None, object] | None = None
         # The last settings the form held that were valid, saved while a box is not.
         self._last_valid_settings = PolarisationSettings()
 
@@ -262,15 +215,32 @@ class PolarisationWidget(QWidget):
         self._build_layout(title, subtitle)
         self._show_settings(PolarisationSettings())
         self._draw(None)
+        self._drawn = (None, current_palette())
 
     # --- Public API -------------------------------------------------------------
 
-    def set_document(self, document: ProjectDocument | None) -> None:
-        """Show ``document``'s field results and simulations."""
+    def set_document(
+        self,
+        document: ProjectDocument | None,
+        form_state: Mapping[str, object] | None = None,
+    ) -> None:
+        """Show ``document``'s field results and simulations.
 
+        ``form_state``, when given, is the form to show with them, restored as
+        :meth:`set_form_state` does, so the plot is drawn once, for the
+        simulation the form selects.
+        """
+
+        if document is not self._document:
+            self._record_cache.clear()
+            self._drawn = None
         self._document = document
         self._refresh_sources()
-        self._refresh_simulations()
+        if form_state is None:
+            self._refresh_simulations()
+        else:
+            self._refresh_simulations(show=False)
+            self.set_form_state(form_state)
 
     def refresh(self) -> None:
         """Re-read the field results and simulations, keeping the selection and checks."""
@@ -343,7 +313,7 @@ class PolarisationWidget(QWidget):
                     SimulationSource(source.owner, source.record_id, source.title)
                     for source in self._sources[:1]
                 ]
-            self._show_sources(sources)
+            self._fill_sources(sources)
             selected = state.get("selected_simulation")
             self._simulations_table.clearSelection()
             if selected:
@@ -510,11 +480,11 @@ class PolarisationWidget(QWidget):
             self._title_edit,
             self._apodisation_sigma,
             self._apodisation_lambda,
-            *self._spin.edits,
-            *self._detector.edits,
-            *self._along_z.edits,
-            *self._along_x.edits,
-            *self._added_field.edits,
+            self._spin,
+            self._detector,
+            self._along_z,
+            self._along_x,
+            self._added_field,
         ):
             edit.textChanged.connect(self._on_setting_changed)
 
@@ -702,9 +672,6 @@ class PolarisationWidget(QWidget):
             table.blockSignals(False)
         self._sync_applied_field()
 
-    def _show_sources(self, sources: Sequence[SimulationSource]) -> None:
-        self._fill_sources(list(sources))
-
     def _set_checked_owners(self, owners: set[str]) -> None:
         self._fill_sources(
             [
@@ -758,11 +725,17 @@ class PolarisationWidget(QWidget):
 
     # --- Simulations --------------------------------------------------------------
 
-    def _refresh_simulations(self, keep: str | None = None) -> None:
-        self._record_cache.clear()
+    def _refresh_simulations(self, keep: str | None = None, *, show: bool = True) -> None:
         records = (
             polarisation_simulation_summaries(self._document) if self._document is not None else []
         )
+        self._result_ids = {record.simulation_id: record.result_id for record in records}
+        # Keep each decoded simulation whose stored record is unchanged.
+        self._record_cache = {
+            simulation_id: entry
+            for simulation_id, entry in self._record_cache.items()
+            if self._result_ids.get(simulation_id) == entry[0]
+        }
         table = self._simulations_table
         table.blockSignals(True)
         try:
@@ -790,7 +763,8 @@ class PolarisationWidget(QWidget):
                 self._select_simulation(keep)
         finally:
             table.blockSignals(False)
-        self._show_selected_simulation()
+        if show:
+            self._show_selected_simulation()
 
     def _select_simulation(self, simulation_id: str) -> None:
         for row in range(self._simulations_table.rowCount()):
@@ -803,11 +777,13 @@ class PolarisationWidget(QWidget):
         simulation_id = self.selected_simulation_id()
         if self._document is None or simulation_id is None:
             return None
-        record = self._record_cache.get(simulation_id)
-        if record is None:
-            record = polarisation_simulation(self._document, simulation_id)
-            if record is not None:
-                self._record_cache[simulation_id] = record
+        result_id = self._result_ids.get(simulation_id, "")
+        cached = self._record_cache.get(simulation_id)
+        if cached is not None and cached[0] == result_id:
+            return cached[1]
+        record = polarisation_simulation(self._document, simulation_id)
+        if record is not None:
+            self._record_cache = {simulation_id: (result_id, record)}
         return record
 
     def _on_simulation_selected(self) -> None:
@@ -817,7 +793,7 @@ class PolarisationWidget(QWidget):
             try:
                 self._show_settings(record.settings)
                 self._title_edit.setText(record.title)
-                self._show_sources(record.sources)
+                self._fill_sources(record.sources)
             finally:
                 self._restoring = False
         self._show_selected_simulation()
@@ -825,7 +801,14 @@ class PolarisationWidget(QWidget):
 
     def _show_selected_simulation(self) -> None:
         record = self._selected_record()
-        self._draw(record)
+        # Redraw only when the plot would change: another record, or another theme.
+        drawn = (
+            None if record is None else self._result_ids.get(record.simulation_id),
+            current_palette(),
+        )
+        if drawn != self._drawn:
+            self._draw(record)
+            self._drawn = drawn
         stale = stale_sources(self._document, record) if record and self._document else []
         if stale:
             names = ", ".join(source.title for source in stale)
@@ -860,15 +843,18 @@ class PolarisationWidget(QWidget):
         sources = self._checked_sources()
         title = self._title_edit.text().strip() or self._unused_title()
         try:
+            # The worker simulates a copy of what it needs and never reads the
+            # project, which may change, or be closed, once the run is cancelled.
+            request = prepare_polarisation_simulation(
+                document,
+                title=title,
+                settings=settings,
+                sources=sources,
+                simulation_id=simulation_id,
+            )
             record = run_blocking_call(
                 self,
-                lambda: run_polarisation_simulation(
-                    document,
-                    title=title,
-                    settings=settings,
-                    sources=sources,
-                    simulation_id=simulation_id,
-                ),
+                lambda: run_prepared_polarisation_simulation(request),
                 title="Polarisation",
                 description="Simulating the muon polarisation…",
                 cancellable=True,

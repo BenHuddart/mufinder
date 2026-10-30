@@ -324,6 +324,10 @@ of the Magnetic Fields page and each saved workspace as sources
 ``muon_polarisation`` record of its own (``store_polarisation_simulation``,
 ``polarisation_simulations``). A simulation records the field record of each
 source, so ``stale_sources`` names the sources recalculated or removed since.
+A caller that simulates on a worker thread splits the run in two:
+``prepare_polarisation_simulation`` reads what the simulation needs from the
+project, and ``run_prepared_polarisation_simulation`` simulates that request
+without reading the project again.
 
 
 Model spin dynamics

@@ -24,8 +24,10 @@ from mufinder.services.polarisation_simulations import (
     field_sources,
     polarisation_simulation,
     polarisation_simulations,
+    prepare_polarisation_simulation,
     remove_polarisation_simulation,
     run_polarisation_simulation,
+    run_prepared_polarisation_simulation,
     simulation_owner,
     stale_sources,
     store_polarisation_simulation,
@@ -382,3 +384,49 @@ def test_summaries_list_simulations_without_their_traces(document) -> None:
     assert summary.sources == record.sources
     assert summary.estimate
     assert stale_sources(document, summary) == []
+    # The record id stays while the simulation is stored unchanged and moves with new data.
+    store_polarisation_simulation(document, record)
+    assert polarisation_simulation_summaries(document)[0].result_id == summary.result_id
+    changed = run_polarisation_simulation(
+        document,
+        title="Renamed",
+        settings=SETTINGS,
+        sources=[SimulationSource("ws-1", "", "")],
+        simulation_id=record.simulation_id,
+    )
+    store_polarisation_simulation(document, changed)
+    assert polarisation_simulation_summaries(document)[0].result_id not in {"", summary.result_id}
+
+
+def test_a_prepared_simulation_keeps_the_fields_it_was_made_with(document) -> None:
+    sources = [SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "")]
+    expected = run_polarisation_simulation(
+        document, title="ZF", settings=SETTINGS, sources=sources, simulation_id="sim"
+    )
+    request = prepare_polarisation_simulation(
+        document, title=" ZF ", settings=SETTINGS, sources=sources, simulation_id="sim"
+    )
+
+    # The project changes, and loses its host, while the request is simulated.
+    _store_fields(document, MAGNETIC_FIELD_PAGE_OWNER, _commensurate(_field((0.0, 0.05, 0.0))))
+    document.structures.clear()
+    record = run_prepared_polarisation_simulation(request)
+
+    assert record.title == "ZF"
+    assert record.sources == expected.sources
+    assert stale_sources(document, record) == list(record.sources)
+    np.testing.assert_allclose(
+        record.simulation.static.polarisation, expected.simulation.static.polarisation
+    )
+
+
+def test_preparing_a_simulation_refuses_what_it_cannot_run(document) -> None:
+    with pytest.raises(PolarisationError, match="select at least one field result"):
+        prepare_polarisation_simulation(document, title="", settings=SETTINGS, sources=[])
+    with pytest.raises(PolarisationError, match="weights must be >= 0"):
+        prepare_polarisation_simulation(
+            document,
+            title="",
+            settings=SETTINGS,
+            sources=[SimulationSource(MAGNETIC_FIELD_PAGE_OWNER, "", "", weight=-1.0)],
+        )

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.decimal_input import DecimalLineEdit, VectorInput
 from mufinder.app.demagnetizing_dialogs import (
     ADVANCED_DEMAG_SHAPES,
     DemagnetizingFieldAdvancedDialog,
@@ -144,6 +144,16 @@ def _distribution_label(calculation_parameters: object) -> str:
 
 
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
+# The page's measured-magnetisation and applied-field boxes: their range and width, and the
+# unit label that follows them in the row.
+_PAGE_VECTOR_BOXES: dict[str, Any] = {
+    "text": "0.0",
+    "minimum": -1_000.0,
+    "maximum": 1_000.0,
+    "decimals": 6,
+    "box_width": 80,
+    "stretch": False,
+}
 
 
 CONVERGENCE_GUIDANCE_TEXT = (
@@ -509,18 +519,24 @@ class MagneticFieldWidget(QWidget):
             "instead of the model's uniform moment, which assumes a single domain."
         )
         self._measured_magnetization_check.toggled.connect(self._on_measured_magnetization_toggled)
-        self._measured_magnetization_inputs = tuple(
-            self._measured_magnetization_input(axis) for axis in ("x", "y", "z")
+        self._measured_magnetization_input = VectorInput(
+            name="Measured Bulk Magnetisation",
+            tooltip=lambda axis: (
+                f"Cartesian {axis} component of the measured bulk magnetisation, "
+                "in μB per formula unit."
+            ),
+            **_PAGE_VECTOR_BOXES,
         )
-        for edit in self._measured_magnetization_inputs:
-            edit.textChanged.connect(self._on_form_setting_changed)
+        self._measured_magnetization_input.setEnabled(False)
+        self._measured_magnetization_input.textChanged.connect(self._on_form_setting_changed)
         self._measured_magnetization_unit = QLabel("μB per formula unit")
         style_hint_text(self._measured_magnetization_unit)
-        self._applied_field_inputs = tuple(
-            self._applied_field_input(axis) for axis in ("x", "y", "z")
+        self._applied_field_input = VectorInput(
+            name="Applied Field",
+            tooltip=lambda axis: f"Cartesian {axis} component of the applied field, in T.",
+            **_PAGE_VECTOR_BOXES,
         )
-        for edit in self._applied_field_inputs:
-            edit.textChanged.connect(self._on_form_setting_changed)
+        self._applied_field_input.textChanged.connect(self._on_form_setting_changed)
         self._applied_field_unit = QLabel("T (Cartesian x, y, z)")
         style_hint_text(self._applied_field_unit)
 
@@ -648,8 +664,7 @@ class MagneticFieldWidget(QWidget):
         results_layout.addWidget(self._advanced_demag_summary)
         magnetization_row = QHBoxLayout()
         magnetization_row.addWidget(self._measured_magnetization_check)
-        for edit in self._measured_magnetization_inputs:
-            magnetization_row.addWidget(edit)
+        magnetization_row.addWidget(self._measured_magnetization_input)
         magnetization_row.addWidget(self._measured_magnetization_unit)
         magnetization_row.addStretch(1)
         results_layout.addLayout(magnetization_row)
@@ -660,8 +675,7 @@ class MagneticFieldWidget(QWidget):
             "It appears as the Applied row of the field breakdown."
         )
         applied_row.addWidget(applied_label)
-        for edit in self._applied_field_inputs:
-            applied_row.addWidget(edit)
+        applied_row.addWidget(self._applied_field_input)
         applied_row.addWidget(self._applied_field_unit)
         applied_row.addStretch(1)
         results_layout.addLayout(applied_row)
@@ -713,12 +727,8 @@ class MagneticFieldWidget(QWidget):
             "demag_shape": self._demag_shape(),
             "demag_sample": self._demag_sample.to_json(),
             "use_measured_magnetization": self._measured_magnetization_check.isChecked(),
-            "measured_magnetization": [
-                self._vector_component_or_zero(edit) for edit in self._measured_magnetization_inputs
-            ],
-            "applied_field_T": [
-                self._vector_component_or_zero(edit) for edit in self._applied_field_inputs
-            ],
+            "measured_magnetization": list(self._measured_magnetization_input.value_or_zero()),
+            "applied_field_T": list(self._applied_field_input.value_or_zero()),
             "include_equivalent_sites": self._include_equivalent_sites.isChecked(),
             **self._settings.state_items(),
             "hyperfine_coupling": self._hyperfine_coupling.text().strip(),
@@ -794,7 +804,7 @@ class MagneticFieldWidget(QWidget):
             self._set_measured_magnetization_from_state(
                 state.get("use_measured_magnetization"), state.get("measured_magnetization")
             )
-            self._set_vector_inputs(self._applied_field_inputs, state.get("applied_field_T"))
+            self._applied_field_input.set_value(state.get("applied_field_T"))
 
             self._settings = self._settings.with_state(state)
             self._include_equivalent_sites.setChecked(
@@ -844,7 +854,7 @@ class MagneticFieldWidget(QWidget):
             self._none_radio.setChecked(True)
             self._demag_sample = DemagnetizingSample()
             self._set_measured_magnetization_from_state(False, None)
-            self._set_vector_inputs(self._applied_field_inputs, None)
+            self._applied_field_input.set_value(None)
             self._settings = MagneticFieldCalculationSettings()
             self._include_equivalent_sites.setChecked(False)
             self._hyperfine_coupling.setText("0.0")
@@ -887,10 +897,8 @@ class MagneticFieldWidget(QWidget):
         self._hyperfine_units.setEnabled(has_host)
         self._measured_magnetization_check.setEnabled(has_host)
         measured = has_host and self._measured_magnetization_check.isChecked()
-        for edit in self._measured_magnetization_inputs:
-            edit.setEnabled(measured)
-        for edit in self._applied_field_inputs:
-            edit.setEnabled(has_host)
+        self._measured_magnetization_input.setEnabled(measured)
+        self._applied_field_input.setEnabled(has_host)
 
     def _refresh_summary(self) -> None:
         if self._host_structure is None:
@@ -1000,25 +1008,6 @@ class MagneticFieldWidget(QWidget):
             f"({site.fractional_position[0]:.4f}, {site.fractional_position[1]:.4f}, "
             f"{site.fractional_position[2]:.4f}).{distortion}{estimate}{refused}"
         )
-
-    @staticmethod
-    def _measured_magnetization_input(axis: str) -> DecimalLineEdit:
-        edit = DecimalLineEdit(text="0.0", minimum=-1_000.0, maximum=1_000.0, decimals=6)
-        edit.setToolTip(
-            f"Cartesian {axis} component of the measured bulk magnetisation, in μB per formula unit."
-        )
-        edit.setMaximumWidth(80)
-        edit.setEnabled(False)
-        edit.setAccessibleName(f"Measured Bulk Magnetisation {axis}")
-        return edit
-
-    @staticmethod
-    def _applied_field_input(axis: str) -> DecimalLineEdit:
-        edit = DecimalLineEdit(text="0.0", minimum=-1_000.0, maximum=1_000.0, decimals=6)
-        edit.setToolTip(f"Cartesian {axis} component of the applied field, in T.")
-        edit.setMaximumWidth(80)
-        edit.setAccessibleName(f"Applied Field {axis}")
-        return edit
 
     @staticmethod
     def _hyperfine_coupling_input() -> DecimalLineEdit:
@@ -1429,59 +1418,13 @@ class MagneticFieldWidget(QWidget):
     def _measured_magnetization(self) -> tuple[float, float, float] | None:
         if not self._measured_magnetization_check.isChecked():
             return None
-        x, y, z = (
-            self._parse_vector_component(edit.text(), "measured magnetisation")
-            for edit in self._measured_magnetization_inputs
-        )
-        return (x, y, z)
+        return self._measured_magnetization_input.value("measured magnetisation")
 
     def _applied_field(self) -> tuple[float, float, float]:
-        x, y, z = (
-            self._parse_vector_component(edit.text(), "applied field")
-            for edit in self._applied_field_inputs
-        )
-        return (x, y, z)
-
-    @staticmethod
-    def _parse_vector_component(text: str, quantity: str) -> float:
-        stripped = text.strip()
-        if not stripped:
-            return 0.0
-        try:
-            value = float(stripped)
-        except ValueError as exc:
-            raise ValueError(f"{quantity} components must be decimal numbers") from exc
-        if not np.isfinite(value):
-            raise ValueError(f"{quantity} components must be finite")
-        return value
-
-    def _vector_component_or_zero(self, edit: QLineEdit) -> float:
-        try:
-            return self._parse_vector_component(edit.text(), "vector")
-        except ValueError:
-            return 0.0
-
-    @staticmethod
-    def _set_vector_inputs(edits: Sequence[QLineEdit], values: object) -> None:
-        """Show the three components of a saved vector, or zeros when it is malformed."""
-
-        components = (0.0, 0.0, 0.0)
-        if (
-            isinstance(values, Sequence)
-            and not isinstance(values, (str, bytes))
-            and len(values) == 3
-        ):
-            try:
-                parsed = tuple(float(value) for value in values)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                parsed = components
-            if all(np.isfinite(parsed)):
-                components = parsed
-        for edit, value in zip(edits, components):
-            edit.setText(f"{value:g}")
+        return self._applied_field_input.value("applied field")
 
     def _set_measured_magnetization_from_state(self, enabled: object, values: object) -> None:
-        self._set_vector_inputs(self._measured_magnetization_inputs, values)
+        self._measured_magnetization_input.set_value(values)
         self._measured_magnetization_check.setChecked(bool(enabled))
 
     def _refresh_measured_magnetization_unit(self) -> None:

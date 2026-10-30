@@ -10283,11 +10283,12 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_stage_icons()
 
     def _refresh_polarisation_view(self) -> None:
-        self._polarisation_view.set_document(self._document)
-        if self._document is not None:
-            self._polarisation_view.set_form_state(
-                self._document.ui_state.get(self._POLARISATION_FORM_KEY, {})
-            )
+        self._polarisation_view.set_document(
+            self._document,
+            None
+            if self._document is None
+            else self._document.ui_state.get(self._POLARISATION_FORM_KEY, {}),
+        )
 
     def _open_polarisation_for(self, owner: str) -> None:
         """Show the Polarisation page with ``owner``'s field results selected."""
