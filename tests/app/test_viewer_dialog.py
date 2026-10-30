@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.app.magnetic_field_widget import MagneticStructureBuilderDialog
+from mufinder.app.magnetic_structure_builder import MagneticStructureBuilderDialog
 from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.relaxation_analysis_widget import (
     DisplacementAnalysisDialog,

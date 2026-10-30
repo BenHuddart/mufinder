@@ -359,10 +359,10 @@ def test_main_window_restores_magnetic_field_form_state(qapp, tmp_path: Path) ->
 
     view = window._magnetic_field_view
     assert view._demag_shape() == "none"
-    assert view._field_options().supercell == (18, 20, 22)
-    assert view._field_options().find_equivalent_sites is True
-    assert view._field_options().phase_sample_count == 8192
-    assert view._field_options().histogram_bins == 1024
+    assert view.field_options().supercell == (18, 20, 22)
+    assert view.field_options().find_equivalent_sites is True
+    assert view.field_options().phase_sample_count == 8192
+    assert view.field_options().histogram_bins == 1024
     assert view.selected_muon_site().fractional_position == (0.25, 0.5, 0.75)
 
     view.set_calculation_settings(replace(view.calculation_settings(), histogram_bins=768))
@@ -377,10 +377,10 @@ def test_main_window_restores_magnetic_field_form_state(qapp, tmp_path: Path) ->
     reloaded_view = reloaded_window._magnetic_field_view
 
     assert reloaded_view._demag_shape() == "none"
-    assert reloaded_view._field_options().supercell == (18, 20, 22)
-    assert reloaded_view._field_options().find_equivalent_sites is True
-    assert reloaded_view._field_options().phase_sample_count == 8192
-    assert reloaded_view._field_options().histogram_bins == 768
+    assert reloaded_view.field_options().supercell == (18, 20, 22)
+    assert reloaded_view.field_options().find_equivalent_sites is True
+    assert reloaded_view.field_options().phase_sample_count == 8192
+    assert reloaded_view.field_options().histogram_bins == 768
     assert reloaded_view.selected_muon_site().fractional_position == (0.25, 0.5, 0.75)
 
     window.close()
@@ -432,7 +432,7 @@ def test_main_window_persists_magnetic_field_calculation_results(
 
     window._document = doc
     window._refresh_ui_after_project_change()
-    window._magnetic_field_view._set_model(_magnetic_model("Main field"))
+    window._magnetic_field_view.set_model(_magnetic_model("Main field"))
     window._magnetic_field_view._selected_muon_site = (
         magnetic_field_widget_module.MagneticMuonSiteOption(
             source="custom",
@@ -441,7 +441,7 @@ def test_main_window_persists_magnetic_field_calculation_results(
             cartesian_position=(0.75, 0.75, 0.75),
         )
     )
-    window._magnetic_field_view._calculate_fields()
+    window._magnetic_field_view.calculate_fields()
 
     assert "magnetic_field_results" not in doc.ui_state["magnetic_field_form"]
     (record,) = magnetic_field_results(doc)
@@ -600,7 +600,7 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     window._document = doc
     window._refresh_ui_after_project_change()
     window._set_active_route("magnetic_fields")
-    window._magnetic_field_view._set_model(_magnetic_model("Main helix"))
+    window._magnetic_field_view.set_model(_magnetic_model("Main helix"))
     window._magnetic_field_view._none_radio.setChecked(True)
     window._magnetic_field_view.set_calculation_settings(
         replace(window._magnetic_field_view.calculation_settings(), phase_sample_count=8192)
@@ -624,9 +624,9 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     assert workspace_item.text(0) == "Pinned helix"
     assert window._main_stack.currentWidget() is workspace_widget
     assert workspace_widget.workspace_title() == "Pinned helix"
-    assert workspace_widget._field_options().phase_sample_count == 8192
+    assert workspace_widget.field_options().phase_sample_count == 8192
 
-    workspace_widget._set_model(_magnetic_model("Copied helix"))
+    workspace_widget.set_model(_magnetic_model("Copied helix"))
 
     assert doc.project.magnetic_structure == main_structure
     assert doc.ui_state["magnetic_field_workspaces"][0]["magnetic_structure"]["components"][0][

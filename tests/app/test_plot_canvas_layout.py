@@ -24,10 +24,8 @@ import pytest
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.geometry_progress_dialog import GeometryProgressDialog
-from mufinder.app.magnetic_field_widget import (
-    MagneticFieldDistributionDialog,
-    MagneticTextureDialog,
-)
+from mufinder.app.magnetic_field_distribution_dialog import MagneticFieldDistributionDialog
+from mufinder.app.magnetic_texture_dialog import MagneticTextureDialog
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
 from mufinder.app.polarisation_widget import PolarisationWidget
 from mufinder.app.relaxation_analysis_widget import (

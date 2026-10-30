@@ -115,7 +115,7 @@ def choose_helix(dialog: QDialog) -> None:
 def mnsi_magnetic_model() -> MagneticStructureModel:
     """The helix, built by the preset helper with the choices of :func:`choose_helix`."""
 
-    from mufinder.app.magnetic_field_widget import MagneticPresetDialog
+    from mufinder.app.magnetic_component_dialogs import MagneticPresetDialog
 
     model = q_basis_model()
     dialog = MagneticPresetDialog(mnsi_host(), model=model)
