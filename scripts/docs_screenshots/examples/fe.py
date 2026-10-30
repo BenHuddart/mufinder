@@ -37,8 +37,8 @@ from ..render import (
     save_magnetic_workspace,
     settle,
     show_every_result_row,
-    show_host_with_spins,
     synthetic_runs,
+    view_along_a,
     when_modal,
 )
 from ..synthetic import castep_text, cell_text, den_fmt_text
@@ -411,7 +411,7 @@ SCENES: dict[str, Scene] = {
     "fe_host_structure": Scene(
         octahedral_project,
         "host_structure",
-        Page("_host_structure_view", (1100, 760), prepare=show_host_with_spins),
+        Page("_host_structure_view", (1100, 760), prepare=view_along_a),
     ),
     "fe_magnetic_fields_page": Scene(
         octahedral_project,

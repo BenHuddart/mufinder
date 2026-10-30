@@ -355,6 +355,28 @@ def create_workflow_table(
     return table
 
 
+def table_natural_width(table: QTableWidget) -> int:
+    """Return the width that shows every column in full, without a horizontal scrollbar.
+
+    It measures the contents, so it holds for a table that has not been shown yet and
+    for a stretched column; a ``Fixed`` column counts at the width it was given. It
+    reserves the vertical scrollbar whether or not the rows overflow today, because a
+    shorter window must not then clip the last column.
+    """
+
+    header = table.horizontalHeader()
+    width = sum(
+        table.columnWidth(column)
+        if header.sectionResizeMode(column) == QHeaderView.ResizeMode.Fixed
+        else max(header.sectionSizeHint(column), table.sizeHintForColumn(column))
+        for column in range(table.columnCount())
+        if not table.isColumnHidden(column)
+    )
+    if not table.verticalHeader().isHidden():
+        width += table.verticalHeader().sizeHint().width()
+    return width + 2 * table.frameWidth() + table.verticalScrollBar().sizeHint().width()
+
+
 def name_row_control(control: QWidget | None, action: str, row_label: str) -> None:
     """Name a control in a table row ``"<action> <row label>"`` for screen readers.
 

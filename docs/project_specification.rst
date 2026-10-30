@@ -431,10 +431,10 @@ Host structure magnetic editing and the supercell editor
 - Spin-arrow display defaults to disabled for a non-magnetic host and
   auto-enables when any per-atom spin is set non-zero; spins render as clearly
   visible 3D arrows with signed styling for opposite directions.
-- The panel defaults to an expanded viewer area with user-resizable split
-  between the metadata table and the viewer; current-structure metadata is a
-  compact two-row summary; left-clicking empty space in the viewer clears the
-  atom selection.
+- The panel opens the atom table at the width of its contents and gives the rest
+  to the viewer, with a user-resizable split between them; current-structure
+  metadata is a one-line summary; left-clicking empty space in the viewer clears
+  the atom selection.
 - The Supercell Editor provides a simple diagonal mode (Nx, Ny, Nz) and an
   advanced full 3×3 integer matrix mode, read-only visual verification of the
   magnetic pattern across the generated supercell, and lets the user save,

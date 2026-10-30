@@ -292,7 +292,8 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.app.workflow_table_utils``
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``, ``fill_workflow_table`` for a table of
-       display text, ``set_header_tooltips``; ``accessible_name`` names a
+       display text, ``set_header_tooltips``, ``table_natural_width`` for the
+       width that shows every column; ``accessible_name`` names a
        table and ``name_row_control`` names a row's own controls after the
        row), the shared right-click menu
        (``standard_row_actions``, ``bind_reset_failed_context_menu``; a
