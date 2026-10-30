@@ -1096,7 +1096,13 @@ def test_job_records_name_the_row_of_other_workflows_and_leave_out_a_charge_stat
         calc_type="castep_convergence_cutoff",
     )
     _bind_jobs(doc, WorkflowStage.PRISTINE_RELAXATION, {"relax_1": relax})
-    _bind_jobs(doc, WorkflowStage.QUANTUM_CORRECTIONS, {f"{site.id}:muonium": phonon})
+    quantum = CalculationDefinition(
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type="castep_quantum_phonon_set",
+        # Bound only through the phonon mapping, as a loaded definition can be.
+        parameters={"phonon_job_ids_by_label": {f"{site.id}:muonium": str(phonon.id)}},
+    )
+    doc.calculations[quantum.id] = quantum
 
     for job in (relax, phonon, unbound):
         service.record_job_terminal_event(doc, action="job_completed", job=job)

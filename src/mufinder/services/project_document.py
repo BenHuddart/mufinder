@@ -163,8 +163,8 @@ _LABELLED_ROW_STAGES = frozenset(
 def job_row_label(document: ProjectDocument, job: Job) -> str | None:
     """Return the label of the workflow row that owns ``job``, as the workflow's table shows it.
 
-    Read from the ``job_ids_by_label`` mapping of the job's workflow
-    definitions: a muon-relaxation key's charge-state prefix is dropped, and a
+    Read from the ``job_ids_by_label`` mapping (``phonon_job_ids_by_label``
+    for Quantum Corrections) of the job's workflow definitions: a muon-relaxation key's charge-state prefix is dropped, and a
     Quantum Corrections key names the relaxed site, whose label is returned
     (with ``_<prefix>`` for a source in the site's second charge state).
     ``None`` when no definition binds the job, or for a workflow whose rows are
@@ -175,13 +175,20 @@ def job_row_label(document: ProjectDocument, job: Job) -> str | None:
         return None
     job_key = str(job.id)
     for definition in definitions_for_stage(document, job.workflow_stage):
-        mapping = definition.parameters.get("job_ids_by_label")
-        if not isinstance(mapping, dict):
-            continue
-        for key, raw_job_id in mapping.items():
-            if str(raw_job_id) == job_key:
-                return _row_label_from_key(document, str(key))
+        for mapping_name in _ROW_JOB_MAPPINGS:
+            mapping = definition.parameters.get(mapping_name)
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                if str(raw_job_id) == job_key:
+                    return _row_label_from_key(document, str(key))
     return None
+
+
+#: The mappings that bind a definition's rows to jobs: Quantum Corrections keeps
+#: its phonon jobs in ``phonon_job_ids_by_label`` and may mirror them in
+#: ``job_ids_by_label``.
+_ROW_JOB_MAPPINGS = ("phonon_job_ids_by_label", "job_ids_by_label")
 
 
 _CHARGE_STATE_PREFIXES = frozenset(MUON_RELAXATION_JOB_PREFIXES.values())
