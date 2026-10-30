@@ -1,26 +1,23 @@
-"""Grouping a relaxation analysis workspace's relaxed sites."""
+"""Storing a relaxation analysis workspace's grouping, and keeping it when relaxations join."""
 
 from __future__ import annotations
 
-import importlib.util
 from uuid import uuid4
 
-import pytest
-
-from mufinder.science.relaxation_analysis import RelaxedMuonSite
-from mufinder.science.uep import UepError
-from mufinder.services import analysis_grouping
+from mufinder.science.relaxation_analysis import (
+    RelaxedMuonSite,
+    cluster_connected_components,
+    normalize_site_energies,
+)
 from mufinder.services.analysis_grouping import (
     DEFAULT_GROUPING_SETTINGS,
+    SiteGrouping,
+    extend_grouping_with_new_sites,
+    grouped_clustering_state,
     grouping_settings,
-    regroup_workspace,
+    ungrouped_site_count,
 )
 from tests.support.structures import host_structure
-
-_soprano_required = pytest.mark.skipif(
-    importlib.util.find_spec("soprano") is None,
-    reason="soprano optional dependency not installed",
-)
 
 
 def _site(label: str, frac: tuple[float, float, float], energy: float) -> RelaxedMuonSite:
@@ -36,93 +33,83 @@ def _site(label: str, frac: tuple[float, float, float], energy: float) -> Relaxe
     )
 
 
-SITES = [
-    _site("A", (0.5, 0.25, 0.0), -10.0),
-    _site("B", (0.0, 0.5, 0.25), -10.0),
-    _site("C", (0.25, 0.25, 0.25), -9.5),
-]
+A = _site("A", (0.5, 0.25, 0.0), -10.0)
+B = _site("B", (0.0, 0.5, 0.25), -9.9)
+C = _site("C", (0.25, 0.25, 0.25), -9.5)
 
 
-def test_a_new_workspace_groups_with_connected_components_within_a_quarter_angstrom() -> None:
-    clustering = regroup_workspace({"clustering": None}, SITES, host_structure())
+def _applied(sites: list[RelaxedMuonSite]) -> dict[str, object]:
+    result = cluster_connected_components(sites, host_structure(), tolerance_ang=0.25)
+    grouping = SiteGrouping(
+        method="connected",
+        cluster_labels=result.cluster_labels,
+        clusters=result.clusters,
+        wyckoff_assignments=(),
+    )
+    return grouped_clustering_state(DEFAULT_GROUPING_SETTINGS, grouping, host_structure())
+
+
+def test_an_applied_grouping_stores_its_result_and_record() -> None:
+    clustering = _applied([A, B, C])
 
     assert clustering["method"] == "connected"
-    assert clustering["connected_tolerance_ang"] == 0.25
     assert clustering["result"]["cluster_labels"] == [1, 1, 2]
-    assert len(clustering["result"]["clusters"]) == 2
-    assert len(clustering["result"]["wyckoff_assignments"]) == 2
-    assert clustering["tolerance_scan"] == []
-    grouping = clustering["grouping"]
-    assert grouping["method"] == "connected"
-    assert grouping["connected_tolerance_ang"] == 0.25
-    assert grouping["space_group_symbol"] == "Im-3m"
+    assert clustering["grouping"]["method"] == "connected"
+    assert clustering["grouping"]["space_group_symbol"] == "Im-3m"
 
 
-def test_a_workspace_regroups_with_its_own_stored_settings() -> None:
-    workspace = {
-        "clustering": {
-            **DEFAULT_GROUPING_SETTINGS,
-            "connected_tolerance_ang": 5.0,
-            "tolerance_scan": [[0.0, 3]],
-            "grouping": {"method": "connected", "connected_tolerance_ang": 0.25},
-        }
-    }
+def test_k_means_keeps_the_k_asked_for_and_records_the_k_used() -> None:
+    grouping = SiteGrouping(
+        method="kmeans",
+        cluster_labels=(1, 1, 2),
+        clusters=(),
+        wyckoff_assignments=(),
+        kmeans_k_used=2,
+    )
 
-    clustering = regroup_workspace(workspace, SITES, host_structure())
+    clustering = grouped_clustering_state(
+        {**DEFAULT_GROUPING_SETTINGS, "method": "kmeans", "kmeans_k": 3}, grouping, host_structure()
+    )
 
-    assert clustering["result"]["cluster_labels"] == [1, 1, 1]
-    # The scan and the grouping record describe the new sites, not the old ones.
-    assert clustering["tolerance_scan"] == []
-    assert clustering["grouping"]["connected_tolerance_ang"] == 5.0
-
-
-@_soprano_required
-def test_k_means_stores_the_k_it_used() -> None:
-    workspace = {"clustering": {**DEFAULT_GROUPING_SETTINGS, "method": "kmeans", "kmeans_k": 3}}
-
-    clustering = regroup_workspace(workspace, SITES, host_structure())
-
-    assert clustering["method"] == "kmeans"
-    # The k asked for is kept, so it can grow with the sites; the record states the k used.
     assert clustering["kmeans_k"] == 3
     assert clustering["grouping"]["kmeans_k"] == 2
-    assert len(set(clustering["result"]["cluster_labels"])) == 2
 
 
-def test_a_method_that_cannot_run_falls_back_to_connected_components(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def unavailable(*_args, **_kwargs):
-        raise UepError("Soprano is not installed.")
+def test_relaxations_that_join_a_grouped_workspace_stay_ungrouped() -> None:
+    clustering = _applied([A, C])
+    # D is lower in energy than every earlier site, so the earlier sites move down.
+    d = _site("D", (0.0, 0.5, 0.25), -11.0)
 
-    monkeypatch.setattr(analysis_grouping, "cluster_soprano_style", unavailable)
-    workspace = {"clustering": {**DEFAULT_GROUPING_SETTINGS, "method": "hier"}}
+    extended = extend_grouping_with_new_sites(clustering, [A, C], [A, C, d, B])
 
-    clustering = regroup_workspace(workspace, SITES, host_structure())
-
-    assert clustering["method"] == "connected"
-    assert clustering["result"]["cluster_labels"] == [1, 1, 2]
-
-
-def test_a_grouping_that_cannot_run_at_all_leaves_the_workspace_ungrouped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def broken(*_args, **_kwargs):
-        raise ValueError("no symmetry")
-
-    monkeypatch.setattr(analysis_grouping, "cluster_connected_components", broken)
-
-    clustering = regroup_workspace({}, SITES, host_structure())
-
-    assert clustering["result"] is None
-    assert clustering["method"] == "connected"
+    order = [site.job_label for site in normalize_site_energies([A, C, d, B])]
+    assert order == ["D", "A", "B", "C"]
+    labels = extended["result"]["cluster_labels"]
+    assert labels == [0, 1, 0, 2]
+    assert [cluster["member_indexes"] for cluster in extended["result"]["clusters"]] == [[1], [3]]
+    assert [cluster["representative_index"] for cluster in extended["result"]["clusters"]] == [1, 3]
+    assert extended["grouping"] == clustering["grouping"]
+    assert ungrouped_site_count(extended, labels) == 2
 
 
-def test_a_workspace_without_sites_holds_no_result() -> None:
-    clustering = regroup_workspace({}, [], host_structure())
+def test_an_ungrouped_workspace_is_left_as_it_is() -> None:
+    ungrouped = {**DEFAULT_GROUPING_SETTINGS, "result": None}
 
-    assert clustering["result"] is None
-    assert clustering["method"] == "connected"
+    assert extend_grouping_with_new_sites(ungrouped, [A], [A, B]) == ungrouped
+    assert extend_grouping_with_new_sites(None, [A], [A, B]) is None
+    assert ungrouped_site_count(ungrouped, [0, 0]) == 0
+
+
+def test_stale_labels_are_left_alone() -> None:
+    clustering = _applied([A, B, C])
+
+    assert extend_grouping_with_new_sites(clustering, [A, B], [A, B, C]) == clustering
+
+
+def test_a_grouping_that_covers_every_site_is_up_to_date() -> None:
+    clustering = _applied([A, B, C])
+
+    assert ungrouped_site_count(clustering, clustering["result"]["cluster_labels"]) == 0
 
 
 def test_grouping_settings_fill_gaps_and_ignore_unreadable_values() -> None:

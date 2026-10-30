@@ -1,43 +1,35 @@
-"""How a relaxation analysis workspace groups its relaxed muon sites.
+"""How a relaxation analysis workspace stores the grouping of its relaxed muon sites.
 
-A workspace is grouped when it is created and again whenever relaxations join
-it, with the method and settings it stores; a new workspace starts with
-connected components within 0.25 Å. Applying a grouping from the
-``Clustering...`` dialog replaces those settings for that workspace. Both paths
-store the same ``clustering`` mapping, which records how the sites were grouped
-(:func:`~mufinder.services.muon_sites_summary.relaxed_site_grouping`) when the
-grouping is made.
+A workspace starts ungrouped. Applying a grouping from the ``Clustering...``
+dialog stores the method, its settings and the result
+(:func:`grouped_clustering_state`), with how the sites were grouped
+(:func:`~mufinder.services.muon_sites_summary.relaxed_site_grouping`) recorded
+when it is applied. Nothing regroups on its own: relaxations that join a
+grouped workspace keep the existing groups and stay ungrouped themselves
+(:func:`extend_grouping_with_new_sites`) until a grouping is applied again,
+and the grouping is out of date meanwhile (:func:`ungrouped_site_count`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-import logging
 
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import (
     RelaxationClusterSummary,
     RelaxedMuonSite,
-    cluster_connected_components,
-    cluster_soprano_style,
     dataclass_to_plain,
     normalize_site_energies,
-    uep_summary_to_relaxation_clusters,
 )
-from mufinder.science.wyckoff_analysis import (
-    ClusterWyckoffAssignment,
-    assign_cluster_wyckoff_sites,
-)
+from mufinder.science.wyckoff_analysis import ClusterWyckoffAssignment
 from mufinder.services.muon_sites_summary import relaxed_site_grouping
-
-_LOG = logging.getLogger(__name__)
 
 METHOD_CONNECTED = "connected"
 METHOD_HIERARCHICAL = "hier"
 METHOD_KMEANS = "kmeans"
 
-#: The grouping a new workspace starts with: connected components within 0.25 Å.
+#: The settings a new workspace's ``Clustering...`` dialog opens with.
 DEFAULT_GROUPING_SETTINGS: dict[str, object] = {
     "method": METHOD_CONNECTED,
     "connected_tolerance_ang": 0.25,
@@ -84,58 +76,6 @@ def grouping_settings(clustering: object) -> dict[str, object]:
     return settings
 
 
-def group_relaxed_sites(
-    sites: Sequence[RelaxedMuonSite],
-    host_structure: Structure,
-    settings: Mapping[str, object],
-) -> SiteGrouping:
-    """Group ``sites`` with the method and settings in ``settings``.
-
-    Raises :class:`ValueError` (a
-    :class:`~mufinder.science.relaxation_analysis.RelaxationAnalysisError` or
-    :class:`~mufinder.science.uep.UepError`) when the method cannot run, for
-    instance without the optional Soprano dependency.
-    """
-
-    resolved = grouping_settings(settings)
-    method = str(resolved["method"])
-    ordered = normalize_site_energies(sites)
-    kmeans_k_used: int | None = None
-    if method == METHOD_CONNECTED:
-        result = cluster_connected_components(
-            ordered,
-            host_structure,
-            tolerance_ang=float(resolved["connected_tolerance_ang"]),  # type: ignore[arg-type]
-        )
-        labels, clusters = result.cluster_labels, result.clusters
-    else:
-        k = max(min(int(resolved["kmeans_k"]), len(ordered)), 1)  # type: ignore[call-overload]
-        soprano = cluster_soprano_style(
-            ordered,
-            host_structure,
-            method=method,
-            hierarchical_t=float(resolved["hierarchical_t"]),  # type: ignore[arg-type]
-            kmeans_k=k,
-        )
-        labels = soprano.cluster_labels
-        clusters = uep_summary_to_relaxation_clusters(ordered, soprano.summary)
-        if method == METHOD_KMEANS:
-            kmeans_k_used = soprano.summary.clustering_kmeans_k
-    assignments = assign_cluster_wyckoff_sites(
-        ordered,
-        clusters,
-        host_structure,
-        match_tolerance_ang=float(resolved["wyckoff_match_tolerance_ang"]),  # type: ignore[arg-type]
-    )
-    return SiteGrouping(
-        method=method,
-        cluster_labels=tuple(int(label) for label in labels),
-        clusters=tuple(clusters),
-        wyckoff_assignments=tuple(assignments),
-        kmeans_k_used=kmeans_k_used,
-    )
-
-
 def grouped_clustering_state(
     settings: Mapping[str, object],
     grouping: SiteGrouping,
@@ -143,7 +83,7 @@ def grouped_clustering_state(
     *,
     tolerance_scan: Sequence[Sequence[float]] = (),
 ) -> dict[str, object]:
-    """Return the ``clustering`` mapping a workspace stores for ``grouping``.
+    """Return the ``clustering`` mapping a workspace stores for an applied ``grouping``.
 
     It holds the method and settings (k-means with the ``k`` asked for), the
     result, the tolerance scan, and how the sites were grouped, recorded now
@@ -165,36 +105,72 @@ def grouped_clustering_state(
     }
     record = relaxed_site_grouping(clustering, host_structure)
     if grouping.kmeans_k_used is not None:
-        # The stored k stays the one asked for, so it can grow with the sites;
-        # the record states the k this grouping used.
+        # The stored k stays the one asked for; the record states the k this grouping used.
         record["kmeans_k"] = int(grouping.kmeans_k_used)
     clustering["grouping"] = record
     return clustering
 
 
-def regroup_workspace(
-    workspace: Mapping[str, object],
+def extend_grouping_with_new_sites(
+    clustering: object,
+    previous_sites: Sequence[RelaxedMuonSite],
     sites: Sequence[RelaxedMuonSite],
-    host_structure: Structure,
-) -> dict[str, object]:
-    """Return the ``clustering`` mapping for ``workspace`` grouped over ``sites``.
+) -> object:
+    """Return ``clustering`` for ``sites`` after relaxations joined ``previous_sites``.
 
-    The workspace's stored method and settings are used (connected components
-    within 0.25 Å for a new workspace). When the stored method cannot run, the
-    sites are grouped with the default instead. Should that fail too, the
-    workspace is left ungrouped (``result`` is ``None``) rather than raising.
-    The tolerance scan is cleared: it described the previous sites.
+    Nothing is regrouped. A grouped workspace keeps its groups: each earlier
+    site keeps its cluster label, moved to its place in the new energy order,
+    and each new site gets label 0 (ungrouped). The clusters' member and
+    representative indexes move the same way. A workspace without a grouping,
+    or whose stored labels no longer match ``previous_sites``, is returned as
+    it is.
     """
 
-    settings = grouping_settings(workspace.get("clustering"))
-    ungrouped = {**settings, "tolerance_scan": [], "result": None}
-    if not sites:
-        return ungrouped
-    for attempt in (settings, dict(DEFAULT_GROUPING_SETTINGS)):
-        try:
-            grouping = group_relaxed_sites(sites, host_structure, attempt)
-        except ValueError as exc:
-            _LOG.warning("Grouping with %s failed: %s", attempt["method"], exc)
+    if not isinstance(clustering, Mapping):
+        return clustering
+    result = clustering.get("result")
+    labels = result.get("cluster_labels") if isinstance(result, Mapping) else None
+    previous = normalize_site_energies(previous_sites)
+    if not isinstance(labels, list) or len(labels) != len(previous):
+        return clustering
+    ordered = normalize_site_energies(sites)
+    new_index = {site.job_id: index for index, site in enumerate(ordered)}
+    moved = {
+        old_index: new_index[site.job_id]
+        for old_index, site in enumerate(previous)
+        if site.job_id in new_index
+    }
+    new_labels = [0] * len(ordered)
+    for old_index, label in enumerate(labels):
+        if old_index in moved:
+            new_labels[moved[old_index]] = int(label)
+    clusters: list[object] = []
+    for cluster in result.get("clusters", []) or []:  # type: ignore[union-attr]
+        if not isinstance(cluster, Mapping):
+            clusters.append(cluster)
             continue
-        return grouped_clustering_state(attempt, grouping, host_structure)
-    return ungrouped
+        updated = dict(cluster)
+        members = cluster.get("member_indexes")
+        if isinstance(members, list):
+            updated["member_indexes"] = [moved[int(i)] for i in members if int(i) in moved]
+        representative = cluster.get("representative_index")
+        if isinstance(representative, int) and representative in moved:
+            updated["representative_index"] = moved[representative]
+        clusters.append(updated)
+    return {
+        **clustering,
+        "result": {**result, "cluster_labels": new_labels, "clusters": clusters},  # type: ignore[dict-item]
+    }
+
+
+def ungrouped_site_count(clustering: object, labels: Sequence[int]) -> int:
+    """Return how many sites joined a grouped workspace after its grouping was applied.
+
+    The sites with no cluster (label 0) of a workspace that holds a grouping
+    with at least one cluster; 0 for an ungrouped workspace.
+    """
+
+    result = clustering.get("result") if isinstance(clustering, Mapping) else None
+    if not isinstance(result, Mapping) or not any(int(label) for label in labels):
+        return 0
+    return sum(1 for label in labels if not int(label))

@@ -670,15 +670,12 @@ def _create_analysis_workspace_entry(record: ProvenanceRecord) -> JournalEntry:
     count = _int_param(record, "relaxation_count") or 0
     charge = _text_param(record, "charge_state_label")
     relaxations = f"{charge} relaxation" if charge else "relaxation"
-    body = f"Created '{name}' with {plural(count, relaxations)}"
-    distinct = _int_param(record, "distinct_site_count")
-    summary = _text_param(record, "grouping_summary")
-    if distinct is not None:
-        body += f", grouped into {plural(distinct, 'distinct site')}"
-        body += f": {summary}." if summary else "."
-    else:
-        body += "."
-    return _entry(record, stamp_kind="milestone", title="Analysis workspace created", body=body)
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Analysis workspace created",
+        body=f"Created '{name}' with {plural(count, relaxations)}.",
+    )
 
 
 def _group_relaxed_sites_entry(record: ProvenanceRecord) -> JournalEntry:

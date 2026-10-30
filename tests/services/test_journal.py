@@ -470,26 +470,6 @@ def test_journal_describes_workspace_creation_and_grouping() -> None:
     ]
 
 
-def test_journal_states_the_grouping_a_new_workspace_was_created_with() -> None:
-    record = _muon_sites_record(
-        "create_analysis_workspace",
-        parameters={
-            "workspace_name": "Mu+ sites",
-            "charge_state_label": "positive muon",
-            "relaxation_count": 7,
-            "distinct_site_count": 2,
-            "grouping_summary": "Connected components within 0.25 Å",
-        },
-    )
-
-    body = build_journal("Analysis", [record]).days[0].entries[0].body
-
-    assert body == (
-        "Created 'Mu+ sites' with 7 positive muon relaxations, grouped into 2 distinct "
-        "sites: Connected components within 0.25 Å."
-    )
-
-
 def test_a_cluster_positions_entry_names_the_run_only_when_the_starts_had_one() -> None:
     record = _muon_sites_record(
         "cluster_candidate_positions",

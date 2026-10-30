@@ -1,8 +1,9 @@
 """Creating and extending relaxation analysis workspaces from the window.
 
-A new workspace is grouped as it is created, relaxations that join it regroup
-it, relaxations from different calculations are only mixed after a warning,
-and the displacement reference defaults to the newest pristine relaxation.
+A new workspace starts ungrouped; relaxations that join a grouped workspace
+leave its grouping out of date rather than regrouping it; relaxations from
+different calculations are only mixed after a warning; and the displacement
+reference defaults to the newest pristine relaxation.
 """
 
 from __future__ import annotations
@@ -12,14 +13,21 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QLabel
 
 from mufinder.app import main_window as main_window_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.main_window import MainWindow
+from mufinder.app.relaxation_analysis_widget import grouping_out_of_date_note
 from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
+from mufinder.science.relaxation_analysis import cluster_connected_components
+from mufinder.services.analysis_grouping import (
+    DEFAULT_GROUPING_SETTINGS,
+    SiteGrouping,
+    grouped_clustering_state,
+)
 from mufinder.services.project_service import ProjectService
 from mufinder.services.source_candidates import (
     CompletedPristineJob,
@@ -70,29 +78,22 @@ def _create(window: MainWindow, sources: list[CompletedRelaxationAnalysisSource]
     )
 
 
-def test_a_new_workspace_is_grouped_without_opening_the_dialog(window: MainWindow) -> None:
+def test_a_new_workspace_starts_ungrouped(window: MainWindow) -> None:
     sources = [
         _source("A", (0.5, 0.25, 0.0), -10.0),
-        _source("B", (0.0, 0.5, 0.25), -10.0 + 1e-6),
         _source("C", (0.25, 0.25, 0.25), -9.5),
     ]
 
     _create(window, sources)
 
     (workspace,) = window._relaxation_analysis_workspaces()
-    clustering = workspace["clustering"]
-    assert clustering["method"] == "connected"
-    assert clustering["connected_tolerance_ang"] == 0.25
-    # A and B are images of one site under the bcc symmetry; C is another site.
-    assert clustering["result"]["cluster_labels"] == [1, 1, 2]
-    assert clustering["grouping"]["method"] == "connected"
-    assert clustering["grouping"]["space_group_symbol"] == "Im-3m"
+    assert workspace["clustering"]["result"] is None
     created = [
         record
         for record in window._document.provenance
         if record.action == "create_analysis_workspace"
     ]
-    assert created[-1].parameters["distinct_site_count"] == 2
+    assert "distinct_site_count" not in created[-1].parameters
 
 
 def test_relaxations_from_different_calculations_need_a_confirmation(
@@ -121,17 +122,36 @@ def test_relaxations_from_different_calculations_need_a_confirmation(
     assert len(window._relaxation_analysis_workspaces()) == 1
 
 
-def test_relaxations_that_join_a_workspace_regroup_it(
+def _note(window: MainWindow) -> QLabel:
+    page = window._relaxation_analysis_view._workspace_tabs.currentWidget()
+    return grouping_out_of_date_note(page)
+
+
+def test_relaxations_that_join_a_grouped_workspace_leave_its_grouping_out_of_date(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    first = _source("A", (0.5, 0.25, 0.0), -10.0)
-    _create(window, [first])
+    first = [_source("A", (0.5, 0.25, 0.0), -10.0), _source("C", (0.25, 0.25, 0.25), -9.0)]
+    _create(window, first)
     workspace_id = str(window._relaxation_analysis_workspaces()[0]["id"])
     window._set_active_route(window._relaxation_analysis_workspace_route(workspace_id))
-    joining = [_source("B", (0.0, 0.5, 0.25), -10.0), _source("C", (0.25, 0.25, 0.25), -9.0)]
-    every = [first, *joining]
+    view = window._relaxation_analysis_view
+    host = window._project_service.active_host_structure(window._document)
+    sites = [source.to_relaxed_site(host) for source in first]
+    result = cluster_connected_components(sites, host, tolerance_ang=0.25)
+    view._apply_clustering(
+        workspace_id,
+        grouped_clustering_state(
+            DEFAULT_GROUPING_SETTINGS,
+            SiteGrouping("connected", result.cluster_labels, result.clusters, ()),
+            host,
+        ),
+    )
+    assert _note(window).isHidden()
+    joining = [_source("B", (0.0, 0.5, 0.25), -9.5)]
+    every = [*first, *joining]
     window._completed_muon_relaxation_sources = lambda: list(every)  # type: ignore[method-assign]
     window._refresh_relaxation_analysis_context(force=True)
+    records_before = len(window._document.provenance)
 
     class _Picked:
         def __init__(self, **_kwargs) -> None:
@@ -149,11 +169,36 @@ def test_relaxations_that_join_a_workspace_regroup_it(
 
     (workspace,) = window._relaxation_analysis_workspaces()
     assert len(workspace["job_ids"]) == 3
-    assert workspace["clustering"]["result"]["cluster_labels"] == [1, 1, 2]
-    grouped = [
-        record for record in window._document.provenance if record.action == "group_relaxed_sites"
-    ]
-    assert grouped[-1].parameters["distinct_site_count"] == 2
+    # Nothing regrouped: A and C keep their groups and B, between them in energy, has none.
+    assert workspace["clustering"]["result"]["cluster_labels"] == [1, 0, 2]
+    assert len(window._document.provenance) == records_before
+    note = _note(window)
+    assert not note.isHidden()
+    assert note.text() == (
+        "The grouping is out of date: it leaves out 1 relaxation added after it was "
+        "applied. Choose 'Clustering…' and 'Apply Clustering' to group every relaxation."
+    )
+
+    # The out-of-date grouping survives a save and reload.
+    window._project_service.save_project(window._document)
+    reopened = MainWindow()
+    assert reopened.open_project(window._document.project_root)
+    reopened._completed_muon_relaxation_sources = lambda: list(every)  # type: ignore[method-assign]
+    reopened._set_active_route(reopened._relaxation_analysis_workspace_route(workspace_id))
+    assert not _note(reopened).isHidden()
+
+    # Applying a grouping again includes every relaxation and clears the note.
+    every_site = [source.to_relaxed_site(host) for source in every]
+    regrouped = cluster_connected_components(every_site, host, tolerance_ang=0.25)
+    reopened._relaxation_analysis_view._apply_clustering(
+        workspace_id,
+        grouped_clustering_state(
+            DEFAULT_GROUPING_SETTINGS,
+            SiteGrouping("connected", regrouped.cluster_labels, regrouped.clusters, ()),
+            host,
+        ),
+    )
+    assert _note(reopened).isHidden()
 
 
 def test_the_displacement_reference_defaults_to_the_newest_pristine_relaxation(

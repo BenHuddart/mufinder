@@ -235,36 +235,23 @@ def _workspace_job_ids(workspace: Mapping[str, object]) -> list[UUID]:
 
 
 def analysis_workspace_created_record(workspace: Mapping[str, object]) -> ProvenanceRecord:
-    """Return the provenance record of a new relaxation analysis workspace.
-
-    A new workspace is grouped as it is created, so the record also states the
-    number of distinct sites and how they were grouped when it holds a grouping.
-    """
+    """Return the provenance record of a new relaxation analysis workspace."""
 
     name = str(workspace.get("name", "")).strip() or "Analysis workspace"
     charge_state = canonical_charge_state(workspace.get("charge_state"))
     job_ids = _workspace_job_ids(workspace)
-    parameters: dict[str, object] = {
-        "workspace_id": str(workspace.get("id", "")),
-        "workspace_name": name,
-        "charge_state": charge_state,
-        "charge_state_label": muon_charge_state_label(charge_state) if charge_state else None,
-        "relaxation_count": len(job_ids),
-    }
-    clustering = workspace.get("clustering")
-    result = clustering.get("result") if isinstance(clustering, Mapping) else None
-    clusters = result.get("clusters") if isinstance(result, Mapping) else None
-    if isinstance(clustering, Mapping) and isinstance(clusters, list):
-        grouping = relaxed_site_grouping(clustering, None)
-        parameters["distinct_site_count"] = len(clusters)
-        parameters["grouping"] = grouping
-        parameters["grouping_summary"] = grouping_summary(grouping)
     return ProvenanceRecord(
         action="create_analysis_workspace",
         workflow_stage=WorkflowStage.SITE_ANALYSIS,
         actor="user",
         description=f"Created analysis workspace '{name}'",
-        parameters=parameters,
+        parameters={
+            "workspace_id": str(workspace.get("id", "")),
+            "workspace_name": name,
+            "charge_state": charge_state,
+            "charge_state_label": muon_charge_state_label(charge_state) if charge_state else None,
+            "relaxation_count": len(job_ids),
+        },
         input_entity_ids=job_ids,
     )
 

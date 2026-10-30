@@ -382,7 +382,6 @@ from mufinder.services.source_candidates import (
     quantum_seed_name_for_key,
     relaxation_sources_for_labels,
 )
-from mufinder.services.analysis_grouping import regroup_workspace
 from mufinder.services.structure_export import relaxed_structure_export_for_job_id
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
@@ -7178,10 +7177,6 @@ class MainWindow(QMainWindow):
             host_structure_id=host.id,
             job_ids=[source.job_id for source in sources],
         )
-        # A new workspace is grouped straight away (connected components within 0.25 Å).
-        workspace["clustering"] = regroup_workspace(
-            workspace, [source.to_relaxed_site(host) for source in sources], host
-        )
         workspaces = self._relaxation_analysis_workspaces()
         workspaces.append(workspace)
         self._set_relaxation_analysis_workspaces(workspaces)
@@ -7375,8 +7370,6 @@ class MainWindow(QMainWindow):
         if not self._accept_mixed_relaxation_calculations(joined):
             return
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
-        # The workspace regrouped with the relaxations that joined it.
-        self._record_relaxed_sites_grouped(str(workspace_id))
         self.statusBar().showMessage(
             f"Added {plural(len(selected), 'relaxation result')} to the analysis workspace"
         )

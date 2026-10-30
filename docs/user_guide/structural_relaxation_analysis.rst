@@ -143,19 +143,16 @@ Running the workflow
    Selection``. In ``Create Analysis Workspace``, enter the ``Workspace name``
    (default ``positive muon analysis`` or ``muonium analysis``) and accept.
    Selecting rows from both charge states is refused. The new workspace is
-   grouped straight away, with connected components within 0.25 Å, so its
-   ``Cluster`` column and Wyckoff labels are filled in at once.
+   not grouped yet.
 3. **Add more structures if needed.** The workspace opens as a tab in ``Muon
    Sites -> Analysis`` and appears as a node under ``Analysis`` in the project
    tree. Click ``Add Structure to Analysis`` to add further completed
    relaxations of the same charge state, ticking ``Add`` for each. The dialog
    reports each relaxation's energy as ``dE vs workspace min (eV)``, so a
-   negative value means that adding it would reset the workspace zero. The
-   workspace is grouped again with its own method and settings once they join,
-   and the Journal records the new grouping.
-4. **Change the grouping (optional).** Click ``Clustering…`` to compare the
-   methods, choose a ``Method`` and click ``Apply Clustering`` to use it for
-   this workspace instead (see `Clustering`_).
+   negative value means that adding it would reset the workspace zero. Adding
+   relaxations never regroups the workspace (see `Clustering`_).
+4. **Group the sites.** Click ``Clustering…``, choose a ``Method`` and click
+   ``Apply Clustering`` (see `Clustering`_).
 5. **Inspect distortions (optional).** Click ``Analyse Displacements`` (see
    `Displacement analysis`_).
 6. **Pin the result.** Click ``Pin to Summary`` to copy the distinct sites to
@@ -179,8 +176,8 @@ The workspace page
 
 Each workspace is a tab on the ``Muon Sites -> Analysis`` page. Selecting a
 workspace's node in the project tree opens its tab, and switching tabs selects
-the matching node. The node is marked complete once the workspace is grouped,
-which is as soon as it is created. A tab draws its 3D preview the first time you open it, so a project
+the matching node. The node is marked complete once clustering has been
+applied. A tab draws its 3D preview the first time you open it, so a project
 with many workspaces opens without waiting for previews you have not looked
 at.
 
@@ -208,19 +205,19 @@ are saved with the next project save.
 Clustering
 ~~~~~~~~~~
 
-Every workspace is grouped automatically: when it is created, and again
-whenever relaxations join it. A new workspace uses ``Connected Components``
-within 0.25 Å, the method the MuFinder paper uses, which keeps the symmetry
-images of one site together however noisy their positions are.
+A workspace is grouped only when you apply a grouping. The ``Clustering…``
+button opens the ``Clustering - <workspace>`` dialog, which provides three
+methods, selected with ``Method``; it opens on ``Connected Components`` within
+0.25 Å, the method the MuFinder paper uses. Click ``Apply Clustering`` to store
+the result, with the method and its settings, on the workspace. Closing the
+dialog without applying leaves the workspace as it was.
 
-The ``Clustering…`` button opens the ``Clustering - <workspace>`` dialog to
-compare the three methods, selected with ``Method``. Click ``Apply
-Clustering`` to use the method and settings shown for this workspace instead:
-they are saved with the workspace, and relaxations that join it later are
-grouped with them too. Closing the dialog without applying keeps the
-workspace's grouping as it is. A method that cannot run (``Hierarchical`` and
-``K-means`` need the optional Soprano package) falls back to ``Connected
-Components`` within 0.25 Å when relaxations join.
+Relaxations added to a grouped workspace do not regroup it. The earlier sites
+keep their clusters, the new ones are listed without one, and a note above the
+table says the grouping is out of date, for example ``The grouping is out of
+date: it leaves out 2 relaxations added after it was applied. Choose
+'Clustering…' and 'Apply Clustering' to group every relaxation.`` The note
+stays, across saves, until a grouping is applied again.
 
 The dialog regroups a quarter of a second after you stop editing its
 controls, so a run of edits regroups once, and ``Apply Clustering`` always

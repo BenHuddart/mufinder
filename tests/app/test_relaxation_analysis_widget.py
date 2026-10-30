@@ -1430,10 +1430,9 @@ def test_relaxation_analysis_added_structures_and_clustering_update_the_tab_in_p
 
         widget.add_job_ids_to_workspace(workspace_id, [sources[1].job_id])
 
-        # The two sites are one bcc orbit, so the regrouped workspace has one cluster.
-        assert table.topLevelItemCount() == 1
-        assert table.topLevelItem(0).childCount() == 2
-        assert widget._workspaces[0]["clustering"]["result"]["cluster_labels"] == [1, 1]
+        # The workspace is not grouped, and adding a relaxation does not group it.
+        assert table.topLevelItemCount() == 2
+        assert widget._workspaces[0]["clustering"]["result"] is None
         assert len(overlays[-1][0]["positions"]) == 2
 
         widget._apply_clustering(workspace_id, {"result": {"cluster_labels": [1, 2]}})

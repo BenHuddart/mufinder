@@ -458,7 +458,10 @@ def anchored_sites(
     symprec: float = SYMMETRY_TOLERANCE_ANG,
     tolerance: float = 1e-6,
 ) -> tuple[AnchoredRelaxedSite, ...]:
-    """Return non-mutating symmetry-shifted positions clumped by cluster."""
+    """Return non-mutating symmetry-shifted positions clumped by cluster.
+
+    A site labelled 0 is ungrouped and keeps its position.
+    """
 
     ordered_sites = normalize_site_energies(sites)
     if len(ordered_sites) != len(cluster_labels):
@@ -481,6 +484,18 @@ def anchored_sites(
     anchored: list[AnchoredRelaxedSite] = []
     for index, site in enumerate(ordered_sites):
         label = labels[index]
+        if label <= 0:
+            # An ungrouped site (label 0) has no cluster to anchor to.
+            anchored.append(
+                AnchoredRelaxedSite(
+                    site_index=index,
+                    cluster_index=label,
+                    original_fractional_position=site.folded_fractional_position,
+                    shifted_fractional_position=site.folded_fractional_position,
+                    shifted=False,
+                )
+            )
+            continue
         shifted = closest_symmetry_equivalent_position(
             site.folded_fractional_position,
             anchor_frac=anchors[label],

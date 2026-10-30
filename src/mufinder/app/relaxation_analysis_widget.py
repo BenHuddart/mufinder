@@ -63,6 +63,7 @@ from mufinder.app.export_dialogs import (
 )
 from mufinder.app.theme import (
     current_palette,
+    style_warning_text,
     status_brush,
     style_hint_text,
     style_plot_axes,
@@ -75,6 +76,7 @@ from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
 from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
+from mufinder.domain.text import plural
 from mufinder.science.relaxation_analysis import (
     AnchoredRelaxedSite,
     ConnectedComponentsResult,
@@ -98,8 +100,9 @@ from mufinder.services.analysis_grouping import (
     METHOD_HIERARCHICAL as _METHOD_HIERARCHICAL,
     METHOD_KMEANS as _METHOD_KMEANS,
     SiteGrouping,
+    extend_grouping_with_new_sites,
     grouped_clustering_state,
-    regroup_workspace,
+    ungrouped_site_count,
 )
 from mufinder.services.source_candidates import CompletedRelaxationAnalysisSource
 from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
@@ -116,6 +119,17 @@ _JOB_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 #: How long the clustering dialog waits after a control edit before regrouping,
 #: so a run of edits (k-means spin-box steps) regroups once.
 _CLUSTERING_EDIT_DELAY_MS = 250
+#: Marks a workspace tab's "grouping is out of date" note.
+_OUT_OF_DATE_NOTE_PROPERTY = "analysisGroupingOutOfDateNote"
+
+
+def grouping_out_of_date_note(page: QWidget) -> QLabel | None:
+    """Return a workspace tab's note saying its grouping is out of date."""
+
+    for label in page.findChildren(QLabel):
+        if label.property(_OUT_OF_DATE_NOTE_PROPERTY):
+            return label
+    return None
 
 
 class _EqualInitialHorizontalSplitter(QSplitter):
@@ -2186,10 +2200,6 @@ class RelaxationAnalysisWidget(QWidget):
             lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid)
         )
         cluster_button = QPushButton("Clustering…", header)
-        cluster_button.setToolTip(
-            "Sites are grouped automatically, with connected components within 0.25 Å. "
-            "Open to compare methods and apply another grouping to this workspace."
-        )
         cluster_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid)
         )
@@ -2257,6 +2267,13 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.addWidget(export_relaxed_button, 2, 5)
         header_layout.setColumnStretch(1, 1)
         layout.addWidget(header)
+        out_of_date = QLabel("", page)
+        out_of_date.setWordWrap(True)
+        # The warning style names the label, so the note is found by a property.
+        style_warning_text(out_of_date)
+        out_of_date.setProperty(_OUT_OF_DATE_NOTE_PROPERTY, True)
+        out_of_date.hide()
+        layout.addWidget(out_of_date)
 
         splitter = _EqualInitialHorizontalSplitter(page)
         splitter.setObjectName("analysisWorkspaceContentSplitter")
@@ -2343,6 +2360,7 @@ class RelaxationAnalysisWidget(QWidget):
         sites = self._workspace_sites(workspace)
         anchored = self._anchored(workspace, sites)
         labels = self._cluster_labels(workspace, sites)
+        self._show_grouping_out_of_date(table, workspace, labels)
         show_shifted = bool(workspace.get("show_shifted_positions", False))
         colors = _cluster_color_map(labels)
         table.clear()
@@ -2429,6 +2447,28 @@ class RelaxationAnalysisWidget(QWidget):
             }
         ]
 
+    @staticmethod
+    def _show_grouping_out_of_date(
+        table: QTreeWidget, workspace: Mapping[str, object], labels: Sequence[int]
+    ) -> None:
+        """Say, above ``table``, when relaxations joined after the grouping was applied."""
+
+        page = table.parentWidget()
+        while page is not None and page.property("workspace_id") is None:
+            page = page.parentWidget()
+        note = grouping_out_of_date_note(page) if page is not None else None
+        if note is None:
+            return
+        count = ungrouped_site_count(workspace.get("clustering"), labels)
+        note.setText(
+            f"The grouping is out of date: it leaves out {plural(count, 'relaxation')} added "
+            "after it was applied. Choose 'Clustering…' and 'Apply Clustering' to group "
+            "every relaxation."
+            if count
+            else ""
+        )
+        note.setVisible(bool(count))
+
     def _rename_workspace(self, workspace_id: str, name: str) -> None:
         workspace = self._workspace_by_id(workspace_id)
         if workspace is None:
@@ -2465,12 +2505,13 @@ class RelaxationAnalysisWidget(QWidget):
             if job_id not in seen:
                 current.append(job_id)
                 seen.add(job_id)
+        previous_sites = self._workspace_sites(workspace)
         workspace["job_ids"] = [str(job_id) for job_id in current]
-        if self._host_structure is not None:
-            # The workspace regroups with its own method and settings.
-            workspace["clustering"] = regroup_workspace(
-                workspace, self._workspace_sites(workspace), self._host_structure
-            )
+        # Nothing regroups: earlier sites keep their groups, the new ones stay
+        # ungrouped until a grouping is applied again.
+        workspace["clustering"] = extend_grouping_with_new_sites(
+            workspace.get("clustering"), previous_sites, self._workspace_sites(workspace)
+        )
         self._emit_state()
         self._refresh_workspace_tab(workspace_id)
 

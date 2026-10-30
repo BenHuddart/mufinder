@@ -641,12 +641,11 @@ defined by two of these modules, and a pinned count may only fall.
        provenance records of a new analysis workspace and of an applied grouping
        (``analysis_workspace_created_record``, ``relaxed_sites_grouped_record``).
    * - ``mufinder.services.analysis_grouping``
-     - How a relaxation analysis workspace groups its sites: the default
-       grouping (connected components within 0.25 Å), regrouping a workspace
-       with its stored method and settings when it is created or relaxations
-       join it (``regroup_workspace``), and the ``clustering`` mapping both that
-       and ``Apply Clustering`` store, with the grouping record
-       (``grouped_clustering_state``).
+     - The grouping a relaxation analysis workspace stores: the ``clustering``
+       mapping ``Apply Clustering`` writes, with its grouping record
+       (``grouped_clustering_state``); keeping that grouping, without
+       regrouping, when relaxations join (``extend_grouping_with_new_sites``);
+       and whether it is out of date (``ungrouped_site_count``).
    * - ``mufinder.services.convergence_defaults``
      - The pinned cutoff and k-point plots on the Convergence Testing
        overview: building a snapshot from the examiner's saved plot data when

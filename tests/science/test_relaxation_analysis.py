@@ -717,3 +717,17 @@ def test_distinct_feature_count_chains_members_within_the_floors() -> None:
 
     assert distinct_feature_count(vectors) == 2
     assert distinct_feature_count([]) == 0
+
+
+def test_anchoring_leaves_ungrouped_sites_where_they_are() -> None:
+    host = _bcc_host_structure()
+    sites = [
+        _bcc_site("grouped", (0.5, 0.25, 0.0), -10.0),
+        _bcc_site("joined later", (0.0, 0.5, 0.25), -9.0),
+    ]
+
+    anchored = anchored_sites(sites, host, [1, 0])
+
+    assert anchored[1].cluster_index == 0
+    assert anchored[1].shifted is False
+    assert anchored[1].shifted_fractional_position == (0.0, 0.5, 0.25)
