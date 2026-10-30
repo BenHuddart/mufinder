@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.text import natural_sort_key, plural
+from mufinder.domain.text import natural_sort_key, plural, space_group_text
 
 
 @pytest.mark.parametrize(
@@ -32,3 +32,11 @@ def test_natural_sort_key_compares_numbers_as_numbers_and_ignores_case() -> None
 
 def test_natural_sort_key_keeps_non_decimal_digits_as_text() -> None:
     assert natural_sort_key("Mu¹²_3") == ((1, "mu¹²_"), (0, 3))
+
+
+@pytest.mark.parametrize(
+    ("symbol", "expected"),
+    [("P4_2/mnm", "P4₂/mnm"), ("P6_3mc", "P6₃mc"), ("Fm-3m", "Fm-3m"), ("P2_12_12_1", "P2₁2₁2₁")],
+)
+def test_space_group_text_writes_screw_axes_as_subscripts(symbol: str, expected: str) -> None:
+    assert space_group_text(symbol) == expected

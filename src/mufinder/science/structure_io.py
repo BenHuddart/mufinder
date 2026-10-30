@@ -173,8 +173,13 @@ def export_structure_with_muon_sites(
     host_structure: Structure,
     muon_sites: list[CifMuonSite],
     output_path: str | Path,
+    *,
+    header_lines: Sequence[str] = (),
 ) -> list[str]:
     """Write a host structure plus muon sites to a CIF file.
+
+    ``header_lines`` are written as ``#`` comments at the top of the file, as
+    in :func:`export_structure`.
 
     Muons are written as hydrogen (``H``) atoms - the closest standard CIF
     element - with distinct ``_atom_site_label`` values (``site.label``, e.g.
@@ -219,7 +224,9 @@ def export_structure_with_muon_sites(
                 )
 
     destination = Path(output_path)
-    _write_p1_cif(destination, lattice_vectors, species, positions, labels)
+    _write_p1_cif(
+        destination, lattice_vectors, species, positions, labels, header_lines=header_lines
+    )
     if muon_sites:
         with destination.open("a", encoding=_CIF_ENCODING, errors="replace") as handle:
             handle.write("\nloop_\n")

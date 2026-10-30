@@ -16,6 +16,7 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
+    GenerationRun,
     Job,
     MuonSite,
     Project,
@@ -37,6 +38,7 @@ class ProjectDocument:
     runs: dict[UUID, CalculationRun] = field(default_factory=dict)
     results: dict[UUID, Result] = field(default_factory=dict)
     comparison_tables: dict[UUID, ComparisonTable] = field(default_factory=dict)
+    generation_runs: dict[UUID, GenerationRun] = field(default_factory=dict)
     jobs: dict[UUID, Job] = field(default_factory=dict)
     provenance: list[ProvenanceRecord] = field(default_factory=list)
     ui_state: dict[str, Any] = field(default_factory=dict)

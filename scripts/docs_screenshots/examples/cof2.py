@@ -1321,7 +1321,7 @@ SCENES: dict[str, Scene] = {
         ),
     ),
     "comparison_table": Scene(
-        results_project, None, Page(current_page, (780, 820)), setup=open_comparison_table
+        results_project, None, Page(current_page, (780, 680)), setup=open_comparison_table
     ),
     # UEP.
     "uep_page": Scene(results_project, "uep", Page("_uep_view", (1100, 540))),

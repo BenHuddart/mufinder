@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 from matplotlib.colors import to_hex
@@ -921,3 +922,20 @@ def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_po
 
     assert dialog._energy_threshold.value() > 0.0
     assert dialog._force_threshold.text() == "0.00001"
+
+
+def test_convergence_examiner_initial_plot_keeps_points_missing_a_force(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=None),
+            500.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+    )
+
+    energy_line = dialog._energy_ax.lines[0]
+    force_line = dialog._force_ax.lines[0]
+    assert list(energy_line.get_xdata()) == [300.0, 400.0, 500.0]
+    assert list(energy_line.get_ydata()) == [-10.0, -10.01, -10.0105]
+    assert math.isnan(force_line.get_ydata()[1])

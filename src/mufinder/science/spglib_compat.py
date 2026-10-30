@@ -11,6 +11,7 @@ passed explicitly.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 import re
 from typing import Any
@@ -296,6 +297,54 @@ def symmetry_detection_warning(
             "so the host is treated as having no symmetry (P1)."
         )
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class HostSymmetry:
+    """The space group spglib detects for a host at one tolerance.
+
+    ``symbol`` (spglib's international symbol, such as ``"P4_2/mnm"``) and
+    ``number`` are ``None`` when no symmetry was detected; the host is then
+    treated as P1 and ``operation_count`` is 1.
+    """
+
+    symbol: str | None
+    number: int | None
+    operation_count: int
+    symprec: float
+
+
+def host_symmetry(
+    structure: Any = None,
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None = None,
+    species: Sequence[str] | None = None,
+    fractional_positions: Sequence[Sequence[float]] | None = None,
+    symprec: float = SYMMETRY_TOLERANCE_ANG,
+) -> HostSymmetry:
+    """Return the host's space group and its number of operations at ``symprec``.
+
+    Takes the structure, or its parts, as :func:`spglib_cell` does. The
+    operation count is that of :func:`symmetry_operations`, which every symmetry
+    caller uses.
+    """
+
+    cell = spglib_cell(
+        structure,
+        lattice_vectors=lattice_vectors,
+        species=species,
+        fractional_positions=fractional_positions,
+    )
+    dataset = None if cell is None else get_crystal_symmetry_dataset(cell, symprec=symprec)
+    operations = None if cell is None else symmetry_operations(cell, symprec=symprec)
+    if dataset is None or operations is None:
+        return HostSymmetry(symbol=None, number=None, operation_count=1, symprec=float(symprec))
+    return HostSymmetry(
+        symbol=str(dataset.international),
+        number=int(dataset.number),
+        operation_count=max(1, len(operations[1])),
+        symprec=float(symprec),
+    )
 
 
 def clear_symmetry_operations_cache() -> None:

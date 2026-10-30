@@ -24,6 +24,18 @@ def plural(n: int, singular: str, plural: str | None = None) -> str:
     return f"{n} {word}"
 
 
+_SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+
+def space_group_text(symbol: str) -> str:
+    """Return a spglib international symbol as it is printed: ``"P4_2/mnm"`` is ``"P4₂/mnm"``.
+
+    A screw axis's ``_n`` becomes a subscript digit; the rest is unchanged.
+    """
+
+    return re.sub(r"_(\d)", lambda match: match.group(1).translate(_SUBSCRIPT_DIGITS), symbol)
+
+
 def natural_sort_key(label: str) -> tuple[tuple[int, object], ...]:
     """Return a key that orders labels the way a reader expects.
 

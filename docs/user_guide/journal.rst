@@ -56,9 +56,15 @@ reconstructing what happened during a project, including:
 - adopted project defaults, including the functional a cutoff or k-point
   default was converged with, any change to the project default XC
   functional, and defaults entered or cleared by hand
-- muon candidate generation (with an ``Attention`` entry when fewer sites were
-  generated than requested, and one when the host's symmetry could not be
-  detected so generation treated it as having none) and UEP promotion
+- muon candidate generation, with the run's parameters in one line and its
+  random seed (for example ``Random, 6 starts, ≥ 1.79 Å apart, ≥ 1.0 Å from
+  atoms, P4₂/mnm (16 ops), seed 418273.``), an ``Attention`` entry when fewer
+  sites were generated than requested, and one when the host's symmetry could
+  not be detected so generation treated it as having none; UEP promotion
+- ``Cluster Positions…`` (the anchor and the starts moved), staging generated
+  sites for relaxation, and removing generated sites
+- creating a relaxation analysis workspace, and applying a grouping to it (the
+  number of distinct sites, the method, its tolerances and the space group)
 - calculation submission milestones and continuation runs
 - terminal calculation outcomes such as completed, failed, stopped, cancelled,
   and reset

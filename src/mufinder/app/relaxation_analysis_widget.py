@@ -92,6 +92,7 @@ from mufinder.science.relaxation_analysis import (
     scan_connected_component_tolerances,
     uep_summary_to_relaxation_clusters,
 )
+from mufinder.services.muon_sites_summary import relaxed_site_grouping
 from mufinder.services.source_candidates import CompletedRelaxationAnalysisSource
 from mufinder.services.structure_export import NO_STRUCTURE_REASON, RelaxedStructureExport
 from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
@@ -1413,6 +1414,8 @@ class RelaxationClusteringDialog(StructureViewerDialog):
             ],
             "result": result_payload,
         }
+        # Record the symmetry the grouping used now, against the host it ran on.
+        clustering["grouping"] = relaxed_site_grouping(clustering, self._host_structure)
         self.clustering_applied.emit(clustering)
         self.accept()
 
@@ -1622,6 +1625,8 @@ class RelaxationAnalysisWidget(QWidget):
     """Container for persistent structural-relaxation analysis workspaces."""
 
     state_changed = Signal(list)
+    #: A workspace's id, once a grouping (clustering) has been applied to it.
+    grouping_applied = Signal(str)
     add_sites_requested = Signal(str)
     pin_summary_requested = Signal(str)
     delete_requested = Signal(str)
@@ -2371,6 +2376,7 @@ class RelaxationAnalysisWidget(QWidget):
         workspace["clustering"] = dict(clustering)
         self._emit_state()
         self._refresh_workspace_tab(workspace_id)
+        self.grouping_applied.emit(str(workspace_id))
 
     def _open_displacements(self, workspace_id: str) -> None:
         workspace = self._workspace_by_id(workspace_id)

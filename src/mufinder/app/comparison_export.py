@@ -6,13 +6,32 @@ import csv
 from pathlib import Path
 
 from mufinder.domain.models import ComparisonTable
+from mufinder.science.structure_metrics import MetricDefinition, metric_definitions
+
+
+def table_metric_definitions(table: ComparisonTable) -> list[MetricDefinition]:
+    """The defined metrics a saved table holds, in the order of ``metric_definitions()``.
+
+    A table names its metrics by key in ``metric_definitions`` and in its
+    experimental values. Keys that are no longer defined are skipped, and the
+    label, unit, group and tooltip always come from the current definitions.
+    """
+
+    payload = table.result_data
+    keys: set[str] = set()
+    for definition in payload.get("metric_definitions", []):
+        if isinstance(definition, dict):
+            keys.add(str(definition.get("key", "")))
+    experimental_values = payload.get("experimental_values", {})
+    if isinstance(experimental_values, dict):
+        keys.update(str(key) for key in experimental_values)
+    return [definition for definition in metric_definitions() if definition.key in keys]
 
 
 def export_comparison_csv(table: ComparisonTable, output_path: Path) -> None:
     """Export one comparison table to a CSV file."""
 
     payload = table.result_data
-    definitions = payload.get("metric_definitions", [])
     dft_columns = payload.get("dft_columns", [])
     experimental_values = payload.get("experimental_values", {})
 
@@ -25,18 +44,14 @@ def export_comparison_csv(table: ComparisonTable, output_path: Path) -> None:
         writer = csv.writer(handle)
         writer.writerow(headers)
 
-        for definition in definitions:
-            if not isinstance(definition, dict):
-                continue
-            key = str(definition.get("key", ""))
-            label = str(definition.get("label", key))
-            unit = str(definition.get("unit", ""))
+        for definition in table_metric_definitions(table):
+            key = definition.key
             experimental = experimental_values.get(key, {})
             exp_display = ""
             if isinstance(experimental, dict):
                 exp_display = str(experimental.get("display", ""))
 
-            row = [label, unit, exp_display]
+            row = [definition.label, definition.unit, exp_display]
             for column in dft_columns:
                 display = ""
                 if isinstance(column, dict):

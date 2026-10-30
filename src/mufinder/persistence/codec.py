@@ -92,6 +92,17 @@ def int_or_none(value: object) -> int | None:
         return None
 
 
+def float_or_none(value: object) -> float | None:
+    """Return ``float(value)``, or ``None`` when ``value`` is missing or does not convert."""
+
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def float_triplet(value: object) -> tuple[float, float, float]:
     """Return ``value`` as three floats.
 

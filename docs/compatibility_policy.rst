@@ -74,6 +74,22 @@ Compatibility ledger
        key. A site whose key is present but ``null`` is never repaired this way.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that adds the key to stored snapshots.
+   * - ``generation_runs`` entities and generated sites without a run
+     - ``entities/generation_runs`` (``mufinder.persistence.project_codec``,
+       ``generation_run_from_dict``); ``MuonSite.source_generation_batch_id``;
+       ``mufinder.services.generation_runs`` (``generation_run_groups``)
+     - Each ``Generate Sites`` run is saved as a ``GenerationRun`` and its sites
+       name it in ``source_generation_batch_id``. A project saved before runs
+       existed has no ``generation_runs`` directory and loads with none; its
+       sites keep ``source_generation_batch_id`` ``null`` and are listed under
+       an "Earlier starts" header built from their ``properties``, as is a site
+       whose run is missing. Optional run fields that are missing or malformed
+       load as ``None``. The same additive rule covers the ``grouping`` key of a
+       Muon Sites summary snapshot: a snapshot pinned before it existed shows no
+       grouping lines and exports none, until the analysis is pinned again.
+     - Current project data, not deprecated. Additive with defaults, so no
+       migration; runs may not be dropped without a schema migration that keeps
+       the seed and inputs elsewhere.
    * - ``relative_energy_eV`` muon-site key
      - ``mufinder.persistence.project_codec`` (``site_from_dict``)
      - ``MuonSite`` stored the source relaxation's absolute final total energy
@@ -545,6 +561,25 @@ Compatibility ledger
      - Read-side alias. Keep until a saved-project schema version bump
        includes a migration that rewrites the three values in stored form
        states and samples.
+   * - Comparison-table metric keys without a definition
+       (``similarity_score``, ``mean_displacement``, ``delta_a_pct``,
+       ``delta_b_pct``, ``delta_c_pct``, ``delta_volume_pct``,
+       ``mean_bond_length_diff``, ``max_bond_length_diff``,
+       ``mean_bond_angle_diff``, ``coordination_changes``,
+       ``topology_preserved``)
+     - ``ComparisonTable.result_data``; read by
+       ``mufinder.app.comparison_export`` (``table_metric_definitions``) for
+       the comparison table widget and the CSV export
+     - A saved table names its metrics by key. The widget and the export show
+       the keys that ``mufinder.science.structure_metrics`` still defines, with
+       the current label, unit, group and tooltip, and skip every other key,
+       so a table holding these keys opens with its lattice, displacement and
+       space-group rows. A saved ``space_group`` value shows its stored text
+       (such as ``Match (P4_2/mnm)``) under ``Space group``. The stored payload
+       is never rewritten.
+     - Read-side skip. Keep while projects holding such tables may be opened,
+       or until a saved-project schema version bump includes a migration that
+       drops the keys from stored tables.
 
 Saved-project schema migrations
 -------------------------------

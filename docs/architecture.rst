@@ -479,10 +479,16 @@ defined by two of these modules, and a pinned count may only fall.
        ``magnetic_structure_builder_stylesheet``) carry no colours that would
        go stale when the theme changes, and their coloured rules are sections
        of the application stylesheet. Painted widgets take their colours from
-       here (``texture_preview_colors`` for the magnetic texture preview).
+       here (``texture_preview_colors`` for the magnetic texture preview), and
+       plots their series colours by role (``convergence_plot_colors``).
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
+   * - ``mufinder.app.convergence_plot``
+     - The convergence plot the examiner dialog and the pinned overview cards
+       both draw (``draw_convergence_plot``) from a sweep's saved ``plot_data``
+       (``ConvergencePlotData``), including the k-point count and spacing axes
+       (``spacing_axis_ticks``).
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
        and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`).
@@ -621,6 +627,11 @@ defined by two of these modules, and a pinned count may only fall.
        ``pinned_sites_by_representative``), and the per-workflow "Show every relaxed
        site" choice and notice that decide which sites quantum corrections,
        energy barriers and magnetic fields list (``downstream_site_scope``).
+       The snapshot keeps how the sites were grouped (``relaxed_site_grouping``:
+       method, tolerances, symmetry tolerance and space group), which the
+       summary card and its CIF export state; the module also builds the
+       provenance records of a new analysis workspace and of an applied grouping
+       (``analysis_workspace_created_record``, ``relaxed_sites_grouped_record``).
    * - ``mufinder.services.convergence_defaults``
      - The pinned cutoff and k-point plots on the Convergence Testing
        overview: building a snapshot from the examiner's saved plot data when
@@ -631,9 +642,10 @@ defined by two of these modules, and a pinned count may only fall.
        (``validated_cutoff_overview_snapshot``,
        ``validated_kpoint_overview_snapshot``), with the k-point spacings
        recomputed on the cell the sweep ran on (``kpoint_snapshot_cell``,
-       ``recompute_snapshot_spacings``). A k-point snapshot stores the
-       examined grids as ``Grid: a x b x c`` point labels, which the overview
-       shows and ``kpoint_grids_from_labels`` reads back. The
+       ``recompute_snapshot_spacings``) and that cell's lattice vectors added
+       for the plot's spacing axis. A k-point snapshot stores the
+       examined grids as ``Grid: a x b x c`` point labels, which
+       ``kpoint_grids_from_labels`` reads back. The
        spacing series itself is ``distinct_grid_spacings`` in
        ``mufinder.science.kpoint_grids``, which the examiner also uses.
    * - ``mufinder.services.project_summary``
@@ -715,7 +727,19 @@ defined by two of these modules, and a pinned count may only fall.
        refusing them if the active host or its geometry changed and
        renumbering a label another site took meanwhile. The main window's
        ``MuonGenerationThread`` runs only the middle step. The placement maths
-       is ``mufinder.science.site_generation``.
+       is ``mufinder.science.site_generation``. Every generation records a
+       ``GenerationRun`` (inputs, seed, host space group, outcome) that its
+       sites point to through ``source_generation_batch_id``; a random run
+       given no seed draws one in ``prepare_candidate_sites``. Clustering near an
+       anchor adds the starts' positions before the move to their run.
+   * - ``mufinder.services.generation_runs``
+     - The words for a generation run: its one-line summary
+       (``run_summary_line``, also the Journal's line with the seed,
+       ``run_journal_line``), its methods-section sentence
+       (``run_methods_sentence``), and the grouping of generated starts by run
+       for the Generation page (``generation_run_groups``), with starts made
+       before runs were recorded grouped as "Earlier starts" from their
+       ``properties``.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
        submission: the workflow directory fragment and remote path
@@ -1821,14 +1845,14 @@ rendered by ``app``. The implementation is intentionally layered:
 
 - normalization in ``mufinder.science.supercell_matching``,
 - atom matching in ``mufinder.science.atom_matching``,
-- bonding and topology analysis in ``mufinder.science.bonding_analysis`` and
-  ``mufinder.science.symmetry_analysis``,
+- space-group detection in ``mufinder.science.symmetry_analysis``,
 - metric registry and evaluation in ``mufinder.science.structure_metrics``,
 - orchestration in ``mufinder.science.structure_comparison``,
 - rendering in ``mufinder.app.comparison_table_widget``.
 
-The per-metric help shown by the GUI ``Info`` buttons is sourced from the same
-metric-definition registry used to populate the comparison table.
+The widget takes each row's label, unit, group and tooltip from that metric
+registry, looked up by the metric keys a saved table holds; the method behind
+the metrics is described in the user guide, which the table links to.
 
 Cross-platform appearance
 -------------------------

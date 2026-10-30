@@ -105,8 +105,8 @@ def build_kpoint_overview_snapshot(
     """Return the snapshot that pins an adopted k-point grid, with the point labels.
 
     ``point_grids`` maps each examined k-point count to its grid; the snapshot
-    stores them as ``point_labels`` (``{"8.0": "Grid: 2 x 2 x 2"}``), which the
-    overview shows and :func:`recompute_snapshot_spacings` reads back. ``None``
+    stores them as ``point_labels`` (``{"8.0": "Grid: 2 x 2 x 2"}``), which
+    :func:`recompute_snapshot_spacings` reads back. ``None``
     when there is no active host or the k-point examiner has saved no plot data.
     """
 
@@ -201,7 +201,9 @@ def validated_kpoint_overview_snapshot(
     matches the project's recommended grid. The returned copy carries
     ``point_spacings`` recomputed on the cell the sweep ran on (a saved
     supercell, or the host for a snapshot that records none), so values stored
-    with an older spacing formula are always refreshed.
+    with an older spacing formula are always refreshed, and that cell's
+    ``lattice_vectors``, which place the overview plot's spacing axis. The
+    lattice is not stored with the snapshot.
     """
 
     snapshot = _host_snapshot(document, KPOINT_SNAPSHOT)
@@ -223,6 +225,9 @@ def validated_kpoint_overview_snapshot(
     cell = kpoint_snapshot_cell(document, snapshot)
     if cell is not None:
         snapshot = recompute_snapshot_spacings(snapshot, cell.lattice_vectors)
+        snapshot["lattice_vectors"] = [
+            [float(component) for component in vector] for vector in cell.lattice_vectors
+        ]
     return snapshot
 
 

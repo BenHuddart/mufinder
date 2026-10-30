@@ -229,6 +229,7 @@ class ProjectService:
             ("runs", [(str(r.id), r) for r in document.runs.values()]),
             ("results", [(str(r.id), r) for r in document.results.values()]),
             ("comparison_tables", [(str(t.id), t) for t in document.comparison_tables.values()]),
+            ("generation_runs", [(str(r.id), r) for r in document.generation_runs.values()]),
             ("jobs", [(str(j.id), j) for j in document.jobs.values()]),
         ]
 
@@ -287,6 +288,7 @@ class ProjectService:
                 "runs",
                 "results",
                 "comparison_tables",
+                "generation_runs",
                 "jobs",
             )
         }

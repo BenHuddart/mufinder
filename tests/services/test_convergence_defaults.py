@@ -299,9 +299,14 @@ def test_kpoint_overview_recomputes_spacings_on_the_sweep_cell(project) -> None:
     assert snapshot["plot_data"]["point_spacings"][16.0] != pytest.approx(
         spacing_from_grid(host.lattice_vectors, (4, 2, 2))
     )
+    # The copy carries the sweep cell's lattice for the plot's spacing axis.
+    assert snapshot["lattice_vectors"] == [
+        [float(component) for component in vector] for vector in supercell.lattice_vectors
+    ]
     # The stored snapshot keeps its values; only the returned copy is refreshed.
     stored = doc.ui_state[CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY][KPOINT_SNAPSHOT]
     assert stored["plot_data"]["point_spacings"] == {"16.0": 999.0}
+    assert "lattice_vectors" not in stored
 
 
 @pytest.mark.parametrize("cell_id", [None, "", "not-a-uuid", "SUPERCELL_MISSING"])
