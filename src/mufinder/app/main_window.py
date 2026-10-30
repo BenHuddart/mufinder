@@ -1292,17 +1292,20 @@ class MainWindow(QMainWindow):
                 self._sync_job_runtime_timer()
                 event.ignore()
                 return
-            self._shutting_down = True
-            self._close_open_uep_analysis_dialogs()
             if answer == "save":
                 try:
                     self._project_service.save_project(self._document)
-                except ValueError as exc:
-                    self._shutting_down = False
-                    QMessageBox.critical(self, "Save blocked", str(exc))
-                    self._sync_job_runtime_timer()
+                except (OSError, ValueError) as exc:
                     event.ignore()
+                    QMessageBox.critical(self, "Save blocked", str(exc))
+                    # Staying open: everything stopped above for the close resumes.
+                    self._flush_dashboard()
+                    self._sync_job_runtime_timer()
+                    if job_watchdog_timer is not None:
+                        job_watchdog_timer.start()
                     return
+            self._shutting_down = True
+            self._close_open_uep_analysis_dialogs()
             relaxation_analysis_view = getattr(self, "_relaxation_analysis_view", None)
             if relaxation_analysis_view is not None:
                 relaxation_analysis_view.shutdown()
@@ -1871,16 +1874,16 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
-        # This writes the whole document, so any coalesced flush is subsumed.
+        try:
+            self._project_service.save_project(self._document)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Save blocked", str(exc))
+            return
+        # This wrote the whole document, so any coalesced flush is subsumed.
         self._dashboard_flush_pending = False
         self._dashboard_flush_timer.stop()
         self._dashboard_flush_deadline = None
         self._dashboard_last_flush_at = time.monotonic()
-        try:
-            self._project_service.save_project(self._document)
-        except ValueError as exc:
-            QMessageBox.critical(self, "Save blocked", str(exc))
-            return
         self.statusBar().showMessage("Project saved")
 
     def _open_castep_setup_dialog(self) -> None:
@@ -3072,7 +3075,8 @@ class MainWindow(QMainWindow):
             return
         try:
             self._project_service.save_project(self._document)
-        except ValueError:
+        except (OSError, ValueError) as exc:
+            _LOG.warning("Autosave failed: %s", exc)
             self.statusBar().showMessage(failure_message)
 
     def _request_dashboard_flush(self, *, failure_message: str) -> None:
