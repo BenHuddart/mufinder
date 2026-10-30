@@ -289,6 +289,8 @@ from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
     awaits_scheduler_reappearance,
+    remember_local_cores,
+    remembered_local_cores,
 )
 from mufinder.services.convergence_defaults import (
     CUTOFF_SNAPSHOT,
@@ -362,6 +364,7 @@ from mufinder.services.project_summary import (
     COMPLETION_CHECKS,
     PROJECT_HOME_STAGE_KEY,
     WORKFLOW_STAGES,
+    job_stage_title,
     magnetic_field_workspace_complete,
     relaxation_analysis_workspace_clustered,
     stage_group,
@@ -4490,12 +4493,17 @@ class MainWindow(QMainWindow):
             job_labels=[job.label for job in eligible_jobs],
             mpirun_configured=bool(setup.mpirun_path),
             farm_counts=self._farm_counts_for_jobs(eligible_jobs),
+            stage_title=job_stage_title(job.workflow_stage for job in eligible_jobs),
+            initial_cores=remembered_local_cores(self._document.ui_state),
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
         config = dialog.config()
+        if setup.mpirun_path:
+            # Without mpirun the dialog pins one core, which is not a choice to keep.
+            remember_local_cores(self._document.ui_state, config.num_cores)
 
         fresh_jobs = [job for job in eligible_jobs if job.id in fresh_start_job_ids]
         if fresh_jobs:

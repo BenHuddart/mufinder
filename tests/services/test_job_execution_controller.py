@@ -15,7 +15,10 @@ from mufinder.services.failure_diagnosis import MISSING_SCHEDULER_ENTRY_FAILURE_
 from mufinder.services.job_execution_controller import (
     ClusterJobSubmission,
     JobExecutionController,
+    LOCAL_SUBMISSION_CORES_KEY,
     awaits_scheduler_reappearance,
+    remember_local_cores,
+    remembered_local_cores,
 )
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from tests.support.jobs import make_job
@@ -1450,3 +1453,18 @@ def test_stale_reappearance_watches_and_their_observations(tmp_path: Path) -> No
     assert dismissed.last_status_message != "watching"
     assert waiting.last_status_message == "watching"
     assert resumed.last_status_message == "watching"
+
+
+def test_local_cores_are_remembered_in_the_project_ui_state() -> None:
+    ui_state: dict[str, object] = {}
+    assert remembered_local_cores(ui_state) is None
+
+    remember_local_cores(ui_state, 6)
+
+    assert ui_state[LOCAL_SUBMISSION_CORES_KEY] == 6
+    assert remembered_local_cores(ui_state) == 6
+
+
+@pytest.mark.parametrize("saved", [0, -2, "8", 2.5, True, None])
+def test_remembered_local_cores_ignores_a_saved_value_that_is_not_a_core_count(saved) -> None:
+    assert remembered_local_cores({LOCAL_SUBMISSION_CORES_KEY: saved}) is None

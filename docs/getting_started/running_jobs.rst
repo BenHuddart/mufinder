@@ -72,8 +72,8 @@ Local submission
 ~~~~~~~~~~~~~~~~
 
 .. figure:: ../_generated/screenshots/local_submission_dialog.webp
-   :alt: The local submission dialog for six cutoff-convergence jobs, set to
-         run one after another.
+   :alt: The local submission dialog headed 'Run 6 Cutoff Energy jobs', with
+         cores per job, jobs at once and the cores the run uses.
 
    The local submission dialog for the six-row cutoff sweep of the CoF₂
    example (:doc:`/user_guide/examples/cof2`).
@@ -89,14 +89,23 @@ install prefixes. Multi-core local runs need a configured or discovered
 keyword catalog from the same dialog is described in
 :doc:`/castep_keyword_catalog`.
 
-1. Set ``Processor cores per job``. The hint beneath it gives this computer's
-   logical core count.
-2. With more than one job, choose ``Run jobs one after another`` or ``Run jobs
-   at the same time``. For the second, set ``Maximum jobs running together``.
-3. Read the warning line below the settings. It warns when cores per job
-   multiplied by the concurrency exceeds the logical CPUs. A task-farming
-   check blocks ``OK`` when a row's farm count exceeds the cores per job.
-4. Click ``OK``.
+The heading names the page the jobs come from and how many there are (``Run 6
+Cutoff Energy jobs``); hold the pointer over it to list the jobs.
+
+1. Set ``Cores per job``. The first local run in a project offers every
+   physical core of this computer (every logical core where the physical count
+   cannot be read): OpenMPI's ``mpirun`` refuses more processes than physical
+   cores, so on a computer with two threads per core the logical count would
+   not start. Later runs offer the count used last in that project. Without
+   ``mpirun`` the count is 1 and is not remembered.
+2. With more than one job, set ``Jobs at once``: 1 runs them one after
+   another, a larger number runs that many side by side.
+3. Read the line beneath: ``Uses 16 of 20 cores`` multiplies the two numbers
+   and compares the total with this computer's logical cores. It turns to the
+   warning colour when the total is larger, since jobs that share cores run
+   slower. A task-farming check blocks the run button when a row's farm count
+   exceeds the cores per job.
+4. Click ``Run 6 jobs`` (the button gives the count).
 
 Jobs run in the background, so the window never blocks, inside the job
 directories created at submission time. A local job passes through ``queued``
