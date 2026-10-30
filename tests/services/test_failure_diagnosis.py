@@ -26,7 +26,6 @@ from mufinder.services.failure_diagnosis import (
     group_reports_by_headline,
     read_error_contexts,
     read_log_tail,
-    read_text_excerpt,
 )
 
 _SLURM_TIMEOUT = (
@@ -294,22 +293,18 @@ def test_failure_log_files_finds_the_scheduler_output(tmp_path: Path) -> None:
     assert "2: slurm error: out of memory" in read_error_contexts(path)
 
 
-def test_read_error_contexts_and_excerpt_handle_empty_missing_and_small_files(
-    tmp_path: Path,
-) -> None:
-    content = "first line\nerror here\nthird line\n"
-    small = _write(tmp_path / "small.err", content)
+def test_read_error_contexts_handles_empty_missing_and_unmarked_files(tmp_path: Path) -> None:
+    small = _write(tmp_path / "small.err", "first line\nerror here\nthird line\n")
     empty = _write(tmp_path / "empty.err", "")
+    quiet = _write(tmp_path / "quiet.out", "".join(f"line {n}\n" for n in range(1, 31)))
 
     assert read_error_contexts(empty) == "[File is empty]"
     assert read_error_contexts(tmp_path / "missing.err").startswith("Could not read file")
-    assert "2: error here" in read_error_contexts(small)
-    assert read_text_excerpt(small) == content.strip()
-    assert read_text_excerpt(empty) == "[File is empty]"
-    assert read_text_excerpt(small, max_chars=5) == "first\n… [truncated]"
+    assert read_error_contexts(small) == "1: first line\n2: error here\n3: third line"
+    assert read_error_contexts(quiet).splitlines()[0] == "11: line 11"
 
 
-def test_excerpts_of_a_large_file_read_only_its_tail(tmp_path: Path) -> None:
+def test_the_excerpt_of_a_large_file_reads_only_its_tail(tmp_path: Path) -> None:
     path = tmp_path / "huge.out"
     first_line = "FIRST-LINE-SENTINEL " + ("x" * 200) + "\n"
     filler_line = "y" * 500 + "\n"
@@ -320,7 +315,17 @@ def test_excerpts_of_a_large_file_read_only_its_tail(tmp_path: Path) -> None:
         handle.write("LAST-LINE-SENTINEL\n")
     assert path.stat().st_size > EXCERPT_TAIL_BYTES
 
-    excerpt = read_text_excerpt(path, max_chars=10**9)
+    excerpt = read_error_contexts(path)
     assert "FIRST-LINE-SENTINEL" not in excerpt
     assert "LAST-LINE-SENTINEL" in excerpt
-    assert "FIRST-LINE-SENTINEL" not in read_error_contexts(path)
+
+
+def test_evidence_taken_from_the_recorded_message_is_not_repeated(tmp_path: Path) -> None:
+    message = f"slurmstepd: noise\n{_SLURM_TIMEOUT}"
+    job = _job(message=message)
+    diagnosis = diagnose_failure(message, [])
+
+    report = failed_job_report(job, diagnosis, tmp_path, job.label)
+
+    assert diagnosis.evidence_source == "failure message"
+    assert report.notes == (f"Recorded message: {message}",)

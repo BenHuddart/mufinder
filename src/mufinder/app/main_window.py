@@ -4650,50 +4650,57 @@ class MainWindow(QMainWindow):
         )
 
     def _castep_executable_ready(self) -> bool:
-        """Return whether a local CASTEP executable is configured.
+        """Return whether a local CASTEP executable is configured, offering Setup > CASTEP."""
 
-        When none is, say so and offer ``Setup > CASTEP``; the answer is true
-        when the user configures one there.
-        """
-
-        if load_castep_setup(self._settings).executable_path:
-            return True
-        choice = workflow_table_utils.confirm_choice(
-            self,
-            "CASTEP executable missing",
-            "Configure a CASTEP executable in Setup > CASTEP before submitting jobs.",
-            [("setup", "Open Setup > CASTEP…"), ("cancel", "Cancel")],
-            default="cancel",
-            escape="cancel",
-            icon=QMessageBox.Icon.Warning,
+        return self._ready_or_offer_setup(
+            lambda: bool(load_castep_setup(self._settings).executable_path),
+            title="CASTEP executable missing",
+            text="Configure a CASTEP executable in Setup > CASTEP before submitting jobs.",
+            setup_label="Open Setup > CASTEP…",
+            open_setup=self._open_castep_setup_dialog,
         )
-        if choice != "setup":
-            return False
-        self._open_castep_setup_dialog()
-        return bool(load_castep_setup(self._settings).executable_path)
 
     def _clusters_configured(self) -> bool:
-        """Return whether at least one cluster is configured.
+        """Return whether at least one cluster is configured, offering Setup > HPC Clusters."""
 
-        When none is, say so and offer ``Setup > HPC Clusters``; the answer is
-        true when the user adds one there.
+        return self._ready_or_offer_setup(
+            lambda: bool(load_cluster_configs(self._settings)),
+            title="No configured clusters",
+            text="Configure at least one cluster in Setup > HPC Clusters before submitting.",
+            setup_label="Open Setup > HPC Clusters…",
+            open_setup=self._open_cluster_setup_dialog,
+        )
+
+    def _ready_or_offer_setup(
+        self,
+        is_ready: Callable[[], bool],
+        *,
+        title: str,
+        text: str,
+        setup_label: str,
+        open_setup: Callable[[], None],
+    ) -> bool:
+        """Return ``is_ready()``; when false, say why and offer the setup dialog.
+
+        The answer is true when the user opens the setup dialog and fixes it
+        there. Cancel is the default.
         """
 
-        if load_cluster_configs(self._settings):
+        if is_ready():
             return True
         choice = workflow_table_utils.confirm_choice(
             self,
-            "No configured clusters",
-            "Configure at least one cluster in Setup > HPC Clusters before submitting.",
-            [("setup", "Open Setup > HPC Clusters…"), ("cancel", "Cancel")],
+            title,
+            text,
+            [("setup", setup_label), ("cancel", "Cancel")],
             default="cancel",
             escape="cancel",
             icon=QMessageBox.Icon.Warning,
         )
         if choice != "setup":
             return False
-        self._open_cluster_setup_dialog()
-        return bool(load_cluster_configs(self._settings))
+        open_setup()
+        return is_ready()
 
     def _choose_cluster_submission(
         self, eligible_jobs: list[Job], default_cluster_name: str | None
@@ -5238,7 +5245,8 @@ class MainWindow(QMainWindow):
         )
         dialog = FailedJobDialog(
             reports,
-            can_resubmit=all(job.status in _RESUBMITTABLE_JOB_STATES for job in failed_jobs),
+            # Failed and stopped jobs can always be resubmitted.
+            can_resubmit=True,
             can_continue=continue_relaxation is not None,
             open_folder=open_containing_folder,
             parent=self,
@@ -5255,20 +5263,66 @@ class MainWindow(QMainWindow):
 
         ``None`` when ``job`` is not a relaxation, no row of its page's active
         run holds it, or that row cannot be continued (the row menu's check).
+        The row is found through the active run's job bindings, as the row
+        menu resolves its row's job.
         """
 
         if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION:
             controller = self._pristine_relaxation_controller
+            view = self._pristine_relaxation_view
             handler = self._on_continue_relaxation_requested_from_pristine_relaxation
         elif job.workflow_stage == WorkflowStage.MUON_RELAXATION:
             controller = self._muon_relaxation_controller
+            view = self._muon_relaxation_view
             handler = self._on_continue_relaxation_requested_from_muon_relaxation
         else:
             return None
-        for key, state in controller.build_states().items():
-            if state.job_id == job.id:
-                return partial(handler, key) if controller.row_is_continuable(key) else None
-        return None
+        key = self._relaxation_row_key_for_job(job)
+        if key is None or not controller.row_is_continuable(key):
+            return None
+        if view.continue_relaxation_dialog_seed(key) is None:
+            return None
+        return partial(handler, key)
+
+    def _relaxation_row_key_for_job(self, job: Job) -> str | None:
+        """Return the key of the active relaxation run's row bound to ``job``."""
+
+        if job.workflow_stage == WorkflowStage.PRISTINE_RELAXATION:
+            controller = self._pristine_relaxation_controller
+            definition = controller.active_definition()
+            if definition is None:
+                return None
+            controller.sync_mappings(definition)
+            config = deserialize_pristine_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
+            rows = config.rows if config is not None else ()
+            return next(
+                (
+                    row.label
+                    for row in rows
+                    if (bound := controller.job_for_key(definition, row.label)) is not None
+                    and bound.id == job.id
+                ),
+                None,
+            )
+        controller = self._muon_relaxation_controller
+        definition = controller.active_definition()
+        if definition is None:
+            return None
+        controller.sync_mappings(definition)
+        config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        rows = config.rows if config is not None else ()
+        return next(
+            (
+                self._muon_relaxation_row_key(row)
+                for row in rows
+                if (bound := controller.job_for_label(definition, row.label, row.charge_state))
+                is not None
+                and bound.id == job.id
+            ),
+            None,
+        )
 
     def _reset_failed_jobs(self, jobs: list[Job], *, cleanup_choice: bool | None = None) -> None:
         """Reset terminal jobs back to ``defined``.

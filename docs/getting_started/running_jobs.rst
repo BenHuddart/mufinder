@@ -482,8 +482,8 @@ The dialog's buttons act on the job directly:
 - ``Close`` does nothing further.
 
 With several jobs selected, the dialog is ``Failed jobs``: each headline is
-followed by one line per job that has it, ``Log excerpt`` holds every job's
-excerpts, and ``Resubmit…`` resubmits them all. ``Continue relaxation…`` and
+followed by one line per job that has it, ``Log excerpt`` holds each job's
+notes and excerpts under its name, and ``Resubmit…`` resubmits them all. ``Continue relaxation…`` and
 ``Open Folder`` act on one job, so they are offered only when one job is
 selected.
 
@@ -556,7 +556,8 @@ need a CASTEP executable: without one, ``CASTEP executable missing`` offers
 set there. Cluster jobs need a configured cluster: without one, ``No configured
 clusters`` offers ``Open Setup > HPC Clusters…`` in the same way. Cancelling
 either leaves those jobs out and resubmits the rest. The keyword-catalog
-warning (see :doc:`/castep_keyword_catalog`) also comes before the question.
+warning (see :doc:`/castep_keyword_catalog`) also comes before the question;
+cancelling it resubmits nothing.
 The same prompts guard every local and cluster submission. Then:
 
 1. Read the ``Causes`` line, which summarises the recorded causes.

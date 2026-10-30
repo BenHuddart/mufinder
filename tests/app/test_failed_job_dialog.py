@@ -145,7 +145,12 @@ def test_log_excerpt_is_collapsed_until_asked_for(qapp) -> None:
 def test_several_jobs_are_listed_one_per_line_under_their_cause(qapp) -> None:
     walltime = "The scheduler stopped the job when it reached its walltime limit."
     reports = [
-        _report("a", headline=walltime, status=JobStatus.STOPPED, output_directory=Path("/x")),
+        _report(
+            "a",
+            headline=walltime,
+            status=JobStatus.STOPPED,
+            notes=("The job's output folder was not found.",),
+        ),
         _report("b", headline="exit 137", log_excerpt="[b.err]\n1: error"),
         _report("c", headline=walltime, status=JobStatus.STOPPED),
     ]
@@ -154,7 +159,9 @@ def test_several_jobs_are_listed_one_per_line_under_their_cause(qapp) -> None:
     assert dialog.windowTitle() == "Failed jobs"
     assert _texts(dialog) == ["3 jobs failed or stopped", walltime, "• a\n• c", "exit 137", "• b"]
     assert dialog.open_folder_button is None
-    assert dialog.log_view.toPlainText() == "=== b ===\n[b.err]\n1: error"
+    assert dialog.log_view.toPlainText() == (
+        "=== a ===\nThe job's output folder was not found.\n\n=== b ===\n[b.err]\n1: error"
+    )
     dialog.close()
 
 

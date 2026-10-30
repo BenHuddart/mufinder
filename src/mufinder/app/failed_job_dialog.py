@@ -132,7 +132,7 @@ class FailedJobDialog(QDialog):
         self.close_button.setDefault(True)
         buttons.rejected.connect(self.reject)
         for button in buttons.buttons():
-            button.setAccessibleName(button.text().rstrip("…"))
+            button.setAccessibleName(button.text().replace("&", "").rstrip("…"))
         # Spare height goes below the text, not between its lines; once the
         # log excerpt is shown it takes the spare height instead.
         self._spacer_index = layout.count()
@@ -181,11 +181,14 @@ class FailedJobDialog(QDialog):
             layout.addWidget(jobs)
 
     def _log_excerpt_text(self) -> str:
-        with_excerpt = [report for report in self._reports if report.log_excerpt]
         if len(self._reports) == 1:
-            return with_excerpt[0].log_excerpt if with_excerpt else ""
+            return self._reports[0].log_excerpt
+        # Several jobs list only their labels above, so each job's notes lead
+        # its section here.
         return "\n\n".join(
-            f"=== {report.label} ===\n{report.log_excerpt}" for report in with_excerpt
+            "\n".join((f"=== {report.label} ===", *report.notes, report.log_excerpt)).rstrip()
+            for report in self._reports
+            if report.notes or report.log_excerpt
         )
 
     def _add_log_excerpt(self, layout: QVBoxLayout, excerpt: str) -> None:

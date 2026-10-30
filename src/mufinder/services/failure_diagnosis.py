@@ -305,7 +305,8 @@ def failed_job_report(
     notes: list[str] = []
     if message and message != headline:
         notes.append(f"Recorded message: {message}")
-    if diagnosis.evidence and diagnosis.evidence not in {headline, message}:
+    # Evidence taken from the recorded message (or equal to it) is already shown.
+    if diagnosis.evidence and diagnosis.evidence not in f"{headline}\n{message}":
         notes.append(f"From {diagnosis.evidence_source}: {diagnosis.evidence}")
     folder = (
         output_directory if output_directory is not None and output_directory.is_dir() else None
@@ -381,22 +382,6 @@ def read_error_contexts(path: Path, *, context_lines: int = 2, max_matches: int 
         excerpts.append("\n".join(f"{index + 1}: {lines[index]}" for index in range(start, stop)))
 
     return "\n\n…\n\n".join(excerpts)
-
-
-def read_text_excerpt(path: Path, *, max_chars: int = 12000) -> str:
-    """Return the stripped tail of ``path``, cut to ``max_chars``. Never raises."""
-
-    try:
-        text = read_log_tail(path, EXCERPT_TAIL_BYTES)
-    except OSError as exc:
-        return f"Could not read file: {exc}"
-
-    stripped = text.strip()
-    if not stripped:
-        return "[File is empty]"
-    if len(stripped) <= max_chars:
-        return stripped
-    return stripped[:max_chars] + "\n… [truncated]"
 
 
 def _fresh_log_text(path: Path, not_before: datetime | None) -> str | None:

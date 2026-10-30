@@ -1383,6 +1383,27 @@ def test_continue_relaxation_from_the_failed_job_dialog_continues_the_row(
     window.close()
 
 
+def test_failed_job_dialog_continues_a_muon_relaxation_by_its_charge_qualified_row(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _service, _doc, _definition, job, _output_root, _param_path = _muon_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    window._refresh_ui_after_project_change()
+    continued: list[object] = []
+    monkeypatch.setattr(
+        window, "_on_continue_relaxation_requested_from_muon_relaxation", continued.append
+    )
+    dialogs = capture_failed_job_dialogs(monkeypatch, action=FailedJobAction.CONTINUE_RELAXATION)
+
+    window._inspect_failed_jobs([job])
+
+    assert dialogs[0].continue_button is not None
+    assert continued == ["positivemuon:Site 1"]
+    window.close()
+
+
 def test_failed_job_dialog_offers_no_continue_when_the_row_cannot_be_continued(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
