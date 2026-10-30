@@ -45,6 +45,23 @@ Each entry carries a stamp: ``Milestone``, ``Completed``, ``Attention``, or
 ``Failed``. Entries tied to a workflow also name it (for example
 ``Cutoff Convergence`` or ``Muon Relaxations``).
 
+Batch cards
+~~~~~~~~~~~
+
+One submission gives one card. It stays on the day the batch was launched and
+says how the batch stands: ``3 of 10 completed`` while jobs are still running,
+``10 of 10 completed`` or ``8 completed, 2 failed`` once they have all finished.
+
+- A failed, stopped or cancelled job also keeps its own card, on the day it
+  happened and with its reason, so a problem stands out.
+- A batch that finishes on a later day adds a short line under that day, such as
+  ``Finished: 10 of 10 completed``, saying which launch it belongs to.
+- Resets and continuations keep their own cards, and a continuation's new run is
+  a submission of its own. A completion with no submission on record, as in an
+  older project, also has its own card.
+- Dismissing several calculations gives one card (``Calculations dismissed``);
+  dismissals in a row on one day read as one action.
+
 Entries use the names the rest of MuFinder shows. A calculation is named by
 its workflow and its row in that workflow's table (``pristine relaxation
 relax_1``, ``muonium relaxation Random Site 1``, ``phonon calculation for
@@ -79,14 +96,15 @@ reconstructing what happened during a project, including:
   sites for relaxation, and removing generated sites
 - creating a relaxation analysis workspace, and applying a grouping to it (the
   number of distinct sites, the method, its tolerances and the space group)
-- calculation submission milestones and continuation runs. A muon-relaxation
-  batch names its charge state (``Muon relaxations launched: muonium``), so a
-  positive-muon run and a muonium run of the same sites read differently
-- terminal calculation outcomes such as completed, failed, stopped, cancelled,
-  and reset, and calculations dismissed from the Job Dashboard. A muon
-  relaxation's outcome names its charge state (``Positive muon relaxation
-  completed``); a single calculation's total energy is given to 0.1 meV and
-  its largest force to three significant figures
+- calculation submission milestones with each batch's outcome, and continuation
+  runs. A muon-relaxation batch names its charge state (``Muon relaxations
+  launched: muonium``), so a positive-muon run and a muonium run of the same
+  sites read differently
+- failed, stopped and cancelled calculations with their reason, resets, and
+  calculations dismissed from the Job Dashboard. A muon relaxation's outcome
+  names its charge state (``Muonium relaxation failed``); where a calculation
+  with its own card has a total energy, it is given to 0.1 meV and its largest
+  force to three significant figures
 - comparison-table creation
 - import of legacy relaxations run outside MuFinder, and removal of imported
   relaxations

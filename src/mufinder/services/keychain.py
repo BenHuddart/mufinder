@@ -104,10 +104,12 @@ def keychain_setup_command(*, endpoint: str, account: str, platform: str | None 
     """Return the user-facing command to create one required keyring entry."""
 
     service = _service_for_endpoint(endpoint)
+    # A profile without a username yet still gets a command to copy and complete.
+    account_argument = shlex.quote(account) if account else "<username>"
     if credential_store(platform=platform) is _SECRET_SERVICE_KEYRING:
-        label = shlex.quote(f"MuFinder {service} ({account})")
-        return f"secret-tool store --label={label} service {service} account {shlex.quote(account)}"
-    return f"security add-generic-password -a {shlex.quote(account)} -s {service} -w"
+        label = shlex.quote(f"MuFinder {service} ({account or 'username'})")
+        return f"secret-tool store --label={label} service {service} account {account_argument}"
+    return f"security add-generic-password -a {account_argument} -s {service} -w"
 
 
 def keychain_setup_help(config: ClusterConfig, *, platform: str | None = None) -> str:

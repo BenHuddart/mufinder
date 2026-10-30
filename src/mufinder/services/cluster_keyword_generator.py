@@ -107,6 +107,8 @@ def validate_cluster_keyword_config(config: ClusterConfig) -> list[str]:
         issues.append("Cluster hostname is required.")
     if not config.username.strip():
         issues.append("Cluster username is required.")
+    if config.jump_host_enabled and not config.jump_username.strip():
+        issues.append("Jump host username is required.")
     if not config.castep_executable.strip():
         issues.append("CASTEP executable is required.")
 
@@ -510,7 +512,7 @@ def _generate_scheduler_keywords_json(
         cancel_command_path=config.cancel_command_path,
     )
     remote_directory = posixpath.join(
-        config.default_working_directory.strip(),
+        config.working_directory_for(),
         f".mufinder-keywords-{uuid4().hex}",
     )
     remote_runner_path = posixpath.join(remote_directory, _REMOTE_RUNNER_NAME)

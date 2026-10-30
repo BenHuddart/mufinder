@@ -466,6 +466,19 @@ Compatibility ledger
      - Application setting, not project data. Current behaviour, not
        deprecated: ``default_queue_name`` stays the name of the default queue,
        and a profile with no queues is valid.
+   * - ``clusters/<name>/username`` holding ``username`` and
+       ``clusters/<name>/jump_username`` holding ``physics_username``
+     - ``mufinder.cluster_setup`` (``load_cluster_configs``) and
+       ``ClusterSubmissionDialog`` (a project's last cluster submission)
+     - The built-in presets once shipped these literal names as values, so a
+       profile saved from them never held a real username. Each reads as empty,
+       and ``username`` path components of that profile's
+       ``default_working_directory`` read as ``{username}``. The next save
+       stores the values as read. A profile with any other username keeps its
+       directory unchanged. A project's recorded submission with the username
+       ``username`` restores neither its username nor its directory.
+     - Application setting and ``ui_state`` read-side repair. Keep until the
+       next major release.
    * - ``magnetic_structure`` moments with ``coordinate_system: "crystalaxis"``
      - ``mufinder.science.magnetic_structure``
        (``magnetic_model_from_legacy_structure``)

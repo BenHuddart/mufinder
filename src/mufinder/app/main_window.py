@@ -1613,7 +1613,7 @@ class MainWindow(QMainWindow):
         castep_action = setup_menu.addAction(icon("settings"), "CASTEP…")
         castep_action.triggered.connect(self._open_castep_setup_dialog)
         cluster_action = setup_menu.addAction(icon("cluster"), "HPC Clusters…")
-        cluster_action.triggered.connect(self._open_cluster_setup_dialog)
+        cluster_action.triggered.connect(lambda: self._open_cluster_setup_dialog())
 
         view_menu = self.menuBar().addMenu("View")
         appearance_menu = view_menu.addMenu("Appearance")
@@ -1920,11 +1920,23 @@ class MainWindow(QMainWindow):
 
         self._keyword_catalog_guard.prompt_at_startup_if_needed()
 
-    def _open_cluster_setup_dialog(self) -> None:
-        dialog = ClusterSetupDialog(settings=self._settings, parent=self)
+    def _open_cluster_setup_dialog(
+        self, cluster_name: str | None = None, *, parent: QWidget | None = None
+    ) -> None:
+        dialog = ClusterSetupDialog(
+            settings=self._settings, parent=parent or self, cluster_name=cluster_name
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         self.statusBar().showMessage("HPC cluster setup updated")
+
+    def _edit_cluster_during_submission(
+        self, parent: QWidget, cluster_name: str
+    ) -> list[ClusterConfig]:
+        """Open a cluster's profile over ``parent``; return the clusters as saved."""
+
+        self._open_cluster_setup_dialog(cluster_name, parent=parent)
+        return load_cluster_configs(self._settings)
 
     def _dialog_key(self, context: str | None = None) -> str:
         if context:
@@ -4652,6 +4664,7 @@ class MainWindow(QMainWindow):
             connected_cluster_name=self._cluster_runner.connected_cluster_name,
             connected_username=self._cluster_runner.connected_username,
             farm_counts=self._farm_counts_for_jobs(eligible_jobs),
+            edit_cluster=self._edit_cluster_during_submission,
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -6598,7 +6611,7 @@ class MainWindow(QMainWindow):
         if config is None:
             return ""
 
-        working_directory = config.default_working_directory.strip()
+        working_directory = config.working_directory_for()
         if not working_directory:
             return ""
 

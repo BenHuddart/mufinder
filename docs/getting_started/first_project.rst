@@ -60,8 +60,10 @@ Create a project and set up CASTEP
 4. To run on this computer, fill in ``CASTEP executable`` and ``MPI launcher``
    in the same dialog (``Auto-detect`` searches for ``mpirun``). Each path is
    saved as you finish editing it; click ``Close`` when done.
-5. To run on a cluster instead, add a profile under ``Setup > HPC
-   Clusters…``.
+5. To run on a cluster instead, open ``Setup > HPC Clusters…``, select the
+   built-in SCARF or Redwood profile or add your own, and enter your
+   ``Username``. The built-in profiles ship without one, and submission refuses
+   a cluster that has no username.
 
 .. figure:: ../_generated/screenshots/cluster_setup_dialog.webp
    :alt: The Remote Cluster Connections dialog with the built-in SCARF profile
