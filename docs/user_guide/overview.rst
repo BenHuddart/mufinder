@@ -144,9 +144,11 @@ converge is marked failed, and each successful run adds a relaxed structure to
 the project.
 
 ``Generate Comparison Table…`` compares one or more relaxed structures with
-the experimental host, with supercell-aware atom matching, lattice,
-displacement, bonding, topology and symmetry metrics, a composite similarity
-score, the parameter differences between the selected jobs, and CSV export.
+the experimental host, with supercell-aware atom matching: the lattice
+parameters with their change against experiment, the RMSD and maximum
+displacement of the matched atoms, and the space group of each structure and
+whether they match; the parameter differences between the selected jobs; and
+CSV export.
 Each table is saved as a renamable child of ``Pristine Relaxation``.
 
 See :doc:`/user_guide/structural_relaxation_analysis` (Pristine Relaxation) and

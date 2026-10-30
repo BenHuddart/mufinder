@@ -230,7 +230,7 @@ experimental lattice.
 
 .. figure:: ../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the CoF2 host against one relaxed cell,
-         grouped into lattice, displacement, bonding and symmetry metrics.
+         grouped into lattice, displacement and symmetry metrics.
 
    The CoF₂ host compared with that relaxation.
 
