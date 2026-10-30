@@ -500,6 +500,12 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).
+   * - ``mufinder.app.cluster_dendrogram``
+     - The hierarchical clustering dendrogram the UEP and relaxation clustering
+       dialogs both draw (``draw_cluster_dendrogram``), its links coloured by
+       ``cluster_color_map`` from the node clusters that
+       ``dendrogram_node_clusters`` in ``mufinder.science.uep_clustering`` works
+       out.
    * - ``mufinder.app.convergence_plot``
      - The convergence plot the examiner dialog and the pinned overview cards
        both draw (``draw_convergence_plot``) from a sweep's saved ``plot_data``

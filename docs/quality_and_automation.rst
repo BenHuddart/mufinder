@@ -401,7 +401,7 @@ antiparallel spins on the two Co, ``PBE`` as the project functional and a saved
 
 ``fixture_project`` is the configured-but-unsubmitted project of the setup
 scenes: a cutoff sweep (300 to 800 eV) and a k-point sweep (the grids
-``Generate From Spacing…`` gives down to 0.05 1/Ang), none submitted, and
+``Generate From Spacing…`` gives down to 0.04 1/Ang), none submitted, and
 ten candidate muon sites from ``ProjectService.generate_candidate_sites``,
 one 1 Å from each fluorine and six random with a fixed seed. The builders make
 the calls the application makes, including the sweep widgets' own form logic,

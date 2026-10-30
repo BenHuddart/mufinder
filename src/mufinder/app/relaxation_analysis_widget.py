@@ -47,6 +47,7 @@ from mufinder.app.atomic_structure_viewer import (
     MUON_VIEWER_RADIUS_ANG,
     viewer_atom_style_for_species,
 )
+from mufinder.app.cluster_dendrogram import draw_cluster_dendrogram
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
@@ -1394,15 +1395,11 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._scan_canvas.draw_idle()
 
     def _render_soprano(self, result) -> None:
-        colors = cluster_color_map(result.cluster_labels)
         self._left_figure.clear()
         axis = self._left_figure.add_subplot(111)
         axis.set_facecolor(current_palette().bg_surface)
         if self._method() == _METHOD_HIERARCHICAL:
-            from scipy.cluster import hierarchy
-
-            linkage_matrix = np.asarray(result.linkage_matrix, dtype=float)
-            if linkage_matrix.size == 0:
+            if not result.linkage_matrix:
                 axis.axis("off")
                 axis.text(
                     0.5,
@@ -1414,12 +1411,10 @@ class RelaxationClusteringDialog(StructureViewerDialog):
                 )
                 self._left_canvas.draw_idle()
                 return
-            hierarchy.dendrogram(
-                linkage_matrix,
-                ax=axis,
-                color_threshold=0.0,
-                above_threshold_color=plot_series_colours().reference,
-                labels=[str(index + 1) for index in range(len(self._sites))],
+            draw_cluster_dendrogram(
+                axis,
+                result,
+                leaf_labels=[str(index + 1) for index in range(len(self._sites))],
             )
             axis.axhline(
                 self._hierarchical_input.value(),
@@ -1430,6 +1425,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
             axis.set_ylabel("Distance")
             axis.set_xlabel("Relaxed site")
         else:
+            colors = cluster_color_map(result.cluster_labels)
             vectors = np.asarray(result.normalized_genome_vectors, dtype=float)
             if len(vectors) == 0:
                 axis.text(

@@ -508,6 +508,26 @@ def _linkage_matrix_for_prepared(
     return np.asarray(hierarchy.linkage(condensed, method=method), dtype=float)
 
 
+def dendrogram_node_clusters(
+    cluster_labels: Sequence[int],
+    linkage_matrix: Sequence[Sequence[float]],
+) -> dict[int, int | None]:
+    """Return the cluster of every dendrogram node, ``None`` for a node spanning several.
+
+    Nodes are numbered as in SciPy: leaves ``0`` to ``n - 1`` by site index,
+    then row ``i`` of the linkage matrix as node ``n + i``. A node belongs to a
+    cluster when all its leaves do.
+    """
+
+    count = len(cluster_labels)
+    nodes: dict[int, int | None] = {index: int(label) for index, label in enumerate(cluster_labels)}
+    for row_index, row in enumerate(linkage_matrix):
+        left = nodes[int(row[0])]
+        right = nodes[int(row[1])]
+        nodes[count + row_index] = left if left is not None and left == right else None
+    return nodes
+
+
 def _cluster_groups_from_labels(labels: np.ndarray) -> list[np.ndarray]:
     groups: list[np.ndarray] = []
     for cluster_id in sorted(set(int(value) for value in labels)):

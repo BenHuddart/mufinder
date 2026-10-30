@@ -174,7 +174,7 @@ def cof2_single_component_model() -> MagneticStructureModel:
 # --- The fixture project ----------------------------------------------------------
 
 CUTOFFS_EV = (300.0, 400.0, 500.0, 600.0, 700.0, 800.0)
-KPOINT_MIN_SPACING = 0.05  # 1/Å, the Generate From Spacing... value
+KPOINT_MIN_SPACING = 0.04  # 1/Å, the Generate From Spacing... value
 RANDOM_STARTS = 6
 RANDOM_SEED = "7"
 
@@ -321,7 +321,8 @@ _KPOINT_SWEEP = {  # grid: (energy above the densest grid's value, max force)
     (2, 2, 3): (0.214, 0.046),
     (3, 3, 4): (0.0112, 0.012),
     (4, 4, 6): (0.0006, 0.004),
-    (5, 5, 7): (0.0, 0.003),
+    (5, 5, 7): (0.0001, 0.003),
+    (6, 6, 8): (0.0, 0.003),
 }
 PRISTINE_ENERGY_EV = -5621.8743  # unit cell, two formula units
 _CONVERGED_ENERGY_EV = PRISTINE_ENERGY_EV
@@ -1284,7 +1285,7 @@ SCENES: dict[str, Scene] = {
         fixture_project, "convergence_cutoff", Page("_convergence_view", (1100, 720))
     ),
     "kpoint_convergence_page": Scene(
-        fixture_project, "convergence_kpoint", Page("_kpoint_convergence_view", (1100, 760))
+        fixture_project, "convergence_kpoint", Page("_kpoint_convergence_view", (1100, 820))
     ),
     "parameter_dialog": Scene(
         fixture_project,

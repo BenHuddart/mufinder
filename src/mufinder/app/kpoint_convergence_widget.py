@@ -26,7 +26,7 @@ from mufinder.app.sweep_convergence_widget import SweepConvergenceWidget
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.kpoint_grids import generate_kpoint_grids, lattice_matches
 
-_DEFAULT_KPOINT_SPACING = 0.02
+_DEFAULT_KPOINT_SPACING = 0.04
 _FIRST_GRID: KPointGrid = (1, 1, 1)
 
 
