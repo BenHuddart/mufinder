@@ -118,8 +118,10 @@ class ClusterSetupDialog(QDialog):
         self._loaded_index = -1
         self._queue_row_names: list[str] = []
         self._template_path = ""
-        # The built-in a custom file replaced, for 'Use built-in' to go back to.
+        # The built-in a custom file replaced, for 'Use built-in' to go back to:
+        # the shown cluster's, and every cluster's seen with one, by name.
         self._builtin_template = ""
+        self._builtin_templates: dict[str, str] = {}
 
         self.setWindowTitle("Remote Cluster Connections")
         self.resize(1000, 580)
@@ -572,8 +574,11 @@ class ClusterSetupDialog(QDialog):
         index = self._loaded_index
         if index < 0 or index >= len(self._configs):
             return
+        previous_name = self._configs[index].name
         updated = self._config_from_form(self._configs[index])
         self._configs[index] = updated
+        if updated.name != previous_name and previous_name in self._builtin_templates:
+            self._builtin_templates[updated.name] = self._builtin_templates.pop(previous_name)
         item = self._cluster_list.item(index)
         if item is not None:
             item.setText(updated.name or f"Cluster {index + 1}")
@@ -616,6 +621,8 @@ class ClusterSetupDialog(QDialog):
         if config is None:
             return
         copy = replace(config, name=self._unique_name(f"{config.name} copy"))
+        if config.name in self._builtin_templates:
+            self._builtin_templates[copy.name] = self._builtin_templates[config.name]
         index = self._selected_index() + 1
         self._configs.insert(index, copy)
         self._loaded_index = -1
@@ -663,9 +670,9 @@ class ClusterSetupDialog(QDialog):
         self._queue_system_combo.setCurrentText(config.queue_system.upper())
         self._cores_per_node_spin.setValue(int(config.cores_per_node))
         self._walltime_edit.setText(config.default_walltime)
-        self._builtin_template = (
-            config.template_script_path if is_builtin_template(config.template_script_path) else ""
-        )
+        if is_builtin_template(config.template_script_path):
+            self._builtin_templates[config.name] = config.template_script_path
+        self._builtin_template = self._builtin_templates.get(config.name, "")
         self._set_template_path(config.template_script_path)
         self._castep_exec_edit.setText(config.castep_executable)
         self._default_memory_spin.setValue(

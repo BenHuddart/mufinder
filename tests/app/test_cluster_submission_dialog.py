@@ -883,6 +883,38 @@ def test_cluster_submission_dialog_picks_up_the_username_set_on_the_profile(
     dialog.close()
 
 
+def test_cluster_submission_dialog_asks_again_when_the_cluster_was_renamed(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dialog_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "setup"
+    )
+    other = replace(_scarf_like("bob"), name="Other")
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=[other, _scarf_like()],
+        default_cluster_name="SCARF",
+        edit_cluster=lambda _parent, _name: [other, replace(_scarf_like("alice"), name="Mine")],
+    )
+
+    dialog._accept_if_valid()
+
+    # Nothing is selected, so nothing can go to 'Other' by accident.
+    assert dialog.selected_cluster_name() == ""
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox, "warning", lambda _p, title, _t: warnings.append(title)
+    )
+    dialog._accept_if_valid()
+    assert warnings == ["Missing cluster"]
+    assert dialog.result() != dialog.DialogCode.Accepted
+
+    dialog._cluster_combo.setCurrentText("Mine")
+    assert dialog.config().username == "alice"
+    dialog.close()
+
+
 def test_cluster_submission_dialog_reads_the_keyring_for_the_typed_username(
     qapp,
     monkeypatch: pytest.MonkeyPatch,

@@ -376,6 +376,27 @@ def test_cluster_setup_dialog_template_row_names_the_template(
     dialog.close()
 
 
+def test_cluster_setup_dialog_remembers_the_built_in_template_across_clusters(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._duplicate_cluster()
+    assert dialog._name_edit.text() == "SCARF copy"
+
+    dialog._set_template_path("/templates/site.sh")
+    dialog._select_cluster("Redwood")
+    dialog._select_cluster("SCARF copy")
+    assert dialog._template_name_label.text() == "site.sh"
+
+    # Renaming the cluster keeps it too.
+    dialog._name_edit.setText("Mine")
+    dialog._select_cluster("Redwood")
+    dialog._select_cluster("Mine")
+    dialog._template_builtin_button.click()
+
+    assert dialog._template_name_label.text() == "Built-in SCARF template"
+    assert dialog._updated_selected_config().template_script_path == "builtin:scarf-slurm"
+    dialog.close()
+
+
 def test_cluster_setup_dialog_custom_template_goes_back_to_the_fallback_built_in(qapp) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
     dialog._add_cluster()

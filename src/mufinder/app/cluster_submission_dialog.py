@@ -638,9 +638,9 @@ class ClusterSubmissionDialog(QDialog):
         self._cluster_combo.blockSignals(True)
         self._cluster_combo.clear()
         self._cluster_combo.addItems(list(self._cluster_configs))
-        index = self._cluster_combo.findText(typed.cluster_name)
-        if index >= 0:
-            self._cluster_combo.setCurrentIndex(index)
+        # A renamed or removed cluster leaves nothing selected, so the next OK
+        # asks for a choice instead of submitting to whichever cluster is first.
+        self._cluster_combo.setCurrentIndex(self._cluster_combo.findText(typed.cluster_name))
         self._cluster_combo.blockSignals(False)
         self._apply_cluster_defaults()
         self._initial_config = replace(
