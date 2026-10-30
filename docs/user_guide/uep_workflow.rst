@@ -128,7 +128,8 @@ The window offers:
   ``Delete Plane`` there removes it after a confirmation whose default is
   ``Cancel``;
 - multi-atom selection in the structure viewer using ``Shift``-click so slice
-  planes can be defined directly from the host structure;
+  planes can be defined directly from the host structure (see
+  :doc:`/user_guide/structure_viewer` for the viewer's controls);
 - slice saturation controls (``Slice saturation``, ``Min (eV)``, ``Max
   (eV)``) and a colorbar that marks when clipped display limits exclude lower
   or higher physical potentials from the visible range;

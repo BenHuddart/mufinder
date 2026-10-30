@@ -69,8 +69,8 @@ The page has the ``Generation Setup`` group on the left, with the ``Method``
 drop-down and the fields for the chosen method, the buttons ``Generate Sites``,
 ``Cluster Positions…``, ``Remove Selected`` and ``Create Jobs from
 Selected``, a progress bar, and the generated-site table. The ``Preview Muon
-Sites`` viewer on the right shows the host structure with the selected
-positions overlaid. The table has the columns ``Site``, ``Method``, ``State``
+Sites`` viewer on the right (see :doc:`/user_guide/structure_viewer`) shows the
+host structure with the selected positions overlaid. The table has the columns ``Site``, ``Method``, ``State``
 and the fractional coordinates ``fX``, ``fY`` and ``fZ``.
 
 The table is ordered with natural numeric sorting, so ``Random Site 2`` appears
