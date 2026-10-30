@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import itertools
+import math
+
+from matplotlib.figure import Figure
 import pytest
 
 from PySide6.QtCore import QEvent, QPoint, QSettings, Qt
@@ -817,7 +821,6 @@ def test_plot_series_colours_change_with_the_theme(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
     try:
         dark = theme_module.plot_series_colours()
-        assert dark.threshold == theme_module.current_palette().warning
         assert dark.reference == theme_module.current_palette().text_muted
         assert dark.total == theme_module.current_palette().text_primary
     finally:
@@ -907,3 +910,78 @@ def test_style_transparent_surface_lets_the_parent_show_through(qapp) -> None:
         parent.close()
     finally:
         qapp.setStyleSheet(previous_sheet)
+
+
+def _colour_distance(first: str, second: str) -> float:
+    """Return the CIE76 distance between two colours; below about 25 they read as one hue."""
+
+    def lab(colour: str) -> tuple[float, float, float]:
+        channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+        red, green, blue = (
+            value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+            for value in channels
+        )
+        scaled = (
+            (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047,
+            0.2126 * red + 0.7152 * green + 0.0722 * blue,
+            (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883,
+        )
+        x, y, z = (
+            value ** (1 / 3) if value > 0.008856 else 7.787 * value + 16 / 116 for value in scaled
+        )
+        return 116 * y - 16, 500 * (x - y), 200 * (y - z)
+
+    return math.dist(lab(first), lab(second))
+
+
+#: The roles drawn together on one plot: the two convergence panels, and a
+#: geometry-progress criterion or scan against its tolerance line.
+_ROLES_SHARING_A_PLOT = (
+    ("energy", "fit", "converged", "reference"),
+    ("force", "stress", "threshold", "converged", "stress_converged", "reference"),
+    ("displacement", "reference"),
+)
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_plot_series_roles_sharing_a_plot_read_as_different_colours(qapp, mode) -> None:
+    theme_module.apply_theme(qapp, mode)
+    try:
+        colours = theme_module.plot_series_colours()
+        for roles in _ROLES_SHARING_A_PLOT:
+            for first, second in itertools.combinations(roles, 2):
+                distance = _colour_distance(getattr(colours, first), getattr(colours, second))
+                assert distance >= 30.0, f"{mode} {first} and {second}: {distance:.1f}"
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_style_plot_axes_styles_minor_tick_labels_on_a_log_axis(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        figure = Figure()
+        axis = figure.add_subplot(111)
+        theme_module.style_plot_axes(axis, tick_labelsize=8)
+        axis.set_yscale("log")
+        axis.plot([1, 2], [5e-4, 9e-4])
+        figure.canvas.draw()
+
+        minor_labels = [tick.label1 for tick in axis.yaxis.get_minor_ticks()]
+        assert minor_labels
+        for label in minor_labels:
+            assert label.get_color() == theme_module.current_palette().text_primary
+            assert label.get_fontsize() == 8
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_style_plot_axes_can_leave_the_grid_off(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    figure = Figure()
+    axis = figure.add_subplot(111)
+
+    theme_module.style_plot_axes(axis, facecolor="#123456", grid=False)
+    figure.canvas.draw()
+
+    assert not any(line.get_visible() for line in axis.get_xgridlines())
+    assert axis.xaxis.label.get_color() == theme_module.current_palette().text_primary

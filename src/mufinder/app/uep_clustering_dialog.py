@@ -33,6 +33,7 @@ from mufinder.app.theme import (
     current_palette,
     plot_series_colours,
     style_hint_text,
+    style_plot_axes,
     style_section_subtitle,
     style_section_title,
     style_transparent_surface,
@@ -828,7 +829,14 @@ class UepClusteringDialog(QDialog):
         if linkage_matrix.size == 0:
             self._hier_cut_line_artist = None
             axis.axis("off")
-            axis.text(0.5, 0.5, "Only one relaxed site is available.", ha="center", va="center")
+            axis.text(
+                0.5,
+                0.5,
+                "Only one relaxed site is available.",
+                ha="center",
+                va="center",
+                color=current_palette().text_muted,
+            )
             self._left_canvas.draw_idle()
             return
 
@@ -857,11 +865,9 @@ class UepClusteringDialog(QDialog):
         axis.set_ylabel("Distance")
         axis.set_xlabel("Relaxed site")
         axis.tick_params(axis="x", labelrotation=0)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
         self._left_canvas.draw_idle()
 
     def _project_pca_points(self, points: np.ndarray) -> np.ndarray:
@@ -879,7 +885,14 @@ class UepClusteringDialog(QDialog):
         axis.set_facecolor(current_palette().bg_surface)
         if len(self._pca_points) == 0:
             axis.axis("off")
-            axis.text(0.5, 0.5, "No relaxed sites are available.", ha="center", va="center")
+            axis.text(
+                0.5,
+                0.5,
+                "No relaxed sites are available.",
+                ha="center",
+                va="center",
+                color=current_palette().text_muted,
+            )
             self._left_canvas.draw_idle()
             return
 
@@ -918,9 +931,7 @@ class UepClusteringDialog(QDialog):
         axis.set_ylabel("PC2")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         self._left_canvas.draw_idle()
 
     def _render_structure_view(
@@ -1035,9 +1046,7 @@ class UepClusteringDialog(QDialog):
         axis.set_ylabel("Std. dev. (eV)")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         self._bubble_note_label.setText(
             ""
             if omitted == 0
@@ -1067,7 +1076,9 @@ class UepClusteringDialog(QDialog):
             self._left_figure.clear()
             axis = self._left_figure.add_subplot(111)
             axis.axis("off")
-            axis.text(0.5, 0.5, str(exc), ha="center", va="center")
+            axis.text(
+                0.5, 0.5, str(exc), ha="center", va="center", color=current_palette().text_muted
+            )
             self._left_canvas.draw_idle()
             return
 

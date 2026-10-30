@@ -653,18 +653,20 @@ def style_plot_axes(
     tick_labelsize: float | None = None,
     grid_alpha: float = 0.35,
     grid_linewidth: float | None = None,
+    grid: bool = True,
 ) -> None:
     """Paint a matplotlib axis in the current palette.
 
     The axis background defaults to ``bg_surface_alt`` and the ticks to
     ``text_primary``; axis labels and the title use ``text_primary``, spines and
-    grid lines use ``border``. Label and title colours persist, so this may run
-    before or after the text is set.
+    grid lines use ``border``, and ``grid=False`` leaves the grid off. Major and
+    minor ticks are both styled, because a log axis labels its minor ticks. Label
+    and title colours persist, so this may run before or after the text is set.
     """
 
     palette = current_palette()
     axis.set_facecolor(facecolor or palette.bg_surface_alt)
-    tick_kwargs: dict[str, Any] = {"colors": tick_color or palette.text_primary}
+    tick_kwargs: dict[str, Any] = {"which": "both", "colors": tick_color or palette.text_primary}
     if tick_labelsize is not None:
         tick_kwargs["labelsize"] = tick_labelsize
     axis.tick_params(**tick_kwargs)
@@ -673,6 +675,9 @@ def style_plot_axes(
     axis.title.set_color(palette.text_primary)
     for spine in axis.spines.values():
         spine.set_color(palette.border)
+    if not grid:
+        axis.grid(False)
+        return
     grid_kwargs: dict[str, Any] = {"color": palette.border, "alpha": grid_alpha}
     if grid_linewidth is not None:
         grid_kwargs["linewidth"] = grid_linewidth
@@ -731,7 +736,8 @@ class PlotSeriesColours:
 
     Every role but ``label_on_tint``, and every categorical colour, keeps at
     least 3:1 contrast against the plot backgrounds (``bg_primary``,
-    ``bg_surface`` and ``bg_surface_alt``).
+    ``bg_surface`` and ``bg_surface_alt``), and roles drawn on the same plot stay
+    far enough apart to read as different lines.
     """
 
     energy: str
@@ -758,12 +764,12 @@ def plot_series_colours() -> PlotSeriesColours:
             force="#F87171",
             stress="#FBBF24",
             displacement="#C4B5FD",
-            threshold=palette.warning,
+            threshold="#E879F9",
             reference=palette.text_muted,
             total=palette.text_primary,
             fit="#2DD4BF",
-            converged="#34D399",
-            stress_converged="#86EFAC",
+            converged="#A3E635",
+            stress_converged="#5EEAD4",
             label_on_tint="#111111",
             categorical=(
                 "#60A5FA",
@@ -783,14 +789,14 @@ def plot_series_colours() -> PlotSeriesColours:
     return PlotSeriesColours(
         energy="#1D4ED8",
         force="#B91C1C",
-        stress="#B45309",
+        stress="#B85C00",
         displacement="#7C3AED",
-        threshold=palette.warning,
+        threshold="#A21CAF",
         reference=palette.text_muted,
         total=palette.text_primary,
         fit="#0F766E",
-        converged="#047857",
-        stress_converged="#15803D",
+        converged="#15803D",
+        stress_converged="#0E7490",
         label_on_tint="#111111",
         categorical=(
             "#1D4ED8",

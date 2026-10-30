@@ -13,6 +13,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QSizePolicy
 
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
+from mufinder.app.theme import current_palette
 from mufinder.app.uep_clustering_dialog import _GEOMETRY_STATE_EMIT_DELAY_MS, UepClusteringDialog
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
 from mufinder.science.uep_clustering import relaxed_site_number_map
@@ -102,6 +103,11 @@ def test_uep_clustering_dialog_hierarchical_view_keeps_entry_and_overlay_in_sync
         if cluster.average_energy_ev is not None and cluster.standard_deviation_ev is not None
     ]
     assert len(dialog._bubble_figure.axes[0].collections) >= 2 * len(finite_clusters)
+    palette = current_palette()
+    for figure in (dialog._left_figure, dialog._bubble_figure):
+        axis = figure.axes[0]
+        assert axis.xaxis.label.get_color() == palette.text_primary
+        assert axis.yaxis.label.get_color() == palette.text_primary
     # Each cluster number sits beside its bubble, clear of the series colour.
     bubble_labels = dialog._bubble_figure.axes[0].texts
     assert len(bubble_labels) == len(finite_clusters)
