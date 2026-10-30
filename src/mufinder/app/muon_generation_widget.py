@@ -961,9 +961,7 @@ class MuonGenerationWidget(QWidget):
             if not isinstance(row_data, dict):
                 # A generation run's header row.
                 continue
-            source_id = (
-                str(row_data.get("source_structure_id", "")) if isinstance(row_data, dict) else ""
-            )
+            source_id = str(row_data.get("source_structure_id", ""))
             stale = active_host_id is not None and source_id and source_id != active_host_id
             for col in range(self._site_table.columnCount()):
                 item = self._site_table.item(row, col)

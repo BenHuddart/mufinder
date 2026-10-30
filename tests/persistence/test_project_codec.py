@@ -263,3 +263,25 @@ def test_a_generation_run_round_trips_and_reads_malformed_optional_values_as_non
         [],
         "",
     )
+
+
+def test_a_generation_run_with_malformed_moves_and_site_ids_still_loads() -> None:
+    good = uuid4()
+    run = project_codec.generation_run_from_dict(
+        {
+            "id": str(uuid4()),
+            "site_ids": [str(good), "not-a-uuid", None],
+            "created_at": "yesterday",
+            "moves": [
+                {
+                    "anchor_fractional": [None, 0, 0],
+                    "original_positions": {"a": [0.1, 0.2, 0.3], "b": "bad"},
+                    "moved_at": 3,
+                }
+            ],
+        }
+    )
+
+    assert run.site_ids == [good]
+    assert run.moves[0].anchor_fractional == [0.0, 0.0, 0.0]
+    assert run.moves[0].original_positions == {"a": [0.1, 0.2, 0.3]}

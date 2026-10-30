@@ -145,9 +145,9 @@ def _symmetry_sentence(run: GenerationRun, *, subject: str) -> str:
         )
     operations = run.symmetry_operation_count or 1
     return (
-        f" {subject} the {space_group_text(run.space_group_symbol)} space group "
-        f"({plural(operations, 'operation')}) detected by spglib at a tolerance of "
-        f"{tolerance} Å."
+        f" {subject} the {plural(operations, 'symmetry operation')} of the host cell "
+        f"(space group {space_group_text(run.space_group_symbol)}), detected by spglib at a "
+        f"tolerance of {tolerance} Å."
     )
 
 
@@ -192,7 +192,7 @@ def run_methods_sentence(
                 f" {plural(run.attempts_used, 'trial position was', 'trial positions were')} drawn"
             )
             if parameters.get("max_attempts") is not None:
-                text += f" (limit {int(parameters['max_attempts'])})"
+                text += f" (limit {int(parameters['max_attempts'])} per try)"
             text += "."
         text += _symmetry_sentence(run, subject="Symmetry images were taken from")
         if run.seed is not None:
@@ -330,7 +330,13 @@ def _earlier_inputs(method: str, properties: Mapping[str, Any]) -> dict[str, Any
 def _earlier_key(site: MuonSite) -> str:
     method = _run_method(site.generation_method)
     inputs = _earlier_inputs(method, site.properties)
-    return repr((method, sorted((key, repr(value)) for key, value in inputs.items())))
+    return repr(
+        (
+            method,
+            str(site.source_structure_id or ""),
+            sorted((key, repr(value)) for key, value in inputs.items()),
+        )
+    )
 
 
 def _earlier_group(sites: Sequence[MuonSite], host_label: str | None) -> GenerationRunGroup:

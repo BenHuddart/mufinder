@@ -467,9 +467,14 @@ For six random starts in CoF₂ it reads, for example:
     least 1.79 Å from the other starts and their symmetry images and at least
     1.0 Å from every host atom. The separation was estimated as 1.99 Å from the
     requested 6 starts and reduced to 1.79 Å after 1 retry so that they fitted.
-    314 trial positions were drawn (limit 20000). Symmetry images were taken
-    from the P4₂/mnm space group (16 operations) detected by spglib at a
-    tolerance of 0.001 Å. The random seed was 418273.
+    20314 trial positions were drawn (limit 20000 per try). Symmetry images
+    were taken from the 16 symmetry operations of the host cell (space group
+    P4₂/mnm), detected by spglib at a tolerance of 0.001 Å. The random seed
+    was 418273.
+
+The trial count includes every try: a count-mode try that falls short has
+drawn its whole limit. For a supercell host the operation count includes the
+supercell's lattice translations, as the generator uses them.
 
 The Journal's generation entry prints the header line followed by the seed.
 

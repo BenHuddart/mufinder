@@ -407,16 +407,7 @@ def _generation_run(
         symmetry_operation_count=None if symmetry is None else symmetry.operation_count,
         site_ids=[site.id for site in batch.sites],
         requested_count=requested_count,
-        distinct_site_count=(
-            symmetry_distinct_position_count(
-                positions,
-                lattice_vectors=host.lattice,
-                host_species=host.species,
-                host_positions_frac=host.positions,
-            )
-            if has_cell
-            else None
-        ),
+        distinct_site_count=_distinct_site_count(method, parameters, host, positions),
         min_muon_muon_ang=(
             smallest_start_separation(positions, lattice_vectors=host.lattice)
             if host.lattice is not None
@@ -425,6 +416,27 @@ def _generation_run(
         attempts_used=batch.attempts_used,
         retries=batch.retries,
         source_structure_id=host.structure_id,
+    )
+
+
+def _distinct_site_count(
+    method: str, parameters: dict[str, Any], host: _HostContext, positions: list[list[float]]
+) -> int | None:
+    """Return how many starts are symmetry-distinct, or ``None`` without a host cell.
+
+    A random run that excluded symmetry images made only distinct starts, so
+    it is not counted again.
+    """
+
+    if host.lattice is None or not host.species:
+        return None
+    if method == "random" and _uses_symmetry(method, parameters):
+        return len(positions)
+    return symmetry_distinct_position_count(
+        positions,
+        lattice_vectors=host.lattice,
+        host_species=host.species,
+        host_positions_frac=host.positions,
     )
 
 
@@ -801,6 +813,7 @@ def _random_draw_by_count(
         include_symmetry_equivalents=include_symmetry_equivalents,
     )
     min_muon_muon = estimated_min_muon_muon
+    max_attempts = int(parameters.get("max_attempts", 20000))
     last_error: SiteGenerationError | None = None
     for retry in range(_RANDOM_COUNT_RETRIES):
         try:
@@ -811,7 +824,7 @@ def _random_draw_by_count(
                 count=target_count,
                 min_muon_muon=min_muon_muon,
                 min_muon_atom=min_muon_atom,
-                max_attempts=int(parameters.get("max_attempts", 20000)),
+                max_attempts=max_attempts,
                 seed=seed,
                 include_symmetry_equivalents=include_symmetry_equivalents,
                 progress_callback=progress_callback,
@@ -820,9 +833,10 @@ def _random_draw_by_count(
             last_error = exc
             min_muon_muon *= _RANDOM_COUNT_SEPARATION_SHRINK
             continue
+        # A try that falls short has drawn its whole attempt limit.
         return _RandomDraw(
             points=points,
-            attempts_used=attempts_used,
+            attempts_used=retry * max_attempts + attempts_used,
             min_muon_muon=min_muon_muon,
             estimated_min_muon_muon=estimated_min_muon_muon,
             retries=retry,

@@ -645,3 +645,28 @@ def test_generation_runs_survive_a_save_and_reload(tmp_path: Path) -> None:
     run = next(iter(reloaded.generation_runs.values()))
     assert reloaded.sites[created[0].id].source_generation_batch_id == run.id
     assert list(run.moves[0].original_positions) == [str(created[0].id)]
+
+
+def test_a_count_run_counts_the_whole_limit_of_every_try_that_fell_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = _document(tmp_path)
+    real_generate = site_generation_service.generate_random_sites
+    calls: list[int] = []
+
+    def fail_once(**kwargs: object):
+        calls.append(1)
+        if len(calls) < 2:
+            raise SiteGenerationError("too tight")
+        return real_generate(**kwargs)
+
+    monkeypatch.setattr(site_generation_service, "generate_random_sites", fail_once)
+
+    outcome = site_generation_service.generate_candidate_sites(
+        document,
+        method="random",
+        parameters={"selection_mode": "count", "count": 2, "seed": 1, "max_attempts": 500},
+    )
+
+    assert outcome.run is not None and outcome.run.retries == 1
+    assert 500 < outcome.run.attempts_used <= 1000

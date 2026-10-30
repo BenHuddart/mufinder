@@ -7168,6 +7168,10 @@ class MainWindow(QMainWindow):
         self._project_service.append_provenance(
             self._document, analysis_workspace_created_record(workspace)
         )
+        # The Journal now names the workspace, so save it with its record.
+        self._persist_document_ui_state(
+            failure_message="The analysis workspace was created, but autosave failed."
+        )
         self._refresh_relaxation_analysis_context()
         self._populate_project_tree()
         self._refresh_journal_view()
@@ -7365,6 +7369,9 @@ class MainWindow(QMainWindow):
         if record is None:
             return
         self._project_service.append_provenance(self._document, record)
+        self._persist_document_ui_state(
+            failure_message="The grouping was applied, but autosave failed."
+        )
         self._refresh_journal_view()
 
     def _workspace_host(self, workspace: dict) -> Structure | None:

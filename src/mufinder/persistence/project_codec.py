@@ -33,7 +33,14 @@ from mufinder.domain.models import (
     normalize_default_method,
     utc_now,
 )
-from mufinder.persistence.codec import float_or_none, int_or_none, parse_datetime, parse_uuid
+from mufinder.persistence.codec import (
+    float_or_none,
+    float_triplet_or_none,
+    int_or_none,
+    parse_datetime,
+    parse_uuid,
+    uuid_or_none,
+)
 
 #: Status a freshly generated muon site loads with.
 _GENERATED_SITE_STATUS = "generated"
@@ -294,14 +301,18 @@ def generation_run_from_dict(payload: dict[str, Any]) -> GenerationRun:
         ),
         space_group_number=int_or_none(payload.get("space_group_number")),
         symmetry_operation_count=int_or_none(payload.get("symmetry_operation_count")),
-        site_ids=[UUID(value) for value in payload.get("site_ids", [])],
+        site_ids=[
+            site_id
+            for site_id in map(uuid_or_none, _list_or_empty(payload.get("site_ids")))
+            if site_id is not None
+        ],
         requested_count=int_or_none(payload.get("requested_count")),
         distinct_site_count=int_or_none(payload.get("distinct_site_count")),
         min_muon_muon_ang=float_or_none(payload.get("min_muon_muon_ang")),
         attempts_used=int_or_none(payload.get("attempts_used")),
         retries=int_or_none(payload.get("retries")),
-        source_structure_id=parse_uuid(payload.get("source_structure_id")),
-        created_at=parse_datetime(payload.get("created_at")) or utc_now(),
+        source_structure_id=uuid_or_none(payload.get("source_structure_id")),
+        created_at=_datetime_or_now(payload.get("created_at")),
         moves=[
             _generation_run_move_from_dict(move)
             for move in (raw_moves if isinstance(raw_moves, list) else [])
@@ -310,17 +321,35 @@ def generation_run_from_dict(payload: dict[str, Any]) -> GenerationRun:
     )
 
 
+def _list_or_empty(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _datetime_or_now(value: object) -> datetime:
+    try:
+        return parse_datetime(value) or utc_now()  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return utc_now()
+
+
+def _position_or_none(value: object) -> list[float] | None:
+    triplet = float_triplet_or_none(value)
+    return None if triplet is None else list(triplet)
+
+
 def _generation_run_move_from_dict(payload: dict[str, Any]) -> GenerationRunMove:
+    """Decode one Cluster Positions step; a malformed position is left out, never fatal."""
+
     raw_positions = payload.get("original_positions")
+    positions = {
+        str(site_id): position
+        for site_id, raw in (raw_positions.items() if isinstance(raw_positions, dict) else ())
+        if (position := _position_or_none(raw)) is not None
+    }
     return GenerationRunMove(
-        anchor_fractional=[float(value) for value in payload.get("anchor_fractional", [])],
-        original_positions={
-            str(site_id): [float(value) for value in position]
-            for site_id, position in (
-                raw_positions.items() if isinstance(raw_positions, dict) else ()
-            )
-        },
-        moved_at=parse_datetime(payload.get("moved_at")) or utc_now(),
+        anchor_fractional=_position_or_none(payload.get("anchor_fractional")) or [0.0, 0.0, 0.0],
+        original_positions=positions,
+        moved_at=_datetime_or_now(payload.get("moved_at")),
     )
 
 

@@ -64,9 +64,10 @@ def test_the_methods_sentence_quotes_every_recorded_input() -> None:
         "MuFinder generated 6 initial muon positions at random in CoF2, each at least 1.79 Å "
         "from the other starts and their symmetry images and at least 1.0 Å from every host "
         "atom. The separation was estimated as 1.99 Å from the requested 6 starts and reduced to "
-        "1.79 Å after 1 retry so that they fitted. 314 trial positions were drawn (limit 20000). "
-        "Symmetry images were taken from the P4₂/mnm space group (16 operations) detected by "
-        "spglib at a tolerance of 0.001 Å. The random seed was 418273."
+        "1.79 Å after 1 retry so that they fitted. 314 trial positions were drawn (limit 20000 "
+        "per try). Symmetry images were taken from the 16 symmetry operations of the host cell "
+        "(space group P4₂/mnm), detected by spglib at a tolerance of 0.001 Å. The random seed "
+        "was 418273."
     )
 
 
@@ -168,3 +169,23 @@ def test_earlier_starts_with_different_inputs_get_their_own_groups(tmp_path: Pat
         "Earlier starts: Attached to Co, 1 start, 1 per atom, 1.0 Å from Co",
         "Earlier starts: Attached to F, 1 start, 1 per atom, 1.0 Å from F",
     ]
+
+
+def test_earlier_starts_for_different_hosts_get_their_own_groups(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    other = cof2_host()
+    other.label = "CoF2 supercell"
+    document.structures[other.id] = other
+    for host_id in (document.project.host_structure_id, other.id):
+        site = MuonSite(
+            label=f"Random Site {len(document.sites) + 1}",
+            generation_method="random",
+            source_structure_id=host_id,
+            properties={"min_muon_muon": 0.8, "min_muon_atom": 1.0},
+        )
+        document.sites[site.id] = site
+
+    groups = generation_runs.generation_run_groups(document, document.sites.values())
+
+    assert len(groups) == 2
+    assert sorted(" in CoF2 supercell" in group.description for group in groups) == [False, True]
