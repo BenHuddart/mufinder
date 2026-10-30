@@ -55,7 +55,6 @@ MANUAL_ALIAS_MAP: dict[str, dict[str, str]] = {
     },
     "param": {
         "spin_polarised": "spin_polarized",
-        "calculate_polarisation": "calculate_polarization",
     },
 }
 
@@ -678,14 +677,16 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "allowed_tasks": ("MOLECULARDYNAMICS",),
         },
         # Hidden from Add Parameter (``user_visible``); each stays valid in
-        # files, parsers and validators.
+        # files, parsers and validators. A full catalog's obsolete and
+        # Dummy-level keywords are hidden by rule in ``schema``, not here.
         # Set by MuFinder: Quantum Corrections and Energy Barriers choose the farms.
         "num_farms": {"user_visible": False},
         # Set by MuFinder: the Hyperfine Coupling workflow writes HYPERFINE.
         "magres_task": {"user_visible": False},
         # Developer control block, passed through verbatim.
         "devel_code": {"user_visible": False},
-        # Obsolete in CASTEP; kept so older stored configurations still parse.
+        # Obsolete in CASTEP; the starter catalog keeps it so older stored
+        # configurations still parse, without CASTEP's OBSOLETE marker.
         "tssearch_lst_max_iter": {"user_visible": False},
     },
 }

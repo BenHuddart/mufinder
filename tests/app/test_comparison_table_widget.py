@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
+from mufinder.app.comparison_export import export_comparison_csv
 from mufinder.app.comparison_table_widget import COMPARISON_METRICS_URL, ComparisonTableWidget
 from mufinder.branding import DOCUMENTATION_URL
 from mufinder.domain.models import ComparisonTable
-from mufinder.science.structure_metrics import metric_definitions
+from mufinder.science.structure_comparison import (
+    ComparisonResult,
+    DftComparisonInput,
+    compare_structures,
+)
+from mufinder.science.structure_metrics import MetricValue, metric_definitions
+from mufinder.science.supercell_matching import tile_to_supercell
+from tests.support.structures import host_structure
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -303,3 +313,104 @@ def test_table_fits_the_page_without_scrolling_for_two_dft_columns(qapp) -> None
         assert grid.horizontalScrollBar().maximum() == 0
         assert grid.columnWidth(0) < 200
         widget.close()
+
+
+def _computed_table(result: ComparisonResult) -> ComparisonTable:
+    """A table holding ``result``'s values and displays, as generating one saves them."""
+
+    def payload(values: dict[str, MetricValue]) -> dict[str, dict[str, object]]:
+        return {
+            key: {"value": value.value, "display": value.display} for key, value in values.items()
+        }
+
+    return ComparisonTable(
+        label="Computed",
+        result_data={
+            "metric_definitions": [{"key": definition.key} for definition in result.definitions],
+            "experimental_values": payload(result.experimental_values),
+            "dft_columns": [
+                {"label": column.label, "values": payload(column.values)}
+                for column in result.dft_columns
+            ],
+            "parameter_differences": [],
+            "warnings": list(result.warnings),
+        },
+    )
+
+
+def _supercell_comparison() -> ComparisonResult:
+    """CoF₂ against a primitive cell 2 % off, a 2 × 2 × 2 and a rotated supercell."""
+
+    host = host_structure(
+        label="CoF2",
+        lattice=[[4.695, 0, 0], [0, 4.695, 0], [0, 0, 3.18]],
+        species=("Co", "Co", "F", "F", "F", "F"),
+        positions=(
+            (0.0, 0.0, 0.0),
+            (0.5, 0.5, 0.5),
+            (0.306, 0.306, 0.0),
+            (0.694, 0.694, 0.0),
+            (0.806, 0.194, 0.5),
+            (0.194, 0.806, 0.5),
+        ),
+    )
+    columns = []
+    for label, matrix, scale in (
+        ("unit", ((1, 0, 0), (0, 1, 0), (0, 0, 1)), 1.02),
+        ("2x2x2", ((2, 0, 0), (0, 2, 0), (0, 0, 2)), 1.004),
+        ("rotated", ((1, 1, 0), (-1, 1, 0), (0, 0, 1)), 1.006),
+    ):
+        cell = tile_to_supercell(host, matrix)
+        cell.lattice_vectors = (np.asarray(cell.lattice_vectors) * scale).tolist()
+        columns.append(DftComparisonInput(label=label, structure=cell, structure_id=cell.id))
+    return compare_structures(host, columns)
+
+
+def _row(widget: ComparisonTableWidget, label: str) -> int:
+    grid = widget._grid
+    return next(row for row in range(grid.rowCount()) if grid.item(row, 0).text() == label)
+
+
+def _row_texts(widget: ComparisonTableWidget, label: str) -> list[str]:
+    grid = widget._grid
+    row = _row(widget, label)
+    return [grid.item(row, column).text() for column in range(1, grid.columnCount())]
+
+
+def test_supercell_columns_show_host_cell_values_and_can_win_the_highlight(qapp) -> None:
+    widget = ComparisonTableWidget(_computed_table(_supercell_comparison()))
+
+    assert _row_texts(widget, "a (Å)") == [
+        "4.695",
+        "4.7889 (+2.00 %)",
+        "4.71378 (+0.40 %)",
+        "4.72317 (+0.60 %)",
+    ]
+    assert _row_texts(widget, "γ (°)")[1:] == ["90 (+0.00 %)"] * 3
+    # Per host cell the 2 × 2 × 2 column is closest, so it wins the a and V rows;
+    # the rotated supercell is next and the primitive cell last.
+    grid = widget._grid
+    for label in ("a (Å)", "V (Å³)"):
+        row = _row(widget, label)
+        assert [grid.item(row, column).font().bold() for column in range(2, 5)] == [
+            False,
+            True,
+            False,
+        ]
+    banner = widget._warning_banner.text()
+    assert "2x2x2: 2 × 2 × 2 supercell; its lattice parameters are shown per host cell." in banner
+    assert "rotated: Supercell of 2 host cells" in banner
+
+
+def test_csv_export_of_supercell_columns_matches_the_table(qapp, tmp_path: Path) -> None:
+    table = _computed_table(_supercell_comparison())
+    widget = ComparisonTableWidget(table)
+    output_path = tmp_path / "comparison.csv"
+
+    export_comparison_csv(table, output_path)
+
+    with output_path.open(encoding="utf-8", newline="") as handle:
+        rows = {row[0]: row[2:] for row in csv.reader(handle)}
+    for definition in metric_definitions():
+        label = f"{definition.label} ({definition.unit})" if definition.unit else definition.label
+        assert rows[definition.label] == _row_texts(widget, label), definition.key

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, Deque
 from uuid import UUID
 
@@ -15,6 +17,44 @@ from mufinder.domain.enums import JobStatus
 from mufinder.native_threads import capped_thread_variables
 from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.job_progress import castep_output_names
+
+
+_CPU_SYSFS_ROOT = Path("/sys/devices/system/cpu")
+
+
+def physical_core_count() -> int | None:
+    """Return this computer's physical cores, or ``None`` where they cannot be read.
+
+    OpenMPI's ``mpirun`` gives each physical core one slot and refuses
+    ``-np`` above that count, so on a computer with two threads per core the
+    logical count is not a core count a local run can use. Linux reports the
+    topology under ``/sys``; macOS through ``sysctl``.
+    """
+
+    cores: set[tuple[str, str]] = set()
+    for topology in _CPU_SYSFS_ROOT.glob("cpu[0-9]*/topology"):
+        try:
+            package = (topology / "physical_package_id").read_text().strip()
+            core = (topology / "core_id").read_text().strip()
+        except OSError:
+            continue
+        cores.add((package, core))
+    if cores:
+        return len(cores)
+    if sys.platform == "darwin":
+        try:
+            completed = subprocess.run(
+                ["sysctl", "-n", "hw.physicalcpu"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            )
+            count = int(completed.stdout.strip())
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        return count if count > 0 else None
+    return None
 
 
 @dataclass(slots=True)

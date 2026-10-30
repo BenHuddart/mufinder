@@ -55,20 +55,40 @@ counts, whether the starter catalog is active, and any such reason.
 Keywords kept out of Add Parameter
 ----------------------------------
 
-An entry in ``KEYWORD_OVERRIDES`` (``mufinder.castep_io.catalog_overrides``)
-may set ``user_visible`` to ``False``; it defaults to ``True``. The keyword stays
-in the schema: parsers read it, validators check it and writers render it, but
-the parameter dialog's ``Add Parameter`` picker never offers it. A value already
-stored for it still shows as a row, so it can be inspected and removed. The flag
-applies to a full catalog and to the starter catalog alike, and an override that
-sets nothing else adjusts a keyword the catalog provides without adding one the
-catalog lacks.
+Every keyword spec carries ``user_visible``. A keyword with ``user_visible``
+set to ``False`` stays in the schema: parsers read it, validators check it and
+writers render it, but the parameter dialog's ``Add Parameter`` picker never
+offers it. A value already stored for it still shows as a row, so it can be
+inspected and removed.
 
-The flag is set for these kinds of entry:
+With a full catalog, ``user_visible`` follows CASTEP's own markers. CASTEP
+keeps two kinds of keyword only so older input files still run, and both are
+hidden by rule:
+
+- **Obsolete keywords**, whose CASTEP help text calls the keyword itself
+  obsolete: it opens with ``OBSOLETE:`` or says ``This is an OBSOLETE form``,
+  usually naming the keyword that replaced it, such as ``MD_NOSE_T`` (now
+  ``MD_ION_T``) or ``PPD_SIZE_X`` (now ``NLXC_PPD_SIZE_X``). A help text that
+  only mentions another keyword as obsolete does not hide its own keyword.
+  CASTEP 26.11 has 17, all in ``.param``.
+- **Dummy-level keywords**, which CASTEP lists at its ``Dummy`` help level: the
+  settings of withdrawn tasks (``BANDSTRUCTURE``, ``OPTICS``, ``ELNES`` and
+  ``WANNIER``, such as ``BS_MAX_ITER`` or ``BS_KPOINT_PATH``) and ``ATOMIC_INIT``,
+  which has no effect. CASTEP 26.11 lists 59 entries at this level. MuFinder
+  folds some of their alternative spellings into one keyword (``BS_KPOINTS_LIST``
+  into ``BS_KPOINT_LIST``, for example), which leaves 52 keywords, 18 in
+  ``.cell`` and 34 in ``.param``.
+
+An entry in ``KEYWORD_OVERRIDES`` (``mufinder.castep_io.catalog_overrides``)
+may also set ``user_visible``, which takes precedence over the rule. The
+override applies to a full catalog and to the starter catalog alike, and an
+override that sets nothing else adjusts a keyword the catalog provides without
+adding one the catalog lacks. It is set for these kinds of entry:
 
 - **Parser compatibility.** ``UNIT_CELL``, because MuFinder writes the lattice
-  from the project structure, and ``TSSEARCH_LST_MAX_ITER``, which CASTEP marks
-  obsolete and which is kept so older stored configurations still parse.
+  from the project structure, and ``TSSEARCH_LST_MAX_ITER``, which the starter
+  catalog lists so older stored configurations still parse but which carries
+  none of CASTEP's markers there.
 - **Developer blocks.** ``DEVEL_CODE``, passed through verbatim.
 - **Keywords MuFinder sets itself.** ``NUM_FARMS``, which Quantum Corrections
   and Energy Barriers set from their own farm count, and ``MAGRES_TASK``, which

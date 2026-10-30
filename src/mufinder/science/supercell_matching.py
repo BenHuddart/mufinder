@@ -100,6 +100,24 @@ def detect_supercell_matrix_from_lattices(
     )
 
 
+def host_cell_lattice(
+    lattice_vectors: Sequence[Sequence[float]],
+    matrix: Sequence[Sequence[int]],
+) -> np.ndarray:
+    """The host cell of a supercell lattice, in the host's own setting.
+
+    A supercell's rows are ``matrix`` times the host rows (``L_super = M L_host``),
+    so the host rows are ``M⁻¹ L_super``. For a diagonal ``matrix`` this divides
+    each lattice vector by its tiling and keeps the angles; for any other matrix
+    it gives the host-cell vectors the supercell implies, so a strained supercell
+    reads as the host cell averaged over its tiles.
+    """
+
+    return np.linalg.solve(
+        np.asarray(matrix, dtype=float), np.asarray(lattice_vectors, dtype=float)
+    )
+
+
 def tile_to_supercell(
     experimental: Structure,
     matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]],

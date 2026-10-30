@@ -13,6 +13,7 @@ from mufinder.app.param_widgets import HubbardUParamEditor
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from tests.support.keyword_catalogs import catalog_entry, refresh_from_catalog
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -1138,6 +1139,51 @@ def test_add_parameter_from_the_catalog_offers_no_internal_keywords(qapp, workfl
     assert offered.isdisjoint(
         {"unit_cell", "num_farms", "magres_task", "devel_code", "tssearch_lst_max_iter"}
     )
+
+
+def _retired_keyword_dialog(tmp_path, monkeypatch) -> ParameterDialog:
+    from mufinder.castep_io.gui_metadata import get_gui_keyword_specs_for_files
+
+    refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={"atomic_init": catalog_entry("Block", level="Dummy")},
+        param={
+            "task": catalog_entry("String"),
+            "ppd_size_x": catalog_entry(
+                "Integer",
+                "NB This is an OBSOLETE form - please use NLXC_PPD_SIZE_X instead.",
+                level="Intermediate",
+            ),
+            "nlxc_ppd_size_x": catalog_entry("Integer", level="Intermediate"),
+        },
+    )
+    specs = get_gui_keyword_specs_for_files(
+        files=("param", "cell"), workflow_stage="muon_relaxation", include_advanced=True
+    )
+    return ParameterDialog(specs=specs, workflow_stage="muon_relaxation")
+
+
+def test_add_parameter_leaves_out_obsolete_and_dummy_level_keywords(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog = _retired_keyword_dialog(tmp_path, monkeypatch)
+
+    offered = {spec.name for spec in dialog._available_advanced_specs()}
+
+    assert "nlxc_ppd_size_x" in offered
+    assert offered.isdisjoint({"ppd_size_x", "atomic_init"})
+
+
+def test_obsolete_keyword_with_a_stored_value_still_shows_as_a_row(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog = _retired_keyword_dialog(tmp_path, monkeypatch)
+    dialog.set_values({"ppd_size_x": 2})
+    dialog.set_advanced_names(())
+
+    assert "ppd_size_x" in dialog._rows
+    assert dialog.collect_values()["ppd_size_x"] == 2
 
 
 def test_parameter_dialog_search_matches_the_group_heading(qapp) -> None:

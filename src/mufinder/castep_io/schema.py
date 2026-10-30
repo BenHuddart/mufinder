@@ -55,6 +55,12 @@ _EXAMPLE_RE = re.compile(
     r"Example:\s*(.+?)(?:Default value\s*:|Allowed values:|$)", re.IGNORECASE | re.DOTALL
 )
 _ALIAS_RE = re.compile(r"Default value:\s*Determined from ([A-Z0-9_+]+)", re.IGNORECASE)
+# CASTEP's own markers for keywords kept only so older input files still run:
+# the ``Dummy`` help level, and a help text that calls the keyword itself
+# obsolete ("OBSOLETE: ..." or "This is an OBSOLETE form ..."). A help text
+# that only mentions another keyword as obsolete does not match.
+_HIDDEN_CATALOG_LEVEL = "Dummy"
+_OBSOLETE_RE = re.compile(r"^\s*OBSOLETE:|\bThis is an OBSOLETE form\b", re.MULTILINE)
 _ENUM_TOKEN_RE = re.compile(r"[A-Za-z0-9_+\-*/.]+")
 _NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
@@ -452,6 +458,16 @@ def _apply_override(spec: KeywordSpec, override: dict[str, object]) -> KeywordSp
     return replace(spec, **payload)
 
 
+def _catalog_marks_hidden(level: str, docstring: str) -> bool:
+    """Whether CASTEP's catalog marks a keyword to keep out of Add Parameter.
+
+    CASTEP puts withdrawn keywords at its ``Dummy`` help level and calls
+    superseded ones ``OBSOLETE`` in their help text. Both still parse.
+    """
+
+    return level == _HIDDEN_CATALOG_LEVEL or _OBSOLETE_RE.search(docstring) is not None
+
+
 def _base_spec(
     file: FileKind, entry: dict[str, object], *, aliases: tuple[str, ...]
 ) -> KeywordSpec:
@@ -462,13 +478,14 @@ def _base_spec(
     kind, value_type = _infer_value_type(name, option_type, allowed_values)
     default_value = _parse_default_value(docstring, value_type=value_type, option_type=option_type)
     unit = _infer_unit(docstring, option_type)
+    level = str(entry.get("level", ""))
     spec = KeywordSpec(
         name=name,
         file=file,
         kind=kind,
         value_type=value_type,
         option_type=option_type,
-        level=str(entry.get("level", "")),
+        level=level,
         docstring=docstring,
         unit=unit,
         allowed_values=allowed_values,
@@ -485,6 +502,7 @@ def _base_spec(
         default_value=default_value,
         source_order=int(entry.get("order", 0)),
         vector_length=3 if value_type in {"int_triplet", "real_vector"} else None,
+        user_visible=not _catalog_marks_hidden(level, docstring),
     )
     return _apply_override(spec, KEYWORD_OVERRIDES.get(file, {}).get(name, {}))
 

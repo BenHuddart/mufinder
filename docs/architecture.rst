@@ -491,7 +491,9 @@ defined by two of these modules, and a pinned count may only fall.
        (``spacing_axis_ticks``).
    * - ``mufinder.services.job_execution_controller``
      - Job state transitions: submission, start, completion, failure, cancellation
-       and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`).
+       and retrieval (``JobExecutionController``; see :doc:`/job_lifecycle`), and
+       the cores per job a project's next local run offers
+       (``remembered_local_cores``, ``remember_local_cores``).
    * - ``mufinder.services.job_paths``
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
@@ -651,7 +653,8 @@ defined by two of these modules, and a pinned count may only fall.
    * - ``mufinder.services.project_summary``
      - The workflow-stage catalogue the navigator and the project home are built
        from (``WORKFLOW_STAGES``, ``STAGE_GROUPS``: titles, completion goals and
-       guidance), the dependency graph between stages (``STAGE_DEPENDENCIES``),
+       guidance; ``job_stage_title`` names the page a batch of jobs came from),
+       the dependency graph between stages (``STAGE_DEPENDENCIES``),
        each stage's completion rule (``COMPLETION_CHECKS`` and the ``*_complete``
        functions), the muon-relaxation row and job lookups those rules share
        (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the

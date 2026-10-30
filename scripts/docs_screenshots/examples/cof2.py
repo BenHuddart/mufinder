@@ -1007,20 +1007,28 @@ def open_local_submission(window: MainWindow) -> None:
     The run button first checks for a CASTEP executable, which the scratch
     settings do not have, so the dialog is opened with the sweep's job labels
     directly. It reports the computer's core count; an eight-core computer
-    keeps the image the same on every build machine.
+    (eight logical and eight physical cores) keeps the image the same on every
+    build machine.
     """
 
     from mufinder.app import submission_dialog
+    from mufinder.services.project_summary import job_stage_title
 
     labels = sweep_job_labels(window._document, WorkflowStage.CONVERGENCE_CUTOFF)
     ideal_thread_count = submission_dialog.QThread.idealThreadCount
+    physical_core_count = submission_dialog.physical_core_count
     submission_dialog.QThread.idealThreadCount = staticmethod(lambda: 8)
+    submission_dialog.physical_core_count = lambda: 8
     try:
         dialog = submission_dialog.LocalSubmissionDialog(
-            job_labels=labels, mpirun_configured=True, parent=window
+            job_labels=labels,
+            mpirun_configured=True,
+            stage_title=job_stage_title([WorkflowStage.CONVERGENCE_CUTOFF]),
+            parent=window,
         )
     finally:
         submission_dialog.QThread.idealThreadCount = ideal_thread_count
+        submission_dialog.physical_core_count = physical_core_count
     dialog.exec()
 
 
