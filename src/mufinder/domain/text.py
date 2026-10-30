@@ -7,6 +7,8 @@ the app.
 
 from __future__ import annotations
 
+import re
+
 
 def plural(n: int, singular: str, plural: str | None = None) -> str:
     """Return ``n`` followed by the word that agrees with it.
@@ -20,3 +22,21 @@ def plural(n: int, singular: str, plural: str | None = None) -> str:
 
     word = singular if n == 1 else (plural if plural is not None else f"{singular}s")
     return f"{n} {word}"
+
+
+def natural_sort_key(label: str) -> tuple[tuple[int, object], ...]:
+    """Return a key that orders labels the way a reader expects.
+
+    Runs of digits compare as numbers and the rest compares case-insensitively,
+    so ``site_2`` sorts before ``site_10`` and ``Site_1`` beside ``site_1``.
+    """
+
+    parts: list[tuple[int, object]] = []
+    for part in re.split(r"(\d+)", str(label)):
+        if not part:
+            continue
+        if part.isdecimal():
+            parts.append((0, int(part)))
+        else:
+            parts.append((1, part.casefold()))
+    return tuple(parts)

@@ -123,7 +123,7 @@ from mufinder.app.energy_barriers_widget import (
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
-from mufinder.domain.text import plural
+from mufinder.domain.text import natural_sort_key, plural
 from mufinder.services.legacy_import import LegacyFolderScan
 from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
 from mufinder.services.legacy_import_removal import (
@@ -10008,7 +10008,7 @@ class MainWindow(QMainWindow):
             for site in self._document.sites.values()
             if site.status in {"generated", "candidate", "staged"}
         ]
-        candidates.sort(key=lambda item: self._natural_label_sort_key(item.label))
+        candidates.sort(key=lambda item: natural_sort_key(item.label))
         rows = [
             {
                 "id": str(site.id),
@@ -10027,18 +10027,6 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.set_uep_cluster_sources(self._uep_cluster_source_rows())
         self._refresh_workflow_stage_icons()
         self._sync_project_home()
-
-    @staticmethod
-    def _natural_label_sort_key(label: str) -> tuple[tuple[int, object], ...]:
-        parts: list[tuple[int, object]] = []
-        for part in re.split(r"(\d+)", str(label)):
-            if not part:
-                continue
-            if part.isdigit():
-                parts.append((0, int(part)))
-            else:
-                parts.append((1, part.casefold()))
-        return tuple(parts)
 
     def _refresh_host_structure_view(self) -> None:
         if self._document is None:

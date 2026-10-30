@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.text import plural
+from mufinder.domain.text import natural_sort_key, plural
 
 
 @pytest.mark.parametrize(
@@ -22,3 +22,13 @@ def test_plural_uses_the_given_plural_form() -> None:
 def test_plural_makes_a_following_verb_agree() -> None:
     assert plural(1, "job was", "jobs were") == "1 job was"
     assert plural(4, "job was", "jobs were") == "4 jobs were"
+
+
+def test_natural_sort_key_compares_numbers_as_numbers_and_ignores_case() -> None:
+    labels = ["site_10", "Site_2", "site_1", "mu", "site_2b"]
+
+    assert sorted(labels, key=natural_sort_key) == ["mu", "site_1", "Site_2", "site_2b", "site_10"]
+
+
+def test_natural_sort_key_keeps_non_decimal_digits_as_text() -> None:
+    assert natural_sort_key("Mu¹²_3") == ((1, "mu¹²_"), (0, 3))

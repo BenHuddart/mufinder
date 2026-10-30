@@ -60,6 +60,7 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.charge_states import POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
+from mufinder.domain.text import natural_sort_key
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 if TYPE_CHECKING:
@@ -353,7 +354,7 @@ def _build_results(directory: Path, *, run_neb: bool) -> Path:
         document = window._document
         manual = sorted(
             (site for site in document.sites.values() if site.generation_method == "manual"),
-            key=lambda site: window._natural_label_sort_key(site.label),
+            key=lambda site: natural_sort_key(site.label),
         )
         # Positive-muon relaxations of the two starts in the 2x2x1 supercell.
         when_modal("MuonChargeStateDialog", lambda dialog: dialog.accept())
