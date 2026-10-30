@@ -316,6 +316,32 @@ def group_stage_keys(group_key: str) -> tuple[str, ...]:
     return tuple(stage.key for stage in WORKFLOW_STAGES if stage.group == group_key)
 
 
+# A page whose own title reads as a job name ("Cutoff Energy jobs") lends it;
+# "Relaxations" names the page only under its Muon Sites group.
+_JOB_STAGE_TITLE_OVERRIDES: dict[WorkflowStage, str] = {
+    WorkflowStage.MUON_RELAXATION: "Muon Relaxation",
+}
+
+
+def job_stage_title(stages: Iterable[WorkflowStage]) -> str | None:
+    """Return the name of the page that made a batch of jobs, for "Run 6 Cutoff Energy jobs".
+
+    Returns ``None`` when the batch is empty, mixes stages, or comes from a
+    stage no page submits jobs for, so the caller says plain "jobs".
+    """
+
+    distinct = set(stages)
+    if len(distinct) != 1:
+        return None
+    (stage,) = distinct
+    if stage in _JOB_STAGE_TITLE_OVERRIDES:
+        return _JOB_STAGE_TITLE_OVERRIDES[stage]
+    for key, job_stages in _STAGE_JOB_STAGES.items():
+        if stage in job_stages:
+            return stage_info(key).title
+    return None
+
+
 # --- Completion rules ---------------------------------------------------------
 
 

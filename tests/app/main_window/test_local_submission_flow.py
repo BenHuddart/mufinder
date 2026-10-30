@@ -93,6 +93,8 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
     assert len(runs) == 1
     assert doc.provenance[-1].action == "submit_jobs"
     assert doc.provenance[-1].parameters["job_labels"] == [job.label]
+    # Without mpirun the dialog pins one core; that is not remembered.
+    assert "local_submission_cores" not in doc.ui_state
 
     window.close()
 
@@ -526,4 +528,86 @@ def test_main_window_submit_jobs_locally_dialog_rejected(
 
     assert submit_calls == []
     assert job.status == JobStatus.DEFINED
+    window.close()
+
+
+def test_main_window_local_submission_remembers_cores_per_project(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "remember_cores.mufinder", "RememberCores")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    output_dir = doc.project_root / "files" / "convergence_cutoff"
+    jobs = []
+    for cutoff in (300, 400):
+        job = service.add_job(
+            doc,
+            label=f"conv_ecut_{cutoff}",
+            workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+        )
+        (output_dir / job.label).mkdir(parents=True, exist_ok=True)
+        jobs.append(job)
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "sweep_values": [300.0, 400.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=output_dir,
+        job_ids_by_cutoff={
+            main_window_module.MainWindow._cutoff_key(300.0): str(jobs[0].id),
+            main_window_module.MainWindow._cutoff_key(400.0): str(jobs[1].id),
+        },
+    )
+    window._document = doc
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path="/bin/mpirun"),
+    )
+
+    dialog_kwargs: list[dict[str, object]] = []
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **kwargs) -> None:
+            dialog_kwargs.append(kwargs)
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(num_cores=6, parallel=False, max_concurrent=1)
+
+    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs)
+    )
+
+    window._submit_jobs_locally([jobs[0]])
+
+    assert dialog_kwargs[0]["stage_title"] == "Cutoff Energy"
+    assert dialog_kwargs[0]["initial_cores"] is None
+    assert len(submit_calls) == 1
+
+    # The count is saved with the project, so it survives reopening it.
+    reloaded = ProjectService().load_project(doc.project_root)
+    window._document = reloaded
+    window._submit_jobs_locally([reloaded.jobs[jobs[1].id]])
+
+    assert dialog_kwargs[1]["initial_cores"] == 6
     window.close()

@@ -795,3 +795,31 @@ def test_local_runner_output_candidates_name_a_running_jobs_castep(qapp, tmp_pat
         tmp_path / "seed.castep",
     )
     assert runner.output_candidates(uuid4()) == ()
+
+
+def _write_cpu_topology(root: Path, cpu: int, *, package: int, core: int) -> None:
+    topology = root / f"cpu{cpu}" / "topology"
+    topology.mkdir(parents=True)
+    (topology / "physical_package_id").write_text(f"{package}\n")
+    (topology / "core_id").write_text(f"{core}\n")
+
+
+def test_physical_core_count_counts_each_core_once_across_its_threads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Two packages of two cores, two threads each: eight logical CPUs.
+    for cpu in range(8):
+        _write_cpu_topology(tmp_path, cpu, package=cpu // 4, core=(cpu // 2) % 2)
+    (tmp_path / "cpufreq").mkdir()
+    monkeypatch.setattr(local_runner_module, "_CPU_SYSFS_ROOT", tmp_path)
+
+    assert local_runner_module.physical_core_count() == 4
+
+
+def test_physical_core_count_is_none_without_a_readable_topology(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(local_runner_module, "_CPU_SYSFS_ROOT", tmp_path)
+    monkeypatch.setattr(local_runner_module.sys, "platform", "win32")
+
+    assert local_runner_module.physical_core_count() is None

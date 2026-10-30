@@ -19,6 +19,7 @@ from mufinder.services.project_summary import (
     StageStatus,
     energy_barriers_complete,
     group_stage_keys,
+    job_stage_title,
     muon_relaxations_complete,
     structure_formula,
     summarize_project,
@@ -265,3 +266,16 @@ def test_polarisation_needs_fields_and_completes_with_a_simulation(tmp_path: Pat
     polarisation = summarize_project(document).stage("polarisation")
     assert polarisation.status == StageStatus.COMPLETE
     assert polarisation.facts == ("2 simulations",)
+
+
+def test_job_stage_title_names_the_page_a_batch_of_jobs_came_from() -> None:
+    assert job_stage_title([WorkflowStage.CONVERGENCE_CUTOFF] * 3) == "Cutoff Energy"
+    assert job_stage_title([WorkflowStage.QUANTUM_CORRECTIONS]) == "Quantum Corrections"
+    # "Relaxations" names the page only under Muon Sites.
+    assert job_stage_title([WorkflowStage.MUON_RELAXATION]) == "Muon Relaxation"
+
+
+def test_job_stage_title_is_none_for_a_mixed_empty_or_jobless_batch() -> None:
+    assert job_stage_title([WorkflowStage.CONVERGENCE_CUTOFF, WorkflowStage.UEP]) is None
+    assert job_stage_title([]) is None
+    assert job_stage_title([WorkflowStage.SITE_ANALYSIS]) is None

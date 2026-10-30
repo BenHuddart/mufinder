@@ -166,8 +166,8 @@ and k-point grid, so settle them first.
    Dashboard`` at the bottom of the window lists them too.
 
    .. figure:: ../_generated/screenshots/local_submission_dialog.webp
-      :alt: The local submission dialog for six cutoff-convergence jobs, set to
-            run one after another.
+      :alt: The local submission dialog headed 'Run 6 Cutoff Energy jobs', with
+            cores per job and jobs at once.
 
       The local submission dialog for the six cutoff rows.
 
