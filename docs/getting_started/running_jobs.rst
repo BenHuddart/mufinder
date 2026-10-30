@@ -785,11 +785,24 @@ Monitoring and retrieval
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 - The dashboard shows each job's execution target (``Cluster``), remote job
-  id, a live ``Runtime`` and the process count used at submission. The status
-  bar shows the connection state (``Cluster: connected (<name>)`` or ``Cluster:
-  disconnected``), when the queue was last checked (``Queue last checked``) and
-  a ``Refresh Queue`` button. ``Refresh Queue`` reconnects disconnected
-  sessions for clusters that have active dashboard jobs.
+  id, a live ``Runtime`` and the process count used at submission.
+- While the open project has cluster jobs that are active (including one whose
+  output is being retrieved) or that MuFinder is watching for the scheduler to
+  list again, the status bar shows the connection state, when the queue was last
+  checked (``Queue last checked``) and a ``Refresh Queue`` button. With no
+  project, or with only local or finished jobs, these three are hidden.
+- The connection state names the cluster. ``Not connected to SCARF`` in grey is
+  the ordinary idle state, for example after reopening a project.
+  ``Connected to SCARF`` is green. ``Connection to SCARF lost`` is red and means
+  a connection dropped while jobs on that cluster are active: their status is
+  not being updated until you reconnect.
+- ``Refresh Queue`` checks the queue now. When no connection is open to a cluster
+  with such jobs it reconnects first. The status bar reports the result
+  (``Refreshed queue: checked 2 jobs at 12:34:56``, or that the check failed). If
+  a job's connection has died unnoticed, the first refresh reports it as lost and
+  the next one reconnects. The button is
+  disabled, with a tooltip saying why, when no job has a remote job id to poll,
+  such as while the only cluster job is still being submitted.
 - The queue is polled periodically, updating each job's ``Last Checked`` time.
   SLURM polling tolerates stale or expired job ids (``Invalid job id
   specified``) by falling back to per-job status checks instead of failing the

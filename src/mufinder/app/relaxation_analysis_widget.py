@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from ase.data import atomic_numbers
 from ase.data.colors import jmol_colors
-from matplotlib import colormaps, colors as mcolors
+from matplotlib import colors as mcolors
 from matplotlib.collections import PolyCollection
 from matplotlib.font_manager import FontProperties
 from matplotlib.patches import Circle, PathPatch
@@ -62,7 +62,10 @@ from mufinder.app.export_dialogs import (
     report_export_saved,
 )
 from mufinder.app.theme import (
+    categorical_colour,
+    cluster_color_map,
     current_palette,
+    plot_series_colours,
     style_warning_text,
     status_brush,
     style_hint_text,
@@ -383,14 +386,6 @@ def _workspace_job_ids(workspace: Mapping[str, object]) -> list[UUID]:
     return ids
 
 
-def _cluster_color_map(labels: Sequence[int]) -> dict[int, str]:
-    cmap = colormaps["tab20"]
-    colors: dict[int, str] = {}
-    for index, label in enumerate(sorted(set(int(value) for value in labels))):
-        colors[int(label)] = mcolors.to_hex(cmap(index % cmap.N))
-    return colors
-
-
 def _lightened_cluster_color(color: str) -> str:
     rgb = np.asarray(mcolors.to_rgb(color), dtype=float)
     return mcolors.to_hex((0.28 * rgb) + 0.72)
@@ -594,7 +589,10 @@ def _graph_node_label(text: str, centre: tuple[float, float], radius: float) -> 
         .translate(*centre)
     )
     return PathPatch(
-        transform.transform_path(path), facecolor="#111111", edgecolor="none", zorder=4
+        transform.transform_path(path),
+        facecolor=plot_series_colours().label_on_tint,
+        edgecolor="none",
+        zorder=4,
     )
 
 
@@ -1160,7 +1158,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         figure.clear()
         axis = figure.add_subplot(111)
         axis.axis("off")
-        axis.text(0.5, 0.5, text, ha="center", va="center")
+        axis.text(0.5, 0.5, text, ha="center", va="center", color=current_palette().text_muted)
         canvas.draw_idle()
 
     @staticmethod
@@ -1297,7 +1295,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         if self._graph_layouts is None:
             return
         result, layouts = self._graph_layouts
-        colors = _cluster_color_map(result.cluster_labels)
+        colors = cluster_color_map(result.cluster_labels)
         self._graph_figure.clear()
         self._graph_figure.patch.set_alpha(0.0)
         axis = self._graph_figure.add_subplot(111)
@@ -1377,11 +1375,16 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         if scan_rows:
             x_values, y_values = zip(*scan_rows, strict=False)
             scan_axis.plot(
-                x_values, y_values, marker="o", linestyle="-", color="#b91c1c", linewidth=1.5
+                x_values,
+                y_values,
+                marker="o",
+                linestyle="-",
+                color=categorical_colour(0),
+                linewidth=1.5,
             )
             scan_axis.axvline(
                 result.tolerance_ang,
-                color=current_palette().text_muted,
+                color=plot_series_colours().threshold,
                 linestyle="-",
                 linewidth=1.0,
                 alpha=0.55,
@@ -1391,7 +1394,7 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         self._scan_canvas.draw_idle()
 
     def _render_soprano(self, result) -> None:
-        colors = _cluster_color_map(result.cluster_labels)
+        colors = cluster_color_map(result.cluster_labels)
         self._left_figure.clear()
         axis = self._left_figure.add_subplot(111)
         axis.set_facecolor(current_palette().bg_surface)
@@ -1401,19 +1404,26 @@ class RelaxationClusteringDialog(StructureViewerDialog):
             linkage_matrix = np.asarray(result.linkage_matrix, dtype=float)
             if linkage_matrix.size == 0:
                 axis.axis("off")
-                axis.text(0.5, 0.5, "Only one relaxed site is available.", ha="center", va="center")
+                axis.text(
+                    0.5,
+                    0.5,
+                    "Only one relaxed site is available.",
+                    ha="center",
+                    va="center",
+                    color=current_palette().text_muted,
+                )
                 self._left_canvas.draw_idle()
                 return
             hierarchy.dendrogram(
                 linkage_matrix,
                 ax=axis,
                 color_threshold=0.0,
-                above_threshold_color=current_palette().text_muted,
+                above_threshold_color=plot_series_colours().reference,
                 labels=[str(index + 1) for index in range(len(self._sites))],
             )
             axis.axhline(
                 self._hierarchical_input.value(),
-                color=current_palette().accent,
+                color=plot_series_colours().threshold,
                 linestyle="--",
                 linewidth=1.2,
             )
@@ -1422,7 +1432,14 @@ class RelaxationClusteringDialog(StructureViewerDialog):
         else:
             vectors = np.asarray(result.normalized_genome_vectors, dtype=float)
             if len(vectors) == 0:
-                axis.text(0.5, 0.5, "No sites available.", ha="center", va="center")
+                axis.text(
+                    0.5,
+                    0.5,
+                    "No sites available.",
+                    ha="center",
+                    va="center",
+                    color=current_palette().text_muted,
+                )
             else:
                 origin = np.mean(vectors, axis=0)
                 centred = vectors - origin
@@ -1458,13 +1475,11 @@ class RelaxationClusteringDialog(StructureViewerDialog):
                 axis.set_ylabel("PC2")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         self._left_canvas.draw_idle()
 
     def _render_viewer(self) -> None:
-        colors = _cluster_color_map(self._current_labels)
+        colors = cluster_color_map(self._current_labels)
         positions = [site.cartesian_position_ang for site in normalize_site_energies(self._sites)]
         overlays = [
             {
@@ -1728,7 +1743,7 @@ class DisplacementAnalysisDialog(StructureViewerDialog):
                 s=42,
                 alpha=0.9,
             )
-        axis.axhline(0.0, color=current_palette().text_muted, linewidth=1.0)
+        axis.axhline(0.0, color=plot_series_colours().reference, linewidth=1.0)
         axis.set_xlabel("Distance from muon (Å)")
         axis.set_ylabel("Radial displacement (Å)")
         if species:
@@ -1743,9 +1758,7 @@ class DisplacementAnalysisDialog(StructureViewerDialog):
             style_plot_legend(legend, frame_alpha=0.96)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.spines["left"].set_color(current_palette().border)
-        axis.spines["bottom"].set_color(current_palette().border)
-        axis.tick_params(colors=current_palette().text_primary)
+        style_plot_axes(axis, facecolor=current_palette().bg_surface, grid=False)
         self._canvas.draw_idle()
 
 
@@ -2252,7 +2265,6 @@ class RelaxationAnalysisWidget(QWidget):
         )
         show_shifted = QCheckBox("Show shifted positions", header)
         show_shifted.setObjectName("analysisShowShiftedCheckBox")
-        show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
         show_shifted.toggled.connect(
             lambda checked, wid=_workspace_id(workspace): self._set_show_shifted(wid, checked)
@@ -2366,7 +2378,7 @@ class RelaxationAnalysisWidget(QWidget):
         labels = self._cluster_labels(workspace, sites)
         self._show_grouping_out_of_date(table, workspace, labels)
         show_shifted = bool(workspace.get("show_shifted_positions", False))
-        colors = _cluster_color_map(labels)
+        colors = cluster_color_map(labels)
         table.clear()
         lattice = (
             np.asarray(self._host_structure.lattice_vectors, dtype=float)

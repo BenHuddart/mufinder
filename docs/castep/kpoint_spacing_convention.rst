@@ -94,7 +94,7 @@ Where spacings appear
 
 - **Convergence examiner results.** A k-point recommendation reads
   ``Recommended k-point grid: ... (spacing s 1/Ang)``, with ``s`` from
-  ``spacing_from_grid`` on the swept cell (see :doc:`/user_guide/convergence_testing`).
+  ``spacing_from_grid`` on the swept cell (see :doc:`/user_guide/convergence_criteria`).
 - **Per-grid annotations.** The examiner and the convergence overview label
   each grid with its spacing. ``(1, 1, 1)`` is never labelled, and a grid whose
   spacing equals the previous label (``math.isclose``, ``rel_tol=1e-9``) is

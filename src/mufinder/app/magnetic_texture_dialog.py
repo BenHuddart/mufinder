@@ -808,7 +808,6 @@ class MagneticTextureDialog(AtomTargetCardsMixin, QDialog):
         button.setParent(card)
         hint = QLabel(hint_text, card)
         hint.setWordWrap(True)
-        hint.setStyleSheet("background: transparent;")
         style_hint_text(hint)
         card_layout.addWidget(button)
         card_layout.addWidget(hint)

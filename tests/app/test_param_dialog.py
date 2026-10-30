@@ -1156,6 +1156,9 @@ def _retired_keyword_dialog(tmp_path, monkeypatch) -> ParameterDialog:
                 level="Intermediate",
             ),
             "nlxc_ppd_size_x": catalog_entry("Integer", level="Intermediate"),
+            "nlxc_exchange_fraction": catalog_entry(
+                "Real", "NB This keyword has been removed.", level="Expert"
+            ),
         },
     )
     specs = get_gui_keyword_specs_for_files(
@@ -1164,7 +1167,7 @@ def _retired_keyword_dialog(tmp_path, monkeypatch) -> ParameterDialog:
     return ParameterDialog(specs=specs, workflow_stage="muon_relaxation")
 
 
-def test_add_parameter_leaves_out_obsolete_and_dummy_level_keywords(
+def test_add_parameter_leaves_out_obsolete_removed_and_dummy_level_keywords(
     qapp, tmp_path, monkeypatch
 ) -> None:
     dialog = _retired_keyword_dialog(tmp_path, monkeypatch)
@@ -1172,7 +1175,7 @@ def test_add_parameter_leaves_out_obsolete_and_dummy_level_keywords(
     offered = {spec.name for spec in dialog._available_advanced_specs()}
 
     assert "nlxc_ppd_size_x" in offered
-    assert offered.isdisjoint({"ppd_size_x", "atomic_init"})
+    assert offered.isdisjoint({"ppd_size_x", "nlxc_exchange_fraction", "atomic_init"})
 
 
 def test_obsolete_keyword_with_a_stored_value_still_shows_as_a_row(
@@ -1184,6 +1187,17 @@ def test_obsolete_keyword_with_a_stored_value_still_shows_as_a_row(
 
     assert "ppd_size_x" in dialog._rows
     assert dialog.collect_values()["ppd_size_x"] == 2
+
+
+def test_removed_keyword_with_a_stored_value_still_shows_as_a_row(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    dialog = _retired_keyword_dialog(tmp_path, monkeypatch)
+    dialog.set_values({"nlxc_exchange_fraction": 0.25})
+    dialog.set_advanced_names(())
+
+    assert "nlxc_exchange_fraction" in dialog._rows
+    assert dialog.collect_values()["nlxc_exchange_fraction"] == 0.25
 
 
 def test_parameter_dialog_search_matches_the_group_heading(qapp) -> None:

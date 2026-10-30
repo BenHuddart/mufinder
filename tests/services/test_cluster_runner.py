@@ -1702,6 +1702,74 @@ def test_cluster_runner_poll_failure_leaves_tracked_jobs_untouched(qapp, tmp_pat
     assert entry.missing_retrieval_attempts == 0
 
 
+def test_cluster_runner_poll_reports_a_transport_that_died(qapp, tmp_path: Path) -> None:
+    # A dead transport leaves ``_ssh`` set but ``is_connected`` false. The poll must
+    # say so rather than stop silently, or the connection state stays "connected".
+    runner, _scheduler, _job_id = _submitted_runner(tmp_path, "dead_transport_seed")
+    runner._config = ClusterConfig(
+        name="SCARF",
+        hostname="host",
+        username="user",
+        auth_method="key",
+        key_path="",
+        default_working_directory="/work",
+        queue_system="SLURM",
+        cores_per_node=24,
+        default_walltime="",
+        template_script_path="",
+    )
+
+    class _DeadSSH:
+        is_connected = False
+
+        def disconnect(self) -> None:
+            pass
+
+    runner._ssh = _DeadSSH()
+    connection_states: list[bool] = []
+    poll_failures: list[str] = []
+    runner.connection_status_changed.connect(connection_states.append)
+    runner.poll_failed.connect(poll_failures.append)
+
+    runner._poll_queue()
+
+    assert connection_states == [False]
+    assert poll_failures == ["Queue polling failed for SCARF: the connection was lost."]
+    assert runner._ssh is None
+
+
+def test_cluster_runner_poll_closes_a_dead_idle_connection_without_a_warning(qapp) -> None:
+    runner = ClusterJobRunner()
+
+    class _DeadSSH:
+        is_connected = False
+
+        def disconnect(self) -> None:
+            pass
+
+    runner._ssh = _DeadSSH()
+    connection_states: list[bool] = []
+    poll_failures: list[str] = []
+    runner.connection_status_changed.connect(connection_states.append)
+    runner.poll_failed.connect(poll_failures.append)
+
+    runner._poll_queue()
+
+    assert connection_states == [False]
+    assert poll_failures == []
+    assert runner._ssh is None
+
+
+def test_cluster_runner_poll_is_silent_when_never_connected(qapp) -> None:
+    runner = ClusterJobRunner()
+    poll_failures: list[str] = []
+    runner.poll_failed.connect(poll_failures.append)
+
+    runner._poll_queue()
+
+    assert poll_failures == []
+
+
 def _submit_scarf_job(
     tmp_path: Path,
     *,

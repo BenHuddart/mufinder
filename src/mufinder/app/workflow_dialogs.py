@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.theme import STRUCTURE_OVERLAY_COLOURS
 from mufinder.app.viewer_dialog import StructureViewerDialog
 from mufinder.app.workflow_parameters import (
     kpoint_exclusive_hint,
@@ -481,12 +482,12 @@ class EnergyBarrierPathViewerDialog(StructureViewerDialog):
             [
                 {
                     "positions": [start],
-                    "colors": ["#ff7a18"],
+                    "colors": [STRUCTURE_OVERLAY_COLOURS.path_start],
                     "radii": [0.28],
                 },
                 {
                     "positions": [end],
-                    "colors": ["#0f8aa8"],
+                    "colors": [STRUCTURE_OVERLAY_COLOURS.path_end],
                     "radii": [0.28],
                 },
             ]
@@ -497,7 +498,7 @@ class EnergyBarrierPathViewerDialog(StructureViewerDialog):
                     {
                         "start": start,
                         "end": end,
-                        "color": "#2f6f4f",
+                        "color": STRUCTURE_OVERLAY_COLOURS.path_arrow,
                         "width": 7.0,
                         "alpha": 0.92,
                         "arrow": True,

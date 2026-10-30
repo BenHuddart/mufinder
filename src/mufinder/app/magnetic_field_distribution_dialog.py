@@ -15,7 +15,13 @@ from mufinder.app.export_dialogs import (
     report_export_saved,
 )
 from mufinder.app.plot_canvas import create_plot_canvas
-from mufinder.app.theme import current_palette, style_plot_axes, style_plot_legend
+from mufinder.app.theme import (
+    categorical_colour,
+    current_palette,
+    plot_series_colours,
+    style_plot_axes,
+    style_plot_legend,
+)
 from mufinder.persistence.codec import float_triplet
 from mufinder.science.field_histograms import (
     common_binned_series,
@@ -101,7 +107,7 @@ class MagneticFieldDistributionDialog(QDialog):
         if series:
             low = min(limit[0] for limit in x_limits)
             high = max(limit[1] for limit in x_limits)
-            for centres, probabilities, magnitudes, label in series:
+            for index, (centres, probabilities, magnitudes, label) in enumerate(series):
                 if common_edges is None:
                     plot_x, plot_y = probability_steps_with_zero_baseline(
                         centres, probabilities, low, high
@@ -110,7 +116,9 @@ class MagneticFieldDistributionDialog(QDialog):
                     plot_x, plot_y = interval_steps_with_zero_baseline(
                         common_edges, probabilities, low, high
                     )
-                line = axis.plot(plot_x, plot_y, linewidth=1.8, label=label)[0]
+                line = axis.plot(
+                    plot_x, plot_y, linewidth=1.8, color=categorical_colour(index), label=label
+                )[0]
                 fill_alpha = 0.24 if len(series) == 1 else 0.06
                 axis.fill_between(plot_x, plot_y, color=line.get_color(), alpha=fill_alpha)
             if len(series) > 1:
@@ -125,7 +133,7 @@ class MagneticFieldDistributionDialog(QDialog):
                         common_edges, sum_values, low, high
                     )
                 sum_line = axis.plot(
-                    sum_x, sum_y, linewidth=2.4, color=palette.text_primary, label="sum"
+                    sum_x, sum_y, linewidth=2.4, color=plot_series_colours().total, label="sum"
                 )[0]
                 axis.fill_between(sum_x, sum_y, color=sum_line.get_color(), alpha=0.16)
                 if sum_values.size:

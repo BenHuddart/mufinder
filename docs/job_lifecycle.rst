@@ -661,6 +661,10 @@ During polling:
   connected state, and emits a warning through the UI. Tracked job state is left untouched — active cluster
   rows go stale rather than failing, and the dashboard derives staleness from
   ``last_checked_at`` plus the disconnect (``services.job_monitoring``).
+  A poll that finds the transport already dead is handled the same way. The
+  status bar reads ``Connection to <name> lost`` in red while that cluster still
+  has jobs the poll follows (``services.cluster_status``), until a reconnect or a
+  project change.
 
 .. _missing-scheduler-entry-recovery:
 

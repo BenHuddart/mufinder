@@ -484,8 +484,16 @@ defined by two of these modules, and a pinned count may only fall.
        ``magnetic_structure_builder_stylesheet``) carry no colours that would
        go stale when the theme changes, and their coloured rules are sections
        of the application stylesheet. Painted widgets take their colours from
-       here (``texture_preview_colors`` for the magnetic texture preview), and
-       plots their series colours by role (``convergence_plot_colors``).
+       here (``texture_preview_colors`` for the magnetic texture preview). Every
+       plot but the UEP wizard's own, which the harness allow-lists, takes its
+       series colours from ``plot_series_colours``: named roles
+       for quantities and marker lines (energy, force, stress, threshold,
+       reference, ...) and an ordered categorical list for sites and clusters,
+       each at least 3:1 against the plot backgrounds of its theme. Colours
+       drawn over a 3D structure are ``STRUCTURE_OVERLAY_COLOURS``. Labels,
+       checkboxes and radio buttons are transparent through one rule of the
+       application stylesheet and need no stylesheet of their own; a container
+       drawn over another surface uses ``style_transparent_surface``.
    * - ``mufinder.app.plot_canvas``
      - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
        canvas policy).

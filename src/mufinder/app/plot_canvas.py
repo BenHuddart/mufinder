@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.icons import icon
 from mufinder.app.screen_utils import clamped_size
-from mufinder.app.theme import style_hint_text
+from mufinder.app.theme import style_hint_text, style_transparent_surface
 
 DEFAULT_MINIMUM_CANVAS_SIZE: tuple[int, int] = (220, 160)
 """Smallest canvas (logical pixels) that still fits ticks, labels and a plot area."""
@@ -86,7 +86,7 @@ def create_plot_canvas(
     canvas.setMinimumSize(*minimum_size)
     if transparent:
         canvas.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        canvas.setStyleSheet("background: transparent;")
+        style_transparent_surface(canvas)
     return figure, canvas
 
 

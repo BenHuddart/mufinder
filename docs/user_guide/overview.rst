@@ -129,7 +129,8 @@ recorded in the Journal.
 
 See :doc:`/user_guide/convergence_testing` (Adopting a result as a project
 default), :doc:`/user_guide/quantum_corrections` and
-:doc:`/user_guide/energy_barriers`. For the grid and spacing round trip, see
+:doc:`/user_guide/energy_barriers`. How the examiner judges a sweep is in
+:doc:`/user_guide/convergence_criteria`. For the grid and spacing round trip, see
 :doc:`/castep/kpoint_spacing_convention`. :doc:`/user_guide/examples/cof2`
 sweeps and adopts a cutoff and a grid for CoF₂.
 

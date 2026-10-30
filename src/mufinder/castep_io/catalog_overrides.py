@@ -677,8 +677,8 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "allowed_tasks": ("MOLECULARDYNAMICS",),
         },
         # Hidden from Add Parameter (``user_visible``); each stays valid in
-        # files, parsers and validators. A full catalog's obsolete and
-        # Dummy-level keywords are hidden by rule in ``schema``, not here.
+        # files, parsers and validators. A full catalog's obsolete, removed
+        # and Dummy-level keywords are hidden by rule in ``schema``, not here.
         # Set by MuFinder: Quantum Corrections and Energy Barriers choose the farms.
         "num_farms": {"user_visible": False},
         # Set by MuFinder: the Hyperfine Coupling workflow writes HYPERFINE.
