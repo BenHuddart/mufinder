@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from typing import Any
 
 from matplotlib.axes import Axes
@@ -431,31 +432,43 @@ def draw_convergence_plot(
         )
 
     if not compact and x_values:
-        # Two small columns keep a full legend inside a panel at the examiner's minimum size.
+        # Small columns keep a full legend inside a panel at the examiner's minimum size.
         energy_ax.legend(loc="best", ncols=2, fontsize="small")
         style_plot_legend(energy_ax.get_legend(), frame_alpha=0.95)
-        handles = force_handles + stress_handles
-        force_ax.legend(
+        # Filled by column, so interleaving gives a force row above a stress row.
+        handles = [
+            handle
+            for pair in zip_longest(force_handles, stress_handles)
+            for handle in pair
+            if handle is not None
+        ]
+        # The stress axis draws over the force axis, so it holds the legend when present.
+        legend_ax = stress_ax if stress_ax is not None else force_ax
+        legend_ax.legend(
             handles,
             [handle.get_label() for handle in handles],
             loc="best",
-            ncols=2,
+            ncols=3 if stress_handles else 2,
             fontsize="small",
         )
-        style_plot_legend(force_ax.get_legend(), frame_alpha=0.95)
-        _draw_threshold_titles(energy_ax, force_ax, data)
+        style_plot_legend(legend_ax.get_legend(), frame_alpha=0.95)
+    if not compact:
+        _draw_titles(energy_ax, force_ax, data)
 
     return ConvergencePlotAxes(
         energy=energy_ax, force=force_ax, spacing=spacing_ax, stress=stress_ax
     )
 
 
-def _draw_threshold_titles(energy_ax: Axes, force_ax: Axes, data: ConvergencePlotData) -> None:
+def _draw_titles(energy_ax: Axes, force_ax: Axes, data: ConvergencePlotData) -> None:
+    """Title both panels, before any analysis too: the top row keeps the panel off the pop-out button."""
+
+    energy_title = "Energy convergence"
     if data.energy_threshold is not None:
-        energy_ax.set_title(
-            f"Energy convergence (threshold {data.energy_threshold:.3g} eV/atom)", pad=10
-        )
+        energy_title += f" (threshold {data.energy_threshold:.3g} eV/atom)"
+    energy_ax.set_title(energy_title, pad=12)
     if data.force_threshold is None:
+        force_ax.set_title("Force convergence", pad=10)
         return
     if data.stresses and data.stress_threshold is not None:
         force_ax.set_title(

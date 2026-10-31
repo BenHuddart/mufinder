@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from matplotlib.colors import to_hex
 import pytest
-from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QPushButton, QScrollArea, QWidget
 
@@ -148,14 +148,118 @@ def test_convergence_examiner_legends_stay_inside_their_panels_at_the_minimum_si
         _settle(qapp)
         dialog._canvas.draw()
         renderer = dialog._canvas.get_renderer()
-        assert len(dialog._force_ax.get_legend().get_texts()) == 6
-        for axes in (dialog._energy_ax, dialog._force_ax):
+        assert len(dialog._stress_ax.get_legend().get_texts()) == 6
+        force_legend = dialog._stress_ax.get_legend().get_window_extent(renderer)
+        assert force_legend.height <= 0.45 * dialog._force_ax.get_window_extent(renderer).height
+        for axes in (dialog._energy_ax, dialog._stress_ax):
             legend = axes.get_legend().get_window_extent(renderer)
             panel = axes.get_window_extent(renderer)
             assert legend.y0 >= panel.y0 - 1
             assert legend.y1 <= panel.y1 + 1
             assert legend.x0 >= panel.x0 - 1
             assert legend.x1 <= panel.x1 + 1
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_force_legend_draws_above_the_stress_axis(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            cutoff: SweepPointRunState(
+                status="completed", total_energy=energy, max_force=force, max_stress=stress
+            )
+            for cutoff, energy, force, stress in (
+                (300.0, -10.0, 0.30, 0.9),
+                (400.0, -10.01, 0.20, 0.5),
+                (500.0, -10.0105, 0.19, 0.45),
+            )
+        },
+        num_atoms=2,
+    )
+    dialog._include_stress.setChecked(True)
+    dialog._run_button.click()
+
+    legend = dialog._stress_ax.get_legend()
+    assert legend is not None
+    assert dialog._force_ax.get_legend() is None
+    # Axes draw in z-order, in figure order on a tie, so the legend's axes must come last.
+    panels = sorted(dialog._figure.axes, key=lambda axes: axes.get_zorder())
+    assert panels[-1] is dialog._stress_ax
+    lines = dialog._stress_ax.get_lines()
+    assert lines and legend.get_zorder() > max(line.get_zorder() for line in lines)
+    # One row per quantity: filled by column, the force and stress entries alternate.
+    labels = [text.get_text() for text in legend.get_texts()]
+    assert labels[:2] == ["Max force", "Max stress"]
+
+
+def _pop_out_examiner(kind: str, state: str) -> ConvergenceExaminerDialog:
+    finished = {
+        4.0: (-10.0, 0.30, 0.9),
+        32.0: (-10.01, 0.20, 0.5),
+        108.0: (-10.0105, 0.19, 0.45),
+    }
+    if state == "no points":
+        points = {4.0: SweepPointRunState(status="failed")}
+    elif state == "one point":
+        points = {4.0: _completed_state(-10.0, 0.30)}
+    else:
+        points = {
+            value: SweepPointRunState(
+                status="completed", total_energy=energy, max_force=force, max_stress=stress
+            )
+            for value, (energy, force, stress) in finished.items()
+        }
+    options: dict[str, object] = {}
+    if kind == "kpoint":
+        options = {
+            "sweep_kind": "kpoint",
+            "point_grids": {4.0: (1, 1, 4), 32.0: (2, 2, 8), 108.0: (3, 3, 12)},
+            "lattice_vectors": ((4.0, 0.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 4.0)),
+        }
+    return ConvergenceExaminerDialog(points, num_atoms=2, **options)
+
+
+@pytest.mark.parametrize("size", [(1080, 900), (880, 640)], ids=["default", "minimum"])
+@pytest.mark.parametrize("kind", ["cutoff", "kpoint"])
+@pytest.mark.parametrize("state", ["no points", "one point", "open", "analysed", "stress"])
+def test_convergence_examiner_keeps_the_plot_clear_of_the_pop_out_button(
+    qapp, size, kind, state
+) -> None:
+    dialog = _pop_out_examiner(kind, state)
+    try:
+        dialog.show()
+        dialog.resize(*size)
+        _settle(qapp)
+        if state == "stress":
+            dialog._include_stress.setChecked(True)
+        if state in {"analysed", "stress"}:
+            dialog._run_button.click()
+        _settle(qapp)
+        dialog._canvas.draw()
+
+        button = dialog._canvas.parentWidget().pop_out_button
+        corner = _bounds_in_dialog(dialog, button).translated(
+            -_bounds_in_dialog(dialog, dialog._canvas).topLeft()
+        )
+        ratio = dialog._canvas.device_pixel_ratio
+        height = dialog._canvas.height()
+        renderer = dialog._canvas.get_renderer()
+        artists = []
+        for axes in dialog._figure.axes:
+            artists += [axes, axes.title, axes.xaxis.label, axes.yaxis.label]
+            if axes.get_legend() is not None:
+                artists.append(axes.get_legend())
+        for artist in artists:
+            extent = artist.get_window_extent(renderer)
+            if not extent.width or not extent.height:
+                continue
+            drawn = QRectF(
+                extent.x0 / ratio,
+                height - extent.y1 / ratio,
+                extent.width / ratio,
+                extent.height / ratio,
+            )
+            assert not drawn.intersects(QRectF(corner)), artist
     finally:
         dialog.close()
 
