@@ -630,6 +630,29 @@ def test_one_site_with_six_noisy_members_is_one_group_under_every_method(method:
 
 
 @_soprano_required
+@pytest.mark.parametrize("method", ["hier", "kmeans"])
+def test_soprano_style_labels_number_each_site_as_its_cluster(method: str) -> None:
+    host = _bcc_host_structure()
+    positions = ((0.5, 0.25, 0.0), (0.25, 0.25, 0.25), (0.5, 0.0, 0.0))
+    # Two energy orders of the same geometry: whichever labels the clustering
+    # first assigns, at least one order differs from them.
+    for energies in ((-10.0, -9.6, -9.2), (-9.2, -9.6, -10.0)):
+        sites = [
+            *_noisy_members(positions[0], 3, noise=1e-3, energy=energies[0], seed=2),
+            *_noisy_members(positions[1], 3, noise=1e-3, energy=energies[1], seed=3),
+            *_noisy_members(positions[2], 3, noise=1e-3, energy=energies[2], seed=4),
+        ]
+
+        result = cluster_soprano_style(sites, host, method=method, kmeans_k=3)
+
+        assert [cluster.cluster_index for cluster in result.summary.clusters] == [1, 2, 3]
+        for cluster in result.summary.clusters:
+            assert {result.cluster_labels[site] for site in cluster.member_indexes} == {
+                cluster.cluster_index
+            }
+
+
+@_soprano_required
 def test_kmeans_with_more_clusters_than_sites_does_not_invent_sites() -> None:
     host = _bcc_host_structure()
     sites = [

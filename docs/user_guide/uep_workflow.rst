@@ -156,9 +156,12 @@ The clustering window, ``UEP Clustering - <job label>``, offers hierarchical
 dendrogram exploration of the Soprano-backed feature space with a live
 tolerance control (``Tolerance t``), a k-means PCA view with live cluster-count
 updates (``Clusters k``), a shared structure view that colours every relaxed
-muon position by its cluster, and the cluster-summary bubble plot. A
-``Clustering method`` drop-down switches between ``Hierarchical`` and
-``K-means``. On a small window it reflows only its controls, so the dendrogram
+muon position by its cluster, and the cluster-summary bubble plot. Clusters are
+numbered from the lowest mean classical energy. A cluster has the same colour in
+all of these plots, and the same number on its bubble and its k-means centroid;
+in the dendrogram a single-site cluster has no link of its own to colour. A
+``Clustering method`` drop-down switches between
+``Hierarchical`` and ``K-means``. On a small window it reflows only its controls, so the dendrogram
 or PCA plot stays beside the structure view and energy-spread plot instead of
 being stacked into a thin strip.
 
