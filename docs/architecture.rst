@@ -1923,8 +1923,9 @@ selected, resolved or written, so spin-polarized ``.cell`` files keep their
 Structure comparison
 --------------------
 
-The :doc:`/user_guide/comparison_table` is computed by the ``science`` layer and
-rendered by ``app``. The implementation is intentionally layered:
+The comparison table (:doc:`/user_guide/comparison_table`) is computed by the
+``science`` layer and rendered by ``app``. The implementation is intentionally
+layered:
 
 - normalization in ``mufinder.science.supercell_matching``,
 - atom matching in ``mufinder.science.atom_matching``,

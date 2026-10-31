@@ -99,8 +99,7 @@ The pristine host
 
 A variable-cell relaxation of the host without a muon checks the functional:
 the synthetic run ends at a = 4.709 Å and c = 3.188 Å, within 0.3 % of
-experiment (see :doc:`/user_guide/structural_relaxation_analysis` and
-:doc:`/user_guide/comparison_table`).
+experiment (see :doc:`/user_guide/pristine_relaxation`).
 
 .. figure:: ../../_generated/screenshots/comparison_table.webp
    :alt: A comparison table of the CoF2 host against its relaxed cell: lattice

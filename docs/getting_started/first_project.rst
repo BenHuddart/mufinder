@@ -239,8 +239,8 @@ experimental lattice.
 
 The table is saved under ``Pristine Relaxation`` in the navigator. This
 tutorial keeps the imported structure as the active host. See
-:doc:`/user_guide/structural_relaxation_analysis` (*Pristine Relaxation*) and
-:doc:`/user_guide/comparison_table` for reading the metrics.
+:doc:`/user_guide/pristine_relaxation` for the workflow and for reading the
+metrics.
 
 Optional: a first look with the UEP
 -----------------------------------

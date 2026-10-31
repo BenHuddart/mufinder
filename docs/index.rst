@@ -46,6 +46,7 @@ and quality standards.
    user_guide/supercells
    user_guide/convergence_testing
    user_guide/convergence_criteria
+   user_guide/pristine_relaxation
    user_guide/comparison_table
    user_guide/uep_workflow
    user_guide/site_generation
