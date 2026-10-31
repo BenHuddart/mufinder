@@ -2,6 +2,7 @@
 
 Every project service module works on a :class:`ProjectDocument`;
 :mod:`mufinder.services.project_service` re-exports the names here.
+:func:`append_provenance` is the one write here: the stream is append-only.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from mufinder.domain.models import (
     Result,
     Structure,
 )
+from mufinder.persistence.codec import to_jsonable
+from mufinder.persistence.json_store import ProjectStore
 
 
 @dataclass(slots=True)
@@ -51,6 +54,16 @@ def active_host_structure(document: ProjectDocument) -> Structure | None:
     if host_id is None:
         return None
     return document.structures.get(host_id)
+
+
+def append_provenance(document: ProjectDocument, record: ProvenanceRecord) -> None:
+    """Append a provenance record to the project's stream on disk, then in memory.
+
+    In that order, so a record that could not be written is not shown as if it had been.
+    """
+
+    ProjectStore(document.project_root).append_provenance(to_jsonable(record))
+    document.provenance.append(record)
 
 
 def definitions_for_stage(
@@ -175,14 +188,21 @@ def job_row_label(document: ProjectDocument, job: Job) -> str | None:
         return None
     job_key = str(job.id)
     for definition in definitions_for_stage(document, job.workflow_stage):
-        for mapping_name in _ROW_JOB_MAPPINGS:
-            mapping = definition.parameters.get(mapping_name)
-            if not isinstance(mapping, dict):
-                continue
-            for key, raw_job_id in mapping.items():
-                if str(raw_job_id) == job_key:
-                    return _row_label_from_key(document, str(key))
+        for key, raw_job_id in definition_row_jobs(definition):
+            if raw_job_id == job_key:
+                return _row_label_from_key(document, key)
     return None
+
+
+def definition_row_jobs(definition: CalculationDefinition) -> list[tuple[str, str]]:
+    """Return the ``(row key, job id text)`` pairs ``definition`` binds."""
+
+    return [
+        (str(key), str(raw_job_id))
+        for mapping_name in _ROW_JOB_MAPPINGS
+        if isinstance(mapping := definition.parameters.get(mapping_name), dict)
+        for key, raw_job_id in mapping.items()
+    ]
 
 
 #: The mappings that bind a definition's rows to jobs: Quantum Corrections keeps

@@ -2,7 +2,8 @@ Journal
 =======
 
 The ``Journal`` is a curated, day-grouped narrative of what happened in a
-project: what was imported, configured, submitted and finished. Use it to
+project: what was imported, configured, submitted and finished, and what was
+found. Use it to
 reconstruct the history of a project, for example when writing up a study. It
 is the user-facing view of the project's structured provenance stream.
 
@@ -66,7 +67,7 @@ over the dot names the kind.
      - Routine steps: imports, configurations, launches
    * - ``Completed``
      - Gold
-     - Adopted defaults, grouped sites, new comparison tables, finished
+     - Adopted defaults, findings (`Findings`_), new comparison tables, finished
        calculations
    * - ``Attention``
      - Amber
@@ -102,6 +103,7 @@ below, and the exact time with its time zone.
   sentence, ready for a methods section.
 - **Legacy imports** show the source folder, each skipped run with its reason,
   and each parameter conflict with how it was resolved.
+- **Findings** show their numbers; see `Findings`_.
 
 ``Open in <workflow>`` opens the entry's workflow page, ``Open in Host Structure``
 an imported structure's page, and ``Open in '<table>'`` a comparison table. The
@@ -133,6 +135,71 @@ convergence point, is named by its job name. Where it ran is ``this
 computer`` or the cluster's name, and a generation method is named as the
 ``Generate Sites`` method picker names it.
 
+Findings
+~~~~~~~~
+
+Each result that concludes a step of a study gives one entry, with the measured
+numbers in its summary line and in full on the expanded card.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 34 42
+
+   * - Entry
+     - Written when
+     - Example summary and details
+   * - ``UEP minima found``
+     - A UEP batch search is grouped
+     - ``UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)``. Each minimum's
+       position, starts and ``ΔE (meV)``, and how the search was grouped.
+   * - ``Relaxed sites grouped``
+     - A grouping is applied to an analysis workspace
+     - ``Positive muon: 4 distinct sites; lowest 4c, next cluster 2 +112 meV``. Each
+       site's position and ``ΔE (meV)``, the method, its tolerances and the space
+       group. A site is named by its Wyckoff label, or by its cluster without one.
+   * - ``Magnetic field calculated``
+     - A Magnetic Fields calculation gives new values
+     - ``Field at 4c: 0.42 T (dipolar + contact)``, a range over equivalent sites
+       that differ, or the RMS of an incommensurate distribution. Each site's
+       ``|B|`` and field vector, or RMS and mean field; the applied field, the
+       contact coupling and its shell, the supercell, and a distribution's phase
+       samples and seed.
+   * - ``Polarisation simulated``
+     - A polarisation simulation gives new traces
+     - ``ZF polycrystal simulation from 2 sites``. Its title, its field sources with
+       their weights, its end time and damping.
+   * - ``Zero-point energy calculated``
+     - A Quantum Corrections phonon job completes
+     - ``ZPE at 8g · cluster 1: 0.558 eV; ordering unchanged``. The charge state, muon modes,
+       zero-point widths and ``w1``. With two or more comparable sites, a table of
+       ``ΔE``, ``ZPE`` and ``ΔE + ZPE``. A phonon warning, such as the muon-mass
+       check, stamps the entry ``Attention``.
+   * - ``Energy barrier calculated``
+     - An Energy Barriers NEB job completes
+     - ``Barrier 8g · cluster 1 → 16m · cluster 2: 0.495 eV``. The charge state, reverse barrier, endpoint
+       ``ΔE``, images and path length.
+
+``ordering unchanged`` compares the sites of the same charge state and cell that
+have a zero-point energy so far: it says whether adding it reorders them. With
+one such site the phrase is left out, so the first site of a batch never has it.
+
+A relaxed site is named by its label on the Muon Sites summary when it is pinned
+(``8g · cluster 1``), and otherwise by its own label. A field or simulation
+calculated at an unrelaxed UEP site says it is an estimate.
+
+Recalculating with identical inputs does not add an entry when it repeats the
+latest finding about the same thing (the same UEP job, workspace, Magnetic Fields
+page, simulation or row) on the same day; on a later day it does. Each record keeps
+a fingerprint of its inputs for this. A UEP
+grouping, a site grouping and a magnetic field also fingerprint what they found, so
+adding the ZPE to a UEP search, or regrouping after a relaxation was run again,
+is a new entry. A Magnetic Fields calculation that gives the values already stored
+adds no entry on any day.
+
+Going back to an earlier result adds an entry: calculating ``A``, ``B`` and ``A``
+again on one day gives three, so the last entry about anything is always current. A
+new polarisation simulation has its own entry even with the same settings as another.
+
 What the Journal includes
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -157,8 +224,9 @@ reconstructing what happened during a project, including:
   not be detected so generation treated it as having none; UEP promotion
 - ``Cluster Positions…`` (the anchor and the starts moved), staging generated
   sites for relaxation, and removing generated sites
-- creating a relaxation analysis workspace, and applying a grouping to it (the
-  number of distinct sites, the method, its tolerances and the space group)
+- creating a relaxation analysis workspace
+- findings: UEP minima, grouped sites, magnetic fields, polarisation simulations,
+  zero-point energies and energy barriers (see `Findings`_)
 - calculation submission milestones with each batch's outcome, and continuation
   runs. A muon-relaxation batch names its charge state (``Muon relaxations
   launched: muonium``), so a positive-muon run and a muonium run of the same
@@ -181,8 +249,8 @@ intentionally omits:
 - intermediate job states such as ``queued``, ``running``, and ``retrieving``
 - inferred or backfilled history for older projects that lack the newer
   provenance milestones
-- some analysis-only artifacts that are not yet recorded as dedicated
-  provenance events
+- a UEP batch search that was never grouped, whose distinct minima are not known
+- dipolar-tensor and nuclear-relaxation calculations on the Magnetic Fields page
 
 Limitations
 -----------

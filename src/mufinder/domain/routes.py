@@ -5,6 +5,13 @@ from __future__ import annotations
 from uuid import UUID
 
 _COMPARISON_ROUTE_PREFIX = "pristine_relaxation/comparison/"
+MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
+
+
+def magnetic_field_workspace_route(workspace_id: str) -> str:
+    """The navigator route of one saved magnetic-field workspace."""
+
+    return f"{MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX}{workspace_id}"
 
 
 def comparison_route(table_id: UUID) -> str:

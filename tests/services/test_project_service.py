@@ -1316,9 +1316,11 @@ def test_workflow_supercell_asset_roundtrip_and_selection_state(tmp_path: Path) 
     )
 
 
-def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) -> None:
+def test_use_workflow_supercell_asset_shares_the_cell_with_other_workflows(
+    tmp_path: Path,
+) -> None:
     service = ProjectService()
-    doc = service.create_project(tmp_path / "workflow_supercell_clone.mufinder", "WorkflowClone")
+    doc = service.create_project(tmp_path / "workflow_supercell_share.mufinder", "WorkflowShare")
     host = silicon_oxide_host()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
@@ -1336,19 +1338,49 @@ def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) 
         workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
         asset_structure_id=source_asset.id,
     )
-    repeated = service.use_workflow_supercell_asset(
-        doc,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        asset_structure_id=source_asset.id,
-    )
 
-    assert selected.id != source_asset.id
-    assert repeated.id == selected.id
-    assert selected.parent_structure_id == host.id
-    assert selected.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
-    assert selected.properties["supercell_asset"]["source_asset_structure_id"] == str(
-        source_asset.id
+    assert selected.id == source_asset.id
+    assert selected.properties["supercell_asset"]["owner_workflow_stage"] == "muon_relaxation"
+    assert [
+        asset.structure_id
+        for asset in service.list_workflow_supercell_assets(doc, host_structure_id=host.id)
+    ] == [source_asset.id]
+
+
+def test_supercell_asset_without_an_owner_and_seed_round_trip_through_save(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "neutral_supercell.mufinder", "NeutralSupercell")
+    host = silicon_oxide_host()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    # A project saved before the field stopped being written still holds its value.
+    doc.project.supercell_matrix = [[3, 0, 0], [0, 3, 0], [0, 0, 1]]
+    older = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
     )
+    newer = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=[[1, 0, 0], [0, 2, 0], [0, 0, 1]],
+    )
+    older.properties["supercell_asset"]["saved_at"] = "2026-01-01T00:00:00+00:00"
+
+    service.save_project(doc)
+    loaded = service.load_project(doc.project_root)
+
+    assert loaded.project.supercell_matrix == [[3, 0, 0], [0, 3, 0], [0, 0, 1]]
+    assert loaded.structures[older.id].properties["supercell_asset"]["owner_workflow_stage"] is None
+    assert {
+        asset.structure_id
+        for asset in service.list_workflow_supercell_assets(loaded, host_structure_id=host.id)
+    } == {older.id, newer.id}
+    assert service.supercell_editor_seed_matrix(loaded) == [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
 
 
 def test_workflow_supercell_asset_rename_update_and_delete(tmp_path: Path) -> None:

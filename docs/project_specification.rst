@@ -272,8 +272,9 @@ from the persisted ``provenance.jsonl`` records rather than inferred job
 history. Entries are grouped by local calendar day with human-readable date
 headers, one compact card each with the local time. The default presentation is
 curated and narrative-focused: it includes major workflow actions, submission
-milestones, comparison-table creation and terminal calculation outcomes, and
-omits intermediate runtime states such as queued, running and retrieving. A card
+milestones, comparison-table creation, terminal calculation outcomes and the
+findings that conclude a study (UEP minima, grouped sites, magnetic fields,
+polarisation simulations, zero-point energies and barriers), and omits intermediate runtime states such as queued, running and retrieving. A card
 expands to the details logged for it and the exact time, and links to its
 workflow page. The Journal follows MuFinder branding as a notebook-style
 expedition record using the existing palette and typography tokens; a stamp
@@ -437,12 +438,13 @@ Host structure magnetic editing and the supercell editor
   to the viewer, with a user-resizable split between them; current-structure
   metadata is a one-line summary; left-clicking empty space in the viewer clears
   the atom selection.
-- The Supercell Editor provides a simple diagonal mode (Nx, Ny, Nz) and an
-  advanced full 3×3 integer matrix mode, read-only visual verification of the
+- The Supercell Editor provides a compact diagonal scaling row (Nx × Ny × Nz)
+  and an advanced full 3×3 integer matrix mode, read-only visual verification of the
   magnetic pattern across the generated supercell, and lets the user save,
   name, edit, delete and select reusable project supercells. Editing the
   matrix of a saved supercell already frozen into a configured calculation
-  creates a future-use copy rather than rewriting the frozen structure (see
+  creates a future-use copy with its own name, reported in the status line, rather
+  than rewriting the frozen structure (see
   :doc:`/user_guide/supercells`).
 
 Workflow-scoped simulation cells and supercell assets
@@ -455,21 +457,25 @@ Workflow-scoped simulation cells and supercell assets
 - Saved supercell assets are regular ``Structure`` entities carrying
   ``parent_structure_id`` equal to the active host id,
   ``properties.supercell_asset.matrix``,
-  ``properties.supercell_asset.owner_workflow_stage`` and
-  ``properties.supercell_asset.source_asset_structure_id`` (nullable clone
-  provenance). They are reusable across workflows for the same host and have
-  user-facing names editable in the Supercell Editor.
-- Selecting an asset owned by another workflow clones it on load into the
-  current workflow scope, deduplicated when an identical current-workflow
-  host-plus-matrix asset already exists.
+  ``properties.supercell_asset.owner_workflow_stage`` (nullable: the workflow it
+  was saved from, null when saved from the host page),
+  ``properties.supercell_asset.source_asset_structure_id`` (nullable: the frozen
+  cell a future-use copy came from, or the source of a copy in an older project) and
+  ``properties.supercell_asset.saved_at`` (when it was last saved). They are
+  reusable across workflows for the same host and have user-facing names
+  editable in the Supercell Editor.
+- Workflows that select the same asset share it; selecting never copies, so the
+  library holds one entry per cell. Saving a changed matrix on an asset that other
+  workflows select asks first and names them.
 - Convergence definition snapshots freeze the resolved simulation cell: the
   resolved structure id in ``CalculationDefinition.input_structure_ids[0]`` and
   lightweight provenance (``simulation_cell_mode``,
   ``supercell_source_workflow``) in the calculation parameters. Materialized
   ``.cell`` files render from that frozen snapshot, never from host-preview
   state.
-- ``Project.supercell_matrix`` remains compatibility and read-only data for
-  host-preview defaults and does not govern workflow calculations.
+- ``Project.supercell_matrix`` is read-only compatibility data: it seeds the
+  Supercell Editor only in a project with no saved supercell for the active host,
+  nothing writes it, and it does not govern workflow calculations.
 - Invalid, missing or host-mismatched saved selections fall back safely to
   unit-cell mode, and selection state can be normalized.
 - Stale all-zero supercell spin arrays are repairable from host magnetic

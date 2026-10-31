@@ -851,6 +851,9 @@ The harness tests currently verify:
   ``background: transparent`` stylesheet, apart from the allow-lists
   ``PINNED_HEX_COLOUR_LITERALS`` and ``PINNED_TRANSPARENT_STYLESHEETS``, which
   give a reason for each module and may only shrink.
+- ``PINNED_LITERAL_STYLE_CALLS`` counts the ``setContentsMargins``,
+  ``setSpacing`` and ``setPixelSize`` calls outside ``mufinder.app.theme`` that
+  pass a non-zero literal; a count may only fall (see :doc:`/branding`, Scales).
 - No string literal under ``src/mufinder`` (docstrings and ``numpy.einsum``
   subscripts excepted) contains ``(s)`` after a word, three dots or ``->``:
   counts go through ``mufinder.domain.text.plural``, the ellipsis is ``…`` and

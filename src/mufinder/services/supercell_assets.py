@@ -1,13 +1,14 @@
 """Saved workflow supercell assets and each workflow's simulation-cell selection.
 
 A supercell asset is a :class:`~mufinder.domain.models.Structure` built from a
-host structure by an integer 3x3 matrix. It records the matrix and its owning
-workflow stage under ``properties["supercell_asset"]`` and points at the host
-through ``parent_structure_id``. Each workflow stage persists which cell it
-simulates (the single unit cell or one saved asset) in the
-``workflow_supercells`` ``ui_state`` entry. An asset referenced by a
-calculation definition is frozen: it can be renamed but not regenerated or
-deleted.
+host structure by an integer 3x3 matrix. It records the matrix under
+``properties["supercell_asset"]``, with the workflow stage it was saved from
+(none when it was saved from the host page), and points at the host through
+``parent_structure_id``. Assets are project-wide: the library holds one entry per
+cell, and every workflow selects that entry. Each workflow stage persists which
+cell it simulates (the single unit cell or one saved asset) in the
+``workflow_supercells`` ``ui_state`` entry. An asset referenced by a calculation
+definition is frozen: it can be renamed but not regenerated or deleted.
 
 :class:`~mufinder.services.project_service.ProjectService` delegates its
 supercell methods to the functions here, under the same names and signatures.
@@ -16,6 +17,8 @@ supercell methods to the functions here, under the same names and signatures.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
+import re
 from typing import Any
 from uuid import UUID
 
@@ -25,7 +28,8 @@ from mufinder.domain.magnetic_properties import (
     has_nonzero_spins,
     propagation_vector_from_structure,
 )
-from mufinder.domain.models import Structure
+from mufinder.domain.models import Structure, utc_now
+from mufinder.persistence.codec import parse_datetime
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.services.project_document import ProjectDocument, active_host_structure
 
@@ -53,9 +57,10 @@ class WorkflowSupercellAsset:
     structure_id: UUID
     label: str
     parent_structure_id: UUID | None
-    owner_workflow_stage: WorkflowStage
+    owner_workflow_stage: WorkflowStage | None
     matrix: list[list[int]]
     source_asset_structure_id: UUID | None = None
+    saved_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -88,6 +93,14 @@ def _coerce_supercell_matrix(matrix: Any) -> list[list[int]] | None:
     return parsed
 
 
+def _parse_saved_at(value: Any) -> datetime | None:
+    try:
+        parsed = parse_datetime(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+    return parsed if parsed is not None and parsed.tzinfo is not None else None
+
+
 def _parse_optional_uuid(value: Any) -> UUID | None:
     if value is None:
         return None
@@ -97,7 +110,7 @@ def _parse_optional_uuid(value: Any) -> UUID | None:
         return None
 
 
-def _supercell_asset_label(workflow_stage: WorkflowStage, matrix: list[list[int]]) -> str:
+def _supercell_asset_label(matrix: list[list[int]]) -> str:
     if (
         matrix[0][1] == 0
         and matrix[0][2] == 0
@@ -113,7 +126,25 @@ def _supercell_asset_label(workflow_stage: WorkflowStage, matrix: list[list[int]
             f"{matrix[1][0]} {matrix[1][1]} {matrix[1][2]}; "
             f"{matrix[2][0]} {matrix[2][1]} {matrix[2][2]}]"
         )
-    return f"{workflow_stage.value} {token}"
+    return f"{token} supercell"
+
+
+def _supercell_asset_properties(
+    matrix: list[list[int]],
+    owner_workflow_stage: WorkflowStage | None,
+    source_asset_structure_id: UUID | None,
+    saved_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "matrix": [list(row) for row in matrix],
+        "owner_workflow_stage": (
+            owner_workflow_stage.value if owner_workflow_stage is not None else None
+        ),
+        "source_asset_structure_id": (
+            str(source_asset_structure_id) if source_asset_structure_id is not None else None
+        ),
+        "saved_at": saved_at.isoformat(),
+    }
 
 
 def _workflow_supercells_state(document: ProjectDocument) -> dict[str, Any]:
@@ -176,7 +207,7 @@ def supercell_asset(structure: Structure) -> WorkflowSupercellAsset | None:
 
     owner = raw.get("owner_workflow_stage")
     try:
-        owner_stage = WorkflowStage(str(owner))
+        owner_stage = WorkflowStage(str(owner)) if owner is not None else None
     except ValueError:
         return None
 
@@ -187,6 +218,7 @@ def supercell_asset(structure: Structure) -> WorkflowSupercellAsset | None:
         owner_workflow_stage=owner_stage,
         matrix=matrix,
         source_asset_structure_id=_parse_optional_uuid(raw.get("source_asset_structure_id")),
+        saved_at=_parse_saved_at(raw.get("saved_at")),
     )
 
 
@@ -195,7 +227,7 @@ def list_workflow_supercell_assets(
     *,
     host_structure_id: UUID | None,
 ) -> list[WorkflowSupercellAsset]:
-    """Return the assets built from ``host_structure_id``, ordered by owner stage then label."""
+    """Return the assets built from ``host_structure_id``, ordered by label."""
 
     if host_structure_id is None:
         return []
@@ -209,35 +241,46 @@ def list_workflow_supercell_assets(
             continue
         assets.append(asset)
 
-    assets.sort(
-        key=lambda asset: (
-            asset.owner_workflow_stage.value,
-            asset.label.casefold(),
-            str(asset.structure_id),
-        )
-    )
+    assets.sort(key=lambda asset: (asset.label.casefold(), str(asset.structure_id)))
     return assets
 
 
-def _find_matching_workflow_supercell_asset(
+def latest_workflow_supercell_asset(
     document: ProjectDocument,
     *,
-    host_structure_id: UUID,
-    workflow_stage: WorkflowStage,
-    matrix: list[list[int]],
-) -> Structure | None:
-    for structure in document.structures.values():
-        if structure.parent_structure_id != host_structure_id:
-            continue
-        asset = supercell_asset(structure)
-        if asset is None:
-            continue
-        if asset.owner_workflow_stage != workflow_stage:
-            continue
-        if asset.matrix != matrix:
-            continue
-        return structure
-    return None
+    host_structure_id: UUID | None,
+    matrix: list[list[int]] | None = None,
+) -> WorkflowSupercellAsset | None:
+    """Return the last saved asset of ``host_structure_id``, of ``matrix`` when one is given.
+
+    An asset saved before ``saved_at`` was recorded counts as older than any that has it.
+    """
+
+    matches = [
+        asset
+        for asset in list_workflow_supercell_assets(document, host_structure_id=host_structure_id)
+        if matrix is None or asset.matrix == matrix
+    ]
+    oldest = datetime.min.replace(tzinfo=UTC)
+    return max(matches, key=lambda asset: asset.saved_at or oldest, default=None)
+
+
+def supercell_editor_seed_matrix(document: ProjectDocument) -> list[list[int]]:
+    """Return the matrix the Supercell Editor opens on when no cell is in use.
+
+    That is the active host's most recently saved supercell. A project
+    without one reads its legacy ``Project.supercell_matrix``, which new projects
+    leave at the identity.
+    """
+
+    host = active_host_structure(document)
+    latest = latest_workflow_supercell_asset(
+        document, host_structure_id=host.id if host is not None else None
+    )
+    if latest is not None:
+        return [list(row) for row in latest.matrix]
+    legacy = _coerce_supercell_matrix(document.project.supercell_matrix)
+    return legacy if legacy is not None else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 
 def structure_atomic_spins(structure: Structure) -> list[float]:
@@ -310,15 +353,7 @@ def _repair_legacy_supercell_asset_spins(
     structure.species = list(repaired.species)
     structure.fractional_positions = [list(position) for position in repaired.fractional_positions]
     repaired_properties = dict(repaired.properties)
-    repaired_properties["supercell_asset"] = {
-        "matrix": [list(row) for row in asset.matrix],
-        "owner_workflow_stage": asset.owner_workflow_stage.value,
-        "source_asset_structure_id": (
-            str(asset.source_asset_structure_id)
-            if asset.source_asset_structure_id is not None
-            else None
-        ),
-    }
+    repaired_properties["supercell_asset"] = dict(structure.properties["supercell_asset"])
     structure.properties = repaired_properties
     return True
 
@@ -361,14 +396,19 @@ def _refresh_supercell_asset_if_needed(
 def create_workflow_supercell_asset(
     document: ProjectDocument,
     *,
-    workflow_stage: WorkflowStage,
+    workflow_stage: WorkflowStage | None,
     host_structure_id: UUID,
     matrix: list[list[int]],
     label: str | None = None,
     source_asset_structure_id: UUID | None = None,
     reuse_existing: bool = True,
 ) -> Structure:
-    """Build and register an asset of ``host_structure_id``, reusing a matching one by default."""
+    """Build and register an asset of ``host_structure_id``, reusing a matching one by default.
+
+    ``workflow_stage`` records the workflow it was saved from, or ``None`` for no
+    workflow. By default a saved asset with the same matrix is returned, whichever
+    workflow it was saved from.
+    """
 
     host = document.structures.get(host_structure_id)
     if host is None:
@@ -379,13 +419,11 @@ def create_workflow_supercell_asset(
         raise ValueError("Supercell matrix must be a 3x3 integer matrix.")
 
     if reuse_existing:
-        existing = _find_matching_workflow_supercell_asset(
-            document,
-            host_structure_id=host_structure_id,
-            workflow_stage=workflow_stage,
-            matrix=parsed_matrix,
+        match = latest_workflow_supercell_asset(
+            document, host_structure_id=host_structure_id, matrix=parsed_matrix
         )
-        if existing is not None:
+        if match is not None:
+            existing = document.structures[match.structure_id]
             _refresh_supercell_asset_if_needed(host=host, structure=existing)
             return existing
 
@@ -395,17 +433,11 @@ def create_workflow_supercell_asset(
         atomic_spins=structure_atomic_spins(host),
         propagation_vector=list(propagation_vector_from_structure(host)),
     )
-    structure.label = str(label or "").strip() or _supercell_asset_label(
-        workflow_stage, parsed_matrix
-    )
+    structure.label = str(label or "").strip() or _supercell_asset_label(parsed_matrix)
     structure.parent_structure_id = host_structure_id
-    structure.properties["supercell_asset"] = {
-        "matrix": [list(row) for row in parsed_matrix],
-        "owner_workflow_stage": workflow_stage.value,
-        "source_asset_structure_id": (
-            str(source_asset_structure_id) if source_asset_structure_id is not None else None
-        ),
-    }
+    structure.properties["supercell_asset"] = _supercell_asset_properties(
+        parsed_matrix, workflow_stage, source_asset_structure_id, utc_now()
+    )
     document.structures[structure.id] = structure
     return structure
 
@@ -432,6 +464,50 @@ def supercell_asset_references(
             references.append(f"{stage_value} active selection")
 
     return references
+
+
+def workflows_selecting_supercell_asset(
+    document: ProjectDocument,
+    *,
+    asset_structure_id: UUID,
+) -> list[WorkflowStage]:
+    """Return the workflow stages that simulate the asset, in workflow order.
+
+    A selection of an asset of another host resolves to the unit cell, so it does not count.
+    """
+
+    structure = document.structures.get(asset_structure_id)
+    host = active_host_structure(document)
+    if structure is None or host is None or structure.parent_structure_id != host.id:
+        return []
+    return [
+        stage
+        for stage in WorkflowStage
+        if get_workflow_supercell_selection(document, stage).structure_id == asset_structure_id
+    ]
+
+
+def distinct_supercell_asset_label(
+    document: ProjectDocument,
+    *,
+    host_structure_id: UUID,
+    label: str,
+) -> str:
+    """Return ``label``, with ``copy`` added when a saved asset of the host already has it."""
+
+    taken = {
+        asset.label.casefold()
+        for asset in list_workflow_supercell_assets(document, host_structure_id=host_structure_id)
+    }
+    if label.casefold() not in taken:
+        return label
+    base = re.sub(r" copy( \d+)?$", "", label, flags=re.IGNORECASE)
+    candidate = f"{base} copy"
+    number = 2
+    while candidate.casefold() in taken:
+        candidate = f"{base} copy {number}"
+        number += 1
+    return candidate
 
 
 def supercell_asset_is_frozen(
@@ -462,6 +538,7 @@ def rename_workflow_supercell_asset(
     if not cleaned:
         raise ValueError("Supercell name must not be empty.")
     structure.label = cleaned
+    structure.properties["supercell_asset"]["saved_at"] = utc_now().isoformat()
     return structure
 
 
@@ -506,23 +583,12 @@ def update_workflow_supercell_asset_matrix(
         list(position) for position in regenerated.fractional_positions
     ]
     structure.label = (
-        str(label or "").strip()
-        or structure.label
-        or _supercell_asset_label(
-            asset.owner_workflow_stage,
-            parsed_matrix,
-        )
+        str(label or "").strip() or structure.label or _supercell_asset_label(parsed_matrix)
     )
     structure.properties = dict(regenerated.properties)
-    structure.properties["supercell_asset"] = {
-        "matrix": [list(row) for row in parsed_matrix],
-        "owner_workflow_stage": asset.owner_workflow_stage.value,
-        "source_asset_structure_id": (
-            str(asset.source_asset_structure_id)
-            if asset.source_asset_structure_id is not None
-            else None
-        ),
-    }
+    structure.properties["supercell_asset"] = _supercell_asset_properties(
+        parsed_matrix, asset.owner_workflow_stage, asset.source_asset_structure_id, utc_now()
+    )
     structure.parent_structure_id = host.id
     return structure
 
@@ -558,7 +624,7 @@ def use_workflow_supercell_asset(
     workflow_stage: WorkflowStage,
     asset_structure_id: UUID,
 ) -> Structure:
-    """Select a saved asset for ``workflow_stage``, using this stage's own copy when another stage owns it."""
+    """Select a saved asset for ``workflow_stage``; the asset is shared, not copied."""
 
     host = active_host_structure(document)
     if host is None:
@@ -574,34 +640,17 @@ def use_workflow_supercell_asset(
     if asset_structure.parent_structure_id != host.id:
         raise ValueError("Selected supercell does not belong to the active host structure.")
 
-    selected = asset_structure
-    if asset.owner_workflow_stage != workflow_stage:
-        selected = _find_matching_workflow_supercell_asset(
-            document,
-            host_structure_id=host.id,
-            workflow_stage=workflow_stage,
-            matrix=asset.matrix,
-        )
-        if selected is None:
-            selected = create_workflow_supercell_asset(
-                document,
-                workflow_stage=workflow_stage,
-                host_structure_id=host.id,
-                matrix=asset.matrix,
-                source_asset_structure_id=asset.structure_id,
-                reuse_existing=False,
-            )
-    _refresh_supercell_asset_if_needed(host=host, structure=selected)
+    _refresh_supercell_asset_if_needed(host=host, structure=asset_structure)
 
     set_workflow_supercell_selection(
         document,
         workflow_stage,
         WorkflowSupercellSelection(
             mode=WORKFLOW_SUPERCELL_SAVED,
-            structure_id=selected.id,
+            structure_id=asset_structure.id,
         ),
     )
-    return selected
+    return asset_structure
 
 
 def clear_workflow_supercell_selection(
@@ -675,7 +724,7 @@ def resolve_workflow_structure(
                 source_asset = (
                     supercell_asset(source_structure) if source_structure is not None else None
                 )
-                if source_asset is not None:
+                if source_asset is not None and source_asset.owner_workflow_stage is not None:
                     source_workflow_stage = source_asset.owner_workflow_stage
             return WorkflowStructureResolution(
                 structure=selected_structure,

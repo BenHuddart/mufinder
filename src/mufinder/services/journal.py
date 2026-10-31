@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 from uuid import UUID
 
 from mufinder.domain.charge_states import (
@@ -22,9 +22,11 @@ from mufinder.domain.models import (
     MANUAL_DEFAULT_METHOD,
     ProvenanceRecord,
 )
-from mufinder.domain.routes import comparison_route
+from mufinder.domain.routes import comparison_route, magnetic_field_workspace_route
 from mufinder.domain.text import execution_target_text, plural
 from mufinder.services.failure_diagnosis import FAILURE_REASON_SUMMARIES
+from mufinder.services.magnetic_field_results import MAGNETIC_FIELD_PAGE_OWNER
+from mufinder.services.magnetic_field_settings import phase_sampling_label
 from mufinder.services.generation_runs import (
     generation_run_from_provenance,
     run_journal_line,
@@ -49,14 +51,29 @@ class JournalJobRow:
 
 
 @dataclass(frozen=True, slots=True)
+class JournalJobTable:
+    """A table on an expanded card as display text, in column order.
+
+    ``name`` says what it holds, for assistive technology; columns from
+    ``first_number_column`` on hold numbers and align right.
+    """
+
+    headers: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    name: str = "Calculations in this batch"
+    first_number_column: int = 2
+
+
+@dataclass(frozen=True, slots=True)
 class JournalEntry:
     """One user-facing journal entry derived from provenance.
 
     ``body`` is the curated text exports print. ``summary`` is the shorter line a
     collapsed card shows when it differs from the body (see :attr:`card_summary`).
-    ``detail_lines`` and ``job_rows`` feed :func:`entry_details`, ``job_column``
-    heads the first column of the job table, and ``route`` is the navigator route
-    of the page ``open_label`` opens.
+    ``detail_lines``, ``job_rows`` and ``table`` feed :func:`entry_details`:
+    ``job_column`` heads the first column of the job table, and a finding's own
+    numbers come as ``table``. ``route`` is the navigator route of the page
+    ``open_label`` opens.
     """
 
     timestamp: datetime
@@ -72,20 +89,13 @@ class JournalEntry:
     job_column: str = "Calculation"
     route: str | None = None
     open_label: str | None = None
+    table: JournalJobTable | None = None
 
     @property
     def card_summary(self) -> str:
         """The one line a collapsed card shows under its title."""
 
         return self.summary or self.body
-
-
-@dataclass(frozen=True, slots=True)
-class JournalJobTable:
-    """A batch's per-job table as display text, in column order."""
-
-    headers: tuple[str, ...]
-    rows: tuple[tuple[str, ...], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +136,7 @@ _WORKFLOW_LABELS: dict[WorkflowStage, str] = {
     WorkflowStage.QUANTUM_CORRECTIONS: "Quantum Corrections",
     WorkflowStage.ENERGY_BARRIERS: "Energy Barriers",
 }
+
 
 _STAMP_LABELS = {
     "milestone": "Milestone",
@@ -204,7 +215,7 @@ def entry_details(entry: JournalEntry) -> JournalDetails:
     return JournalDetails(
         exact_time=f"{_day_label(local)} at {local.strftime('%H:%M:%S %Z').strip()}",
         lines=(*entry.detail_lines, *failures),
-        job_table=_job_table(entry) if entry.job_rows else None,
+        job_table=_job_table(entry) if entry.job_rows else entry.table,
     )
 
 
@@ -393,6 +404,12 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "delete_candidates": _delete_candidates_entry,
         "create_analysis_workspace": _create_analysis_workspace_entry,
         "group_relaxed_sites": _group_relaxed_sites_entry,
+        "uep_minima_found": _uep_minima_entry,
+        "sites_grouped": _sites_grouped_entry,
+        "field_calculated": _field_calculated_entry,
+        "polarisation_simulated": _polarisation_simulated_entry,
+        "quantum_corrected": _quantum_corrected_entry,
+        "barrier_calculated": _barrier_calculated_entry,
         "promote_uep_candidate": _promote_uep_candidate_entry,
         "submit_jobs": _submit_jobs_entry,
         "job_completed": _job_completed_entry,
@@ -438,10 +455,14 @@ def _open_label(workflow_stage: WorkflowStage | None) -> str | None:
     return f"Open in {label}" if label else None
 
 
+def workflow_label(stage: WorkflowStage) -> str:
+    """Return the name users know the workflow ``stage`` by."""
+
+    return _WORKFLOW_LABELS.get(stage, stage.value.replace("_", " ").title())
+
+
 def _workflow_label(workflow_stage: WorkflowStage | None) -> str | None:
-    if workflow_stage is None:
-        return None
-    return _WORKFLOW_LABELS.get(workflow_stage, workflow_stage.value.replace("_", " ").title())
+    return None if workflow_stage is None else workflow_label(workflow_stage)
 
 
 def _int_param(record: ProvenanceRecord, key: str) -> int | None:
@@ -863,6 +884,404 @@ def _group_relaxed_sites_entry(record: ProvenanceRecord) -> JournalEntry:
     )
     body += f": {summary}." if summary else "."
     return _entry(record, stamp_kind="success", title="Relaxed sites grouped", body=body)
+
+
+def _mapping_rows(record: ProvenanceRecord, key: str) -> list[Mapping[str, Any]]:
+    raw = record.parameters.get(key)
+    return [row for row in raw if isinstance(row, Mapping)] if isinstance(raw, list) else []
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _position_text(value: object) -> str:
+    """A fractional position as ``(0.000, 0.500, 0.000)``; empty when it is not one."""
+
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return ""
+    numbers = [_number(item) for item in value]
+    if any(number is None for number in numbers):
+        return ""
+    return "(" + ", ".join(f"{number:.3f}" for number in numbers) + ")"
+
+
+def _vector_text(value: object) -> str:
+    """A vector in tesla as ``(0, 0, 0.42)``; empty when it is not one.
+
+    A component far below any measurable field is rounding noise and reads as 0.
+    """
+
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return ""
+    numbers = [_number(item) for item in value]
+    if any(number is None for number in numbers):
+        return ""
+    return (
+        "(" + ", ".join(f"{number if abs(number) >= 1e-9 else 0.0:.4g}" for number in numbers) + ")"
+    )
+
+
+def _meV_text(value: float | None) -> str:
+    return f"{value * MEV_PER_EV:.1f}" if value is not None else "—"
+
+
+def _eV_text(value: object) -> str:
+    number = _number(value)
+    return f"{number:.3f}" if number is not None else "—"
+
+
+#: How a UEP grouping's method and its parameter read on a card.
+_UEP_GROUPING_TEXT: dict[str, tuple[str, str]] = {
+    "legacy_cartesian_hier": ("Grouped within {value:g} Å", "threshold_ang"),
+    "hier": ("Hierarchical grouping, t = {value:g}", "clustering_hier_t"),
+    "kmeans": ("K-means grouping, k = {value:g}", "clustering_kmeans_k"),
+}
+
+
+def _uep_grouping_text(grouping: object) -> str:
+    if not isinstance(grouping, Mapping):
+        return ""
+    known = _UEP_GROUPING_TEXT.get(str(grouping.get("clustering_method")))
+    value = _number(grouping.get(known[1])) if known else None
+    return known[0].format(value=value) if known and value is not None else ""
+
+
+def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
+    """``UEP: 3 distinct minima; lowest at (0.000, 0.500, 0.000)``."""
+
+    minima = _mapping_rows(record, "minima")
+    count = plural(len(minima), "distinct minimum", "distinct minima")
+    position = _position_text(minima[0].get("fractional_position")) if minima else ""
+    body = f"UEP: {count}; lowest at {position}" if position else f"UEP: {count}"
+    energies = [
+        energy for row in minima if (energy := _number(row.get("minimum_energy_eV"))) is not None
+    ]
+    lowest = min(energies, default=None)
+    rows = tuple(
+        (
+            str(index),
+            _position_text(row.get("fractional_position")),
+            str(row.get("size", "")),
+            _meV_text(
+                energy - lowest
+                if (energy := _number(row.get("minimum_energy_eV"))) is not None
+                and lowest is not None
+                else None
+            ),
+        )
+        for index, row in enumerate(minima, start=1)
+    )
+    lines = [f"Batch search of {record.parameters.get('job_label')}"]
+    starts = _int_param(record, "start_count")
+    if starts:
+        lines.append(f"{plural(starts, 'optimised start')} grouped")
+    if text := _uep_grouping_text(record.parameters.get("grouping")):
+        lines.append(text)
+    if record.parameters.get("includes_zpe"):
+        lines.append("Energies include the zero-point energy")
+    entry = _entry(record, stamp_kind="success", title="UEP minima found", body=body)
+    return replace(
+        entry,
+        detail_lines=tuple(lines),
+        table=JournalJobTable(
+            ("Minimum", "Position", "Starts", "ΔE (meV)"), rows, name="Minima of this batch search"
+        ),
+    )
+
+
+def _grouped_site_name(site: Mapping[str, Any]) -> str:
+    """A distinct site by its Wyckoff label, else by its cluster."""
+
+    label = str(site.get("wyckoff_label") or "").strip()
+    return label or f"cluster {site.get('cluster_index')}"
+
+
+def _sites_grouped_entry(record: ProvenanceRecord) -> JournalEntry:
+    """``Positive muon: 4 distinct sites; lowest 4c, next T_A +112 meV``."""
+
+    sites = _mapping_rows(record, "sites")
+    distinct = _int_param(record, "distinct_site_count") or len(sites)
+    count = plural(distinct, "distinct site")
+    charge = _text_param(record, "charge_state_label")
+    body = f"{charge.capitalize()}: {count}" if charge else count[:1].upper() + count[1:]
+    if sites:
+        body += f"; lowest {_grouped_site_name(sites[0])}"
+    if len(sites) > 1:
+        body += f", next {_grouped_site_name(sites[1])}"
+        step = _number(sites[1].get("relative_energy_ev"))
+        if step is not None:
+            body += f" +{step * MEV_PER_EV:.0f} meV"
+    name = _text_param(record, "workspace_name") or "analysis workspace"
+    site_count = _int_param(record, "site_count") or 0
+    lines = [f"Grouped {plural(site_count, 'relaxed site')} in '{name}'"]
+    if summary := _text_param(record, "grouping_summary"):
+        lines.append(summary)
+    rows = tuple(
+        (
+            _grouped_site_name(site),
+            _position_text(site.get("fractional_position")),
+            _meV_text(_number(site.get("relative_energy_ev"))),
+        )
+        for site in sites
+    )
+    entry = _entry(record, stamp_kind="success", title="Relaxed sites grouped", body=body)
+    return replace(
+        entry,
+        detail_lines=tuple(lines),
+        table=(
+            JournalJobTable(
+                ("Site", "Position", "ΔE (meV)"), rows, name="Distinct sites of this grouping"
+            )
+            if rows
+            else None
+        ),
+    )
+
+
+def _field_size_text(values: Sequence[float]) -> str:
+    """One value in tesla, or the range when equivalent sites differ."""
+
+    if not values:
+        return "no value"
+    low, high = min(values), max(values)
+    if f"{low:.3g}" == f"{high:.3g}":
+        return f"{high:.3g} T"
+    return f"{low:.3g} to {high:.3g} T"
+
+
+def _field_settings_lines(settings: Mapping[str, Any]) -> list[str]:
+    """What a field calculation used: its contact term, then its numerical settings."""
+
+    lines = []
+    coupling = _number(settings.get("contact_coupling_per_A3"))
+    if coupling:
+        line = f"Contact coupling {coupling:g} Å⁻³"
+        neighbours = _number(settings.get("contact_neighbours"))
+        radius = _number(settings.get("contact_radius_A"))
+        if neighbours is not None and radius is not None:
+            ions = plural(int(neighbours), "nearest magnetic ion", "nearest magnetic ions")
+            line += f", shell of {ions} within {radius:g} Å"
+        lines.append(line)
+    parts = []
+    if supercell := _grid_text(settings.get("supercell")):
+        parts.append(f"Supercell {supercell}")
+    if settings.get("equivalent_sites"):
+        parts.append("equivalent sites included")
+    if settings.get("distortion_corrected"):
+        parts.append("distortion corrected")
+    samples = _number(settings.get("phase_samples"))
+    if samples:
+        text = plural(int(samples), "phase sample")
+        if settings.get("phase_sampling"):
+            text += f" ({phase_sampling_label(settings['phase_sampling'])})"
+        parts.append(text)
+    seed = _number(settings.get("phase_sampling_seed"))
+    if seed is not None:
+        parts.append(f"seed {seed:.0f}")
+    if parts:
+        lines.append(" · ".join(parts))
+    return lines
+
+
+def _field_calculated_entry(record: ProvenanceRecord) -> JournalEntry:
+    """``Field at 4c: 0.42 T (dipolar + contact)``, or a distribution's RMS."""
+
+    rows = _mapping_rows(record, "results")
+    distribution = record.parameters.get("kind") != "commensurate"
+    size_key = "total_rms_T" if distribution else "magnitude_T"
+    sizes = [value for row in rows if (value := _number(row.get(size_key))) is not None]
+    site = _text_param(record, "site_label") or "the muon site"
+    terms = record.parameters.get("terms")
+    term_text = " + ".join(str(term) for term in terms) if isinstance(terms, list) else ""
+    noun = "RMS field" if distribution else "Field"
+    body = f"{noun} at {site}: {_field_size_text(sizes)}"
+    if term_text:
+        body += f" ({term_text})"
+    lines = [f"On '{_text_param(record, 'owner_title')}'"]
+    if record.parameters.get("estimate"):
+        body += "; estimate at an unrelaxed UEP site"
+    applied = record.parameters.get("applied_field_T")
+    if isinstance(applied, list) and any(_number(value) for value in applied):
+        lines.append(f"Applied field {_vector_text(applied)} T")
+    raw_settings = record.parameters.get("settings")
+    lines.extend(_field_settings_lines(raw_settings if isinstance(raw_settings, Mapping) else {}))
+    for row in rows:
+        for message in row.get("not_converged") or ():
+            lines.append(str(message))
+    vector_key = "mean_T" if distribution else "total_T"
+    size_head = "RMS (T)" if distribution else "|B| (T)"
+    vector_head = "Mean field (T)" if distribution else "Field (T)"
+    table_rows = tuple(
+        (
+            str(row.get("site_label") or ""),
+            _position_text(row.get("muon_position")),
+            f"{value:.4g}" if (value := _number(row.get(size_key))) is not None else "—",
+            _vector_text(row.get(vector_key)),
+        )
+        for row in rows
+    )
+    entry = _entry(record, stamp_kind="success", title="Magnetic field calculated", body=body)
+    owner = _text_param(record, "owner")
+    if owner and owner != MAGNETIC_FIELD_PAGE_OWNER:
+        entry = replace(
+            entry,
+            route=magnetic_field_workspace_route(owner),
+            open_label=f"Open in '{_text_param(record, 'owner_title')}'",
+        )
+    return replace(
+        entry,
+        detail_lines=tuple(lines),
+        table=JournalJobTable(
+            ("Site", "Position", size_head, vector_head), table_rows, name="Field at each site"
+        ),
+    )
+
+
+#: How a polarisation geometry is abbreviated in a card's line.
+_POLARISATION_GEOMETRIES = {"zero_field": "ZF", "longitudinal": "LF", "transverse": "TF"}
+
+
+def _polarisation_simulated_entry(record: ProvenanceRecord) -> JournalEntry:
+    """``ZF polycrystal simulation from 2 sites``."""
+
+    raw_settings = record.parameters.get("settings")
+    settings = raw_settings if isinstance(raw_settings, Mapping) else {}
+    geometry = _POLARISATION_GEOMETRIES.get(str(settings.get("geometry")), "Polarisation")
+    sample = "polycrystal" if settings.get("polycrystalline") else "single-crystal"
+    count = _int_param(record, "site_count") or 0
+    body = f"{geometry} {sample} simulation from {plural(count, 'site')}"
+    if record.parameters.get("estimate"):
+        body += "; estimate at an unrelaxed UEP site"
+    lines = [f"Simulation '{_text_param(record, 'title')}'"]
+    sources = _mapping_rows(record, "sources")
+    if sources:
+        lines.append(
+            "Fields from "
+            + ", ".join(
+                f"'{source.get('title')}' (weight {_number(source.get('weight')) or 0.0:g})"
+                for source in sources
+            )
+        )
+    parts = []
+    end = _number(settings.get("end_time_us"))
+    if end is not None:
+        parts.append(f"End time {end:g} µs")
+    added = settings.get("added_applied_field_T")
+    if isinstance(added, list) and any(_number(value) for value in added):
+        parts.append(f"added field {_vector_text(added)} T")
+    from_nuclei = bool(settings.get("sigma_from_nuclear_widths"))
+    for key, name in (
+        ("lambda_z_per_us", "λ"),
+        ("sigma_per_us", "σ"),
+        ("collision_rate_per_us", "collision rate"),
+    ):
+        value = _number(settings.get(key))
+        if value and not (key == "sigma_per_us" and from_nuclei):
+            parts.append(f"{name} {value:g} µs⁻¹")
+    if from_nuclei:
+        parts.append("σ from nuclear widths")
+    if parts:
+        lines.append(" · ".join(parts))
+    warnings = record.parameters.get("warnings")
+    lines.extend(str(item) for item in warnings if item) if isinstance(warnings, list) else None
+    entry = _entry(record, stamp_kind="success", title="Polarisation simulated", body=body)
+    return replace(
+        entry,
+        workflow_label="Polarisation",
+        route="polarisation",
+        open_label="Open in Polarisation",
+        detail_lines=tuple(lines),
+    )
+
+
+def _quantum_corrected_entry(record: ProvenanceRecord) -> JournalEntry:
+    """``ZPE at 4c: 0.680 eV; ordering unchanged``."""
+
+    site = _text_param(record, "site_label") or "the muon site"
+    zpe = _eV_text(record.parameters.get("muon_zpe_total_eV"))
+    body = f"ZPE at {site}: {zpe} eV"
+    changed = record.parameters.get("ordering_changed")
+    if isinstance(changed, bool):
+        body += "; ordering changed" if changed else "; ordering unchanged"
+    lines = []
+    if charge := _text_param(record, "charge_state_label"):
+        lines.append(charge.capitalize())
+    frequencies = [
+        value
+        for item in record.parameters.get("mode_frequencies_cm") or ()
+        if (value := _number(item)) is not None
+    ]
+    if frequencies:
+        lines.append("Muon modes " + ", ".join(f"{value:.0f}" for value in frequencies) + " cm⁻¹")
+    widths = [
+        value
+        for item in record.parameters.get("mode_widths_A") or ()
+        if (value := _number(item)) is not None
+    ]
+    if widths:
+        lines.append("Zero-point widths " + ", ".join(f"{value:.2f}" for value in widths) + " Å")
+    w1 = _number(record.parameters.get("w1"))
+    if w1 is not None:
+        lines.append(f"w1 {w1:.3f}")
+    warnings = [str(item) for item in record.parameters.get("warnings") or () if item]
+    lines.extend(warnings)
+    rows = tuple(
+        (
+            str(row.get("site_label") or ""),
+            _eV_text(row.get("relative_energy_eV")),
+            _eV_text(row.get("zpe_eV")),
+            _eV_text(row.get("corrected_energy_eV")),
+        )
+        for row in _mapping_rows(record, "comparison")
+    )
+    entry = _entry(
+        record,
+        stamp_kind="warning" if warnings else "success",
+        title="Zero-point energy calculated",
+        body=body,
+    )
+    return replace(
+        entry,
+        detail_lines=tuple(lines),
+        table=(
+            JournalJobTable(
+                ("Site", "ΔE (eV)", "ZPE (eV)", "ΔE + ZPE (eV)"),
+                rows,
+                name="Sites compared with their zero-point energies",
+                first_number_column=1,
+            )
+            if len(rows) > 1
+            else None
+        ),
+    )
+
+
+def _barrier_calculated_entry(record: ProvenanceRecord) -> JournalEntry:
+    """``Barrier 4c → T_A: 0.310 eV``, by the job's name when its sites are not known."""
+
+    start, end = _text_param(record, "start_label"), _text_param(record, "end_label")
+    path = f"{start} → {end}" if start and end else _text_param(record, "job_label")
+    body = f"Barrier {path}: {_eV_text(record.parameters.get('forward_barrier_eV'))} eV"
+    parts = []
+    if charge := _text_param(record, "charge_state_label"):
+        parts.append(charge.capitalize())
+    reverse = _number(record.parameters.get("reverse_barrier_eV"))
+    if reverse is not None:
+        parts.append(f"reverse barrier {reverse:.3f} eV")
+    delta = _number(record.parameters.get("endpoint_delta_eV"))
+    if delta is not None:
+        parts.append(f"endpoint ΔE {delta:+.3f} eV")
+    images = _int_param(record, "num_images")
+    if images:
+        parts.append(plural(images, "image"))
+    length = _number(record.parameters.get("path_length_ang"))
+    if length is not None:
+        parts.append(f"path length {length:.3g} Å")
+    entry = _entry(record, stamp_kind="success", title="Energy barrier calculated", body=body)
+    return replace(entry, detail_lines=(" · ".join(parts),) if parts else ())
 
 
 def _generation_partial_entry(record: ProvenanceRecord) -> JournalEntry:

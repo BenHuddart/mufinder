@@ -77,6 +77,7 @@ from mufinder.services.source_candidates import (
     energy_barrier_path_symmetry_uses_magnetic_order,
     energy_barrier_source_label,
     energy_barrier_source_site_labels,
+    neb_barrier_energies,
     enumerate_energy_barrier_source_candidates,
     float_from_source,
     fractional_triplet_from_source,
@@ -1338,26 +1339,11 @@ def _format_endpoint_relative_energy(value: float | None) -> str:
 def _neb_barrier_summaries(data: Mapping[str, object]) -> tuple[str, str, str]:
     """Format (forward barrier, reverse barrier, endpoint ΔE) from a NEB result payload.
 
-    Both barriers and ΔE derive from the persisted per-image energies; a result
-    without ``image_energies_eV`` falls back to the stored forward barrier with
-    blank reverse and ΔE columns.
+    A value that :func:`neb_barrier_energies` cannot derive gives a blank column.
     """
 
-    energies_payload = data.get("image_energies_eV")
-    energies: list[float] = []
-    if isinstance(energies_payload, (list, tuple)):
-        try:
-            energies = [float(value) for value in energies_payload]
-        except (TypeError, ValueError):
-            energies = []
-    if len(energies) >= 2:
-        peak = max(energies)
-        return (
-            format_energy_ev(peak - energies[0]),
-            format_energy_ev(peak - energies[-1]),
-            format_energy_ev(energies[-1] - energies[0]),
-        )
-    return format_energy_ev(data.get("barrier_height_eV")), "", ""
+    forward, reverse, delta = neb_barrier_energies(data)
+    return format_energy_ev(forward), format_energy_ev(reverse), format_energy_ev(delta)
 
 
 def _farm_count_label(num_farms: int) -> str:

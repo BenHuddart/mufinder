@@ -57,7 +57,6 @@ class HostStructureWidget(QWidget):
         self._current_structure: Structure | None = None
         self._atomic_spins: list[float] = []
         self._propagation_vector: list[float] = [0.0, 0.0, 0.0]
-        self._supercell_matrix: list[list[int]] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
         self._updating = False
         self._table_seed: tuple[object, int] | None = None
         # Flush-path guard: skip the full atom-table + 3D viewer rebuild when the
@@ -428,18 +427,6 @@ class HostStructureWidget(QWidget):
             return
         self.supercell_editor_requested.emit()
 
-    def set_project_supercell_matrix(self, matrix: list[list[int]] | None) -> None:
-        if not isinstance(matrix, list) or len(matrix) != 3:
-            self._supercell_matrix = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-            return
-        parsed: list[list[int]] = []
-        for row in matrix:
-            if not isinstance(row, list) or len(row) != 3:
-                self._supercell_matrix = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-                return
-            parsed.append([int(row[0]), int(row[1]), int(row[2])])
-        self._supercell_matrix = parsed
-
     def _emit_magnetic_configuration(self) -> None:
         if self._current_structure is None:
             return
@@ -469,6 +456,5 @@ class HostStructureWidget(QWidget):
                 "atomic_spins": [float(value) for value in self._atomic_spins],
                 "propagation_vector": propagation,
                 "magnetic_structure": magnetic_structure,
-                "supercell_matrix": [list(row) for row in self._supercell_matrix],
             }
         )

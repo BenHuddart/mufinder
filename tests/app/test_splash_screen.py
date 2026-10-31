@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 
 import mufinder.app.splash_screen as splash_module
 from mufinder.app.splash_screen import MuFinderSplashScreen
@@ -20,6 +20,22 @@ def test_splash_progress_clamps_and_renders(qapp) -> None:
     assert splash._message == "Loading UI…"
     assert splash.pixmap() is not None
     assert not splash.pixmap().isNull()
+
+
+def test_splash_progress_fill_takes_the_track_height(qapp) -> None:
+    splash = MuFinderSplashScreen()
+    splash.set_progress(50, "Loading")
+    image = splash.pixmap().toImage()
+    ratio = splash.pixmap().devicePixelRatio()
+    # The track: x 84 to 596, y 294 to 304.
+    fill = QColor("#2C2418")
+
+    def pixel(x: int, y: int) -> QColor:
+        return image.pixelColor(round(x * ratio), round(y * ratio))
+
+    for y in (296, 299, 301):
+        assert pixel(200, y) == fill
+        assert pixel(500, y) != fill
 
 
 def test_make_canvas_uses_device_pixel_ratio() -> None:

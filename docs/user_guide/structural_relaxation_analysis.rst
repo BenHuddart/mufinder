@@ -173,6 +173,9 @@ small graph on a large window stays readable, and components with more than 2.5
 edges per node draw thinner, translucent edges so the edges of a dense
 component can still be told apart.
 
+Applying a grouping adds a ``Relaxed sites grouped`` entry to the
+:doc:`/user_guide/journal`.
+
 Site ordering
 ~~~~~~~~~~~~~
 
