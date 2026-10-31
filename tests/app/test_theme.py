@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QProxyStyle,
+    QPushButton,
     QStyle,
     QTableWidget,
     QToolButton,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app import theme as theme_module
+from mufinder.app import workflow_table_utils
 
 
 def test_theme_mode_roundtrip() -> None:
@@ -1205,3 +1207,38 @@ def test_scaled_to_text_follows_the_type_scale(qapp, desktop_font) -> None:
     desktop_font(_system_font(pixels=200))
     theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
     assert theme_module.scaled_to_text(58) == 116
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_standard_button_is_28_px_high_under_both_themes(qapp, desktop_font, mode) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, mode)
+
+    button = QPushButton("Configure…")
+    marked = QPushButton("Configure…")
+    marked.setProperty("multiRowTarget", True)
+
+    assert button.sizeHint().height() == 28
+    # The marker's thicker border must not change the height.
+    assert marked.sizeHint().height() == 28
+
+
+def test_standard_button_grows_with_larger_desktop_text(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=29))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert QPushButton("Configure…").sizeHint().height() > 28
+
+
+def test_a_row_button_fits_a_table_row_with_a_pixel_to_spare(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    table = workflow_table_utils.create_workflow_table(("Action",))
+    table.setRowCount(1)
+    table.setCellWidget(0, 0, QPushButton("Dismiss"))
+    table.show()
+    qapp.processEvents()
+
+    assert table.rowHeight(0) >= 29
+    assert table.cellWidget(0, 0).height() == table.rowHeight(0) - 1
+    table.close()

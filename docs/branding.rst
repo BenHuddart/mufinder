@@ -109,6 +109,10 @@ radius in its stylesheets comes from them:
      - ``control`` 6, ``card`` 10
      - Corners of controls, tables and tabs; corners of cards and panels
 
+A standard push button is 28 px high, so its click target does not depend on a
+padding step; larger desktop text grows it. A button in a table row fills its
+row, which is at least as high.
+
 A square corner or an absent padding is ``0px``. A round shape takes half its
 side (``ROUND_RADIUS``), and a combo box or spin box keeps a gutter for its
 arrow buttons, so neither is a step on a scale.

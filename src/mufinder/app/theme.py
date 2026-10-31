@@ -198,6 +198,10 @@ ROUND_RADIUS = RoundShapeRadii()
 _COMBO_ARROW_GUTTER = 28
 _SPIN_ARROW_GUTTER = 30
 
+# A standard push button's height in pixels, so its click target does not depend
+# on the padding step. Larger text grows it past this.
+_STANDARD_BUTTON_HEIGHT = 28
+
 # The general font each platform's desktop ships with, in pixels: 13 pt at
 # 72 dpi on macOS, 9 pt at 96 dpi on Windows, and 11 pt at 96 dpi on GNOME, the
 # largest of the common Linux defaults, so no default Linux desktop is scaled.
@@ -2060,6 +2064,7 @@ def _button_styles(p: MuFinderPalette) -> str:
         border: 1px solid {p.border};
         border-radius: {RADIUS.control}px;
         padding: {SPACING.xs}px {SPACING.sm}px;
+        min-height: {_STANDARD_BUTTON_HEIGHT - 2 * SPACING.xs - 2}px;
         background: {p.bg_surface};
     }}
     QPushButton:hover {{
@@ -2098,6 +2103,7 @@ def _button_styles(p: MuFinderPalette) -> str:
         background: {p.bg_surface};
         font-weight: 600;
         padding: {SPACING.xs}px {SPACING.sm}px;
+        min-height: 0px;
     }}
     QPushButton#overviewActionButton:hover {{
         background: {p.bg_surface_alt};

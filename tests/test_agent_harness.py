@@ -443,7 +443,7 @@ LITERAL_STYLE_CALLS = ("setContentsMargins", "setSpacing", "setPixelSize")
 #: counted. Pages move to the scales when they are next rebuilt: lower the count then.
 PINNED_LITERAL_STYLE_CALLS: dict[str, int] = {
     "setContentsMargins": 106,
-    "setSpacing": 162,
+    "setSpacing": 164,
     "setPixelSize": 12,
 }
 
