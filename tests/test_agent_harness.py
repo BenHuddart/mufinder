@@ -435,6 +435,71 @@ def test_styling_stays_in_the_theme_module() -> None:
     )
 
 
+#: The layout and font calls whose literal values should come from the scales.
+LITERAL_STYLE_CALLS = ("setContentsMargins", "setSpacing", "setPixelSize")
+
+#: How many calls outside ``theme.py`` still pass each one a literal size. Zero is
+#: "none" and not a step on a scale, so a call whose literals are all zero is not
+#: counted. Pages move to the scales when they are next rebuilt: lower the count then.
+PINNED_LITERAL_STYLE_CALLS: dict[str, int] = {
+    "setContentsMargins": 106,
+    "setSpacing": 162,
+    "setPixelSize": 12,
+}
+
+
+def _literal_style_calls() -> dict[str, int]:
+    counts = dict.fromkeys(LITERAL_STYLE_CALLS, 0)
+    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        if path.relative_to(SOURCE_ROOT).as_posix() == "app/theme.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in counts
+            ):
+                continue
+            literals = [
+                inner.value
+                for argument in node.args
+                for inner in ast.walk(argument)
+                if isinstance(inner, ast.Constant) and isinstance(inner.value, int | float)
+            ]
+            if any(literals):
+                counts[node.func.attr] += 1
+    return counts
+
+
+def test_literal_margins_spacing_and_font_sizes_only_fall() -> None:
+    """Keep new layouts on the scales in ``theme.py``.
+
+    Use ``page_margins``, ``card_margins``, ``form_spacing``, ``SPACING`` and
+    ``type_scale`` instead of a number. The pinned counts may only fall.
+    """
+
+    actual = _literal_style_calls()
+    grown = {
+        name: f"{PINNED_LITERAL_STYLE_CALLS[name]} -> {count}"
+        for name, count in actual.items()
+        if count > PINNED_LITERAL_STYLE_CALLS[name]
+    }
+    assert not grown, (
+        f"New literal sizes outside theme.py: {grown}. Use page_margins(), card_margins(), "
+        "form_spacing(), SPACING or type_scale() from mufinder.app.theme."
+    )
+    stale = {
+        name: f"pinned {PINNED_LITERAL_STYLE_CALLS[name]}, actual {count}"
+        for name, count in actual.items()
+        if count < PINNED_LITERAL_STYLE_CALLS[name]
+    }
+    assert not stale, (
+        f"Literal sizes fell for {stale}. Lower PINNED_LITERAL_STYLE_CALLS so the ratchet "
+        "keeps its bite."
+    )
+
+
 #: ``QMessageBox.question`` and the Yes/No standard buttons (``YesToAll`` and
 #: ``NoToAll`` included) answer a question with "Yes" or "No" instead of the
 #: action, and the static ``question`` keeps Qt's default button, which is

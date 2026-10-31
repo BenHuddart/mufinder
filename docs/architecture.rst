@@ -474,7 +474,10 @@ defined by two of these modules, and a pinned count may only fall.
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
    * - ``mufinder.app.theme``
-     - Reusable styling, palettes and status brushes. Item-view corner styling
+     - Reusable styling, palettes and status brushes. Sizes come from the type,
+       spacing and radius scales, and layouts from ``page_margins``,
+       ``card_margins`` and ``form_spacing`` (see :doc:`/branding`). Item-view
+       corner styling
        follows each view's vertical scroll bar and header through
        ``track_item_view_corners``; the shared table helpers call it, and any
        ``QTableWidget`` or ``QTreeWidget`` built without them calls it directly,
