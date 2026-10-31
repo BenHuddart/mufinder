@@ -1581,8 +1581,17 @@ def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(
     assert resolution.structure.id == second_host.id
     assert resolution.selected_asset is None
     assert resolution.normalized_selection.mode == "unit_cell"
+    assert resolution.fell_back_to_unit_cell is True
     assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "unit_cell"
     assert resolution.available_assets == []
+
+    # The selection was rewritten, so the next resolution sees a plain unit cell.
+    assert (
+        service.resolve_workflow_structure(
+            doc, WorkflowStage.CONVERGENCE_CUTOFF
+        ).fell_back_to_unit_cell
+        is False
+    )
 
 
 def test_workflow_supercell_helpers_handle_invalid_metadata_and_defaults(tmp_path: Path) -> None:

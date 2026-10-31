@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtCore import QItemSelectionModel, QSize, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QPushButton, QToolButton
+from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QToolButton, QWidget
 
 import mufinder.app.convergence_widget as convergence_widget_module
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.convergence_widget import CutoffConvergenceWidget, CutoffRangeDialog
+from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.sweep_convergence_widget import SweepConvergenceWidget
 from mufinder.app.theme import status_brush
 
 
@@ -23,6 +25,213 @@ def _table_values(widget: CutoffConvergenceWidget) -> list[float]:
         if item is not None:
             values.append(float(item.text()))
     return values
+
+
+# The size of a page inside the main window at its default size on a 1280 x 864 desktop.
+_DEFAULT_PAGE_SIZE = QSize(964, 677)
+_SWEEP_WIDGETS = (CutoffConvergenceWidget, KPointConvergenceWidget)
+
+
+def _show_at_default_page_size(widget: SweepConvergenceWidget, qapp) -> None:
+    widget.resize(_DEFAULT_PAGE_SIZE)
+    widget.show()
+    qapp.processEvents()
+
+
+def _on_same_row(first: QWidget, second: QWidget) -> bool:
+    """Whether two widgets share a row; layouts round the centring of unequal heights."""
+
+    first_centre = first.mapToGlobal(first.rect().center()).y()
+    second_centre = second.mapToGlobal(second.rect().center()).y()
+    return abs(first_centre - second_centre) <= 1
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_simulation_cell_is_one_row_without_a_group_or_unit_cell_button(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    _show_at_default_page_size(widget, qapp)
+
+    label = next(item for item in widget.findChildren(QLabel) if item.text() == "Simulation cell")
+
+    assert label.buddy() is widget._simulation_cell_combo
+    assert _on_same_row(label, widget._simulation_cell_combo)
+    assert _on_same_row(widget._simulation_cell_create_button, widget._simulation_cell_combo)
+    assert label.x() < widget._simulation_cell_combo.x() < widget._simulation_cell_create_button.x()
+    assert "Simulation Cell" not in {group.title() for group in widget.findChildren(QGroupBox)}
+    assert "Use Unit Cell" not in {button.text() for button in widget.findChildren(QPushButton)}
+    assert "Using single unit cell." not in {item.text() for item in widget.findChildren(QLabel)}
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_simulation_cell_combo_keeps_the_summary_as_its_tooltip(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    unavailable = "Using single unit cell: the saved supercell was not available."
+
+    widget.set_simulation_cell_options(
+        summary=unavailable, assets=[], selected_structure_id=None, enabled=True
+    )
+
+    assert widget._simulation_cell_combo.toolTip() == unavailable
+    assert widget._simulation_cell_combo.currentText() == "Single unit cell"
+    assert widget._simulation_cell_combo.isEnabled()
+    assert widget._simulation_cell_create_button.isEnabled()
+
+    no_host = "Load a host structure to choose a simulation cell."
+    widget.set_simulation_cell_options(
+        summary=no_host, assets=[], selected_structure_id=None, enabled=False
+    )
+
+    assert widget._simulation_cell_combo.toolTip() == no_host
+    assert not widget._simulation_cell_combo.isEnabled()
+    assert not widget._simulation_cell_create_button.isEnabled()
+
+
+_FALLBACK = "Using single unit cell: the saved supercell was not available."
+
+
+def _set_fallback(widget: SweepConvergenceWidget, warning: str) -> None:
+    widget.set_simulation_cell_options(
+        summary="Using single unit cell.",
+        assets=[],
+        selected_structure_id=None,
+        enabled=True,
+        fallback_warning=warning,
+    )
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_fallback_warning_shows_one_line_under_the_row_and_clearing_it_hides_it(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    _show_at_default_page_size(widget, qapp)
+    normal_table_height = widget._table.height()
+    normal_minimum = widget.minimumSizeHint().height()
+    assert widget._simulation_cell_warning.isHidden()
+
+    _set_fallback(widget, _FALLBACK)
+    qapp.processEvents()
+
+    warning = widget._simulation_cell_warning
+    assert warning.isVisible()
+    assert warning.text() == _FALLBACK
+    assert warning.y() > widget._simulation_cell_combo.geometry().bottom()
+    assert (
+        warning.geometry().bottom()
+        < widget._table.mapTo(widget, widget._table.rect().topLeft()).y()
+    )
+    assert widget.minimumSizeHint().height() <= _DEFAULT_PAGE_SIZE.height()
+
+    _set_fallback(widget, "")
+    qapp.processEvents()
+
+    assert warning.isHidden()
+    assert widget._table.height() == normal_table_height
+    assert widget.minimumSizeHint().height() == normal_minimum
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_choosing_single_unit_cell_again_accepts_the_fallback(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    accepted: list[bool] = []
+    widget.simulation_cell_use_unit_cell_requested.connect(lambda: accepted.append(True))
+
+    _set_fallback(widget, "")
+    widget._simulation_cell_combo.activated.emit(0)
+    assert accepted == []
+
+    _set_fallback(widget, _FALLBACK)
+    widget._simulation_cell_combo.activated.emit(0)
+    assert accepted == [True]
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_long_supercell_name_does_not_widen_the_page(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    base_width = widget.minimumSizeHint().width()
+
+    widget.set_simulation_cell_options(
+        summary="Using saved supercell",
+        assets=[{"structure_id": "abc", "label": "a very long supercell name " * 8}],
+        selected_structure_id="abc",
+        enabled=True,
+    )
+
+    assert widget.minimumSizeHint().width() == base_width
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_long_supercell_name_elides_visibly_with_the_full_name_in_tooltips(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    _show_at_default_page_size(widget, qapp)
+    combo = widget._simulation_cell_combo
+    _set_fallback(widget, "")
+    assert combo.displayed_text() == combo.currentText() == "Single unit cell"
+
+    long_name = "a very long supercell name for checking elision " * 3
+    widget.set_simulation_cell_options(
+        summary=f"Using saved supercell: {long_name}",
+        assets=[{"structure_id": "abc", "label": long_name}],
+        selected_structure_id="abc",
+        enabled=True,
+    )
+    qapp.processEvents()
+
+    shown = combo.displayed_text()
+    assert combo.currentText() == long_name.strip()
+    assert shown.endswith("\N{HORIZONTAL ELLIPSIS}")
+    assert combo.fontMetrics().horizontalAdvance(shown) < combo.width()
+    assert long_name.strip() in combo.toolTip()
+    assert combo.itemData(1, Qt.ItemDataRole.ToolTipRole) == long_name.strip()
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_examine_button_shares_the_table_controls_row(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    _show_at_default_page_size(widget, qapp)
+
+    assert _on_same_row(widget._examine_button, widget._add_button)
+    assert widget._examine_button.x() > widget._batch_configure_button.x()
+    assert widget._examine_button.geometry().right() <= widget._table.geometry().right()
+
+
+@pytest.mark.parametrize("widget_type", _SWEEP_WIDGETS)
+def test_sweep_page_fits_the_default_page_and_the_table_takes_the_spare_height(
+    qapp, widget_type: type[SweepConvergenceWidget]
+) -> None:
+    widget = widget_type()
+    # The longest state of the page: the warning line shown and a selection in
+    # the controls row.
+    widget._warning_label.setText("K-point grids were generated for a different simulation cell.")
+    widget._warning_label.show()
+    widget._selection_count_label.setText("12 selected")
+
+    minimum = widget.minimumSizeHint()
+    assert minimum.height() <= _DEFAULT_PAGE_SIZE.height()
+    assert minimum.width() <= _DEFAULT_PAGE_SIZE.width()
+
+    _show_at_default_page_size(widget, qapp)
+    default_table_height = widget._table.height()
+
+    widget.resize(_DEFAULT_PAGE_SIZE.width(), minimum.height())
+    qapp.processEvents()
+
+    # Everything the page loses comes out of the table.
+    assert widget._table.height() == default_table_height - (
+        _DEFAULT_PAGE_SIZE.height() - minimum.height()
+    )
 
 
 def test_cutoff_range_dialog_validates_and_returns_values(

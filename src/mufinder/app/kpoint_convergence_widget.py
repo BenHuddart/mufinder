@@ -30,6 +30,10 @@ _DEFAULT_KPOINT_SPACING = 0.04
 _FIRST_GRID: KPointGrid = (1, 1, 1)
 
 
+def _grid_up(grid: KPointGrid) -> KPointGrid:
+    return (grid[0] + 1, grid[1] + 1, grid[2] + 1)
+
+
 class KPointSpacingDialog(QDialog):
     """Dialog for generating Monkhorst-Pack grids from a spacing target."""
 
@@ -196,7 +200,17 @@ class KPointConvergenceWidget(SweepConvergenceWidget):
     # -- Sweep hooks -------------------------------------------------------------
 
     def next_key(self, previous: KPointGrid | None) -> KPointGrid:
-        return _FIRST_GRID if previous is None else previous
+        """Return the next grid up from ``previous`` that is not listed yet.
+
+        One more k-point along every axis, repeated past any grid already in
+        the table, so accepting it never adds a duplicate.
+        """
+
+        listed = set(self._collect_keys(strict=False))
+        grid = _FIRST_GRID if previous is None else _grid_up(previous)
+        while grid in listed:
+            grid = _grid_up(grid)
+        return grid
 
     def prompt_new_key(self) -> KPointGrid | None:
         dialog = KPointGridDialog(grid=self.next_key(self._last_key()), parent=self)

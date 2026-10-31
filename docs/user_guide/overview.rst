@@ -52,7 +52,8 @@ Application shell
   ``K-Point Grid``), ``Pristine Relaxation``, ``UEP``, ``Muon Sites``
   (``Generation``, ``Relaxations`` and ``Analysis``), ``Hyperfine Coupling``,
   ``Magnetic Fields``, ``Polarisation``, ``Quantum Corrections``, ``Energy Barriers`` and ``Journal``. The home button
-  above it returns to the project home. Analysis-workspace and saved
+  above it returns to the project home, and dragging its right edge resizes the
+  navigator; MuFinder remembers the width. Analysis-workspace and saved
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
 - The ``Job Dashboard`` dock tracks every job in the project (see `Jobs and

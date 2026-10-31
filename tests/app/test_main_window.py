@@ -2886,7 +2886,6 @@ def test_main_window_project_tree_uses_custom_panel_header(qapp) -> None:
     assert title.text() == "Project"
     assert home_button.isEnabled() is False
     assert panel.minimumWidth() == 220
-    assert panel.maximumWidth() == 300
     assert window._project_tree.isHeaderHidden() is True
 
     window.close()
