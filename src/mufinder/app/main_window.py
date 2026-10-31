@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from PySide6.QtCore import (
     QByteArray,
+    QEvent,
     QEventLoop,
     QSize,
     QSettings,
@@ -533,10 +534,9 @@ class MainWindow(QMainWindow):
         _JOB_RESET_COLUMN,
         _JOB_DISMISS_COLUMN,
     )
-    # The default fits a workspace label such as "Positive muon sites" at the deepest
-    # indent; the minimum fits every stage label, both with room for a scrollbar.
-    _PROJECT_TREE_DEFAULT_WIDTH = 220
-    _PROJECT_TREE_MIN_WIDTH = 190
+    # Both the default and the minimum: it fits a workspace label such as "Positive
+    # muon sites" at the deepest indent, with room for a scrollbar.
+    _PROJECT_TREE_MIN_WIDTH = 220
     _PROJECT_TREE_MAX_SAVED_WIDTH = 4096
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = ConvergenceCutoffController.active_key
     _ACTIVE_KPOINT_DEFINITION_KEY = ConvergenceKpointController.active_key
@@ -1252,6 +1252,8 @@ class MainWindow(QMainWindow):
         self._navigator_splitter.setStretchFactor(0, 0)
         self._navigator_splitter.setStretchFactor(1, 1)
         self._navigator_splitter.setSizes([self._saved_navigator_width(), self.width()])
+        self._navigator_splitter.handle(1).installEventFilter(self)
+        self._navigator_width_in_drag = self._project_tree_panel.width()
         self._dragged_navigator_width: int | None = None
         self._navigator_splitter.splitterMoved.connect(self._on_navigator_splitter_moved)
         central_layout.addWidget(self._navigator_splitter)
@@ -1283,20 +1285,33 @@ class MainWindow(QMainWindow):
 
     def _saved_navigator_width(self) -> int:
         raw_value = self._settings.value(
-            self._PROJECT_NAVIGATOR_WIDTH_KEY, self._PROJECT_TREE_DEFAULT_WIDTH
+            self._PROJECT_NAVIGATOR_WIDTH_KEY, self._PROJECT_TREE_MIN_WIDTH
         )
         try:
             width = int(raw_value)
         except (TypeError, ValueError):
-            return self._PROJECT_TREE_DEFAULT_WIDTH
+            return self._PROJECT_TREE_MIN_WIDTH
         if not self._PROJECT_TREE_MIN_WIDTH <= width <= self._PROJECT_TREE_MAX_SAVED_WIDTH:
-            return self._PROJECT_TREE_DEFAULT_WIDTH
+            return self._PROJECT_TREE_MIN_WIDTH
         return width
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and watched is self._navigator_splitter.handle(1)
+        ):
+            self._navigator_width_in_drag = self._project_tree_panel.width()
+        return super().eventFilter(watched, event)
 
     def _on_navigator_splitter_moved(self, _position: int, _index: int) -> None:
         # Only a drag lands here, so a window too narrow for the chosen width
         # squeezes the navigator for now without changing the width closeEvent saves.
-        self._dragged_navigator_width = self._project_tree_panel.width()
+        # The signal also fires for a drag the page minimum blocks; that one chose nothing.
+        width = self._project_tree_panel.width()
+        if width == self._navigator_width_in_drag:
+            return
+        self._navigator_width_in_drag = width
+        self._dragged_navigator_width = width
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         if getattr(self, "_shutting_down", False):

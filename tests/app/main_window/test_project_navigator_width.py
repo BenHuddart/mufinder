@@ -94,15 +94,13 @@ def test_default_width_fits_the_deepest_label_without_eliding(qapp, tmp_path: Pa
         assert window._project_tree_panel.width() == 220
         assert _text_fits_beside_a_scrollbar(window, deepest)
 
-        # The smallest width still shows every stage label in full; only a named
-        # workspace at the deepest indent may elide there.
+        # The default is also the minimum: no drag can make any label elide.
         _drag_navigator_edge(window, -1000)
-        assert window._project_tree_panel.width() == window._PROJECT_TREE_MIN_WIDTH
+        assert window._project_tree_panel.width() == 220
         tree = window._project_tree
         for row in range(tree.topLevelItemCount()):
             for item in _all_items(tree.topLevelItem(row)):
-                if item is not deepest:
-                    assert _text_fits_beside_a_scrollbar(window, item), item.text(0)
+                assert _text_fits_beside_a_scrollbar(window, item), item.text(0)
     finally:
         window.close()
 
@@ -137,11 +135,11 @@ def test_navigator_cannot_be_dragged_past_its_minimum_or_over_the_page_minimum(q
     window = _shown(MainWindow())
     try:
         _drag_navigator_edge(window, -1000)
-        assert window._project_tree_panel.width() == window._PROJECT_TREE_MIN_WIDTH
+        assert window._project_tree_panel.width() == 220
 
         _drag_navigator_edge(window, 2000)
         assert window._main_stack.width() == window._main_stack.minimumSizeHint().width()
-        assert window._project_tree_panel.width() > window._PROJECT_TREE_DEFAULT_WIDTH
+        assert window._project_tree_panel.width() > 220
     finally:
         window.close()
 
@@ -175,7 +173,7 @@ def test_a_window_too_narrow_for_the_width_keeps_the_saved_choice(qapp) -> None:
 
 @pytest.mark.parametrize(
     "saved",
-    ["not a width", "", "0", "-40", "189", "99999999999"],
+    ["not a width", "", "0", "-40", "219", "99999999999"],
 )
 def test_an_unusable_saved_width_falls_back_to_the_default(qapp, saved: str) -> None:
     _save_navigator_width(saved)
@@ -185,3 +183,54 @@ def test_an_unusable_saved_width_falls_back_to_the_default(qapp, saved: str) -> 
         assert window._project_tree_panel.width() == 220
     finally:
         window.close()
+
+
+def test_window_minimum_is_the_navigator_minimum_plus_the_page_minimum(qapp) -> None:
+    window = _shown(MainWindow())
+    try:
+        page_minimum = window._main_stack.minimumSizeHint().width()
+        assert window.minimumSizeHint().width() == 220 + page_minimum + 24
+    finally:
+        window.close()
+
+
+def test_a_blocked_drag_leaves_the_saved_width_alone(qapp) -> None:
+    _save_navigator_width(300)
+
+    window = MainWindow()
+    window.show()
+    window.resize(window.minimumSizeHint().width(), _WINDOW_SIZE[1])
+    QApplication.processEvents()
+    try:
+        squeezed = window._project_tree_panel.width()
+        assert squeezed < 300
+
+        _drag_navigator_edge(window, 40)
+
+        assert window._project_tree_panel.width() == squeezed
+    finally:
+        window.close()
+
+    assert int(_saved_navigator_width()) == 300
+
+
+def test_a_drag_out_and_back_saves_the_width_it_ended_on(qapp) -> None:
+    _save_navigator_width(260)
+
+    window = _shown(MainWindow())
+    try:
+        handle = window._navigator_splitter.handle(1)
+        start = handle.rect().center()
+        QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(handle, start + QPoint(20, 0))
+        QApplication.processEvents()
+        assert window._project_tree_panel.width() == 280
+        # Positions are relative to the handle, which has moved with the drag.
+        QTest.mouseMove(handle, start + QPoint(-20, 0))
+        QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=start)
+        QApplication.processEvents()
+        assert window._project_tree_panel.width() == 260
+    finally:
+        window.close()
+
+    assert int(_saved_navigator_width()) == 260
