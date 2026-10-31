@@ -1273,3 +1273,228 @@ def test_parameter_dialog_removing_a_disabled_flag_returns_it_to_the_default(qap
 
     assert "symmetry_generate" not in dialog.collect_values()
     assert dialog.advanced_names() == ()
+
+
+NEB_LOCKED_VALUES = ("tssearch_method", "tssearch_neb_climbing")
+NEB_EXPERT_KEYWORDS = (
+    "tssearch_neb_spring_constant",
+    "tssearch_neb_tangent_mode",
+    "tssearch_neb_method",
+    "tssearch_neb_max_iter",
+    "tssearch_neb_normed",
+)
+
+
+def _neb_dialog(**kwargs):
+    from mufinder.app.workflow_controllers.energy_barriers import EnergyBarriersController
+    from mufinder.app.workflow_dialogs import NudgedElasticBandConfigDialog
+
+    return NudgedElasticBandConfigDialog(specs=EnergyBarriersController.parameter_specs(), **kwargs)
+
+
+def _table_rows(dialog) -> list[str]:
+    """Return what the dialog's table shows, top to bottom, by the first column's text."""
+
+    layout = dialog._table_layout
+    rows: dict[int, str] = {}
+    for index in range(layout.count()):
+        row, column, _row_span, _column_span = layout.getItemPosition(index)
+        widget = layout.itemAt(index).widget()
+        if column != 0 or row == 0:
+            continue
+        label = widget if isinstance(widget, QLabel) else widget.findChild(QLabel)
+        rows[row] = label.text()
+    return [rows[row] for row in sorted(rows)]
+
+
+def test_neb_dialog_default_rows_in_order(qapp) -> None:
+    dialog = _neb_dialog(num_farms=2)
+
+    assert _table_rows(dialog) == [
+        "Basis Precision",
+        "Cutoff Energy",
+        "SCF Energy Tolerance",
+        "K-Point MP Grid",
+        "K-Point MP Spacing",
+        "Images",
+        "",  # The note on what the image count means.
+        "Force tolerance (eV/Å)",
+        "Task farms",
+        "XC Functional",
+        "Spin Polarized",
+        "TS Search Method",
+        "Climbing image",
+    ]
+    assert dialog.num_farms() == 2
+    assert dialog._num_farms_spin.accessibleName() == "Task farms"
+    dialog.close()
+
+
+def test_neb_dialog_says_what_the_image_count_means(qapp) -> None:
+    dialog = _neb_dialog()
+
+    note = next(row.value for row in dialog._workflow_rows if row.after.endswith("path_points"))
+    assert "two more" in note.text()
+    assert "rounded up" in note.text()
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("name", "label"),
+    [
+        ("tssearch_max_path_points", "Images"),
+        ("tssearch_force_tol", "Force tolerance (eV/Å)"),
+        ("tssearch_neb_spring_constant", "Spring constant (eV/Å²)"),
+        ("tssearch_neb_tangent_mode", "Tangent"),
+        ("tssearch_neb_method", "NEB method"),
+        ("tssearch_neb_max_iter", "Max iterations"),
+        ("tssearch_neb_normed", "Normed"),
+        ("tssearch_neb_climbing", "Climbing image"),
+    ],
+)
+def test_neb_keywords_have_plain_labels_on_any_catalog(
+    name: str, label: str, tmp_path, monkeypatch
+) -> None:
+    from mufinder.castep_io.schema import get_keyword_spec
+
+    starter = get_keyword_spec("param", name)
+    assert starter is not None and starter.label == label
+
+    refresh_from_catalog(tmp_path, monkeypatch, cell={}, param={name: catalog_entry("Real")})
+    full = get_keyword_spec("param", name)
+    assert full is not None and full.label == label
+
+
+def test_neb_dialog_units_are_in_the_labels_not_beside_the_editors(qapp) -> None:
+    dialog = _neb_dialog(values={"tssearch_neb_spring_constant": ValueWithUnit(5.0, "eV/ang**2")})
+
+    for name in ("tssearch_force_tol", "tssearch_neb_spring_constant"):
+        editor = dialog._rows[name].editor
+        assert [label.text() for label in editor.findChildren(QLabel)] == []
+    # The value keeps its CASTEP unit, and other keywords still show theirs.
+    values = dialog.collect_values()
+    assert values["tssearch_force_tol"] == ValueWithUnit(0.05, "eV/ang")
+    assert values["tssearch_neb_spring_constant"] == ValueWithUnit(5.0, "eV/ang**2")
+    cutoff = dialog._rows["cut_off_energy"].editor
+    assert [label.text() for label in cutoff.findChildren(QLabel)] == ["eV"]
+    dialog.close()
+
+
+def test_keyword_whose_unit_differs_from_its_label_keeps_the_unit_beside_the_editor(qapp) -> None:
+    from mufinder.app.param_widgets import PhysicalParamEditor
+    from mufinder.castep_io.gui_metadata import keyword_unit_in_label
+
+    spec = KeywordSpec(
+        name="tssearch_force_tol",
+        file="param",
+        kind="scalar",
+        value_type="physical",
+        unit="ha/bohr",
+        label="Force tolerance (eV/Å)",
+    )
+
+    assert keyword_unit_in_label(spec) is False
+    editor = PhysicalParamEditor(spec)
+    assert [label.text() for label in editor.findChildren(QLabel)] == ["ha/bohr"]
+    editor.deleteLater()
+
+
+def test_neb_dialog_keeps_expert_keywords_behind_add_parameter(qapp) -> None:
+    dialog = _neb_dialog()
+
+    available = {spec.name for spec in dialog._available_advanced_specs()}
+    assert set(NEB_EXPERT_KEYWORDS) <= available
+    # An untouched dialog writes none of them, so CASTEP's defaults apply.
+    assert set(NEB_EXPERT_KEYWORDS).isdisjoint(dialog.collect_values())
+    assert set(NEB_EXPERT_KEYWORDS).isdisjoint(dialog._visible_names())
+    dialog.close()
+
+
+def test_neb_dialog_shows_a_spring_constant_configured_earlier(qapp) -> None:
+    stored = ValueWithUnit(3.5, "eV/ang**2")
+    dialog = _neb_dialog(values={"tssearch_neb_spring_constant": stored})
+
+    assert "tssearch_neb_spring_constant" in dialog._visible_names()
+    assert dialog.advanced_names() == ("tssearch_neb_spring_constant",)
+    assert dialog.collect_values()["tssearch_neb_spring_constant"] == stored
+    assert _table_rows(dialog).index("Spring constant (eV/Å²)") > _table_rows(dialog).index(
+        "Task farms"
+    )
+    dialog.close()
+
+
+def test_neb_dialog_locks_the_workflow_rows(qapp) -> None:
+    dialog = _neb_dialog(
+        values={"tssearch_method": "LSTQST"},
+    )
+
+    for name in NEB_LOCKED_VALUES:
+        assert dialog._rows[name].locked is True
+        assert dialog._rows[name].editor is None
+    assert dialog._rows["tssearch_method"].cells[1].text() == "NEB"
+    assert dialog._rows["tssearch_neb_climbing"].cells[1].text() == "TRUE"
+    assert dialog._task == "TRANSITIONSTATESEARCH"
+    dialog.close()
+
+
+def test_neb_dialog_task_farm_row_survives_a_row_rebuild(qapp) -> None:
+    dialog = _neb_dialog(num_farms=3, values={"tssearch_max_path_points": 11})
+    spin = dialog._num_farms_spin
+    spin.setValue(4)
+
+    dialog.set_advanced_names(["tssearch_neb_max_iter"])
+
+    assert dialog._num_farms_spin is spin
+    assert dialog.num_farms() == 4
+    assert "Max iterations" in _table_rows(dialog)
+    assert _table_rows(dialog).count("Task farms") == 1
+    assert "11 images over 4 farms" in dialog._farm_hint.text()
+    dialog.close()
+
+
+def test_neb_dialog_tab_order_reaches_task_farms_after_the_force_tolerance(qapp) -> None:
+    dialog = _neb_dialog()
+
+    dialog.show()
+    tab_stops = []
+    widget = dialog.nextInFocusChain()
+    while widget is not dialog:
+        if (
+            widget.focusPolicy() & Qt.FocusPolicy.TabFocus
+            and widget.isVisible()
+            and widget.isEnabled()
+        ):
+            tab_stops.append(widget)
+        widget = widget.nextInFocusChain()
+
+    info_button = dialog._rows["tssearch_force_tol"].cells[3]
+    spin = dialog._num_farms_spin
+    assert tab_stops.index(info_button) < tab_stops.index(spin)
+    following = tab_stops[tab_stops.index(info_button) + 1 :]
+    assert following[0] is spin
+    dialog.close()
+
+
+def test_neb_dialog_search_filters_the_rows_without_a_keyword(qapp) -> None:
+    dialog = _neb_dialog()
+    dialog.show()
+    farms_row, note_row = dialog._workflow_rows[1], dialog._workflow_rows[0]
+
+    dialog._search_input.setText("farm")
+    assert farms_row.value.isVisible() is True
+    assert note_row.value.isVisible() is False
+    assert dialog._rows["tssearch_force_tol"].cells[0].isVisible() is False
+
+    dialog._search_input.setText("force")
+    assert farms_row.value.isVisible() is False
+    assert dialog._rows["tssearch_force_tol"].cells[0].isVisible() is True
+
+    # The note follows the Images row it explains.
+    dialog._search_input.setText("images")
+    assert note_row.value.isVisible() is True
+    assert dialog._rows["tssearch_max_path_points"].cells[0].isVisible() is True
+
+    dialog._search_input.clear()
+    assert farms_row.value.isVisible() is True
+    assert note_row.value.isVisible() is True
+    dialog.close()

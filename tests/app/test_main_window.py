@@ -3728,7 +3728,7 @@ def test_main_window_configures_neb_paths_through_the_dialog(
 
     assert len(opened) == 1
     assert opened[0]["title"] == "Configure NEB Parameters"
-    assert opened[0]["intro_text"] == "Path: siteA_to_siteB_path1"
+    assert opened[0]["intro_text"].startswith("siteA → siteB · ")
     assert opened[0]["read_only"] is False
     assert opened[0]["values"]["tssearch_max_path_points"] == 11
     definition = window._energy_barriers_controller.active_definition()

@@ -629,7 +629,7 @@ def _override_kind_details(
     return ("scalar", "text", "String")
 
 
-_VISIBILITY_ONLY_OVERRIDE_KEYS = frozenset({"user_visible"})
+_PRESENTATION_ONLY_OVERRIDE_KEYS = frozenset({"label", "user_visible"})
 
 
 def _override_canonical_names(file: FileKind) -> tuple[str, ...]:
@@ -639,9 +639,9 @@ def _override_canonical_names(file: FileKind) -> tuple[str, ...]:
             if name not in names:
                 names.append(name)
     for name, override in KEYWORD_OVERRIDES.get(file, {}).items():
-        # An override that only sets ``user_visible`` adjusts a keyword the
-        # catalog provides; it never adds one the catalog lacks.
-        if set(override) <= _VISIBILITY_ONLY_OVERRIDE_KEYS:
+        # An override that only sets ``label`` or ``user_visible`` adjusts a
+        # keyword the catalog provides; it never adds one the catalog lacks.
+        if set(override) <= _PRESENTATION_ONLY_OVERRIDE_KEYS:
             continue
         if name not in names:
             names.append(name)
