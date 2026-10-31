@@ -333,6 +333,8 @@ class QuantumCorrectionsWidget(RelaxedSiteSourceTableWidget):
                 lambda _checked=False, key=row.key: self.analysis_requested.emit(key)
             )
             self._results_table.setCellWidget(row_index, RESULT_ANALYSIS_COLUMN, button)
+        # The rows were sized to their text; the buttons are taller, and must fit.
+        self._results_table.resizeRowsToContents()
         if self._results_table.rowCount() > 0:
             for column in range(1, len(RESULT_COLUMNS)):
                 self._results_table.resizeColumnToContents(column)
