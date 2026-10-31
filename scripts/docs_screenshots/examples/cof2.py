@@ -242,7 +242,6 @@ def _build_fixture(directory: Path) -> tuple[ProjectService, ProjectDocument]:
         matrix=SUPERCELL_2X2X2,
         label=SUPERCELL_LABEL,
     )
-    document.project.supercell_matrix = [list(row) for row in SUPERCELL_2X2X2]
 
     _configure_sweep(
         service,

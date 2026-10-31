@@ -200,7 +200,8 @@ def test_host_magnetic_configuration_changes_update_document(main_window, tmp_pa
     assert host.properties["atomic_spins"] == pytest.approx([2.0])
     assert host.properties["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
     assert window._document.project.magnetic_structure is not None
-    assert window._document.project.supercell_matrix == [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+    # A stale matrix in the payload no longer reaches the legacy project field.
+    assert window._document.project.supercell_matrix == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
     window._project_service.save_project(window._document)
     reloaded = window._project_service.load_project(window._document.project_root)
@@ -211,7 +212,7 @@ def test_host_magnetic_configuration_changes_update_document(main_window, tmp_pa
     assert reloaded.project.magnetic_structure["propagation_vector"] == pytest.approx(
         [0.0, 0.0, 0.25]
     )
-    assert reloaded.project.supercell_matrix == [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+    assert reloaded.project.supercell_matrix == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
     window.close()
 
@@ -261,10 +262,16 @@ def test_host_page_button_opens_the_supercell_editor(
     window._document = doc
     window._refresh_ui_after_project_change()
     opened: list[dict[str, object]] = []
+    saved = window._project_service.create_workflow_supercell_asset(
+        window._document,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+    )
 
     class _FakeDialog:
         def matrix(self):
-            return [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
+            return [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
 
     def fake_open(**kwargs):
         opened.append(kwargs)
@@ -277,7 +284,9 @@ def test_host_page_button_opens_the_supercell_editor(
     assert len(opened) == 1
     assert opened[0]["source_structure"].id == host.id
     assert opened[0]["select_mode"] is False
-    assert window._host_structure_view._supercell_matrix == [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
+    assert opened[0]["workflow_stage"] is None
+    assert opened[0]["initial_matrix"] == saved.properties["supercell_asset"]["matrix"]
+    assert window._document.project.supercell_matrix == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
     window.close()
 
 

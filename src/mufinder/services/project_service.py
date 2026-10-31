@@ -813,7 +813,7 @@ class ProjectService:
         self,
         document: ProjectDocument,
         *,
-        workflow_stage: WorkflowStage,
+        workflow_stage: WorkflowStage | None,
         host_structure_id: UUID,
         matrix: list[list[int]],
         label: str | None = None,
@@ -829,6 +829,38 @@ class ProjectService:
             label=label,
             source_asset_structure_id=source_asset_structure_id,
             reuse_existing=reuse_existing,
+        )
+
+    def latest_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        host_structure_id: UUID | None,
+        matrix: list[list[int]] | None = None,
+    ) -> WorkflowSupercellAsset | None:
+        """Return the last saved asset of ``host_structure_id``, of ``matrix`` when given."""
+        return supercell_assets.latest_workflow_supercell_asset(
+            document, host_structure_id=host_structure_id, matrix=matrix
+        )
+
+    def supercell_editor_seed_matrix(self, document: ProjectDocument) -> list[list[int]]:
+        """Return the matrix the Supercell Editor opens on when no cell is in use."""
+        return supercell_assets.supercell_editor_seed_matrix(document)
+
+    def workflows_selecting_supercell_asset(
+        self, document: ProjectDocument, *, asset_structure_id: UUID
+    ) -> list[WorkflowStage]:
+        """Return the workflow stages whose active selection is the asset."""
+        return supercell_assets.workflows_selecting_supercell_asset(
+            document, asset_structure_id=asset_structure_id
+        )
+
+    def distinct_supercell_asset_label(
+        self, document: ProjectDocument, *, host_structure_id: UUID, label: str
+    ) -> str:
+        """Return ``label``, with ``copy`` added when a saved asset of the host already has it."""
+        return supercell_assets.distinct_supercell_asset_label(
+            document, host_structure_id=host_structure_id, label=label
         )
 
     def supercell_asset_references(

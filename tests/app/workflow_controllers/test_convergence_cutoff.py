@@ -797,10 +797,11 @@ def test_refresh_simulation_cell_lists_saved_cells_and_the_cell_species(tmp_path
 def test_supercell_initial_matrix_prefers_the_selected_saved_cell(tmp_path: Path) -> None:
     service = ProjectService()
     document, asset = _cell_document(service, tmp_path, matrix=[[3, 0, 0], [0, 1, 0], [0, 0, 1]])
+    # A sweep on the unit cell opens on the unit cell, whatever else the project holds.
     document.project.supercell_matrix = [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
     controller, _view = _cell_controller(document, RecordingSweepWindow(), service=service)
 
-    assert controller.supercell_initial_matrix() == [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
+    assert controller.supercell_initial_matrix() == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
     _use_saved_cell(service, document, asset)
 
@@ -845,7 +846,7 @@ def test_create_simulation_cell_changes_nothing_when_the_editor_picks_nothing(
     assert statuses == []
 
 
-def test_select_simulation_cell_clones_another_workflows_saved_cell(tmp_path: Path) -> None:
+def test_select_simulation_cell_shares_another_workflows_saved_cell(tmp_path: Path) -> None:
     service = ProjectService()
     document, source = _cell_document(service, tmp_path, stage=WorkflowStage.MUON_RELAXATION)
     statuses: list[str] = []
@@ -856,13 +857,12 @@ def test_select_simulation_cell_clones_another_workflows_saved_cell(tmp_path: Pa
     controller.select_simulation_cell(str(source.id))
 
     selection = document.ui_state["workflow_supercells"]["convergence_cutoff"]
-    cloned = document.structures[UUID(selection["structure_id"])]
-    assert selection["mode"] == "saved_supercell"
-    assert cloned.id != source.id
-    assert cloned.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
-    assert cloned.properties["supercell_asset"]["source_asset_structure_id"] == str(source.id)
-    assert view.simulation_cell_options[-1]["selected_structure_id"] == str(cloned.id)
-    assert statuses == [f"Selected convergence simulation cell '{cloned.label}'"]
+    assert selection == {"mode": "saved_supercell", "structure_id": str(source.id)}
+    assert view.simulation_cell_options[-1]["selected_structure_id"] == str(source.id)
+    assert [option["structure_id"] for option in view.simulation_cell_options[-1]["assets"]] == [
+        str(source.id)
+    ]
+    assert statuses == [f"Selected convergence simulation cell '{source.label}'"]
 
 
 @pytest.mark.parametrize("payload", [None, "not-a-uuid"])

@@ -609,6 +609,31 @@ Compatibility ledger
      - Read-side shim. Keep while projects holding such tables may be opened,
        or until a saved-project schema version bump includes a migration that
        drops the key from stored tables.
+   * - ``supercell_matrix`` project field
+     - ``Project``; read by ``mufinder.services.supercell_assets``
+       (``supercell_editor_seed_matrix``)
+     - Nothing writes the field: new projects keep the identity, and a project
+       that holds another matrix keeps it through saves. It seeds the Supercell
+       Editor only when the active host has no saved supercell. The Supercell
+       Editor otherwise seeds from the most recently saved cell.
+     - Read-side shim. Keep while projects holding a non-identity value may be
+       opened, or until a saved-project schema version bump includes a migration
+       that drops the field.
+   * - ``owner_workflow_stage`` and ``saved_at`` of ``supercell_asset``
+     - ``Structure.properties``; read by ``mufinder.services.supercell_assets``
+       (``supercell_asset``)
+     - ``owner_workflow_stage`` is null for a cell saved from the Host Structure
+       page. A release before null owners does not read such a cell as a saved
+       supercell: it offers the cell as a host to promote, and a sweep that
+       selected it falls back to the unit cell with no warning, permanently once
+       the project is saved there. A named owner is provenance only: it no longer
+       limits which workflows share the cell.
+       A cell with no ``saved_at`` counts as older than any cell that has one;
+       among cells without it, the first by name counts as the most recent.
+       A copy that an older project made for another workflow stays in the
+       library as an ordinary cell, with its ``source_asset_structure_id``.
+     - Current project data, not deprecated. Additive with defaults, so no
+       migration.
 
 Saved-project schema migrations
 -------------------------------
@@ -849,10 +874,16 @@ only MuFinder's own code and tests called them.
   the leading underscore in ``mufinder.app.workflow_config_codecs``. The stored
   configuration shape is unchanged.
 
-The names below were removed without a deprecation period. Neither is in the
-API reference and no project data depends on them: nothing constructed the
-dialog, and the Supercell Editor was the only caller of the private forwarder.
+The names below were removed without a deprecation period. None is in the API
+reference and no project data depends on them: nothing constructed the dialog,
+the Supercell Editor was the only caller of the private forwarder, and the main
+window was the only caller of the host widget's setter.
 
+- ``HostStructureWidget.set_project_supercell_matrix`` and the
+  ``supercell_matrix`` key of its ``magnetic_configuration_changed`` payload
+  (``mufinder.app.host_structure_widget``): call
+  ``ProjectService.supercell_editor_seed_matrix`` for the matrix the Supercell
+  Editor opens on.
 - ``SupercellPreviewDialog`` (``mufinder.app.supercell_dialog``): open
   ``SupercellEditorDialog`` from the same module, which previews, names and
   saves supercells.
