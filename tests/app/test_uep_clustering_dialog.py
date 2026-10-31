@@ -512,6 +512,106 @@ def test_uep_clustering_dialog_dendrogram_links_take_the_cluster_colours(qapp) -
     dialog.close()
 
 
+def _energy_ordered_against_labels() -> list[UepOptimizationResult]:
+    """Three pairs of sites listed in an order other than their energy order."""
+
+    return [
+        _optimization((0.65, 0.65, 0.65), 0.50),
+        _optimization((0.66, 0.67, 0.64), 0.52),
+        _optimization((0.10, 0.10, 0.10), 0.01),
+        _optimization((0.12, 0.09, 0.11), 0.02),
+        _optimization((0.35, 0.90, 0.35), 0.25),
+        _optimization((0.36, 0.91, 0.34), 0.26),
+    ]
+
+
+def _clustering_dialog_for_colour_checks(initial_state: dict[str, object]) -> UepClusteringDialog:
+    host = _host_structure()
+    return UepClusteringDialog(
+        source_job_label="uep_source_row1",
+        source_structure=host,
+        viewer_host_structure=host,
+        optimizations=_energy_ordered_against_labels(),
+        initial_state=initial_state,
+    )
+
+
+def _bubble_colours_by_site(dialog: UepClusteringDialog) -> dict[int, str]:
+    """Return the colour of the energy bubble each site's cluster draws."""
+
+    # Each cluster draws its bubble and then the marker at the bubble's centre.
+    bubbles = dialog._bubble_figure.axes[0].collections[::2]
+    clusters = dialog.current_result().summary.clusters
+    assert len(bubbles) == len(clusters)
+    return {
+        site: mcolors.to_hex(bubble.get_facecolor()[0])
+        for cluster, bubble in zip(clusters, bubbles, strict=True)
+        for site in cluster.member_indexes
+    }
+
+
+def _structure_colours_by_site(dialog: UepClusteringDialog) -> dict[int, str]:
+    spec = dialog._structure_viewer._point_overlay_specs[0]
+    return {site: mcolors.to_hex(colour) for site, colour in enumerate(spec.colors)}
+
+
+def _dendrogram_colours_by_site(dialog: UepClusteringDialog) -> dict[int, str]:
+    """Return the colour of the link rising from each site's dendrogram leaf."""
+
+    site_by_number = {number: site for site, number in dialog._site_number_map.items()}
+    axis = dialog._hier_axis
+    site_by_leaf_x = {
+        float(x): site_by_number[int(label.get_text())]
+        for x, label in zip(axis.get_xticks(), axis.get_xticklabels(), strict=True)
+    }
+    return {
+        site_by_leaf_x[float(x)]: mcolors.to_hex(collection.get_color()[0])
+        for collection in axis.collections
+        for segment in collection.get_segments()
+        for x, y in segment
+        if y == 0.0
+    }
+
+
+def test_uep_clustering_dialog_gives_each_cluster_one_colour_in_every_hierarchical_view(
+    qapp,
+) -> None:
+    dialog = _clustering_dialog_for_colour_checks({"method": "hier", "hierarchical_t": 0.3})
+    result = dialog.current_result()
+    assert len(result.summary.clusters) == 3
+
+    bubbles = _bubble_colours_by_site(dialog)
+    assert bubbles == _structure_colours_by_site(dialog)
+    assert bubbles == _dendrogram_colours_by_site(dialog)
+    assert len(set(bubbles.values())) == 3
+    dialog.close()
+
+
+def test_uep_clustering_dialog_gives_each_cluster_one_colour_in_every_kmeans_view(qapp) -> None:
+    dialog = _clustering_dialog_for_colour_checks({"method": "kmeans", "kmeans_k": 3})
+    result = dialog.current_result()
+    assert result.config.clustering_method == "kmeans"
+    assert len(result.summary.clusters) == 3
+
+    bubbles = _bubble_colours_by_site(dialog)
+    points = dialog._left_figure.axes[0].collections[0]
+    assert bubbles == _structure_colours_by_site(dialog)
+    assert bubbles == {
+        site: mcolors.to_hex(colour) for site, colour in enumerate(points.get_facecolor())
+    }
+    # Each centroid carries the number and the colour of its cluster's bubble.
+    centroids = dialog._left_figure.axes[0].collections[1]
+    centroid_labels = dialog._left_figure.axes[0].texts
+    assert len(centroid_labels) == 3
+    for row, label in enumerate(centroid_labels):
+        cluster = result.summary.clusters[row]
+        assert label.get_text().strip() == f"C{cluster.cluster_index}"
+        assert (
+            mcolors.to_hex(centroids.get_facecolor()[row]) == (bubbles[cluster.member_indexes[0]])
+        )
+    dialog.close()
+
+
 def test_uep_clustering_dialog_has_no_unlaid_label_over_the_viewer_toolbar(qapp) -> None:
     """The structure summary lives in the viewer tooltip, not a stray label.
 

@@ -1671,6 +1671,48 @@ def test_prepared_uep_clustering_dataset_supports_replayable_hier_and_kmeans_mod
     assert len(kmeans.summary.clusters) == 2
 
 
+@_soprano_required
+@pytest.mark.parametrize(
+    "config",
+    [
+        UepClusteringConfig(clustering_method="hier", clustering_hier_t=0.30),
+        UepClusteringConfig(clustering_method="kmeans", clustering_kmeans_k=3),
+    ],
+    ids=["hier", "kmeans"],
+)
+def test_clustering_labels_sites_with_their_clusters_energy_rank(config) -> None:
+    pairs = (
+        ((0.65, 0.65, 0.65), (0.66, 0.67, 0.64)),
+        ((0.10, 0.10, 0.10), (0.12, 0.09, 0.11)),
+        ((0.35, 0.90, 0.35), (0.36, 0.91, 0.34)),
+    )
+    # Two energy orders of the same geometry: whichever labels the clustering
+    # first assigns, at least one order differs from them.
+    for ranks in ((3, 1, 2), (1, 3, 2)):
+        prepared = prepare_uep_clustering_dataset(
+            [
+                _fake_optimization(position, total=-1.0 + 0.3 * rank + 0.01 * offset)
+                for pair, rank in zip(pairs, ranks, strict=True)
+                for offset, position in enumerate(pair)
+            ],
+            source_structure=_simple_cubic_host(),
+        )
+
+        result = cluster_prepared_uep_dataset(prepared, config=config)
+
+        assert result.cluster_labels == tuple(rank for rank in ranks for _ in range(2))
+        assert [cluster.cluster_index for cluster in result.summary.clusters] == [1, 2, 3]
+        for cluster in result.summary.clusters:
+            assert {result.cluster_labels[site] for site in cluster.member_indexes} == {
+                cluster.cluster_index
+            }
+        vectors = np.asarray(result.normalized_genome_vectors)
+        assert len(result.kmeans_centroids) == (3 if config.clustering_method == "kmeans" else 0)
+        for row, centroid in enumerate(result.kmeans_centroids):
+            members = np.asarray(result.summary.clusters[row].member_indexes)
+            assert np.allclose(centroid, vectors[members].mean(axis=0))
+
+
 def test_prepare_uep_clustering_dataset_empty_returns_empty_features() -> None:
     prepared = prepare_uep_clustering_dataset([], source_structure=_simple_cubic_host())
     assert prepared.optimizations == ()

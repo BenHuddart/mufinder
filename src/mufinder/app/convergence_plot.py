@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from typing import Any
 
 from matplotlib.axes import Axes
@@ -366,9 +367,7 @@ def draw_convergence_plot(
         labelpad=6 if compact else 8,
         fontsize=label_size,
     )
-    force_ax.set_ylabel(
-        "Max force\n(eV/Ang)" if compact else "Max force (eV/Ang)", fontsize=label_size
-    )
+    force_ax.set_ylabel("Max force\n(eV/Ang)", fontsize=label_size)
     style_plot_axes(force_ax, facecolor=axes_face, tick_labelsize=tick_size)
     if not compact:
         force_ax.yaxis.label.set_color(colors.force)
@@ -408,9 +407,7 @@ def draw_convergence_plot(
                     label="Stress threshold",
                 )
             )
-        stress_ax.set_ylabel(
-            "Max stress\n(GPa)" if compact else "Max stress (GPa)", fontsize=label_size
-        )
+        stress_ax.set_ylabel("Max stress\n(GPa)", fontsize=label_size)
         stress_ax.yaxis.label.set_color(colors.stress)
         stress_ax.tick_params(
             axis="y", colors=colors.stress, labelcolor=colors.stress, labelsize=tick_size
@@ -435,24 +432,43 @@ def draw_convergence_plot(
         )
 
     if not compact and x_values:
-        energy_ax.legend(loc="best")
+        # Small columns keep a full legend inside a panel at the examiner's minimum size.
+        energy_ax.legend(loc="best", ncols=2, fontsize="small")
         style_plot_legend(energy_ax.get_legend(), frame_alpha=0.95)
-        handles = force_handles + stress_handles
-        force_ax.legend(handles, [handle.get_label() for handle in handles], loc="best")
-        style_plot_legend(force_ax.get_legend(), frame_alpha=0.95)
-        _draw_threshold_titles(energy_ax, force_ax, data)
+        # Filled by column, so interleaving gives a force row above a stress row.
+        handles = [
+            handle
+            for pair in zip_longest(force_handles, stress_handles)
+            for handle in pair
+            if handle is not None
+        ]
+        # The stress axis draws over the force axis, so it holds the legend when present.
+        legend_ax = stress_ax if stress_ax is not None else force_ax
+        legend_ax.legend(
+            handles,
+            [handle.get_label() for handle in handles],
+            loc="best",
+            ncols=3 if stress_handles else 2,
+            fontsize="small",
+        )
+        style_plot_legend(legend_ax.get_legend(), frame_alpha=0.95)
+    if not compact:
+        _draw_titles(energy_ax, force_ax, data)
 
     return ConvergencePlotAxes(
         energy=energy_ax, force=force_ax, spacing=spacing_ax, stress=stress_ax
     )
 
 
-def _draw_threshold_titles(energy_ax: Axes, force_ax: Axes, data: ConvergencePlotData) -> None:
+def _draw_titles(energy_ax: Axes, force_ax: Axes, data: ConvergencePlotData) -> None:
+    """Title both panels, before any analysis too: the top row keeps the panel off the pop-out button."""
+
+    energy_title = "Energy convergence"
     if data.energy_threshold is not None:
-        energy_ax.set_title(
-            f"Energy convergence (threshold {data.energy_threshold:.3g} eV/atom)", pad=10
-        )
+        energy_title += f" (threshold {data.energy_threshold:.3g} eV/atom)"
+    energy_ax.set_title(energy_title, pad=12)
     if data.force_threshold is None:
+        force_ax.set_title("Force convergence", pad=10)
         return
     if data.stresses and data.stress_threshold is not None:
         force_ax.set_title(

@@ -84,7 +84,12 @@ class UepClusteringConfig:
 
 @dataclass(frozen=True, slots=True)
 class UepClusteringResult:
-    """Full output of one Soprano-backed clustering pass."""
+    """Full output of one Soprano-backed clustering pass.
+
+    ``cluster_labels`` gives each site its cluster's ``cluster_index`` from
+    ``summary``, its rank by mean classical energy. ``kmeans_centroids`` follow that
+    order: row ``i`` is the centroid of cluster ``i + 1``.
+    """
 
     config: UepClusteringConfig
     cluster_labels: tuple[int, ...]
@@ -539,7 +544,6 @@ def _build_clustering_result(
     prepared: UepPreparedClusteringDataset,
     *,
     config: UepClusteringConfig,
-    cluster_labels: np.ndarray,
     cluster_groups: list[np.ndarray],
     linkage_matrix: np.ndarray | None = None,
     kmeans_centroids: np.ndarray | None = None,
@@ -586,6 +590,17 @@ def _build_clustering_result(
         )
 
     normalized_clusters, cluster_index_map = _renumber_cluster_summaries(clusters, optimizations)
+    site_labels = [0] * len(optimizations)
+    for cluster in normalized_clusters:
+        for member in cluster.member_indexes:
+            site_labels[member] = cluster.cluster_index
+    centroids = (
+        np.empty((0, 0), dtype=float)
+        if kmeans_centroids is None
+        else kmeans_centroids[
+            [group - 1 for group in sorted(cluster_index_map, key=cluster_index_map.__getitem__)]
+        ]
+    )
     summary = UepBatchSummary(
         threshold_ang=float(config.clustering_hier_t if method == "hier" else 0.0),
         clusters=normalized_clusters,
@@ -601,9 +616,7 @@ def _build_clustering_result(
     )
     return UepClusteringResult(
         config=config,
-        cluster_labels=tuple(
-            int(value) for value in np.asarray(cluster_labels, dtype=int).tolist()
-        ),
+        cluster_labels=tuple(site_labels),
         asymmetric_fractional_positions=prepared.asymmetric_fractional_positions,
         genome_vectors=prepared.genome_vectors,
         normalized_genome_vectors=prepared.normalized_genome_vectors,
@@ -614,13 +627,7 @@ def _build_clustering_result(
                 dtype=float,
             )
         ),
-        kmeans_centroids=tuple(
-            tuple(float(value) for value in row.tolist())
-            for row in np.asarray(
-                np.empty((0, 0), dtype=float) if kmeans_centroids is None else kmeans_centroids,
-                dtype=float,
-            )
-        ),
+        kmeans_centroids=tuple(tuple(float(value) for value in row.tolist()) for row in centroids),
         summary=summary,
     )
 
@@ -667,23 +674,22 @@ def cluster_prepared_uep_dataset(
 
     if method == "hier":
         if len(prepared.optimizations) == 1:
-            cluster_labels = np.array([1], dtype=int)
             cluster_groups = [np.array([0], dtype=int)]
             linkage_matrix = np.empty((0, 4), dtype=float)
         else:
             linkage_matrix = _linkage_matrix_for_prepared(
                 prepared, method=active.clustering_linkage_method
             )
-            cluster_labels = hierarchy.fcluster(
-                linkage_matrix,
-                t=max(float(active.clustering_hier_t), 1e-12),
-                criterion="distance",
-            ).astype(int)
-            cluster_groups = _cluster_groups_from_labels(cluster_labels)
+            cluster_groups = _cluster_groups_from_labels(
+                hierarchy.fcluster(
+                    linkage_matrix,
+                    t=max(float(active.clustering_hier_t), 1e-12),
+                    criterion="distance",
+                ).astype(int)
+            )
         return _build_clustering_result(
             prepared,
             config=active,
-            cluster_labels=cluster_labels,
             cluster_groups=cluster_groups,
             linkage_matrix=linkage_matrix,
         )
@@ -703,7 +709,6 @@ def cluster_prepared_uep_dataset(
         seed=_UEP_KMEANS_SEED,
     )
     zero_based_labels, _distances = vq.vq(normalized_vectors, centroids)
-    cluster_labels = zero_based_labels.astype(int) + 1
     cluster_groups = [
         np.where(zero_based_labels == index)[0].astype(int)
         for index in range(int(np.max(zero_based_labels)) + 1)
@@ -711,7 +716,6 @@ def cluster_prepared_uep_dataset(
     return _build_clustering_result(
         prepared,
         config=active,
-        cluster_labels=cluster_labels,
         cluster_groups=cluster_groups,
         kmeans_centroids=np.asarray(centroids, dtype=float),
     )
