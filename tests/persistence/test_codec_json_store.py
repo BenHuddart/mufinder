@@ -250,7 +250,7 @@ def test_failed_sync_or_replace_keeps_the_file_and_removes_the_temporary_file(
     assert _leftover_temporary_files(path) == before
 
 
-def test_temporary_file_is_synced_before_it_replaces_the_target(
+def test_file_is_synced_before_the_replace_and_its_folder_after(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = ProjectStore(tmp_path / "store.mufinder")
@@ -260,7 +260,8 @@ def test_temporary_file_is_synced_before_it_replaces_the_target(
     real_replace = json_store.os.replace
 
     def _fsync(descriptor: int) -> None:
-        events.append("fsync")
+        kind = "folder" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
+        events.append(f"fsync {kind}")
         real_fsync(descriptor)
 
     def _replace(source, destination) -> None:
@@ -274,7 +275,26 @@ def test_temporary_file_is_synced_before_it_replaces_the_target(
 
     store.write_json(path, {"id": "later"})
 
-    assert events == ["fsync", "replace"]
+    assert events == ["fsync file", "replace", "fsync folder"]
+    assert path.read_text(encoding="utf-8") == ProjectStore.canonical_json({"id": "later"})
+
+
+def test_folder_that_cannot_be_synced_does_not_fail_a_completed_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ProjectStore(tmp_path / "store.mufinder")
+    path, _earlier = _project_file_with_content(store)
+    real_fsync = json_store.os.fsync
+
+    def _refuse_folders(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(22, "Invalid argument")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(json_store.os, "fsync", _refuse_folders)
+
+    store.write_json(path, {"id": "later"})
+
     assert path.read_text(encoding="utf-8") == ProjectStore.canonical_json({"id": "later"})
 
 

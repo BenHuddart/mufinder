@@ -76,8 +76,9 @@ class ProjectStore:
         """Write JSON payload with stable formatting, atomically.
 
         The document goes to a sibling temporary file, is synced to disk and is
-        moved into place, so a full disk or a crash never leaves a truncated file
-        where a good one was. The temporary name does not end in ``.json``, so one
+        moved into place, and the folder is synced to record the move, so a full
+        disk or a crash never leaves a truncated file where a good one was. The
+        temporary name does not end in ``.json``, so one
         left by a killed process is never read or pruned as an entity.
         """
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +99,21 @@ class ProjectStore:
             with contextlib.suppress(OSError):
                 temporary.unlink(missing_ok=True)
             raise
+        self._sync_folder(destination.parent)
+
+    @staticmethod
+    def _sync_folder(folder: Path) -> None:
+        """Record a completed move on disk, where the platform allows it.
+
+        The file is already complete and in place, so a folder that cannot be
+        synced (Windows cannot open one, some mounts refuse) does not fail the write.
+        """
+        with contextlib.suppress(OSError):
+            descriptor = os.open(folder, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
 
     @staticmethod
     def _writable_file_mode(path: Path) -> int | None:
