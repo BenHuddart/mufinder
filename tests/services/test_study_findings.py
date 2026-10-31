@@ -260,6 +260,27 @@ def test_a_field_calculation_records_its_site_size_and_terms(document) -> None:
     assert record.parameters["estimate"] is False
 
 
+def test_a_field_record_keeps_the_settings_the_calculation_used(document) -> None:
+    form = _field_form(0.42)
+    form["magnetic_field_results"]["results"][0]["calculation_parameters"] = {
+        "contact_coupling": 1.2,
+        "nnn": 2,
+        "rcont": 4.0,
+    }
+    form["supercell"] = [10, 10, 10]
+    form["include_equivalent_sites"] = True
+
+    _store(document, form)
+
+    settings = _actions(document, "field_calculated")[0].parameters["settings"]
+    assert settings["contact_coupling_per_A3"] == 1.2
+    assert settings["contact_neighbours"] == 2
+    assert settings["contact_radius_A"] == 4.0
+    assert settings["supercell"] == [10, 10, 10]
+    assert settings["equivalent_sites"] is True
+    assert settings["distortion_corrected"] is False
+
+
 def test_each_distinct_field_result_is_recorded_once(document) -> None:
     _store(document, _field_form(0.42))
     _store(document, _field_form(0.42))

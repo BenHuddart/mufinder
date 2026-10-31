@@ -210,13 +210,12 @@ class _JournalCard(QFrame):
             resize_to_contents_columns=tuple(range(1, len(job_table.headers))),
             selection_mode=QAbstractItemView.SelectionMode.NoSelection,
             stretch_last_section=False,
-            accessible_name="Calculations in this batch",
+            accessible_name=job_table.name,
         )
         table.setParent(parent)
         fill_workflow_table(table, job_table.rows)
         for row in range(table.rowCount()):
-            # The energy, force and warning columns are numbers.
-            for column in range(2, table.columnCount()):
+            for column in range(job_table.first_number_column, table.columnCount()):
                 table.item(row, column).setTextAlignment(
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 )

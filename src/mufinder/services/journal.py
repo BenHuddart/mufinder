@@ -26,6 +26,7 @@ from mufinder.domain.routes import comparison_route, magnetic_field_workspace_ro
 from mufinder.domain.text import execution_target_text, plural
 from mufinder.services.failure_diagnosis import FAILURE_REASON_SUMMARIES
 from mufinder.services.magnetic_field_results import MAGNETIC_FIELD_PAGE_OWNER
+from mufinder.services.magnetic_field_settings import phase_sampling_label
 from mufinder.services.generation_runs import (
     generation_run_from_provenance,
     run_journal_line,
@@ -51,10 +52,16 @@ class JournalJobRow:
 
 @dataclass(frozen=True, slots=True)
 class JournalJobTable:
-    """A table on an expanded card as display text, in column order."""
+    """A table on an expanded card as display text, in column order.
+
+    ``name`` says what it holds, for assistive technology; columns from
+    ``first_number_column`` on hold numbers and align right.
+    """
 
     headers: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    name: str = "Calculations in this batch"
+    first_number_column: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -974,7 +981,9 @@ def _uep_minima_entry(record: ProvenanceRecord) -> JournalEntry:
     return replace(
         entry,
         detail_lines=tuple(lines),
-        table=JournalJobTable(("Minimum", "Position", "Starts", "ΔE (meV)"), rows),
+        table=JournalJobTable(
+            ("Minimum", "Position", "Starts", "ΔE (meV)"), rows, name="Minima of this batch search"
+        ),
     )
 
 
@@ -1017,7 +1026,13 @@ def _sites_grouped_entry(record: ProvenanceRecord) -> JournalEntry:
     return replace(
         entry,
         detail_lines=tuple(lines),
-        table=JournalJobTable(("Site", "Position", "ΔE (meV)"), rows) if rows else None,
+        table=(
+            JournalJobTable(
+                ("Site", "Position", "ΔE (meV)"), rows, name="Distinct sites of this grouping"
+            )
+            if rows
+            else None
+        ),
     )
 
 
@@ -1030,6 +1045,40 @@ def _field_size_text(values: Sequence[float]) -> str:
     if f"{low:.3g}" == f"{high:.3g}":
         return f"{high:.3g} T"
     return f"{low:.3g} to {high:.3g} T"
+
+
+def _field_settings_lines(settings: Mapping[str, Any]) -> list[str]:
+    """What a field calculation used: its contact term, then its numerical settings."""
+
+    lines = []
+    coupling = _number(settings.get("contact_coupling_per_A3"))
+    if coupling:
+        line = f"Contact coupling {coupling:g} Å⁻³"
+        neighbours = _number(settings.get("contact_neighbours"))
+        radius = _number(settings.get("contact_radius_A"))
+        if neighbours is not None and radius is not None:
+            ions = plural(int(neighbours), "nearest magnetic ion", "nearest magnetic ions")
+            line += f", shell of {ions} within {radius:g} Å"
+        lines.append(line)
+    parts = []
+    if supercell := _grid_text(settings.get("supercell")):
+        parts.append(f"Supercell {supercell}")
+    if settings.get("equivalent_sites"):
+        parts.append("equivalent sites included")
+    if settings.get("distortion_corrected"):
+        parts.append("distortion corrected")
+    samples = _number(settings.get("phase_samples"))
+    if samples:
+        text = plural(int(samples), "phase sample")
+        if settings.get("phase_sampling"):
+            text += f" ({phase_sampling_label(settings['phase_sampling'])})"
+        parts.append(text)
+    seed = _number(settings.get("phase_sampling_seed"))
+    if seed is not None:
+        parts.append(f"seed {seed:.0f}")
+    if parts:
+        lines.append(" · ".join(parts))
+    return lines
 
 
 def _field_calculated_entry(record: ProvenanceRecord) -> JournalEntry:
@@ -1052,6 +1101,8 @@ def _field_calculated_entry(record: ProvenanceRecord) -> JournalEntry:
     applied = record.parameters.get("applied_field_T")
     if isinstance(applied, list) and any(_number(value) for value in applied):
         lines.append(f"Applied field {_vector_text(applied)} T")
+    raw_settings = record.parameters.get("settings")
+    lines.extend(_field_settings_lines(raw_settings if isinstance(raw_settings, Mapping) else {}))
     for row in rows:
         for message in row.get("not_converged") or ():
             lines.append(str(message))
@@ -1078,7 +1129,9 @@ def _field_calculated_entry(record: ProvenanceRecord) -> JournalEntry:
     return replace(
         entry,
         detail_lines=tuple(lines),
-        table=JournalJobTable(("Site", "Position", size_head, vector_head), table_rows),
+        table=JournalJobTable(
+            ("Site", "Position", size_head, vector_head), table_rows, name="Field at each site"
+        ),
     )
 
 
@@ -1189,7 +1242,12 @@ def _quantum_corrected_entry(record: ProvenanceRecord) -> JournalEntry:
         entry,
         detail_lines=tuple(lines),
         table=(
-            JournalJobTable(("Site", "ΔE (eV)", "ZPE (eV)", "ΔE + ZPE (eV)"), rows)
+            JournalJobTable(
+                ("Site", "ΔE (eV)", "ZPE (eV)", "ΔE + ZPE (eV)"),
+                rows,
+                name="Sites compared with their zero-point energies",
+                first_number_column=1,
+            )
             if len(rows) > 1
             else None
         ),

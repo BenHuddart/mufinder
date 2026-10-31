@@ -161,7 +161,9 @@ numbers in its summary line and in full on the expanded card.
      - A Magnetic Fields calculation gives new values
      - ``Field at 4c: 0.42 T (dipolar + contact)``, a range over equivalent sites
        that differ, or the RMS of an incommensurate distribution. Each site's
-       ``|B|`` and field vector, or RMS and mean field, and the applied field.
+       ``|B|`` and field vector, or RMS and mean field; the applied field, the
+       contact coupling and its shell, the supercell, and a distribution's phase
+       samples and seed.
    * - ``Polarisation simulated``
      - A polarisation simulation gives new traces
      - ``ZF polycrystal simulation from 2 sites``. Its title, its field sources with

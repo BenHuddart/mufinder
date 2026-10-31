@@ -301,6 +301,7 @@ def _field_calculated_record(
         _commensurate_row(result) if kind == "commensurate" else _distribution_row(result)
         for result in results
     ]
+    settings = _field_settings(results, site, form_state)
     return ProvenanceRecord(
         action="field_calculated",
         workflow_stage=WorkflowStage.MAGNETIC_FIELD,
@@ -317,10 +318,34 @@ def _field_calculated_record(
             ],
             "results": rows,
             "applied_field_T": to_jsonable(form_state.get("applied_field_T")),
+            "settings": settings,
             SUBJECT_KEY: owner,
-            FINGERPRINT_KEY: input_fingerprint(owner, rows),
+            FINGERPRINT_KEY: input_fingerprint(owner, rows, settings),
         },
     )
+
+
+def _field_settings(
+    results: list[Mapping[str, Any]], site: object, form_state: Mapping[str, object]
+) -> dict[str, object]:
+    """The settings of a calculation: what its results say they used, else what the form held."""
+
+    raw = results[0].get("calculation_parameters") if results else None
+    used = raw if isinstance(raw, Mapping) else {}
+    return {
+        "contact_coupling_per_A3": used.get("contact_coupling"),
+        "contact_neighbours": used.get("nnn"),
+        "contact_radius_A": used.get("rcont"),
+        "supercell": to_jsonable(used.get("supercell", form_state.get("supercell"))),
+        "equivalent_sites": form_state.get("include_equivalent_sites"),
+        "distortion_corrected": bool(
+            used.get("distortion_corrected")
+            or (isinstance(site, Mapping) and site.get("include_distortion"))
+        ),
+        "phase_samples": used.get("phase_sample_count"),
+        "phase_sampling": used.get("resolved_phase_sampling"),
+        "phase_sampling_seed": used.get("phase_sampling_seed"),
+    }
 
 
 def _is_nonzero(vector: object) -> bool:

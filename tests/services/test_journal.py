@@ -14,6 +14,7 @@ from mufinder.services import site_generation_service
 from mufinder.services.project_document import ProjectDocument
 from tests.support.symmetry_hosts import cof2_host
 from tests.support.journal import generation_record
+from mufinder.services.magnetic_field_settings import phase_sampling_label
 from mufinder.services.journal import (
     build_journal,
     entry_details,
@@ -1868,6 +1869,49 @@ def test_a_field_entry_gives_the_size_terms_and_table() -> None:
     assert details.lines == ("On 'Magnetic Fields'", "Applied field (0, 0, 0.1) T")
     assert details.job_table.headers == ("Site", "Position", "|B| (T)", "Field (T)")
     assert details.job_table.rows == (("Mu 1", "(0.000, 0.500, 0.000)", "0.42", "(0, 0, 0.42)"),)
+
+
+def test_a_field_entry_shows_the_settings_it_recorded() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="distribution",
+        site_label="4c",
+        owner_title="Helix",
+        results=[{"site_label": "Mu 1", "total_rms_T": 0.1}],
+        settings={
+            "contact_coupling_per_A3": 1.2,
+            "contact_neighbours": 2,
+            "contact_radius_A": 4.0,
+            "supercell": [20, 20, 20],
+            "equivalent_sites": True,
+            "distortion_corrected": True,
+            "phase_samples": 1000,
+            "phase_sampling": "montecarlo",
+            "phase_sampling_seed": 7,
+        },
+    )
+
+    assert entry_details(entry).lines == (
+        "On 'Helix'",
+        "Contact coupling 1.2 Å⁻³, shell of 2 nearest magnetic ions within 4 Å",
+        "Supercell 20×20×20 · equivalent sites included · distortion corrected · "
+        f"1000 phase samples ({phase_sampling_label('montecarlo')}) · seed 7",
+    )
+
+
+def test_a_field_entry_without_a_contact_coupling_does_not_mention_one() -> None:
+    entry = _finding_entry(
+        "field_calculated",
+        WorkflowStage.MAGNETIC_FIELD,
+        kind="commensurate",
+        site_label="4c",
+        owner_title="AFM",
+        results=[{"site_label": "Mu 1", "magnitude_T": 0.1}],
+        settings={"contact_coupling_per_A3": 0.0, "contact_neighbours": 2, "contact_radius_A": 4.0},
+    )
+
+    assert entry_details(entry).lines == ("On 'AFM'",)
 
 
 def test_a_field_entry_gives_the_range_over_equivalent_sites_and_marks_an_estimate() -> None:
