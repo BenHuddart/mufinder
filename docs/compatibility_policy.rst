@@ -623,8 +623,11 @@ Compatibility ledger
      - ``Structure.properties``; read by ``mufinder.services.supercell_assets``
        (``supercell_asset``)
      - ``owner_workflow_stage`` is null for a cell saved from the Host Structure
-       page, and a release before null owners ignores such a cell. A named owner
-       is provenance only: it no longer limits which workflows share the cell.
+       page. A release before null owners does not read such a cell as a saved
+       supercell: it offers the cell as a host to promote, and a sweep that
+       selected it falls back to the unit cell with no warning, permanently once
+       the project is saved there. A named owner is provenance only: it no longer
+       limits which workflows share the cell.
        A cell with no ``saved_at`` counts as older than any cell that has one;
        among cells without it, the first by name counts as the most recent.
        A copy that an older project made for another workflow stays in the

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from functools import partial
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QHeaderView
 
+from mufinder.app import theme as theme_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
@@ -201,6 +203,71 @@ def test_supercell_editor_return_in_a_field_presses_no_button(qapp, tmp_path) ->
     assert dialog._name_edit.text() == "Work in progress"
     assert dialog.matrix() == [[4, 0, 0], [0, 4, 0], [0, 0, 1]]
     dialog.close()
+
+
+def test_supercell_editor_return_on_a_focused_button_presses_it(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._new_button.setFocus()
+    QTest.keyClick(dialog._new_button, Qt.Key.Key_Return)
+    assert dialog.matrix() == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+    dialog._simple_nx.setValue(4)
+    dialog._new_button.setFocus()
+    QTest.keyClick(dialog._new_button, Qt.Key.Key_Enter)
+    assert dialog.matrix() == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+    dialog._close_button.setFocus()
+    QTest.keyClick(dialog._close_button, Qt.Key.Key_Return)
+    assert not dialog.isVisible()
+    dialog.close()
+
+
+def test_supercell_editor_save_as_with_an_empty_name_loads_the_name(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+    assert dialog._name_edit.text() == ""
+
+    dialog._save_as_button.click()
+
+    assert dialog._name_edit.text() == "4x4x1 supercell"
+    table = dialog._asset_table
+    assert table.item(table.currentRow(), dialog._NAME_COLUMN).text() == "4x4x1 supercell"
+    dialog.close()
+
+
+def test_supercell_editor_save_with_an_empty_name_loads_the_name(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]])
+    dialog._name_edit.setText("")
+
+    dialog._save_button.click()
+
+    assert dialog._name_edit.text() == "3x3x3 supercell"
+    dialog.close()
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_supercell_editor_scaling_boxes_fit_two_digits_under_the_theme(
+    qapp, tmp_path, mode
+) -> None:
+    theme_module.apply_theme(qapp, mode)
+    try:
+        dialog = _make_editor(tmp_path)
+        dialog.show()
+        qapp.processEvents()
+
+        # A line edit keeps a 2 px margin on each side of its text.
+        for box in (dialog._simple_nx, dialog._simple_ny, dialog._simple_nz):
+            edit = box.lineEdit()
+            widest = max(edit.fontMetrics().horizontalAdvance(str(n)) for n in range(10, 65))
+            assert edit.contentsRect().width() >= widest + 4
+        dialog.close()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
 
 def test_supercell_editor_scaling_row_has_narrow_named_boxes(qapp, tmp_path) -> None:

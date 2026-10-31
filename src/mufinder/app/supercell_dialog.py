@@ -8,7 +8,7 @@ from itertools import chain
 from uuid import UUID
 
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer
-from PySide6.QtGui import QShowEvent
+from PySide6.QtGui import QKeyEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -51,8 +51,8 @@ class SupercellEditorDialog(StructureViewerDialog):
     _MATRIX_COLUMN = 2
     _ATOMS_COLUMN = 3
     _USAGE_COLUMN = 4
-    # Fits two digits beside the stepper arrows.
-    _SCALING_BOX_WIDTH = 72
+    # Fits two digits beside the stepper arrows under the application theme.
+    _SCALING_BOX_WIDTH = 84
 
     def __init__(
         self,
@@ -147,6 +147,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._build_layout()
         # Return in the name or a scaling box must not press a button: the first
         # automatic default would be New, which discards the cell being edited.
+        # keyPressEvent keeps Return working on a focused button.
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
         self._apply_matrix(initial_matrix or [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
@@ -404,6 +405,14 @@ class SupercellEditorDialog(StructureViewerDialog):
         asset = supercell_asset(structure) if structure is not None else None
         return asset if asset is not None and asset.matrix == self.matrix() else None
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API naming.
+        if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            super().keyPressEvent(event)
+            return
+        focused = self.focusWidget()
+        if isinstance(focused, QPushButton):
+            focused.click()
+
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
         # QDialog gives the opening focus after this event, and that selects the name;
@@ -513,6 +522,7 @@ class SupercellEditorDialog(StructureViewerDialog):
             return None
         self._current_asset_id = saved.id
         self._refresh_assets(select_id=saved.id)
+        self._name_edit.setText(saved.label)
         self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms.")
         return saved
 
@@ -565,6 +575,7 @@ class SupercellEditorDialog(StructureViewerDialog):
 
         self._current_asset_id = saved.id
         self._refresh_assets(select_id=saved.id)
+        self._name_edit.setText(saved.label)
         self._status_label.setText(f"Saved '{saved.label}' with {len(saved.species)} atoms.")
         return saved
 
