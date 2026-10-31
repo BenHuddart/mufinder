@@ -536,7 +536,7 @@ def test_main_window_open_uep_analysis_recreates_closed_window(
     assert window._uep_analysis_dialogs[job.id] is constructed[1]
 
 
-def test_main_window_close_closes_open_uep_dialogs_before_saving(
+def test_main_window_close_saves_before_closing_open_uep_dialogs(
     qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = main_window
@@ -568,7 +568,7 @@ def test_main_window_close_closes_open_uep_dialogs_before_saving(
 
     window.close()
 
-    assert events[:2] == ["dialog.close", "save_project"]
+    assert events[:2] == ["save_project", "dialog.close"]
 
 
 def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_until_save(

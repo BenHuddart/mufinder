@@ -196,7 +196,8 @@ Muon sites often relax close to high-symmetry interstitial positions. After
 clustering, MuFinder assigns each cluster the highest-symmetry unoccupied
 Wyckoff position of the host space group that is consistent with all members of
 the cluster. The clustered-sites table shows this in the cluster header, for
-example ``Cluster 1: (0.2500, 0.5000, 0.0000) 12c``.
+example ``Cluster 1: (0.2500, 0.5000, 0.0000) 12c``. That number is the cluster's
+number in the clustering window's summary table.
 
 The assignment is a tolerance-based fit rather than a claim that the relaxed
 muon is exactly on the Wyckoff position. If no unoccupied special position
