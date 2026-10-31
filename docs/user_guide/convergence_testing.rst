@@ -328,14 +328,23 @@ summary of how many completed points have energy, force, and stress values and
 how many atoms are used for per-atom normalization.
 
 ``Convergence Criteria``
-   The energy threshold, the force threshold, and an optional stress threshold.
+   One row with the energy threshold, the force threshold, and an optional
+   stress threshold.
 ``Analyse Convergence``
    Runs the analysis on every completed point that has both an energy and a
    force (at least two are needed), writes the results, and redraws the plot.
+``Close``
+   Closes the dialog. The thresholds and the last analysis stay saved.
 
-The results list the thresholds, the reference point, the outcome for each
-quantity, the sweep length of a cutoff sweep, and the recommended value. The
-plot has an energy panel above a force panel. Every quantity is judged against
+The buttons sit beside the thresholds, and move under them when the window is
+too narrow for the adopt button's text. The whole dialog fits the window without
+scrolling: a short results box, then the plot, which takes all the remaining
+height and has a button that opens it in its own window.
+
+The results give the recommended value first, then the sweep length of a cutoff
+sweep and any notes on the data, then the thresholds, the reference point, and the
+outcome for each quantity; a long list scrolls inside the box. The plot has an
+energy panel above a force panel. Every quantity is judged against
 the finest point of the sweep; :doc:`/user_guide/convergence_criteria` gives
 the rule, the thresholds' defaults and limits, the sweep-length check, and how
 to read the results and the plot.

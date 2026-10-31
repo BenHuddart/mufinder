@@ -10,17 +10,16 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
     QDialog,
-    QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
-    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.convergence_plot import ConvergencePlotData, draw_convergence_plot
 from mufinder.app.convergence_types import KPointGrid, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.plot_canvas import create_plot_canvas
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import current_palette, plot_badge_box
 from mufinder.castep_io.output_parser import (
@@ -59,6 +58,13 @@ _THRESHOLD_DECIMALS = 12
 _MIN_ENERGY_THRESHOLD = 10.0**-_THRESHOLD_DECIMALS
 _MIN_FORCE_THRESHOLD = CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG
 _MIN_STRESS_THRESHOLD = CASTEP_STRESS_PRINT_RESOLUTION_GPA
+
+#: The threshold fields are as wide as this text; a longer value scrolls in its field.
+_THRESHOLD_FIELD_TEXT = "0.00005"
+_THRESHOLD_FIELD_PADDING = 28
+#: The results box holds about six rows, and scrolls inside itself; the plot takes the rest.
+_RESULTS_HEIGHT = 120
+_CANVAS_MINIMUM_SIZE = (480, 320)
 
 
 _NO_RECOMMENDED_GRID_TOOLTIP = (
@@ -163,7 +169,7 @@ class ConvergenceExaminerDialog(QDialog):
         self._force_threshold.setSingleStep(0.01)
         self._force_threshold.setValue(0.05)
 
-        self._include_stress = QCheckBox("Stress threshold (GPa)", self)
+        self._include_stress = QCheckBox("Stress", self)
         self._include_stress.setChecked(False)
         self._stress_threshold = DecimalLineEdit(self)
         self._stress_threshold.setRange(_MIN_STRESS_THRESHOLD, 100.0)
@@ -177,12 +183,13 @@ class ConvergenceExaminerDialog(QDialog):
         self._results.setReadOnly(True)
 
         self._figure, self._canvas = create_plot_canvas(
-            figsize=(8.0, 5.5), facecolor=current_palette().bg_surface
+            figsize=(8.0, 5.5),
+            facecolor=current_palette().bg_surface,
+            minimum_size=_CANVAS_MINIMUM_SIZE,
         )
         layout_engine = self._figure.get_layout_engine()
         if layout_engine is not None:
             layout_engine.set(w_pad=0.04, h_pad=0.04, hspace=0.08, wspace=0.04)
-        self._canvas.setMinimumHeight(520)
 
         self._adopt_button = QPushButton(
             "Set as Project Default Cutoff"
@@ -191,6 +198,7 @@ class ConvergenceExaminerDialog(QDialog):
             self,
         )
         self._adopt_button.setEnabled(False)
+        self._close_button = QPushButton("Close", self)
 
         self._build_layout()
         self._connect_signals()
@@ -198,29 +206,44 @@ class ConvergenceExaminerDialog(QDialog):
         self._write_initial_summary()
         self._draw_initial_plot()
         self._restore_initial_state(initial_state)
+        self._show_threshold_starts()
 
     def _build_layout(self) -> None:
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        outer_layout.addWidget(scroll)
-
-        content = QWidget(scroll)
-        scroll.setWidget(content)
-        layout = QVBoxLayout(content)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
 
-        criteria_group = QGroupBox("Convergence Criteria", self)
-        criteria_form = QFormLayout(criteria_group)
-        criteria_form.setHorizontalSpacing(16)
-        criteria_form.setVerticalSpacing(12)
-        criteria_form.addRow("Energy threshold (eV/atom)", self._energy_threshold)
-        criteria_form.addRow("Force threshold (eV/Ang)", self._force_threshold)
-        criteria_form.addRow(self._include_stress, self._stress_threshold)
+        self._criteria_group = QGroupBox("Convergence Criteria", self)
+        criteria_row = QHBoxLayout(self._criteria_group)
+        criteria_row.setSpacing(6)
+        for index, (caption, field, unit, accessible_name) in enumerate(
+            (
+                ("Energy", self._energy_threshold, "eV/atom", "Energy threshold (eV/atom)"),
+                ("Force", self._force_threshold, "eV/Ang", "Force threshold (eV/Ang)"),
+                (self._include_stress, self._stress_threshold, "GPa", "Stress threshold (GPa)"),
+            )
+        ):
+            if index:
+                criteria_row.addSpacing(12)
+            if isinstance(caption, str):
+                caption_label = QLabel(caption, self._criteria_group)
+                caption_label.setBuddy(field)
+                criteria_row.addWidget(caption_label)
+            else:
+                criteria_row.addWidget(caption)
+            field.setFixedWidth(
+                field.fontMetrics().horizontalAdvance(_THRESHOLD_FIELD_TEXT)
+                + _THRESHOLD_FIELD_PADDING
+            )
+            field.setAccessibleName(accessible_name)
+            criteria_row.addWidget(field)
+            criteria_row.addWidget(QLabel(unit, self._criteria_group))
+        criteria_row.addStretch(1)
+        self._include_stress.setAccessibleName("Use a stress threshold")
+        self._energy_threshold.setToolTip(
+            "Energy convergence threshold (eV/atom). Compared with the difference in "
+            "total energy per atom."
+        )
         self._force_threshold.setToolTip(
             "Force convergence threshold (eV/Ang). The minimum is "
             f"{_MIN_FORCE_THRESHOLD:.5f} eV/Ang, the precision CASTEP prints forces to."
@@ -229,26 +252,75 @@ class ConvergenceExaminerDialog(QDialog):
             "Stress convergence threshold (GPa). Mirrors GEOM_STRESS_TOL. The minimum is "
             f"{_MIN_STRESS_THRESHOLD:.6f} GPa, the precision CASTEP prints stresses to."
         )
-        layout.addWidget(criteria_group)
 
-        action_row = QHBoxLayout()
+        self._actions = QWidget(self)
+        action_row = QHBoxLayout(self._actions)
+        action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(12)
         action_row.addStretch(1)
         action_row.addWidget(self._run_button)
         action_row.addWidget(self._adopt_button)
-        layout.addLayout(action_row)
+        action_row.addWidget(self._close_button)
 
-        self._results.setMinimumHeight(220)
-        self._results.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding
-        )
+        self._header = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self._header.setSpacing(12)
+        self._header.addWidget(self._criteria_group, 1)
+        self._header.addWidget(self._actions)
+        layout.addLayout(self._header)
+
+        self._results.setFixedHeight(_RESULTS_HEIGHT)
         layout.addWidget(self._results)
-        layout.addWidget(self._canvas)
-        layout.addStretch(1)
+        layout.addWidget(PlotFrame(self._canvas, title="Convergence plot", parent=self), 1)
+
+        QWidget.setTabOrder(self._stress_threshold, self._run_button)
+        QWidget.setTabOrder(self._run_button, self._adopt_button)
+        QWidget.setTabOrder(self._adopt_button, self._close_button)
+        QWidget.setTabOrder(self._close_button, self._results)
+        self._arrange_header()
+
+    def _show_threshold_starts(self) -> None:
+        """Show each narrow threshold field from its start, so a long value keeps its point."""
+
+        for field in (self._energy_threshold, self._force_threshold, self._stress_threshold):
+            if not field.hasFocus():
+                field.setCursorPosition(0)
+
+    def _header_width_needed(self) -> int:
+        """Return the dialog width that fits the actions beside the thresholds."""
+
+        margins = self.layout().contentsMargins()
+        return (
+            margins.left()
+            + self._criteria_group.sizeHint().width()
+            + self._header.spacing()
+            + self._actions.sizeHint().width()
+            + margins.right()
+        )
+
+    def _arrange_header(self) -> None:
+        """Put the actions beside the thresholds when they fit, and under them when not.
+
+        The adopt button names the recommendation, so its text can outgrow the
+        row even when the dialog keeps its size.
+        """
+
+        self._actions.layout().activate()
+        self._header.setDirection(
+            QBoxLayout.Direction.LeftToRight
+            if self._header_width_needed() <= self.width()
+            else QBoxLayout.Direction.TopToBottom
+        )
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._arrange_header()
 
     def _connect_signals(self) -> None:
         self._run_button.clicked.connect(self._run_analysis)
         self._adopt_button.clicked.connect(self._emit_adopted_default)
+        self._close_button.clicked.connect(self.reject)
+        for field in (self._energy_threshold, self._force_threshold, self._stress_threshold):
+            field.editingFinished.connect(self._show_threshold_starts)
         self._canvas.mpl_connect("motion_notify_event", self._on_plot_hover)
         self._canvas.mpl_connect("figure_leave_event", self._on_plot_leave)
         self._include_stress.toggled.connect(self._on_include_stress_toggled)
@@ -756,10 +828,14 @@ class ConvergenceExaminerDialog(QDialog):
         """Show labelled rows: the label in bold on the left, each line beside it.
 
         The first line of a row is the result; any further lines explain it in
-        muted text. A blank row separates the groups.
+        muted text. A blank row separates the groups. The recommendation and the
+        caveats on it come first, so the short box opens on what the adopt button
+        depends on.
         """
 
-        self._result_groups = [list(group) for group in groups if group]
+        self._result_groups = sorted(
+            (list(group) for group in groups if group), key=self._result_group_rank
+        )
         palette = current_palette()
         cells: list[str] = []
         for index, group in enumerate(self._result_groups):
@@ -776,6 +852,13 @@ class ConvergenceExaminerDialog(QDialog):
                         f'<td style="color:{color}">{escape(line)}</td></tr>'
                     )
         self._results.setHtml(f'<table cellspacing="0" cellpadding="1">{"".join(cells)}</table>')
+
+    @staticmethod
+    def _result_group_rank(group: Sequence[ResultRow]) -> int:
+        labels = [label for label, _ in group]
+        if any(label.startswith("Recommended") for label in labels):
+            return 0
+        return 1 if {"Sweep length", "Notes"}.intersection(labels) else 2
 
     @staticmethod
     def _is_warning_row(label: str, line: str) -> bool:
@@ -815,6 +898,7 @@ class ConvergenceExaminerDialog(QDialog):
             else "Set as Project Default K-Point Grid"
         )
         self._adopt_button.setToolTip("")
+        self._arrange_header()
 
     def _offer_adoption(self) -> None:
         """Name the recommendation on the adopt button, enabled when it can be set."""
@@ -823,6 +907,7 @@ class ConvergenceExaminerDialog(QDialog):
         self._adopt_button.setEnabled(settable)
         self._adopt_button.setText(self._adopt_button_text())
         self._adopt_button.setToolTip("" if settable else _NO_RECOMMENDED_GRID_TOOLTIP)
+        self._arrange_header()
 
     def _adopt_button_text(self) -> str:
         if self._sweep_kind == "cutoff":
@@ -900,6 +985,7 @@ class ConvergenceExaminerDialog(QDialog):
         # edit (macOS buttons take no focus), so snap the text here as well.
         for field in (self._energy_threshold, self._force_threshold, self._stress_threshold):
             field.setValue(field.value())
+        self._show_threshold_starts()
         self._update_availability()
         if not self._run_button.isEnabled():
             self._write_initial_summary()

@@ -23,17 +23,17 @@ quantity:
      - Default
      - Minimum
      - Maximum
-   * - ``Energy threshold (eV/atom)``
+   * - ``Energy`` (eV/atom)
      - total energy per atom
      - 0.001
      - 1e-12
      - 1
-   * - ``Force threshold (eV/Ang)``
+   * - ``Force`` (eV/Ang)
      - largest force on any atom
      - 0.05
      - 0.00001
      - 1
-   * - ``Stress threshold (GPa)`` (optional)
+   * - ``Stress`` (GPa, optional)
      - largest absolute component of the stress tensor
      - 0.1
      - 0.000001

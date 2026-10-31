@@ -366,9 +366,7 @@ def draw_convergence_plot(
         labelpad=6 if compact else 8,
         fontsize=label_size,
     )
-    force_ax.set_ylabel(
-        "Max force\n(eV/Ang)" if compact else "Max force (eV/Ang)", fontsize=label_size
-    )
+    force_ax.set_ylabel("Max force\n(eV/Ang)", fontsize=label_size)
     style_plot_axes(force_ax, facecolor=axes_face, tick_labelsize=tick_size)
     if not compact:
         force_ax.yaxis.label.set_color(colors.force)
@@ -408,9 +406,7 @@ def draw_convergence_plot(
                     label="Stress threshold",
                 )
             )
-        stress_ax.set_ylabel(
-            "Max stress\n(GPa)" if compact else "Max stress (GPa)", fontsize=label_size
-        )
+        stress_ax.set_ylabel("Max stress\n(GPa)", fontsize=label_size)
         stress_ax.yaxis.label.set_color(colors.stress)
         stress_ax.tick_params(
             axis="y", colors=colors.stress, labelcolor=colors.stress, labelsize=tick_size
@@ -435,10 +431,17 @@ def draw_convergence_plot(
         )
 
     if not compact and x_values:
-        energy_ax.legend(loc="best")
+        # Two small columns keep a full legend inside a panel at the examiner's minimum size.
+        energy_ax.legend(loc="best", ncols=2, fontsize="small")
         style_plot_legend(energy_ax.get_legend(), frame_alpha=0.95)
         handles = force_handles + stress_handles
-        force_ax.legend(handles, [handle.get_label() for handle in handles], loc="best")
+        force_ax.legend(
+            handles,
+            [handle.get_label() for handle in handles],
+            loc="best",
+            ncols=2,
+            fontsize="small",
+        )
         style_plot_legend(force_ax.get_legend(), frame_alpha=0.95)
         _draw_threshold_titles(energy_ax, force_ax, data)
 

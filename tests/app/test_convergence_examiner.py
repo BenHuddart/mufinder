@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 from types import SimpleNamespace
 
 from matplotlib.colors import to_hex
 import pytest
-from PySide6.QtWidgets import QComboBox, QPushButton, QScrollArea
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QComboBox, QPushButton, QScrollArea, QWidget
 
 import mufinder.app.convergence_examiner as convergence_examiner_module
 from mufinder.app import theme as theme_module
@@ -32,7 +35,12 @@ def test_convergence_examiner_disables_run_with_insufficient_points(qapp) -> Non
     assert "Need at least two" in dialog._results.toPlainText()
 
 
-def test_convergence_examiner_uses_scrollable_layout_and_minimum_sizes(qapp) -> None:
+def _settle(qapp, passes: int = 4) -> None:
+    for _ in range(passes):
+        qapp.processEvents()
+
+
+def _analysed_dialog(qapp, size: tuple[int, int]) -> ConvergenceExaminerDialog:
     dialog = ConvergenceExaminerDialog(
         {
             300.0: _completed_state(-10.0, 0.30),
@@ -41,16 +49,303 @@ def test_convergence_examiner_uses_scrollable_layout_and_minimum_sizes(qapp) -> 
         },
         num_atoms=2,
     )
+    dialog.show()
+    dialog.resize(*size)
+    _settle(qapp)
+    dialog._run_button.click()
+    _settle(qapp)
+    return dialog
 
-    scrolls = dialog.findChildren(QScrollArea)
-    assert scrolls
-    # Minimum size was lowered from 920x760 to 880x640 to fit a 13" MacBook's
-    # usable desktop area; content still sits in a QScrollArea (asserted
-    # above), so the dialog remains fully usable at the smaller minimum.
-    assert dialog.minimumWidth() >= 880
-    assert dialog.minimumHeight() >= 640
-    assert dialog._canvas.minimumHeight() >= 520
-    assert dialog._adopt_button.parentWidget() is not None
+
+def _kpoint_dialog() -> ConvergenceExaminerDialog:
+    return ConvergenceExaminerDialog(
+        {
+            4.0: _completed_state(-10.0, 0.30),
+            32.0: _completed_state(-10.01, 0.20),
+            108.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_grids={4.0: (1, 1, 4), 32.0: (2, 2, 8), 108.0: (3, 3, 12)},
+    )
+
+
+def _bounds_in_dialog(dialog: ConvergenceExaminerDialog, widget: QWidget) -> QRect:
+    return QRect(widget.mapTo(dialog, QPoint(0, 0)), widget.size())
+
+
+def _action_buttons(dialog: ConvergenceExaminerDialog) -> list[QRect]:
+    return [
+        _bounds_in_dialog(dialog, button)
+        for button in (dialog._run_button, dialog._adopt_button, dialog._close_button)
+    ]
+
+
+@pytest.mark.parametrize("size", [(1080, 900), (880, 640)], ids=["default", "minimum"])
+def test_convergence_examiner_shows_the_whole_plot_without_scrolling(qapp, size) -> None:
+    dialog = _analysed_dialog(qapp, size)
+    try:
+        assert (dialog.minimumWidth(), dialog.minimumHeight()) == (880, 640)
+        assert (dialog.width(), dialog.height()) == size
+        assert not dialog.findChildren(QScrollArea)
+        for widget in (
+            dialog._energy_threshold,
+            dialog._force_threshold,
+            dialog._stress_threshold,
+            dialog._run_button,
+            dialog._adopt_button,
+            dialog._close_button,
+            dialog._results,
+            dialog._canvas,
+        ):
+            assert dialog.rect().contains(_bounds_in_dialog(dialog, widget)), widget
+
+        # Everything under the results is the plot, down to the dialog's margin.
+        results = _bounds_in_dialog(dialog, dialog._results)
+        canvas = _bounds_in_dialog(dialog, dialog._canvas)
+        assert canvas.top() > results.bottom()
+        assert canvas.bottom() >= dialog.rect().bottom() - 16
+        assert canvas.height() > results.height()
+
+        # The force panel's axis and legend are on the canvas.
+        force_bounds = dialog._force_ax.get_tightbbox(dialog._canvas.get_renderer())
+        assert force_bounds.y0 >= 0
+        assert force_bounds.y1 <= dialog._figure.bbox.height
+        assert dialog._force_ax.get_legend() is not None
+        # No axis label is taller than its panel.
+        for axes in (dialog._energy_ax, dialog._force_ax):
+            label = axes.yaxis.label.get_window_extent(dialog._canvas.get_renderer())
+            assert label.height <= axes.get_window_extent().height
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_legends_stay_inside_their_panels_at_the_minimum_size(qapp) -> None:
+    # The fullest legends: seven cutoffs fit a limit, and stress adds three force entries.
+    dialog = ConvergenceExaminerDialog(
+        {
+            cutoff: SweepPointRunState(
+                status="completed", total_energy=energy, max_force=force, max_stress=stress
+            )
+            for cutoff, energy, force, stress in (
+                (300.0, -5620.2, 0.31, 0.9),
+                (400.0, -5621.1, 0.2, 0.5),
+                (500.0, -5621.5, 0.12, 0.3),
+                (600.0, -5621.72, 0.07, 0.2),
+                (700.0, -5621.78, 0.04, 0.12),
+                (800.0, -5621.79, 0.035, 0.1),
+                (900.0, -5621.795, 0.033, 0.09),
+            )
+        },
+        num_atoms=6,
+    )
+    try:
+        dialog.show()
+        dialog.resize(880, 640)
+        _settle(qapp)
+        dialog._include_stress.setChecked(True)
+        dialog._run_button.click()
+        _settle(qapp)
+        dialog._canvas.draw()
+        renderer = dialog._canvas.get_renderer()
+        assert len(dialog._force_ax.get_legend().get_texts()) == 6
+        for axes in (dialog._energy_ax, dialog._force_ax):
+            legend = axes.get_legend().get_window_extent(renderer)
+            panel = axes.get_window_extent(renderer)
+            assert legend.y0 >= panel.y0 - 1
+            assert legend.y1 <= panel.y1 + 1
+            assert legend.x0 >= panel.x0 - 1
+            assert legend.x1 <= panel.x1 + 1
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_gives_extra_height_to_the_plot_alone(qapp) -> None:
+    dialog = _analysed_dialog(qapp, (880, 640))
+    try:
+        results_height = dialog._results.height()
+        canvas_height = dialog._canvas.height()
+        dialog.resize(880, 840)
+        _settle(qapp)
+        assert dialog._results.height() == results_height
+        assert dialog._canvas.height() == canvas_height + 200
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_results_are_a_short_block_led_by_the_answer(qapp) -> None:
+    dialog = _analysed_dialog(qapp, (1080, 900))
+    try:
+        assert dialog._results.height() == 120
+        assert dialog._results.toPlainText().lstrip().startswith("Recommended cutoff\n")
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_shows_a_restored_recommendation_first(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {300.0: _completed_state(-10.0, 0.30), 400.0: _completed_state(-10.01, 0.20)},
+        num_atoms=2,
+    )
+    state = dialog.state_snapshot()
+    state["results_rows"] = [
+        [["Thresholds", ["energy 0.001 eV/atom"]]],
+        [["Recommended cutoff", ["400 eV"]]],
+    ]
+    restored = ConvergenceExaminerDialog(
+        {300.0: _completed_state(-10.0, 0.30), 400.0: _completed_state(-10.01, 0.20)},
+        num_atoms=2,
+        initial_state=state,
+    )
+    assert restored._results.toPlainText().lstrip().startswith("Recommended cutoff\n400 eV")
+
+
+def test_convergence_examiner_thresholds_share_one_compact_row(qapp) -> None:
+    dialog = _analysed_dialog(qapp, (1080, 900))
+    try:
+        fields = (dialog._energy_threshold, dialog._force_threshold, dialog._stress_threshold)
+        centres = {_bounds_in_dialog(dialog, field).center().y() for field in fields}
+        assert len(centres) == 1
+        stress_centre = _bounds_in_dialog(dialog, dialog._include_stress).center().y()
+        assert abs(stress_centre - centres.pop()) <= 1
+        for field in fields:
+            assert field.width() <= 120
+            assert field.fontMetrics().horizontalAdvance("0.001") < field.width() - 16
+        assert dialog._energy_threshold.accessibleName() == "Energy threshold (eV/atom)"
+        assert dialog._force_threshold.accessibleName() == "Force threshold (eV/Ang)"
+        assert dialog._stress_threshold.accessibleName() == "Stress threshold (GPa)"
+        assert dialog._include_stress.accessibleName() == "Use a stress threshold"
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_actions_sit_beside_the_thresholds_when_they_fit(qapp) -> None:
+    dialog = _kpoint_dialog()
+    try:
+        dialog.show()
+        dialog.resize(1600, 900)
+        _settle(qapp)
+        dialog._run_button.click()
+        _settle(qapp)
+        fields = _bounds_in_dialog(dialog, dialog._stress_threshold)
+        buttons = _action_buttons(dialog)
+        assert all(button.left() > fields.right() for button in buttons)
+        assert all(button.top() <= fields.bottom() for button in buttons)
+
+        # At the minimum the value-bearing adopt text does not fit: the actions
+        # wrap under the thresholds, still side by side and nothing clipped.
+        dialog.resize(880, 640)
+        _settle(qapp)
+        fields = _bounds_in_dialog(dialog, dialog._stress_threshold)
+        buttons = _action_buttons(dialog)
+        assert all(button.top() > fields.bottom() for button in buttons)
+        assert buttons[0].right() < buttons[1].left() < buttons[1].right() < buttons[2].left()
+        assert all(dialog.rect().contains(button) for button in buttons)
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_wraps_the_actions_when_the_adopt_text_grows(qapp) -> None:
+    dialog = _kpoint_dialog()
+    try:
+        dialog.show()
+        _settle(qapp)
+        # Exactly wide enough for the actions while the adopt text is neutral.
+        dialog.resize(dialog._header_width_needed(), 900)
+        _settle(qapp)
+        fields = _bounds_in_dialog(dialog, dialog._stress_threshold)
+        assert all(button.left() > fields.right() for button in _action_buttons(dialog))
+
+        dialog._run_button.click()
+        _settle(qapp)
+        assert dialog._adopt_button.text() == "Set 2 x 2 x 8 as Project Default K-Point Grid"
+        fields = _bounds_in_dialog(dialog, dialog._stress_threshold)
+        assert all(button.top() > fields.bottom() for button in _action_buttons(dialog))
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_close_button_sits_beside_adopt_and_closes(qapp) -> None:
+    dialog = _analysed_dialog(qapp, (1080, 900))
+    try:
+        assert dialog._close_button.text() == "Close"
+        assert dialog._adopt_button.text() == "Set 400 eV as Project Default Cutoff"
+        adopt = _bounds_in_dialog(dialog, dialog._adopt_button)
+        close = _bounds_in_dialog(dialog, dialog._close_button)
+        assert close.left() > adopt.right()
+        assert close.center().y() == adopt.center().y()
+
+        dialog._close_button.click()
+        _settle(qapp)
+        assert dialog.isVisible() is False
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_return_analyses_in_a_field_and_closes_on_close(qapp) -> None:
+    dialog = _analysed_dialog(qapp, (1080, 900))
+    try:
+        dialog._results.clear()
+        QTest.keyClick(dialog._energy_threshold, Qt.Key.Key_Return)
+        _settle(qapp)
+        assert dialog.isVisible() is True
+        assert "Recommended cutoff" in dialog._results.toPlainText()
+
+        dialog._close_button.setFocus()
+        _settle(qapp)
+        QTest.keyClick(dialog._close_button, Qt.Key.Key_Return)
+        _settle(qapp)
+        assert dialog.isVisible() is False
+    finally:
+        dialog.close()
+
+
+def test_convergence_examiner_shows_a_long_threshold_from_its_start(qapp) -> None:
+    points = {300.0: _completed_state(-10.0, 0.30), 400.0: _completed_state(-10.01, 0.20)}
+    state = ConvergenceExaminerDialog(points, num_atoms=2).state_snapshot()
+    state["energy_threshold"] = 0.000001234567
+    dialog = ConvergenceExaminerDialog(points, num_atoms=2, initial_state=state)
+    assert dialog._energy_threshold.text() == "0.000001234567"
+    assert dialog._energy_threshold.cursorPosition() == 0
+
+    dialog._energy_threshold.setCursorPosition(14)
+    dialog._energy_threshold.editingFinished.emit()
+    assert dialog._energy_threshold.cursorPosition() == 0
+
+
+def test_convergence_examiner_leads_with_the_recommendation_and_its_caveats(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+        notes=("A grid was left out.",),
+    )
+    dialog._run_analysis()
+    labels = [group[0][0] for group in dialog._result_groups]
+    assert labels[:3] == ["Recommended cutoff", "Sweep length", "Notes"]
+    assert labels[3] == "Thresholds"
+
+
+def test_convergence_examiner_tab_order_follows_the_layout(qapp) -> None:
+    dialog = _analysed_dialog(qapp, (1080, 900))
+    try:
+        order = [
+            dialog._energy_threshold,
+            dialog._force_threshold,
+            dialog._include_stress,
+            dialog._stress_threshold,
+            dialog._run_button,
+            dialog._adopt_button,
+            dialog._close_button,
+            dialog._results,
+        ]
+        for before, after in itertools.pairwise(order):
+            assert before.nextInFocusChain() is after, (before, after)
+    finally:
+        dialog.close()
 
 
 def test_convergence_examiner_has_no_method_picker(qapp) -> None:
