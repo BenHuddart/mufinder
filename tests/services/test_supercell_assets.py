@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -59,8 +60,8 @@ def test_create_asset_labels_diagonal_and_general_matrices(tmp_path: Path) -> No
         matrix=[[1, 1, 0], [0, 1, 0], [0, 0, 1]],
     )
 
-    assert diagonal.label == "convergence_cutoff 2x1x1"
-    assert general.label == "convergence_cutoff [1 1 0; 0 1 0; 0 0 1]"
+    assert diagonal.label == "2x1x1 supercell"
+    assert general.label == "[1 1 0; 0 1 0; 0 0 1] supercell"
     assert len(diagonal.species) == 2 * len(host.species)
     assert diagonal.parent_structure_id == host.id
 
@@ -135,7 +136,7 @@ def test_list_assets_needs_a_host_and_skips_other_hosts(tmp_path: Path) -> None:
     assert [item.structure_id for item in listed] == [asset.id]
 
 
-def test_use_asset_from_another_stage_selects_this_stages_copy(tmp_path: Path) -> None:
+def test_use_asset_from_another_stage_keeps_one_library_entry(tmp_path: Path) -> None:
     document, host = _document_with_host(tmp_path)
     original = supercell_assets.create_workflow_supercell_asset(
         document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A
@@ -146,11 +147,269 @@ def test_use_asset_from_another_stage_selects_this_stages_copy(tmp_path: Path) -
     )
     resolution = supercell_assets.resolve_workflow_structure(document, WorkflowStage.UEP)
 
-    assert selected.id != original.id
-    assert resolution.structure is selected
-    assert resolution.selected_asset is not None
-    assert resolution.selected_asset.source_asset_structure_id == original.id
+    assert selected is original
+    assert resolution.structure is original
     assert resolution.source_workflow_stage == _STAGE
+    assert [
+        asset.structure_id
+        for asset in supercell_assets.list_workflow_supercell_assets(
+            document, host_structure_id=host.id
+        )
+    ] == [original.id]
+
+
+def test_create_asset_reuses_a_matching_asset_from_another_stage(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    original = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+
+    again = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=WorkflowStage.UEP, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+
+    assert again is original
+
+
+def test_asset_saved_with_no_workflow_has_no_owner_and_can_be_selected(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+
+    saved = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+    supercell_assets.use_workflow_supercell_asset(
+        document, workflow_stage=_STAGE, asset_structure_id=saved.id
+    )
+    resolution = supercell_assets.resolve_workflow_structure(document, _STAGE)
+
+    assert saved.label == "2x1x1 supercell"
+    assert saved.properties["supercell_asset"]["owner_workflow_stage"] is None
+    assert resolution.structure is saved
+    assert resolution.selected_asset is not None
+    assert resolution.selected_asset.owner_workflow_stage is None
+    assert resolution.source_workflow_stage is None
+
+
+def test_asset_without_an_owner_survives_a_matrix_update_and_a_spin_repair(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    saved = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+    double_b = [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
+
+    supercell_assets.update_workflow_supercell_asset_matrix(
+        document, asset_structure_id=saved.id, matrix=double_b
+    )
+    host.properties["atomic_spins"] = [1.0] * len(host.species)
+    assert supercell_assets.repair_supercell_asset_if_needed(document, structure_id=saved.id)
+
+    asset = supercell_assets.supercell_asset(saved)
+    assert asset is not None
+    assert asset.owner_workflow_stage is None
+    assert asset.matrix == double_b
+
+
+def test_legacy_clone_keeps_resolving_to_its_source_workflow(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    source = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=_STAGE, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+    clone = supercell_assets.create_workflow_supercell_asset(
+        document,
+        workflow_stage=WorkflowStage.UEP,
+        host_structure_id=host.id,
+        matrix=_DOUBLE_A,
+        label="uep 2x1x1",
+        source_asset_structure_id=source.id,
+        reuse_existing=False,
+    )
+
+    selected = supercell_assets.use_workflow_supercell_asset(
+        document, workflow_stage=WorkflowStage.UEP, asset_structure_id=clone.id
+    )
+    resolution = supercell_assets.resolve_workflow_structure(document, WorkflowStage.UEP)
+
+    assert selected is clone
+    assert resolution.source_workflow_stage == _STAGE
+
+
+def test_assets_are_listed_by_label_whichever_stage_saved_them(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    for label, stage, matrix in (
+        ("Zinc", WorkflowStage.CONVERGENCE_CUTOFF, _DOUBLE_A),
+        ("Alpha", WorkflowStage.UEP, [[1, 0, 0], [0, 2, 0], [0, 0, 1]]),
+        ("beta", None, [[1, 0, 0], [0, 1, 0], [0, 0, 2]]),
+    ):
+        supercell_assets.create_workflow_supercell_asset(
+            document, workflow_stage=stage, host_structure_id=host.id, matrix=matrix, label=label
+        )
+
+    assets = supercell_assets.list_workflow_supercell_assets(document, host_structure_id=host.id)
+
+    assert [asset.label for asset in assets] == ["Alpha", "beta", "Zinc"]
+
+
+def _dated_asset(document, host, matrix, day: int) -> Structure:
+    structure = supercell_assets.create_workflow_supercell_asset(
+        document,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=matrix,
+        reuse_existing=False,
+    )
+    structure.properties["supercell_asset"]["saved_at"] = datetime(
+        2026, 1, day, tzinfo=UTC
+    ).isoformat()
+    return structure
+
+
+def test_latest_asset_is_the_newest_and_can_be_narrowed_to_a_matrix(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    double_b = [[1, 0, 0], [0, 2, 0], [0, 0, 1]]
+    newest_a = _dated_asset(document, host, _DOUBLE_A, day=3)
+    _dated_asset(document, host, _DOUBLE_A, day=1)
+    newest_b = _dated_asset(document, host, double_b, day=2)
+
+    latest = supercell_assets.latest_workflow_supercell_asset(document, host_structure_id=host.id)
+    of_b = supercell_assets.latest_workflow_supercell_asset(
+        document, host_structure_id=host.id, matrix=double_b
+    )
+    of_a = supercell_assets.latest_workflow_supercell_asset(
+        document, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+
+    assert latest is not None and latest.structure_id == newest_a.id
+    assert of_b is not None and of_b.structure_id == newest_b.id
+    assert of_a is not None and of_a.structure_id == newest_a.id
+    assert (
+        supercell_assets.latest_workflow_supercell_asset(
+            document, host_structure_id=host.id, matrix=[[5, 0, 0], [0, 5, 0], [0, 0, 5]]
+        )
+        is None
+    )
+    assert (
+        supercell_assets.latest_workflow_supercell_asset(document, host_structure_id=None) is None
+    )
+
+
+def test_latest_asset_prefers_any_recorded_save_time_over_none(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    dated = _dated_asset(document, host, _DOUBLE_A, day=1)
+    undated = _dated_asset(document, host, [[1, 0, 0], [0, 2, 0], [0, 0, 1]], day=2)
+    del undated.properties["supercell_asset"]["saved_at"]
+    garbled = _dated_asset(document, host, [[1, 0, 0], [0, 1, 0], [0, 0, 2]], day=3)
+    garbled.properties["supercell_asset"]["saved_at"] = "not a date"
+
+    latest = supercell_assets.latest_workflow_supercell_asset(document, host_structure_id=host.id)
+
+    assert latest is not None and latest.structure_id == dated.id
+
+
+def test_latest_asset_ignores_a_save_time_without_a_timezone(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    dated = _dated_asset(document, host, _DOUBLE_A, day=1)
+    naive = _dated_asset(document, host, [[1, 0, 0], [0, 2, 0], [0, 0, 1]], day=2)
+    naive.properties["supercell_asset"]["saved_at"] = "2026-06-01T12:00:00"
+
+    latest = supercell_assets.latest_workflow_supercell_asset(document, host_structure_id=host.id)
+
+    assert latest is not None and latest.structure_id == dated.id
+
+
+def test_copy_of_a_cell_without_an_owner_keeps_its_own_source_workflow(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    source = supercell_assets.create_workflow_supercell_asset(
+        document, workflow_stage=None, host_structure_id=host.id, matrix=_DOUBLE_A
+    )
+    copy = supercell_assets.create_workflow_supercell_asset(
+        document,
+        workflow_stage=_STAGE,
+        host_structure_id=host.id,
+        matrix=[[3, 0, 0], [0, 1, 0], [0, 0, 1]],
+        source_asset_structure_id=source.id,
+        reuse_existing=False,
+    )
+    supercell_assets.use_workflow_supercell_asset(
+        document, workflow_stage=_STAGE, asset_structure_id=copy.id
+    )
+
+    resolution = supercell_assets.resolve_workflow_structure(document, _STAGE)
+
+    assert resolution.source_workflow_stage == _STAGE
+
+
+def test_saving_an_asset_again_makes_it_the_latest(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    first = _dated_asset(document, host, _DOUBLE_A, day=1)
+    second = _dated_asset(document, host, [[1, 0, 0], [0, 2, 0], [0, 0, 1]], day=2)
+
+    def latest() -> object:
+        found = supercell_assets.latest_workflow_supercell_asset(
+            document, host_structure_id=host.id
+        )
+        return found.structure_id
+
+    assert latest() == second.id
+    supercell_assets.rename_workflow_supercell_asset(
+        document, asset_structure_id=first.id, label="Renamed"
+    )
+    assert latest() == first.id
+    supercell_assets.update_workflow_supercell_asset_matrix(
+        document, asset_structure_id=second.id, matrix=[[1, 0, 0], [0, 3, 0], [0, 0, 1]]
+    )
+    assert latest() == second.id
+
+
+def test_spin_repair_keeps_the_asset_metadata(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    saved = _dated_asset(document, host, _DOUBLE_A, day=1)
+    before = dict(saved.properties["supercell_asset"])
+    host.properties["atomic_spins"] = [1.0] * len(host.species)
+
+    assert supercell_assets.repair_supercell_asset_if_needed(document, structure_id=saved.id)
+
+    assert saved.properties["supercell_asset"] == before
+
+
+def test_editor_seed_is_the_identity_for_a_new_project(tmp_path: Path) -> None:
+    document, _host = _document_with_host(tmp_path)
+
+    assert supercell_assets.supercell_editor_seed_matrix(document) == [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+    ]
+
+
+def test_editor_seed_reads_the_legacy_project_matrix_without_a_saved_cell(tmp_path: Path) -> None:
+    document, _host = _document_with_host(tmp_path)
+    document.project.supercell_matrix = [[3, 0, 0], [0, 3, 0], [0, 0, 1]]
+
+    assert supercell_assets.supercell_editor_seed_matrix(document) == [
+        [3, 0, 0],
+        [0, 3, 0],
+        [0, 0, 1],
+    ]
+
+
+def test_editor_seed_prefers_the_newest_saved_cell_over_the_legacy_matrix(tmp_path: Path) -> None:
+    document, host = _document_with_host(tmp_path)
+    document.project.supercell_matrix = [[3, 0, 0], [0, 3, 0], [0, 0, 1]]
+    _dated_asset(document, host, _DOUBLE_A, day=2)
+    _dated_asset(document, host, [[1, 0, 0], [0, 2, 0], [0, 0, 1]], day=1)
+
+    assert supercell_assets.supercell_editor_seed_matrix(document) == _DOUBLE_A
+
+
+def test_editor_seed_ignores_a_malformed_legacy_matrix(tmp_path: Path) -> None:
+    document, _host = _document_with_host(tmp_path)
+    document.project.supercell_matrix = [[1, 0], [0, 1]]
+
+    assert supercell_assets.supercell_editor_seed_matrix(document) == [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+    ]
 
 
 def test_frozen_asset_cannot_be_regenerated_or_deleted(tmp_path: Path) -> None:

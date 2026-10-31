@@ -23,16 +23,18 @@ Running the workflow
    page, or choose ``Manage Supercells…`` from a workflow's simulation-cell
    selector or row ``Supercell`` drop-down.
 2. **Start a new cell.** Click ``New`` to start from the unit-cell matrix.
-3. **Choose the scaling.** Set ``Nx``, ``Ny`` and ``Nz`` (1 to 64 each), or tick
-   ``Advanced 3x3 matrix`` and enter a full 3×3 integer matrix. Alternatively,
-   click ``Suggest…`` (see `Suggesting a supercell`_).
+3. **Choose the scaling.** Set the three ``Scaling`` boxes, ``Nx × Ny × Nz`` (1
+   to 64 each), or tick ``Advanced 3x3 matrix`` and enter a full 3×3 integer
+   matrix. Alternatively, click ``Suggest…`` (see `Suggesting a supercell`_).
 4. **Check the preview.** The preview, a :doc:`/user_guide/structure_viewer`,
    shows the generated structure and the propagated spin arrows, and the status
-   line reports the resulting atom count. It updates on each edit of a ``Nx``,
-   ``Ny``, ``Nz`` or matrix box. Opening the editor, selecting a saved cell, clicking ``New`` and applying a
-   suggestion set the whole matrix at once and build the preview once.
-5. **Name and save.** Give the supercell a clear name and click ``Save``. Click
-   ``Save As`` to create another saved copy from the current matrix and name.
+   line reports the resulting atom count. It updates on each edit of a scaling
+   or matrix box. Opening the editor, selecting a saved cell, clicking ``New``
+   and applying a suggestion set the whole matrix at once and build the preview
+   once.
+5. **Name and save.** Give the supercell a clear name and click ``Save As`` to
+   add it to the saved supercells. ``Save`` is for a saved cell you have
+   selected: it updates that cell, and it is disabled when no cell is selected.
 6. **Use it.** Pick it from the simulation-cell selector or the row
    ``Supercell`` drop-down of the workflow that should use it. If you opened
    the editor from a workflow, click ``Use Selected`` instead (see below).
@@ -48,16 +50,26 @@ The editor
    (:doc:`/user_guide/examples/cof2`) selected and its
    48-atom preview.
 
-The ``Saved Supercells`` table on the left lists each saved cell with its
-``Name``, ``Matrix``, ``Atoms`` count, and ``Usage`` (the configured
-calculations and active workflow selections that refer to it). The controls
-for the selected cell are ``New``, ``Save``, ``Save As``, ``Delete``,
-``Suggest…``, ``Use Selected`` and ``Close``.
+The ``Saved Supercells`` table on the left lists each saved cell, in name
+order, with its ``Name``, ``Matrix``, ``Atoms`` count, and ``Usage`` (the
+configured calculations and active workflow selections that refer to it). The
+``Name`` column takes the spare width, and hovering over a name that does not
+fit shows it in full. The controls for the selected cell are ``New``, ``Save``,
+``Save As``, ``Delete``, ``Suggest…``, ``Use Selected`` and ``Close``.
+
+Opened from the ``Host Structure`` page, the editor starts on the most recently
+saved supercell, with that row selected and its name and matrix loaded. Opened
+from a workflow, it starts on the cell that workflow is using. When no saved
+cell has the starting matrix, as in a project with no saved cells, no row is
+selected, the name is empty, and ``Save`` stays disabled until a row is selected.
+An automatic name such as ``2x2x2 supercell`` follows the matrix as you change
+it; a name you typed stays as it is.
 
 When the editor is opened from a workflow row or simulation-cell selector, a
 ``Use Selected`` button is shown; it returns the highlighted saved supercell to
-that workflow (saving the current matrix first if nothing is selected). The
-workflow selector refreshes immediately after the editor closes.
+that workflow. It is disabled when no cell is selected and when the matrix has
+been changed and not saved. The workflow selector refreshes immediately after
+the editor closes.
 
 Suggesting a supercell
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -152,12 +164,11 @@ selection that calculation inputs read.
   ``Supercell`` drop-down with ``Unit cell``, the saved supercells and
   ``Manage Supercells…``.
 - Saved supercells are project-wide and visible to every workflow for the same
-  active host. Selecting one owned by another workflow clones it into the
-  current workflow, reusing an existing current-workflow copy when one with the
-  same host and matrix already exists, and the original saved cell stays as
-  the source. Automatic labels combine the workflow stage and the matrix, for
-  example ``convergence_cutoff 2x2x1``. UEP source jobs use the currently
-  selected UEP source structure as their supercell context.
+  active host. Workflows that pick the same saved cell share it, so the library
+  keeps one entry per cell, whichever workflow or page it was saved from. Editing
+  the matrix of a shared cell that no configured calculation uses changes it for
+  every workflow that has it selected. UEP source jobs use the currently selected
+  UEP source structure as their supercell context.
 
 A configured calculation keeps the cell it was configured with: the cell is
 frozen when the job is defined, with its expanded lattice, positions and spins,

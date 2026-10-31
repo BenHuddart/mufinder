@@ -235,7 +235,6 @@ def _build_generation(directory: Path) -> tuple[ProjectService, ProjectDocument]
         matrix=SUPERCELL_2X2X1,
         label=SUPERCELL_LABEL,
     )
-    document.project.supercell_matrix = [list(row) for row in SUPERCELL_2X2X1]
     # The paper's settings, set by hand: no convergence sweep ran in this project.
     supercell_lattice = (
         np.asarray(SUPERCELL_2X2X1, dtype=float) @ np.asarray(host.lattice_vectors)

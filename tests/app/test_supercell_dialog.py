@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from functools import partial
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QHeaderView
 
 from mufinder.app import workflow_table_utils
@@ -20,6 +22,25 @@ from tests.support.structures import si_pair_host
 
 
 _host_structure = partial(si_pair_host, label="Host", properties={"pbc": [True, True, True]})
+
+
+def _project_with_saved_cells(tmp_path) -> dict[str, object]:
+    """Editor arguments for a project with the saved cells ``Three`` and ``Two``."""
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_open.mufinder", "EditorOpen")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    for label, scale in (("Three", 3), ("Two", 2)):
+        service.create_workflow_supercell_asset(
+            doc,
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            host_structure_id=host.id,
+            matrix=[[scale, 0, 0], [0, scale, 0], [0, 0, scale]],
+            label=label,
+        )
+    return {"document": doc, "project_service": service, "source_structure": host}
 
 
 def test_supercell_editor_saves_named_asset_and_selects_it(qapp, tmp_path) -> None:
@@ -39,7 +60,7 @@ def test_supercell_editor_saves_named_asset_and_selects_it(qapp, tmp_path) -> No
     )
     dialog._name_edit.setText("Relaxation 2x1x1")
 
-    saved = dialog._save_current()
+    saved = dialog._save_as_asset()
     assert saved is not None
     dialog._use_selected()
 
@@ -50,7 +71,7 @@ def test_supercell_editor_saves_named_asset_and_selects_it(qapp, tmp_path) -> No
     dialog.close()
 
 
-def test_supercell_editor_asset_table_visible_columns_stretch(qapp, tmp_path) -> None:
+def test_supercell_editor_asset_table_gives_the_spare_width_to_the_name(qapp, tmp_path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "editor_columns.mufinder", "EditorColumns")
     host = _host_structure()
@@ -65,13 +86,259 @@ def test_supercell_editor_asset_table_visible_columns_stretch(qapp, tmp_path) ->
 
     header = dialog._asset_table.horizontalHeader()
     assert header.sectionResizeMode(dialog._ID_COLUMN) == QHeaderView.ResizeMode.Fixed
-    for column in (
-        dialog._NAME_COLUMN,
-        dialog._MATRIX_COLUMN,
-        dialog._ATOMS_COLUMN,
-        dialog._USAGE_COLUMN,
-    ):
-        assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(dialog._NAME_COLUMN) == QHeaderView.ResizeMode.Stretch
+    for column in (dialog._MATRIX_COLUMN, dialog._ATOMS_COLUMN, dialog._USAGE_COLUMN):
+        assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.ResizeToContents
+    dialog.close()
+
+
+_LONG_NAME = "CoF2 production 3x3x3 for muon relaxation"
+
+
+def test_supercell_editor_shows_a_long_name_whole_at_the_default_size(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_long_name.mufinder", "EditorLongName")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=None,
+        host_structure_id=host.id,
+        matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+        label=_LONG_NAME,
+    )
+
+    dialog = SupercellEditorDialog(document=doc, project_service=service, source_structure=host)
+    dialog.show()
+    qapp.processEvents()
+
+    table = dialog._asset_table
+    name_item = table.item(0, dialog._NAME_COLUMN)
+    assert name_item.toolTip() == _LONG_NAME
+    assert table.columnWidth(dialog._NAME_COLUMN) > table.fontMetrics().horizontalAdvance(
+        _LONG_NAME
+    )
+    dialog.close()
+
+
+def test_supercell_editor_opens_on_the_saved_cell_the_seed_names(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]])
+    dialog.show()
+    qapp.processEvents()
+
+    assert dialog.focusWidget() is dialog._name_edit
+    assert not dialog._name_edit.hasSelectedText()
+    table = dialog._asset_table
+    assert table.item(table.currentRow(), dialog._NAME_COLUMN).text() == "Three"
+    assert table.selectedItems()[0].row() == table.currentRow()
+    assert dialog._name_edit.text() == "Three"
+    assert dialog._save_button.isEnabled()
+    assert dialog._delete_button.isEnabled()
+    dialog.close()
+
+
+def test_supercell_editor_opens_on_no_cell_when_the_seed_names_none(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+    dialog.show()
+    qapp.processEvents()
+
+    table = dialog._asset_table
+    assert table.currentItem() is None
+    assert table.selectedItems() == []
+    assert dialog.focusWidget() is dialog._name_edit
+    assert dialog._name_edit.text() == ""
+    assert dialog.matrix() == [[4, 0, 0], [0, 4, 0], [0, 0, 1]]
+    assert not dialog._save_button.isEnabled()
+    assert "Save As" in dialog._save_button.toolTip()
+    assert dialog._save_as_button.isEnabled()
+    assert not dialog._delete_button.isEnabled()
+    dialog.close()
+
+
+def test_supercell_editor_save_is_enabled_only_with_a_selected_cell(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args)
+    assert not dialog._save_button.isEnabled()
+
+    dialog._asset_table.selectRow(0)
+    assert dialog._save_button.isEnabled()
+    assert dialog._save_button.toolTip() == ""
+
+    dialog._new_button.click()
+    assert not dialog._save_button.isEnabled()
+    assert dialog._asset_table.currentItem() is None
+    dialog.close()
+
+
+def test_supercell_editor_save_as_selects_the_cell_it_adds(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+    dialog._name_edit.setText("Four")
+
+    dialog._save_as_button.click()
+
+    table = dialog._asset_table
+    assert table.item(table.currentRow(), dialog._NAME_COLUMN).text() == "Four"
+    assert dialog._save_button.isEnabled()
+    dialog.close()
+
+
+def test_supercell_editor_return_in_a_field_presses_no_button(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+    dialog.show()
+    qapp.processEvents()
+    dialog._name_edit.setText("Work in progress")
+
+    QTest.keyClick(dialog._name_edit, Qt.Key.Key_Return)
+    QTest.keyClick(dialog._simple_nx, Qt.Key.Key_Return)
+
+    assert dialog.isVisible()
+    assert dialog._name_edit.text() == "Work in progress"
+    assert dialog.matrix() == [[4, 0, 0], [0, 4, 0], [0, 0, 1]]
+    dialog.close()
+
+
+def test_supercell_editor_scaling_row_has_narrow_named_boxes(qapp, tmp_path) -> None:
+    dialog = _make_editor(tmp_path)
+    dialog.show()
+    qapp.processEvents()
+
+    boxes = (dialog._simple_nx, dialog._simple_ny, dialog._simple_nz)
+    assert [box.accessibleName() for box in boxes] == ["Nx", "Ny", "Nz"]
+    for box in boxes:
+        assert box.width() == dialog._SCALING_BOX_WIDTH
+        assert box.toolTip().endswith(".")
+    # The toggle sits beneath the boxes, lined up with them.
+    assert dialog._advanced_toggle.y() >= boxes[0].geometry().bottom()
+    assert dialog._advanced_toggle.x() == boxes[0].x()
+    dialog.close()
+
+
+def test_supercell_editor_opens_on_the_cell_the_workflow_uses_among_equal_matrices(
+    qapp, tmp_path
+) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    doc, service = dialog_args["document"], dialog_args["project_service"]
+    assets = {
+        asset.label: asset
+        for asset in service.list_workflow_supercell_assets(
+            doc, host_structure_id=dialog_args["source_structure"].id
+        )
+    }
+    service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=None,
+        host_structure_id=dialog_args["source_structure"].id,
+        matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+        label="Newer three",
+        reuse_existing=False,
+    )
+    service.use_workflow_supercell_asset(
+        doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=assets["Three"].structure_id
+    )
+
+    dialog = SupercellEditorDialog(
+        **dialog_args,
+        workflow_stage=WorkflowStage.UEP,
+        initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+    )
+    assert dialog._name_edit.text() == "Three"
+    dialog.close()
+
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]])
+    assert dialog._name_edit.text() == "Newer three"
+    dialog.close()
+
+
+def test_supercell_editor_use_selected_waits_for_a_changed_matrix_to_be_saved(
+    qapp, tmp_path
+) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(
+        **dialog_args, initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]], select_mode=True
+    )
+    assert dialog._use_button.isEnabled()
+
+    dialog._simple_nx.setValue(4)
+    assert not dialog._use_button.isEnabled()
+    assert dialog._use_button.toolTip().endswith(".")
+
+    dialog._simple_nx.setValue(3)
+    assert dialog._use_button.isEnabled()
+    dialog.close()
+
+
+def test_supercell_editor_warns_that_save_changes_a_shared_cell(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    doc, service = dialog_args["document"], dialog_args["project_service"]
+    asset = service.latest_workflow_supercell_asset(
+        doc,
+        host_structure_id=dialog_args["source_structure"].id,
+        matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]],
+    )
+    service.use_workflow_supercell_asset(
+        doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=asset.structure_id
+    )
+
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[3, 0, 0], [0, 3, 0], [0, 0, 3]])
+
+    assert "every workflow" in dialog._save_button.toolTip()
+    dialog.close()
+
+
+def test_supercell_editor_automatic_name_follows_the_matrix(qapp, tmp_path) -> None:
+    dialog = _make_editor(tmp_path)
+    dialog._new_button.click()
+    assert dialog._name_edit.text() == "1x1x1 supercell"
+
+    dialog._simple_nx.setValue(3)
+    assert dialog._name_edit.text() == "3x1x1 supercell"
+
+    dialog._name_edit.setText("My cell")
+    dialog._simple_nx.setValue(2)
+    assert dialog._name_edit.text() == "My cell"
+    dialog.close()
+
+
+def test_supercell_editor_keeps_a_saved_name_that_reads_like_an_automatic_one(
+    qapp, tmp_path
+) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    service, doc = dialog_args["project_service"], dialog_args["document"]
+    service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=None,
+        host_structure_id=dialog_args["source_structure"].id,
+        matrix=[[5, 0, 0], [0, 1, 0], [0, 0, 1]],
+        label="1x1x1 supercell",
+    )
+    dialog = SupercellEditorDialog(**dialog_args)
+    row = next(
+        row
+        for row in range(dialog._asset_table.rowCount())
+        if dialog._asset_table.item(row, dialog._NAME_COLUMN).text() == "1x1x1 supercell"
+    )
+
+    dialog._asset_table.selectRow(row)
+
+    assert dialog._name_edit.text() == "1x1x1 supercell"
+    assert dialog.matrix() == [[5, 0, 0], [0, 1, 0], [0, 0, 1]]
+    dialog.close()
+
+
+def test_supercell_editor_saves_from_the_host_page_without_an_owner(qapp, tmp_path) -> None:
+    dialog_args = _project_with_saved_cells(tmp_path)
+    dialog = SupercellEditorDialog(**dialog_args, initial_matrix=[[4, 0, 0], [0, 4, 0], [0, 0, 1]])
+
+    saved = dialog._save_as_asset()
+
+    assert saved.label == "4x4x1 supercell"
+    assert saved.properties["supercell_asset"]["owner_workflow_stage"] is None
     dialog.close()
 
 
@@ -302,7 +569,7 @@ def _editor_with_saved_supercell(tmp_path, monkeypatch):
         initial_matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
     )
     dialog._name_edit.setText("Delete me")
-    saved = dialog._save_current()
+    saved = dialog._save_as_asset()
     assert saved is not None
     return dialog, doc, saved
 

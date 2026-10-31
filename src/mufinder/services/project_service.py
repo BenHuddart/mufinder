@@ -813,7 +813,7 @@ class ProjectService:
         self,
         document: ProjectDocument,
         *,
-        workflow_stage: WorkflowStage,
+        workflow_stage: WorkflowStage | None,
         host_structure_id: UUID,
         matrix: list[list[int]],
         label: str | None = None,
@@ -830,6 +830,22 @@ class ProjectService:
             source_asset_structure_id=source_asset_structure_id,
             reuse_existing=reuse_existing,
         )
+
+    def latest_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        host_structure_id: UUID | None,
+        matrix: list[list[int]] | None = None,
+    ) -> WorkflowSupercellAsset | None:
+        """Return the last saved asset of ``host_structure_id``, of ``matrix`` when given."""
+        return supercell_assets.latest_workflow_supercell_asset(
+            document, host_structure_id=host_structure_id, matrix=matrix
+        )
+
+    def supercell_editor_seed_matrix(self, document: ProjectDocument) -> list[list[int]]:
+        """Return the matrix the Supercell Editor opens on when no cell is in use."""
+        return supercell_assets.supercell_editor_seed_matrix(document)
 
     def supercell_asset_references(
         self, document: ProjectDocument, *, asset_structure_id: UUID

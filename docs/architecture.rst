@@ -1892,9 +1892,11 @@ are stored as follows.
 A saved supercell is an ordinary ``Structure`` entity whose
 ``parent_structure_id`` is the active host, with its asset metadata under
 ``properties["supercell_asset"]``: ``matrix`` (a 3×3 integer matrix),
-``owner_workflow_stage`` and ``source_asset_structure_id`` (nullable, the clone
-source). Each workflow's selection is stored in ``state.json`` under
-``workflow_supercells``:
+``owner_workflow_stage`` (nullable, the workflow it was saved from),
+``source_asset_structure_id`` (nullable, the cell it was copied from) and
+``saved_at`` (ISO 8601, when it was last saved). Every workflow selects the same
+asset, so the library holds one entry per cell. Each workflow's selection is
+stored in ``state.json`` under ``workflow_supercells``:
 
 .. code-block:: json
 
@@ -1908,8 +1910,10 @@ source). Each workflow's selection is stored in ``state.json`` under
 ``unit_cell`` mode resolves to the active host and ``saved_supercell`` mode to
 the selected saved structure. A missing, invalid or other-host selection falls
 back to the host unit cell, and the stored selection can be normalized to
-match. ``Project.supercell_matrix`` only seeds the host preview; it never
-decides a workflow's calculation structure.
+match. ``Project.supercell_matrix`` is written by nothing: it seeds the Supercell
+Editor only when the active host has no saved supercell
+(``supercell_editor_seed_matrix``), and it never decides a workflow's calculation
+structure.
 
 Spins follow the host's magnetic data. When a host's scalar spin list is
 missing or invalid, spins are taken from ``magnetic_structure`` moment

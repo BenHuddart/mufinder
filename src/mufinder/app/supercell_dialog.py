@@ -7,7 +7,8 @@ from contextlib import ExitStack
 from itertools import chain
 from uuid import UUID
 
-from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -39,7 +40,7 @@ from mufinder.domain.models import Structure
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.supercell_suggestion import SupercellSuggestionError, suggest_supercell
 from mufinder.services.project_service import ProjectDocument, ProjectService
-from mufinder.services.supercell_assets import supercell_asset
+from mufinder.services.supercell_assets import WorkflowSupercellAsset, supercell_asset
 
 
 class SupercellEditorDialog(StructureViewerDialog):
@@ -50,6 +51,8 @@ class SupercellEditorDialog(StructureViewerDialog):
     _MATRIX_COLUMN = 2
     _ATOMS_COLUMN = 3
     _USAGE_COLUMN = 4
+    # Fits two digits beside the stepper arrows.
+    _SCALING_BOX_WIDTH = 72
 
     def __init__(
         self,
@@ -57,7 +60,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         document: ProjectDocument,
         project_service: ProjectService,
         source_structure: Structure,
-        workflow_stage: WorkflowStage = WorkflowStage.CONVERGENCE_CUTOFF,
+        workflow_stage: WorkflowStage | None = None,
         initial_matrix: Sequence[Sequence[int]] | None = None,
         select_mode: bool = False,
         parent=None,
@@ -73,6 +76,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._select_mode = bool(select_mode)
         self._selected_structure_id: UUID | None = None
         self._current_asset_id: UUID | None = None
+        self._previewed_matrix: list[list[int]] | None = None
         self._updating_table = False
 
         self._title = QLabel("Supercell Editor")
@@ -95,13 +99,21 @@ class SupercellEditorDialog(StructureViewerDialog):
 
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("Supercell name")
+        self._name_edit.setAccessibleName("Supercell name")
 
         self._simple_nx = QSpinBox()
         self._simple_ny = QSpinBox()
         self._simple_nz = QSpinBox()
-        for spinbox in (self._simple_nx, self._simple_ny, self._simple_nz):
+        for spinbox, name, axis in (
+            (self._simple_nx, "Nx", "a"),
+            (self._simple_ny, "Ny", "b"),
+            (self._simple_nz, "Nz", "c"),
+        ):
             spinbox.setRange(1, 64)
             spinbox.setValue(1)
+            spinbox.setFixedWidth(self._SCALING_BOX_WIDTH)
+            spinbox.setAccessibleName(name)
+            spinbox.setToolTip(f"{name}: repeats of the unit cell along {axis}.")
             spinbox.valueChanged.connect(lambda *_: self._generate_preview())
 
         self._advanced_toggle = QCheckBox("Advanced 3x3 matrix")
@@ -133,8 +145,12 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._use_button.setVisible(self._select_mode)
 
         self._build_layout()
+        # Return in the name or a scaling box must not press a button: the first
+        # automatic default would be New, which discards the cell being edited.
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
         self._apply_matrix(initial_matrix or [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        self._refresh_assets()
+        self._open_on_saved_cell()
 
     def selected_structure_id(self) -> UUID | None:
         """Return the supercell selected for caller use."""
@@ -155,13 +171,9 @@ class SupercellEditorDialog(StructureViewerDialog):
     def _configure_asset_table_columns(self) -> None:
         header = self._asset_table.horizontalHeader()
         header.setSectionResizeMode(self._ID_COLUMN, QHeaderView.ResizeMode.Fixed)
-        for column in (
-            self._NAME_COLUMN,
-            self._MATRIX_COLUMN,
-            self._ATOMS_COLUMN,
-            self._USAGE_COLUMN,
-        ):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self._NAME_COLUMN, QHeaderView.ResizeMode.Stretch)
+        for column in (self._MATRIX_COLUMN, self._ATOMS_COLUMN, self._USAGE_COLUMN):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
 
     def matrix(self) -> list[list[int]]:
         """Return the currently configured editor matrix."""
@@ -196,23 +208,22 @@ class SupercellEditorDialog(StructureViewerDialog):
         controls = QGroupBox("Supercell")
         controls_layout = QVBoxLayout(controls)
 
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Name"))
-        name_row.addWidget(self._name_edit, 1)
-        controls_layout.addLayout(name_row)
+        scaling_row = QHBoxLayout()
+        scaling_row.addWidget(self._simple_nx)
+        scaling_row.addWidget(QLabel("×"))
+        scaling_row.addWidget(self._simple_ny)
+        scaling_row.addWidget(QLabel("×"))
+        scaling_row.addWidget(self._simple_nz)
+        scaling_row.addStretch(1)
 
-        simple_row = QHBoxLayout()
-        simple_row.addWidget(QLabel("Simple mode:"))
-        simple_row.addWidget(QLabel("Nx"))
-        simple_row.addWidget(self._simple_nx)
-        simple_row.addWidget(QLabel("Ny"))
-        simple_row.addWidget(self._simple_ny)
-        simple_row.addWidget(QLabel("Nz"))
-        simple_row.addWidget(self._simple_nz)
-        simple_row.addStretch(1)
-        controls_layout.addLayout(simple_row)
-
-        controls_layout.addWidget(self._advanced_toggle)
+        fields = QGridLayout()
+        fields.setColumnStretch(1, 1)
+        fields.addWidget(QLabel("Name"), 0, 0)
+        fields.addWidget(self._name_edit, 0, 1)
+        fields.addWidget(QLabel("Scaling"), 1, 0)
+        fields.addLayout(scaling_row, 1, 1)
+        fields.addWidget(self._advanced_toggle, 2, 1)
+        controls_layout.addLayout(fields)
         controls_layout.addWidget(self._advanced_group)
 
         action_row = QHBoxLayout()
@@ -233,7 +244,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 7)
-        splitter.setSizes([360, 820])
+        splitter.setSizes([440, 740])
         outer.addWidget(splitter, 1)
 
         bottom_row = QHBoxLayout()
@@ -333,7 +344,9 @@ class SupercellEditorDialog(StructureViewerDialog):
                 self._asset_table.setItem(
                     row, self._ID_COLUMN, QTableWidgetItem(str(asset.structure_id))
                 )
-                self._asset_table.setItem(row, self._NAME_COLUMN, QTableWidgetItem(asset.label))
+                name_item = QTableWidgetItem(asset.label)
+                name_item.setToolTip(asset.label)
+                self._asset_table.setItem(row, self._NAME_COLUMN, name_item)
                 self._asset_table.setItem(
                     row, self._MATRIX_COLUMN, QTableWidgetItem(self._matrix_label(asset.matrix))
                 )
@@ -349,16 +362,53 @@ class SupercellEditorDialog(StructureViewerDialog):
                 )
                 if asset.structure_id == select_id:
                     selected_row = row
-            self._asset_table.resizeColumnsToContents()
             if selected_row >= 0:
                 self._current_asset_id = select_id
                 self._asset_table.selectRow(selected_row)
             elif self._asset_table.rowCount() > 0 and self._current_asset_id is not None:
-                self._asset_table.clearSelection()
+                self._clear_table_selection()
         finally:
             self._updating_table = False
 
         self._refresh_action_state()
+
+    def _clear_table_selection(self) -> None:
+        self._asset_table.clearSelection()
+        self._asset_table.setCurrentItem(None)
+
+    def _open_on_saved_cell(self) -> None:
+        """Select the saved cell the opening matrix names, or leave every row unmarked."""
+
+        asset = self._workflow_cell_with_opening_matrix()
+        if asset is None:
+            asset = self._project_service.latest_workflow_supercell_asset(
+                self._document,
+                host_structure_id=self._source_structure.id,
+                matrix=self.matrix(),
+            )
+        if asset is None:
+            self._refresh_assets()
+        else:
+            self._refresh_assets(select_id=asset.structure_id)
+            self._name_edit.setText(asset.label)
+        # A table that takes the opening focus frames its first row as current.
+        self._name_edit.setFocus()
+
+    def _workflow_cell_with_opening_matrix(self) -> WorkflowSupercellAsset | None:
+        if self._workflow_stage is None:
+            return None
+        selection = self._project_service.get_workflow_supercell_selection(
+            self._document, self._workflow_stage
+        )
+        structure = self._document.structures.get(selection.structure_id)
+        asset = supercell_asset(structure) if structure is not None else None
+        return asset if asset is not None and asset.matrix == self.matrix() else None
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        # QDialog gives the opening focus after this event, and that selects the name;
+        # a stray key press must not replace it.
+        QTimer.singleShot(0, self._name_edit.deselect)
 
     def _selected_table_asset_id(self) -> UUID | None:
         selected = self._asset_table.selectedItems()
@@ -389,8 +439,8 @@ class SupercellEditorDialog(StructureViewerDialog):
         if asset is None:
             self._refresh_action_state()
             return
-        self._name_edit.setText(asset.label)
         self._apply_matrix(asset.matrix)
+        self._name_edit.setText(asset.label)
         self._refresh_action_state()
 
     def _refresh_action_state(self) -> None:
@@ -403,22 +453,44 @@ class SupercellEditorDialog(StructureViewerDialog):
             if self._current_asset_id is not None
             else False
         )
-        self._save_button.setEnabled(True)
-        self._save_button.setToolTip(
-            "Creates a new copy when the selected supercell is already used by configured calculations."
-            if frozen
-            else ""
-        )
+        self._save_button.setEnabled(has_asset)
+        if not has_asset:
+            save_tooltip = "Select a saved supercell to update it, or use 'Save As' to add one."
+        elif frozen:
+            save_tooltip = (
+                "Creates a new copy when the selected supercell is already used by configured"
+                " calculations."
+            )
+        elif self._project_service.supercell_asset_references(
+            self._document, asset_structure_id=self._current_asset_id
+        ):
+            save_tooltip = "Also changes it for every workflow that has it selected."
+        else:
+            save_tooltip = ""
+        self._save_button.setToolTip(save_tooltip)
         self._delete_button.setEnabled(has_asset and not frozen)
         self._delete_button.setToolTip(
             "Configured calculations already use this supercell, so it cannot be deleted."
             if frozen
             else ""
         )
-        self._use_button.setEnabled(has_asset)
+        matches_selection = self._selected_asset_matrix() == self.matrix()
+        self._use_button.setEnabled(matches_selection)
+        self._use_button.setToolTip(
+            "Save the changed matrix before using this supercell."
+            if has_asset and not matches_selection
+            else ""
+        )
+
+    def _selected_asset_matrix(self) -> list[list[int]] | None:
+        if self._current_asset_id is None:
+            return None
+        structure = self._document.structures.get(self._current_asset_id)
+        asset = supercell_asset(structure) if structure is not None else None
+        return None if asset is None else asset.matrix
 
     def _new_asset(self) -> None:
-        self._asset_table.clearSelection()
+        self._clear_table_selection()
         self._current_asset_id = None
         self._apply_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         self._name_edit.setText(self._default_name(self.matrix()))
@@ -448,7 +520,7 @@ class SupercellEditorDialog(StructureViewerDialog):
         matrix = self.matrix()
         label = self._name_edit.text().strip() or self._default_name(matrix)
         if self._current_asset_id is None:
-            return self._save_as_asset()
+            return None
 
         structure = self._document.structures.get(self._current_asset_id)
         asset = supercell_asset(structure) if structure is not None else None
@@ -523,13 +595,9 @@ class SupercellEditorDialog(StructureViewerDialog):
         self._status_label.setText(f"Deleted '{removed.label}'.")
 
     def _use_selected(self) -> None:
-        asset_id = self._current_asset_id
-        if asset_id is None:
-            saved = self._save_current()
-            asset_id = saved.id if saved is not None else None
-        if asset_id is None:
+        if self._current_asset_id is None:
             return
-        self._selected_structure_id = asset_id
+        self._selected_structure_id = self._current_asset_id
         self.accept()
 
     def _suggest_supercell(self) -> None:
@@ -548,8 +616,16 @@ class SupercellEditorDialog(StructureViewerDialog):
         if matrix is not None:
             self._apply_matrix(matrix)
 
+    def _follow_matrix_with_automatic_name(self, matrix: list[list[int]]) -> None:
+        previous = self._previewed_matrix
+        if previous is not None and self._name_edit.text() == self._default_name(previous):
+            self._name_edit.setText(self._default_name(matrix))
+        self._previewed_matrix = matrix
+
     def _generate_preview(self) -> None:
         matrix = self.matrix()
+        self._follow_matrix_with_automatic_name(matrix)
+        self._refresh_action_state()
         try:
             expanded_structure, expanded_spins = build_supercell_structure(
                 self._source_structure,
