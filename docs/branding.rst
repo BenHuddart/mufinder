@@ -85,6 +85,53 @@ platform:
 Hero and major section headings use the serif; controls and dense scientific
 content use the sans-serif. Copy is plain and actionable.
 
+Scales
+------
+
+``mufinder.app.theme`` holds the scales. Every font size, padding and corner
+radius in its stylesheets comes from them:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
+
+   * - Scale
+     - Steps (px)
+     - Used for
+   * - ``TYPE_SCALE``
+     - ``caption`` 11, ``body`` 13, ``emphasis`` 15, ``section`` 18, ``page`` 28
+     - Font sizes. The application font, and so every control and table, is
+       ``caption``.
+   * - ``SPACING``
+     - ``xs`` 4, ``sm`` 8, ``md`` 12, ``lg`` 16, ``xl`` 24
+     - Padding, and the margins and gaps of layouts built with the helpers below
+   * - ``RADIUS``
+     - ``control`` 6, ``card`` 10
+     - Corners of controls, tables and tabs; corners of cards and panels
+
+A standard push button is 28 px high, so its click target does not depend on a
+padding step; larger desktop text grows it. A button in a table row fills its
+row, so a table that sizes its rows to their contents does so after adding its
+buttons.
+
+A square corner or an absent padding is ``0px``. A round shape takes half its
+side (``ROUND_RADIUS``), and a combo box or spin box keeps a gutter for its
+arrow buttons, so neither is a step on a scale.
+
+Text follows the desktop: ``type_scale()`` multiplies ``TYPE_SCALE`` by
+``text_scale()``, the desktop's general font size over the usual default of
+that platform (13 pt on macOS, 9 pt on Windows, 11 pt elsewhere), from 1 up to 2.
+A default or smaller desktop font gives the sizes above, so the smallest step is
+never under 11 px. The scale is fixed when a theme is applied, so a change of
+desktop font takes effect at the next start or change of appearance. Painted
+text and a page's own stylesheet keep their pixel sizes until the page is rebuilt.
+A width cap on a control that holds text goes through ``scaled_to_text()``.
+
+Layouts take ``page_margins()``, ``card_margins()`` and ``form_spacing()``, or a
+``SPACING`` step. A page moves to these when it is next rebuilt; the harness
+counts the literal sizes still passed outside ``theme.py``, and that count may
+only fall.
+
 Navigation
 ----------
 

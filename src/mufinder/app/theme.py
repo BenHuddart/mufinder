@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from importlib.resources import files
 import logging
 from pathlib import Path
+import sys
 import tempfile
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt
+from PySide6.QtCore import QEvent, QMargins, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -145,6 +146,129 @@ def adjust_font_size(font: QFont, delta: int, *, minimum: int = 1) -> None:
     point = font.pointSize()
     if point > 0:
         font.setPointSize(max(minimum, point + delta))
+
+
+@dataclass(frozen=True, slots=True)
+class TypeScale:
+    """Font sizes in pixels, smallest first."""
+
+    caption: int = 11
+    body: int = 13
+    emphasis: int = 15
+    section: int = 18
+    page: int = 28
+
+
+@dataclass(frozen=True, slots=True)
+class SpacingScale:
+    """Padding, margins and gaps in pixels, smallest first."""
+
+    xs: int = 4
+    sm: int = 8
+    md: int = 12
+    lg: int = 16
+    xl: int = 24
+
+
+@dataclass(frozen=True, slots=True)
+class RadiusScale:
+    """Corner radii in pixels. A square corner is ``0px``."""
+
+    control: int = 6
+    card: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class RoundShapeRadii:
+    """Radii that draw a round shape: half its side, set by its size and not a scale step."""
+
+    journal_stamp: int = 5
+    slider_groove: int = 7
+    radio_indicator: int = 9
+    help_button: int = 12
+    slider_handle: int = 13
+
+
+TYPE_SCALE = TypeScale()
+SPACING = SpacingScale()
+RADIUS = RadiusScale()
+ROUND_RADIUS = RoundShapeRadii()
+
+# The room a combo box and a spin box keep for their arrow buttons (24 and 22 px wide).
+_COMBO_ARROW_GUTTER = 28
+_SPIN_ARROW_GUTTER = 30
+
+# A standard push button's height in pixels, so its click target does not depend
+# on the padding step. Larger text grows it past this.
+_STANDARD_BUTTON_HEIGHT = 28
+
+# The general font each platform's desktop ships with, in pixels: 13 pt at
+# 72 dpi on macOS, 9 pt at 96 dpi on Windows, and 11 pt at 96 dpi on GNOME, the
+# largest of the common Linux defaults, so no default Linux desktop is scaled.
+_DEFAULT_SYSTEM_TEXT_PX = {"darwin": 13.0, "win32": 12.0}
+_DEFAULT_SYSTEM_TEXT_PX_ELSEWHERE = 44.0 / 3.0
+_MAX_TEXT_SCALE = 2.0
+_CURRENT_TYPE_SCALE = TYPE_SCALE
+
+
+def text_scale() -> float:
+    """Return how far the desktop's text size is above the usual default, from 1 to 2.
+
+    A smaller desktop font leaves MuFinder at its designed sizes, so the type
+    scale's smallest step stays readable and a default desktop renders the same
+    on every platform.
+    """
+
+    if not isinstance(QGuiApplication.instance(), QGuiApplication):
+        return 1.0
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    pixels = float(font.pixelSize())
+    if pixels <= 0:
+        screen = QGuiApplication.primaryScreen()
+        dpi = screen.logicalDotsPerInch() if screen is not None else 96.0
+        pixels = font.pointSizeF() * dpi / 72.0
+    default = _DEFAULT_SYSTEM_TEXT_PX.get(sys.platform, _DEFAULT_SYSTEM_TEXT_PX_ELSEWHERE)
+    return max(1.0, min(_MAX_TEXT_SCALE, pixels / default))
+
+
+def type_scale() -> TypeScale:
+    """Return the type scale in use, fixed when a theme is applied (see ``text_scale``)."""
+
+    return _CURRENT_TYPE_SCALE
+
+
+def scaled_to_text(pixels: int) -> int:
+    """Return a width set for the designed text size, at the type scale in use."""
+
+    return round(pixels * type_scale().caption / TYPE_SCALE.caption)
+
+
+def _scaled_type_scale(factor: float) -> TypeScale:
+    return TypeScale(
+        caption=round(TYPE_SCALE.caption * factor),
+        body=round(TYPE_SCALE.body * factor),
+        emphasis=round(TYPE_SCALE.emphasis * factor),
+        section=round(TYPE_SCALE.section * factor),
+        page=round(TYPE_SCALE.page * factor),
+    )
+
+
+def page_margins() -> QMargins:
+    """Return the margins of a page or a dialog's content."""
+
+    return QMargins(SPACING.md, SPACING.md, SPACING.md, SPACING.md)
+
+
+def card_margins() -> QMargins:
+    """Return the margins inside a card or a group of controls."""
+
+    return QMargins(SPACING.md, SPACING.sm, SPACING.md, SPACING.sm)
+
+
+def form_spacing() -> int:
+    """Return the gap between the rows and controls of a form."""
+
+    return SPACING.sm
 
 
 def _arrow_asset_path(direction: str, colour: str) -> str:
@@ -1030,16 +1154,16 @@ def _base_widget_styles(p: MuFinderPalette) -> str:
     }}
     QGroupBox {{
         border: 1px solid {p.border};
-        border-radius: 10px;
+        border-radius: {RADIUS.card}px;
         margin-top: 10px;
-        padding: 10px;
+        padding: {SPACING.sm}px;
         font-weight: 600;
         background: {p.bg_surface};
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         left: 10px;
-        padding: 0 4px;
+        padding: 0px {SPACING.xs}px;
         color: {p.text_primary};
     }}
     """
@@ -1057,13 +1181,13 @@ def feature_dialog_stylesheet(
 
     palette = current_palette()
     radio_buttons = (
-        """
-        QRadioButton {
+        f"""
+        QRadioButton {{
             font-weight: 600;
             spacing: 10px;
-            padding-top: 4px;
-            padding-bottom: 4px;
-        }
+            padding-top: {SPACING.xs}px;
+            padding-bottom: {SPACING.xs}px;
+        }}
         """
         if emphasised_radio_buttons
         else ""
@@ -1088,21 +1212,21 @@ def feature_dialog_stylesheet(
         QGroupBox {{
             background: {palette.bg_surface};
             border: 1px solid {palette.border};
-            border-radius: 14px;
+            border-radius: {RADIUS.card}px;
             margin-top: 12px;
-            padding-top: 14px;
+            padding-top: {SPACING.md}px;
             font-weight: 700;
             color: {palette.text_primary};
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
             left: 12px;
-            padding: 0 8px;
+            padding: 0px {SPACING.sm}px;
         }}
         QFrame#mufinderOptionCard {{
             background: {palette.bg_surface_alt};
             border: 1px solid {palette.border};
-            border-radius: 12px;
+            border-radius: {RADIUS.card}px;
         }}
         QFrame#mufinderOptionCard[selected="true"] {{
             background: {palette.bg_surface};
@@ -1125,8 +1249,8 @@ def feature_dialog_stylesheet(
         QToolButton#mufinderCheckedToolButton {{
             background: {palette.bg_surface_alt};
             border: 1px solid {palette.border};
-            border-radius: 8px;
-            padding: 4px;
+            border-radius: {RADIUS.control}px;
+            padding: {SPACING.xs}px;
             min-width: 24px;
             min-height: 24px;
         }}
@@ -1146,6 +1270,7 @@ def uep_clustering_toolbar_stylesheet() -> str:
     """Return the stylesheet of the clustering dendrogram's navigation toolbar."""
 
     palette = current_palette()
+    t = type_scale()
     return f"""
         QToolBar#uepClusteringDendrogramToolbar {{
             border: none;
@@ -1155,11 +1280,11 @@ def uep_clustering_toolbar_stylesheet() -> str:
         }}
         QPushButton#uepClusteringToolbarButton {{
             border: 1px solid {palette.border};
-            border-radius: 10px;
-            padding: 6px 14px;
+            border-radius: {RADIUS.control}px;
+            padding: {SPACING.xs}px {SPACING.md}px;
             background: {palette.bg_surface};
             color: {palette.text_primary};
-            font-size: 12px;
+            font-size: {t.body}px;
             font-weight: 600;
         }}
         QPushButton#uepClusteringToolbarButton:hover {{
@@ -1205,19 +1330,19 @@ def magnetic_fields_stylesheet() -> str:
     stays right when the theme changes.
     """
 
-    return """
-        QRadioButton, QCheckBox {
+    return f"""
+        QRadioButton, QCheckBox {{
             background: transparent;
             spacing: 10px;
-            padding-top: 3px;
-            padding-bottom: 3px;
-        }
-        QWidget#magneticMuonSiteInlinePanel {
+            padding-top: {SPACING.xs}px;
+            padding-bottom: {SPACING.xs}px;
+        }}
+        QWidget#magneticMuonSiteInlinePanel {{
             background: transparent;
-        }
-        QStackedWidget, QStackedWidget > QWidget, QLabel {
+        }}
+        QStackedWidget, QStackedWidget > QWidget, QLabel {{
             background: transparent;
-        }
+        }}
         """
 
 
@@ -1228,17 +1353,17 @@ def magnetic_structure_builder_stylesheet() -> str:
     tighter spacing than the page's checkboxes.
     """
 
-    return """
-        QWidget#atomicViewerDisplayControls QCheckBox {
+    return f"""
+        QWidget#atomicViewerDisplayControls QCheckBox {{
             background: transparent;
             spacing: 9px;
-            padding-left: 2px;
-            padding-right: 6px;
-        }
-        QWidget#atomicViewerDisplayControls QCheckBox::indicator {
+            padding-left: {SPACING.xs}px;
+            padding-right: {SPACING.xs}px;
+        }}
+        QWidget#atomicViewerDisplayControls QCheckBox::indicator {{
             width: 18px;
             height: 18px;
-        }
+        }}
         """
 
 
@@ -1309,8 +1434,8 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
     return f"""
     QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
         border: 1px solid {p.border};
-        border-radius: 6px;
-        padding: 4px 8px;
+        border-radius: {RADIUS.control}px;
+        padding: {SPACING.xs}px {SPACING.sm}px;
         background: {p.bg_surface};
     }}
     /* A disabled input is drawn muted, so a field that is ignored reads as such. */
@@ -1320,7 +1445,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         color: {p.text_muted};
     }}
     QComboBox {{
-        padding-right: 28px;
+        padding-right: {_COMBO_ARROW_GUTTER}px;
     }}
     QComboBox::drop-down {{
         subcontrol-origin: padding;
@@ -1328,8 +1453,8 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         width: 24px;
         border: 0;
         border-left: 1px solid {p.border};
-        border-top-right-radius: 6px;
-        border-bottom-right-radius: 6px;
+        border-top-right-radius: {RADIUS.control}px;
+        border-bottom-right-radius: {RADIUS.control}px;
         background: {p.bg_surface_alt};
     }}
     QComboBox::drop-down:hover {{
@@ -1342,7 +1467,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         height: 12px;
     }}
     QSpinBox, QDoubleSpinBox {{
-        padding-right: 30px;
+        padding-right: {_SPIN_ARROW_GUTTER}px;
     }}
     QSpinBox::up-button, QDoubleSpinBox::up-button {{
         subcontrol-origin: border;
@@ -1351,7 +1476,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         border: 0;
         border-left: 1px solid {p.border};
         border-bottom: 1px solid {p.border};
-        border-top-right-radius: 6px;
+        border-top-right-radius: {RADIUS.control}px;
         background: {p.bg_surface_alt};
     }}
     QSpinBox::down-button, QDoubleSpinBox::down-button {{
@@ -1360,7 +1485,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         width: 22px;
         border: 0;
         border-left: 1px solid {p.border};
-        border-bottom-right-radius: 6px;
+        border-bottom-right-radius: {RADIUS.control}px;
         background: {p.bg_surface_alt};
     }}
     QSpinBox::up-button:hover,
@@ -1386,7 +1511,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
     QSlider#uepIsosurfaceSlider::groove:horizontal {{
         height: 14px;
         border: 1px solid {p.border};
-        border-radius: 7px;
+        border-radius: {ROUND_RADIUS.slider_groove}px;
         background: qlineargradient(
             x1: 0, y1: 0, x2: 1, y2: 0,
             stop: 0 {p.bg_surface_alt},
@@ -1394,7 +1519,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         );
     }}
     QSlider#uepIsosurfaceSlider::sub-page:horizontal {{
-        border-radius: 7px;
+        border-radius: {ROUND_RADIUS.slider_groove}px;
         background: qlineargradient(
             x1: 0, y1: 0, x2: 1, y2: 0,
             stop: 0 {p.accent},
@@ -1402,14 +1527,14 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         );
     }}
     QSlider#uepIsosurfaceSlider::add-page:horizontal {{
-        border-radius: 7px;
+        border-radius: {ROUND_RADIUS.slider_groove}px;
         background: {p.bg_surface_alt};
     }}
     QSlider#uepIsosurfaceSlider::handle:horizontal {{
         width: 26px;
         margin: -9px 0;
         border: 2px solid {p.bg_surface};
-        border-radius: 13px;
+        border-radius: {ROUND_RADIUS.slider_handle}px;
         background: {p.seal_gold};
     }}
     QSlider#uepIsosurfaceSlider::handle:horizontal:hover {{
@@ -1435,7 +1560,7 @@ def _item_view_styles(p: MuFinderPalette) -> str:
     return f"""
     QTreeWidget, QTableWidget, QListWidget {{
         border: 1px solid {p.border};
-        border-radius: 8px;
+        border-radius: {RADIUS.control}px;
         gridline-color: {p.border};
         background: {p.bg_surface};
         alternate-background-color: {p.bg_surface_alt};
@@ -1445,7 +1570,7 @@ def _item_view_styles(p: MuFinderPalette) -> str:
         border: 0;
         border-right: 1px solid {p.border};
         border-bottom: 1px solid {p.border};
-        border-top-left-radius: 8px;
+        border-top-left-radius: {RADIUS.control}px;
     }}
     QTableWidget[squareTopCorners="true"] {{
         border-top-left-radius: 0px;
@@ -1479,8 +1604,8 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
         background: {p.bg_surface_alt};
         border: 1px solid {p.border};
         border-bottom: 1px solid {p.border};
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
+        border-top-left-radius: {RADIUS.card}px;
+        border-top-right-radius: {RADIUS.card}px;
     }}
     QLabel#projectTreePanelTitle {{
         font-weight: 600;
@@ -1488,13 +1613,13 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
     QFrame#projectTreePanelBody {{
         border: 1px solid {p.border};
         border-top: 0px;
-        border-bottom-left-radius: 10px;
-        border-bottom-right-radius: 10px;
+        border-bottom-left-radius: {RADIUS.card}px;
+        border-bottom-right-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QFrame#projectDefaultsStrip {{
         border: 1px solid {p.border};
-        border-radius: 10px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QFrame#projectDefaultsSeparator {{
@@ -1522,24 +1647,24 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
         border: 1px solid {p.border};
         background: transparent;
         color: {p.text_primary};
-        padding: 2px 9px;
-        border-radius: 6px;
+        padding: {SPACING.xs}px {SPACING.sm}px;
+        border-radius: {RADIUS.control}px;
     }}
     QToolButton#projectDefaultsButton:hover {{
         background: {p.bg_surface_alt};
     }}
     QDockWidget#jobDashboardDock {{
         border: 1px solid {p.border};
-        border-radius: 10px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QDockWidget#jobDashboardDock::title {{
         background: {p.bg_surface_alt};
         border: 1px solid {p.border};
         border-bottom: 1px solid {p.border};
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
-        padding: 8px 12px;
+        border-top-left-radius: {RADIUS.card}px;
+        border-top-right-radius: {RADIUS.card}px;
+        padding: {SPACING.sm}px {SPACING.md}px;
         text-align: left;
         font-weight: 600;
     }}
@@ -1565,7 +1690,7 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     QWidget#randomCountChoice {{
         background: {p.bg_surface};
         border: 1px solid {p.border};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
     }}
     QWidget#randomSeparationChoice QRadioButton,
     QWidget#randomCountChoice QRadioButton {{
@@ -1576,7 +1701,7 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     QWidget#randomCountChoice[active="true"] {{
         background: {p.bg_surface_alt};
         border: 1px solid {p.accent};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
     }}
     QWidget#randomSeparationChoice[active="true"] QRadioButton,
     QWidget#randomCountChoice[active="true"] QRadioButton {{
@@ -1593,14 +1718,14 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     QWidget#clusterPositionsCard {{
         background: {p.bg_surface};
         border: 1px solid {p.border};
-        border-radius: 8px;
+        border-radius: {RADIUS.card}px;
     }}
     QWidget#clusterPositionsCard QLabel {{
         background: transparent;
     }}
     QProgressBar#muonGenerationProgress {{
         border: 1px solid {p.border};
-        border-radius: 7px;
+        border-radius: {RADIUS.control}px;
         background: {p.bg_surface_alt};
         color: {p.text_primary};
         text-align: center;
@@ -1608,7 +1733,7 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     }}
     QProgressBar#muonGenerationProgress::chunk {{
         background: {p.accent};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
         margin: 1px;
     }}
     QProgressBar#muonGenerationProgress[generationState="complete"] {{
@@ -1626,8 +1751,8 @@ def _magnetic_field_styles(p: MuFinderPalette) -> str:
         background: {p.bg_surface};
         border: 1px solid {p.border};
         color: {p.text_primary};
-        border-radius: 5px;
-        padding: 5px 8px;
+        border-radius: {RADIUS.control}px;
+        padding: {SPACING.xs}px {SPACING.sm}px;
     }}
     QLineEdit#nuclearDirectionInput:disabled {{
         background: {p.bg_surface};
@@ -1644,7 +1769,7 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QTabWidget#energyBarriersTabs::pane,
     QTabWidget#quantumAnalysisTabs::pane {{
         border: 1px solid {p.border};
-        border-radius: 8px;
+        border-radius: {RADIUS.control}px;
         top: -1px;
         background: {p.bg_surface};
     }}
@@ -1674,9 +1799,9 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         color: {p.text_muted};
         border: 1px solid {p.border};
         border-bottom: none;
-        border-top-left-radius: 8px;
-        border-top-right-radius: 8px;
-        padding: 8px 16px;
+        border-top-left-radius: {RADIUS.control}px;
+        border-top-right-radius: {RADIUS.control}px;
+        padding: {SPACING.sm}px {SPACING.lg}px;
         margin-right: 4px;
         font-weight: 700;
     }}
@@ -1713,7 +1838,7 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         background: {p.bg_surface_alt};
         color: {p.text_primary};
         border: 1px solid {p.border};
-        border-radius: 12px;
+        border-radius: {ROUND_RADIUS.help_button}px;
         min-width: 24px;
         min-height: 24px;
         font-weight: 800;
@@ -1728,14 +1853,14 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QWidget#muonChargeStateCard {{
         background: {p.bg_surface};
         border: 1px solid {p.border};
-        border-radius: 8px;
+        border-radius: {RADIUS.card}px;
     }}
     QWidget#muonChargeStateCard QLabel {{
         background: transparent;
     }}
     QRadioButton[chargeStateOption="true"] {{
         background: transparent;
-        padding: 6px;
+        padding: {SPACING.xs}px;
         color: {p.text_primary};
     }}
     QRadioButton[chargeStateOption="true"]:checked {{
@@ -1762,7 +1887,7 @@ def _workflow_tree_styles(
     }}
     QTreeWidget#workflowTree::item {{
         background: transparent;
-        padding: 2px 4px;
+        padding: {SPACING.xs}px {SPACING.xs}px;
         border-radius: 0px;
     }}
     QTreeWidget#workflowTree::item:hover {{
@@ -1813,7 +1938,7 @@ def _scrollbar_styles(p: MuFinderPalette) -> str:
     QScrollBar::handle:vertical {{
         background: {p.seal_gold};
         border: 1px solid {p.border};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
         min-height: 28px;
     }}
     QScrollBar::handle:vertical:hover {{
@@ -1831,7 +1956,7 @@ def _scrollbar_styles(p: MuFinderPalette) -> str:
     }}
     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
         background: {p.bg_surface_alt};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
     }}
     QScrollBar:horizontal {{
         background: transparent;
@@ -1841,7 +1966,7 @@ def _scrollbar_styles(p: MuFinderPalette) -> str:
     QScrollBar::handle:horizontal {{
         background: {p.seal_gold};
         border: 1px solid {p.border};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
         min-width: 28px;
     }}
     QScrollBar::handle:horizontal:hover {{
@@ -1859,7 +1984,7 @@ def _scrollbar_styles(p: MuFinderPalette) -> str:
     }}
     QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
         background: {p.bg_surface_alt};
-        border-radius: 6px;
+        border-radius: {RADIUS.control}px;
     }}
     QTreeWidget QScrollBar:horizontal, QTableWidget QScrollBar:horizontal, QListWidget QScrollBar:horizontal {{
         margin-left: 8px;
@@ -1874,17 +1999,17 @@ def _header_styles(p: MuFinderPalette) -> str:
         background: {p.bg_surface_alt};
         border: 0;
         border-bottom: 1px solid {p.border};
-        padding: 6px;
+        padding: {SPACING.xs}px;
         font-weight: 600;
     }}
     QHeaderView {{
         background: transparent;
     }}
     QTableWidget[hasVisibleVerticalHeader="false"] QHeaderView::section:horizontal:first {{
-        border-top-left-radius: 8px;
+        border-top-left-radius: {RADIUS.control}px;
     }}
     QTreeWidget QHeaderView::section:horizontal:first {{
-        border-top-left-radius: 8px;
+        border-top-left-radius: {RADIUS.control}px;
     }}
     QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 0px;
@@ -1896,10 +2021,10 @@ def _header_styles(p: MuFinderPalette) -> str:
         border-top-left-radius: 0px;
     }}
     QTableWidget QHeaderView::section:horizontal:last {{
-        border-top-right-radius: 8px;
+        border-top-right-radius: {RADIUS.control}px;
     }}
     QTreeWidget QHeaderView::section:horizontal:last {{
-        border-top-right-radius: 8px;
+        border-top-right-radius: {RADIUS.control}px;
     }}
     QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last {{
         border-top-right-radius: 0px;
@@ -1927,16 +2052,19 @@ def _button_styles(p: MuFinderPalette) -> str:
     QToolButton#plotPopOutButton {{
         background: {p.bg_surface};
         border: 1px solid {p.border};
-        border-radius: 6px;
-        padding: 2px;
+        border-radius: {RADIUS.control}px;
+        padding: 0px;
+        min-width: 20px;
+        min-height: 20px;
     }}
     QToolButton#plotPopOutButton:hover {{
         border-color: {p.accent};
     }}
     QPushButton {{
         border: 1px solid {p.border};
-        border-radius: 8px;
-        padding: 6px 10px;
+        border-radius: {RADIUS.control}px;
+        padding: {SPACING.xs}px {SPACING.sm}px;
+        min-height: {_STANDARD_BUTTON_HEIGHT - 2 * SPACING.xs - 2}px;
         background: {p.bg_surface};
     }}
     QPushButton:hover {{
@@ -1959,10 +2087,10 @@ def _button_styles(p: MuFinderPalette) -> str:
         border: 2px solid {p.text_primary};
     }}
     QPushButton[multiRowTarget="true"] {{
-        padding: 5px 9px;
+        padding: {SPACING.xs - 1}px {SPACING.sm - 1}px;
     }}
     QComboBox[multiRowTarget="true"] {{
-        padding: 3px 27px 3px 7px;
+        padding: {SPACING.xs - 1}px {_COMBO_ARROW_GUTTER - 1}px {SPACING.xs - 1}px {SPACING.sm - 1}px;
     }}
     QCheckBox#rowCheckBox {{
         margin-left: 16px;
@@ -1974,7 +2102,8 @@ def _button_styles(p: MuFinderPalette) -> str:
         border-color: {p.accent};
         background: {p.bg_surface};
         font-weight: 600;
-        padding: 4px 10px;
+        padding: {SPACING.xs}px {SPACING.sm}px;
+        min-height: 0px;
     }}
     QPushButton#overviewActionButton:hover {{
         background: {p.bg_surface_alt};
@@ -1984,7 +2113,7 @@ def _button_styles(p: MuFinderPalette) -> str:
         background: transparent;
         color: {p.text_primary};
         font-weight: 600;
-        padding: 3px 4px;
+        padding: {SPACING.xs}px {SPACING.xs}px;
     }}
     QToolButton#sectionToggleButton:hover {{
         color: {p.accent};
@@ -1994,8 +2123,8 @@ def _button_styles(p: MuFinderPalette) -> str:
     }}
     QToolButton#mufinderHelpButton {{
         border: 1px solid {p.border};
-        border-radius: 8px;
-        padding: 3px;
+        border-radius: {RADIUS.control}px;
+        padding: {SPACING.xs}px;
         min-width: 24px;
         min-height: 24px;
         background: {p.bg_surface};
@@ -2010,8 +2139,8 @@ def _button_styles(p: MuFinderPalette) -> str:
     }}
     QToolButton#mufinderCheckedToolButton {{
         border: 1px solid {p.border};
-        border-radius: 8px;
-        padding: 4px;
+        border-radius: {RADIUS.control}px;
+        padding: {SPACING.xs}px;
         min-width: 24px;
         min-height: 24px;
         background: {p.bg_surface_alt};
@@ -2025,8 +2154,8 @@ def _button_styles(p: MuFinderPalette) -> str:
     }}
     QToolButton#projectHomeButton {{
         border: 1px solid {p.border};
-        border-radius: 7px;
-        padding: 3px;
+        border-radius: {RADIUS.control}px;
+        padding: {SPACING.xs}px;
         min-width: 24px;
         min-height: 24px;
         background: {p.bg_surface};
@@ -2047,23 +2176,24 @@ def _button_styles(p: MuFinderPalette) -> str:
 
 
 def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
+    t = type_scale()
     return f"""
     QLabel#sectionTitle {{
-        font-size: 18px;
+        font-size: {t.section}px;
         font-weight: 600;
         font-family: "{heading_font}";
         color: {p.text_primary};
     }}
     QLabel#sectionSubtitle {{
-        font-size: 12px;
+        font-size: {t.body}px;
         color: {p.text_muted};
     }}
     QLabel#hintText {{
-        font-size: 11px;
+        font-size: {t.caption}px;
         color: {p.text_muted};
     }}
     QLabel#mixedValueMarker {{
-        font-size: 11px;
+        font-size: {t.caption}px;
         font-style: italic;
         color: {p.warning};
     }}
@@ -2072,68 +2202,68 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         font-weight: 600;
     }}
     QLabel#homeHeroTitle {{
-        font-size: 28px;
+        font-size: {t.page}px;
         font-weight: 700;
         font-family: "{heading_font}";
         color: {p.text_primary};
     }}
     QLabel#homeHeroSubtitle {{
-        font-size: 14px;
+        font-size: {t.emphasis}px;
         color: {p.text_muted};
     }}
     QLabel#cardTitle {{
-        font-size: 16px;
+        font-size: {t.emphasis}px;
         font-weight: 600;
         font-family: "{heading_font}";
     }}
     QLabel#cardBody {{
-        font-size: 13px;
+        font-size: {t.body}px;
         color: {p.text_muted};
     }}
     QLabel#overviewCardTitle {{
-        font-size: 16px;
+        font-size: {t.emphasis}px;
         font-weight: 700;
         font-family: "{heading_font}";
         color: {p.text_primary};
     }}
     QLabel#overviewSummaryValue {{
         color: {p.text_primary};
-        font-size: 13px;
+        font-size: {t.body}px;
     }}
     QLabel#overviewPlaceholder {{
         color: {p.text_muted};
-        font-size: 12px;
+        font-size: {t.body}px;
     }}
     QLabel#uepIsosurfacePanelTitle {{
         color: {p.text_primary};
-        font-size: 14px;
+        font-size: {t.emphasis}px;
         font-weight: 700;
         font-family: "{heading_font}";
     }}
     QLabel#uepIsosurfaceMinorLabel {{
         color: {p.text_muted};
-        font-size: 11px;
+        font-size: {t.caption}px;
         font-weight: 600;
     }}
     QLabel#uepIsosurfaceLegendTitle {{
         color: {p.text_primary};
-        font-size: 14px;
+        font-size: {t.emphasis}px;
         font-weight: 700;
         font-family: "{heading_font}";
     }}
     QLabel#uepIsosurfaceRangeValue {{
         color: {p.text_primary};
-        font-size: 13px;
+        font-size: {t.body}px;
         font-weight: 500;
     }}
     QLabel#uepIsosurfaceBound {{
         color: {p.text_muted};
-        font-size: 11px;
+        font-size: {t.caption}px;
         font-weight: 600;
     }}
     QLabel#uepIsosurfaceStatusLabel {{
         color: {p.text_muted};
-        font-size: 12px;
+        font-size: {t.body}px;
         font-weight: 500;
         line-height: 1.35em;
     }}
@@ -2150,13 +2280,13 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         color: {p.status_failed};
     }}
     QLabel#expeditionTrailTitle {{
-        font-size: 15px;
+        font-size: {t.emphasis}px;
         font-weight: 700;
         font-family: "{heading_font}";
         color: {p.text_primary};
     }}
     QLabel#expeditionTrailHint {{
-        font-size: 12px;
+        font-size: {t.body}px;
         color: {p.text_muted};
     }}
     QLabel#expeditionLegendComplete {{
@@ -2172,50 +2302,50 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         font-weight: 600;
     }}
     QLabel#journalDayHeader {{
-        font-size: 17px;
+        font-size: {t.section}px;
         font-weight: 700;
         font-family: "{heading_font}";
         color: {p.text_primary};
-        padding-top: 6px;
+        padding-top: {SPACING.xs}px;
     }}
     QLabel#journalEntryTitle {{
-        font-size: 13px;
+        font-size: {t.body}px;
         font-weight: 700;
         font-family: "{heading_font}";
         color: {p.text_primary};
     }}
     QLabel#journalWorkflowLabel {{
-        font-size: 11px;
+        font-size: {t.caption}px;
         font-weight: 600;
         color: {p.text_muted};
     }}
     QLabel#journalChevron {{
-        font-size: 11px;
+        font-size: {t.caption}px;
         color: {p.text_muted};
     }}
     QLabel#journalEntryBody {{
-        font-size: 12px;
+        font-size: {t.body}px;
         color: {p.text_primary};
     }}
     QLabel#journalDetailTime {{
-        font-size: 11px;
+        font-size: {t.caption}px;
         color: {p.text_muted};
     }}
     QLabel#journalDetailLine {{
-        font-size: 12px;
+        font-size: {t.body}px;
         color: {p.text_primary};
     }}
     QLabel#journalEmptyState {{
-        font-size: 13px;
+        font-size: {t.body}px;
         color: {p.text_muted};
-        padding: 18px;
+        padding: {SPACING.lg}px;
     }}
     QLabel#journalStamp {{
         min-width: 10px;
         max-width: 10px;
         min-height: 10px;
         max-height: 10px;
-        border-radius: 5px;
+        border-radius: {ROUND_RADIUS.journal_stamp}px;
         background: {p.border};
     }}
     QLabel#journalStamp[stampKind="milestone"] {{
@@ -2237,7 +2367,7 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     return f"""
     QFrame#homeCard {{
         border: 1px solid {p.border};
-        border-radius: 10px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QFrame#homeCard:hover {{
@@ -2245,17 +2375,17 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     }}
     QFrame#overviewCard {{
         border: 1px solid {p.border};
-        border-radius: 14px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QFrame#overviewPinnedZone {{
         border: 2px dashed {p.border};
-        border-radius: 12px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface_alt};
     }}
     QFrame#muonSummaryViewerFrame {{
         border: 1px solid {p.border};
-        border-radius: 8px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_primary};
     }}
     QWidget#muonSummaryPanelBody {{
@@ -2263,7 +2393,7 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     }}
     QFrame#mufinderOptionCard {{
         border: 1px solid {p.border};
-        border-radius: 12px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface_alt};
     }}
     QFrame#mufinderOptionCard[selected="true"] {{
@@ -2282,12 +2412,12 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     QFrame#uepIsosurfaceInfoCard,
     QFrame#connectedToleranceScanPanel {{
         border: 1px solid {p.border};
-        border-radius: 12px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QFrame#uepIsosurfaceStatusCard {{
         border: 1px solid {p.border};
-        border-radius: 12px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QFrame#uepIsosurfaceStatusCard[statusKind="busy"] {{
@@ -2305,7 +2435,7 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     QFrame#journalEntryCard {{
         border: 1px solid {p.border};
         border-left: 4px solid {p.border};
-        border-radius: 8px;
+        border-radius: {RADIUS.card}px;
         background: {p.bg_surface};
     }}
     QWidget#journalCardHeader, QWidget#journalEntryDetails {{
@@ -2362,10 +2492,10 @@ def _indicator_styles(
     }}
     QCheckBox::indicator,
     QTreeView::indicator, QTableView::indicator, QListView::indicator {{
-        border-radius: 4px;
+        border-radius: {RADIUS.control}px;
     }}
     QRadioButton::indicator {{
-        border-radius: 9px;
+        border-radius: {ROUND_RADIUS.radio_indicator}px;
     }}
     QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
         border-color: {p.accent};
@@ -2469,13 +2599,14 @@ def apply_base_style(app: QApplication) -> None:
 def apply_theme(app: QApplication, mode: str) -> str:
     """Apply MuFinder look-and-feel and return resolved light/dark mode."""
 
-    global _CURRENT_PALETTE
+    global _CURRENT_PALETTE, _CURRENT_TYPE_SCALE
 
     ensure_fonts_loaded()
     apply_base_style(app)
 
     resolved = resolve_theme_mode(mode)
     _CURRENT_PALETTE = dark_palette() if resolved == THEME_DARK else light_palette()
+    _CURRENT_TYPE_SCALE = _scaled_type_scale(text_scale())
 
     app.setPalette(_build_palette(_CURRENT_PALETTE))
     app.setStyleSheet(_build_stylesheet(_CURRENT_PALETTE))
@@ -2485,7 +2616,8 @@ def apply_theme(app: QApplication, mode: str) -> str:
     # Pixel size, not point size: the stylesheet declares every label size in
     # px, and point-to-pixel conversion differs per platform (macOS logical
     # 72 dpi vs Windows 96 dpi), which made Windows body text ~33% larger
-    # than every px-sized label. 11 px matches the macOS 11 pt rendering.
-    font.setPixelSize(11)
+    # than every px-sized label. The desktop's text size reaches both through
+    # type_scale().
+    font.setPixelSize(type_scale().caption)
     app.setFont(font)
     return resolved

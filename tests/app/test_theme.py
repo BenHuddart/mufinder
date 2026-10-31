@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import math
+import re
 
 from matplotlib.figure import Figure
 import pytest
 
-from PySide6.QtCore import QEvent, QPoint, QSettings, Qt
-from PySide6.QtGui import QColor, QFontDatabase
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QSettings, Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QProxyStyle,
+    QPushButton,
     QStyle,
     QTableWidget,
     QToolButton,
@@ -30,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app import theme as theme_module
+from mufinder.app import workflow_table_utils
 
 
 def test_theme_mode_roundtrip() -> None:
@@ -985,3 +989,256 @@ def test_style_plot_axes_can_leave_the_grid_off(qapp) -> None:
 
     assert not any(line.get_visible() for line in axis.get_xgridlines())
     assert axis.xaxis.label.get_color() == theme_module.current_palette().text_primary
+
+
+def _stylesheet_rules(stylesheet: str) -> list[tuple[str, str]]:
+    """Split a stylesheet into (selector, declarations) pairs, comments removed."""
+
+    without_comments = re.sub(r"/\*.*?\*/", "", stylesheet, flags=re.DOTALL)
+    return [
+        (selector.strip(), body)
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", without_comments)
+    ]
+
+
+def _every_stylesheet() -> list[str]:
+    return [
+        theme_module._build_stylesheet(theme_module.light_palette()),
+        theme_module.feature_dialog_stylesheet(
+            include_scroll_area=True, emphasised_radio_buttons=True
+        ),
+        theme_module.uep_clustering_toolbar_stylesheet(),
+        theme_module.magnetic_fields_stylesheet(),
+        theme_module.magnetic_structure_builder_stylesheet(),
+    ]
+
+
+def _declared_pixels(property_pattern: str) -> list[tuple[str, int]]:
+    """Return (selector, pixels) for each value of the matching properties in every stylesheet."""
+
+    found = []
+    for stylesheet in _every_stylesheet():
+        for selector, body in _stylesheet_rules(stylesheet):
+            for values in re.findall(rf"(?:^|[;\s])(?:{property_pattern})\s*:\s*([^;]+);", body):
+                found.extend(
+                    (selector, int(value)) for value in re.findall(r"(\d+)(?:px)?\b", values)
+                )
+    return found
+
+
+def test_scales_hold_the_agreed_steps() -> None:
+    assert dataclasses.astuple(theme_module.TYPE_SCALE) == (11, 13, 15, 18, 28)
+    assert dataclasses.astuple(theme_module.SPACING) == (4, 8, 12, 16, 24)
+    assert dataclasses.astuple(theme_module.RADIUS) == (6, 10)
+
+
+def test_stylesheet_font_sizes_are_type_scale_steps(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    sizes = {pixels for _selector, pixels in _declared_pixels("font-size")}
+
+    assert sizes == set(dataclasses.astuple(theme_module.TYPE_SCALE))
+
+
+def test_stylesheet_radii_are_scale_steps_or_round_shapes(qapp) -> None:
+    allowed = (
+        {0}
+        | set(dataclasses.astuple(theme_module.RADIUS))
+        | set(dataclasses.astuple(theme_module.ROUND_RADIUS))
+    )
+    radii = {pixels for _selector, pixels in _declared_pixels(r"border(?:-\w+-\w+)?-radius")}
+
+    assert radii <= allowed, sorted(radii - allowed)
+
+
+def test_stylesheet_padding_is_on_the_spacing_scale(qapp) -> None:
+    steps = {0} | set(dataclasses.astuple(theme_module.SPACING))
+    gutters = {theme_module._COMBO_ARROW_GUTTER, theme_module._SPIN_ARROW_GUTTER}
+    offenders = set()
+    for selector, pixels in _declared_pixels(r"padding(?:-\w+)?"):
+        # A multi-row marker's thicker border is given back by the padding, so
+        # the control keeps its size.
+        compensated = (
+            {step - 1 for step in steps | gutters} if "multiRowTarget" in selector else set()
+        )
+        if pixels not in steps | gutters | compensated:
+            offenders.add((selector, pixels))
+
+    assert not offenders
+
+
+def test_stylesheet_round_radii_are_half_the_shape(qapp) -> None:
+    round_radius = theme_module.ROUND_RADIUS
+    stylesheet = theme_module._build_stylesheet(theme_module.light_palette())
+    rules = dict(_stylesheet_rules(stylesheet))
+
+    # 16 px and a 1 px border each side.
+    assert f"border-radius: {round_radius.radio_indicator}px" in rules["QRadioButton::indicator"]
+    assert round_radius.radio_indicator == (16 + 2) // 2
+    handle = rules["QSlider#uepIsosurfaceSlider::handle:horizontal"]
+    assert "width: 26px" in handle
+    assert f"border-radius: {round_radius.slider_handle}px" in handle
+    assert round_radius.slider_handle == 26 // 2
+    stamp = rules["QLabel#journalStamp"]
+    assert "min-width: 10px" in stamp
+    assert f"border-radius: {round_radius.journal_stamp}px" in stamp
+    assert round_radius.journal_stamp == 10 // 2
+    help_button = rules["QToolButton#quantumAnalysisHelpButton"]
+    assert "min-width: 24px" in help_button
+    assert f"border-radius: {round_radius.help_button}px" in help_button
+    assert round_radius.help_button == 24 // 2
+    groove = rules["QSlider#uepIsosurfaceSlider::groove:horizontal"]
+    assert "height: 14px" in groove
+    assert f"border-radius: {round_radius.slider_groove}px" in groove
+    assert round_radius.slider_groove == 14 // 2
+
+
+def test_layout_helpers_take_their_values_from_the_spacing_scale(qapp) -> None:
+    steps = set(dataclasses.astuple(theme_module.SPACING))
+    layout = QVBoxLayout()
+
+    layout.setContentsMargins(theme_module.page_margins())
+    margins = layout.contentsMargins()
+    assert {margins.left(), margins.top(), margins.right(), margins.bottom()} <= steps
+
+    layout.setContentsMargins(theme_module.card_margins())
+    margins = layout.contentsMargins()
+    assert {margins.left(), margins.top(), margins.right(), margins.bottom()} <= steps
+
+    layout.setSpacing(theme_module.form_spacing())
+    assert layout.spacing() in steps
+
+
+def _system_font(*, points: float | None = None, pixels: int | None = None) -> QFont:
+    font = QFont("Sans")
+    if points is not None:
+        font.setPointSizeF(points)
+    if pixels is not None:
+        font.setPixelSize(pixels)
+    return font
+
+
+@pytest.fixture
+def desktop_font(qapp, monkeypatch):
+    """Pretend the desktop's general font is the given one, on a platform with a known default."""
+
+    monkeypatch.setattr(theme_module.sys, "platform", "linux")
+
+    def set_font(font: QFont) -> None:
+        monkeypatch.setattr(theme_module.QFontDatabase, "systemFont", lambda _kind: font)
+
+    yield set_font
+    monkeypatch.undo()
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_default_or_smaller_desktop_text_keeps_the_designed_sizes(qapp, desktop_font) -> None:
+    # 11 pt at 96 dpi is the default; 9 pt must not push the smallest step below 11 px.
+    desktop_font(_system_font(pixels=12))
+
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert theme_module.text_scale() == 1.0
+    assert theme_module.type_scale() == theme_module.TYPE_SCALE
+    assert theme_module.type_scale().caption >= 11
+
+
+def test_larger_desktop_text_scales_the_stylesheet_and_application_font(qapp, desktop_font) -> None:
+    default_size = theme_module._DEFAULT_SYSTEM_TEXT_PX_ELSEWHERE
+    desktop_font(_system_font(pixels=round(default_size * 1.5)))
+    factor = round(default_size * 1.5) / default_size
+
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert theme_module.text_scale() == pytest.approx(factor)
+    assert qapp.font().pixelSize() == round(11 * factor)
+    rules = dict(_stylesheet_rules(qapp.styleSheet()))
+    assert f"font-size: {round(28 * factor)}px" in rules["QLabel#homeHeroTitle"]
+    assert f"font-size: {round(11 * factor)}px" in rules["QLabel#hintText"]
+    toolbar = theme_module.uep_clustering_toolbar_stylesheet()
+    assert f"font-size: {round(13 * factor)}px" in toolbar
+
+
+def test_desktop_text_size_is_read_in_points_as_well_as_pixels(qapp, desktop_font) -> None:
+    screen = qapp.primaryScreen()
+    default_points = (
+        theme_module._DEFAULT_SYSTEM_TEXT_PX_ELSEWHERE * 72.0 / screen.logicalDotsPerInch()
+    )
+    desktop_font(_system_font(points=default_points * 1.25))
+
+    assert theme_module.text_scale() == pytest.approx(1.25, abs=0.01)
+
+
+def test_text_scale_is_capped_so_a_huge_desktop_font_stays_usable(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=200))
+
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert theme_module.text_scale() == 2.0
+    assert theme_module.type_scale().page == 56
+
+
+def test_desktop_font_change_applies_with_the_next_theme_only(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    desktop_font(_system_font(pixels=22))
+
+    assert theme_module.type_scale() == theme_module.TYPE_SCALE
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert theme_module.type_scale().caption > theme_module.TYPE_SCALE.caption
+
+
+def test_text_scale_is_one_without_a_gui_application(monkeypatch) -> None:
+    monkeypatch.setattr(
+        theme_module.QGuiApplication, "instance", lambda: QCoreApplication.instance()
+    )
+    monkeypatch.setattr(QCoreApplication, "instance", lambda: object())
+
+    assert theme_module.text_scale() == 1.0
+
+
+def test_scaled_to_text_follows_the_type_scale(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert theme_module.scaled_to_text(58) == 58
+
+    desktop_font(_system_font(pixels=200))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    assert theme_module.scaled_to_text(58) == 116
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_standard_button_is_28_px_high_under_both_themes(qapp, desktop_font, mode) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, mode)
+
+    button = QPushButton("Configure…")
+    marked = QPushButton("Configure…")
+    marked.setProperty("multiRowTarget", True)
+
+    assert button.sizeHint().height() == 28
+    # The marker's thicker border must not change the height.
+    assert marked.sizeHint().height() == 28
+
+
+def test_standard_button_grows_with_larger_desktop_text(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=29))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert QPushButton("Configure…").sizeHint().height() > 28
+
+
+def test_a_row_button_fits_a_table_row_with_a_pixel_to_spare(qapp, desktop_font) -> None:
+    desktop_font(_system_font(pixels=12))
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    table = workflow_table_utils.create_workflow_table(("Action",))
+    table.setRowCount(1)
+    table.setCellWidget(0, 0, QPushButton("Dismiss"))
+    table.show()
+    qapp.processEvents()
+
+    assert table.rowHeight(0) >= 29
+    assert table.cellWidget(0, 0).height() == table.rowHeight(0) - 1
+    table.close()

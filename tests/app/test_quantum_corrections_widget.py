@@ -7,10 +7,12 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QHeaderView, QLabel
 
 from mufinder.app.quantum_corrections_widget import (
+    RESULT_ANALYSIS_COLUMN,
     QuantumCorrectionsWidget,
     QuantumResultRow,
     QuantumSourceRow,
 )
+from mufinder.app import theme
 from mufinder.app.theme import status_brush
 
 
@@ -185,3 +187,19 @@ def test_page_guidance_explains_purpose_and_source_headers(qapp) -> None:
     ):
         assert tooltips[header].strip(), header
     assert "farm count" in tooltips["Displacements"]
+
+
+def test_launch_analysis_buttons_fit_their_rows_with_a_pixel_to_spare(qapp) -> None:
+    theme.apply_theme(qapp, theme.THEME_LIGHT)
+    widget = QuantumCorrectionsWidget()
+    widget.set_results([_result_row(), _result_row(key="res-b")])
+    widget.show()
+    qapp.processEvents()
+    table = widget._results_table
+
+    for row in range(table.rowCount()):
+        button = table.cellWidget(row, RESULT_ANALYSIS_COLUMN)
+        assert button.sizeHint().height() == 28
+        assert table.rowHeight(row) >= 29
+        assert button.height() == table.rowHeight(row) - 1
+    widget.close()

@@ -47,7 +47,7 @@ from mufinder.castep_io.gui_metadata import (
     validate_gui_values,
 )
 from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
-from mufinder.app.theme import track_item_view_corners
+from mufinder.app.theme import scaled_to_text, track_item_view_corners
 from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_status
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
@@ -909,7 +909,7 @@ class ParameterDialog(QDialog):
             self._table_layout.addWidget(value_widget, row_index, 1)
 
             reset_button = QPushButton("Reset", self._table_widget)
-            reset_button.setMaximumWidth(58)
+            reset_button.setMaximumWidth(scaled_to_text(58))
             reset_button.setEnabled(
                 self._is_name_editable(name) and not locked and editor is not None
             )
@@ -920,7 +920,7 @@ class ParameterDialog(QDialog):
             self._table_layout.addWidget(reset_button, row_index, 2)
 
             info_button = QPushButton("Info", self._table_widget)
-            info_button.setMaximumWidth(52)
+            info_button.setMaximumWidth(scaled_to_text(52))
             info_button.clicked.connect(
                 lambda _checked=False, row_spec=spec: self._show_help(row_spec)
             )

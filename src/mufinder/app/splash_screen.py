@@ -13,6 +13,7 @@ from PySide6.QtGui import (
     QGuiApplication,
     QLinearGradient,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
 )
@@ -96,15 +97,22 @@ class MuFinderSplashScreen(QSplashScreen):
         bar_y = 294
         bar_w = 512
         bar_h = 10
-        painter.setPen(QPen(QColor("#C4AD8F"), 1))
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#FDF6EC"))
         painter.drawRoundedRect(bar_x, bar_y, bar_w, bar_h, 5, 5)
 
-        fill_w = int((bar_w - 2) * (self._progress / 100.0))
-        painter.setPen(QPen(QColor("#2C2418"), 2))
-        painter.drawLine(
-            bar_x + 1, bar_y + (bar_h // 2), bar_x + max(1, fill_w), bar_y + (bar_h // 2)
+        # The fill takes the track's height and its rounded ends; the outline
+        # is drawn over it.
+        track = QPainterPath()
+        track.addRoundedRect(bar_x, bar_y, bar_w, bar_h, 5, 5)
+        painter.setClipPath(track)
+        painter.fillRect(
+            bar_x, bar_y, int(bar_w * (self._progress / 100.0)), bar_h, QColor("#2C2418")
         )
+        painter.setClipping(False)
+        painter.setPen(QPen(QColor("#C4AD8F"), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(bar_x, bar_y, bar_w, bar_h, 5, 5)
 
         message_font = QFont(self._body_font_family)
         message_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
