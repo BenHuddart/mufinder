@@ -20,7 +20,7 @@ from test_plot_canvas_layout import PLOT_DIALOGS  # noqa: E402
 
 # Dialogs whose only content is their plot: the dialog itself is already the
 # resizable plot window, so they have no pop-out button.
-_SINGLE_PLOT_DIALOGS = {"magnetic-field-distribution", "convergence-examiner"}
+_SINGLE_PLOT_DIALOGS = {"magnetic-field-distribution"}
 
 
 def _settle(qapp, passes: int = 4) -> None:
