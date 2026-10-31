@@ -1343,10 +1343,7 @@ class MainWindow(QMainWindow):
                 destructive=("discard",),
             )
             if answer == "cancel":
-                # Staying open: persist/refresh the coalesced flush that closeEvent
-                # stopped the timer for, so it is not orphaned until the next job.
-                self._flush_dashboard()
-                self._sync_job_runtime_timer()
+                self._resume_after_abandoned_close()
                 event.ignore()
                 return
             if answer == "save":
@@ -1355,11 +1352,7 @@ class MainWindow(QMainWindow):
                 except (OSError, ValueError) as exc:
                     event.ignore()
                     QMessageBox.critical(self, "Save blocked", str(exc))
-                    # Staying open: everything stopped above for the close resumes.
-                    self._flush_dashboard()
-                    self._sync_job_runtime_timer()
-                    if job_watchdog_timer is not None:
-                        job_watchdog_timer.start()
+                    self._resume_after_abandoned_close()
                     return
             self._shutting_down = True
             self._close_open_uep_analysis_dialogs()
@@ -1407,6 +1400,16 @@ class MainWindow(QMainWindow):
         if cluster_runner is not None:
             cluster_runner.shutdown()
         super().closeEvent(event)
+
+    def _resume_after_abandoned_close(self) -> None:
+        """Restart what ``closeEvent`` stopped, now that the window stays open."""
+        # Persist/refresh the coalesced flush whose timer was stopped, so it is not
+        # orphaned until the next job.
+        self._flush_dashboard()
+        self._sync_job_runtime_timer()
+        job_watchdog_timer = getattr(self, "_job_watchdog_timer", None)
+        if job_watchdog_timer is not None:
+            job_watchdog_timer.start()
 
     def _shutdown_embedded_structure_viewers(self) -> None:
         viewers = self.findChildren(AtomicStructureViewer)
@@ -1743,7 +1746,7 @@ class MainWindow(QMainWindow):
             self._document = self._project_service.create_project(
                 project_root, project_name.strip()
             )
-        except ValueError as exc:
+        except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Project error", str(exc))
             return
 

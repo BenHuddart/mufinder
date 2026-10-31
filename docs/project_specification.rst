@@ -103,6 +103,8 @@ Persistence requirements:
 - workflow-relevant UI state is persisted where appropriate
 - provenance and the source files needed for reproducibility are preserved
 - cross-entity references are validated before save
+- each project file is replaced atomically, so a full disk or a crash during a
+  save leaves the file being written with its earlier content
 - saved supercell assets are persisted as ``Structure`` entities with
   ``properties.supercell_asset`` metadata rather than as a separate entity type
 - persisted names and compatibility shims follow :doc:`/compatibility_policy`

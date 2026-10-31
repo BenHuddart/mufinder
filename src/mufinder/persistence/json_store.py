@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import json
 import os
+import stat
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 
 _DARWIN_SF_DATALESS = 0x40000000
@@ -69,9 +73,46 @@ class ProjectStore:
         return json.dumps(payload, indent=2, sort_keys=True)
 
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
-        """Write JSON payload with stable formatting."""
+        """Write JSON payload with stable formatting, atomically.
+
+        The document goes to a sibling temporary file, is synced to disk and is
+        moved into place, so a full disk or a crash never leaves a truncated file
+        where a good one was. The temporary name does not end in ``.json``, so one
+        left by a killed process is never read or pruned as an entity.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.canonical_json(payload), encoding="utf-8")
+        # The real file, so a symbolic link stays a link rather than being replaced.
+        destination = Path(os.path.realpath(path))
+        existing_mode = self._writable_file_mode(destination)
+        temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
+        try:
+            with temporary.open("x", encoding="utf-8") as stream:
+                stream.write(self.canonical_json(payload))
+                stream.flush()
+                os.fsync(stream.fileno())
+            if existing_mode is not None:
+                temporary.chmod(existing_mode)
+            os.replace(temporary, destination)
+        except BaseException:
+            # The original failure is the one to report, not a failed clean-up.
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _writable_file_mode(path: Path) -> int | None:
+        """Return the permission bits of ``path``, or ``None`` if there is no such file.
+
+        Renaming over a file needs only a writable folder, so a read-only file is
+        refused here to keep it from being replaced.
+        """
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            return None
+        if not os.access(path, os.W_OK):
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
+        return mode
 
     @staticmethod
     def _is_dataless_file(path: Path) -> bool:

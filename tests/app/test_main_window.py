@@ -64,6 +64,7 @@ from mufinder.services.magnetic_field_results import (
     MAGNETIC_FIELD_RESULT_TYPE,
     magnetic_field_results,
 )
+from mufinder.persistence import json_store
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.services.project_service import ProjectService
 from mufinder.services.project_summary import StageStatus, summarize_project
@@ -904,6 +905,31 @@ def test_failed_save_on_close_keeps_the_window_open_and_asks_again(
     assert window._shutting_down is True
 
 
+def test_failed_save_on_close_shows_the_reason_and_keeps_the_saved_project(
+    visible_project_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    answered_choices: list[dict[str, object]],
+) -> None:
+    window = visible_project_window
+    manifest = window._document.project_root / "project.json"
+    earlier = manifest.read_bytes()
+    messages = _record_critical_messages(monkeypatch)
+
+    def _no_space(_descriptor: int) -> None:
+        raise OSError(28, "No space left on device")
+
+    # The real write path runs up to the failure, unlike _fail_project_writes.
+    monkeypatch.setattr(json_store.os, "fsync", _no_space)
+
+    assert window.close() is False
+
+    assert window.isVisible()
+    assert [title for title, _text in messages[:1]] == ["Save blocked"]
+    assert "No space left on device" in messages[0][1]
+    assert manifest.read_bytes() == earlier
+    assert len(answered_choices) == 1
+
+
 def test_failed_save_on_close_leaves_uep_analysis_dialogs_open(
     visible_project_window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -966,6 +992,56 @@ def test_cancelled_close_survives_a_failed_autosave(
         main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
     )
     assert window.close() is True
+
+
+def test_cancelled_close_restarts_the_job_watchdog(
+    visible_project_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = visible_project_window
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "cancel"
+    )
+    assert window._job_watchdog_timer.isActive()
+
+    assert window.close() is False
+
+    assert window._job_watchdog_timer.isActive()
+    monkeypatch.setattr(
+        main_window_module.workflow_table_utils, "confirm_choice", lambda *_a, **_k: "discard"
+    )
+    assert window.close() is True
+    assert not window._job_watchdog_timer.isActive()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError(28, "No space left on device"),
+        PermissionError(13, "Permission denied"),
+        ValueError("Project integrity check failed"),
+    ],
+    ids=["full-disk", "read-only-folder", "integrity-check"],
+)
+def test_new_project_failure_shows_the_reason_and_keeps_the_open_project(
+    main_window: MainWindow,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    window = main_window
+    current = ProjectService().create_project(tmp_path / "current.mufinder", "Current")
+    window._document = current
+    messages = _record_critical_messages(monkeypatch)
+    monkeypatch.setattr(
+        main_window_module.QInputDialog, "getText", lambda *_a, **_k: ("Fresh", True)
+    )
+    monkeypatch.setattr(window, "_get_existing_directory", lambda **_k: str(tmp_path))
+    _fail_project_writes(monkeypatch, error)
+
+    window._new_project()
+
+    assert messages == [("Project error", str(error))]
+    assert window._document is current
 
 
 def test_close_without_a_prompt_survives_a_failed_autosave(
