@@ -2003,8 +2003,11 @@ each platform's native look:
   checkboxes.
 - Keyboard focus shows as a 2 px ring in the accent colour (red in light, amber
   in dark) on push buttons, tool buttons, combo boxes, line edits, text edits,
-  spin boxes, tab bars (around the current tab), item views and checkbox and
-  radio indicators, in ``mufinder.app.theme``. The ring is painted by a small
+  spin boxes, scroll areas, tab bars (around the current tab), item views and
+  checkbox and radio indicators, in ``mufinder.app.theme``. A 1 px surface-coloured
+  keyline keeps the ring visible on an accent fill: along its inner edge everywhere,
+  and along its outer edge too for a control in an item view, whose row may be
+  selected. The ring is painted by a small
   child widget of the focused control rather than by a stylesheet border: a
   focused control keeps its size and contents, the ring stays inside a row
   button's table row, and a feature-local stylesheet cannot remove it. It

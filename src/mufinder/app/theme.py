@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QRadioButton,
     QScrollBar,
     QStyle,
@@ -42,7 +41,6 @@ from PySide6.QtWidgets import (
     QTabBar,
     QTableWidget,
     QTabWidget,
-    QTextEdit,
     QToolButton,
     QTreeWidget,
     QWidget,
@@ -227,6 +225,15 @@ _SPIN_ARROW_GUTTER = 30
 _STANDARD_BUTTON_HEIGHT = 28
 _FOCUS_RING_WIDTH = 2
 _FOCUS_RING_NAME = "mufinderFocusRing"
+_FOCUS_RING_KEYLINE = 1
+_TAB_GAP = 4
+_GAPPED_TAB_WIDGETS = (
+    "mufinderTabs",
+    "muonRelaxationChargeTabs",
+    "analysisWorkspaceTabs",
+    "energyBarriersTabs",
+    "quantumAnalysisTabs",
+)
 
 # The general font each platform's desktop ships with, in pixels: 13 pt at
 # 72 dpi on macOS, 9 pt at 96 dpi on Windows, and 11 pt at 96 dpi on GNOME, the
@@ -679,13 +686,11 @@ def _ensure_table_corner_styler(app: QApplication) -> None:
 # The control kinds that show the keyboard focus ring.
 _FOCUS_RING_CONTROLS = (
     QAbstractButton,
-    QAbstractItemView,
+    QAbstractScrollArea,  # Item views, text edits and scroll areas.
     QAbstractSpinBox,
     QComboBox,
     QLineEdit,
-    QPlainTextEdit,
     QTabBar,
-    QTextEdit,
 )
 # Events on a ringed control that can change where its ring belongs.
 _FOCUS_RING_LAYOUT_EVENTS = {
@@ -696,6 +701,15 @@ _FOCUS_RING_LAYOUT_EVENTS = {
 }
 
 
+def _is_inside_item_view(control: QWidget) -> bool:
+    ancestor = control.parentWidget()
+    while ancestor is not None:
+        if isinstance(ancestor, QAbstractItemView):
+            return True
+        ancestor = ancestor.parentWidget()
+    return False
+
+
 class _FocusRing(QWidget):
     """The accent ring painted over the control that has keyboard focus.
 
@@ -704,6 +718,12 @@ class _FocusRing(QWidget):
     move a neighbour or be clipped by a table row, and no stylesheet, including a
     feature-local one, can override it. The colour is read at paint time, so the
     ring follows a theme change.
+
+    The accent colour disappears against an accent fill, so a surface-coloured keyline
+    runs along the ring's inner edge, for a checked button or a selected row inside the
+    ring, and, for a control in an item view, along its outer edge too, for the selected
+    row around the control. Outside an item view nothing around a control is filled with
+    the accent, and the ring stays at the control's edge.
     """
 
     def __init__(self, control: QWidget, tracker: "_FocusRingTracker") -> None:
@@ -712,6 +732,7 @@ class _FocusRing(QWidget):
         self.setObjectName(_FOCUS_RING_NAME)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._outer_keyline = _is_inside_item_view(control)
         # The ring is an event filter only while it exists, and only on its own
         # control, so this costs nothing on any other widget. A click usually lands
         # on a child: a view's viewport or a spin box's line edit.
@@ -742,6 +763,10 @@ class _FocusRing(QWidget):
             rect = self._indicator_rect(control)
         elif isinstance(control, QTabBar):
             rect = control.tabRect(control.currentIndex())
+            # The tab's margin is part of its rect but not of what it draws.
+            tab_widget = control.parentWidget()
+            if tab_widget is not None and tab_widget.objectName() in _GAPPED_TAB_WIDGETS:
+                rect = rect.adjusted(0, 0, -_TAB_GAP, 0)
         else:
             rect = control.rect()
         if rect == self.geometry():
@@ -752,7 +777,8 @@ class _FocusRing(QWidget):
             # Mask to the ring's band, so the ring does not overlap the whole of a
             # scrolling viewport and cost it Qt's scrolling optimisation.
             whole = QRect(0, 0, rect.width(), rect.height())
-            band = _FOCUS_RING_WIDTH + 1  # The rounded corners reach a pixel further in.
+            # The rounded corners reach a pixel further in.
+            band = _FOCUS_RING_WIDTH + _FOCUS_RING_KEYLINE + 1
             self.setMask(QRegion(whole) - QRegion(whole.adjusted(band, band, -band, -band)))
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -764,6 +790,10 @@ class _FocusRing(QWidget):
         elif event_type in _FOCUS_RING_LAYOUT_EVENTS:
             if watched is self.parentWidget():
                 self._follow_control()
+        elif event_type in (QEvent.Type.ZOrderChange, QEvent.Type.Show):
+            # A scroll area raises its scroll bars when it lays them out.
+            if watched is not self.parentWidget():
+                self.raise_()
         elif event_type == QEvent.Type.Paint and isinstance(watched, QTabBar):
             # A tab bar has no signal for its tabs moving: a new tab, a longer
             # title, a scroll. It repaints for all of them.
@@ -773,7 +803,9 @@ class _FocusRing(QWidget):
     def paintEvent(self, _event: object) -> None:
         control = self.parentWidget()
         palette = current_palette()
-        inset = _FOCUS_RING_WIDTH / 2
+        keyline = _FOCUS_RING_KEYLINE
+        edge = keyline if self._outer_keyline else 0
+        inset = edge + _FOCUS_RING_WIDTH / 2
         ring = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
         round_shape = isinstance(control, QRadioButton)
         radius = ring.width() / 2 if round_shape else max(0.0, RADIUS.control - inset)
@@ -781,14 +813,15 @@ class _FocusRing(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        if isinstance(control, (QCheckBox, QRadioButton)):
-            # A checked indicator is filled with the accent colour, so a surface-
-            # coloured line keeps the ring distinct from the fill.
-            gap = inset + 0.5
-            inner = ring.adjusted(gap, gap, -gap, -gap)
-            inner_radius = inner.width() / 2 if round_shape else radius
-            painter.setPen(QPen(QColor(palette.bg_surface), 1))
-            painter.drawRoundedRect(inner, inner_radius, inner_radius)
+        painter.setPen(QPen(QColor(palette.bg_surface), keyline))
+        gap = (_FOCUS_RING_WIDTH + keyline) / 2
+        inner = ring.adjusted(gap, gap, -gap, -gap)
+        inner_radius = inner.width() / 2 if round_shape else max(0.0, radius - gap)
+        painter.drawRoundedRect(inner, inner_radius, inner_radius)
+        if self._outer_keyline:
+            outer = ring.adjusted(-gap, -gap, gap, gap)
+            outer_radius = outer.width() / 2 if round_shape else radius + gap
+            painter.drawRoundedRect(outer, outer_radius, outer_radius)
         painter.setPen(QPen(QColor(palette.accent), _FOCUS_RING_WIDTH))
         painter.drawRoundedRect(ring, radius, radius)
         painter.end()
@@ -2022,7 +2055,7 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         border-top-left-radius: {RADIUS.control}px;
         border-top-right-radius: {RADIUS.control}px;
         padding: {SPACING.sm}px {SPACING.lg}px;
-        margin-right: 4px;
+        margin-right: {_TAB_GAP}px;
         font-weight: 700;
     }}
     QTabWidget#mufinderTabs QTabBar::tab:selected,

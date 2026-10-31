@@ -30,9 +30,11 @@ from PySide6.QtWidgets import (
     QProxyStyle,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QStyle,
     QTabBar,
+    QTabWidget,
     QTableWidget,
     QToolButton,
     QTreeWidget,
@@ -1292,6 +1294,12 @@ def _tree() -> QTreeWidget:
     return tree
 
 
+def _scroll_area() -> QScrollArea:
+    area = QScrollArea()
+    area.setWidget(QLabel("contents"))
+    return area
+
+
 def _list_widget() -> QListWidget:
     widget = QListWidget()
     widget.addItem("row")
@@ -1314,6 +1322,7 @@ _FOCUS_RING_KINDS = {
     "tree": _tree,
     "list": _list_widget,
     "text edit": lambda: QPlainTextEdit("notes"),
+    "scroll area": lambda: _scroll_area(),
 }
 
 
@@ -1588,6 +1597,133 @@ def test_radio_ring_is_a_whole_circle(focus_scene) -> None:
         assert abs(colour.greenF() - accent.greenF()) < 0.2
 
 
+def _wcag_ratio(first: QColor, second: QColor) -> float:
+    return _contrast_ratio(first.name(), second.name())
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_ring_stands_out_on_a_row_button_in_a_selected_row(focus_scene, mode: str) -> None:
+    table = QTableWidget(3, 1)
+    table.setTabKeyNavigation(False)
+    table.horizontalHeader().setStretchLastSection(True)
+    row_button = QPushButton("Configured...")
+    table.setCellWidget(0, 0, row_button)
+    scene = focus_scene(table, mode)
+    table.setRowHeight(0, row_button.sizeHint().height() + 1)
+    table.selectRow(0)
+    table.setFocus()
+    QTest.keyClick(table, Qt.Key.Key_Tab)
+    QApplication.processEvents()
+    assert scene.ring().parentWidget() is row_button
+
+    image = row_button.grab().toImage()
+    ratio = row_button.devicePixelRatioF()
+    y = int(row_button.height() / 2 * ratio)
+    keyline, accent = (image.pixelColor(int(x * ratio), y) for x in (0, 1))
+
+    palette = theme_module.current_palette()
+    assert accent == QColor(palette.accent)
+    assert keyline == QColor(palette.bg_surface)
+    # The keyline separates the ring from the selected row's accent fill.
+    assert _wcag_ratio(keyline, QColor(palette.accent)) >= 3
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_ring_stands_out_on_a_checked_accent_filled_button(focus_scene, mode: str) -> None:
+    button = QPushButton("Cluster")
+    button.setObjectName("uepClusteringToolbarButton")
+    button.setCheckable(True)
+    button.setChecked(True)
+    scene = focus_scene(button, mode)
+    button.setStyleSheet(theme_module.uep_clustering_toolbar_stylesheet())
+    QApplication.processEvents()
+    scene.tab_to_control()
+
+    image = button.grab().toImage()
+    ratio = button.devicePixelRatioF()
+    y = int(button.height() / 2 * ratio)
+    ring, keyline, fill = (image.pixelColor(int(x * ratio), y) for x in (1, 2, 4))
+
+    palette = theme_module.current_palette()
+    assert fill == QColor(palette.accent)
+    assert ring == fill
+    assert _wcag_ratio(keyline, fill) >= 3
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_ring_stands_out_on_a_selected_row_at_the_view_edge(focus_scene, mode: str) -> None:
+    table = QTableWidget(3, 1)
+    table.setTabKeyNavigation(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setStretchLastSection(True)
+    table.setMinimumHeight(120)
+    scene = focus_scene(table, mode)
+    table.selectRow(1)
+    QApplication.processEvents()
+    scene.tab_to_control()
+
+    image = table.grab().toImage()
+    ratio = table.devicePixelRatioF()
+    y = int(table.rowViewportPosition(1) + table.viewport().y() + table.rowHeight(1) / 2)
+    ring, keyline, fill = (image.pixelColor(int(x * ratio), int(y * ratio)) for x in (1, 2, 5))
+
+    # Fusion shades a selected row, so its fill is only close to the accent colour.
+    assert ring == QColor(theme_module.current_palette().accent)
+    assert _wcag_ratio(ring, fill) < 1.2
+    assert _wcag_ratio(keyline, fill) >= 3
+
+
+@pytest.mark.parametrize("mode", [theme_module.THEME_LIGHT, theme_module.THEME_DARK])
+def test_scroll_bars_do_not_cover_the_ring(focus_scene, mode: str) -> None:
+    table = QTableWidget(40, 12)
+    table.setTabKeyNavigation(False)
+    table.setFixedSize(240, 160)
+    scene = focus_scene(table, mode)
+    assert table.verticalScrollBar().isVisible()
+    assert table.horizontalScrollBar().isVisible()
+    scene.tab_to_control()
+
+    accent = QColor(theme_module.current_palette().accent)
+    image = table.grab().toImage()
+    ratio = table.devicePixelRatioF()
+    width, height = image.width(), image.height()
+    middle_x, middle_y = width // 2, height // 2
+    bar_x = int((table.verticalScrollBar().parentWidget().x() + 4) * ratio)
+    bar_y = int((table.horizontalScrollBar().parentWidget().y() + 4) * ratio)
+    for pixels in (
+        [(width - 1, middle_y), (width - 2, middle_y)],
+        [(middle_x, height - 1), (middle_x, height - 2)],
+        [(bar_x, 0), (bar_x, 1)],
+        [(0, bar_y), (1, bar_y)],
+    ):
+        for x, y in pixels:
+            assert image.pixelColor(x, y) == accent
+
+    # And when a bar appears after the ring: the bars are raised as they are laid out.
+    table.setRowCount(1)
+    QApplication.processEvents()
+    table.setRowCount(40)
+    QApplication.processEvents()
+    image = table.grab().toImage()
+    assert image.pixelColor(width - 1, middle_y) == accent
+    assert image.pixelColor(width - 2, middle_y) == accent
+
+
+def test_ring_fits_the_drawn_tab_not_its_margin(focus_scene) -> None:
+    tabs = QTabWidget()
+    tabs.addTab(QWidget(), "First")
+    tabs.addTab(QWidget(), "Second")
+    theme_module.style_tab_widget(tabs)
+    scene = focus_scene(tabs)
+    scene.leading.setFocus()
+    QTest.keyClick(scene.leading, Qt.Key.Key_Tab)
+    QApplication.processEvents()
+    bar = tabs.tabBar()
+    assert bar.hasFocus()
+
+    assert scene.ring().geometry() == bar.tabRect(0).adjusted(0, 0, -theme_module._TAB_GAP, 0)
+
+
 def test_item_view_contents_do_not_shift_on_keyboard_focus(focus_scene) -> None:
     table = _table()
     table.horizontalHeader().setStretchLastSection(True)
@@ -1628,7 +1764,8 @@ def test_ring_on_a_row_button_is_whole_inside_its_table_row(focus_scene, mode: s
     ratio = table.viewport().devicePixelRatioF()
     accent = QColor(theme_module.current_palette().accent)
     x = int(geometry.center().x() * ratio)
-    for y in (geometry.top(), geometry.top() + 1, geometry.bottom() - 1, geometry.bottom()):
+    # A keyline at each edge, then two pixels of accent.
+    for y in (geometry.top() + 1, geometry.top() + 2, geometry.bottom() - 2, geometry.bottom() - 1):
         assert image.pixelColor(x, int(y * ratio)) == accent
 
 
