@@ -2001,6 +2001,24 @@ each platform's native look:
   operating system's native artwork and accent colour. Checkable rows in tree,
   table and list views get the same treatment, so table checkboxes match form
   checkboxes.
+- Keyboard focus shows as a 2 px ring in the accent colour (red in light, amber
+  in dark) on push buttons, tool buttons, combo boxes, line edits, text edits,
+  spin boxes, scroll areas, tab bars (around the current tab), item views and
+  checkbox and radio indicators, in ``mufinder.app.theme``. A 1 px surface-coloured
+  keyline keeps the ring visible on an accent fill: along its inner edge everywhere,
+  and along its outer edge too for a control in an item view, whose row may be
+  selected. The ring is painted by a small
+  child widget of the focused control rather than by a stylesheet border: a
+  focused control keeps its size and contents, the ring stays inside a row
+  button's table row, and a feature-local stylesheet cannot remove it. It
+  appears when focus moves during keyboard use: by Tab, Shift+Tab or a shortcut,
+  and when focus then returns from a dialog or popup or a handler moves it. A
+  mouse click that moves focus shows no ring, and a click on the ringed control
+  removes it. Fusion's own focus tint is switched off where the ring replaces it
+  and stays on the current cell or row of an item view, on tabs and on plain tool
+  buttons. Sliders keep Fusion's focus highlight. Controls that draw their own
+  focus state, such as the project home chart and journal entry cards, do not get
+  the ring.
 - The project home (``mufinder.app.project_home_trail``) is painted from data,
   not artwork: waypoint positions are fractions of the chart area and label,
   node and region sizes follow the widget's size within fixed bounds, so the
